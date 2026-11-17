@@ -7,7 +7,7 @@ executable names are the same. Reusable domain and protocol libraries keep their
 
 | Executable | Source | Job |
 | --- | --- | --- |
-| `agentic-org` | `apps/agentic-org` | The person's command line. `setup` creates the instance and its HQ; `serve` runs the host, which owns accounts, sessions and secrets and starts the offices and the web process. |
+| `agentic-org` | `apps/agentic-org` | The person's command line. `setup` creates the instance and prints a one-time registration link; `serve` runs the host, which owns accounts, sessions and secrets and starts the offices and the web process. |
 | `agentic-org-office` | `apps/agentic-org-office` | One office worker: every domain rule, the only writer of organization data, and the supervisor of the office's agents. |
 | `agentic-org-web` | `apps/agentic-org-web` | Serves the static UI and `/api/v1` to browsers. Holds no keys and opens no database. |
 | `agent-os` | `apps/agent-os` | The only way an agent reaches the product. |
@@ -43,7 +43,7 @@ source; recheck it against the commit you work on.
 | `agentic-org` | `serve`, help and version. `setup` refuses without changing state ([`apps/agentic-org/src/lib.rs`](../../apps/agentic-org/src/lib.rs)). The host socket answers only `hello` and `instance.status` (`crates/org-host/src/service/mod.rs`). |
 | `agentic-org-office` | Runs when the host starts it, on macOS only (`crates/org-host/src/spawn.rs`). Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls yet. |
 | `agentic-org-web` | Help and version. Startup refuses to open a listener ([`apps/agentic-org-web/src/main.rs`](../../apps/agentic-org-web/src/main.rs)). |
-| `agent-os` | Messaging, directory and work calls against a running office. |
+| `agent-os` | Messaging, directory and work calls against a running office when one is named; with none it writes to a file queue, which is deleted (implementation plan B6). |
 
 Libraries that exist and are not yet reachable from any command: release
 verification (`org-release`), socket admission and confinement primitives

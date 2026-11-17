@@ -228,7 +228,7 @@ the data in `{{data}}`:
 
 - The data is one JSON object, `{"input": ..., "context": [...]}`, so every newline
   and quote inside a value is escaped.
-- `<`, `>`, `&` and backticks are escaped as well (`<` and so on), so a value can
+- `<`, `>`, `&` and backticks are escaped as well (`\u003c` and so on, still valid JSON), so a value can
   never contain the fence lines `<<<DATA` and `DATA>>>`, a Markdown fence or a tag. The
   holes are filled in one pass, so data that looks like `{{schema}}` is never
   expanded. The renderer checks the escaping again and refuses to render if the data

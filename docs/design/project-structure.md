@@ -112,6 +112,8 @@ crates/
   org-git/                           # Local Git adapter
   org-runtime-claude/                # Vendor adapters behind org-runtime
   org-runtime-codex/
+  org-runtime-agy/
+  org-office-sessions/               # Agent sessions in the office (agent-sessions design)
 
 apps/
   agentic-org/                       # CLI and serve composition
@@ -159,7 +161,7 @@ library.
 | `org-sync`, `org-sync-proto` | Replication between HQ and satellites | Parked until the store reads and writes the canonical files | After the storage move; then satellite enrollment |
 | `org-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
 | `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
-| `org-spool` | File queue `agent-os` uses when no office is named | Decided with the session mode of ADR-0014; it may be removed | When `agent-os` gains session mode (FC-160) |
+| `org-spool` | File queue `agent-os` uses when no office is named | Deleted, with the route through it | With conversations and messages (implementation plan B6) |
 
 ## 4. Svelte and TypeScript layout
 
@@ -274,6 +276,7 @@ and build, and the relevant browser tests.
 The application renames and host extraction are done. The domain modules above are
 not finished: `org-office` has `organization`, `employees`, `processes` and `rules`
 modules that implement the older model with several memberships per member, and `store` holds the SQL for all of them,
-with two files outside it (`organization/bootstrap.rs`, `organization/admission.rs`)
-that move behind it under ADR-0018. `org-git` and the vendor runtime adapters do
+with SQL in four files outside it (`organization/bootstrap.rs`,
+`organization/admission.rs`, `office.rs`, `office/hq_creation.rs`) that moves behind it
+under ADR-0018. `org-git` and the vendor runtime adapters do
 not exist yet.

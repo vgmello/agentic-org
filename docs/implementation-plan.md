@@ -21,38 +21,52 @@ New here? Read [START-HERE](START-HERE.md) first.
 
 ## The path
 
-| Milestone | A person can | Increments |
-| --- | --- | --- |
-| M1 | Install the server, register from the link setup prints, create the organization, and sign in from the command line | A1 to A5 |
-| M2 | Set up offices, projects, teams and people; give the second engineer an account; run the product in a Linux container | B1, B2, B3, O1, A6, U1, A7 |
-| M3 | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
-| M4 | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
-| M5 | Chat, and ask a question that waits for an answer | B6, B7, C6 |
-| Later | Costs and budgets, a second office, features and releases. All of it is v1 scope. | L1 to L10 |
+**Milestone one: one office, with people and agents on board and talking.** This is
+the owner's first milestone (2026-11-17), and everything in it runs in a single
+office. Its steps, in order:
 
-The order is the owner's (2026-11-17): the organization, its offices, projects, teams
-and people first, then agents, hired through HR. Most of M2 and the hire flow are
-create, read, update and delete on records the data contract already defines.
+| Step | A person can | Increments |
+| --- | --- | --- |
+| 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
+| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; run the product in a Linux container | B1, B2, B3, O1, A6, U1, A7 |
+| 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
+| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
+| 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
+
+**Milestone two: a second office on another machine.** It is a separate thread and
+starts only when milestone one works in one office: enrolment of the office,
+replication between offices, and messages relayed between them (S1).
+
+**Later:** costs and budgets, features and releases, updates. All of it is v1 scope.
+
+Most of step 2 and the hire flow are create, read, update and delete on records the
+data contract already defines. The parts that are not: the web process and sessions
+working end to end for the first time (step 1), the store rebuilt so that files are
+the source (B1), and starting and supervising an agent process (C3).
 
 Track A is the way in: host, setup, web, sign-in. Track B is the organization's data:
 the office's storage and the domain on it. Track C is agents. A and B start on the same
-day. C starts when M2 is usable; its spike (C1) and the proof of concept of the session
-view (C4) can start at once.
+day. C starts when step 2 is usable; its spike (C1) and the proof of concept of the
+session view (C4) can start at once.
 
 An agent exists only as an employee of the organization: it is onboarded through HR
 and started by the office. People use the browser and the terminal.
 
-Two things to know about the order:
+Three things to know about the order:
 
-- **A1 and B1 both change `crates/org-office/src/store`.** A1 removes the database
-  encryption from it; B1 rebuilds it. A1's part lands first. B1 begins with its written
-  plan, which changes no code, so the two tracks still start together.
+- **Getting in comes first and waits for nothing.** The Track A engineer starts at A2
+  and goes straight through A3 and A4: the link, registration, and creating the
+  organization.
+- **A1 is a clean-up that the Track B engineer takes first,** because B1 rebuilds the
+  office store that A1 removes the encryption from. B1's written plan is prepared
+  meanwhile. A1 also removes the encryption of the host database, which A2 and A3
+  write to: the two leads agree the order of those commits.
 - **Both engineers work on macOS and use Docker to run the product on Linux.** Linux is
   therefore a scheduled increment, A7, and not an option.
 
 ---
 
-## M1 · Install, sign in, create the organization
+## Step 1 · Getting in: install, register, create the organization
 
 ### A1 · One launch contract, no database encryption
 
@@ -90,8 +104,8 @@ Two things to know about the order:
     it.
   - Setup asks for no username and no password. It prints one registration link to
     the instance's own address. The link works once, expires, and is stored only as a
-    digest. A command on the server machine issues a new link, which cancels the
-    previous one.
+    digest. `agentic-org admin reset` on the server machine issues a new link, which
+    cancels the previous one.
   - Setup reports the state of disk encryption and the file permissions it set.
   - Setup creates no account, no organization and no office (A3, A4).
 - **Read:** [standalone server design](design/standalone-server.md),
@@ -108,7 +122,7 @@ Two things to know about the order:
     password, which the link replaces.
 - **Done when:** the SRV criteria for a fresh install pass on macOS; a second run of
   setup changes nothing; a used or replaced link is refused; ENC-3 passes.
-- **Needs:** A1.
+- **Needs:** nothing. It is where Track A starts.
 
 ### A3 · The web process, registration and sign-in
 
@@ -120,7 +134,12 @@ Two things to know about the order:
     static UI and `/api/v1`, and confines itself before handling input.
   - Registration through a one-time link: the page asks for a username and a
     password, and the host creates the account. The account created from setup's link
-    is the instance administrator. No password is ever typed in a terminal.
+    is the server's administrator. Exactly one account is the administrator at any
+    time; it can hand the role to another account from the browser. No password is
+    ever typed in a terminal.
+  - `agentic-org admin reset` always concerns the administrator account: it prints a
+    one-time link that registers the account if none exists, and otherwise sets a new
+    password. It is the only account command.
   - Sign-in and sign-out. Sessions are stored at the host as digests, cached in the web
     process, and survive a restart of either.
   - Every request made for a person reaches the office with that person's principal and
@@ -221,7 +240,7 @@ Two things to know about the order:
 
 ---
 
-## M2 · Offices, projects, teams and people
+## Step 2 · The organization: office, projects, teams and people
 
 ### B1 · The store foundation
 
@@ -256,7 +275,7 @@ Two things to know about the order:
   seam and the organization suite passes against SQLite and against an in-memory
   implementation (ENG-2, and ENG-3 for organization records); ENG-4 and ENG-5 pass.
   The suites for work and messaging arrive with B4 and B6, for the host with A3, and for
-  replication with L5.
+  replication with S1.
 - **This is the largest increment in the plan.** It starts with a written plan, recorded
   in the repository: which record families move first, and what is deleted.
 - **Needs:** A1's change to the office store.
@@ -300,7 +319,7 @@ Two things to know about the order:
   administrator restarts one.
 - **Build:** the office list and each office's state as the host and the office report
   them; restart of an office through the host. The HQ office is the only office until a
-  second one is enrolled (L5).
+  second one is enrolled (milestone two, S1).
 - **Read:** [offices design](design/offices-hq-and-satellites.md),
   [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria that need one
   office), [host boundary design](design/office-host-boundary.md). Rows FC-019, FC-021.
@@ -313,22 +332,23 @@ Two things to know about the order:
 
 ### A6 · A second person can sign in
 
-- **Outcome:** the owner gives the second engineer a registration link; that person
-  creates their account, signs in, and works in the same organization under their own
-  name.
+- **Outcome:** the owner invites the second engineer from the browser; that person
+  creates their account from the link, signs in, and works in the same organization
+  under their own name.
 - **Build:**
-  - An instance administrator issues a one-time registration link for a person, from
-    the server machine (`agentic-org account invite`), and the person chooses their own
-    username and password in the browser, as in A3. A forgotten password is handled
-    the same way: a one-time link issued on the server machine. `account link`,
-    `unlink` and `revoke` stay commands on the server machine. There is no browser
-    screen for managing accounts in v1.
+  - In People, the administrator or the organization's owner invites a person to sign
+    in. That creates a one-time registration link, shown once to pass on. The person
+    chooses their own username and password, as in A3. The product sends no email.
+  - The same people issue a new link for someone who forgot their password, and remove
+    a person's access, which signs them out everywhere. A signed-in person changes
+    their own password in the browser.
+  - There is no account command besides `agentic-org admin reset` (A3).
   - Every account is tied to a person (owner decision, 2026-11-17). In each
     organization an account can open, it is tied to exactly one person record, and
     what the account does there carries that person's name. A person does not need an
-    account. An account is never tied to an agent. `account invite` and `account link`
-    name the person, or create one in the top-level team, who is then moved between
-    teams like anyone else.
+    account. An account is never tied to an agent.
+  - An owner hands ownership of the organization to another person who has an account.
+    An organization has exactly one owner.
 - **Read:** [installation and access UX](specs/server-installation-and-access-ux.md)
   (accounts), [agent structure](design/organization-data/04-agent-structure.md),
   [index, what the host owns](design/organization-data/STATUS.md#outside-this-set-what-the-host-owns).
@@ -337,7 +357,8 @@ Two things to know about the order:
   Account storage is `crates/org-host/src/hostdb/accounts.rs`; its schema allows many
   accounts and several linked organizations, but the only insert is the first
   administrator account. `account.create` is defined in `crates/org-host-control` and has
-  no handler; nothing issues or redeems a link. Account IDs are still ULIDs and become UUIDv7.
+  no handler; nothing issues or redeems a link. The command-line account operations
+  defined there are removed. Account IDs are still ULIDs and become UUIDv7.
 - **Done when:** two people are signed in at once from two browsers, and a change each
   makes carries their own name.
 - **Needs:** A3, B2.
@@ -373,12 +394,12 @@ Two things to know about the order:
   but macOS; the web process's Linux confinement is a contract with no adapter and
   refuses to start; host secrets use the macOS keychain.
 - **Done when:** LNX-1 to LNX-6 pass.
-- **Needs:** A1 to A3; it can run alongside the rest of M2. Each of the three Linux adapters starts with a short design,
+- **Needs:** A1 to A3; it can run alongside the rest of step 2. Each of the three Linux adapters starts with a short design,
   which the engineer writes and decides.
 
 ---
 
-## M3 · Agents
+## Step 3 · Agents
 
 ### C1 · The sign-in spike
 
@@ -460,7 +481,65 @@ Two things to know about the order:
 
 ---
 
-## M4 · Tasks
+## Step 4 · Messages: chat and asks
+
+### B6 · Conversations and messages
+
+- **Outcome:** people and agents send direct messages, talk in channels, and see what
+  they have not read.
+- **Build:**
+  - Conversations of kind DM, group DM and channel, with membership.
+  - Every file has one writing office: a message is written once by the sender's office;
+    each employee's read state, reactions and preferences are that employee's own files.
+  - A send is acknowledged at the local commit and relayed afterwards.
+  - `agent-os` talks to the office for every call and gains the long-running mode. The
+    file queue, `crates/org-spool` and the route through it are deleted.
+- **Read:** [messaging and chat](design/organization-data/15-messaging-and-chat.md),
+  [ADR-0003](adr/0003-agent-messaging-office-first.md),
+  [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) (ACK-1 to ACK-9),
+  [chat UX](specs/chat-ux.md) (CHAT criteria). Rows FC-074 to FC-078, FC-160.
+- **Code today:** `crates/org-mailbox` has directed messages, asks and triage with a
+  conformance suite; `crates/org-office/src/store/messages.rs` stores them in tables the
+  messaging contract replaces; `agent-os` uses a file queue by default and the office
+  when one is named.
+- **Done when:** the CHAT criteria for sending, reading and channels pass; the
+  engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
+- **Needs:** B2, A5. The browser part needs A3.
+
+### B7 · Asks and questions
+
+- **Outcome:** an agent or person asks a question with choices, a yes/no or free text;
+  the other answers in chat; the asker gets the answer, or a timeout after the wait.
+- **Build:**
+  - An ask carries the question schema, an optional default, `required`, and how long
+    the asker waits (10 minutes unless stated).
+  - The answer is the answerer's own record; the asker's office records the one close
+    outcome.
+  - The question components in the product's chat, built from shadcn-svelte and Bits UI:
+    single choice, multiple choice, yes/no, free text. A default is preselected.
+  - A required ask that is not answered in time returns "required answer pending". The
+    suspension that follows is increment C6.
+- **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
+  [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
+  (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
+- **Done when:** each question type is asked from a terminal and answered in the
+  browser; ASK-1 and ASK-2 pass.
+- **Needs:** B6.
+
+### C6 · A required ask suspends and resumes the agent
+
+- **Outcome:** an agent that cannot continue without an answer is stopped after being
+  told, and starts again in the same session when the answer arrives.
+- **Read:** [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 5 to 13.
+  Row FC-166.
+- **Done when:** ASK-3, ASK-5, ASK-6, ASK-7 and ASK-9 pass, and the presence part of
+  ASK-4. The rest of ASK-4 (no turn permit and no subscription slot while suspended) is
+  finished with L4, and ASK-8 (a budget hold keeps the agent suspended) with L3.
+- **Needs:** B7, C3.
+
+---
+
+## Step 5 · Tasks
 
 ### B4 · Typed tasks
 
@@ -519,61 +598,22 @@ Two things to know about the order:
 
 ---
 
-## M5 · Chat and asks
+## Milestone two · A second office
 
-### B6 · Conversations and messages
+### S1 · A second office on another machine
 
-- **Outcome:** people and agents send direct messages, talk in channels, and see what
-  they have not read.
-- **Build:**
-  - Conversations of kind DM, group DM and channel, with membership.
-  - Every file has one writing office: a message is written once by the sender's office;
-    each employee's read state, reactions and preferences are that employee's own files.
-  - A send is acknowledged at the local commit and relayed afterwards.
-  - `agent-os` talks to the office for every call and gains the long-running mode. The
-    file queue, `crates/org-spool` and the route through it are deleted.
-- **Read:** [messaging and chat](design/organization-data/15-messaging-and-chat.md),
-  [ADR-0003](adr/0003-agent-messaging-office-first.md),
-  [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) (ACK-1 to ACK-9),
-  [chat UX](specs/chat-ux.md) (CHAT criteria). Rows FC-074 to FC-078, FC-160.
-- **Code today:** `crates/org-mailbox` has directed messages, asks and triage with a
-  conformance suite; `crates/org-office/src/store/messages.rs` stores them in tables the
-  messaging contract replaces; `agent-os` uses a file queue by default and the office
-  when one is named.
-- **Done when:** the CHAT criteria for sending, reading and channels pass; the
-  engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
-- **Needs:** B2, A5. The browser part needs A3.
-
-### B7 · Asks and questions
-
-- **Outcome:** an agent or person asks a question with choices, a yes/no or free text;
-  the other answers in chat; the asker gets the answer, or a timeout after the wait.
-- **Build:**
-  - An ask carries the question schema, an optional default, `required`, and how long
-    the asker waits (10 minutes unless stated).
-  - The answer is the answerer's own record; the asker's office records the one close
-    outcome.
-  - The question components in the product's chat, built from shadcn-svelte and Bits UI:
-    single choice, multiple choice, yes/no, free text. A default is preselected.
-  - A required ask that is not answered in time returns "required answer pending". The
-    suspension that follows is increment C6.
-- **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
-  [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
-  (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
-- **Done when:** each question type is asked from a terminal and answered in the
-  browser; ASK-1 and ASK-2 pass.
-- **Needs:** B6.
-
-### C6 · A required ask suspends and resumes the agent
-
-- **Outcome:** an agent that cannot continue without an answer is stopped after being
-  told, and starts again in the same session when the answer arrives.
-- **Read:** [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 5 to 13.
-  Row FC-166.
-- **Done when:** ASK-3, ASK-5, ASK-6, ASK-7 and ASK-9 pass, and the presence part of
-  ASK-4. The rest of ASK-4 (no turn permit and no subscription slot while suspended) is
-  finished with L4, and ASK-8 (a budget hold keeps the agent suspended) with L3.
-- **Needs:** B7, C3.
+- **Outcome:** an owner adds an office on another machine; agents placed there work
+  when HQ is unreachable, and messages reach people and agents in the other office.
+- **Build:** enrolment of the office from HQ, replication of the organization's data
+  between HQ and the office, and relay of messages between offices through HQ.
+- **Read:** [offices design](design/offices-hq-and-satellites.md),
+  [ADR-0001](adr/0001-app-is-a-client-office-is-a-server.md),
+  [ADR-0003](adr/0003-agent-messaging-office-first.md) decisions 4 to 8,
+  [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria for a second
+  office), [recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
+  Rows FC-020, FC-145; the replication suite of ADR-0018 (ENG-3).
+- **Code today:** `crates/org-sync` is the replication core; nothing enrols an office.
+- **Needs:** milestone one. It starts with its own short plan.
 
 ---
 
@@ -588,7 +628,6 @@ product without it.
 | L2 | Usage, prices and cost views | [document 10](design/organization-data/10-usage-and-cost-accounting.md), [costs UX](specs/costs-and-insights-ux.md), FC-084 to FC-088 |
 | L3 | Budgets and the hold at the turn permit | [document 17](design/organization-data/17-budgets-and-controls.md), FC-089 to FC-093; ASK-8 |
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
-| L5 | A second office: enrolment, replication, relay between offices | [offices design](design/offices-hq-and-satellites.md), [ADR-0003](adr/0003-agent-messaging-office-first.md) decisions 4 to 8, FC-020, FC-145; the replication suite of ENG-3 |
 | L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
 | L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
