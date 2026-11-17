@@ -675,7 +675,7 @@ on the HQ machine, in a session at that machine:
   approving the run in a browser where they're signed in (§4a.2). No password
   is typed in the terminal.
 - Then it asks them to confirm it's them, **once per run**, before it shows the
-  code (2026-11-10). That one confirmation covers
+  code. That one confirmation covers
   both showing the code and recording that it's stored, and the prompt names
   both: on a Mac, Touch ID or the Mac's login password, in a system dialog that
   reads "show the recovery code for Lumen Labs and record it as stored" (with

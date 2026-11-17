@@ -48,9 +48,11 @@ runs its local screen and Enter preflight before sign-in. These facts are rechec
 after the OS reply and before release. A user switch, session end, peer exit or
 exec, revoked account or disconnected channel invalidates the request.
 
-**Linux.** Linux needs its own presence adapter under ADR-0017. Until it exists,
-`recovery.release` refuses on Linux; it never releases a code without a presence
-check.
+**Linux, including a container** (ADR-0017). There is no OS presence dialog. The
+signed-in administrator's approval of this run in the browser counts as the
+confirmation: it is the run's one confirmation, bound to this connection and run
+like the macOS confirmation, and it never carries over to another run. The terminal
+and local-context checks still apply; a non-interactive run receives no code.
 
 Each release or redelivery allocates a fresh `LAContext` with
 `touchIDAuthenticationAllowableReuseDuration = 0` and evaluates
