@@ -28,9 +28,9 @@ Done reflects the linked source evidence, **not a fresh execution of all accepta
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 58 |
-| Planned | 48 |
-| Blocked | 3 |
+| In progress | 61 |
+| Planned | 47 |
+| Blocked | 1 |
 | Deferred | 40 |
 | Needs verification | 0 |
 | **Total** | **158** |
