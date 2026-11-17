@@ -1352,23 +1352,43 @@ fn a_child_that_exec_ed_after_connecting_is_refused_at_the_ready_line() {
 
 #[test]
 fn runs_that_end_before_they_are_stable_count_as_failed_starts() {
-    let stopping = AtomicBool::new(false);
-    let state = Mutex::new(GatewayState::NotConfigured);
-    let starts = std::sync::atomic::AtomicUsize::new(0);
+    let stopping = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let timing = Timing {
         serving: SERVING_DEADLINE,
         stable: Duration::from_secs(3600),
         backoff: Duration::from_millis(1),
     };
-    let began = Instant::now();
-    // Each run is published Running, then ends long before it is stable.
-    supervise(&stopping, &state, &|| true, timing, &quiet, || {
-        starts.fetch_add(1, Ordering::SeqCst);
-        Ok(Brief {
-            until: Instant::now() + Duration::from_millis(30),
+    let supervisor = {
+        let (stopping, state, starts) = (
+            Arc::clone(&stopping),
+            Arc::clone(&state),
+            Arc::clone(&starts),
+        );
+        thread::spawn(move || {
+            // Each run is published Running, then ends long before it is stable.
+            supervise(&stopping, &state, &|| true, timing, &quiet, || {
+                starts.fetch_add(1, Ordering::SeqCst);
+                Ok(Brief {
+                    until: Instant::now() + Duration::from_millis(30),
+                })
+            })
         })
-    });
+    };
+    let until = Instant::now() + Duration::from_secs(10);
+    while !supervisor.is_finished() && Instant::now() < until {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let gave_up = supervisor.is_finished();
+    stopping.store(true, Ordering::SeqCst);
+    supervisor.thread().unpark();
+    supervisor.join().unwrap();
+    assert!(
+        gave_up,
+        "kept restarting after {} short runs",
+        starts.load(Ordering::SeqCst)
+    );
     assert_eq!(starts.load(Ordering::SeqCst), MAX_STARTS);
-    assert!(began.elapsed() < Duration::from_secs(10));
     assert_eq!(*lock(&state), GatewayState::Failed);
 }
