@@ -1,10 +1,6 @@
 # ADR-0003 · Agent messaging is office-first
 
-Status: **accepted**. Rewritten on 2026-11-17 at the owner's request so that it states
-the current design only. The first revision described the first implementation in
-detail: its tables, wire calls, command-line surface, an application token for a
-desktop app, and a file spool. That text is no longer a requirement. It is kept in Git
-history ([revision before the rewrite](https://github.com/vgmello/agentic-org/blob/af79d2743bcc1c8afd07e57473bcbe6ec410a282/docs/adr/0003-agent-messaging-office-first.md)).
+Status: **accepted**.
 
 What is stored and where is owned by the
 [messaging contract](../design/organization-data/15-messaging-and-chat.md). How fast a
@@ -98,18 +94,20 @@ must stay fast under load. People take part too, through the product's own chat.
   suite is the executable form of those rules.
 - `crates/org-office` stores messages in its own tables in the office database. The
   selected design makes those tables a projection of files (messaging contract).
-- `agent-os` writes to a file queue when no office is named and talks to an office when
-  one is. Whether the file queue stays is decided with the long-running mode of
-  ADR-0014.
+- `agent-os` writes to a file queue when no office is named. The file queue,
+  `crates/org-spool` and the route through it are deleted
+  ([implementation plan](../implementation-plan.md), B6); `agent-os` always talks to
+  its office.
 - One held call on an agent's connection is capped at 60 seconds. The wait of ADR-0020
   spans several held calls.
 - Routing between offices (decisions 4 to 8) is designed and not built; the replication
   core it uses is `crates/org-sync`.
 
-## Citations of the first revision
+## Section numbers cited in code
 
-Other documents cite sections of the first revision as `ADR-0003 §n`. Read them with
-this table.
+Code comments and `apps/agent-os/README.md` cite numbered sections, `ADR-0003 §n`,
+that this record no longer has. Read them with this table until that code is
+replaced.
 
 | Cited as | Now |
 | --- | --- |
@@ -124,7 +122,7 @@ this table.
 | §3.2 (recipient check, failure notice) | Decisions 7 and 8 |
 | §3.3 (deadlines, re-ask) | Decision 9 |
 | §3.4 (content hash, ordering) | [Messaging contract](../design/organization-data/15-messaging-and-chat.md) for the hash; decision 4 for ordering |
-| §3.5 (offline behaviour, the file queue) | Decision 1; "What the code does today" |
+| §3.5 (offline behaviour, the file queue) | Decision 1; the file queue is deleted |
 | §4 (wire additions, code ownership) | `crates/org-proto`; [project structure](../design/project-structure.md) |
 | §5 (performance targets) | [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) |
 | §6 (conversations, channels, bridges) | [Messaging contract](../design/organization-data/15-messaging-and-chat.md); [chat UX](../specs/chat-ux.md) |
