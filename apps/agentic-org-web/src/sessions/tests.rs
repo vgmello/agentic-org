@@ -511,6 +511,73 @@ fn an_exhausted_capacity_scan_keeps_the_control_connection_and_sessions() {
 }
 
 #[test]
+fn bounded_capacity_scans_eventually_reach_revocations_after_a_live_prefix() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    for _ in 1..MAX_SESSIONS {
+        f.sign_in();
+    }
+    let live_key = ticket(&f.sessions, &live).key;
+    let revoked_key = {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        // Keep a live prefix ahead of one revoked binding, without presenting
+        // that binding to the gateway. Its host slot is already available.
+        let (key, session) = bindings
+            .iter()
+            .skip(2)
+            .find(|(key, _)| **key != live_key)
+            .unwrap();
+        f.ended
+            .lock()
+            .unwrap()
+            .insert(session.handle.expose().to_owned());
+        *key
+    };
+    let window = Duration::from_millis(100);
+    // Each window can start only one probe. Repeated scans must advance past
+    // the same live prefix instead of permanently denying reauthentication.
+    *f.inspect_delay.lock().unwrap() = window;
+    assert!(f.sessions.reclaim_capacity_within(window).is_ok());
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
+    for _ in 0..3 {
+        assert!(f.sessions.reclaim_capacity_within(window).is_ok());
+    }
+    {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        assert_eq!(bindings.len(), MAX_SESSIONS - 1);
+        assert!(!bindings.contains_key(&revoked_key));
+        assert!(bindings.contains_key(&live_key));
+    }
+    *f.inspect_delay.lock().unwrap() = Duration::ZERO;
+    let replacement = f.sign_in();
+    assert!(f.sessions.get(ticket(&f.sessions, &replacement)).is_ok());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+    assert!(f.sessions.host.live());
+
+    // The cursor's revoked binding was removed. Resuming must still reach a
+    // newly revoked earlier entry by wrapping around the surviving live tail.
+    let wrapped_key = {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        let (key, session) = bindings
+            .range(..revoked_key)
+            .find(|(key, _)| **key != live_key)
+            .unwrap();
+        f.ended
+            .lock()
+            .unwrap()
+            .insert(session.handle.expose().to_owned());
+        *key
+    };
+    assert!(f.sessions.reclaim_capacity().is_ok());
+    {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        assert!(!bindings.contains_key(&wrapped_key));
+        assert_eq!(bindings.len(), MAX_SESSIONS - 1);
+    }
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+}
+
+#[test]
 fn host_denial_releases_capacity_for_reauthentication() {
     let f = Fixture::new();
     let revoked = f.sign_in();

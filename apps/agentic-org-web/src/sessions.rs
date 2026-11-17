@@ -20,6 +20,7 @@ use org_proto::gateway::{
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
+    ops::Bound::{Excluded, Unbounded},
     sync::{
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
         Arc, Mutex,
@@ -53,6 +54,7 @@ pub struct BrowserSessions {
     secure: bool,
     proof_key: Zeroizing<[u8; 32]>,
     sessions: Mutex<BTreeMap<[u8; 32], Arc<Session>>>,
+    capacity_cursor: Mutex<Option<[u8; 32]>>,
     cleanup: SyncSender<Arc<SessionHandle>>,
 }
 struct Session {
@@ -157,6 +159,7 @@ impl BrowserSessions {
             secure,
             proof_key: Zeroizing::new(random()?),
             sessions: Mutex::new(BTreeMap::new()),
+            capacity_cursor: Mutex::new(None),
         }))
     }
     fn mac(&self, proof: &[u8]) -> ProofMac {
@@ -256,23 +259,32 @@ impl BrowserSessions {
         self.reclaim_capacity_within(CAPACITY_RECHECK)
     }
     fn reclaim_capacity_within(&self, window: Duration) -> Result<(), ApiReply> {
-        let candidates: Vec<_> = {
-            let sessions = self.sessions.lock().map_err(|_| unavailable())?;
-            if sessions.len() < MAX_SESSIONS {
-                return Ok(());
-            }
-            sessions.values().cloned().collect()
-        };
         // Only sign-in's blocking worker probes the host, never authenticate/reap.
         // The window bounds when a probe may start, not how long it may take:
         // each probe keeps the normal per-call deadline, because truncating an
         // in-flight call would close the shared control connection and end every
         // session. The scan therefore takes at most `window` plus one call deadline.
         let started = Instant::now();
-        for session in candidates {
+        for _ in 0..MAX_SESSIONS {
             if started.elapsed() >= window {
                 break;
             }
+            let session = {
+                // Reserve the next probe across concurrent scans. Continue after
+                // the last key even if its binding was removed or rotated; wrap
+                // at the end so bounded retries eventually cover the whole map.
+                let mut cursor = self.capacity_cursor.lock().map_err(|_| unavailable())?;
+                let sessions = self.sessions.lock().map_err(|_| unavailable())?;
+                if sessions.len() < MAX_SESSIONS {
+                    return Ok(());
+                }
+                let (key, session) = cursor
+                    .and_then(|key| sessions.range((Excluded(key), Unbounded)).next())
+                    .or_else(|| sessions.first_key_value())
+                    .expect("capacity requires a nonempty map");
+                *cursor = Some(*key);
+                Arc::clone(session)
+            };
             match self.host.inspect(&session.handle) {
                 Err(control::Failure::Denied) => {
                     self.session_failure(&session, control::Failure::Denied);
