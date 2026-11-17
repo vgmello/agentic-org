@@ -2,7 +2,7 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo: conflict fixes A-01..A-06 (one storage tree, HQ authority, relocation, codecs, messaging merge) and owner decisions ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes, ADR0016 no application-level data encryption. security-boundaries and hq-creation-provider skills gain the matching guardrails; no new tool, role or stack. Code unchanged; SQLCipher/key custody remain until FC-162.",
+  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os. Skills carry matching guardrails; no new tool, role or stack. Code unchanged.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -118,31 +118,31 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "5a8988b5c0c7ca17240a9f0d1cef68f72696c2b7b351ed7b64e1b547400ab6e7"
+      "sha256": "d63ae24c88dd8e9c4476376211cbedc17b26795c8b5b63b58da647ad86dfad46"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "d073d3427e489b48ccbb98f6f148fea2ec8f53a8e54e39f85fdfb222905c9ca8"
+      "sha256": "8384f1bdb1d99e0ab60281a8178a6e4f9b03f033ca818a758f5a9dcf003f28bf"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "07dcc3c5054d671db3848612ee0b37ccb2d2b4824f328f5e565a0a7f5eaec3f5"
+      "sha256": "cec497fab9ea05352144376909601376b5366f0a5f0a14853584f5d96afef94f"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "b30a5ef6e0d924d73a8b96f34565564269dd336e5c0296205037e4512aeafa7f"
+      "sha256": "f588cbddac60d2eec410a217a1b005288fd53483b95214c265fcc8636ba88f23"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",
-      "sha256": "a6b1a72eab2a70f05012bf52c9302b3097f4368095d7191d711f71f4a22e441d"
+      "sha256": "aa43a5f046cc8992ec0ead5b66af8c094632dc21a63929e080124ce0409f0f51"
     },
     {
       "path": "docs/adr/0010-legacy-task-adoption.md",
-      "sha256": "010d28fff2d1b01a515aa662bd438ec275e2f0b357be0c07d1cd1a4528185f03"
+      "sha256": "2d80ff0285e5126ad8097b89c2b141a980b4d3663944c911a9223e73de751295"
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "72d87a6af79d0624ac723900f06925bb2dfce0964b94e07a16a44e2a33959457"
+      "sha256": "07aea48691616c61dac62c0e28f83e993e896e74adf00ea36eef4f9c5f5a52e5"
     },
     {
       "path": "docs/architecture-rules.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "9946955e29cd0b5ae6a967724871bbbf791cf713e9533fd7b7dd60cdbdd33870"
+      "sha256": "e94adafeb87d5e6119380d5bab65b5b48a7470c45d7a7200f9169e3263eee922"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "16d2709b0a13b719ffec88a8e14ebc617becd1091f69ee8716013d7caddd2cea"
+      "sha256": "6543a2c364c9c9b29aef3ad1d0d44ab9cd4647ee5cb635976b71779f135ec63d"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "94077069631e634c110751bd2dc5979fa3fadde65e80077716d0f129266b4910"
+      "sha256": "98c500a1d466560660b775e65a9083941f4cf88949184629e1161bc7f4379064"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,11 +182,11 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "caacb59302ed8246cb1e444c09a2b01553d2f7a1c74cb9cca528f5c44dc8f205"
+      "sha256": "fb8f8a3a541076a8896266442c539898d268f8d07ceea93fc5ef9de9c25c66d9"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "1a8378c94ec45a7d92438370d90fdfbec661e6ec154e03ac1992a8a1b7706a0a"
+      "sha256": "2b9bdb274c4d2ba4298937f10fa2dd30f4a1cea8419e59c97b199d70c06cd741"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
