@@ -55,3 +55,10 @@
   org-work/org-client. Every Cargo edge is annotated with the symbol that uses it. All required tests are present, including the
   source guard `the_f4_gateway_sends_no_office_channel_request` and handoff decode/refusal. P-5 is VERIFIED: the selected-task
   coupling was removed cleanly. The lead committed the work as writer 4's output. Writer 4's preflight ack: see preflight-writer4.json if present.
+- Step 6 UI (P-8) dispatched in parallel: slot-2 branch worktree-f4-ui from 90dab93b (UI files only), subagent ab3c96e4bee71689f, Opus High. Two writers task-wide: writer 5 (slot-1, org-host tests) + UI writer (slot-2). The lead does not write product source. The UI branch is merged into worktree-f4-sessions before full checks.
+- Writer 5 (subagent aab431942fb286aa0): INCOMPLETE. Committed real-process test 6b888611
+  (bootstrap::tests::gateway_process_tests::actual_host_spawns_web_gateway_with_sessions_refresh_sign_out_eof_and_lockout; in
+  bootstrap/ because only BootstrapHost creates admin + Active HQ; needs ORG_TEST_OFFICE_BIN + ORG_TEST_WEB_BIN, absolute paths).
+  The run FAILS, and the lead reproduced it UNSANDBOXED: "authenticated browser startup failed" x5, then timed out waiting for gateway_ready
+  (0 passed/1 failed). The web child process::serve returns failure(); the exact site is unknown. Writer 5's skill preflight
+  is BLOCKED on a Cargo.lock capability-evidence change (to reassess). Next: writer 6 root-causes the failure.
