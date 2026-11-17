@@ -49,7 +49,7 @@ let release = verify_manifest(&exact_manifest_bytes, &raw_signature, &policy, &k
 // over the exact bytes, not a serialization of the parsed manifest.
 let manifest_digest = release.manifest_sha256();
 release.verify_inventory(actual_regular_payload_paths.iter().map(String::as_str))?;
-let expected = release.file("agentic-org-web").ok_or(AdapterError::MissingGateway)?;
+let expected = release.file("agentic-org-web").ok_or(AdapterError::MissingWeb)?;
 let signed_cdhash = expected.macos_cdhash(); // Compare to platform-reported loaded-image identity.
 
 let mut payload = expected.payload_verifier();
