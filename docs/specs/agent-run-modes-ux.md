@@ -34,7 +34,7 @@ Earlier revision history is available in
 The operative cost rules are [COST](costs-and-insights-ux.md) and document 17,
 which integrate compatible earlier requirements without adopting superseded rules.
 One-off labels below are display proposals, without R- prefixes or a
-new selected record counter. T- task references are scoped to project or team.
+new selected record counter. T- task references are minted by the creating office and unique in the organization.
 
 ## 0. Decisions
 

@@ -193,7 +193,7 @@ running executable.
 | `org-sync`, `org-sync-proto` | Replication of organization changes between HQ and satellite offices | Linked into the office; no satellite can be enrolled. | **Parked until the storage move.** Its source adapter must read the canonical files, not the legacy tables (B-01). | After the store reads and writes the selected files; then satellite enrolment. |
 | `org-runtime`, `org-supervise` | The contract for vendor runtimes, and process start, stop and cleanup | Linked into the office worker; no agent is launched. | **Continue.** This is the next foundation for running agents. | With the first vendor adapter and the launch path (FC-101), using the isolation modes of ADR-0015. |
 | `org-host` `hostdb` | The host's accounts, sessions and office registry storage | Compiled; marked unused outside tests. | **Continue.** | With stored browser sessions and setup (FC-159, FC-010). |
-| `org-spool` | Offline queue for the agent CLI when the office is not running | Yes, through `agent-os`. | **Review at cutover.** The session mode of ADR-0014 may make it unnecessary. | When the agent CLI moves to session mode (FC-160). |
+| `org-spool` | Offline queue for the agent CLI when the office is not running | Yes, through `agent-os`. | **Review when the agent CLI changes.** The session mode of ADR-0014 may make it unnecessary. | When the agent CLI moves to session mode (FC-160). |
 
 ## 4. Proposed Svelte/TypeScript layout
 

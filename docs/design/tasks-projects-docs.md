@@ -10,7 +10,7 @@ There is one task entity with extensible `type`, required accountable team, opti
 
 1. **One typed task.** `type: task | bug | request | ...` is classification, not a different entity/table/folder. Optional `work_type: build | run` is a separate classification; null means unclassified.
 2. **Accountability and assignment differ.** Required task `team_id` equals `projects.owner_team_id` when project-scoped. Nullable `assigned_team_id` and `assignee_id` form one atomic current assignment pair. Neither is inferred from the other or from employee home membership.
-3. **Identity is stable.** Records use UUIDv7. Readable T- references are scoped to project or to the accountable team when projectless. Type changes and assignment never renumber tasks.
+3. **Identity is stable.** Records use UUIDv7. A task reference is minted by the creating office and is unique in the organization on its own, for example `T-B37`. Type changes and assignment never renumber tasks.
 4. **Sources are durable.** Task files and published immutable task events are organization Git content. Acknowledged unpublished changes require a durable journal. SQLite is their indexed projection, not the sole recovery source.
 5. **Features are definitions.** `projects/<project-id>/features/<feature-id>/feature.md` defines behavior, rules, limitations and non-goals. Its status and owner are authored fields, not values automatically calculated from task completion.
 6. **Supporting documents have explicit scope.** Required project; zero or one same-project feature, release or deployment; stable IDs and common attribution. `feature.md` is not duplicated as a supporting-document row.
@@ -78,14 +78,14 @@ Every foreign reference and filename uses the immutable stable ID. IDs are UUIDv
 | --- | --- | --- |
 | Team | `TEAM-12` | Organization |
 | Project | `P-8`, slug `reservations` | Organization |
-| Task of every type | `T-A42` | Project, or team when projectless |
+| Task of every type | `T-A42` | The creating office: one sequence per office, unique in the organization |
 | Feature | `F-6`, full slug `reservations/table-booking` | Number/local slug within project |
 | Release | `R-3` | Project |
 | Milestone | `M-2` | Release; full reference `P-8/R-3/M-2` |
 
 A task reference such as `T-A42` is complete on its own in every view; it never needs a project or team in front. Type icons/words distinguish Bug T-A42 and Request T-A43. A feature that HQ has not yet registered shows **Pending number** plus a copyable stable ID (a task never does: its creating office numbers it at once); any short display must resolve unambiguously and is not a final reference.
 
-A target resolver requires unambiguous owning scope, not a first match: project/team for T, project for R and project plus release for M. Explicit page/conversation context supplies only the scopes it actually knows. Global lookup lists permitted matches with canonical qualified references; insufficient scope asks for qualification. Echo the resolved qualified reference before a mutation. Case-insensitive/hyphen-less conveniences, text-key/short-ID precedence and reserved-key grammar require a separate decision; they cannot change selected counters.
+A task reference resolves on its own, with no scope. For HQ-numbered records a target resolver requires unambiguous owning scope, not a first match: project for F and R, and project plus release for M. Explicit page/conversation context supplies only the scopes it actually knows. Global lookup lists permitted matches with their full references; insufficient scope asks for qualification. Echo the resolved qualified reference before a mutation. Case-insensitive/hyphen-less conveniences, text-key/short-ID precedence and reserved-key grammar require a separate decision; they cannot change selected counters.
 
 ### 1.2 The core (every kind)
 
@@ -119,6 +119,7 @@ A newly authored project task uses stable UUIDv7 IDs. This illustrative subset a
 ```yaml
 schema_version: 1
 id: 019a8541-1800-7000-8000-000000000042
+office_code: A
 number: 42
 revision: 3
 type: bug

@@ -1010,4 +1010,4 @@ Managed employees instead use their injected instance/office/session binding and
 reject conflicting manual selectors. They never fall back to spool on auth failure.
 Any retained hand-run offline spool mode is explicit and uses its existing restricted
 ingest rules. These commands are implementation requirements, not a claim that the
-installed Phase A CLI already accepts these flags.
+CLI already accepts these flags.

@@ -91,9 +91,9 @@ Remaining domain-layout changes are implementation requirements. Explicit baseli
   origin-scoped proof on every protected operation/stream/refresh; cookies alone
   are insufficient because browsers do not isolate them by port. Browser tabs
   share one authenticated streaming fetch or use bounded short polling.
-- First standalone local `org-proto` uses API_VERSION 2 for breaking retirements
-  and changed authority. Retained versions remain additive-only. HTTP `/api/v1`
-  and launch/sync versions are independent. `home`/`clear_home` mutations retire;
+- The local `org-proto` API version is 1 and changes in place until v1 ships
+  (owner, 2026-11-17); no retained version is kept. HTTP `/api/v1` and launch/sync
+  versions are independent. `home`/`clear_home` mutations retire;
   managed launch paths come only from instance/office/member identity.
 - Pause durably commits at HQ while a disconnected office's stop remains pending.
   New goal changes to a known-offline office are rejected before admission; an

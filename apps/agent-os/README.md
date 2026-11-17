@@ -9,7 +9,7 @@ cargo build --release -p agent-os --bin agent-os
 ./target/release/agent-os --help
 ```
 
-Install the reviewed agent-os artifact through the pinned release; do not overwrite the old installed CLI as a build step. The new CLI keeps the existing spool layout and ORG_AGENT/ORG_OFFICE bindings.
+Install the reviewed agent-os artifact through the pinned release. The new CLI keeps the existing spool layout and ORG_AGENT/ORG_OFFICE bindings.
 
 Use agent-os relay run/status directly. Legacy relay argv[0] dispatch remains compatible for existing deployments; a fresh release needs no relay alias or additional service executable.
 

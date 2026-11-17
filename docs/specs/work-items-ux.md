@@ -27,7 +27,7 @@ Criterion IDs remain stable. **Deferred** criteria below preserve earlier UX req
 
 1. **Task is the entity.** Bug and Request are types with dedicated views and fields; every type uses T-. An optional project does not determine whether something is a task.
 2. **Work spans projects and teams.** Keep Tasks | Bugs | Requests views, with Debt linking to knowledge rather than inventing another task entity. Include projectless team work. Type filters avoid accidental double counting in combined totals.
-3. **References have scope.** Inside Reservations P-8: Bug T-A42. Outside: Bug T-A42. A projectless request may be Request T-A42. Features use F-6 (P-8/F-6 outside project); no B-/REQ-/FEAT- counters.
+3. **Task references are complete on their own.** Bug T-A42 reads the same inside Reservations P-8 and outside it, and a projectless request is simply Request T-A43; the creating office mints the reference. Features use F-6 (P-8/F-6 outside the project). There are no B-/REQ-/FEAT- counters.
 4. **Every task has one accountable team.** Project tasks use the project's owner team; team tasks choose one. An assigned team and an individual are optional independent fields. Assignment changes neither accountability nor numbering.
 5. **Severity and priority differ.** Severity is optional bug-impact metadata, explained in plain words. Priority is Urgent/High/Normal/Low, default Normal and shared across types.
 6. **Reporter is immutable.** Show original admitted creator separately from current assignment, latest updater and recorded fix/closure actor. Missing historical provenance stays unknown.
@@ -120,7 +120,7 @@ record.
 
 Projects → Reservations **P-8**, with a Projects back link. Header: **Accountable team: Payments**; **Contributors: Platform**; real done/total counts; New task and Report bug. The integrated IA target replaces separate Tasks/Bugs tabs with **Overview | Work | Team | Activity | Conversations**, Overview by default. Work filters shared typed tasks by type. Backlog and Releases join after Work when their services are available; Insights is last when its separately gated analytics service exists. Routines stays deferred. Features, Debt, Docs and Settings do not appear merely because this navigation skeleton exists; their owning capability specs define their separately supported experiences.
 
-Overview shows the living Brief, real open/blocked counts and the five latest activity entries. Work shows the project's typed tasks with one status signal; Team shows accountable/contributing teams and then member rows, with only supported authorized association edits. Activity uses qualified references: “Ana assigned T-A42 to Platform · Ana.” Conversations shows permitted project-linked threads. Empty feeds say **No activity yet** or **No conversations yet**. Projectless work appears in Work/team backlogs rather than an artificial project.
+Overview shows the living Brief, real open/blocked counts and the five latest activity entries. Work shows the project's typed tasks with one status signal; Team shows accountable/contributing teams and then member rows, with only supported authorized association edits. Activity uses full references: “Ana assigned T-A42 to Platform · Ana.” Conversations shows permitted project-linked threads. Empty feeds say **No activity yet** or **No conversations yet**. Projectless work appears in Work/team backlogs rather than an artificial project.
 
 Optional lead, due date and health show only when backed by supported explicit data; contributors never imply co-leads. The source's manual health control in the header's More menu remains pending a selected health field/write contract; no inferred health or invented planning date is saved. Progress denominators and Flow follow the separately gated analytics definitions in costs-and-insights-ux.md/project-status-ux.md.
 
@@ -142,7 +142,7 @@ manual Report bug confirmation. See the existing [copilot contract](../design/sm
 
 After three title characters show up to three similar open bug-typed tasks in the selected scope. “This is the same bug” adds the report as an explicitly shared comment on the chosen existing record; it preserves that record's reporter and creates no second task. Clearly label suggestions from other scopes with qualified references. No match does not block reporting.
 
-Environment capture is visible/editable: office/app version and per-repository branch/commit only when actually known, never guessed from a single project cache. Attachments remain hidden until their storage is designed. Closing dirty capture asks before discarding. Submit reports success only after durable acceptance; local acceptance with no number says **Saved · Pending number**, whereas an unsubmitted draft says **Unsaved**. In place of an old B- toast use “Bug T-A42 saved”.
+Environment capture is visible/editable: office/app version and per-repository branch/commit only when actually known, never guessed from a single project cache. Attachments remain hidden until their storage is designed. Closing dirty capture asks before discarding. Submit reports success only after durable acceptance; an accepted bug always has its reference at once, so it says “Bug T-A42 saved”, whereas an unsubmitted draft says **Unsaved**. In place of an old B- toast use “Bug T-A42 saved”.
 
 ## 5. Flow 3 · Triage
 
@@ -218,7 +218,7 @@ Two panes: Brief pinned first, then project/feature/release/deployment documents
 
 Example: `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`, title **Prevent overlapping table bookings**, project Reservations P-8, feature F-6. The definition itself is `features/<feature-id>/feature.md` with Purpose/How it works/Rules/Known limitations/Non-goals; it is not duplicated in the supporting list as a second authored record. Cross-feature architecture is a project document linked by relates_to rather than copied to several features. Release changelog describes product changes; deployment changelog describes technical delivery.
 
-Reader sanitizes Markdown: no raw HTML or automatic remote images, deliberate external navigation. Selected scoped task references render chips with type/status, resolving stable IDs. A local reference resolves only in its unambiguous owning scope: project/team for a task, project for a release and project plus release for a milestone. Global lookup lists each permitted match with its canonical qualified reference instead of selecting the first; a chat thread without scope never guesses. An ambiguous reference stays visibly unresolved. Mention indexes are derived, not canonical relationship authority.
+Reader sanitizes Markdown: no raw HTML or automatic remote images, deliberate external navigation. Task references render chips with type/status, resolving stable IDs. A task reference resolves on its own; a release reference resolves in its project and a milestone in its project and release. Global lookup lists each permitted match with its canonical qualified reference instead of selecting the first; a chat thread without scope never guesses. An ambiguous reference stays visibly unresolved. Mention indexes are derived, not canonical relationship authority.
 
 Write/Preview, Save (⌘S), Cancel and unsaved-navigation prompts remain. Saving first durably persists a validated stable-ID record/history as appropriate, then separately reports publication; never claim Git merge or shared publication before acknowledgment. Exact organization Git editing/branch APIs remain implementation work. Preserve the older code-repository doc adapter's expected-blob/ref-CAS, safe paths/Git hardening, durable intents and no cross-agent-worktree writes when adapting it. An agent co-author trailer is a from-git claim, not authenticated provenance.
 
@@ -228,9 +228,9 @@ Projects need **no code repository** to read or write organization Git knowledge
 
 ## 11. Flow 9 · Work (cross-project)
 
-Work spans all project/team scopes with Tasks | Bugs | Requests and a knowledge/debt link. Columns include Project (or **No project**), Accountable team, Assigned team, Assignee and qualified reference. Saved filters distinguish **Owned by my team**, **Assigned to my team**, **Assigned to me**, **Reported by me**, Blocked and All. “My” derives from the admitted user/employee context, never a security owner flag. Project and No project filters combine with teams/type/status/severity/priority.
+Work spans all project/team scopes with Tasks | Bugs | Requests and a knowledge/debt link. Columns include Project (or **No project**), Accountable team, Assigned team, Assignee and reference. Saved filters distinguish **Owned by my team**, **Assigned to my team**, **Assigned to me**, **Reported by me**, Blocked and All. “My” derives from the admitted user/employee context, never a security owner flag. Project and No project filters combine with teams/type/status/severity/priority.
 
-Queue example: “Bug T-A42 · Prevent overlapping reservations · Accountable Payments · Assigned Platform · Ana”; “Request T-A42 · Review onboarding · Accountable People · Unassigned”. Same local number is valid across these scopes. An individual's home-team move does not rewrite their recorded task's assigned team.
+Queue example: “Bug T-A42 · Prevent overlapping reservations · Accountable Payments · Assigned Platform · Ana”; “Request T-B17 · Review onboarding · Accountable People · Unassigned”. The two were created in different offices, which is what the letter shows. An individual's home-team move does not rewrite their recorded task's assigned team.
 
 The **Show** menu offers Needs me, Mine, By project and By assignee, retaining
 its choice in `?view=`. Default to Needs me when supported owner-waiting work
@@ -255,7 +255,7 @@ Needs you/triage/verification badges require their eventual lifecycle rule; pres
 
 Keep stable row/card identity, live actor-attributed updates and a two-second highlight; hold reordering while a menu is open. A disconnected/read-only last projection is visibly stale. An attempted shared mutation remains pending/conflicted until its accepting writer resolves it; show no optimistic final status as accepted. Lost responses resolve through the same operation identity, never a duplicate create.
 
-Any office may locally create and durably save tasks and features, including disconnected. A task has its final reference at once. A feature works by stable ID and shows Pending number until organization registration. HQ creates projects/teams/releases/milestones; office replicas cannot allocate independent counters. A browser has no promised background outbox or offline durable store. Its draft stays visibly unsaved in the open page until an available service acknowledges it. **Saved locally**, **Pending number**, **Pending publication** and **Unsaved** describe different states and must not be conflated.
+Any office may locally create and durably save tasks and features, including disconnected. A task has its final reference at once. A feature works by stable ID and shows Pending number until organization registration. HQ creates projects/teams/releases/milestones; office replicas cannot allocate HQ's counters; each office keeps only its own task sequence. A browser has no promised background outbox or offline durable store. Its draft stays visibly unsaved in the open page until an available service acknowledges it. **Saved locally**, **Pending number**, **Pending publication** and **Unsaved** describe different states and must not be conflated.
 
 Accepted task snapshot/events/receipt recover together before success; hourly Git publication alone is insufficient. Private notes, protected chat, usage, budget history and authority have separate durable sources. Rebuilding office SQLite does not authorize a new agent process or delete worktrees. Exact target mutation/replication/restore services remain unimplemented.
 
@@ -374,7 +374,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 
 **Work (WORK)**
 
-- WORK-1 · Work spans projects and projectless teams with type views Tasks/Bugs/Requests plus knowledge/debt navigation, qualified references, project/no-project and team filters.
+- WORK-1 · Work spans projects and projectless teams with type views Tasks/Bugs/Requests plus knowledge/debt navigation, task references, project/no-project and team filters.
 - WORK-2 · Saved filters distinguish Owned by my team, Assigned to my team, Assigned to me, Reported by me, Blocked and All; lifecycle-specific triage/verify filters require their selected rules.
 - WORK-3 · **Lifecycle-dependent:** badge counts actionable owner questions/verification/blocked work using explicitly selected rules; account ownership does not imply employee assignment.
 - WORK-4 · Every task type displays its type word/icon and T- reference in the selected scope.
@@ -390,7 +390,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - TSK-12 · Accountable team is required for every type; project tasks match project owner. Project/feature/milestone references stay same-project; projectless tasks have neither feature nor milestone.
 - TSK-13 · All four assignment states are supported. Both fields and their old/new event commit with expected revision and durable receipt; stale/conflicting writes update neither. Home-team moves never silently rewrite assignments.
 - TSK-14 · Reporter is admitted-creator-derived/immutable. Unknown history is marked unavailable, never invented from current state.
-- TSK-15 · Accepted snapshot/events/receipt recover together; history survives task closure/archive/tombstone and unknown event tags. Pending numbering, pending publication and unsaved drafts remain distinct.
+- TSK-15 · Accepted snapshot/events/receipt recover together; history survives task closure/archive/tombstone and unknown event tags. A feature's pending number, pending publication and unsaved drafts remain distinct.
 - TSK-16 · Type changes preserve stable ID/number/metadata.
 - DOC-10 · Each supporting doc requires project and at most one same-project feature/release/deployment; scope/path/kind agree, current requires an active accountable employee, and scope moves preserve ID without duplicate canonical copies.
 - DOC-11 · Feature definitions use stable-ID feature.md paths, local_slug plus derived project prefix, explicit owners/status and behavior/limitation sections; task completion never silently rewrites feature status.

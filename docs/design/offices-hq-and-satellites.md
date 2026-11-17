@@ -43,7 +43,7 @@ neither access to private data nor authority to run another process.
   to its project's owner when project-scoped. Projectless tasks belong to a team.
   Nullable `assigned_team_id` and `assignee_id` are independent from that owner
   and changed atomically at an expected revision. Reporter is the immutable
-  creator. All task types use T-; use `T-A42` or `T-A42` across scopes.
+  creator. All task types use T-; a reference such as `T-A42` is complete on its own.
 - **Runtime placement.** One office worker supervises logical agent controllers,
   turns/attempts and owned processes. A runnable agent needs separate execution
   config, model profile, fresh local connection evidence and a shared permit.
@@ -109,7 +109,8 @@ separate contract/implementation gates.
 
 Office-first means a permitted local write can be durable before network
 publication. It does not mean offices own accountable teams/projects or allocate
-independent counters. Persist stable IDs, revisions, domain source and required
+HQ's counters; the one sequence an office keeps is for the tasks it creates
+([document 06](organization-data/06-identity-and-numbering.md)). Persist stable IDs, revisions, domain source and required
 journal/receipt evidence before acknowledging. Hourly Git publication cannot be
 the only copy of an accepted change. Features may have `number: null` while
 the shared authority registers their scope and allocates the final reference.
