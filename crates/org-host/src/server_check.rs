@@ -259,8 +259,9 @@ fn admit(
                 Ok(Some(token))
             } else {
                 Err(
-                    "it isn't the signed office server (its code signature doesn't satisfy the \
-                     requirement, or it isn't hardened)"
+                    "it isn't the signed browser gateway (its code signature doesn't satisfy \
+                     the gateway requirement, it isn't hardened, or it holds a Keychain \
+                     entitlement)"
                         .into(),
                 )
             }
@@ -386,12 +387,18 @@ mod tests {
         else {
             unreachable!()
         };
-        assert!(admit(
+        let refusal = admit(
             &ServerCheck::Gateway(requirement),
             || Ok([7; 32]),
-            |_, _| false
+            |_, _| false,
         )
-        .is_err());
+        .unwrap_err();
+        // The gateway refusal names the gateway and its full admission condition.
+        assert!(refusal.contains("browser gateway"), "{refusal}");
+        assert!(!refusal.contains("office server"), "{refusal}");
+        for condition in ["code signature", "hardened", "Keychain entitlement"] {
+            assert!(refusal.contains(condition), "{refusal}");
+        }
     }
 
     #[test]
