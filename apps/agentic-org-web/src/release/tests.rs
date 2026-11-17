@@ -106,6 +106,19 @@ fn signed_assets_are_verified_before_csp_and_remain_memory_only() {
     assert_eq!(files.file("index.html").unwrap().as_ref(), HTML);
     assert!(preload(&root, &manifest, &signature).is_err());
 }
+
+#[test]
+fn signed_manifest_alone_cannot_admit_the_running_image() {
+    let input = Input::new();
+    let (manifest, _) = input.verified();
+    // This signed Linux fixture has no macOS image identity. macOS must reject
+    // it, and unsupported platforms must refuse even a valid signed manifest.
+    assert!(matches!(
+        verify_running_image(&manifest),
+        Err(BuildError::ReleaseImageMismatch)
+    ));
+}
+
 #[test]
 fn changed_pin_controls_assets_and_actual_byte_budget_refuse() {
     let input = Input::new();

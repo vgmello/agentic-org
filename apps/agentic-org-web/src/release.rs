@@ -103,22 +103,29 @@ pub(crate) fn load(assets: &Path, pin: Option<&GatewayRelease>) -> Result<BuildF
     let (policy, keys) = policy()?;
     let root = files::Directory::open_root(assets.parent().ok_or(BuildError::UnsafeBuildEntry)?)?;
     let (manifest, signature) = authenticate(&root, pin, &policy, &keys)?;
-    #[cfg(target_os = "macos")]
-    {
-        let expected = manifest
-            .file("agentic-org-web")
-            .and_then(|f| f.macos_cdhash())
-            .ok_or(BuildError::ReleaseImageMismatch)?;
-        if &org_socket::image::own_loaded_cdhash().map_err(|_| BuildError::ReleaseImageMismatch)?
-            != expected
-        {
-            return Err(BuildError::ReleaseImageMismatch);
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    return Err(BuildError::ReleaseImageMismatch); // Linux runtime confinement remains unavailable.
-    #[cfg(target_os = "macos")]
+    verify_running_image(&manifest)?;
     preload(&root, &manifest, &signature)
+}
+
+#[cfg(target_os = "macos")]
+fn verify_running_image(manifest: &VerifiedManifest) -> Result<(), BuildError> {
+    let expected = manifest
+        .file("agentic-org-web")
+        .and_then(|f| f.macos_cdhash())
+        .ok_or(BuildError::ReleaseImageMismatch)?;
+    if &org_socket::image::own_loaded_cdhash().map_err(|_| BuildError::ReleaseImageMismatch)?
+        != expected
+    {
+        return Err(BuildError::ReleaseImageMismatch);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn verify_running_image(_: &VerifiedManifest) -> Result<(), BuildError> {
+    // Linux runtime confinement remains unavailable. A valid manifest alone
+    // never admits this process or permits asset preload.
+    Err(BuildError::ReleaseImageMismatch)
 }
 
 fn authenticate(
