@@ -62,3 +62,11 @@
   The run FAILS, and the lead reproduced it UNSANDBOXED: "authenticated browser startup failed" x5, then timed out waiting for gateway_ready
   (0 passed/1 failed). The web child process::serve returns failure(); the exact site is unknown. Writer 5's skill preflight
   is BLOCKED on a Cargo.lock capability-evidence change (to reassess). Next: writer 6 root-causes the failure.
+- Gates-1: FAILED (web build-fence test). Gates-2 at fea3d2d3 PASS: 3210/0/9, native 1 passed, clippy, kit 8.
+- Sol review run a40d361d (origin = lead session 8dacde39, claude-opus-5-5; the writer sessions are unresumable; Xhigh):
+  round 1 found R1 (P1, Linux dead code in the release image check) and R2 (P2, host per-connection cap of 32 sessions vs browser
+  1024). The fixer fixed R1 uncommitted and was BLOCKED on R2 (authentication.rs outside scope). The lead reviewed R1 and committed
+  522f126b. R2 writer (a89f223da6183cd39) committed 5f6c57f7: gateway-kind connection budget = MAX_SESSIONS; RED/GREEN evidence.
+  The lead fixed the follow-up found by the R2 writer (web reap didn't end host sessions): 00c93089, RED 0 / GREEN 2 host ends.
+  Linux cross-target clippy is not runnable locally (no C cross compiler); R1 is verified by code reading plus the macOS regression test.
+  Next: gates-3, then a new review run (review-2), the same journal.
