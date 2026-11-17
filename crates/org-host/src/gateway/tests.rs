@@ -422,3 +422,100 @@ fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
         "slept {tail:?} after the final start"
     );
 }
+
+/// Starts a gateway whose child is a zsh script that reads the first line,
+/// connects to the rendezvous and reports ready. The scripted admission
+/// answers the child's real token when `tokens` (no token otherwise, so the
+/// child passes the peer-pid check and reaches the post-ready re-admission),
+/// except that the `nth` call (1-based) of `refuse` fails with `cause`.
+#[cfg(target_os = "macos")]
+fn start_refusing(
+    refuse: crate::server_check::Step,
+    nth: usize,
+    tokens: bool,
+    cause: &'static str,
+) -> io::Error {
+    use crate::server_check::{Scripted, Step};
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::AtomicUsize;
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("agentic-org-web");
+    fs::write(
+        &program,
+        "#!/bin/zsh -f\n\
+         IFS= read -r first || exit 1\n\
+         p=${first#*\\\"rendezvous\\\":\\\"}\n\
+         p=${p%%\\\"*}\n\
+         zmodload zsh/net/socket || exit 1\n\
+         zsocket \"$p\" || exit 1\n\
+         print -r -u $REPLY '{\"v\":1,\"event\":\"ready_for_secrets\"}'\n\
+         read -r -t 20 -u $REPLY _\n",
+    )
+    .unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let listen = serde_json::from_str(&format!(
+        r#"{{"address":"127.0.0.1","port":{port},"scheme":"http_loopback","origin":"http://127.0.0.1:{port}","hsts":"off"}}"#
+    ))
+    .unwrap();
+    let calls = [AtomicUsize::new(0), AtomicUsize::new(0)];
+    let check = ServerCheck::Scripted(Scripted(Arc::new(move |step: Step, pid: u32| {
+        let n = calls[usize::from(step == Step::Still)].fetch_add(1, Ordering::SeqCst) + 1;
+        if step == refuse && n == nth {
+            return Err(cause.to_owned());
+        }
+        if !tokens {
+            return Ok(None);
+        }
+        crate::spawn::audit_token_of_child(pid)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })));
+    let config = Configuration {
+        program,
+        instance: "instance".into(),
+        runtime: dir.path().to_owned(),
+        listen,
+        check,
+        critical_paths: vec![],
+        release: None,
+    };
+    match Running::start(&config, Arc::new(NoOps)) {
+        Err(error) => error,
+        Ok(_) => panic!("the scripted check refuses this start"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn every_admission_refusal_inside_start_keeps_its_cause() {
+    use crate::server_check::Step;
+    // The post-ready `still` re-check is mapped the same way; reaching it
+    // needs a token-matching peer, which the real-process test provides.
+    for (step, nth, tokens, cause) in [
+        (Step::Admit, 1, true, "admission refused by the test"),
+        (
+            Step::Still,
+            1,
+            true,
+            "pre-resume re-check refused by the test",
+        ),
+        (
+            Step::Admit,
+            2,
+            false,
+            "post-ready re-admission refused by the test",
+        ),
+    ] {
+        let message = start_refusing(step, nth, tokens, cause).to_string();
+        assert!(
+            message.contains("gateway admission refused"),
+            "{step:?} {nth}: {message}"
+        );
+        assert!(message.contains(cause), "{step:?} {nth}: {message}");
+    }
+}

@@ -353,8 +353,8 @@ impl Running {
         config
             .check
             .still(spawned.process.id(), admitted)
-            .map_err(invalid)?;
-        if config.check.admit(spawned.process.id()).map_err(invalid)? != admitted {
+            .map_err(refused)?;
+        if config.check.admit(spawned.process.id()).map_err(refused)? != admitted {
             return Err(unavailable());
         }
         let paths: Vec<_> = config.critical_paths.iter().map(PathBuf::as_path).collect();
