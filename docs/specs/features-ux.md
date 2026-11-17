@@ -81,8 +81,8 @@ add a tab to the initial project skeleton.
 ```text
  Features   [New feature]   [Planned ▾ In progress ▾ Live ▾ Retired ▾]   [Search]
  IN PROGRESS · 2
-   F-6 Quick capture of requests     Owner Eden   4 of 6 tasks completed
-   F-7 Agent run modes               Owner River  1 of 7 tasks completed
+   F-6 Quick capture of requests     Owner Mira   4 of 6 tasks completed
+   F-7 Agent run modes               Owner Tomas  1 of 7 tasks completed
  PLANNED · 1
    F-8 Reporting                    Unassigned    0 of 9 tasks completed
  LIVE · 5 (collapsed)

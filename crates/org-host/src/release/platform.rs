@@ -86,7 +86,7 @@ fn platform_signature(file: &File, entry: &FileEntry) -> Result<(), Error> {
             crate::code_signing::developer_id_requirement(crate::HOST_SIGNING_ID, team)
         }
         "agentic-org-office" => {
-            crate::code_signing::developer_id_requirement(crate::SERVER_SIGNING_ID, team)
+            crate::code_signing::developer_id_requirement(crate::OFFICE_SIGNING_ID, team)
         }
         "agentic-org-web" => {
             crate::code_signing::developer_id_requirement(crate::WEB_SIGNING_ID, team)

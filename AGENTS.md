@@ -66,7 +66,8 @@ product, and they are to be onboarded onto it as early as it can carry them, so 
 they talk to each other, track their tasks and run their agents through the product
 they are building. The owner's order of work: milestone one is one office on a Mac
 (getting in, the organization with its office, projects, teams and people, agents
-hired through HR, messages, then tasks); milestone two is Linux; milestone three is
+hired through HR, messages, then tasks); milestone two is Linux, built as its own
+track alongside milestone one; milestone three is
 a second office. As each step lands, the people and agents building the product
 start using it.
 

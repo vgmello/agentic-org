@@ -146,7 +146,7 @@ release; a malformed input fails the build.
 Setup talks to the host over a typed reverse connection: `agentic-org serve` in
 bootstrap mode connects to setup's private listener, and `bootstrap` and `exit` are
 never ordinary `host.sock` methods. Both sides are the same executable, with the
-retained signing identifier `com.ellosoft.agentic-org.org-office-host` and the
+retained signing identifier `com.vgmello.agentic-org.org-office-host` and the
 compiled team and hardened-runtime checks on macOS. A debug executable allowance is
 debug-only. Before creating the registry, the bootstrap host holds the instance,
 root and host locks and hands those same locks and custody to the normal runtime
@@ -270,7 +270,9 @@ or issuing a link. Existing satellite-only state is never converted into HQ.
 `setup --non-interactive --config <file>` takes a strict JSON object with
 `version: 1`, an absolute `root` and `listen` (the host-control `ListenConfig`). It
 holds no login, password, organization, TLS private key, satellite role or extra
-property. Configuration is at most 64 KiB. Missing required input fails without a
+property, apart from `service` (`registered` or `foreground`) and `credentials` (the
+absolute directory of the Linux credential store, required on Linux;
+[Linux host design](linux-host.md#32-credential-provider)). Configuration is at most 64 KiB. Missing required input fails without a
 prompt. Noninteractive setup prints no link; its status reports
 `administrator: none` until `agentic-org admin reset` is run in a terminal. A
 container can run setup this way, without a terminal and offline. Unsupported

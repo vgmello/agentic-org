@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "a15b6116e8a91665610d61634b7e41a0127fc35f82d360344388e153f0da36fe"
+      "sha256": "8fc5db20419dc4d0f210b91bc5287e18493770150f8f5b6b354a1edcb7df771f"
     },
     {
       "path": "Cargo.lock",
@@ -130,7 +130,7 @@
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "75b5722bbaef0bb361c205c949d0b7b7675a30827792e7cbd496daa06455eafb"
+      "sha256": "7232430004e71136763a26f7c20208e5fdfccbd1cc5790f04343da3781dce813"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",
@@ -142,11 +142,11 @@
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "4603e8f1856cff991f820a6a209c1c46feeb5e93d761ffc3969270fdb12fd15e"
+      "sha256": "0e57cc2fc10f35ba36c2de9c4ae21a4d8cd92d6d3d02f68d1daaf0857cc1e076"
     },
     {
       "path": "docs/architecture-rules.md",
-      "sha256": "b6dc265e2c54b4b2896235da47e32793671e7d437c19dfd28e1424c72c0395a6"
+      "sha256": "34620907fec0477ce16bb20bd1f3722ed33f97497145f7ce17a77ea20288ee6d"
     },
     {
       "path": "docs/design/documentation-authority.md",
@@ -158,7 +158,7 @@
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "7d4aca69ed6594a9df1d474e0e2342d1ccf16d526d7b2645ebd14ef65c7d26ac"
+      "sha256": "6b65bf97b04ce3ada47f9b820bde19b3ac5efc2138d5e63a6231b029fe1c527a"
     },
     {
       "path": "docs/processes/branch-and-merge.md",

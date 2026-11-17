@@ -651,9 +651,11 @@ not interpolate organization names. Actual local console/audit-session and
 foreground TTY checks precede credentials and are repeated after authentication.
 The SDK device-owner policy may use the methods supported by macOS. Each new
 invocation authenticates afresh; same-run acknowledgement uses private
-connection-bound permission, not a second dialog. Linux secret delivery remains
-unavailable until its own reviewed presence policy, superseding the prospective
-Linux examples below for this selected implementation.
+connection-bound permission, not a second dialog. On Linux there is no
+system dialog: the signed-in administrator's approval of this run in the browser is
+the one confirmation, with the same terminal checks; a run without a terminal
+receives no code ([ADR-0011](../adr/0011-protected-recovery-delivery.md),
+[ADR-0017](../adr/0017-linux-and-container-hosting.md) decision 11).
 
 The CLI asks for an explicit new package file, refuses overwrite, and requires
 the final code group plus typed `yes` for **both** package and code retained off

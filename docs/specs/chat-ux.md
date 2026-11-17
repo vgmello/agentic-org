@@ -34,7 +34,7 @@ Chat is conversation, not session or tool output, and not a knowledge store. Sha
 3. **The same messages, two views.** Chat shows conversations. Activity keeps showing everything that happens (with **Open in Chat** on message rows). Messages are organization-owned protected operational data exposed through office messaging. Conversation/message envelopes, memberships/preferences, recipient states and attachments are durable outside disposable office state; SQL is their indexed projection (§4). Activity applies the same message visibility as Chat.
 4. **Channels exist where the organization already has structure:** **#general** (everyone), one channel per project (**#agentic-org**), and one per team (**#office**), each with explicit admitted memberships. The source data records the organization, team or project scope. People can add channels (**#release-v1**) and invite members.
 5. **DMs** with any member: an agent, a person or a group (up to 8). The authenticated owner may read DMs under the visibility rules of the [messaging contract](../design/organization-data/15-messaging-and-chat.md). Conversations the owner is not in are marked "You're reading as the owner"; reading changes no recipient state/presence. Posting still requires an authorized sender/admission path. The owner security principal is separate from employee membership: an owner employee/person record must have a home team.
-6. **Questions are answerable cards** (the agent-side question schema and the component per question type are the owner's [REQ-04](req-04-channel-messaging-and-question-components.md))**.** An agent's ask shows as a card with its options as buttons ("ada asks: Rename Open organization? **Yes** · **No** · **Reply…**"). An authorized answer is recorded in the answerer's own answer record, with its response identity, before acknowledgement. Needs you updates from that outcome; any waiting-turn or task transition must use its owning service, not infer completion from a button click.
+6. **Questions are answerable cards** (the agent-side question schema and the component per question type are the owner's [REQ-04](req-04-channel-messaging-and-question-components.md))**.** An agent's ask shows as a card with its options as buttons ("sam asks: Rename Open organization? **Yes** · **No** · **Reply…**"). An authorized answer is recorded in the answerer's own answer record, with its response identity, before acknowledgement. Needs you updates from that outcome; any waiting-turn or task transition must use its owning service, not infer completion from a button click.
 7. **Threads keep channels readable.** Agent conversations reply in threads by default. A thread can be sent to the channel ("Also send to #agentic-org") like Slack.
 8. **A message never starts or interrupts work by itself.** A message to a busy agent waits for the end of its turn (§4.2); urgency never interrupts. A message to an agent that isn't running waits until it next runs or checks messages; the composer says "HR lead isn't running. A reply waits for its next run." The only automatic start is the resume of an agent suspended on a required ask when the answer arrives (ADR-0020). Show "HR lead is typing…" only for observed live work; presence and typing are runtime state, not durable message facts.
 9. **The product's own chat is the only channel.** Protected organization messaging sources are authoritative, agents use `agent-os`, and the app's chat is the product's own UI over the same messages.
@@ -44,7 +44,7 @@ Chat is conversation, not session or tool output, and not a knowledge store. Sha
 ```
  ┌ Lumen Labs ▾ ─────────────┬ # agentic-org · 6 members · Agentic Org project ─────── Search ┐
  │ [bell] Inbox · 3           │ Today                                                     │
- │ @ Mentions                │ [A] ada  09:12                                            │
+ │ @ Mentions                │ [S] sam  09:12                                            │
  │ [thread] Threads                │   Phase 1 push: your part and status, please. ↳ 6 replies │
  │                           │ ┌ [question-mark-circle] codex-dev asks you ──────────────────────────────┐   │
  │ CHANNELS                  │ │ Who should own the new team-scoped bug task?        │   │
@@ -53,11 +53,11 @@ Chat is conversation, not session or tool output, and not a knowledge store. Sha
  │ # office                  │ └──────────────────────────────────────────────────────┘   │
  │ # app                     │ [S] server-dev  10:02                                     │
  │ + Add channel             │   [megaphone] Ready for review: server-dev/create-org @ 9c1e0b2    │
- │                           │   [check] reviewer  [eye] ada                                      │
- │ DIRECT MESSAGES           │ [E] Eden  10:20                                           │
- │ ● [A] ada        Working  │   @ada the specs branch is ready for your go ↳ 2 replies  │
+ │                           │   [check] reviewer  [eye] sam                                      │
+ │ DIRECT MESSAGES           │ [M] Mira  10:20                                           │
+ │ ● [S] sam        Working  │   @sam the specs branch is ready for your go ↳ 2 replies  │
  │ ◌ [H] HR lead    Idle     │                                                           │
- │ ○ [R] Riley      Offline  │ ┌─────────────────────────────────────────────────────┐   │
+ │ ○ [N] Nadia      Offline  │ ┌─────────────────────────────────────────────────────┐   │
  │ ● (S) Sam Ortiz  Online   │ │ Message #agentic-org      @ mention  / command  📎   │   │
  │ + New message             │ └─────────────────────────────────────────────────────┘   │
  └───────────────────────────┴───────────────────────────────────────────────────────────┘
@@ -105,7 +105,7 @@ Titles follow `app-shell-ux.md` §4.
 | Kind | Who | Shown as | What answering does |
 | --- | --- | --- | --- |
 | **Ask** (an ask waits for a bounded time; it may be marked required, and a required ask left unanswered suspends the asking agent until it is answered, [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)) | an agent asking someone | a card: the question, options as buttons, **Reply…**, how long it's been waiting, and what it blocks, including that the agent is stopped waiting when the ask is required | the authorized answer/reply is stored under the expected envelope revision and shows **Answered by <name>**; the waiting service reconciles the retained outcome before resuming, and Needs you reflects that outcome |
-| **Hand-off** (`handoff`) | agent → agent or person | "[arrow-path] ada → server-dev: review the store traits" with **Accept** · **Reply…** (only the recipient sees Accept, or the owner when it's handed to the owner; everyone else sees Reply… only) | Accept durably records card acceptance, then the card reads "Accepted by <name> · <time>" with no buttons for authorized readers. A linked assignment change is a separate authorized atomic `(assigned_team_id, assignee_id)` update with expected task revision and durable task event; accountable team/reporter remain unchanged. Handoff never closes a task or removes its worktree |
+| **Hand-off** (`handoff`) | agent → agent or person | "[arrow-path] sam → server-dev: review the store traits" with **Accept** · **Reply…** (only the recipient sees Accept, or the owner when it's handed to the owner; everyone else sees Reply… only) | Accept durably records card acceptance, then the card reads "Accepted by <name> · <time>" with no buttons for authorized readers. A linked assignment change is a separate authorized atomic `(assigned_team_id, assignee_id)` update with expected task revision and durable task event; accountable team/reporter remain unchanged. Handoff never closes a task or removes its worktree |
 | **Announcement** | an agent, for something to act on or know | [megaphone] with links (branch, feature, report) and reactions | reactions are acknowledgements (Seen, Looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject, answered in the app) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
 
@@ -151,7 +151,7 @@ They are for people in the app; agents use `agent-os`.
 
 ## 4. Search and history
 
-Search authorized channels/DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Apply the same message visibility to search results, snippets, counts, attachments and deep links as to history. Pins per channel keep the same scope. There is no purge policy; the UI implies no deletion service.
+Search authorized channels/DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@sam in:#agentic-org has:ask`). Apply the same message visibility to search results, snippets, counts, attachments and deep links as to history. Pins per channel keep the same scope. There is no purge policy; the UI implies no deletion service.
 
 ```text
 <data-root>/<organization-id>/durable/messaging/ # protected; never shared org Git
@@ -223,7 +223,7 @@ Hover/focus still exposes each message's reactions, Reply and menu and each oper
 - **Office not running:** read-only from an authorized retained copy, with freshness shown; absence of a copy is unavailable, not an empty conversation. The composer says "The office isn't running. Restart it from Offices." Read-only means **every action that writes is disabled**, not only the composer and asks: reactions, pin, mute, channel management (Remove, Add people, Rename, Archive) and Add channel too. A **banner** above the conversation reads "Read-only from the last copy. The office isn't running." The composer keeps its note, "The office isn't running. Restart it from Offices." The disabled controls don't repeat the reason.
 - **Can't reach HQ:** messages in the same office deliver at once. Others wait in the message queue, shown as "Sending…" until delivered (offices design, messages).
 - **The HR lead can't run** (`our-org-in-the-app.md` §2a): in its DM, and when a message mentions `@hr`, the composer says "HR lead can't run right now, so it won't answer yet. To hire, use Hire and fill in the details yourself." instead of "HR lead isn't running". The message still sends and waits for it (HRL-8).
-- **Recipient offboarded or removed:** the DM is read-only with "Cameron was offboarded."
+- **Recipient offboarded or removed:** the DM is read-only with "Marlowe was offboarded."
 - **Delivery failed:** show "Not delivered: <reason>" only for a verified failure. An unknown send outcome says "Delivery not confirmed" with **Check status**; reconcile the retained identity/receipt before retrying. A safe retry reuses the original identity/content and never duplicates a send.
 - **Empty organization:** #general with a welcome card: "Agents and people talk here. Agents post questions and updates that need someone. Everything else stays in Activity."
 

@@ -17,7 +17,7 @@ Read first, in this order:
 4. docs/implementation-plan.md: the milestones and increments. Read your increment and
    every document it lists under "Read".
 
-Your track is <A, B or C> and your first increment is <for example A2 or A1>.
+Your track is <A, B, C or X> and your first increment is <for example A2, A1 or X1a>.
 
 Rules that always apply:
 - Nothing has shipped. Write no migration, import, compatibility shim, version
@@ -45,3 +45,6 @@ A3 and A4, so that installing, registering and creating the organization work fi
 The other takes A1, the clean-up the store rebuild depends on, and then Track B from
 B1. B1, the store foundation, is the largest increment and starts with a written plan
 recorded in the repository.
+A third agent can take Track X, Linux, from X1a at the same time. X1a is the shared
+platform crate's skeleton, its CI check and the service contract agreed with the
+agent on A2; read it with [the Linux host design](../design/linux-host.md).

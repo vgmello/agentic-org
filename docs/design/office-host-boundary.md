@@ -108,19 +108,22 @@ agentic-org-office --discard <id>    # remove an unfinished office, then exit (t
 
 ### Admission and the verified rendezvous
 
-There is one launch contract (version 1), in `crates/org-office-launch`. It covers every child the host
+There is one launch contract, in `crates/org-office-launch`. It covers every child the host
 supervises: office workers and the web process (owner-delegated decision 2026-11-17). No secret is ever on
 argv, in the environment or on the first line. The steps for an office worker are below; the web process
 uses the same steps with its own identifier, image and listener handoff (see "The web process" below):
 
-1. The host spawns the worker **suspended**, with only its three pipes.
-2. It checks that the suspended child is the intended program through the platform's
-   process-admission adapter. On macOS: the child's audit token, its code object, the
-   identifier `com.ellosoft.agentic-org.org-server` with the compiled Developer ID
-   team, the hardened runtime and none of the refused entitlements. On Linux: the
-   pinned path of the verified release image, its content digest from the release
-   manifest, and the child's identity from the kernel. A child that fails is killed
-   while still suspended.
+1. The host starts the worker, with only its three pipes, through the platform's
+   process-admission adapter. On macOS the child is spawned **suspended**. On Linux
+   it is started from a sealed, execute-only copy of the pinned image whose digest the
+   host has already checked, so there is nothing to suspend
+   ([Linux host design](linux-host.md#31-process-admission)).
+2. The adapter checks that the child is the intended program. On macOS: the child's
+   audit token, its code object, the identifier `com.vgmello.agentic-org.office` with
+   the compiled Developer ID team, the hardened runtime and none of the refused
+   entitlements; a child that fails is killed while still suspended. On Linux: the
+   image's SHA-256 against the release manifest before `exec`, no loader variables in
+   its environment, and the child held by a pidfd.
 3. Only then does the host create a per-spawn **rendezvous** socket and write the
    worker's first line on stdin. The first line holds **no secret**: the instance, the
    office, the rendezvous path and, for a create, the organization, the names, the role,
@@ -206,16 +209,19 @@ unverified.
 The verified release's `agentic-org-web --serve` loads its `ui/` build before
 confinement. The host spawns it with `POSIX_SPAWN_CLOEXEC_DEFAULT`, keeping only its
 three pipes, and the child checks that exactly descriptors 0 to 2 remain; anything
-else makes it exit before readiness. After the confinement checks of
-[ADR-0008](../adr/0008-gateway-macos-sandbox.md) (Landlock and seccomp on Linux)
-succeed, it connects only to its exact rendezvous. It accepts no descriptors in the
+else makes it exit before readiness. It connects only to its exact
+rendezvous, and reads nothing from it and reports nothing until confinement holds:
+on macOS it confines itself first ([ADR-0008](../adr/0008-gateway-macos-sandbox.md));
+on Linux it connects first, because the seccomp filter then forbids any new
+connection, and applies Landlock and seccomp before reading
+([Linux host design](linux-host.md#33-confinement-of-the-web-process)). It accepts no descriptors in the
 header; the next marker carries the transfer socket and then the listener, each checked
 for socket type and close-on-exec before `fds.received`. The same connection then
 carries host control; neither `host.sock` nor an office path is a fallback. `tls.fetch`
 supplies the verified listener configuration before HTTP accepts. Host EOF ends the web
 process.
 
-On macOS the web process is admitted as `com.ellosoft.agentic-org.web`, with
+On macOS the web process is admitted as `com.vgmello.agentic-org.web`, with
 the compiled team, hardened runtime, no debug or injection entitlements and no Keychain
 access group. The host rechecks the reader's audit token, image and kernel sandbox
 before sending either descriptor. Browser sessions are stored at the host and survive a
@@ -346,8 +352,8 @@ restarted.
   `allow-dyld-environment-variables` or `disable-library-validation`. A release-profile
   build with debug assertions on fails to compile.
 - **Only the admitted worker receives a key,** and only over the authenticated
-  rendezvous after the peer check of step 4. A same-user process that resumes a
-  suspended child before the host checks it cannot receive the key, because the key goes
+  rendezvous after the peer check of step 4. On macOS, a same-user process that
+  resumes a suspended child before the host checks it cannot receive the key, because the key goes
   only to the connected peer that matches the admitted identity.
 
 ## 4. Recovery before launch
@@ -385,10 +391,11 @@ it restarts the worker; it never races a live worker over its agents.
 | --- | --- | --- |
 | A1 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/v3.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
 | A1, A3 | People are authorized by grants; no application token | The older first line still carries `app_token`, and the host still has `app_auth.rs`; the worker stores the grant key unused. |
+| A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
 | A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
 | A1 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
-| X1 | macOS and Linux, including a container | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
+| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
 
 `organization.provision.v1` today carries a `home_team_name`, creates no person record
 for the creator, and is reached only from tests (implementation plan A4).

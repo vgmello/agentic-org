@@ -343,6 +343,8 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <li><strong>Setup creates no organization and no office.</strong> The headquarters office comes into being with its organization, when the administrator creates it.</li>
     <li><strong>Every account is tied to a person.</strong> So every change is recorded under a person or an agent. There is no nameless owner: the owner is a person, and being the owner is a permission of their account at the host.</li>
     <li><strong>Agents exist only as employees hired through HR,</strong> which is built into the product, and they are started only by the office.</li>
+    <li><strong>No access roles.</strong> A person is whatever place the owner gives them in the hierarchy. Anyone with an account can read the organization, work on tasks and talk to any person or agent. A short list of rights is reserved: the administrator creates organizations; the owner changes the structure; either invites people; a hire is approved by the owner or someone in the lead chain of the team the agent joins.</li>
+    <li><strong>The host's database can be lost without losing the organization.</strong> The files are the source, so an existing organization can be opened again from its repository on a server that has no record of it.</li>
   </ul>
   <p>The screens and steps for installing, registering and inviting people are product behaviour, not architecture. They are in <code>docs/specs/server-installation-and-access-ux.md</code>.</p>
 
@@ -704,7 +706,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
 
 <section id="order">
   <h2><span class="num">11</span>What gets built first</h2>
-  <p class="sec-lede">Milestone one is one office on a Mac, with people and agents on board and talking. Its steps, in the owner's order: getting in; the organization with its office, projects, teams and people; agents, hired through HR; messages; then tasks. Most of the second step and the hire flow are create, read, update and delete on records the data contract already defines.</p>
+  <p class="sec-lede">Milestone one is one office, built on a Mac first, with people and agents on board and talking. Its steps, in the owner's order: getting in; the organization with its office, projects, teams and people; agents, hired through HR; messages; then tasks. Most of the second step and the hire flow are create, read, update and delete on records the data contract already defines.</p>
   <div class="tbl wide"><table>
     <thead><tr><th>Step</th><th>A person can</th><th>What is not simple in it</th></tr></thead>
     <tbody>
@@ -715,7 +717,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
       <tr><td>5 · Tasks</td><td>Create, assign and follow tasks, in the browser and from <code>agent-os</code>. An agent works in a repository.</td><td>Task numbers minted by each office; Git worktrees.</td></tr>
     </tbody>
   </table></div>
-  <p><strong>Milestone two is Linux.</strong> Once everything in milestone one works on a Mac, the same server runs on Linux, including inside a container. The platform differences sit behind small contracts, so this is adapters, not a redesign.</p>
+  <p><strong>Milestone two is Linux,</strong> including inside a container. It runs as its own track alongside milestone one, because the platform differences sit behind small contracts in one shared crate: the Mac work and the Linux work change different files.</p>
   <p><strong>Milestone three is a second office on another machine.</strong> It is a separate thread: enrolment of the office, replication between machines and messages relayed between offices. Costs and budgets, features and releases, and updates come later still; all of it is v1.</p>
   <p>The plan with every increment, what to read for it and when it is finished is <code>docs/implementation-plan.md</code>.</p>
 </section>

@@ -98,7 +98,8 @@ crates/
   org-proto/                         # Local request and event contracts
   org-office-launch/                 # Private host/worker launch contract (the verified rendezvous)
   org-client/                        # Local IPC client
-  org-socket/                        # Unix-socket admission, confinement and liveness (libc only)
+  org-platform/                      # Every OS difference: platform contracts and their macOS, Linux and refusing adapters
+  org-socket/                        # Portable Unix-socket I/O: ticked reads, descriptor passing
   org-runtime/                       # Vendor runtime contract and conformance support
   org-supervise/                     # OS process ownership and cleanup
   org-process/                       # Process and standard resolution
@@ -161,6 +162,7 @@ library.
 | `org-sync`, `org-sync-proto` | Replication between HQ and satellites | Parked until the store reads and writes the canonical files | After the storage move; then satellite enrollment |
 | `org-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
 | `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
+| `org-platform` | Holds every operating-system difference: the platform contracts of ADR-0017 with macOS, Linux and refusing adapters ([Linux host design](linux-host.md)) | New in X1a; the only crate with platform conditionals | Track X, from X1a (the first day) |
 | `org-spool` | File queue `agent-os` uses when no office is named | Deleted, with the route through it | With conversations and messages (implementation plan B6) |
 
 ## 4. Svelte and TypeScript layout
