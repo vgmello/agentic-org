@@ -1,9 +1,8 @@
 # Agentic Org browser UI: tech stack
 
 V1 is a standalone Rust server on macOS/Linux serving a browser application from HQ.
-See the [server design](../../docs/design/standalone-server.md),
-[project structure](../../docs/design/project-structure.md) and
-[removal inventory](../../docs/design/standalone-server-removal-inventory.md).
+See the [server design](../../docs/design/standalone-server.md)
+and [project structure](../../docs/design/project-structure.md).
 The Tauri shell, adapters, packages, workspace member and native installation scripts
 have been removed. Tauri is deferred to v2. The import feature remains retired.
 

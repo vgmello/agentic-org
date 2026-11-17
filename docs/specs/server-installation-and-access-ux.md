@@ -142,9 +142,7 @@ window are v2 features. Any future desktop window uses the same web application
 and HTTP API; it adds no second implementation of organization behavior.
 
 The implementation proposal is [standalone-server.md](../design/standalone-server.md),
-the decision is [ADR-0005](../adr/0005-standalone-server-v1.md), and the
-[removal inventory](../design/standalone-server-removal-inventory.md) names the
-existing code to delete, retain or replace. CLI spelling below is proposed,
+and the decision is [ADR-0005](../adr/0005-standalone-server-v1.md). CLI spelling below is proposed,
 not a claim that these commands exist on the inspected branch.
 
 Application directories, Cargo packages and executable names are agentic-org (human CLI/service host), agentic-org-web (browser server), agentic-org-office (one office worker), and agent-os (agent CLI). agentic-org-ui contains static browser assets. Source renames and host extraction have landed; see [executable migration](../design/executable-migration.md) for actual command availability. Initial HQ setup, service registration, downloads/updates and production web handoff below remain implementation requirements.
@@ -1507,7 +1505,7 @@ rules, which are distinct from uninstalling software on a machine.
 **REC-1 remains open:** a reviewed manual HQ-loss recovery/re-certification/fencing
 procedure and disaster-recovery evidence are required before production recovery
 claims. V1 still provisions CA escrow and its owner recovery code under SRV-25.
-See [review decisions](../design/standalone-v1-review-decisions.md).
+See [REC-1](../design/standalone-server.md#ca-escrow-and-the-explicit-recovery-gate).
 
 The server/installer must document the supported OS/architecture matrix, minimum
 versions and Linux service prerequisites. Production key custody on headless Linux
