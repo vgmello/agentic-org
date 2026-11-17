@@ -16,7 +16,8 @@
       "Retained b77 host provisioning/recovery implementation and original author intake; accepted F3b provider."
     ],
     "precise_scope": [
-      "v1-protected-host-creation-source-grant.json:93exactcandidatepaths with native-only hunk limits and frozen-channel/b77 provenance; source grant cannot widen itself."
+      "v1-protected-host-creation-source-grant.json revision2:96 exact native candidate paths with native-only hunk limits and frozen-channel/b77 provenance; source grant cannot widen itself.",
+      "v1-protected-host-creation-root-repairs.md explicitly records root-owned compatibility tests and four build-inventory paths beyond the native author grant."
     ],
     "localized_change": [
       "Crosses host/account/custody, supervisor, launch and authenticated human session boundaries."

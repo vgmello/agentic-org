@@ -258,3 +258,24 @@ fn embed_release_trust() {
 }
 "#####,
 )];
+
+// Complete unchanged local helper compiled by the reviewed host build script.
+// Re-pinning any of these bytes requires review alongside the build-script pin.
+pub(super) const HOST_BUILD_HELPER_PINS: &[(&str, &str)] = &[
+    (
+        "crates/org-release/Cargo.toml",
+        "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a",
+    ),
+    (
+        "crates/org-release/src/lib.rs",
+        "107da5630030ba2df4cbec507a27602d15b2de83c4473943a0d302fa1ff3fd4e",
+    ),
+    (
+        "crates/org-release/src/decode.rs",
+        "a1f7c425ba2fcedeb479f5850970a34243531031090a11d652556cc788037f5a",
+    ),
+    (
+        "crates/org-release/src/payload.rs",
+        "6ad9fcba513440e1d32830e6394260ba264ae05915340d765922ac253db10f12",
+    ),
+];
