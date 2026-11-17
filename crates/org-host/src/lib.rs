@@ -772,7 +772,10 @@ impl Host {
                 Ok(gateway) => Some(gateway),
                 Err(error) => {
                     *sync::lock(&gateway_state) = org_host_control::GatewayState::Failed;
-                    host_log::log(&format!("browser service not started: {error}"));
+                    host_log::log(&format!(
+                        "browser service not started: {}",
+                        host_log::untrusted(&error.to_string())
+                    ));
                     None
                 }
             }
