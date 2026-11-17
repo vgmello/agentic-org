@@ -230,6 +230,9 @@ impl BrowserSessions {
         admission
     }
     fn reclaim_capacity(&self) -> Result<(), ApiReply> {
+        self.reclaim_capacity_within(CAPACITY_RECHECK)
+    }
+    fn reclaim_capacity_within(&self, window: Duration) -> Result<(), ApiReply> {
         let candidates: Vec<_> = {
             let sessions = self.sessions.lock().map_err(|_| unavailable())?;
             if sessions.len() < MAX_SESSIONS {
@@ -238,13 +241,16 @@ impl BrowserSessions {
             sessions.values().cloned().collect()
         };
         // Only sign-in's blocking worker probes the host, never authenticate/reap.
-        // A shared deadline bounds the whole scan, rather than each of 1024 calls.
-        let until = Instant::now() + CAPACITY_RECHECK;
+        // The window bounds when a probe may start, not how long it may take:
+        // each probe keeps the normal per-call deadline, because truncating an
+        // in-flight call would close the shared control connection and end every
+        // session. The scan therefore takes at most `window` plus one call deadline.
+        let started = Instant::now();
         for session in candidates {
-            if Instant::now() >= until {
+            if started.elapsed() >= window {
                 break;
             }
-            match self.host.inspect_until(&session.handle, until) {
+            match self.host.inspect(&session.handle) {
                 Err(control::Failure::Denied) => {
                     self.session_failure(&session, control::Failure::Denied);
                 }

@@ -60,21 +60,7 @@ fn control_eof_marks_the_connection_dead_and_refuses_calls() {
 }
 
 #[test]
-fn expired_inspection_budget_does_not_close_a_live_connection() {
-    let (control, stop, thread) = connect(INSTANCE);
-    let control = control.unwrap();
-    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
-    assert_eq!(
-        control.inspect_until(&handle, Instant::now()).err(),
-        Some(Failure::Unavailable)
-    );
-    assert!(control.live());
-    stop.shutdown(Shutdown::Both).unwrap();
-    thread.join().unwrap();
-}
-
-#[test]
-fn inspection_uses_the_remaining_shared_budget_when_the_host_stalls() {
+fn a_call_that_outlives_the_full_deadline_closes_the_connection() {
     let (gateway, peer) = UnixStream::pair().unwrap();
     let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
     let (release, stalled) = mpsc::sync_channel(1);
@@ -107,14 +93,22 @@ fn inspection_uses_the_remaining_shared_budget_when_the_host_stalls() {
     .unwrap();
     let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
     let started = Instant::now();
-    let error = control
-        .inspect_until(&handle, started + Duration::from_millis(100))
-        .err();
+    let error = control.inspect(&handle).err();
     let elapsed = started.elapsed();
     release.send(()).unwrap();
     host.join().unwrap();
+    // A stalled reply may still arrive later, so the stream is out of step:
+    // the full per-call deadline is never shortened, and its expiry is fatal.
     assert_eq!(error, Some(Failure::Unavailable));
-    assert!(elapsed < Duration::from_secs(1), "waited {elapsed:?}");
+    assert!(
+        elapsed >= DEADLINE - Duration::from_millis(50),
+        "waited {elapsed:?}"
+    );
+    assert!(
+        elapsed < DEADLINE + Duration::from_secs(2),
+        "waited {elapsed:?}"
+    );
+    assert!(!control.live());
 }
 
 #[test]

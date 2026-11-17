@@ -40,6 +40,8 @@ struct Fixture {
     calls: Arc<Mutex<Vec<String>>>,
     errors: Arc<Mutex<BTreeMap<&'static str, &'static str>>>,
     ended: Arc<Mutex<std::collections::BTreeSet<String>>>,
+    /// Stalls every scripted `session.inspect` answer while non-zero.
+    inspect_delay: Arc<Mutex<Duration>>,
 }
 fn reply(
     request: &serde_json::Value,
@@ -90,6 +92,8 @@ impl Fixture {
         let scripted_errors = Arc::clone(&errors);
         let ended = Arc::new(Mutex::new(std::collections::BTreeSet::<String>::new()));
         let ended_sessions = Arc::clone(&ended);
+        let inspect_delay = Arc::new(Mutex::new(Duration::ZERO));
+        let stall = Arc::clone(&inspect_delay);
         let thread = std::thread::spawn(move || {
             let mut host = BufReader::new(host);
             let mut issued = 0;
@@ -99,6 +103,10 @@ impl Fixture {
                 seen.lock()
                     .unwrap()
                     .push(request["method"].as_str().unwrap().to_owned());
+                if request["method"] == "session.inspect" {
+                    let delay = *stall.lock().unwrap();
+                    std::thread::sleep(delay);
+                }
                 let error = scripted_errors
                     .lock()
                     .unwrap()
@@ -146,6 +154,7 @@ impl Fixture {
             calls,
             errors,
             ended,
+            inspect_delay,
         }
     }
     fn sign_in(&self) -> Established {
@@ -402,6 +411,28 @@ fn capacity_recheck_preserves_bindings_on_transient_host_errors() {
         assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
         assert!(f.sessions.host.live());
     }
+}
+
+#[test]
+fn an_exhausted_capacity_scan_keeps_the_control_connection_and_sessions() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    for _ in 1..MAX_SESSIONS {
+        f.sign_in();
+    }
+    // Each probe takes 60 ms and the scan may start probes for 100 ms, so the
+    // window ends while the second probe is still in flight at the host.
+    *f.inspect_delay.lock().unwrap() = Duration::from_millis(60);
+    let started = Instant::now();
+    assert!(f
+        .sessions
+        .reclaim_capacity_within(Duration::from_millis(100))
+        .is_ok());
+    assert!(started.elapsed() >= Duration::from_millis(100));
+    *f.inspect_delay.lock().unwrap() = Duration::ZERO;
+    assert!(f.sessions.host.live());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
 }
 
 #[test]

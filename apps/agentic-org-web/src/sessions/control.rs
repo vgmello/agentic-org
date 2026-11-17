@@ -197,22 +197,18 @@ impl HostControl {
         }
         self.borrowed::<Verify, _>(&Params { login, password })
     }
+    /// Every call gets the full per-call deadline. Expiry after a request may
+    /// have been written leaves the stream out of step, so it closes the
+    /// connection; callers must never shorten this budget.
     fn borrowed<C: Call, T: Serialize>(&self, params: &T) -> Result<C::Result, Failure> {
-        self.borrowed_until::<C, T>(params, Instant::now() + DEADLINE)
-    }
-    fn borrowed_until<C: Call, T: Serialize>(
-        &self,
-        params: &T,
-        until: Instant,
-    ) -> Result<C::Result, Failure> {
         #[derive(Serialize)]
         struct Request<'a, T> {
             id: u64,
             method: &'static str,
             params: &'a T,
         }
-        let until = until.min(Instant::now() + DEADLINE);
-        if !self.live() || Instant::now() >= until {
+        let until = Instant::now() + DEADLINE;
+        if !self.live() {
             return Err(Failure::Unavailable);
         }
         let id = self
@@ -250,18 +246,11 @@ impl HostControl {
             .map(|_| ())
     }
     pub fn inspect(&self, handle: &SessionHandle) -> Result<ops::SessionInspectResult, Failure> {
-        self.inspect_until(handle, Instant::now() + DEADLINE)
-    }
-    pub(super) fn inspect_until(
-        &self,
-        handle: &SessionHandle,
-        until: Instant,
-    ) -> Result<ops::SessionInspectResult, Failure> {
         #[derive(Serialize)]
         struct Params<'a> {
             session: &'a SessionHandle,
         }
-        self.borrowed_until::<ops::SessionInspect, _>(&Params { session: handle }, until)
+        self.borrowed::<ops::SessionInspect, _>(&Params { session: handle })
     }
     pub fn end(&self, handle: &SessionHandle) -> Result<(), Failure> {
         #[derive(Serialize)]
