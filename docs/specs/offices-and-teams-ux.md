@@ -234,6 +234,13 @@ none. Whoever creates it owns it. The mechanics are in
 - The administrator with no organizations gets **Create organization** on the
   empty page after sign-in, which is the first page it sees after registering
   from setup's link (`server-installation-and-access-ux.md` §4a.5).
+- Beside it the administrator has **Open an existing organization**, for a server
+  that has no record of an organization whose files exist: after the server's
+  database was lost, or on a new server. It asks for the remote organization
+  repository and the state branch (and offers any organization found in the data
+  folder), checks the files, shows what will and will not come back, and asks which
+  person the administrator is. The rules are in the
+  [recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization).
 
 **The form** (slide-over, as for other forms in §2):
 

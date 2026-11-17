@@ -29,11 +29,11 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | --- | ---: |
 | Done | 9 |
 | In progress | 60 |
-| Planned | 53 |
+| Planned | 54 |
 | Blocked | 2 |
 | Deferred | 42 |
 | Needs verification | 0 |
-| **Total** | **166** |
+| **Total** | **167** |
 
 ## Feature tables
 
@@ -311,6 +311,7 @@ Full requirements: [Git, identity, synchronization and recovery](design/organiza
 | [ ] | FC-148 | [Credential rebind and process-safe cache rebuild](design/organization-data/16-recovery-and-office-continuity.md) | Planned | Implement durable authority/process reconciliation before execution; [supervisor] is only a lower-level primitive. |
 | [ ] | FC-149 | [Automatic promotion and backup automation](design/organization-data/16-recovery-and-office-continuity.md) | Deferred | No automatic failover/backup engine selected by the record schema. |
 | [ ] | FC-165 | [Replaceable storage engine](adr/0018-storage-engine-independence.md) | Planned | PostgreSQL must be possible later. SQL is used outside the store folder in two office files, one concrete store type is wired, and replication and messaging have engine-independent suites while work, organization and host storage do not (not verified); criteria ENG-1 to ENG-5 are unmet. |
+| [ ] | FC-167 | [Open an existing organization from its files](design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization) | Planned | Owner decision 2026-11-17. On an instance with no record of an organization (the host's database lost, or a new server), the administrator opens it from its repository and state branch: the files are validated against the data contract, the host registers the organization under its existing ID, the office rebuilds its projection, the administrator becomes the owner as their person record, and people are invited again. Records kept only in protected local files come back only if `durable/` survived or from a backup. Nothing opens an organization from files today. |
 
 ### Session inspection and private memory
 

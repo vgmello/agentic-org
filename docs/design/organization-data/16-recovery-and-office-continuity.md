@@ -223,10 +223,45 @@ would close that path.
 | Office SQLite projections/unread indexes | Rebuild from Git plus protected operational sources; rebind credentials; reconcile process ownership before execution |
 | Office running process | Restart from retained receipts, stream/checkpoint and cleanup evidence; uncertain effects remain unknown until reconciled |
 | Runtime cache/temp/typing/status | Recreate; stale presence expires; no mutation is replayed merely because its UI status vanished |
+| The host's own database (accounts, sessions, the organization registry) | Register a new administrator with `agentic-org admin reset`, then open each organization again from its files ([opening an existing organization](#opening-an-existing-organization)); people are invited again, because accounts are host data |
 | Operational sources but a valid backup exists | Restore with verified identity/epoch/digests and disclose changes not covered by backup; no automatic claim of zero data loss |
 | Operational sources and backups | Git restores portable definitions/open work already published, not all acknowledged messages, receipts, authority or usage; stop affected work rather than fabricate continuity |
 
 This explicitly limits “delete office state”: the disposable directory cannot contain the only copy of acknowledged recovery evidence. Protect live source journals, host/private databases, keys, unresolved communication and process ownership until safe shutdown/archive. Undo, automatic scheduling, memory and process-engine behavior are not part of this contract.
+
+## Opening an existing organization
+
+Owner decision, 2026-11-17: an organization can be opened on an instance that has no
+record of it, from its files. This is what makes losing the host's database, or the
+whole server, survivable: the files are the source, so a database is rebuilt from them.
+
+- **Who and where.** The signed-in administrator, in the browser, chooses to open an
+  existing organization instead of creating one, and names its remote organization
+  repository and state branch. Where the previous data root is still on disk, the
+  instance offers the organizations it finds there.
+- **What is checked.** The files must follow this contract: the organization record,
+  schema versions, stable IDs and references. A record that fails is reported by path
+  and reason. The open refuses if the organization record itself, or the team and
+  employee records it needs, are invalid; it never repairs or guesses.
+- **What is built.** The host registers the organization under its existing ID and
+  starts its HQ office. The office rebuilds its projection from the files, exactly as it
+  does after its cache is deleted. The office starts a new incarnation, so no sequence
+  it acknowledged before is reused, and an office that cannot prove its last task number
+  takes a new office code ([identity contract](06-identity-and-numbering.md)).
+- **Who owns it.** Accounts were host data and are gone. The administrator chooses the
+  person record that is theirs, or adds one, and becomes the owner; other people are
+  invited to sign in again and are tied to their existing person records.
+- **What comes back.** From the repository alone: everything published to it, which is
+  the organization's shared records. Chat, usage, budgets, private notes and receipts
+  are protected local files: they come back only if `durable/` survived or from a
+  backup, as the loss boundaries above say, and the product says plainly what is
+  missing.
+- **Keys.** With the recovery code, or with the host's secrets intact, the
+  organization's certificate authority key is restored. Without either, a new one is
+  created and any other office must enrol again.
+
+This is not an import of some other format. The only organization that can be opened
+is one whose files this product wrote.
 
 ## SQL and field relationships
 
