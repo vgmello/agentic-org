@@ -85,7 +85,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Feature definitions, knowledge and delivery** · [Feature checklist](FEATURES.md#feature-definitions-knowledge-and-delivery)
 
-**Scope:** Canonical feature definitions/lifecycle and linked work; scoped knowledge, briefs, ADRs/debt/limitations, document CLI/publication; release/milestone manifests, changelogs, deployment and flag records.
+**Scope:** Canonical feature definitions/lifecycle and linked work; scoped knowledge, briefs, ADRs, shortcut provenance and feature limitations, document CLI/publication; release/milestone manifests, changelogs, deployment and flag records.
 
 **Boundary:** Owns definitions and records, not deployment execution or flag evaluation. Task execution belongs to AREA-04; richer health/report generation belongs to AREA-10; Git transport/storage mechanics belong to AREA-12.
 
