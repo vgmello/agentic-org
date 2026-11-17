@@ -51,7 +51,7 @@ SPA HTML. Unknown operations do not forward to a local socket.
 | GET `/api/v1/capabilities` | capability view (§7) | Pair; authorized scopes only |
 | GET `/api/v1/instance` | instance view (§3) | Pair; host-derived status, no catalog paths or private listener/socket credentials |
 | GET `/api/v1/organizations` | `{organizations:[...]}` | Pair; host `organization.list`, linked organizations only |
-| POST `/api/v1/organizations` | command envelope with `{name}` | Pair; host `organization.create`, instance admin only |
+| POST `/api/v1/organizations` | command envelope with `{name}` in the code today; the contract is the [selected payload](#selected-create-organization-payload) | Pair; host `organization.create`, instance admin only |
 | POST `/api/v1/organizations/operations/{id}/cancel` | `{}` → dedicated cancellation result (§5) | Pair binds selected instance; host `organization.cancel`, same account/admin, original create ID |
 | GET `/api/v1/organizations/{org}/offices` | `{offices:[...]}` | Pair; host `office.list` narrowed to an authorized organization |
 | GET `/api/v1/organizations/{org}/snapshot` | `{snapshot:OrgSnapshot,resume_cursor}` | Pair; canonical `org.snapshot` on selected HQ, cursor at the same snapshot position |
@@ -160,10 +160,31 @@ original operation ID for reconciliation.
 All reads/chunks/lookups recheck actor/scope; a content reference is not authority.
 Session cookies/proofs and no-store/error rules below apply unchanged.
 
-The wire tables and examples in §§2–9 describe the published HTTP v1 revision 2
-contract, including its current ULID operation admission, native `member` names,
-name-only organization create and multi-membership operations. They are retained
-exactly as protocol evidence. They do not implement the later selected
+### Selected create-organization payload
+
+Owner decision 2026-11-17 (conflict plan entries A-09 and A-12): nothing has shipped,
+so the version 1 contract is changed in place, and what the organization needs the API
+carries. `POST /api/v1/organizations` accepts the fields the
+[create-organization design](create-organization.md) and
+[organization structure](organization-data/01-organization-structure.md) require:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | yes | Display name |
+| `slug` | yes | Lowercase route segment, unique in the instance |
+| `organization_repository` | yes | The remote Git repository that holds the organization's files: URL and the reference to an office-held credential. Never a secret value. |
+| `state_branch` | no | Branch for organization files; default `agentic-org/state` |
+| `bootstrap_team` | yes | Name and key of the first team, of which the creating person becomes lead |
+
+The result adds `slug` and the bootstrap team's ID and reference to the organization
+view. The name-only request in the tables below is what the code accepts today and is
+not a second supported shape. The code change is tracked by FC-018.
+
+The wire tables and examples in §§2–9 describe HTTP v1 revision 2 as the code
+implements it, including its current ULID operation admission, native `member` names,
+name-only organization create and multi-membership operations. Nothing has shipped
+([no compatibility obligations before v1 ships](organization-data/README.md#no-compatibility-obligations-before-v1-ships)),
+so they are evidence of the code, not a published contract to preserve. They do not implement the later selected
 [organization-data model](organization-data/README.md). No route below becomes
 available merely because its codec exists. A selected-target adapter needs
 reviewed version/capability negotiation and conformance vectors before enablement;

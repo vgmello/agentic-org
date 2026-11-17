@@ -164,8 +164,9 @@ Search authorized channels/DMs by text, member, channel, kind (asks, announcemen
 ```text
 <data-root>/<organization-id>/durable/messaging/ # protected; never shared org Git
 ├── conversations/<conversation-id>/
-│   ├── conversation.json                      # memberships, preferences, read markers
-│   └── messages/<message-id>.json             # envelope, recipients, reactions, attachments
+│   ├── conversation.json                      # definition and memberships
+│   ├── messages/<message-id>.json             # content and attachment references
+│   └── participants/<employee-id>/            # that employee's preferences, read markers, received state, reactions
 └── attachments/<sha256>                       # immutable verified content
 <data-root>/<organization-id>/runtime/<office-id>/ # SQL/unread/thread indexes; rebuildable
 ```

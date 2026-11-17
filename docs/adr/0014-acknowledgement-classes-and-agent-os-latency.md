@@ -32,6 +32,10 @@ and the acknowledgement sentence in
    message send completes with a median of at most 1 ms and a 95th percentile of at
    most 2 ms on the reference Mac. One-shot process mode is measured and reported; it
    is bounded by process start and is not held to this target.
+   A plain send is acknowledged within single-digit milliseconds in every topology
+   (owner decision 2026-11-17, conflict plan entry E-02): the target above applies to
+   the sender's office whether the recipient is local or in another office, because
+   relaying is never part of the acknowledgement (decision 9).
 2. **Two acknowledgement classes.**
    - **Committed.** The office answers once the write is committed in its durable
      local store, without forcing the drive. The write survives a crash of the office process. It
@@ -99,8 +103,18 @@ and the acknowledgement sentence in
      interval; a durable write is not acknowledged before it would survive a power
      cut. These guarantees are tested by a suite that does not depend on the engine.
    Conflict plan entry B-13 lists this as one of its steps.
+9. **Send relays after it answers; ask holds with a deadline.** `msg.send` and
+   `msg.reply` commit in the sender's office and return. Delivery to another office is
+   relayed afterwards through HQ and retried with backoff until it is acknowledged or
+   the message expires; a failure becomes a delivery notice, never a slower send.
+   `msg.ask` is the one operation that holds its caller. Every ask has a deadline:
+   the caller may state how long it expects a reply to take, otherwise the default
+   applies, and the wait ends at the deadline with a timeout result. The ask itself
+   is committed and acknowledged like a send; only waiting for the reply is slow.
 
 ## Acceptance criteria
+
+Added 2026-11-17: **ACK-9.** With the recipient in another office and HQ unreachable, `msg.send` still returns within the decision 1 target and the message is delivered after HQ returns. **ACK-10.** An ask with no stated deadline uses the default; an ask whose deadline passes returns a timeout to the caller and the late reply is handled as the messaging contract states.
 
 | ID | Passing evidence |
 | --- | --- |

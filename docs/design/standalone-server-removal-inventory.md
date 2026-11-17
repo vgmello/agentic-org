@@ -224,7 +224,7 @@ names current source locations and remaining work.
 | `apps/org-agent/`, `crates/org-mailbox/` | Employee tooling and messaging semantics are retained in apps/agent-os / agent-os. Bind from injected instance/office/session identity; do not choose the wrong default instance from ambient HOME. Install the small agent-os executable from the pinned release; do not alias it to the human/key-custody CLI. |
 | `crates/org-spool/` | Keep only its explicitly supported offline/person-started CLI behavior and tests. Office-managed agents cannot bypass binding through spool fallback. Legacy aliases are not required; preserve live Phase A coordination through ADR-0003's conditional verified cutover before switching that team. |
 | `crates/org-runtime/`, `org-work/`, `org-copilot/` | Retain contracts/domain logic. Runtime adapters/session orchestration remain necessary; a static web server is not their implementation. |
-| Proposed `org-sync`, `org-sync-proto`, `org-pki` | Implement the approved office semantics; these crates are absent on the inspected branch. No existing replication implementation can be merely moved. |
+| Proposed `org-sync`, `org-sync-proto`, `org-pki` | Implement the approved office semantics; these crates now exist (`crates/org-sync`, `crates/org-sync-proto`, `crates/org-pki`); the statement that they were absent described an earlier branch. No existing replication implementation can be merely moved. |
 
 ## 5. Documentation and acceptance changes
 

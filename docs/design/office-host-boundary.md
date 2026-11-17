@@ -14,6 +14,23 @@ the office executable is `agentic-org-office`. [Executable migration](executable
 records implemented versus unavailable commands. No key-store namespace, signing
 identifier, grant namespace or persisted identity is renamed by those filenames.
 
+## Owner decisions 2026-11-17 that this document must be read with
+
+Nothing has shipped, so there are no protocol versions to keep side by side. Where the
+text below says "launch v2" it describes what the host code writes today, and where it
+says "launch v3" or "pending" it describes the contract. The requirements are:
+
+| Entry | Requirement | Code today |
+| --- | --- | --- |
+| B-06 | **There is one launch contract.** It is the verified-rendezvous design described here as launch v3: the host passes a rendezvous, the worker connects to it and is admitted by its process identity, and secrets and office facts travel over that connection. The older first-line contract is removed, not kept as a fallback, and the version number restarts at 1. | `org-host` writes the first-line form; the worker implements the rendezvous form (`crates/org-office-launch/src/v3.rs`). |
+| B-07 | **People are authorized by grants.** Every request made for a person carries that person's principal and a host-issued grant, which the worker verifies ([ADR-0006](../adr/0006-work-data-in-files.md), [ADR-0012](../adr/0012-office-channel-lifecycle.md)). `app_token` and the `office.app_token` call are removed. | The launch line still carries `app_token`; the worker stores the grant key unused. |
+| B-08 | **Seven web channels per office.** The host refuses the eighth, matching the worker and ADR-0012. | The host allows 63. |
+| B-10 | **The host serves the work reads the web needs** through the office channel, so the browser reads tasks, projects and people through the same path as commands. | `host.sock` dispatches only `hello` and `instance.status`. |
+| F-03 | **No database key.** `db_key` leaves the launch contract with [ADR-0016](../adr/0016-no-application-level-data-encryption.md); the host passes the office secrets key instead. | The launch line carries `db_key`. |
+
+These are requirements for implementation. They are tracked by FC-012, FC-013 and
+FC-017 in the [feature checklist](../FEATURES.md).
+
 ## Selected provisioning and storage responsibilities
 
 The [organization-data contracts](organization-data/README.md) own the target

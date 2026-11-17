@@ -20,8 +20,10 @@ Current executable/source names are agentic-org, agentic-org-office,
 agentic-org-web and agent-os; org-host is a library. See
 [executable migration](executable-migration.md) for available entry points.
 The browser does not own process lifetime. Human controls use authenticated HQ
-operations and the placed office; interactive takeover requires an authorized
-local CLI operation until a separate browser-terminal contract is approved.
+operations and the placed office. There is no terminal in the browser
+([ADR-0004](../adr/0004-headless-agent-sessions.md)): the browser shows a session
+read-only and people interact with agents through chat. Interactive takeover is an
+authorized local CLI operation.
 The macOS Keychain/sandbox evidence below does not establish Linux adapter readiness.
 
 ### Managed home contract (standalone v1)
@@ -53,7 +55,7 @@ stale placement, and symlink redirection without creating an external directory.
    - **Codex:** `codex app-server` over **stdio**, one process per session, with one thread in it. There's no socket. A shared app-server waits until a spike proves that its threads are isolated from each other and from agents.
    - **Antigravity:** `agy acp` (the Agent Client Protocol). `agy` stream-json is the fallback only if the spike shows ACP isn't ready, and then approvals follow decision 7's fallback.
 
-   **This replaces the `--bg` + `claude attach` choice** of the unmerged ADR-0004 draft (`0004-session-panel-embedded-terminal`), which spike S2 confirmed. `--bg` has no programmatic prompt channel, no structured events and no usage stream, and the office needs all three. A person can still work with an agent directly (see "Taking over"). ADR-0004 is rewritten to match before it merges, once the user agrees (U-S4).
+   **This replaces the `--bg` + `claude attach` choice** of the unmerged ADR-0004 draft (`0004-session-panel-embedded-terminal`), which spike S2 confirmed. `--bg` has no programmatic prompt channel, no structured events and no usage stream, and the office needs all three. A person can still work with an agent directly (see "Taking over"). [ADR-0004](../adr/0004-headless-agent-sessions.md) now records this decision.
 2. **One port, one adapter per runtime, one supervisor.**
    - `org-runtime` is the **port**: `AgentRuntime`, an optional `RuntimeHost`, `Session`, `SessionSpec`, `LaunchContext`, `LaunchPlan`, the normalized `SessionEvent`, `Capabilities`, usage types, and the one line framer and encoder that every adapter and the pump share. It's a contract, like `org-proto`. It does no I/O.
      - `AgentRuntime` is a stateless factory per runtime: its capabilities, the launch plan and the `Session` for a session (from a `SessionSpec` and a `LaunchContext`), and the launch plans for its **probes** (preflight, and the usage poll where a runtime needs one) with the parsing of their output.
@@ -141,6 +143,12 @@ stale placement, and symlink redirection without creating an external directory.
 
      **The runtimes must pass this environment to their tools.** Claude does: the allowlisted variables reached the tool's `env` in the spike. Codex's `shell_environment_policy` drops variables whose names match `*KEY*`, `*SECRET*` or `*TOKEN*` from tool shells by default, which would drop `ORG_SESSION_TOKEN`, so every office-run Codex agent would fail `msg.bind`. The office pins `shell_environment_policy.ignore_default_excludes=true` and `shell_environment_policy.include_only=[` the names above, every indexed `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` name included `]` with `-c`, on the app-server and on take-over (`codex resume`). S0 Codex saw the token survive these pins in a standalone `command/exec`; a model's tool shell is still to verify. S0 proves that `agent-os` binds from a tool in each runtime (see "S0 checks and fallbacks").
    - **Runtime binaries** are run by their recorded **real paths** (symlinks resolved at preflight), never looked up on `PATH`. The office records the real path with the version at every start. Writes to those files, and to every user-writable folder they sit in, are fixed denies (see "Security").
+   - **Superseded for sign-in and vendor folders (owner decision 2026-11-17,
+     [ADR-0015](../adr/0015-agent-isolation-modes.md) decisions 10 to 12).** Each agent gets a
+     private home that the office controls. The vendor folders (`~/.claude`, the Codex home,
+     `~/.gemini`) are redirected into it and hold only what belongs to that agent; the sign-in
+     comes from the connection the pool selected. The user's own folders are not used. The
+     per-runtime bullets below record the earlier approach and its spike results.
    - **No personal config reaches agents.** HOME stays, but the user's git and `gh` config don't reach agents (above). For the runtimes:
      - Claude: the user's **real `~/.claude`**, the supported path, so the user's sign-in works. Isolation comes from three switches. The spike verified the first two with an isolated config dir only; S1 repeats every check with the real `~/.claude` (the user's `CLAUDE.md`, skills, agents, synced plugins, and the MCP servers in `~/.claude.json`), and Claude isn't office-run until they hold (see "S0 checks and fallbacks"):
        - `--setting-sources ""` (the empty string; `none` is rejected). It loads no settings file and no instruction file (a nested `CLAUDE.md` loaded lazily is untested, decision 8): no `CLAUDE.md`, `AGENTS.md` or rules from the cwd, its parents, an `--add-dir` folder or `~/.claude`. It loads no user or project skills, agents or commands either. Claude's built-in plugins still load. **The account's synced claude.ai plugins** load whenever the `user` source is on; that `""` keeps them out was seen only by hand, in an isolated config dir (the spike's `[hand]` note), so it's **S1-unverified**.
@@ -408,6 +416,15 @@ one-off policies never widen role defaults. No per-office run counter is added t
 the selected entity-numbering model by these illustrative labels.
 
 ## Taking over (a person works with the agent directly)
+
+> **Owner decision 2026-11-17 ([ADR-0004](../adr/0004-headless-agent-sessions.md)).** There is
+> no terminal in the browser. A person interacts with an agent through chat, and the
+> browser shows the session read-only. Steps 1 and 2 below stay as the local
+> command-line takeover. Step 3, the lease that carries terminal frames to the app, and
+> the `session.input`, `session.resize` and `session.output` calls are **not v1** and are
+> kept only as a record of the earlier proposal. The owner will send two documents
+> describing the intended session view; they replace this section's app behaviour.
+
 - **Every runtime takes over the same way: stop, then resume interactively.** The office spawns the interactive process itself, through `org-supervise`, with the full replayed spec and the same environment allowlist (a fresh session token included):
   1. The office interrupts and stops the headless process, keeping the agent's lock. Its run ends `taken_over`. For Codex it unloads the thread (`thread/unsubscribe`) first, then stops the app-server.
   2. It starts the interactive CLI in the session's workspace, in a PTY it owns, as a new run (trigger `owner`): `claude --resume <id>`, `codex resume <thread id>` with the same `-c` isolation pins, or `agy --conversation <id>`.
@@ -708,6 +725,7 @@ The additive sketches below apply within their negotiated protocol version. ADR-
     - An unanswered approval expires after **30 minutes** (configurable) and counts as a deny.
     - If its session died, or it expired or was cancelled, answering returns `not_found`.
 - **Take-over:**
+  - *Not v1 (ADR-0004).* The calls below belong to the earlier app-attached terminal and are not part of the v1 contract.
   - `session.take_over { member_id, session?, cols, rows }` → `{ lease_id }`. `session` defaults to the live session, or `home` when nothing is live. The connection that makes this call holds the lease (see "Taking over").
   - `session.input { lease_id, data }` and `session.resize { lease_id, cols, rows }`: only from the lease holder's connection (`held` from another app connection)
   - `session.heartbeat { lease_id }`, every 10 s
@@ -796,7 +814,7 @@ explicit turns. Exact legacy path tests must be rerun against the target layout.
 | S3c | Adapt org-git workspaces to document 04 task/employee/repository paths; recompute grants/denies from retained work.git evidence, preserve handoff worktrees and verify any missing-workspace restoration | River (`org-git`), server-dev (the office side) | G2c, S3a |
 | S3d | Single-owner host/worker recovery ordering, durable cleanup inventory and placement fencing before replacement; launch-pipe inventory alone is insufficient | River (ada reviews the `org-office-launch` change) | S1 |
 | S3e | Deferred one-off extension: routing run addresses (`run:<office id>/<run id>`) through HQ: non-owning offices forward any well-formed one, HQ accepts them in synced messages, the owning office dead-letters late ones | River (`org-sync`), server-dev (HQ side) | S3b, `org-sync` |
-| S3f | Deferred interactive integration (browser terminal needs a separate contract): the lease, the `session.*` handlers, the PTY spawn through `org-supervise`, and `session.output` / `session.input` / `session.resize` only on the lease holder's connection | server-dev, River (the PTY in `org-supervise`) | S1, S3a |
+| S3f | Not v1 (ADR-0004: no browser terminal; takeover is a local CLI operation). Earlier scope: the lease, the `session.*` handlers, the PTY spawn through `org-supervise`, and `session.output` / `session.input` / `session.resize` only on the lease holder's connection | server-dev, River (the PTY in `org-supervise`) | S1, S3a |
 | S4 | The Codex and Antigravity adapters. Antigravity ships only with the S0 proof, or with the documented limit for workspace `.agents/` content and the owner told (see "Security"); the fixed denies are never a documented limit | codex-dev | S0, S1 |
 | S5 | App explicit turn/attempt/readiness panel, approvals, independent holds and desired/observed Pause/Resume. Mode scheduling, one-offs and browser takeover remain deferred | app-frontend-dev | S2, S3a, S3b, S3f |
 | S6 | **Security tests** (below) | River + server-dev, codex-dev for its runtimes | S2b, S2d, S3a, S3b, S3c, S3d, S3e, S3f, S4 |
@@ -867,4 +885,4 @@ interactive capability evidence still require their own scoped decisions.
 - **U-S1:** We'd run your own Claude, Codex and Antigravity logins for our own team. Before Agentic Org goes to anyone else, the vendors' terms need checking (the research found that Anthropic doesn't allow third-party products to offer claude.ai login without approval), and an API-key path per runtime is required. With an API key or a `claude setup-token` per organization, each Claude agent could also get its own `CLAUDE_CONFIG_DIR` (later hardening, decision 6). OK to proceed on that basis?
 - **U-S2:** The defaults: up to **4** live agents per office at once; **30 minutes** of busy time per home-session run and **2 hours** per task-session run, with a 1-minute grace; a **10-minute** minimum slice before a normal trigger switches sessions; **20%** of each 5-hour quota window reserved for you; an approval expires after **30 minutes**; always-on agents restart after 10 s and stop after 3 restarts in 10 minutes. OK?
 - **U-S3:** Each runtime keeps its transcripts as **plaintext** on disk in its own store (`office.db` stays encrypted). OK for phase 1?
-- **U-S4:** The office drives every agent headless, and you work with one directly by taking it over (stop, then resume in a terminal the app shows). That replaces ADR-0004's plan (Claude's `--bg` with `claude attach`, from spike S2), and I'd rewrite ADR-0004 to match. OK?
+- **U-S4:** The office drives every agent headless, and you work with one directly by taking it over (stop, then resume in a terminal the app shows). That replaces ADR-0004's plan (Claude's `--bg` with `claude attach`, from spike S2), and I'd rewrite ADR-0004 to match. OK? **Answered 2026-11-17:** headless, yes. No terminal in the app: chat is the interaction and the session view is read-only ([ADR-0004](../adr/0004-headless-agent-sessions.md)).

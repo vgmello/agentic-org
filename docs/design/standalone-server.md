@@ -61,6 +61,8 @@ for implemented entry points.
 
 ## 2. Release, install and runtime boundaries
 
+**Implementation status (2026-11-17):** designed, not reachable. Release verification exists as a library (`org-release`, linked into `org-host`) and is not called by any command. There is no bootstrap, download, installer or updater. The four executables build from source and are started by hand.
+
 Use one user-facing executable, `agentic-org`, for setup and local
 lifecycle commands. The bootstrap only resolves the platform/version, downloads
 and verifies that executable and invokes setup. It is small enough to audit; it
@@ -309,7 +311,7 @@ encryption and the isolation mode are what protect it.
 
 ## 4. Setup and service lifecycle
 
-**Implementation status at merged v1 700d5a37:** serve and help/version are implemented; setup returns unavailable without provisioning. The service start/stop/status commands, protected HQ bootstrap, downloads/offline installation, updater activation and authenticated production web startup below remain requirements. Existing agent-os messaging/directory operations remain available. The UI directory/package is agentic-org-ui in this PR and remains a static asset build.
+**Implementation status (2026-11-17, unchanged in substance since merged v1 700d5a37):** serve and help/version are implemented; setup returns unavailable without provisioning. The service start/stop/status commands, protected HQ bootstrap, downloads/offline installation, updater activation and authenticated production web startup below remain requirements. Existing agent-os messaging/directory operations remain available. The UI directory/package is agentic-org-ui in this PR and remains a static asset build.
 
 
 Initial installation is HQ-only. After obtaining the platform executable, the user runs:
