@@ -13,16 +13,16 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 The data contract owns the records: [organization](../design/organization-data/01-organization-structure.md), [employees](../design/organization-data/04-agent-structure.md), [execution](../design/organization-data/11-model-profiles-and-agent-execution.md), [assignment and history](../design/organization-data/12-task-assignment-and-history.md), [messaging](../design/organization-data/15-messaging-and-chat.md) and [budgets](../design/organization-data/17-budgets-and-controls.md). This spec owns what people see when they run their own team in the product.
 
-## The goal (the user, 2026-11-08)
+## The goal
 
-> All of us (ada, Eden, the reviewer, codex-dev and the other devs) are registered as an organization in the application. From it you can see everything that's happening, add agents, hire more, deallocate agents, assign agents and change teams, with a great user experience.
+The people and agents building this product are registered as an organization in it. From it you can see everything that is happening, hire agents, deallocate them, assign them and change teams, with a great user experience.
 
 **Success test (the dogfood run).** In the real HQ browser application, with no mock data:
 1. The owner creates a fresh organization, adds the people and invites them to sign in, and hires the agents through HR. Each agent appears under the right team and manager with its runtime; nothing is imported.
 2. Home and Activity show, live, what the team is doing: who's working, the messages they send each other, tasks and bugs moving, and merges into the integration branch.
 3. The owner hires a new agent, chooses its required home team and assigns project or team work independently, moves an agent to another team, pauses an idle agent and offboards one. Every change shows at once in the chart and Activity, and every agent keeps working on its own runtime.
 
-The [dogfood run](dogfood-run.md) checks item 1 in its §1, §3 and §3a, item 2 in §3b, and item 3 in §3a.
+The [dogfood run](dogfood-run.md) checks item 1 in its §1 and §3a, item 2 in §3b, and item 3 in §3a. In milestone one it is run on one Mac with one office; the satellite sections join it in milestone three.
 
 ## 1. What the product must respect
 
@@ -35,14 +35,14 @@ The [dogfood run](dogfood-run.md) checks item 1 in its §1, §3 and §3a, item 2
 ```text
 Agentic Consulting                         top-level team, made with the organization
 │                                          lead: Alex (you, the owner); HR lead
-├─ Engineering                            lead: ada; ada is a direct employee
-│  ├─ App                                  lead: app-frontend-dev; Riley
-│  ├─ Office                               lead: server-dev; River
-│  ├─ Agent tooling                        lead: Remy; codex-dev, agy-senior-dev
+├─ Engineering                            lead: Sam; Sam is a direct employee
+│  ├─ App                                  lead: app-frontend-dev; Lena
+│  ├─ Office                               lead: office-dev; Noor
+│  ├─ Agent tooling                        lead: Kai; tooling-dev, senior-dev
 │  └─ Quality                              lead: reviewer
-└─ Design                                 lead: Eden; Eden is a direct employee
+└─ Design                                 lead: Mira; Mira is a direct employee
 Project P-8 Agentic Org: owner Engineering; contributor Design
-Explicit reporting: ada and Eden have no employee manager recorded; other engineering employees → ada
+Explicit reporting: Sam and Mira have no employee manager recorded; other engineering employees → Sam
 ```
 
 Sample names. Every employee appears at exactly one home team. Creating the organization made its top-level team, with the owner as a person and its lead, and the built-in HR lead as its other member; the other teams came later, a project's team by default with the project. Engineering's lead manages its subtree, including child leads; explicit reporting is a separate graph. The organization (**Agentic Consulting** here) is distinct from the product, **Agentic Org**.
@@ -121,9 +121,9 @@ Notes and memory initially says “Not available yet: notes and memory arrive in
  Activity                                [All teams ▾] [Everyone ▾] [All kinds ▾] [Search]
  ─────────────────────────────────────────────────────────────────────────────────────────
  Today
- 05:41  [A] ada → [E] Eden · message · "Phase 1 push: your part + status please"   [Open thread]
+ 05:41  [S] Sam → [M] Mira · message · "Milestone one: your part and status please"   [Open thread]
  05:39  [C] codex-dev → [E] Eden · reply · "No W7 draft or design branch yet…"
- 05:33  [A] ada → 7 members · message · "PHASE 1 PUSH (the user, today)…"
+ 05:33  [S] Sam → 7 members · message · "Milestone one, today…"
  05:30  [S] server-dev · merged server-dev/create-org into v1 · 3 commits      [View]
  05:12  [R] River · status Working → Waiting · "waiting for the reviewer"
  04:58  [E] Eden · bug T-A15 reported in Agentic Org · Major

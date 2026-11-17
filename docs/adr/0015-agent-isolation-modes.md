@@ -74,8 +74,7 @@ section 8.
 9. **Workspaces.** In `dedicated-user`, agent workspaces and each agent's private home
    (decision 10) are owned by or shared with the agent account. Where the sign-in lives
    is decision 11.
-10. **Every agent has a private home, in both modes (owner decision 2026-11-17,
-    conflict plan entry A-08).** The office creates one home directory per agent at
+10. **Every agent has a private home, in both modes (owner decision 2026-11-17).** The office creates one home directory per agent at
     `durable/local/offices/<office-id>/agents/<employee-id>/home/` and starts the agent with `HOME` and each vendor's configuration
     location pointing into it. The agent sees a vendor folder (a "virtual Claude
     folder") that contains only what the office put there: the office's settings, the
