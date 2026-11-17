@@ -133,18 +133,23 @@ fn gateway_ready(host: &BootstrapHost) -> bool {
     state.host.as_ref().is_some_and(crate::Host::gateway_ready)
 }
 
-/// The single live process executing exactly `program` (a unique temp path).
-fn gateway_pid(program: &Path) -> String {
+/// Every live process executing exactly `program` (a unique temp path).
+fn gateway_pids(program: &Path) -> Vec<String> {
     let out = Command::new("/usr/bin/pgrep")
         .arg("-f")
         .arg(program)
         .output()
         .unwrap();
-    let pids: Vec<_> = String::from_utf8(out.stdout)
+    String::from_utf8(out.stdout)
         .unwrap()
         .split_whitespace()
         .map(str::to_owned)
-        .collect();
+        .collect()
+}
+
+/// The single live process executing exactly `program` (a unique temp path).
+fn gateway_pid(program: &Path) -> String {
+    let pids = gateway_pids(program);
     assert_eq!(pids.len(), 1, "exactly one gateway process: {pids:?}");
     pids.into_iter().next().unwrap()
 }
@@ -218,6 +223,23 @@ fn actual_host_spawns_web_gateway_with_sessions_refresh_sign_out_eof_and_lockout
         panic!("bootstrap refused")
     };
     // Authenticated but HQ is not Active yet: the gateway is not serving.
+    assert!(!gateway_ready(&host));
+    // The wired start-eligibility gate holds the supervisor before any spawn or bind:
+    // across several supervisor polls no agentic-org-web child runs and the browser
+    // port accepts nothing.
+    let window = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < window {
+        let pids = gateway_pids(&program);
+        assert!(
+            pids.is_empty(),
+            "gateway spawned before HQ is Active: {pids:?}"
+        );
+        assert!(
+            TcpStream::connect(address).is_err(),
+            "browser port accepted before HQ is Active"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
     assert!(!gateway_ready(&host));
     let prepared = Params {
         session: first.session,

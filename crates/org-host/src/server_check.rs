@@ -446,6 +446,38 @@ mod tests {
         );
     }
 
+    /// The production `ServerCheck::admit` entry wires the live token, signature and
+    /// Keychain probes. With an Apple-anchored requirement (no signing team needed),
+    /// hardened Apple binaries reach every probe: `/usr/bin/scp` (no entitlements) is
+    /// admitted; `/usr/bin/ssh` (hardened, only keychain-access-groups) satisfies the
+    /// signature check, as the office `Requirement` check shows, yet the gateway check
+    /// refuses it; unhardened `/bin/sleep` fails the signature check.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn production_gateway_admission_uses_the_live_keychain_probe() {
+        let admit_with = |check: &ServerCheck, program: &str| {
+            let spawned =
+                crate::spawn::spawn_suspended(std::path::Path::new(program), &[], &[]).unwrap();
+            check.admit(spawned.process.id())
+        };
+        let gateway = ServerCheck::Gateway("anchor apple".into());
+        let office = ServerCheck::Requirement("anchor apple".into());
+        assert!(
+            matches!(admit_with(&gateway, "/usr/bin/scp"), Ok(Some(_))),
+            "a hardened child without a Keychain entitlement was refused"
+        );
+        assert!(
+            matches!(admit_with(&office, "/usr/bin/ssh"), Ok(Some(_))),
+            "/usr/bin/ssh must satisfy the signature check for this test to isolate the probe"
+        );
+        let refused = admit_with(&gateway, "/usr/bin/ssh").expect_err("Keychain child admitted");
+        assert!(refused.contains("Keychain entitlement"), "{refused}");
+        assert!(
+            admit_with(&gateway, "/bin/sleep").is_err(),
+            "an unhardened child was admitted"
+        );
+    }
+
     #[test]
     fn the_gateway_is_admitted_only_without_a_keychain_entitlement() {
         let ServerCheck::Gateway(requirement) =

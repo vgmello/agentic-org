@@ -116,7 +116,13 @@ impl Service {
     /// Whether the host may start its browser gateway: host authentication is
     /// present and HQ is Active. Persisted listener configuration alone never qualifies.
     pub(crate) fn gateway_eligible(&self) -> bool {
-        self.authentication.is_some() && self.hq_active()
+        gateway_start_eligible(self.authentication.is_some(), self.hq_active())
+    }
+    /// The start-eligibility predicate the host wires into its gateway supervisor:
+    /// [`Service::gateway_eligible`], evaluated live on each supervisor poll.
+    pub(crate) fn gateway_eligibility(self: &Arc<Self>) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        let service = Arc::clone(self);
+        Arc::new(move || service.gateway_eligible())
     }
     /// Whether browsers can be served: eligible, and an admitted gateway is serving
     /// (the supervisor publishes `Running` only between admission and exit/EOF).
@@ -601,13 +607,51 @@ pub(crate) fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
     })
 }
 
+/// The start-eligibility rule: host authentication is present and HQ is Active.
+/// Persisted listener configuration alone never qualifies.
+pub(crate) fn gateway_start_eligible(authenticated: bool, hq_active: bool) -> bool {
+    authenticated && hq_active
+}
+
 /// The readiness rule: all three conditions, never persisted state alone.
 pub(crate) fn gateway_serving(authenticated: bool, hq_active: bool, state: GatewayState) -> bool {
-    authenticated && hq_active && state == GatewayState::Running
+    gateway_start_eligible(authenticated, hq_active) && state == GatewayState::Running
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    #[test]
+    fn gateway_start_needs_authentication_and_an_active_hq() {
+        use super::gateway_start_eligible;
+        assert!(gateway_start_eligible(true, true));
+        assert!(!gateway_start_eligible(false, true), "no authentication");
+        assert!(!gateway_start_eligible(true, false), "no Active HQ");
+        assert!(!gateway_start_eligible(false, false));
+    }
+
+    /// The service fixture, and the predicate the host wires into its gateway
+    /// supervisor, refuse to start the gateway without authentication and without an
+    /// Active HQ. An Active HQ needs a real office worker: the ignored real-process
+    /// test covers the eligible case and the authenticated, not-yet-Active window.
+    #[test]
+    fn the_wired_gateway_eligibility_refuses_without_authentication_or_an_active_hq() {
+        let home = tempfile::tempdir().unwrap();
+        let bare = Arc::new(service(home.path()));
+        assert!(!bare.gateway_eligible(), "no authentication");
+        assert!(!(bare.gateway_eligibility())(), "wired: no authentication");
+        let (_root, authentication, _connection) = crate::service::authentication::tests::fixture();
+        let authenticated =
+            Arc::new(service(home.path()).with_authentication(Some(Arc::new(authentication))));
+        assert!(authenticated.offices.offices().is_empty());
+        assert!(!authenticated.gateway_eligible(), "no Active HQ");
+        assert!(
+            !(authenticated.gateway_eligibility())(),
+            "wired: no Active HQ"
+        );
+        bare.offices.shutdown();
+        authenticated.offices.shutdown();
+    }
+
     #[test]
     fn gateway_ready_needs_authentication_active_hq_and_a_serving_gateway() {
         use super::gateway_serving;
@@ -670,7 +714,7 @@ mod tests {
         }
     }
 
-    pub(super) fn service(home: &Path) -> Service {
+    pub(crate) fn service(home: &Path) -> Service {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
@@ -692,6 +736,15 @@ mod tests {
             &Timings::default(),
         );
         Service::new(offices, broadcast, None)
+    }
+
+    /// A service fixture with an instance id, as an admitted gateway's handler, and
+    /// its offices for shutdown.
+    pub(crate) fn gateway_handler(home: &Path) -> (Arc<Service>, Arc<Offices>) {
+        let mut service = service(home);
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        let offices = service.offices.clone();
+        (Arc::new(service), offices)
     }
 
     /// The real handler on an admitted gateway control connection, plus its peer end.

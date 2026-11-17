@@ -1087,3 +1087,67 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
         "gateway start failed: the first line exceeds 1023 bytes"
     );
 }
+
+/// The supervisor's exit cause for an admitted gateway comes from the live `Running`
+/// inputs: the control connection's `gateway.serving` refusal, the reaped child's
+/// status and the control EOF, each read at the `Running::ended` call site.
+#[test]
+fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
+    use org_host_control::ops::GatewayServing;
+    use org_proto::frame;
+    let home = tempfile::tempdir().unwrap();
+    let (handler, offices) = crate::service::tests::gateway_handler(home.path());
+    let running = |program: &str, resume: bool| {
+        let (host, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let (transfer, _child) = UnixDatagram::pair().unwrap();
+        let control =
+            GatewayConnection::start(host, transfer, loopback(), handler.clone()).unwrap();
+        let spawned = spawn::spawn_suspended(Path::new(program), &[], &[]).unwrap();
+        if resume {
+            spawned.process.resume().unwrap();
+        }
+        let running = Running {
+            control,
+            process: spawned.process,
+            _stdin: spawned.stdin,
+        };
+        (running, io::BufReader::new(peer))
+    };
+    let call = |peer: &mut io::BufReader<UnixStream>, request: org_proto::Request| {
+        frame::write_message(peer.get_mut(), &request).unwrap();
+        frame::read_message::<org_proto::Response>(peer)
+            .ok()
+            .flatten()
+    };
+
+    // A refused gateway.serving wins over the EOF it causes; the child still runs.
+    let (mut refused, mut peer) = running("/bin/sleep", false);
+    let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
+    call(&mut peer, hello.unwrap()).expect("hello answered");
+    let early = org_proto::Request::new::<GatewayServing>(2, &Default::default()).unwrap();
+    call(&mut peer, early);
+    wait_for("refusal closes control", || !refused.serving());
+    assert!(matches!(refused.process.try_wait(), Ok(false)));
+    assert_eq!(
+        refused.ended(),
+        "the host refused its gateway.serving as a protocol error"
+    );
+
+    // A reaped child's status, while the control connection is still open.
+    let (mut exited, _peer) = running("/usr/bin/false", true);
+    wait_for("the child exits", || !exited.serving());
+    assert!(exited.control.live());
+    assert_eq!(exited.ended(), "the child exited (exit code 1)");
+
+    // Control EOF while the (suspended) child still runs.
+    let (mut closed, peer) = running("/bin/sleep", false);
+    assert!(closed.serving());
+    drop(peer);
+    wait_for("control EOF", || !closed.serving());
+    assert!(matches!(closed.process.try_wait(), Ok(false)));
+    assert_eq!(closed.ended(), "its control connection reached EOF");
+    drop((refused, exited, closed));
+    offices.shutdown();
+}

@@ -762,12 +762,11 @@ impl Host {
         );
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
         let gateway = gateway_config.and_then(|gateway_config| {
-            let eligibility = Arc::clone(&service);
             match gateway::Supervisor::start(
                 gateway_config,
                 service.clone(),
                 Arc::clone(&gateway_state),
-                Arc::new(move || eligibility.gateway_eligible()),
+                service.gateway_eligibility(),
             ) {
                 Ok(gateway) => Some(gateway),
                 Err(error) => {
