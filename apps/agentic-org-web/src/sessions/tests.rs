@@ -38,6 +38,7 @@ struct Fixture {
     _transfer: UnixDatagram,
     thread: Option<std::thread::JoinHandle<()>>,
     calls: Arc<Mutex<Vec<String>>>,
+    errors: Arc<Mutex<BTreeMap<&'static str, &'static str>>>,
 }
 fn reply(
     request: &serde_json::Value,
@@ -84,6 +85,8 @@ impl Fixture {
         let (transfer, host_transfer) = UnixDatagram::pair().unwrap();
         let calls = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&calls);
+        let errors = Arc::new(Mutex::new(BTreeMap::new()));
+        let scripted_errors = Arc::clone(&errors);
         let thread = std::thread::spawn(move || {
             let mut host = BufReader::new(host);
             let mut issued = 0;
@@ -93,7 +96,16 @@ impl Fixture {
                 seen.lock()
                     .unwrap()
                     .push(request["method"].as_str().unwrap().to_owned());
-                let answer = reply(&request, &mut issued, end_delay);
+                let error = scripted_errors
+                    .lock()
+                    .unwrap()
+                    .remove(request["method"].as_str().unwrap());
+                let answer = match error {
+                    Some(code) => {
+                        serde_json::json!({"id":request["id"],"error":{"code":code,"message":"scripted host refusal"}})
+                    }
+                    None => reply(&request, &mut issued, end_delay),
+                };
                 if org_proto::frame::write_message(host.get_mut(), &answer).is_err() {
                     break;
                 }
@@ -114,6 +126,7 @@ impl Fixture {
             _transfer: host_transfer,
             thread: Some(thread),
             calls,
+            errors,
         }
     }
     fn sign_in(&self) -> Established {
@@ -295,6 +308,97 @@ fn sign_out_ends_the_host_session_and_clears_the_pair() {
     assert!(clear.starts_with(&format!("{}=;", f.sessions.cookie_name)));
     assert!(clear.contains("Max-Age=0"));
     assert!(f.sessions.get(ticket(&f.sessions, &other)).is_ok());
+}
+
+#[test]
+fn host_denial_releases_capacity_for_reauthentication() {
+    let f = Fixture::new();
+    let revoked = f.sign_in();
+    let live = f.sign_in();
+    for _ in 2..MAX_SESSIONS {
+        f.sign_in();
+    }
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
+    assert!(f
+        .sessions
+        .sign_in(LOGIN.into(), Password::new(PASSWORD.into()).unwrap())
+        .is_err());
+
+    // The host has ended this handle (for example after a password change),
+    // but its control connection and unrelated sessions are still live.
+    f.errors
+        .lock()
+        .unwrap()
+        .insert("session.renew", "not_authorized");
+    let result = f.sessions.get(ticket(&f.sessions, &revoked));
+    assert!(matches!(result, Err(ref error) if is_session_ended(error)));
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS - 1);
+    assert!(f.refused(&revoked.cookie, revoked.proof.expose()));
+    let replacement = f.sign_in();
+    assert!(f.sessions.get(ticket(&f.sessions, &replacement)).is_ok());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
+}
+
+#[test]
+fn host_denial_evicts_the_pair_but_transient_errors_preserve_it() {
+    for (operation, method) in [
+        ("get", "session.renew"),
+        ("get", "session.inspect"),
+        ("refresh", "session.renew"),
+        ("refresh", "session.inspect"),
+        ("sign-out", "session.end"),
+    ] {
+        for code in ["not_authorized", "unavailable"] {
+            let f = Fixture::new();
+            let pair = f.sign_in();
+            let live = f.sign_in();
+            let queued = ticket(&f.sessions, &pair);
+            f.errors.lock().unwrap().insert(method, code);
+            let result = match operation {
+                "get" => f.sessions.get(queued).map(|_| ()),
+                "refresh" => f.sessions.refresh(queued).map(|_| ()),
+                "sign-out" => f.sessions.sign_out(queued),
+                _ => unreachable!(),
+            };
+            let error = match result {
+                Err(error) => error,
+                Ok(()) => panic!("{operation}/{method} ignored host {code}"),
+            };
+            if code == "not_authorized" {
+                assert!(is_session_ended(&error));
+                assert!(f.refused(&pair.cookie, pair.proof.expose()));
+                assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+            } else {
+                assert_eq!(error.inspected().0, StatusCode::SERVICE_UNAVAILABLE);
+                assert!(f.sessions.get(ticket(&f.sessions, &pair)).is_ok());
+                assert_eq!(f.sessions.sessions.lock().unwrap().len(), 2);
+            }
+            assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+            assert!(f.sessions.host.live());
+        }
+    }
+}
+
+#[test]
+fn host_denial_of_an_inflight_read_evicts_a_concurrently_rotated_pair() {
+    let f = Fixture::new();
+    let first = f.sign_in();
+    let queued = ticket(&f.sessions, &first);
+    let rotated = f
+        .sessions
+        .refresh(ticket(&f.sessions, &first))
+        .unwrap_or_else(|_| panic!("refresh"));
+    // A read can pass current()/renew before refresh rotates, then inspect the
+    // retained session afterwards. Both pairs refer to the same host handle.
+    f.errors
+        .lock()
+        .unwrap()
+        .insert("session.inspect", "not_authorized");
+    let result = f.sessions.view(&queued.session);
+    assert!(matches!(result, Err(ref error) if is_session_ended(error)));
+    assert!(f.refused(&rotated.cookie, rotated.proof.expose()));
+    assert!(f.sessions.sessions.lock().unwrap().is_empty());
 }
 
 #[test]

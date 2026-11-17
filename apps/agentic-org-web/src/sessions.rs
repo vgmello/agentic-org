@@ -87,12 +87,6 @@ fn unavailable() -> ApiReply {
         "Session service unavailable.",
     )
 }
-fn session_failure(error: control::Failure) -> ApiReply {
-    match error {
-        control::Failure::Denied => denied(),
-        control::Failure::NotFound | control::Failure::Unavailable => unavailable(),
-    }
-}
 fn random() -> Result<[u8; 32], ApiReply> {
     let mut bytes = [0; 32];
     tokio_rustls::rustls::crypto::ring::default_provider()
@@ -254,11 +248,25 @@ impl BrowserSessions {
         }
         Ok(())
     }
+    fn session_failure(&self, session: &Session, error: control::Failure) -> ApiReply {
+        match error {
+            control::Failure::Denied => {
+                let Ok(mut sessions) = self.sessions.lock() else {
+                    return unavailable();
+                };
+                // The host has ended this authority. Evict its binding even if a
+                // concurrent refresh rotated the pair while this call was in flight.
+                sessions.retain(|_, current| !Arc::ptr_eq(&current.handle, &session.handle));
+                denied()
+            }
+            control::Failure::NotFound | control::Failure::Unavailable => unavailable(),
+        }
+    }
     fn view(&self, session: &Session) -> Result<SessionView, ApiReply> {
         let status = self
             .host
             .inspect(&session.handle)
-            .map_err(session_failure)?;
+            .map_err(|error| self.session_failure(session, error))?;
         if status.account != session.account.id {
             return Err(denied());
         }
@@ -301,7 +309,7 @@ impl BrowserSessions {
         self.current(&ticket)?;
         self.host
             .renew(&ticket.session.handle)
-            .map_err(session_failure)?;
+            .map_err(|error| self.session_failure(&ticket.session, error))?;
         *ticket.session.touched.lock().map_err(|_| unavailable())? = Instant::now();
         self.view(&ticket.session)
     }
@@ -309,7 +317,7 @@ impl BrowserSessions {
         self.current(&ticket)?;
         self.host
             .end(&ticket.session.handle)
-            .map_err(session_failure)?;
+            .map_err(|error| self.session_failure(&ticket.session, error))?;
         self.sessions
             .lock()
             .map_err(|_| unavailable())?
@@ -320,7 +328,7 @@ impl BrowserSessions {
         self.current(&ticket)?;
         self.host
             .renew(&ticket.session.handle)
-            .map_err(session_failure)?;
+            .map_err(|error| self.session_failure(&ticket.session, error))?;
         // Share the same secret holder; rotating the browser pair never mints
         // another host session or extends its absolute lifetime.
         let session = Session {
