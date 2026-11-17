@@ -84,3 +84,25 @@ cookie/proof → host session-handle mapping on its admitted control connection.
   real-process test). Production `agentic-org serve` → `Host::start_instance` composition is owned by U1 (ON-01 D2, U1-A3; already
   implemented on worktree-u1-onboarding 7423b855/12dfe5db) because it requires the U1 setup/registry/launcher closure. F4 makes no
   claim that `agentic-org serve` starts a gateway; FEATURES FC-013 already states production launcher = U1.
+
+## Amendment 4 (2026-11-17, owner architecture decisions; supersedes the session scope above)
+The owner's architecture review (v1-integration af79d274 onward: ADR-0013 stored sessions, the v1 kickoff "replace, do not
+adapt", web naming) replaced the connection-bound session design this contract was written for. The delivered scope is
+**F4-CONFORM** (`.agent-kit/slices/f4-conform.md` in the lead checkout):
+- **Outcome now:** the host starts and supervises `agentic-org-web` (renamed from "gateway"): admission and image check,
+  confinement verified through the platform adapter, the ordered `[Transfer, Listener]` handoff over the rendezvous, readiness
+  only after `web.serving`, bounded restart, stop while the host is not eligible. The web process serves only
+  `GET /api/v1/version`; every other `/api/v1` path, including the four session routes, is a JSON 404 (web-api-v1 §2).
+  Debug/test composition only; production `serve` start belongs to implementation-plan A2/A3.
+- **Withdrawn criteria:** AC3, AC4, AC5 and the sign-in/refresh/sign-out legs of AC9 and Amendment 2 (lockout through the web
+  process). They move to implementation-plan A3 (stored sessions, FC-159, ADR-0013 SES-1..SES-8). The removed session code is
+  preserved on local branch `f4-full-reference` as reference only.
+- **Still in force:** AC1/AC2 only as far as the routes that exist (no session routes), AC6 (control connection admission,
+  EOF, closure), AC7, AC8, AC10 (UI cookie/proof wire; a 503 sign-out now keeps the session per ADR-0013 and SIGN-29),
+  AC11-AC13, Amendments 1-3 where they concern supervision, admission, handoff and the release/bundle guard.
+- **Production-path proof now:** the real host spawns and admits the real web process over the actual handoff, serves
+  `/api/v1/version`, returns JSON 404 for the session routes, restarts after control EOF, and leaves no web process after
+  shutdown (`bootstrap::tests::web_process_tests::actual_host_spawns_web_process_serves_version_and_restarts_after_eof`,
+  exactly 1 passed).
+- **Known deferrals:** UI session wire still carries `absolute_expires_at`, `hq_restarted` and `member_id` (changes with A3
+  together with the org-proto DTOs and vectors); pre-existing WebKit journey/CSP time-outs reproduce on the base unchanged.
