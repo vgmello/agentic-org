@@ -524,7 +524,7 @@ Common flags: `-p` stream-json, `--model haiku --max-budget-usd 0.25 --tools "" 
 
 1. **Is `CLAUDE_SECURESTORAGE_CONFIG_DIR=` acceptable?** It's undocumented and could change in any release.
    - The alternatives are the real `~/.claude` as the config dir, which is the design's assumption and brings the user's config, plugins and history into every agent unless `--setting-sources ""` holds; `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, which is long-lived, inference-only, and needs the user to make it; or an API key.
-   - It needs a decision (ada / the user), plus a version gate and the `auth status` preflight.
+   - It needs a decision (the owner), plus a version gate and the `auth status` preflight.
 2. **Hard-coded `~/.claude` writes** (fact 11): what else in the binary ignores `CLAUDE_CONFIG_DIR` (`bridge-spawn`, `ssh`, the OAuth refresh lock)? That matters if `~/.claude/**` is a fixed deny for agents. It's harmless here because the runtime does the writing, not the agent's tools.
 3. **Other agents' branch refs:** can `denyWrite: work.git/refs/heads` plus `allowWrite: work.git/refs/heads/task/<id>` express "only my branch"? Untested. Otherwise, per-branch denies have to be regenerated before every start.
 4. **The shell snapshot** (fact 10): should the office set `SHELL=/bin/sh`, or a clean `ZDOTDIR`, so that the user's rc functions and aliases don't reach agents? Untested.

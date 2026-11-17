@@ -1,75 +1,59 @@
 # Agentic Org
 
-Agentic Org's selected v1 architecture is a standalone Rust server on macOS/Linux
-with a static browser application served by HQ. Offices execute agents and serve
-authorized organization data; teams and projects belong to the organization.
-Tauri is deferred to v2.
+Agentic Org is a self-hosted server that runs an organization of people and AI agents:
+teams, projects, tasks, chat and spend. It runs on macOS and Linux, including in a
+container. People use a browser; agents use the `agent-os` command line and run
+headless, started and supervised by their office.
 
-Use the [feature checklist](docs/FEATURES.md) to see every capability's delivery
-status, remaining work and link to its full specification. It distinguishes
-completed foundations from partial UI work, planned integration and deferred scope.
-The [feature area guide](docs/FEATURE-AREAS.md) defines the categories, their scope
-and boundaries, and the implementation checks still needed in each area.
+**New here? Read [docs/START-HERE.md](docs/START-HERE.md), then the
+[implementation plan](docs/implementation-plan.md).**
 
-The [organization-data contract](docs/design/organization-data/README.md) is the
-source of truth for selected relationships, fields, canonical storage, execution
-and operational data. Read the [authority map](docs/design/documentation-authority.md)
-for the corresponding design/UX guides and their implementation boundaries.
+- [Feature checklist](docs/FEATURES.md): every capability, its status and its
+  requirement. [Feature areas](docs/FEATURE-AREAS.md) define the categories.
+- [Organization data contract](docs/design/organization-data/README.md): records,
+  fields, identities and storage. It wins over any other document on those topics.
+- [Documentation authority map](docs/design/documentation-authority.md): which
+  document owns which topic.
+- [Architecture non-negotiables](docs/architecture-non-negotiables.md): what never
+  varies, and what you decide yourself.
 
-Employees have one home team; projects have an accountable owner team and may
-share registered repositories. Tasks, bugs and requests share one typed task
-model, with independent ownership and assignment. Portable definitions/work files
-live in organization Git. Protected chat, private task notes, usage, budget and
-recovery records have separate durable sources; neither a Git clone nor a fresh
-office cache is a complete organization restore.
-
-The selected data model is a design, not a deployed migration. The executable
-status below identifies available entry points. Automatic scheduling/memory,
-process execution, Areas, Undo and retrospectives remain unselected; their earlier
-proposals do not become shipped capabilities because a related data record exists.
-
-## Proposed v1 layout
-
-The [organization data documentation](docs/design/organization-data/README.md) defines the selected organization/project/employee data model, including messaging, recovery and budget records. The [documentation authority map](docs/design/documentation-authority.md) distinguishes target contracts from current implementation and deferred engines. Its model-profile and agent-execution document is a linked implementation specification; application migrations are not applied by those SQL drafts.
-
-
-Application directories, Cargo packages and executable names now match:
+## Layout
 
 ```text
 apps/
-  agentic-org/         Human CLI and serve host composition
+  agentic-org/         The person's command line; `serve` runs the host
   agentic-org-office/  One office worker
-  agentic-org-web/     Browser entry point and HTTP library
-  agent-os/            Small employee CLI
-  agentic-org-ui/      Static browser assets
+  agentic-org-web/     Serves the browser application and /api/v1
+  agent-os/            The agents' command line
+  agentic-org-ui/      Static browser application (SvelteKit), served by agentic-org-web
 crates/
-  org-host/            Host lifecycle/key-custody library
+  org-host/            Host library composed by `agentic-org serve`
   ...                  Domain and protocol libraries
 ```
 
-agentic-org serve runs the existing host lifecycle. **HQ setup/service registration and production web handoff remain unavailable:** their protected bootstrap/authentication integration has not landed in v1. setup returns an error without creating state; agentic-org-web refuses to open a listener without its unfinished production composition. Help/version commands are available. The existing test-only CSP harness remains a test example, not a production bypass. See [executable migration](docs/design/executable-migration.md) for migration scope and checks. This code change does not install services, update running agents or reset data.
+## What runs today
 
-Follow the [architecture rules](docs/architecture-rules.md) and
-[proposed project structure](docs/design/project-structure.md) for domain/feature
-organization, shared code ownership, and the source-to-target implementation plan.
-The application/package naming migration and Tauri-shell removal are implemented. Remaining standalone deployment features are listed above. Browser areas without a gateway adapter show unavailable
-in both ordinary development and release; test fakes require explicit test composition.
-The historical desktop shell commands are retained in Git history, not as instructions for this tree.
+Nothing a person can use end to end yet. `agentic-org serve` runs the host;
+`agentic-org setup` refuses without changing anything; `agentic-org-web` refuses to
+open a listener. [Executable migration](docs/design/executable-migration.md) lists
+exactly what each executable does now, and the implementation plan says in which
+increment each part becomes usable.
 
-Run the UI checks from `apps/agentic-org-ui`:
+## Build and test
 
-See [development tooling](DEVELOPMENT.md) for pinned runtimes, security checks,
-linting, browser security suites, and Codex skills.
+[DEVELOPMENT.md](DEVELOPMENT.md) has the pinned toolchains and every check. In short:
 
 ```sh
+cargo fmt --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+
 cd apps/agentic-org-ui
 bun install --frozen-lockfile
 bun run check
 bun run test
 bun run build
-bun run test:e2e
 ```
 
-## Historical implementation
-
-Superseded desktop layouts and shell commands are available in Git history. They are not current build or installation instructions. Current source ownership is in AGENTS.md; the executable migration document records the remaining production integration gaps.
+The [local HQ runbook](docs/runbooks/local-hq.md) shows how to build the executables
+and run a disposable development host.

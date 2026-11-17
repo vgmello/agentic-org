@@ -1,6 +1,9 @@
 # org-release
 
-Pure verification for ADR-0009's `agentic-org-release-v1` profile. The library
+Pure verification for ADR-0009's `agentic-org-release-v1` profile. The host's release
+module (`crates/org-host/src/release`) uses it, and no command reaches that yet:
+installing from a signed release is increment L9 of the
+[implementation plan](../../docs/implementation-plan.md). The library
 has no filesystem, archive, environment, process, platform-admission or activation
 adapter. Its six direct external dependencies are pinned existing workspace
 versions: ring 0.17.14, serde 1.0.229, serde_json 1.0.154, sha2 0.10.9,
@@ -32,7 +35,7 @@ no payload bytes assigned to directories. Excess UI bytes return the existing
 manifest and per-file limits also remain enforced. Consumers must use these
 constants and independently check actual input before staging or preload.
 
-The host or gateway composes it with held-descriptor/platform operations:
+The host or the web process composes it with held-descriptor/platform operations:
 
 ```rust,ignore
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, verify_manifest};
@@ -46,7 +49,7 @@ let release = verify_manifest(&exact_manifest_bytes, &raw_signature, &policy, &k
 // over the exact bytes, not a serialization of the parsed manifest.
 let manifest_digest = release.manifest_sha256();
 release.verify_inventory(actual_regular_payload_paths.iter().map(String::as_str))?;
-let expected = release.file("agentic-org-web").ok_or(AdapterError::MissingGateway)?;
+let expected = release.file("agentic-org-web").ok_or(AdapterError::MissingWeb)?;
 let signed_cdhash = expected.macos_cdhash(); // Compare to platform-reported loaded-image identity.
 
 let mut payload = expected.payload_verifier();

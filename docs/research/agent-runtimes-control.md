@@ -1,6 +1,8 @@
 # Controlling agent runtimes from the office server: Claude Code, Codex, Antigravity
 
-Research for Agentic Org's office server (`org-server`, Rust). It answers how the office can start, prompt, observe, resume, stop and meter agents on three runtimes, and recommends one session abstraction. Written 2026-11-08.
+Research for Agentic Org's office worker (now `agentic-org-office`). It answers how the office can start, prompt, observe, resume, stop and meter agents on three runtimes, and recommends one session abstraction. Written 2026-11-08.
+
+**Status.** A dated record of vendor behaviour; it informs designs and is not a requirement. Since it was written, [ADR-0004](../adr/0004-headless-agent-sessions.md) settled the session model: every agent runs headless under the structured driver, and the product never attaches to an agent's process. The agent command line is `agent-os`. The current design is [agent sessions](../design/agent-sessions.md); the spikes are in [`spikes/`](../../spikes/). Where this record discusses attaching, take-over or the `--bg` daemon, it describes what the vendor tools can do, not what the product does.
 
 ## Evidence legend
 
@@ -46,73 +48,15 @@ I didn't install Codex or agy. Both need a sign-in, and installing them was outs
    - **Claude:** a headless `-p` process can't be attached to. The `--bg` daemon + `claude attach` path (spike S2) can, but it has no programmatic prompt channel and no structured event stream.
    - **agy:** take-over only (stop headless, reopen interactively).
 6. **Main risks:**
-   - The Claude path choice conflicts with ADR-0004's `--bg` + attach design.
    - Protocol stability: Claude's stdin control messages are semi-documented, Codex app-server is marked "experimental", and agy is closed-source with weekly releases.
    - **Auth and ToS for a third-party product** driving subscription logins. Anthropic explicitly disallows offering claude.ai login in third-party products without approval.
    - Approvals in headless mode, which all three deny by default.
 
 ---
 
-## 1. What exists locally today
+## 1. Earlier spikes cited below
 
-### 1.1 `agents/bin/agent` (how agents start today)
-
-`bin/agent` is a thin wrapper: `exec python3 hr/hr.py session "$@"`. `hr.py session_command()` builds:
-
-```
-claude --agent <agent-id> --name <agent-id> [--plugin-dir mods/<mod> ...] [extra...]      # new
-claude --agent <agent-id> --resume <agent-id> [--plugin-dir ...] [extra...]               # --resume
-```
-
-`cmd_session` then `chdir`s to the repository root and `execvp`s `claude`.
-
-- Every agent runs **interactively in the user's terminal**, from the repo root. Identity comes from `--agent`, which points at `.claude/agents/<agent>.md` (the generated registration that tells the agent to read its home `CLAUDE.md`).
-- `--name` makes the session resumable by name.
-- Mods (`mods/goals`) load with `--plugin-dir`.
-- There's no headless or programmatic control. The agent's instructions are a subagent definition plus `CLAUDE.md` files, not a system-prompt flag.
-
-### 1.2 App repo `origin/spike/s1-s2` (S1 presence, S2 background sessions and the attach panel)
-
-Both spikes ran against Claude Code 2.1.311 (the version here).
-
-**S2 (`spikes/s2-sessions/README.md`)** answers ADR-0004 §6. Its verdict: "keep the chosen design (Claude Code background sessions + `claude attach` in a PTY)". Facts that matter here:
-
-- **Start:** `claude --bg` returns in 0.57–0.80 s, because a per-user daemon (`claude daemon run`) hands over a pre-started spare.
-  - It prints `backgrounded · <id8> · <name>`.
-  - `--bg` **ignores `--session-id`**. The full uuid comes from `claude agents --json`.
-- **Ids:** `attach`, `stop` and `logs` take only the 8-hex short id. `--resume` takes the uuid. Store both.
-- **Environment:** the caller's env doesn't reach a bg session. Only cwd and `PATH` do, and `PATH` comes from whichever client last started or woke it. Everything else comes from the daemon's env. Pass variables with `--settings '{"env":{…}}'`.
-- **Reopen:** `claude attach <id8>` wakes a stopped session with its saved `respawnFlags`.
-  - `--bg --resume <uuid>` with any flags **forks a copy**.
-  - Right after `stop`, it usually forks a copy that has no mods (5 of 7 trials).
-- **`--bg` setup:**
-  - It needs a trusted workspace.
-  - It appends stdin to the prompt, so spawn it with stdin from `/dev/null`.
-  - It needs `"worktree": {"bgIsolation": "none"}`, or Edit and Write are blocked in the main checkout.
-- **Liveness:** `claude agents --json` gives `status` (`busy`, `idle`, `waiting` + `waitingFor`) and `state`. Liveness means having a `pid`.
-- **`claude logs <id8>`** is raw terminal bytes, not a transcript.
-- **pty-host:** a Rust crate that runs `claude attach <id8>` in a PTY behind seq-numbered frames.
-
-**S1 (`spikes/s1-status/README.md`)** proved status from a presence mod through hooks, a Unix socket, the Rust receiver and a macOS notification. Amendments that matter here:
-
-- Undecided `PermissionRequest` in headless `-p` gives a false "Needs you" (amendment 3).
-- Use `Stop.background_tasks` (subagents only) for "still working".
-- The presence mod must be the **first** `--plugin-dir`.
-- `AC_AGENT` must go through `--settings env` for `--bg`.
-
-### 1.3 ADRs on `origin/v1`
-
-- **ADR-0001** ("the app is a client; the office server holds the organization"):
-  - One `org-server` process per office, supervised by `org-office-host` (a per-user SMAppService login item).
-  - Each office owns its **runtime side: sessions, live status, local queues**.
-  - The office server is also the message hub (decision 4). `org-agent` talks to its own office over the office's local socket.
-  - `crates/` are libraries and `apps/` are runnables.
-- **ADR-0003** (messaging, office-first):
-  - Agents "run across multiple CLIs (Claude Code, Antigravity, Codex)".
-  - Each runtime gets a **thin (~30-line) adapter** around `org-agent msg notify`, run from the runtime's **`Stop` hook**.
-  - Presence is `busy` while executing a turn, `idle` while holding `msg.wait` or between turns, and `offline` when no session is active.
-  - So the ADRs already assume **every runtime has a Stop-like hook**. All three do (Claude: `Stop`; Codex: `Stop` **[src]**; agy: `Stop` with `fullyIdle` **[doc]**).
-- **ADR-0004** (sessions) is referenced by the spikes but isn't on `v1` yet.
+S1 (presence through hooks) and S2 (Claude Code `--bg` background sessions and `claude attach` in a PTY, with a `pty-host` crate) were spikes in an earlier repository. They are cited below only as the source of observed Claude Code behaviour. Neither is part of this repository or of the product.
 
 ---
 
@@ -389,7 +333,7 @@ codex exec review ...
 - **Hooks:** events are `PreModelRequest`, `PostModelRequest`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, **`Stop`**, `Interrupt` **[src: hooks/src/lib.rs]**. They need **persisted hook trust**, or `--dangerously-bypass-hook-trust` for vetted automation. That matters for ADR-0003's Stop adapter.
 - **Required MCP servers:** an enabled server with `required = true` that fails to start makes `exec` exit with an error **[doc]**.
 - **Env vars:** `CODEX_HOME`, `CODEX_API_KEY` (exec), `OPENAI_API_KEY`. Don't put keys in the env of jobs that run repo code **[doc]**.
-- **Tool shells filter the environment:** `shell_environment_policy` (in 0.167.0, with `ignore_default_excludes` and `include_only`) drops variables whose names match `*KEY*`, `*SECRET*` or `*TOKEN*` from tool shells by default **[review]**. That would drop `ORG_SESSION_TOKEN`, so the office pins `shell_environment_policy.ignore_default_excludes=true` and an `include_only` list of its allowlist with `-c`, on the app-server and on `codex resume`. The S0 Codex spike proves `org-agent` binds from a tool. Antigravity's filtering is unknown: its spike checks it too.
+- **Tool shells filter the environment:** `shell_environment_policy` (in 0.167.0, with `ignore_default_excludes` and `include_only`) drops variables whose names match `*KEY*`, `*SECRET*` or `*TOKEN*` from tool shells by default **[review]**. That would drop `ORG_SESSION_TOKEN`, so the office pins `shell_environment_policy.ignore_default_excludes=true` and an `include_only` list of its allowlist with `-c`, on the app-server and on `codex resume`. The S0 Codex spike proves `agent-os` binds from a tool. Antigravity's filtering is unknown: its spike checks it too.
 - **Stability:** app-server is experimental. Experimental fields need `capabilities.experimentalApi`, and the schema follows each CLI version.
 
 ---
@@ -533,7 +477,7 @@ stream-json **[doc]**:
 
 Put the contract in a small, stable crate that the office domain owns, for example `crates/org-runtime`. Each runtime gets an adapter crate (`org-runtime-claude`, `org-runtime-codex`, `org-runtime-agy`).
 
-- The office server depends on the trait. `apps/org-server` wires in the adapters.
+- The office worker depends on the trait. `apps/agentic-org-office` wires in the adapters.
 - Adapters depend only on the trait crate and their CLI, never on each other or on office storage.
 - That follows the architecture rules: dependency inversion around volatile, third-party CLIs, no cycles, and each adapter with Ce ≤ 3.
 
@@ -560,7 +504,7 @@ SessionEvent: Started{runtime_session_id, model} | TurnStarted | TextDelta | Mes
             | Quota{window, used_pct, resets_at} | Error | Exited{code}
 ```
 
-- **Persist in `office.db`:** `(agent_id, runtime, runtime_session_id, cwd, spec_hash, last_state)`. Resume after an office restart is then `runtime.resume(spec, id)`.
+- **Persist in the office:** `(agent_id, runtime, runtime_session_id, cwd, spec_hash, last_state)`. Resume after an office restart is then `runtime.resume(spec, id)`.
 - **Single writer per session:** the office holds a lock. A human take-over releases the headless process first.
 - **Usage:** the office stores **per-turn deltas** (it diffs cumulative counters for Claude totals and for agy), and prices Codex and agy tokens itself from a price table, or shows tokens and quota % only.
 
@@ -579,31 +523,7 @@ SessionEvent: Started{runtime_session_id, model} | TurnStarted | TextDelta | Mes
 | usage | `model_usage_since_last_result` + `total_cost_usd`; `rate_limit_event` | `thread/tokenUsage/updated.last`; `account/rateLimits/updated` | diff cumulative `usage` |
 | attach | TakeOver (stop headless → `claude --resume <uuid>` in pty-host → hand back), or keep S2's `--bg` path for agents the owner wants to "sit with" | TakeOver like the others (`agent-sessions.md`); native joining only if a spike proves `--ws-auth capability-token` | TakeOver: `agy --conversation <id>` in a PTY |
 
-### 6.3 Decision needed: the Claude path versus ADR-0004
-
-S2 chose `--bg` + `claude attach` because the attach panel is the product's core interaction. For **an office that sends prompts and reads structured events**, `--bg` has gaps:
-
-- No programmatic prompt: the only ways in are keystrokes into a PTY, or the agent pulling messages itself through `org-agent msg wait` (ADR-0003).
-- No structured events: only hooks, `claude agents --json` polling, and raw `logs`.
-- No usage or cost stream.
-
-The `-p` stream driver has all of those, but no live attach. Options:
-
-- **(a) Headless-first (my recommendation for the multi-runtime office):**
-  - Every runtime runs under the structured driver.
-  - The app's session panel renders the event stream.
-  - "Open terminal" is a take-over with a lock.
-  - It's uniform across the three runtimes and gives one presence model.
-- **(b) Hybrid:**
-  - Claude agents run as `--bg` for interactive work.
-  - The office talks to them only through `org-agent` messages, hooks and `agents --json`.
-  - Codex and agy go headless.
-  - Two models to maintain, and Claude turns and usage aren't metered.
-- **(c) Keep ADR-0004 as is for Claude**, and accept no programmatic send or usage for Claude.
-
-Whatever the choice, ADR-0004 should state how the office sends a prompt and reads usage for a Claude agent.
-
-### 6.4 Main risks
+### 6.3 Main risks
 
 1. **Contract stability:**
    - Claude: the stdin `control_request` wire format is what the Agent SDK uses but isn't a published, versioned API. Use `system/init.capabilities` for feature detection.
@@ -638,7 +558,7 @@ Whatever the choice, ADR-0004 should state how the office sends a prompt and rea
    - Every runtime shares one account's rate limits across all of the office's agents, so the scheduler needs quota awareness.
 8. **Interrupt asymmetry:** agy's stream mode has no in-band interrupt, so cancelling means killing and resuming (seconds). Prefer `agy acp` if its spike passes.
 
-### 6.5 Spikes to close the gaps
+### 6.4 Spikes to close the gaps
 
 - **S-claude-driver:**
   - The `can_use_tool` approval round-trip through `--permission-prompt-tool stdio`.
@@ -652,21 +572,19 @@ Whatever the choice, ADR-0004 should state how the office sends a prompt and rea
   - `thread/tokenUsage/updated`.
   - TUI `--remote` joining a thread the office already loaded, only over `--ws-auth capability-token` (optional).
   - Hook trust for the ADR-0003 Stop adapter.
-  - `org-agent` binds from a tool shell with the `shell_environment_policy` pins (the token survives).
+  - `agent-os` binds from a tool shell with the `shell_environment_policy` pins (the token survives).
 - **S-agy** (install 1.5.x, sign in once):
   - `agy acp` versus stream-json: interrupt, resume, `request_permission`, usage.
   - Where conversations live.
   - Whether headless conversations are resumable interactively.
   - The custom-agent file as the instructions carrier.
-  - Whether agy filters its tools' environment (the session token must reach `org-agent`).
+  - Whether agy filters its tools' environment (the session token must reach `agent-os`).
 
 ## Sources
 
 - Local:
   - `claude --help`, `claude agents|attach|stop|logs|rm|respawn|auth --help`, `claude auth status` (2.1.311).
   - Live runs (scripts and captures in the session scratchpad, test transcripts deleted afterwards).
-  - `agents/bin/agent`, `agents/hr/hr.py` (`session_command`).
-  - App repo: `origin/spike/s1-s2:spikes/s2-sessions/README.md`, `spikes/s1-status/README.md`; `origin/v1:docs/adr/0001-app-is-a-client-office-is-a-server.md`, `0003-agent-messaging-office-first.md`.
 - Claude Code:
   - [Run Claude Code programmatically](https://code.claude.com/docs/en/headless)
   - [Manage sessions](https://code.claude.com/docs/en/sessions)

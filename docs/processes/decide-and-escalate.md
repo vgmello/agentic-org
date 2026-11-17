@@ -1,53 +1,58 @@
 ---
-process: decide-and-escalate     # the match key for overrides, unique per level and scope
-name: Decide, consult, escalate
+process: decide-and-escalate
+name: Decide, record, escalate
 kind: process
-level: organization          # repository seed metadata; selected structural scopes are organization | team | project
-version: 1
-owner: lead
+level: organization
+version: 2
+owner: owner
 status: active
-summary: Decide routine calls yourself; when unsure, reach consensus with a fresh peer; escalate only critical or unresolved decisions, with options and a recommendation.
-applies_to: every agent
-overridable: false            # sealed: §3's critical list is a floor. A team or project adds its own items in a process with another key
+summary: Decide yourself inside the non-negotiables, record the decision where the next person looks, and bring to the owner only what changes the product for people or cannot be undone.
+applies_to: every engineer and agent working on this repository
+overridable: false
 ---
 
-> The user's standard procedure (2026-11-09). Kept in this repository (`docs/processes/`) as repository contributor instructions; selected organization process records belong in the remote organization repository.
+# Decide, record, escalate
 
-# Decide, consult, escalate
-
-These instructions govern work on this software repository. Their legacy seed
-front matter is not an accepted organization-data payload. When materializing a
-selected process record, use the stable-ID path, `key`, `schema_version`, `revision`,
-`kind`, `title`, scope IDs, lifecycle and attribution fields in
-[organization structure](../design/organization-data/01-organization-structure.md).
-Preserve the explicit `overridable` value. That structural mapping neither
-activates a process engine nor changes this repository's review requirements.
-
-How every agent makes decisions. The goal: work keeps moving, people are asked only what truly needs them.
+How engineers and their agents make decisions while building Agentic Org. The rules
+are those of [architecture non-negotiables](../architecture-non-negotiables.md),
+"Who decides what"; this page restates them as a procedure. If the two ever differ,
+the non-negotiables page wins.
 
 ## 1. Decide yourself
-- Routine and reversible calls are yours: use your best judgment and act. Don't ask "should I?".
-- Write down what you decided and why, where the work is (the task, the branch's commit message, your journal).
-- Approvals another process requires aren't routine calls: they still apply (for example branch-and-merge's reviewer READY and the lead's go, or a process change's approval).
 
-## 2. When you're unsure, consult a peer
-- Start a fresh peer (a subagent or another agent) and give it the question and the facts, not your conclusion.
-- Bounce the options until you agree on what's best. Then act on it, and record the decision, the options you weighed and the consult's view.
+Decide, without asking, anything the requirement documents do not settle or settle
+in two ways: internal structure, algorithms, names, file formats inside the contract's
+intent, the order of work, what to delete, how to test.
 
-## 2a. When a spec is ambiguous and the reading changes an answer
-- Give the staff engineer the options with a recommendation. Fail closed by default (the reading that refuses, keeps the seal or leaves the higher level in force).
-- The ruling is written into the spec next to the rule (`ruled <date>: <who>`) and pinned by a test named after it, so the code and the spec say the same thing.
-- Meanwhile keep moving on everything that doesn't depend on the ruling.
-- First examples: org-process R1 (a sub-team override in a diamond is a conflict) and R2 (an unreadable-key file seals every key below its place, with its own "can't tell" outcome), ruled 2026-11-13: ada.
+When two documents disagree, follow the
+[documentation authority map](../design/documentation-authority.md). If that does not
+settle it, take the reading that fits the non-negotiables and their aims best.
 
-## 3. Escalate only when it's needed
-Go to your lead (or, at the top, the owner) only when:
-- **there's no consensus** after the consult; or
-- **the decision is critical**: security, data loss, money or spend, anything irreversible or one-way, legal, or product scope and priority; or
-- **you're blocked** by something only they can do (an approval, a credential, a purchase, starting a session you can't start).
+When unsure, you may ask a fresh subagent for an independent view: give it the
+question and the facts, not your conclusion. You still own the decision.
 
-An escalation brings: the question, the options, your recommendation, and what the consult agreed or disagreed on. One message, short.
+## 2. Record it where the next person will look
 
-## 4. Keep moving
-- While an escalation waits, keep working on everything that doesn't depend on it.
-- When the answer comes, record it with the decision.
+- Change the document that owns the topic so that it states the decision. Replace the
+  old text; do not leave it beside the new.
+- For a decision about architecture, add a short decision record in
+  [`docs/adr/`](../adr/): the decision, why, and what you rejected.
+- Update the [feature checklist](../FEATURES.md) row.
+
+## 3. A non-negotiable does not vary
+
+If a non-negotiable cannot be met, look again for a design that meets it. If there is
+truly none, do not stop: choose the best option, build it, and write a decision record
+that names the non-negotiable, says why it could not hold, what you chose and what it
+costs. Tell the owner in your next report. An exception is recorded, never silent.
+
+## 4. Bring to the owner only what needs the owner
+
+Bring to the owner only what changes the product for the people using it (adding or
+removing something a person can do) or a choice that cannot be undone later. Bring it
+with a recommendation, in one short message.
+
+## 5. Keep moving
+
+While a question waits for the owner, keep working on everything that does not depend
+on the answer. When the answer comes, record it as in step 2.

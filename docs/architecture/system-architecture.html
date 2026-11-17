@@ -275,7 +275,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <li><a href="#matrix">Status matrix</a></li>
     <li><a href="#conflicts">Review decisions</a></li>
   </ol>
-  <div class="sibling">Companions: <a href="architecture-overview.html">Architecture overview</a> · <a href="../design/conflict-resolution-plan.md">Conflict register</a></div>
+  <div class="sibling">Companions: <a href="architecture-overview.html">Architecture overview</a></div>
 </nav>
 
 <main>
@@ -732,7 +732,7 @@ offices/
     <li>Sync is deterministic apply at <code>(epoch, seq)</code>, with snapshot replace. The per-origin work stream is deduplicated by office, incarnation and sequence.</li>
     <li>The command outbox is ordered and separate from the message queue.</li>
     <li>Promotion of a satellite to HQ is manual and deferred. Higher observed epochs fence stale authority.</li>
-    <li>Setup creates HQ only. Satellite onboarding is a separate flow started from HQ and is unavailable today.</li>
+    <li>Setup creates no office. The HQ office is created with its organization, from the browser. Satellite onboarding is a separate flow started from HQ and is unavailable today.</li>
   </ul>
 </section>
 
@@ -742,6 +742,7 @@ offices/
     <thead><tr><th>Secret</th><th>Held by</th><th>Handed to</th><th>Never seen by</th></tr></thead>
     <tbody>
       <tr><td>Office secrets key (today the database key; under ADR-0016 it only wraps an office's private keys)</td><td>Host key store</td><td>The office worker, on its launch channel</td><td>Web process, agents, <code>agent-os</code>, Git</td></tr>
+      <tr><td>Registration and reset links</td><td>Host database, as a digest of the token; single use, expiring</td><td>Whoever is handed the link</td><td>Logs, the office worker, agents</td></tr>
       <tr><td>Account credentials and sessions</td><td>Host database</td><td>Nobody; the web process asks the host to verify</td><td>Office worker, agents</td></tr>
       <tr><td>Browser session proof</td><td>Browser (IndexedDB or memory) and the web process in memory</td><td></td><td>Disk on the server</td></tr>
       <tr><td>Organization CA key</td><td>HQ worker's encrypted database; encrypted escrow replicated</td><td></td><td>Host, web, satellites, Git (only the public escrow envelope is published)</td></tr>
@@ -770,7 +771,7 @@ offices/
     <li>An employee token is not host administration authority.</li>
     <li>Browser authentication and federation TLS are separate boundaries.</li>
     <li>A SQL row is a projection. It is never launch authority, and raw SQL access on a replica establishes no authority.</li>
-    <li>The organization owner flag alone grants nothing. The authenticated owner account is a security principal; private task notes are hidden even from owners and administrators.</li>
+    <li>No field on a record grants authority. The owner is a person; being the owner is a permission of their account at the host. Exactly one account is the server's administrator. Private task notes are hidden even from owners and the administrator.</li>
     <li>Channel capacity is bounded: 8 per office, 7 for the web process, one reserved for local use. A capacity refusal is ordinary; a malformed transfer is fatal.</li>
     <li>Tests never write to a user's organization workspace and never touch the installed live CLI or spool.</li>
   </ul>
@@ -778,17 +779,28 @@ offices/
 
 <section id="lifecycle">
   <h2><span class="num">14</span>Install, release and recovery</h2>
-  <h3>First install and HQ creation <span class="st part">Built, not reachable</span> in parts; <code>setup</code> refuses today</h3>
+  <h3>First run: install, register, create the organization <span class="st target">Designed</span>; creation is <span class="st part">Built, not reachable</span>; <code>setup</code> refuses today</h3>
   <ol class="flow">
     <li><span class="hop">Bootstrap <i>→</i> setup</span>Downloads and verifies <code>agentic-org</code>, then runs <code>setup</code>, or <code>setup --bundle &lt;path&gt; --offline</code>.</li>
     <li><span class="hop">Setup</span>Verifies the complete signed release: an Ed25519 signature over the manifest covering four executables and the UI. Publishes it atomically and pins it (ADR-0009).</li>
-    <li><span class="hop">Setup</span>Freezes the request, operation IDs and pin in a setup journal. Reserves the instance. Establishes the instance administrator.</li>
+    <li><span class="hop">Setup</span>Reserves the instance, registers and starts the service, and prints one registration link. The host keeps only a digest of the link's token. Setup asks for no username or password and creates no account, organization or office.</li>
+    <li><span class="hop">Browser <i>→</i> web <i>→</i> host</span>The person opens the link and chooses a username and password. The host redeems the token once, creates the account and marks it as the server's one administrator.</li>
+    <li><span class="hop">Browser <i>→</i> web <i>→</i> host</span>The administrator creates an organization: name, slug, remote organization repository and state branch. No team is asked.</li>
     <li><span class="hop">Host</span>Stages the recovery code in its credential provider and keeps only an opaque handle.</li>
-    <li><span class="hop">Host <i>→</i> office</span>Creates the office key and launches the HQ worker with an HQ-creation context and the code.</li>
+    <li><span class="hop">Host <i>→</i> office</span>Creates the office secrets key and launches the HQ worker with an HQ-creation context and the code.</li>
     <li><span class="hop">Office</span>Generates the CA key, seals it (Argon2id, AES-256-GCM), and commits key, envelope and completion in one transaction. Publishes the public envelope. Drops the code. A retry reuses the same material (ADR-0007).</li>
-    <li><span class="hop">Setup</span>Offers code collection, registers and starts the service, probes readiness, and prints the URL.</li>
+    <li><span class="hop">Office</span>In the same accepted transaction: the organization, one top-level team named after it, the creator's person record in that team as its lead, and the built-in HR employee. The creator's account owns the organization.</li>
+    <li><span class="hop">Server machine</span>The recovery code waits to be collected with <code>agentic-org recovery release</code>, at the machine, after device-owner authentication. It is never shown in the browser.</li>
   </ol>
-  <p>An offline setup makes no external requests. Creating an organization needs instance-administrator authority, with name, slug, remote organization repository and state branch, and a bootstrap home team for the built-in HR agent and the owner's person record.</p>
+  <p>An offline setup makes no external requests. The account created from setup's link gets its person record when it creates the organization.</p>
+
+  <h3>Accounts <span class="st target">Designed</span></h3>
+  <ul>
+    <li>Accounts, their password verifiers, sessions and one-time links are host data. Links are stored only as digests, work once and expire.</li>
+    <li>Exactly one account is the administrator. <code>agentic-org admin reset</code>, on the server machine, is the only account command: it issues a new one-time link for that account.</li>
+    <li>Every account is tied to exactly one person in each organization it can open, and an account is never tied to an agent. The link between account and person is host data; it grants nothing by itself.</li>
+  </ul>
+  <p>How people are invited and what each screen shows is in <code>docs/specs/server-installation-and-access-ux.md</code>.</p>
 
   <h3>Updates <span class="st target">Designed</span></h3>
   <p>A person installs only <code>agentic-org</code>; it installs and updates everything else and itself. A release is always complete: four executables and the UI under one signed manifest.</p>
@@ -852,37 +864,38 @@ offices/
 
 <section id="conflicts">
   <h2><span class="num">16</span>Decisions from the architecture review</h2>
-  <p class="sec-lede">This part used to list every place where two documents, or a document and the code, disagreed. The owner has now reviewed all 52. 34 are fixed in the documents and 18 are decided and recorded as requirements with code still to change. The owner has answered every question raised; what is left is code. The <a href="../design/conflict-resolution-plan.md">conflict register</a> has every entry with what was applied.</p>
+  <p class="sec-lede">The decisions in force. Each is written into the requirement documents named in the last column; what is left is code.</p>
   <div class="note"><p><b>The rule above the rest.</b> Nothing has shipped. Until the owner declares v1 shipped there are no versions to keep side by side, no migrations and no old shapes to preserve. Where a rebuild gives the cleaner architecture, rebuild.</p></div>
   <h3>Decided, with code still to change</h3>
   <div class="tbl wide"><table>
     <thead><tr><th>Topic</th><th>Requirement</th><th>Code today</th><th>Recorded in</th></tr></thead>
     <tbody>
-      <tr><td>Storage</td><td>Files are the source; rebuild the store against the selected contract.</td><td>Two encrypted databases with older tables are the source.</td><td class="k">B-01, organization data</td></tr>
+      <tr><td>Storage</td><td>Files are the source; rebuild the store against the selected contract.</td><td>Two encrypted databases with older tables are the source.</td><td class="k">organization data</td></tr>
       <tr><td>Asking and waiting</td><td>Bounded wait; a required ask suspends the agent and the answer resumes it.</td><td>An ask blocks with a deadline; nothing suspends or resumes an agent.</td><td class="k">ADR-0020</td></tr>
-      <tr><td>IDs and task numbers</td><td>UUIDv7 everywhere. Task references minted by the creating office, <code>T-B37</code>.</td><td>ULIDs in most of the code; per-project task counters at HQ.</td><td class="k">B-04, C-12, ADR-0019</td></tr>
-      <tr><td>Storage engine</td><td>Only store adapters know the database; PostgreSQL must be possible.</td><td>One concrete store; two files use SQL outside it. Messaging and replication already have engine-independent tests.</td><td class="k">B-13, ADR-0018</td></tr>
-      <tr><td>Launch contract</td><td>One contract, the verified rendezvous; no older form.</td><td>Host and worker implement both forms; the host uses the rendezvous only for a registered, protected instance.</td><td class="k">B-06, host boundary design</td></tr>
-      <tr><td>Authorization of people</td><td>Principal plus a host-issued grant, verified by the worker.</td><td>The launch line carries an app token; the grant key is unused.</td><td class="k">B-07</td></tr>
-      <tr><td>Work reads for the browser</td><td>Served through the host and office channel.</td><td>The host socket answers two calls.</td><td class="k">B-10</td></tr>
-      <tr><td>Platforms</td><td>macOS and Linux, including a container.</td><td>Workers start on macOS only.</td><td class="k">B-09, ADR-0017</td></tr>
-      <tr><td>Membership, task shape, areas</td><td>One home team; one typed task; no areas.</td><td>Many-to-many membership; separate task and bug families; <code>area.*</code> served.</td><td class="k">B-02, B-03, B-05</td></tr>
-      <tr><td>Create organization</td><td>Name, slug, organization repository, state branch, and the initial team when bootstrap employees are planned.</td><td>Name only.</td><td class="k">A-09, web API design</td></tr>
-      <tr><td>Agent home and sign-in</td><td>A private home per agent; sign-in from the subscription pool; never the user's own vendor folders.</td><td>No agent is launched.</td><td class="k">A-08, ADR-0015</td></tr>
-      <tr><td>Agent isolation</td><td>Same user or a dedicated user, chosen per agent.</td><td>No isolation setting in the launch description.</td><td class="k">F-03, ADR-0015</td></tr>
-      <tr><td>Browser sessions</td><td>Stored at the host; survive restarts.</td><td>In memory.</td><td class="k">F-01, ADR-0013</td></tr>
-      <tr><td>Speed</td><td>Fast acknowledgement for messaging and light task activity; a long-running <code>agent-os</code> mode.</td><td>Every write waits for the drive; a process per call.</td><td class="k">F-02, E-02, ADR-0014</td></tr>
-      <tr><td>Encryption</td><td>No application-level encryption; private keys wrapped by a host-held key.</td><td>SQLCipher on both databases.</td><td class="k">E-01, ADR-0016</td></tr>
-      <tr><td>Names in code</td><td>"web", not "gateway".</td><td>83 source files use the old word.</td><td class="k">D-07</td></tr>
+      <tr><td>IDs and task numbers</td><td>UUIDv7 everywhere. Task references minted by the creating office, <code>T-B37</code>.</td><td>ULIDs in most of the code; per-project task counters at HQ.</td><td class="k">ADR-0019</td></tr>
+      <tr><td>Storage engine</td><td>Only store adapters know the database; PostgreSQL must be possible.</td><td>One concrete store; two files use SQL outside it. Messaging and replication already have engine-independent tests.</td><td class="k">ADR-0018</td></tr>
+      <tr><td>Launch contract</td><td>One contract, the verified rendezvous; no older form.</td><td>Host and worker implement both forms; the host uses the rendezvous only for a registered, protected instance.</td><td class="k">host boundary design</td></tr>
+      <tr><td>Authorization of people</td><td>Principal plus a host-issued grant, verified by the worker.</td><td>The launch line carries an app token; the grant key is unused.</td><td class="k">Data contract</td></tr>
+      <tr><td>Work reads for the browser</td><td>Served through the host and office channel.</td><td>The host socket answers two calls.</td><td class="k">Data contract</td></tr>
+      <tr><td>Platforms</td><td>macOS and Linux, including a container.</td><td>Workers start on macOS only.</td><td class="k">ADR-0017</td></tr>
+      <tr><td>Membership, task shape, areas</td><td>One home team; one typed task; no areas.</td><td>Many-to-many membership; separate task and bug families; <code>area.*</code> served.</td><td class="k">Data contract</td></tr>
+      <tr><td>Getting in and accounts</td><td>Setup prints a one-time registration link; the first account is the one administrator; other accounts by invitation from the browser; every account is tied to a person.</td><td>Setup refuses; the first account is created from a typed password in tests only.</td><td class="k">Installation and access UX</td></tr>
+      <tr><td>Create organization</td><td>In the browser, by the administrator: name, slug, organization repository and state branch. A top-level team, the owner's person record and the built-in HR are created with it.</td><td>Two host commands; one takes a name only, the other the selected payload with a team name.</td><td class="k">Web API design</td></tr>
+      <tr><td>Agent home and sign-in</td><td>A private home per agent; sign-in from the subscription pool; never the user's own vendor folders.</td><td>No agent is launched.</td><td class="k">ADR-0015</td></tr>
+      <tr><td>Agent isolation</td><td>Same user or a dedicated user, chosen per agent.</td><td>No isolation setting in the launch description.</td><td class="k">ADR-0015</td></tr>
+      <tr><td>Browser sessions</td><td>Stored at the host; survive restarts.</td><td>In memory.</td><td class="k">ADR-0013</td></tr>
+      <tr><td>Speed</td><td>Fast acknowledgement for messaging and light task activity; a long-running <code>agent-os</code> mode.</td><td>Every write waits for the drive; a process per call.</td><td class="k">ADR-0014</td></tr>
+      <tr><td>Encryption</td><td>No application-level encryption; private keys wrapped by a host-held key.</td><td>SQLCipher on both databases.</td><td class="k">ADR-0016</td></tr>
+      <tr><td>Names in code</td><td>"web", not "gateway".</td><td>83 source files use the old word.</td><td class="k">Data contract</td></tr>
     </tbody>
   </table></div>
-  <h3>Answered by the owner on 2026-11-17, nothing left open</h3>
+  <h3>Decided, with nothing but code left</h3>
   <div class="tbl wide"><table>
     <thead><tr><th>Topic</th><th>Decision</th><th>Recorded in</th></tr></thead>
     <tbody>
-      <tr><td>Questions to people</td><td>One structured schema, rendered as choice, yes/no or free-text components built with shadcn-svelte and Bits UI in the product's own chat. No external channels. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one.</td><td class="k">A-07, REQ-04</td></tr>
+      <tr><td>Questions to people</td><td>One structured schema, rendered as choice, yes/no or free-text components built with shadcn-svelte and Bits UI in the product's own chat. No external channels. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one.</td><td class="k">REQ-04</td></tr>
       <tr><td>Asking and waiting</td><td>10 minutes wait, 2 minutes grace. A required ask left unanswered suspends the agent; the answer resumes it.</td><td class="k">ADR-0020</td></tr>
-      <tr><td>Anything from before</td><td>Dropped. The former development team's earlier command-line tool and its message queue are not carried over, and no rule protects them. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td class="k">D-01, AGENTS.md</td></tr>
+      <tr><td>Anything from before</td><td>Dropped. The former development team's earlier command-line tool and its message queue are not carried over, and no rule protects them. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td class="k">AGENTS.md</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>
@@ -890,7 +903,7 @@ offices/
 </section>
 
 <footer class="doc-foot">
-  Built from the repository at <code>v1-integration @ 55c7d76</code>: the organization-data contracts (documents 01 to 17), ADRs 0001 to 0020, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
+  Built from the repository branch <code>v1-integration</code>: the organization-data contracts (documents 01 to 17), ADRs 0001 to 0020, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
 </footer>
 </main>
 </div>

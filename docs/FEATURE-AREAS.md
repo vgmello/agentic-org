@@ -1,18 +1,16 @@
 # Feature areas
 
-These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. This preserves the area-by-area explanation alongside the repository requirements.
+These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. 
 
-Reviewed: **2026-11-16**. There are **13 categories, 166 feature rows and 0 rows needing verification** (eight rows added 2026-11-17 for owner decisions: ADR-0013 to ADR-0018, ADR-0020 and the split of hosting-provider integrations from local Git). Counts reflect the current checklist after the [first-five](verification/2026-11-16-first-five-features.md) and [remaining-58](verification/2026-11-16-remaining-feature-audit.md) source/test audits. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
-
-F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim. Accepted F2a adds separately scoped lossless source/codec evidence to already-partial FC-042; no count change or durable/usable history claim. F2b now adds scoped journal/capture source and storage tests, including recovery of interrupted directory creation and ancestor-flush failure fencing: FC-146 moves Planned to In progress, while FC-042 remains partial. F2b was accepted/integrated at `d55e3c25`/`eacb505d` with current checks and author/fresh reviews; protected host/service composition and usable feature acceptance remain. F3a adds the internal REC-ESC-1 crypto adapter and five targeted tests: FC-016 moves Planned to In progress. F3a was accepted/integrated at `065a0824`/`0d4035d7` after full checks and author/fresh reviews. F3b worker HQ persistence/admission was accepted/integrated at `4abca318`/`55c7d762` after full checks (3074 Rust tests, zero failures), original-author validation and fresh initial/separate final reviews. Root source update, 2026-11-17: F3c checkpoint `1ce54471` adds unaccepted native protected bootstrap/account/session/host-recovery composition and actual temporary-root native runtime evidence. FC-012 and FC-014 move to In progress; neither is a usable browser or installed-service delivery. Current full checks, independent reviews, browser/physical-authentication and release gates remain; full-row scope stays partial.
+There are **13 categories, 166 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 ## Categorization rules
 
 - Every FC- row has exactly one primary area, determined by the capability it delivers, regardless of whether it is Done, Planned, Deferred or another state.
 - Preserve FC- identifiers when moving rows. Cross-area dependencies use links; do not count the same feature twice.
-- Keep access/download/CSP features with installation and office operations. Keep deferred planning/tracking/subtask workflows with project work. These replace the former add-on groups, which mixed domain and status.
+- Keep access/download/CSP features with installation and office operations. Keep deferred planning/tracking/subtask workflows with project work. Categories never group rows by status.
 - Shared shell, cost, identity and recovery dependencies do not move a domain feature out of its primary area. Code ownership still follows [AGENTS.md](../AGENTS.md).
-- These are **documentation categories**, not an implementation of the deferred product “Areas” feature. Existing requirements and selection gates are unchanged.
+- These are **documentation categories**, unrelated to the product's areas feature, which is removed from v1.
 
 ## Area summary
 
@@ -43,7 +41,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Shared presentation belongs here; domain operations belong to the domain area. Account authorization and browser service composition belong to AREA-02; usage calculations belong to AREA-07.
 
-**Verification focus:** The [first-five audit](verification/2026-11-16-first-five-features.md) resolved all three unknown rows here: shared controls are In progress with concrete UX gaps; Search/New and keyboard preferences are Planned. Follow the recorded gaps before claiming completion. Shell shortcut or layout tests alone do not establish those capabilities.
+**Verification focus:** Shared controls have concrete UX gaps; Search/New and keyboard preferences are not built. Shell shortcut or layout tests alone do not establish those capabilities.
 
 **Requirements:** [Shell UX](specs/app-shell-ux.md), [Executable migration](design/executable-migration.md).
 
@@ -51,11 +49,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Installation, access and office operations** · [Feature checklist](FEATURES.md#installation-access-and-office-operations)
 
-**Scope:** Standalone installation, named instances, HQ bootstrap, production browser service, account access/grants/recovery, satellites, office lifecycle, verified downloads and release hardening.
+**Scope:** Standalone installation, named instances, setup and registration links, organization creation, production browser service, account access/administration/recovery, satellites, office lifecycle, verified downloads and release hardening.
 
 **Boundary:** Owns service/access/enrollment behavior. Team membership belongs to AREA-03; durable source restoration and process-safe cache rebuild belong to AREA-12. CSP is classified here with production security, even though it affects every screen.
 
-**Verification focus:** The [remaining-58 audit](verification/2026-11-16-remaining-feature-audit.md) resolved the other three unknown rows here: restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. The [first-five audit](verification/2026-11-16-first-five-features.md) established partial TLS/custody and satellite status/repair UI, with production handoff, CA escrow and invitation/approval integration still missing. Native account/bootstrap composition is now In progress with temporary-root executable evidence; it remains unaccepted. User-service registration, real browser onboarding, physical-authentication and authentic signed-release acceptance remain open.
+**Verification focus:** Setup creates the instance and prints a one-time registration link; it creates no account, organization or office and asks for no password. Every account is registered in the browser through a one-time link and is tied to a person. A signed-in administrator creates the organization and becomes its owner. Restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. TLS/custody primitives and satellite status/repair UI are partial; production handoff, CA escrow and invitation/approval integration are missing. Host bootstrap and provisioning code is reached only from tests. User-service registration, browser onboarding, physical authentication and authentic signed-release acceptance remain.
 
 **Requirements:** [Installation/access UX](specs/server-installation-and-access-ux.md), [Office/team UX](specs/offices-and-teams-ux.md), [Host boundary](design/office-host-boundary.md), [Dogfood acceptance](specs/dogfood-run.md).
 
@@ -63,17 +61,15 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Organization, people and teams** · [Feature checklist](FEATURES.md#organization-people-and-teams)
 
-**Scope:** Organization structure, people, home teams, lead/reporting relationships, project accountability, HR/hiring, employee lifecycle, profiles, Home/Inbox and activity/presence.
+**Scope:** Organization structure, people, home teams, lead/reporting relationships, accounts tied to persons, project accountability and project teams, the built-in HR lead and onboarding agents through HR, employee lifecycle, profiles, Home/Inbox and activity/presence.
 
 **Boundary:** People and teams are organizational identity; offices are execution locations. Execution routing/holds belong to AREA-08, and account security grants belong to AREA-02. A chart position never proves authority.
 
-**Verification focus:** Check home-team/lead enforcement, reporting and owner-linked identity, project ownership, valid HR bootstrap, actual hire approval/provisioning and runtime effects of employee controls. Verify Inbox clearing and fresh, real activity sources.
+**Verification focus:** Check home-team/lead enforcement, reporting, the account-to-person link (the owner is a person), the top-level team and project teams made by default, the HR lead made at organization creation and run only when called, hire approval before any provisioning, and runtime effects of employee controls. Verify Inbox clearing and fresh, real activity sources.
 
 **Requirements:** [Organization UX](specs/offices-and-teams-ux.md), [Employee/Home UX](specs/our-org-in-the-app.md), [Organization contract](design/organization-data/01-organization-structure.md), [Employee contract](design/organization-data/04-agent-structure.md).
 
 ## AREA-04
-
-The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment-branch-checkpoint.md) adds scoped FC-041/FC-042 implementation/test evidence beyond the imported origin/v1 audit baseline. Their full scope remains In progress; category/status totals are unchanged.
 
 **Projects, tasks, bugs and requests** · [Feature checklist](FEATURES.md#projects-tasks-bugs-and-requests)
 
@@ -89,7 +85,7 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Feature definitions, knowledge and delivery** · [Feature checklist](FEATURES.md#feature-definitions-knowledge-and-delivery)
 
-**Scope:** Canonical feature definitions/lifecycle and linked work; scoped knowledge, briefs, ADRs/debt/limitations, document CLI/publication; release/milestone manifests, changelogs, deployment and flag records.
+**Scope:** Canonical feature definitions/lifecycle and linked work; scoped knowledge, briefs, ADRs, shortcut provenance and feature limitations, document CLI/publication; release/milestone manifests, changelogs, deployment and flag records.
 
 **Boundary:** Owns definitions and records, not deployment execution or flag evaluation. Task execution belongs to AREA-04; richer health/report generation belongs to AREA-10; Git transport/storage mechanics belong to AREA-12.
 
@@ -137,7 +133,7 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Roles, processes and retrospectives** · [Feature checklist](FEATURES.md#roles-processes-and-retrospectives)
 
-**Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction (selected 2026-11-17), and the separately deferred enforcement/autonomy/retrospective engines.
+**Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction, and the separately deferred enforcement/autonomy/retrospective engines.
 
 **Boundary:** Owns guidance content and proposed learning workflows. Execution configuration belongs to AREA-08; general document tooling belongs to AREA-05. Resolution is selected; mechanical enforcement, approvals and execution engines remain Deferred.
 
@@ -195,8 +191,8 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 ## Maintaining the area guide
 
-The [remaining-58 audit](verification/2026-11-16-remaining-feature-audit.md) now classifies every formerly unknown row. Verification focus paragraphs describe checks still required for **completion**, not rows still awaiting their initial status audit. See the record for scoped evidence, lead adjudications and the unresolved source-guard failure.
+Verification focus paragraphs describe checks still required for **completion**.
 
 FEATURES.md remains the single row-level status/evidence record. Update this guide's summary when rows change status or category; update scope/boundaries when a category changes. Add a category only for a distinct capability domain, not to group backlog states. Keep AREA- identifiers stable, and update checklist/category navigation together.
 
-For a Needs verification row, compare the owning requirements with current code and real persistence, authorization and runtime evidence. Record the implementation/verification links and remaining gap in that checklist row before choosing Done, In progress, Planned or Blocked. A requirement, historical merged task, test-file name or fake-backed screen alone does not establish complete delivery. Deferred requirements retain their decision gates.
+For a Needs verification row, compare the owning requirements with current code and real persistence, authorization and runtime evidence. Record the implementation/verification links and remaining gap in that checklist row before choosing Done, In progress, Planned or Blocked. A requirement, a merged task, a test-file name or a fake-backed screen alone does not establish complete delivery. Deferred requirements retain their decision gates.

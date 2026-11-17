@@ -1,10 +1,10 @@
 # Features and work structure
 
-Status: **selected** data contract, revision 2.10. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Status: **selected** data contract, revision 2.11. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
-There is one authored work entity and one physical `tasks` table. `type` distinguishes `task`, `bug`, `request` or another nonempty task-type identifier. Task `type` is separate from optional `work_type: build | run` (Build/R&D or Run/KTLO). [Record contracts](08-record-contracts.md) records the v1 evidence and proposed classification extension. All types use the same `T-<office code><number>` reference, one sequence per creating office ([document 06](06-identity-and-numbering.md)), and the same comments, checklists and operational metadata. There are no separate bug/request tables, folders or number counters. This entity remains named **task**, not work item.
+There is one authored work entity and one physical `tasks` table. `type` distinguishes `task`, `bug`, `request` or another nonempty task-type identifier. Task `type` is separate from optional `work_type: build | run` (Build/R&D or Run/KTLO). [Record contracts](08-record-contracts.md) defines that classification. All types use the same `T-<office code><number>` reference, one sequence per creating office ([document 06](06-identity-and-numbering.md)), and the same comments, checklists and operational metadata. There are no separate bug/request tables, folders or number counters. This entity remains named **task**, not work item.
 
 ```mermaid
 erDiagram
@@ -97,7 +97,7 @@ erDiagram
 - A project task can have zero or one feature and zero or one milestone, both from the same project. Team tasks have neither. Feature and milestone membership are independent.
 - A feature belongs to one project and has a numeric reference such as `F-6`. Its file stores project-unique `local_slug: table-booking`. The public feature `slug` is derived automatically as `reservations/table-booking` using the project slug, making it unique within the organization.
 - A bug is `type: bug`; `severity` is optional metadata for triage. A request is `type: request`. Changing type preserves the task's ID, number, comments and relationships. Additional types do not require new SQL tables; their workflow behaviour remains out of scope.
-- A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on import/publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
+- A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on projection and publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
 
 ```text
 Project work: projects/<project-id>/work/tasks/<task-id>.md
@@ -251,9 +251,9 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
-**Priority and effort (owner decision 2026-11-17).** Every task has a `priority` from the closed list `urgent`, `high`, `normal`, `low`; the default is `normal` and the list is the same for every task type. A task may have an `effort`: a whole number of points, zero or more, set by whoever estimates it; empty means not estimated. The product attaches no meaning to the scale, so a team may count story points or hours. Both are ordinary task fields: changing one is recorded in task history, and neither changes automatically.
+**Priority and effort.** Every task has a `priority` from the closed list `urgent`, `high`, `normal`, `low`; the default is `normal` and the list is the same for every task type. A task may have an `effort`: a whole number of points, zero or more, set by whoever estimates it; empty means not estimated. The product attaches no meaning to the scale, so a team may count story points or hours. Both are ordinary task fields: changing one is recorded in task history, and neither changes automatically.
 
-**Task status is one closed list (owner decision 2026-11-17; `cancelled` as its own value is the lead's reading of "a cancelled task could be a valid status and counts as done"):** `todo`, `in_progress`, `blocked`, `cancelled`, `done`, the same for every task type. `done` is the last value. A task is finished when it is `done` or `cancelled`, and both count as done for milestone and release completion ([document 02](02-project-structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed, for example duplicate or will not fix. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine.
+**Task status is one closed list:** `todo`, `in_progress`, `blocked`, `cancelled`, `done`, the same for every task type. `done` is the last value. A task is finished when it is `done` or `cancelled`, and both count as done for milestone and release completion ([document 02](02-project-structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed, for example duplicate or will not fix. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine.
 
 Private notes attached to tasks are a required, separate capability defined by [operational data](05-operational-data.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. Shared [comments](05-operational-data.md) do not satisfy that requirement; [document 05](05-operational-data.md#private-notes-attached-to-tasks) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
 
@@ -281,10 +281,10 @@ project_id TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   delivered_at TEXT,
   retired_reason TEXT,
@@ -332,10 +332,10 @@ CREATE TABLE tasks (
   resolution TEXT,
   blocked_reason TEXT,
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
@@ -403,7 +403,7 @@ FROM features AS f
 JOIN projects AS p ON p.organization_id = f.organization_id AND p.id = f.project_id;
 ```
 
-## Detailed task payload and retained feature lifecycle
+## Detailed task payload and feature lifecycle
 
 A task has zero or one `task_details` row, sharing its identity and revision. There are no new bug or request identities/counters. Existing summary fields (type, severity, resolution, priority) stay on `tasks`. Author structured details under `details:` in the same task Markdown front matter; absent optional fields become SQL NULL and absent counters/booleans use the documented defaults. Save details atomically with the task and its activity event. An absent details map produces no row; a present empty map produces a row with defaults.
 
@@ -416,7 +416,7 @@ A task has zero or one `task_details` row, sharing its identity and revision. Th
 | `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity; validate required target type and cycles when the command is accepted |
 | `affects_feature_id` | Affected feature, distinct from the feature implementing the fix; the task's project must match the affected feature's project |
 | `request_kind`, `request_text`, `route_reason`, `routing_source`, `routed_by_employee_id` | Original request content/category and routing decision; `routing_source` is `person | rule | copilot`, never an employee FK. An independently known actor may populate nullable `routed_by_employee_id`; otherwise it stays NULL |
-| `request_outcome_json` | Front matter `details.request_outcome`: object with optional `feature`, `docs`, `draft_tasks`, `estimate`. `feature` is `{type: new | extends, feature_id}`; each `docs[]` entry is `{project_id, doc_key}`; each `draft_tasks[]` entry has required `draft_id`, `title` and optional `description`, `assignee_id`, `team_id`, `priority`. `estimate` has `effort`, `cost_usd_cents_min`, `cost_usd_cents_max`; amounts are nonnegative and min≤max. This is a proposal estimate, not a budget. Validate nested project/feature/doc/employee references; draft IDs are not created tasks |
+| `request_outcome_json` | Front matter `details.request_outcome`: object with optional `feature`, `docs`, `draft_tasks`, `estimate`. `feature` is `{type: new | extends, feature_id}`; each `docs[]` entry is `{project_id, doc_key}`; each `draft_tasks[]` entry has required `draft_id`, `title` and optional `description`, `assignee_id`, `team_id`, `priority`. `estimate` has `effort` (free text such as "a week", unrelated to the task's numeric `effort` in points), `cost_usd_cents_min`, `cost_usd_cents_max`; amounts are nonnegative and min≤max. This is a proposal estimate, not a budget. Validate nested project/feature/doc/employee references; draft IDs are not created tasks |
 | `suggested_triager_id`, `suggested_verifier_id` | Suggested employees; not assignments or permission grants |
 
 `fixes` relationships are stored once as typed links; derive `fixed_by` by reverse query. Do not duplicate those arrays inside details. Validation checks bug-only/request-only fields against task type, shortcut variant tags and request-kind values against the supported variants, and every nested JSON shape; an unknown value is refused. A task becoming a tombstone keeps its final details in `record_metadata` alongside the last revision, and existing immutable history remains.

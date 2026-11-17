@@ -3,12 +3,12 @@
 <a id="design-and-plan-projects-as-git-repositories-connected-to-github"></a>
 <a id="design-and-plan-projects-repository-registrations-and-github"></a>
 
-Revision 3 · 2026-11-17. **Status: design only.** Nothing in this document is implemented. The workspace has no crate, command or handler that runs Git: `org-git` is a planned crate with no code, and `org-github` is v2. Sentences in the present tense describe the selected design, not shipped behaviour.
+**Status: design only.** Nothing in this document is implemented. The workspace has no crate, command or handler that runs Git: `org-git` is a planned crate with no code, and `org-github` is v2. Sentences in the present tense describe the selected design, not shipped behaviour.
 
-This revision applies two decisions the owner made on 2026-11-17 in the [conflict plan](conflict-resolution-plan.md):
+Two rules frame everything below:
 
-- [A-11](conflict-resolution-plan.md#a-11): every algorithm, path and wire sketch here now uses the selected storage layout, with one bare cache per repository per office, many repositories per project and per task, and one worktree per employee, task and repository.
-- [A-10](conflict-resolution-plan.md#a-10): hosting-provider integrations are v2. v1 is plain Git with the office's own Git credentials.
+- Every algorithm, path and wire sketch uses the selected storage layout, with one bare cache per repository per office, many repositories per project and per task, and one worktree per employee, task and repository.
+- Hosting-provider integrations are v2. v1 is plain Git with the office's own Git credentials.
 
 The [organization repository registrations](organization-data/01-organization-structure.md), [project links](organization-data/02-project-structure.md), [task repository targets](organization-data/03-features-and-work.md), the [shared storage contract](organization-data/README.md#shared-storage-contract) and the [authority map](documentation-authority.md) own the data model. Where this document and those contracts differ, they win. Nothing is deployed, so there is no existing layout to migrate from and no compatibility obligation.
 
@@ -80,7 +80,7 @@ Creating a project and registering a repository are separate operations. A proje
 
 ### The repository cache
 
-Each office has exactly one bare cache per repository, at `<cache>`. It serves two users: the office, which fetches and pushes, and the worktrees in which agents commit. That sharing is the main change from the earlier design, and the rules below exist because of it.
+Each office has exactly one bare cache per repository, at `<cache>`. It serves two users: the office, which fetches and pushes, and the worktrees in which agents commit. The rules below exist because of that sharing.
 
 **Creation.** The office creates the cache with `git init --bare`, writes its canonical configuration and then fetches. It does not use `git clone`, which would write a remote and its URL into the configuration.
 
@@ -107,7 +107,7 @@ There are no other branches under `refs/heads/`. The integration branch exists l
 
 ### Credentials and isolation
 
-The earlier design kept two clones per project so that the clone with network credentials was never the one agents worked in. With one cache per repository that separation cannot come from the directory layout. It comes from where the credential is, how Git is invoked and which isolation mode the agent runs in.
+With one cache per repository, keeping the network credential away from agents cannot come from the directory layout. It comes from where the credential is, how Git is invoked and which isolation mode the agent runs in.
 
 **Where the credential is.** An office's Git credential is bound to that office and one remote host or repository. It lives in the host's credential provider, or, for SSH, as a key only the service account can read or use. It is not in the cache, not in a worktree, not in organization Git and not in `office.db`.
 
@@ -137,7 +137,7 @@ The earlier design kept two clones per project so that the clone with network cr
 
 - **A worktree per task and repository.** For each repository a task targets, the office creates one worktree at the task's `<worktree>` path, on a new branch `task/<ref>-<slug>`. Agents never share a working copy. One task has at most one workspace per repository (`task_workspaces` primary key). Creation is one locked operation on the repository:
   1. Check the records: the task targets the repository and, for a project task, the project links it.
-  2. Choose the branch name and validate it with `git check-ref-format`. If the name is already used in this repository by a local or remote branch, a `merged/` or `archive/` tag, or another task's record, append `-2`, `-3` and so on. T- references are scoped to a project or team while a cache is shared across them, so the recorded name, not the reference, identifies the branch.
+  2. Choose the branch name and validate it with `git check-ref-format`. If the name is already used in this repository by a local or remote branch, a `merged/` or `archive/` tag, or another task's record, append `-2`, `-3` and so on. The recorded name, not the task reference, identifies the branch.
   3. Resolve the base commit. For a project task it is the head of that link's `integration_branch`: the office fetches the branch and uses the commit ID the fetch reports. If the remote is unreachable it uses `refs/remotes/origin/<integration_branch>` as last fetched. If the branch does not exist, creation is refused (`unavailable`, reason `integration_branch_missing`). There is no empty-branch fallback. A task may instead start from an explicitly admitted task branch, as after a move between offices. A projectless task has no link and so no integration branch; see open question 6.
   4. Run `git worktree add -b task/<name> -- <worktree> <commit>`, never `-B`, so it fails instead of overwriting an existing branch. The start point is a commit ID, not a reference an agent could have moved.
   5. Find the administrative directory Git created, by reading `<cache>/worktrees/*/gitdir`. Git names it after the last component of the worktree path, which is the repository ID for every task, so names collide and Git appends a number. The name must be read back, not derived.
@@ -155,7 +155,7 @@ The earlier design kept two clones per project so that the clone with network cr
 
   If the remote cannot be reached, the call fails with a retryable `unavailable` and the work stays in the worktree. The office never pushes a default or integration branch of a code repository, and never force-pushes.
 - **Pull requests and merging.** v1 stops at the pushed task branch. A person opens any pull request and merges, using the host's own website or tools, or merges locally and pushes. The office learns about a merge only by fetching: when a task's pushed head is contained in the link's integration branch, it records the task's `integrated_commit` for that repository. Protection rules at the host are an optional extra guard, not the application's authorization model.
-- **Commit identity** *(decided by the owner, 2026-11-08)*: commits are authored under the owner's name and email address, with the agent as co-author through a `Co-authored-by: <agent name> <agent address>` trailer. The office sets the author and committer through the session environment. The agent adds the trailer by following its instructions; the office does not rewrite commits. The host shows whatever identity the office's credential authenticates as the pusher. Where the owner's commit name and email are stored is open question 5.
+- **Commit identity:** commits are authored under the owner's name and email address, with the agent as co-author through a `Co-authored-by: <agent name> <agent address>` trailer. The office sets the author and committer through the session environment. The agent adds the trailer by following its instructions; the office does not rewrite commits. The host shows whatever identity the office's credential authenticates as the pusher. Where the owner's commit name and email are stored is open question 5.
 - **When a task moves:** handoff is not closure and never starts cleanup. The office preserves every worktree, every per-repository branch and all uncommitted work.
   - *To another employee in the same office:* after the previous session has ended and been fenced, the office moves each worktree to the new employee's path with `git worktree move` under the repository lock, deletes any `config.worktree`, updates the workspace row, and derives the deny rules again for the new paths. It never copies the old rule set under a changed prefix. A change of the employee's team path is handled the same way.
   - *To another office:* the receiving office has its own cache and cannot see this one. For a remote repository the office first pushes the task branch under the normal push rules, and the receiving office creates its worktree from that admitted branch. A push does not carry uncommitted edits or commits that fail the push check, so those must be checkpointed and transferred explicitly, or the move is refused and raised to a person. A local-only repository needs a bundle and import, or a remote. The source worktree is removed only as part of a verified transfer, never by closure cleanup. A last pushed commit alone does not establish a lossless handoff.
@@ -168,7 +168,7 @@ The earlier design kept two clones per project so that the clone with network cr
   - *Nothing is lost:* uncommitted changes, or local commits that are on neither the remote branch nor the integration branch, stop the cleanup. The worktree stays and a person is asked.
   - The office deletes only `task/*` branches it created and that have a record. It never deletes a default or integration branch, or any tag.
 
-  The branch-record states and the one-open-branch rule are in the [process design](processes.md#4-enforcement-one-open-task-branch-a54-a55). Its text still names the earlier clones and one repository per project; its rules apply per task and repository against the single cache.
+  The branch-record states are in the [process design](processes.md#4-task-branch-records).
 - **Submodules and Git LFS** are not designed here. Office commands never recurse into submodules, and no filter driver is configured.
 
 ### Hardening every office Git command
@@ -205,8 +205,8 @@ In `dedicated-user` mode file ownership enforces the cache write denies and the 
 
 The single cache cannot give some guarantees the two-clone design aimed for. They are stated here instead of being papered over.
 
-1. **No local copy that agents never write.** The earlier design kept a clone only the office wrote and resolved bases, ownership and ancestry there. Now agents write objects and task branches into the same cache the office reads. The office-only reference namespaces are protected by fixed denies in `same-user` mode and by file ownership as well in `dedicated-user` mode. To depend on that as little as possible, the office takes the commit IDs for decisions that matter (the base of a new branch, the head it tags, the head it deletes, containment in the integration branch) from the remote in the same locked operation whenever the remote is reachable, and pushes by commit ID.
-2. **The office's credentialed Git runs in a repository agents partly write.** Previously the credential-carrying process ran in a clone agents had no reason to touch. Now the cache's configuration is protected only by the denies above, by ownership in `dedicated-user` mode, and by the canonical-configuration check before every command. In `same-user` mode a process outside the sandbox could change the file between the check and the command.
+1. **No local copy that agents never write.** Agents write objects and task branches into the same cache the office reads. The office-only reference namespaces are protected by fixed denies in `same-user` mode and by file ownership as well in `dedicated-user` mode. To depend on that as little as possible, the office takes the commit IDs for decisions that matter (the base of a new branch, the head it tags, the head it deletes, containment in the integration branch) from the remote in the same locked operation whenever the remote is reachable, and pushes by commit ID.
+2. **The office's credentialed Git runs in a repository agents partly write.** The cache's configuration is protected only by the denies above, by ownership in `dedicated-user` mode, and by the canonical-configuration check before every command. In `same-user` mode a process outside the sandbox could change the file between the check and the command.
 3. **Objects and task branches are shared.** Any agent with access to a cache can move or delete another task's local branch, or corrupt or remove objects, because Git needs write access to the shared directories. Content addressing means an agent cannot change what an existing commit ID means, and the office refuses grafts and replacement objects. The push check, the recorded base and review catch a moved branch. Another task's unpushed commits can still be destroyed, which is why checkpoints and timely pushes matter.
 4. **`same-user` is not a boundary.** Once a tool is outside the vendor sandbox it is the service account. The vendor program itself is not confined.
 5. **The credential is broader and longer-lived than a per-job token.** The office's own credential lasts as long as its owner allows and may reach more than one repository. Every office that reaches a remote, satellites included, holds one. Use the narrowest credential the host offers, such as a key or token limited to one repository. Short-lived, single-repository tokens are v2.
@@ -225,7 +225,7 @@ The organization repository is a registered `kind: remote` repository and must s
 
 ## v2: hosting-provider integrations
 
-**Not selected for v1** ([A-10](conflict-resolution-plan.md#a-10)). Nothing here is built, and none of it is a prerequisite for the v1 part. It is kept short so that v1 work is not read as depending on it. The detailed text of the earlier revision (provider app registration steps, the permission table, the token request and the provider wire calls) is in this file's history at commit `e840ea3`.
+**Not selected for v1.** Nothing here is built, and none of it is a prerequisite for the v1 part. It is kept short so that v1 work is not read as depending on it.
 
 - **A provider app managed by HQ.** One GitHub App whose private key HQ holds in the host's credential provider. HQ mints short-lived installation tokens, each limited to one repository and to the permissions one job needs, and hands them to offices on request. Satellites keep no provider credential. The key is never in a database in plaintext or in Git content (ADR-0016).
 - **Creating repositories through the provider.** HQ creates a private repository before submitting the registration, with an idempotent marker so a retry adopts the repository instead of duplicating it.
@@ -272,14 +272,14 @@ Registration and project-link writes belong to the organization and project cont
 
 ## Decisions
 
-1. **2026-11-17, A-10:** hosting-provider integrations are v2. v1 is plain Git over the registered remote with the office's own Git credentials, local-only repositories, per-office caches and per-task worktrees. After a push a person opens any pull request and merges.
-2. **2026-11-17, A-11:** the algorithms use the selected layout: one bare cache per repository per office, many repositories per project and per task, one worktree per employee, task and repository.
-3. **2026-11-17, [ADR-0015](../adr/0015-agent-isolation-modes.md):** agents run in `same-user` or `dedicated-user` mode. This replaces the earlier note that a separate OS user for agents was v2.
-4. **2026-11-17, [ADR-0016](../adr/0016-no-application-level-data-encryption.md):** no application-level encryption of data; credentials and private keys never in plaintext in a database or in Git content.
-5. **2026-11-08, kept:** the office runs all Git that reaches a remote, and agents never hold a credential that can push. The office never pushes a default or integration branch of a code repository and never force-pushes.
-6. **2026-11-08, kept:** commits are authored as the owner, with the agent as co-author.
-7. **2026-11-08, kept:** cleanup happens only after task closure, with a `merged/<branch>` or `archive/<branch>` tag and a compare-and-swap delete. Handoff never triggers cleanup.
-8. **2026-11-08, now v2 and to be confirmed again:** one provider app managed by HQ, with short-lived tokens scoped to one repository; new repositories private, under the owner's account.
+1. Hosting-provider integrations are v2. v1 is plain Git over the registered remote with the office's own Git credentials, local-only repositories, per-office caches and per-task worktrees. After a push a person opens any pull request and merges.
+2. The algorithms use the selected layout: one bare cache per repository per office, many repositories per project and per task, one worktree per employee, task and repository.
+3. Agents run in `same-user` or `dedicated-user` mode ([ADR-0015](../adr/0015-agent-isolation-modes.md)).
+4. No application-level encryption of data; credentials and private keys are never in plaintext in a database or in Git content ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)).
+5. The office runs all Git that reaches a remote, and agents never hold a credential that can push. The office never pushes a default or integration branch of a code repository and never force-pushes.
+6. Commits are authored as the owner, with the agent as co-author.
+7. Cleanup happens only after task closure, with a `merged/<branch>` or `archive/<branch>` tag and a compare-and-swap delete. Handoff never triggers cleanup.
+8. **v2, to be confirmed again:** one provider app managed by HQ, with short-lived tokens scoped to one repository; new repositories private, under the owner's account.
 
 ## Open questions
 
@@ -295,12 +295,8 @@ These are gaps or tensions between this design and the selected contracts. They 
 8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os push` would otherwise do for a local repository.
 9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
 10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
-11. **Branch names for unnumbered tasks (settled 2026-11-17).** There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
+11. **Branch names for unnumbered tasks.** Not open. There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
 
-## What changed from the earlier design
+## What the code does today
 
-Revision 2 described two clones per project, `mirror.git` (the only one given network credentials) and `work.git` (the one agents' worktrees came from), with worktrees in `worktrees/<task-id>/`, all under a per-project folder of the office's workspace, and one repository per project. Revision 3 replaces that with the selected layout and removes the roles those names stood for. The local copy step between the two clones is gone: the office fetches into and pushes from the one cache. The guarantees that depended on the separation are restated under "Credentials and isolation" and, where they no longer hold, under "Known limits".
-
-The provider app, token minting, repository creation through a provider and pull-request tokens moved to the v2 part. Named owners, per-person approval steps and the host-specific key store were removed.
-
-Existing code predates this revision and is not an implementation of it: `org-process` has pure one-open-branch rules, and `org-runtime` has sandbox specification types, and both still name the earlier clones in comments. They are evidence of the earlier contract only and need adaptation when `org-git` is built.
+Nothing runs Git. `org-process` has pure one-open-branch rules and `org-runtime` has sandbox specification types. Both were written before this design, name a different clone layout in their comments, and are adapted when `org-git` is built.

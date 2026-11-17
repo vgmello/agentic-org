@@ -1,118 +1,129 @@
-# Design: create an organization through standalone HQ
+# Design: create an organization
 
-Status: **selected target flow; implementation pending**, revision 2, 2026-11-15.
-Owner: lead. [Organization data](organization-data/01-organization-structure.md)
-owns the records below; [ADR-0005](../adr/0005-standalone-server-v1.md) and
+[Organization structure](organization-data/01-organization-structure.md) owns the
+records created here. The [standalone design](standalone-server.md) and the
 [installation UX](../specs/server-installation-and-access-ux.md) own installation.
-The current `agentic-org setup` refuses before provisioning: protected bootstrap,
-service registration and production browser handoff remain unavailable. The
-name-only create request is what the code accepts today. The contract is the
-[selected payload](web-api-v1.md#selected-create-organization-payload) (owner decision 2026-11-17).
+The request is the [create payload](web-api-v1.md#selected-create-organization-payload)
+of the web API. The screens are
+[offices §5a](../specs/offices-and-teams-ux.md#5a-create-organization-administrator-only).
 
 ## Setup and ownership
 
-Initial setup selects `default` or a named instance, establishes an authenticated
-instance administrator, creates HQ only and registers/starts its service. Satellite
-enrollment is a separate HQ-issued flow. Opening HQ in a browser does neither.
-Organization ownership alone never authorizes creating an organization.
+Setup selects `default` or a named instance, registers and starts its service and
+prints a one-time registration link for the instance's administrator. It creates no
+account, no organization and no office. The person who ran setup opens the link,
+chooses a username and a password, and is signed in as the administrator: the one
+account on the instance with the administrator flag. With no organization yet, the
+application offers **Create organization**. Satellite enrollment is a separate flow
+started from HQ.
 
-The owner account remains a host security principal. An optional person profile
-representing that owner must have a valid home team like every other employee;
-No employee field grants login or ownership, and no profile is teamless. The built-in HR
-bootstrap exception permits approved system provisioning, not invalid employees.
-HR requires a selected valid home team before its profile is committed. No team
-name, lead appointment or reporting line is inferred from the word HR.
+Only the administrator creates an organization, and only in the browser. Whoever
+creates an organization is its owner. Every account is tied to a person in each
+organization it can open: creating the organization makes the creator a person in
+it, and from then on what the account does there carries that person's name. There
+is no nameless owner actor. Owning an organization never authorizes creating
+another one.
+
+Every employee has exactly one home team, so creation makes one top-level team,
+named after the organization, without asking. The creator's person is its lead. The
+built-in HR lead is created as an agent employee in the same team; it is part of the
+product, is not kept running, and runs only when called. It is the only agent that
+is not hired: every other agent comes from an approved hire
+([our organization in the app](../specs/our-org-in-the-app.md) §7). No team name,
+lead appointment or reporting line is inferred from the word HR, and further teams
+come later, a project's by default with the project.
 
 ## Create flow
 
-1. An authenticated instance administrator chooses **Create organization**. Show
-   the destination instance, organization name and explicit organization slug,
-   remote organization repository registration and `state_branch`. Slugs are
-   lowercase kebab-case, unique in the organization catalog, and are not silently
-   recalculated after a rename. No browser storage-path picker appears. The
-   organization repository must have `kind: remote` and a syntactically valid
-   `remote_url`; local-only code repositories are allowed separately, never as
-   organization Git. Offline setup validates the registration URL, state-branch
-   syntax and local credential references/configuration only. It performs no
-   fetch, remote authentication probe or other external request. Persist the remote
-   registration and locally authored state with connectivity/publication readiness
-   explicitly unverified or pending until online operation is authorized.
-2. Collect the initial team choice needed by any bootstrap employees. Either
-   select an existing valid team in a resumed plan or create a root team at HQ
-   within that plan. Every employee has one required `home_team_id`, optional
-   `role_id` and `reports_to_employee_id`, and an organization-unique handle.
-   A lead must be a direct member and manages the subtree. A plan with a missing
-   HR/owner-person home team cannot claim bootstrap complete. The exact initial
-   team content remains a product choice; it is not selected by this document.
-3. Submit one operation ID bound to actor, instance and the validated plan.
-   `agentic-org-web` authenticates and authorizes before invoking a typed restricted
-   host operation. The host verifies the web process capability and administrator
-   grant. No browser HTTP parser or raw-key access lives in the host operation.
-   Reserve the name, slug, IDs and plan under the catalog lock, then provision
-   outside it. New entity IDs use UUIDv7; retained IDs and current ULID operation
-   IDs keep their existing codecs. Numbered teams use durable HQ allocation.
-4. Register the remote organization repository, persist `organization.yaml`
-   (`id`, `slug`, `name`, `organization_repository_id`, `state_branch`, format and
-   concurrency revisions and provenance), `repositories.yaml`, HQ's office record,
-   initial team and any bootstrap profiles at their stable-ID paths. Employee
-   identity stays in `profile.md`; runnable HR additionally requires a separate
-   `execution.md`, selected model profile and fresh local credential/model evidence
-   under [execution](organization-data/11-model-profiles-and-agent-execution.md).
-   Creating its identity alone must show a specific not-ready state, not launch.
-   Offline setup does not probe provider authentication/model entitlement; local
-   configuration can be saved while execution readiness remains unverified.
-5. The host creates and retains the office encryption key and starts
-   `agentic-org-office` using its private launch contract. The worker owns its
-   stored `office.json` marker. Retain adopt-versus-discard and quarantine rules:
-   never discard a committed office after a lost response, nor invent replacement
-   keys. The launch-v2 first line in the code cannot carry the full target plan; the
-   launch contract that replaces it and the cross-store durable commit/recovery boundary must
-   be implemented before this flow is enabled. Do not add guessed wire fields.
-6. Provision versioned encrypted CA escrow and the same owner recovery code on
-   retry. Protected delivery may remain Waiting or Shown, not confirmed while HQ
-   becomes usable. Require off-HQ retention acknowledgement only before reporting
-   recovery material collected; never send the code through the web process.
-   [REC-1](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate) still gates
-   the supported manual HQ-loss recovery procedure.
-7. Return the durable organization/office identity and separate server, runtime
-   and recovery readiness, plus remote repository connectivity/publication readiness.
-   Offline HQ service readiness must not imply that the configured remote was
-   contacted or that any Git publication succeeded. A saved office may be
-   Starting or unavailable.
-   Persist accepted plan, required sources and result evidence before acknowledging;
-   publish Git separately. Resolve a lost response using the same actor-bound
-   operation and fingerprint, rather than creating another organization.
+1. The signed-in administrator chooses **Create organization**. The form shows the
+   destination instance and asks for the organization name, an explicit slug, the
+   remote organization repository and its `state_branch`, and nothing else. Slugs
+   are lowercase kebab-case, unique in the organization catalog, and never
+   recalculated after a rename. There is no storage-path picker. The organization
+   repository has `kind: remote` and a syntactically valid `remote_url`; local-only
+   code repositories are registered separately and never hold the organization's
+   files. Offline, validation checks the URL, branch syntax and local credential
+   configuration only. It makes no fetch, authentication probe or other external
+   request, and saves the registration with connectivity and publication marked
+   unverified until online operation is authorized.
+2. The request carries one operation ID bound to the actor, instance and validated
+   plan. `agentic-org-web` authenticates and authorizes it, then calls a typed,
+   restricted host operation. The host verifies the web capability and the
+   administrator flag; it contains no HTTP parsing and never hands out a key. The
+   host reserves the name, slug, IDs and plan under the catalog lock, then
+   provisions outside it. Every new ID is a UUIDv7. HQ allocates team numbers.
+3. The office registers the remote organization repository and writes
+   `organization.yaml` (`id`, `slug`, `name`, `organization_repository_id`,
+   `state_branch`, format and concurrency revisions, provenance),
+   `repositories.yaml`, HQ's office record, the top-level team, the creator's person
+   (named after the account's username until edited) and the HR lead's profile at
+   their stable-ID paths. Creating the organization is the first accepted
+   transaction of its journal. Employee identity lives in `profile.md`. A runnable
+   HR agent also needs `execution.md`, a selected model profile and local credential
+   and model evidence under
+   [execution](organization-data/11-model-profiles-and-agent-execution.md); without
+   them it shows a specific not-ready state and is not launched. Offline creation
+   does not probe provider authentication or model access.
+4. The host ties the creator's account to the creator's person and records it as the
+   organization's owner.
+5. The host creates and keeps the office secrets key
+   ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)) and starts
+   `agentic-org-office` through the verified rendezvous of the
+   [host boundary](office-host-boundary.md). The worker owns its `office.json`
+   marker. A committed office is never discarded after a lost response, and no
+   replacement key is invented.
+6. The office provisions the encrypted CA escrow and one owner recovery code, the
+   same code on every retry ([ADR-0007](../adr/0007-hq-creation-escrow.md)). The
+   code then waits to be collected on the HQ machine with
+   `agentic-org recovery release --org '<organization>'`; the browser shows only its
+   state. Off-HQ retention is acknowledged before recovery material is reported
+   collected, and the code never passes through the web process
+   ([ADR-0011](../adr/0011-protected-recovery-delivery.md)).
+   [REC-1](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate) gates the
+   supported manual HQ-loss recovery procedure.
+7. The result is the durable organization and office identity, with server,
+   runtime and recovery readiness reported separately from remote repository
+   connectivity and publication. Offline readiness never implies that the remote
+   was contacted or that anything was published. A saved office may be starting or
+   unavailable. The accepted plan, required sources and result are durable before
+   the acknowledgement; Git publication follows separately. A lost response is
+   resolved with the same actor-bound operation and fingerprint, never by creating
+   another organization.
 
 ## Reads and failures
 
-List only organizations the principal can access. The selected organization is a
-UI preference, never a credential. Unauthorized and absent IDs reveal the same
-metadata. Distinguish invalid/duplicate name or slug, missing remote repository,
-invalid state branch or local credential configuration, invalid bootstrap team,
-key-store failure, worker failure and temporary startup. When online operation is
-authorized, report remote authentication/connectivity/publication failures in that
-separate readiness state; do not infer them from offline validation or discard an
-already-created HQ because a later publication fails. Preserve entered safe
-fields and show the failing step; never log credentials or recovery material.
-
-The code's create request accepts `{name}` and returns its existing view. Nothing
-has shipped, so the version 1 request is changed in place to the
-[selected payload](web-api-v1.md#selected-create-organization-payload), which carries
-the fields of this flow (owner decision 2026-11-17, conflict plan entries A-09 and
-A-12). No second request shape and no adapter are kept. Local service repair must remain available when HTTP is down.
+List only organizations the principal can access. The selected organization is a UI
+preference, never a credential. Unauthorized and absent IDs reveal the same
+metadata. Distinguish an invalid or duplicate name or slug, a missing remote
+repository, an invalid state branch or local credential configuration, a key-store
+failure, a worker failure and temporary startup. Once online operation is
+authorized, remote authentication, connectivity and publication failures appear in
+their own readiness state; they never cause an already-created HQ to be discarded.
+Keep the safe fields the person entered and show the failing step. Never log
+credentials or recovery material. Local service repair works when HTTP is down.
 
 ## Verification
 
-Use disposable roots. Verify remote organization Git rejection of local-only
-registration, explicit slug/branch round-trip, valid HR and optional owner-person
-home teams, direct-member lead rules and missing execution configuration readiness.
-Exercise lost/repeated create replies, fingerprint/actor conflicts, concurrent
-name/slug reservations, interruption around each durable source and office marker,
-key failures, online remote-auth failures, quarantine, owner-only create refusal,
-two HQs on one listener, interrupted escrow delivery and stored-create/failed-worker
-separation. Instrument offline setup to prove zero external requests, unchanged
-remote registration and pending connectivity/publication status; later authorized
-online verification must update that status without creating a second organization.
-Prove acknowledged records and receipts survive projection loss; Git publication
-alone cannot establish that boundary. These are required implementation checks,
-not test results from this documentation revision.
+Use temporary roots. Verify: a local-only registration is refused as organization
+Git; slug and branch round-trip; the top-level team exists with the creator's person
+as its lead and the HR lead as a member; the creator's account is tied to that person
+and owns the organization; lead rules hold; a missing execution configuration shows
+not-ready. Exercise lost and repeated create replies, fingerprint and actor
+conflicts, concurrent name and slug reservations, interruption around each durable
+source and the office marker, key failures, online remote authentication failures,
+refusal for an account that isn't the administrator, two HQs on one listener,
+interrupted escrow delivery, and a stored create whose worker fails. Instrument
+offline creation to prove zero external requests and pending connectivity status,
+and prove that a later online check updates that status without creating a second
+organization. Prove acknowledged records survive the loss of the projection.
+
+## What the code does today
+
+`agentic-org setup` refuses before provisioning. The host's `organization.create`
+accepts a name only (FC-018). `organization.provision.v1`
+(`crates/org-proto/src/selected_bootstrap.rs`) carries name, slug, repository
+address, state branch and a home team name, which becomes the top-level team named
+after the organization. `crates/org-host/src/provisioning.rs` and the office's
+`hq_creation` implement protected HQ creation with escrow and are covered by tests,
+but no command reaches them. The UI's create flow runs against fakes
+(`apps/agentic-org-ui/src/lib/create-flow.ts`).

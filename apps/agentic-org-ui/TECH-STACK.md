@@ -1,11 +1,9 @@
 # Agentic Org browser UI: tech stack
 
-V1 is a standalone Rust server on macOS/Linux serving a browser application from HQ.
-See the [server design](../../docs/design/standalone-server.md),
-[project structure](../../docs/design/project-structure.md) and
-[removal inventory](../../docs/design/standalone-server-removal-inventory.md).
-The Tauri shell, adapters, packages, workspace member and native installation scripts
-have been removed. Tauri is deferred to v2. The import feature remains retired.
+Agentic Org is a self-hosted Rust server on macOS and Linux; `agentic-org-web` serves
+this static application to browsers. See the
+[static UI and web process design](../../docs/design/rust-browser-bff-and-static-sveltekit.md)
+and [project structure](../../docs/design/project-structure.md).
 
 The application lives in `apps/agentic-org-ui` (package `agentic-org-ui`); the worker is
 `apps/agentic-org-office` (`agentic-org-office`). Licensed UI remains inside this product application.
@@ -13,25 +11,24 @@ Versions are pinned in `package.json`; `bun.lock` is the frontend lockfile.
 
 ## Current implementation
 
-| Concern                 | Choice                                                    | Notes                                                                                                                                            |
-| ----------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| UI framework            | SvelteKit 2 + Svelte 5 runes                              | Static SPA, adapter-static, ssr=false, index.html fallback.                                                                                      |
-| Language                | Strict TypeScript                                         | Runtime wire readers and feature adapters land separately.                                                                                       |
-| Styling                 | Tailwind CSS v4                                           | CSS-first configuration and tokens in src/app.css; dark theme.                                                                                   |
-| Look                    | Tailwind Plus application UI, ported to Svelte            | Licensed inside apps/agentic-org-ui, never as a separate UI kit.                                                                                 |
-| Components              | shadcn-svelte on Bits UI                                  | Shared primitives under src/lib/components/ui.                                                                                                   |
-| Icons and font          | Lucide/Heroicons; bundled Inter Variable                  | No remote font dependency.                                                                                                                       |
-| Package manager         | Bun                                                       | Frozen install, check, test and build scripts.                                                                                                   |
-| Unit tests              | Vitest                                                    | Domain behavior, test fakes, canonical vectors and platform boundaries.                                                                          |
-| Browser tests           | Playwright Chromium                                       | Retained flows use explicit test-owned dev composition; a second project checks the static production release.                                   |
-| Rust                    | Server, CLI and domain workspace members                  | No UI Rust workspace member remains.                                                                                                             |
-| Contracts               | org-proto; legacy TypeScript mirrored in src/lib/proto.ts | Independent office/wire-shapes.test.ts remains. Shared org/work vectors live in crates/org-office/test-vectors and crates/org-work/test-vectors. |
-| Production availability | Shell capability gate and unavailable APIs                | No native global, query parameter or remembered sample data enables production fakes.                                                            |
+| Concern                 | Choice                                                      | Notes                                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI framework            | SvelteKit 2 + Svelte 5 runes                                | Static SPA, adapter-static, ssr=false, index.html fallback.                                                                                   |
+| Language                | Strict TypeScript                                           | Wire readers and server adapters arrive with each increment.                                                                                  |
+| Styling                 | Tailwind CSS v4                                             | CSS-first configuration and tokens in src/app.css; dark theme.                                                                                |
+| Look                    | Tailwind Plus application UI, ported to Svelte              | Licensed inside apps/agentic-org-ui, never as a separate UI kit.                                                                              |
+| Components              | shadcn-svelte on Bits UI                                    | Shared primitives under src/lib/components/ui.                                                                                                |
+| Icons and font          | Lucide/Heroicons; bundled Inter Variable                    | No remote font dependency.                                                                                                                    |
+| Package manager         | Bun                                                         | Frozen install, check, test and build scripts.                                                                                                |
+| Unit tests              | Vitest                                                      | Domain behavior, test fakes, canonical vectors and platform boundaries.                                                                       |
+| Browser tests           | Playwright (Chromium; WebKit and Firefox for chosen suites) | Product flows use explicit test-owned dev composition; a second project checks the static production release.                                 |
+| Rust                    | Server, CLI and domain workspace members                    | No UI Rust workspace member remains.                                                                                                          |
+| Contracts               | org-proto, mirrored by hand in src/lib/proto.ts             | src/lib/office/wire-shapes.test.ts checks the mirror. Shared vectors live in crates/org-office/test-vectors and crates/org-work/test-vectors. |
+| Production availability | Shell capability gate and unavailable APIs                  | No native global, query parameter or remembered sample data enables production fakes.                                                         |
 
-Real HTTP feature adapters are separate deliveries. The shell defaults every product
-route to unavailable until its adapter is explicitly composed. Framework 404s retain
-the error page. Office, organization and work API defaults reject as unavailable;
-remaining feature factory cutovers follow their module handoffs.
+The shell shows every product route as unavailable until its server adapter is
+composed; each increment adds the adapters for its screens. Framework 404s keep the
+error page. Office, organization and work API defaults reject as unavailable.
 
 `e2e/vite-composition.ts` selects test fakes only for the explicit `e2e` dev-server
 mode. Every build, including `--mode e2e`, retains production availability. Fakes
@@ -68,9 +65,12 @@ At the repository root, use `CARGO_BUILD_JOBS=2` with workspace Clippy and tests
 The toolchain is pinned by `rust-toolchain.toml`. Tests use temporary directories,
 never a user's organization workspace.
 
-## Follow-ups
+## Notes
 
-- Gateway routes, wire readers and per-feature factories follow the approved contracts.
-- TypeScript/Svelte lint and formatting run through `bun run lint` and `bun run format:check`; see [development tooling](../../DEVELOPMENT.md) for the reviewed legacy baselines, dependency audits, browser security suites and AI setup.
-- Browser security headers and server authorization belong to the gateway delivery; removed Tauri capabilities do not provide browser protection.
-- English copy remains inline; keyboard and screen-reader behavior is covered by UI primitives and browser tests.
+- Lint and formatting run through `bun run lint` and `bun run format:check`; see
+  [development tooling](../../DEVELOPMENT.md) for the formatting baseline, dependency
+  audits, browser security suites and AI setup.
+- Browser security headers and authorization belong to `agentic-org-web` and the
+  office, not to this application.
+- English copy is inline; keyboard and screen-reader behavior is covered by the UI
+  primitives and browser tests.

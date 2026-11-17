@@ -1,8 +1,8 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.14 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.15 (2026-11-17). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
-This set owns the **selected target data relationships, fields and canonical sources**. Current code and older designs remain evidence of existing behavior until an explicit migration is approved; they do not override later selected data decisions. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes historical requirements, implementation status and deferred scope.
+This set owns the **data relationships, fields and canonical sources**. Where the code or another design differs, the code or that design changes. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes implementation status and deferred scope.
 
 ## Documents and boundaries
 
@@ -10,8 +10,8 @@ This set owns the **selected target data relationships, fields and canonical sou
 | --- | --- | --- |
 | [Organization structure](01-organization-structure.md) | Organization, offices, team tree, roles, repository registrations, structural process/standard documents | Process-engine execution or replication algorithms |
 | [Project structure](02-project-structure.md) | Project ownership, repository associations, integration branches, releases/milestones and project/feature document records | Agent provisioning or task lifecycle engine |
-| [Features and work](03-features-and-work.md) | Feature definitions and linked knowledge, typed tasks, record identities and tombstones | Areas, advanced Undo or additional v1 workflows not selected yet |
-| [Agent structure](04-agent-structure.md) | Employee identity, home team, relationships and placement boundary | Memory storage or consolidation implementation |
+| [Features and work](03-features-and-work.md) | Feature definitions and linked knowledge, typed tasks, record identities and tombstones | Undo or other workflows |
+| [Agent structure](04-agent-structure.md) | Employee identity, home team, relationships and placement; how an account relates to a person; the HR lead, how agents are onboarded and whom they take instructions from | Memory storage or consolidation implementation |
 | [Operational data](05-operational-data.md) | Shared comments, checklists, watchers, questions, waiting spans, task history and private notes (including mirrors, receipts and retention) | Notification delivery, timers, scheduling or process-engine behaviour |
 | [Identity and numbering](06-identity-and-numbering.md) | Stable IDs, readable references, slugs, handles and durable scoped allocations | Service deployment, failover or messaging implementation |
 | [Release deployments](07-release-deployments.md) | Deployment attempts, environments, outcomes, rollback references and commit snapshots | Build artifacts or deployment execution |
@@ -25,11 +25,11 @@ This set owns the **selected target data relationships, fields and canonical sou
 | [Recovery and office continuity](16-recovery-and-office-continuity.md) | Mutation receipts, origin streams, checkpoints, snapshots and process cleanup evidence | Automatic promotion, restore engines or backup automation |
 | [Budgets and controls](17-budgets-and-controls.md) | Task, agent and release policies, periods, threshold notices, extensions and holds | Budget service, automatic pausing or distributed admission implementation |
 
-Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, including model profiles/execution and task assignment/history, into one shared draft containing 75 tables and 10 views plus indexes/triggers. Document 14 describes the provider and pool records and links to document 11 for their SQL. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
+Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, including model profiles/execution and task assignment/history, into one shared draft containing 77 tables and 10 views plus indexes/triggers. Document 14 describes the provider and pool records and links to document 11 for their SQL. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
 
 ## Shared identity contract
 
-Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text (selected 2026-11-17 at the owner's request for the industry standard; [document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). The newer HQ-creation code already mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
+Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text ([document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). Code today: organization provisioning mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
 
 | Entity | Readable identifier | Uniqueness / counter scope |
 | --- | --- | --- |
@@ -83,27 +83,26 @@ The organization repository must be remote. Its tracked content is mirrored as o
 
 **One root, two halves.** This tree is the only selected on-disk layout; every numbered document and every design or UX guide refers to it. `durable/` holds every organization data source: nothing under it is rebuilt from anything else, a backup must include all of it, and no cleanup may remove it. `runtime/<office-id>/` holds only what can be rebuilt from `durable/`, organization Git and verified probes. Only `durable/state/` is published to organization Git. `messaging/`, `recovery/`, `budgets/`, `accounting/`, `authority/`, `private/` and `local/` are protected local sources and never become Git content.
 
-`<data-root>` is resolved once by the instance under the [standalone design](../standalone-server.md#3-instance-selection-and-storage) and saved in instance configuration; it is never inferred from a client ID, a shell's working directory or `HOME`. An operator may place `durable/` on separate storage, but its logical location stays `<data-root>/<organization-id>/durable/`. Earlier revisions used other names for parts of this tree: `<organization-data-root>` is `<data-root>`, `<organization-operational-root>` is `<data-root>/<organization-id>/durable`, and `<office-state>/cache/` is `<data-root>/<organization-id>/runtime/<office-id>/`. Do not introduce another root name. Two things are deliberately outside this tree and are backed up separately: the host's key and writer custody, and credential stores (document 16; [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md)).
+`<data-root>` is resolved once by the instance under the [standalone design](../standalone-server.md#3-instance-selection-and-storage) and saved in instance configuration; it is never inferred from a client ID, a shell's working directory or `HOME`. An operator may place `durable/` on separate storage, but its logical location stays `<data-root>/<organization-id>/durable/`. Do not introduce another root name. Two things are deliberately outside this tree and are backed up separately: the host's key and writer custody, and credential stores (document 16; [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md)).
 
-This is the selected target. The checked code still keeps its authoritative `org.db` and `office.db` under `offices/<office-id>/` of the host home ([ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md), [host boundary](../office-host-boundary.md)); those databases are sources, not caches, until an approved migration moves each record family here.
+Code today keeps its authoritative `org.db` and `office.db` under `offices/<office-id>/` of the host home ([host boundary](../office-host-boundary.md)); the code moves each record family into this tree.
 
 Durable scalar values are explicit YAML/front-matter fields. Association rows come from ID arrays or maps in their owning documents. Markdown bodies map to `body_markdown`. Array positions and resolver indexes are derived and have no independently authored source. Generated numeric keys are derived from persisted numbers. Null optional fields and documented defaults round-trip identically.
 
 Shared SQLite is the indexed projection for domain records, task activity and accounting events. The private-note database is an explicit separate durable store, not a reconstructible shared cache. Published task activity lives in organization Git under `work-history/tasks/`; acknowledged unpublished changes also require their durable journal. Accounting recovery additionally requires the durable usage archive; rates alone or organization Git alone cannot restore accounting per-event history. Cache paths and worktree paths are transient. Document 11 requires durable placement/fencing evidence before execution; recreating an office database does not authorize starting another copy of an agent. Existing authentication/credential storage remains a separate subsystem and is not made disposable by this schema. Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) organization data is not encrypted by the application: databases and files under this root are protected by disk encryption, private file permissions and the agent isolation mode of [ADR-0015](../../adr/0015-agent-isolation-modes.md). Private keys and credentials never live in plaintext in a database or in Git content: an office's private keys are stored wrapped by a host-held key, and vendor sign-in state has its own owner-only directory under `durable/local/` (document 11). Shared organization files do not contain credentials, private task notes or chat bodies. Document 15 defines protected messaging sources outside disposable office caches; Git alone does not restore chat.
 
-Structural import validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
+Structural validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
 
 Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. Offices submit their stable IDs and scopes to the shared organization authority for final number allocation and feature-slug registration; they never increment replicated counters independently. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
 
 ## No compatibility obligations before v1 ships
 
-Nothing has been deployed. Until the owner declares v1 shipped (owner decision 2026-11-17):
+Nothing has been deployed. Until the owner declares v1 shipped:
 
-- There are no existing users, organizations or data to preserve. No migration, import staging, alias, compatibility adapter or legacy shape is built or kept for a pre-release form.
+- There are no existing users, organizations or data to preserve. No migration, import, alias, compatibility adapter or legacy shape is built or kept.
 - Wire names, method names, file formats, schemas, identifiers and the local API version may change freely. The local API version is 1.
-- No document in this set asks for old data, identifiers, references such as `B-` and `REQ-`, hashes or events to be preserved, imported, adopted, staged or mapped. The structures that existed only for that were removed from the draft schema on 2026-11-17 (set revision 2.13): the imported conversation kind, the source-hash columns on messages, the second task-event version and the feature's old-path field. ADR-0010 is withdrawn.
+- No document in this set asks for earlier data, identifiers, hashes or events to be preserved, imported or mapped.
 - The better design wins. When rebuilding is the cleaner architecture, rebuild; the result must be fast, memory-efficient and reliable.
-- The former development team's message queue is dropped too (owner, 2026-11-17); nothing of it is carried over.
 
 ## Outside this set: what the host owns
 
@@ -118,6 +117,11 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Topic | Current decision |
 | --- | --- |
 | Stable IDs | UUIDv7, plus readable identifiers |
+| Accounts and people | An account is held by the host and, in each organization it can open, tied to exactly one person record; a person needs no account; an account is never tied to an agent. Whoever acts is recorded as an employee (person or agent) or the system, never as "the owner" ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)) |
+| Organization owner | The person whose account created the organization; ownership is a permission of that account at the host. Records that address `owner` mean that person at the time they are read |
+| Creating an organization | A signed-in instance administrator creates it; one transaction makes the organization, HQ office, top-level team named after it, the creator's person record as its lead and the HR lead ([document 01](01-organization-structure.md#creating-an-organization)) |
+| Agents | Built-in HR lead, an agent that runs only when called; agents are onboarded only through the HR hire flow after approval; an agent follows instructions from its lead chain up to the owner ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)) |
+| Project teams | Creating a project creates its owning team under the top-level team by default, or names an existing team ([document 02](02-project-structure.md#creating-a-project)) |
 | Tasks | One entity with required team, optional project and extensible type |
 | Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |
 | Reporter and task history | Immutable creator as reporter/originator; ordered task events preserve assignment, status and other task changes after closure/archival |
@@ -143,7 +147,8 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Agent setup/execution | Document 11 defines model profiles, provider connections and execution data/behavior; memory consolidation and automatic scheduling remain separate pending work |
 | Subscription connections | One connection per provider subscription, reused by office-local bindings and profiles; shared quota remains attached to that connection |
 | Processes and standards | Content, scope and the override lock are selected, and so is resolution: the effective set for a task is the organization's entries, then the accountable team's chain, then the project's, and entries that may not be overridden are always given to the agent ([processes design](../processes.md)). Enforcement, approvals and checklist composition stay out of scope |
-| Areas, advanced checklist workflows, Undo, organization-wide event history, retrospectives | Still unselected; do not silently port or delete them |
+| Areas | Removed: not part of v1; their code is deleted with the typed-task work |
+| Advanced checklist workflows, Undo, organization-wide event history, retrospectives | Not part of v1 |
 
 ## Status and changelog
 
