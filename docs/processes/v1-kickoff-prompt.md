@@ -59,8 +59,10 @@ main. Tests never touch a real organization's data.
 ## Known gaps to settle in the first plans
 
 - Track B: how the first directory generation is admitted, and how a newly created task
-  first enters the acceptance journal
-  ([recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#no-adoption-or-staging-interface)).
+  first enters the acceptance journal. The
+  [recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#no-adoption-or-staging-interface)
+  has a proposed resolution (both are ordinary accepted commands); the Track B plan
+  confirms it against the code.
 - Track A: Linux process admission, the Linux credential provider and the Linux
   confinement adapter each need a short design
   ([ADR-0017](../adr/0017-linux-and-container-hosting.md)).

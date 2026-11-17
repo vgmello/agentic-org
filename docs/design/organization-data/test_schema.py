@@ -817,6 +817,21 @@ class GapPreservationTests(unittest.TestCase):
                    entity_kind="task", last_number=1)
         self.db.rollback()
 
+    def test_task_priority_is_a_closed_list_and_effort_is_a_whole_number_of_points(self):
+        self.assertEqual(tuple(self.db.execute("SELECT priority, effort FROM tasks WHERE id='task'").fetchone()), ("normal", None))
+        for priority in ("urgent", "high", "normal", "low"):
+            self.db.execute("UPDATE tasks SET priority=?", (priority,))
+        for effort in (0, 3, 13, None):
+            self.db.execute("UPDATE tasks SET effort=?", (effort,))
+        self.db.commit()
+        for column, bad in (("priority", "critical"), ("priority", ""), ("effort", -1), ("effort", "large"), ("effort", 2.5)):
+            with self.subTest(column=column, value=bad), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(f"UPDATE tasks SET {column}=?", (bad,))
+            self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE tasks SET priority=NULL")
+        self.db.rollback()
+
     def test_task_status_is_a_closed_list_ending_in_done(self):
         for status in ("todo", "in_progress", "blocked", "cancelled", "done"):
             self.db.execute("UPDATE tasks SET status=?", (status,))

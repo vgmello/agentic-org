@@ -189,11 +189,22 @@ earlier store. Nothing has shipped, so there is nothing to adopt: no such comman
 interface is built, and no staging area exists. The organization's directory of
 teams, employees and projects comes from creating the organization and from ordinary
 organization commands, through the same office writer and acceptance journal as every
-other change. Two things the withdrawn interface used to provide must be restated with
-the store rebuild (conflict plan entry B-01): how the first directory generation is
-admitted, and how a newly created task first enters the acceptance journal
-([ADR-0006](../../adr/0006-selected-task-acceptance.md) covers changes to an existing
-task, not its creation).
+other change.
+
+Two things the withdrawn interface used to provide need a replacement. The proposed
+resolution, to be confirmed in the store rebuild plan (conflict plan entry B-01), is
+that both are ordinary accepted commands and neither is an import:
+
+- **The first directory generation.** Creating the organization is the first accepted
+  transaction of its acceptance journal. It writes the organization, the HQ office and
+  the initial team when one is given, and that is directory generation 1. Every later
+  organization command (create a team, add a person or agent, create a project)
+  is an accepted transaction that produces the next generation.
+- **A task's first entry.** `task.create` goes through the acceptance journal like every
+  other task change. Its `created` event is revision 1 of that task's history, written
+  in the same transaction as the task snapshot and the office-minted number.
+  [ADR-0006](../../adr/0006-selected-task-acceptance.md) covers changes to an existing
+  task; the rebuild extends the same path to creation.
 
 ## Moving agents and moving offices
 

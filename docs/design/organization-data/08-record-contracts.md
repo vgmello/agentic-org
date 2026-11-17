@@ -33,7 +33,7 @@ For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/origi
 | Employee | `status: active | paused | inactive` (default active); `paused` for agents only |
 | Supporting document or process/standard content | `status: draft | current | deprecated` (default draft) |
 | Project | Existing `archived: false | true` |
-| Task | `status: todo | in_progress | blocked | cancelled | done`, set by an authorized actor; `done` or `cancelled` is finished; no transition engine |
+| Task | `status: todo | in_progress | blocked | cancelled | done`, set by an authorized actor; `done` or `cancelled` is finished; no transition engine. `priority: urgent | high | normal | low`; optional `effort`, a whole number of points |
 | Feature | `status: planned | in_progress | live | retired`, authored; no transition engine |
 | Milestone, release | No stored status; done is derived from task status (document 02) |
 

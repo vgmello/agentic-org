@@ -22,6 +22,7 @@ Every numbered document carries one status line. The vocabulary is: **draft** (s
 
 | Date | Set revision | Change |
 | --- | --- | --- |
+| 2026-11-17 | 2.14 | Tasks: `priority` is the closed list urgent, high, normal, low; optional `effort`, a whole number of points. The two gaps left by removing the adoption interface have a proposed resolution in document 16. |
 | 2026-11-17 | 2.13 | Legacy structures removed (owner: "all the legacy stuff we need to remove it"). Draft schema: no `directed_thread` kind, no source-hash columns on messages, one task-event version with required profile and bytes, no `legacy_definition_path`, no `legacy` attribution basis. Documents: the task adoption profile, the adoption and staging interface and the import rules are gone. |
 | 2026-11-17 | 2.12 | Owner answers. `cancelled` is a task status and counts as done; an empty milestone is not done (confirmed). An ask carries `required` (ADR-0020). Creating a task uses the fast acknowledgement. |
 | 2026-11-17 | 2.11 | Owner decisions. Stable IDs are UUIDv7. Task references are minted by the creating office, one sequence per office, with a letter code (`T-B37`); tasks are never unnumbered; two tables added (`office_codes`, `office_task_counters`). Messaging: card answers, close outcome and pins each have one writing office. Release progress counts follow milestone tasks. |

@@ -1,6 +1,6 @@
 # Features and work structure
 
-Status: **selected** data contract, revision 2.9. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Status: **selected** data contract, revision 2.10. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -70,6 +70,7 @@ erDiagram
         TEXT feature_id FK "optional"
         TEXT milestone_id FK "optional"
         TEXT priority "required"
+        INTEGER effort "optional"
         TEXT severity "optional"
         TEXT resolution "optional"
         TEXT blocked_reason "optional"
@@ -157,6 +158,7 @@ updated_by_id: 01930000-0000-7000-8000-000000000030
 feature_id: null
 milestone_id: null
 priority: high
+effort: 3
 severity: major
 resolution: null
 blocked_reason: null
@@ -249,6 +251,8 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
+**Priority and effort (owner decision 2026-11-17).** Every task has a `priority` from the closed list `urgent`, `high`, `normal`, `low`; the default is `normal` and the list is the same for every task type. A task may have an `effort`: a whole number of points, zero or more, set by whoever estimates it; empty means not estimated. The product attaches no meaning to the scale, so a team may count story points or hours. Both are ordinary task fields: changing one is recorded in task history, and neither changes automatically.
+
 **Task status is one closed list (owner decision 2026-11-17; `cancelled` as its own value is the lead's reading of "a cancelled task could be a valid status and counts as done"):** `todo`, `in_progress`, `blocked`, `cancelled`, `done`, the same for every task type. `done` is the last value. A task is finished when it is `done` or `cancelled`, and both count as done for milestone and release completion ([document 02](02-project-structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed, for example duplicate or will not fix. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine.
 
 Private notes attached to tasks are a required, separate capability defined by [operational data](05-operational-data.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. Shared [comments](05-operational-data.md) do not satisfy that requirement; [document 05](05-operational-data.md#private-notes-attached-to-tasks) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
@@ -322,7 +326,8 @@ CREATE TABLE tasks (
   body_markdown TEXT NOT NULL DEFAULT '',
   feature_id TEXT,
   milestone_id TEXT,
-  priority TEXT NOT NULL DEFAULT 'normal',
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('urgent', 'high', 'normal', 'low')),
+  effort INTEGER CHECK (effort >= 0),
   severity TEXT,
   resolution TEXT,
   blocked_reason TEXT,
