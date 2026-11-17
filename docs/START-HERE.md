@@ -31,6 +31,7 @@ They explain; they do not decide. The documents below decide.
 | What a person sees and does | UX specs in [`docs/specs/`](specs/) | Screens, flows and numbered acceptance criteria such as `TSK-4` or `CHAT-12` |
 | What is stored: records, fields, files, tables | Data contract in [`docs/design/organization-data/`](design/organization-data/README.md) | Seventeen documents, one combined draft schema and a test suite that checks them against each other |
 | How a part is built | Designs in [`docs/design/`](design/) | Processes, protocols, storage, sessions, Git, the web API |
+| What must never vary, and what you may decide yourself | [Architecture non-negotiables](architecture-non-negotiables.md) | The aims, seventeen fixed rules, and how a decision is made and recorded |
 | Why a decision was made and how to test it | Decision records in [`docs/adr/`](adr/) | One decision each, with numbered acceptance criteria such as `ASK-3` or `ENC-2` |
 | How code must be organized | [Architecture rules](architecture-rules.md), [project structure](design/project-structure.md), [Rust style guide](rust-style-guide.md) | Dependency direction, where logic lives, naming |
 | Which document wins when two disagree | [Documentation authority map](design/documentation-authority.md) | The owning document for each topic |
@@ -68,8 +69,10 @@ into the documents above, so you do not need it to build.
 - **Nothing has shipped.** Write no migration, import, compatibility shim, version
   negotiation for old clients or legacy handling. Replace, do not adapt.
 - **The documents are the requirement.** Where the code disagrees with them, the code
-  changes. Where a requirement is missing, or two documents disagree, stop and ask the
-  owner; do not invent behaviour.
+  changes.
+- **You decide.** Where a requirement is missing, or two documents disagree, make the
+  decision yourself inside the [architecture non-negotiables](architecture-non-negotiables.md),
+  and write it into the document that owns the topic.
 - **Names.** The browser-facing process is "web". The agent command line is `agent-os`.
   The office worker is `agentic-org-office`.
 - **Identity.** Every ID is a UUIDv7. A task reference is minted by the office that
@@ -80,8 +83,13 @@ into the documents above, so you do not need it to build.
   early as it can carry them. Creating an organization, signing in, people and teams,
   tasks and chat come first.
 
-## When a requirement is unclear
+## When a requirement is unclear or missing
 
-Say exactly which sentence, in which document, and what the two readings are. Do not
-pick one and build it. A short written question to the owner costs less than a feature
-built on the wrong reading.
+Decide. Follow the [authority map](design/documentation-authority.md) when two
+documents disagree; if it does not settle the matter, take the reading that fits the
+[non-negotiables](architecture-non-negotiables.md) and their aims best. Then change the
+owning document so that it says what you decided, and add a short decision record for
+anything architectural. Do not leave the old text beside the new.
+
+Bring to the owner only what changes the product for the people using it, with a
+recommendation, and keep working on what does not depend on the answer.

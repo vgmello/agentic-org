@@ -4,7 +4,9 @@ Written 2026-11-17 by the lead, after the architecture review. It orders the wor
 the two engineers and their agents can work inside the product as early as possible. The
 order and the split into increments are the lead's proposal and may be changed by the
 engineer who takes an increment. The behaviour is not a proposal: it is what the linked
-requirement documents say.
+requirement documents say. Where they are silent, the engineer decides, inside the
+[architecture non-negotiables](architecture-non-negotiables.md), and writes the decision
+down.
 
 How to read an increment:
 
@@ -22,7 +24,7 @@ New here? Read [START-HERE](START-HERE.md) first.
 | Milestone | A person can | Track |
 | --- | --- | --- |
 | M1 | Install the server, create an organization and sign in from a browser | A |
-| M2 | Add people and teams, and give the second engineer an account | A and B |
+| M2 | Add people and teams, give the second engineer an account, and run the product in a Linux container | A and B |
 | M3 | Create, assign and follow tasks, in the browser and with `agent-os` | B |
 | M4 | Chat, and ask a question that waits for an answer | B |
 | M5 | Hire an agent that runs a task, asks questions and pushes a branch | C |
@@ -35,9 +37,9 @@ same time and touch different crates. C starts when M3 is usable.
 **M1 to M4 is the point at which the team can move its own work into the product.** M5 is
 the point at which its agents work there too.
 
-One assumption to confirm with the owner: both engineers work on macOS. The host starts
-office workers only on macOS today. If either works on Linux, increment L1 moves in front
-of M1.
+Both engineers work on macOS and use Docker to run the product on Linux, so Linux is
+part of v1 and is scheduled, not optional: increment A6, straight after the second
+person can sign in.
 
 ---
 
@@ -157,10 +159,9 @@ of M1.
   design keeps; `crates/org-docs` parses and edits the files; two files outside the store
   use SQL (`organization/bootstrap.rs`, `organization/admission.rs`).
 - **Done when:** ENG-1 to ENG-5 pass; deleting `runtime/<office-id>/` and restarting
-  rebuilds the projection with no loss; the first written plan for this increment was
-  agreed with the owner before code.
-- **This is the largest increment in the plan.** It starts with a written plan: which
-  record families move first, and what is deleted.
+  rebuilds the projection with no loss.
+- **This is the largest increment in the plan.** It starts with a written plan, recorded
+  in the repository: which record families move first, and what is deleted.
 
 ### B2 · Organization, teams and people
 
@@ -190,6 +191,25 @@ of M1.
   Row FC-153.
 - **Code today:** `crates/org-host/src/accounts` holds one owner account.
 - **Done when:** two people are signed in at once from two browsers.
+
+### A6 · Linux and containers
+
+- **Outcome:** the same instance runs as the main process of a Docker container on an
+  engineer's Mac, with its data and secrets on mounted volumes, and behaves as on macOS.
+- **Build:** the Linux implementation of each platform contract: checking that a started
+  worker is the intended program, where the host keeps its secrets, confinement of the
+  web process, and running in the foreground under a container runtime. Nothing outside
+  those adapters branches on the operating system. A container file in the repository
+  builds the image. The workspace checks run on both systems in CI.
+- **Read:** [ADR-0017](adr/0017-linux-and-container-hosting.md) (LNX-1 to LNX-6),
+  [host boundary design](design/office-host-boundary.md), [ADR-0008](adr/0008-gateway-macos-sandbox.md).
+  Row FC-164.
+- **Code today:** `crates/org-host/src/spawn.rs` refuses to start a worker on anything
+  but macOS; the web process's Linux confinement is a contract with no adapter and
+  refuses to start; host secrets use the macOS keychain.
+- **Done when:** LNX-1 to LNX-6 pass.
+- **Needs:** A1 to A3. Each of the three Linux adapters starts with a short design,
+  which the engineer writes and decides.
 
 ### U1 · The directory in the browser
 
@@ -373,7 +393,6 @@ of M1.
 
 | Increment | What | Read |
 | --- | --- | --- |
-| L1 | Linux and containers: admission, credential provider, confinement, service lifecycle | [ADR-0017](adr/0017-linux-and-container-hosting.md), FC-164 |
 | L2 | Usage, prices and cost views | [document 10](design/organization-data/10-usage-and-cost-accounting.md), [costs UX](specs/costs-and-insights-ux.md), FC-084 to FC-088 |
 | L3 | Budgets and the hold at the turn permit | [document 17](design/organization-data/17-budgets-and-controls.md), FC-089 to FC-093 |
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099 |
@@ -388,8 +407,10 @@ of M1.
 
 - Branch from `origin/v1-integration`. One writer per file at a time.
 - Before code, write the short plan for the increment: what a person can do at the end,
-  the files you will own, what you will delete, and any question the documents do not
-  answer.
+  the files you will own, what you will delete, and the decisions you are taking where
+  the documents are silent.
+- Decide for yourself inside the [architecture non-negotiables](architecture-non-negotiables.md),
+  and record each decision in the document that owns the topic.
 - Keep the checks green: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace`; for the UI, its type check, tests and build. When you change
   the data contract, `python3 docs/design/organization-data/test_schema.py`.

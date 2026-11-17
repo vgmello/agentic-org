@@ -6,7 +6,7 @@ This is the reading map for the selected organization data design and its reconc
 
 | Question | Authoritative reference |
 | --- | --- |
-| Where does a new engineer start, and what is built next? | [START-HERE](../START-HERE.md) for where each kind of requirement is written; the [implementation plan](../implementation-plan.md) for the order of work. Neither decides behaviour: the documents below do. |
+| Where does a new engineer start, and what is built next? | [START-HERE](../START-HERE.md) for where each kind of requirement is written; the [implementation plan](../implementation-plan.md) for the order of work. Neither decides behaviour: the documents below do. The [architecture non-negotiables](../architecture-non-negotiables.md) say what never varies and that engineers decide the rest. |
 | What features are complete, partial, planned, blocked, deferred or awaiting verification? | [Feature checklist](../FEATURES.md), with scoped implementation evidence and links to the requirements below |
 | How are features categorized, and what does each area cover or need verified? | [Feature area guide](../FEATURE-AREAS.md), with category boundaries, requirement links and a summary of checklist statuses |
 | Selected entity relationships, fields, canonical files and draft SQL | [Organization data index](organization-data/README.md) and its owning documents |

@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "942f57791727cc581c8c5fb60f0e41d2ad058817fd103da4e578473b629dda84"
+      "sha256": "3f52910dd53e86881d44e34bb8abe9c13a4dd07fcf00cc2e33c5890eb1861fa9"
     },
     {
       "path": "Cargo.lock",
@@ -150,7 +150,7 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "6e5db0ab331d5f1262ffb1ac44cccf280c4329f7c93579b9c4e5d517e28172fa"
+      "sha256": "9c136759738fd445728e798069f65fefe0f03818a28f1ff46f2e15b36ef5c0f4"
     },
     {
       "path": "docs/design/organization-data/README.md",

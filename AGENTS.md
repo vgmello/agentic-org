@@ -43,6 +43,8 @@ The owner-requested [v1 project structure](docs/design/project-structure.md) def
 
 What to build, and in what order, is in the [implementation plan](docs/implementation-plan.md);
 [`docs/START-HERE.md`](docs/START-HERE.md) says where each kind of requirement is written.
+Engineers and their agents make architectural decisions themselves, inside the
+[architecture non-negotiables](docs/architecture-non-negotiables.md), and record them.
 
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin.

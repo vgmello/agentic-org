@@ -4,14 +4,14 @@ Status: **accepted by the owner 2026-11-17** during the architecture review (con
 plan entry F-02), including the operations of decision 3 and the engine-independent
 contract of decision 8. Implementation pending. Amends
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 4,
-[ADR-0003](0003-agent-messaging-office-first.md) section 5,
+the performance targets of the first revision of [ADR-0003](0003-agent-messaging-office-first.md),
 [ADR-0006](0006-selected-task-acceptance.md) for the task changes named in decision 3,
 and the acknowledgement sentence in
 [messaging data](../design/organization-data/15-messaging-and-chat.md).
 
 ## Context
 
-- ADR-0003 section 5 targets a same-office send at a median of 15 ms. Its own
+- The first revision of ADR-0003 targeted a same-office send at a median of 15 ms. Its own
   breakdown is about 2 ms to start the `agent-os` process, 0.5 ms to connect, and 6 to
   10 ms for one full flush to the drive. Those are design estimates for an Apple
   Silicon Mac, not measurements.
@@ -79,8 +79,7 @@ and the acknowledgement sentence in
    flush batch. This also answers the durability-cost question recorded in document 15.
 7. **Measure and replace the estimates.** Before the targets are treated as met,
    measure on the reference Mac: process start, connect, committed-class commit,
-   durable commit, and the full round trip in both modes. Replace the estimates in ADR-0003
-   section 5 with the results. Check the binary size target on that build too; the
+   durable commit, and the full round trip in both modes. Record the results in this ADR. Check the binary size target on that build too; the
    Linux build measured 1.56 MB against a 1 MB target.
 
 8. **The class belongs to the storage contract, not to the database engine.** The
@@ -114,9 +113,8 @@ and the acknowledgement sentence in
    the message expires; a failure becomes a delivery notice, never a slower send.
    `msg.ask` is the one operation that holds its caller. Every ask has a deadline:
    the caller may state how long it expects a reply to take, otherwise the default
-   for the recipient's kind applies (ADR-0003 §2.5: 120 seconds for an agent, 24 hours
-   for a person), and the wait ends at the deadline with a timeout result. [ADR-0020](0020-required-asks-suspend-and-resume.md)
-   replaces those two defaults with one organization setting for the wait, and adds the
+   of [ADR-0020](0020-required-asks-suspend-and-resume.md) applies (one system setting,
+   10 minutes), and the wait ends there with a timeout result. ADR-0020 also adds the
    required ask, which suspends the agent until it is answered. The ask itself
    is committed and acknowledged like a send; only waiting for the reply is slow.
 

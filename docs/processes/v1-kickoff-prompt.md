@@ -11,8 +11,10 @@ latest origin/v1-integration.
 Read first, in this order:
 1. docs/START-HERE.md: what the product is, where each kind of requirement is written,
    and how to go from a feature to working code.
-2. AGENTS.md: how to work in this repository.
-3. docs/implementation-plan.md: the milestones and increments. Read your increment and
+2. docs/architecture-non-negotiables.md: what never varies, and how you make and record
+   a decision.
+3. AGENTS.md: how to work in this repository.
+4. docs/implementation-plan.md: the milestones and increments. Read your increment and
    every document it lists under "Read".
 
 Your track is <A, B or C> and your first increment is <for example A1 or B1>.
@@ -21,13 +23,17 @@ Rules that always apply:
 - Nothing has shipped. Write no migration, import, compatibility shim, version
   negotiation for old clients or legacy handling. Replace, do not adapt.
 - The requirement documents decide behaviour. Code that disagrees with them is what you
-  change. If a requirement is missing or two documents disagree, stop and ask; do not
-  invent.
+  change.
+- You make architectural decisions yourself. Where the documents are silent or disagree,
+  decide inside the non-negotiables, write the decision into the owning document, and
+  carry on. A non-negotiable varies only if no design can meet it; then choose the best
+  option, record it as an exception, and report it.
 - Build the smallest path a person or agent can use, not a layer.
 
 Before writing code, reply with a short plan for your increment: what a person can do
 when it is finished, the files you will own, what you will delete, the acceptance
-criteria you will make pass, and any question the documents do not answer.
+criteria you will make pass, and the decisions you are taking where the documents are
+silent.
 
 For every increment: branch from origin/v1-integration, keep the checks green, update
 the row in docs/FEATURES.md with evidence, get an independent review, then merge into
@@ -35,5 +41,5 @@ v1-integration. Never push to main. Tests never touch a real organization's data
 ```
 
 Suggested start: one engineer takes Track A from A1, the other takes Track B from B1.
-B1, the store foundation, is the largest increment and starts with a written plan agreed
-with the owner.
+B1, the store foundation, is the largest increment and starts with a written plan
+recorded in the repository.

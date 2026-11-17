@@ -7,7 +7,7 @@ the two default values. These details inside decisions 1 to 8 are the lead's: th
 configured maximum (1), false as the default (2), "ask someone else" (4), and
 withdrawal or cancellation of a required ask (7). Decisions 9 to 13 are the lead's
 design. Decision 14 is the lead's recommendation, which the owner accepted. Amends
-[ADR-0003](0003-agent-messaging-office-first.md) §2.5 and §3.3,
+[ADR-0003](0003-agent-messaging-office-first.md) decision 9,
 [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 9, the
 [session design](../design/agent-sessions.md) and the [chat spec](../specs/chat-ux.md).
 
@@ -48,7 +48,7 @@ arrives. For the person, the agent is simply idle until they reply.
    expire under its asker. It ends when it is answered, when the asker withdraws it,
    or when a person with authority over the work cancels it. A required ask therefore
    carries no `expires_at`, and an office that receives it late delivers it; the
-   expiry and skew rule of ADR-0003 §3.3 applies only to asks that are not required.
+   expiry and skew rule of ADR-0003 decision 9 applies only to asks that are not required.
 8. **The answer starts the agent again, in the same context.** When the answer arrives,
    the system starts the agent by resuming the same session and gives it the answer as
    its next input. To the agent it is as if it had been working all along; to the
@@ -89,14 +89,14 @@ The lead's design for the rule:
 
 ## How this changes the earlier rules
 
-- ADR-0003 §2.5 set default deadlines by recipient kind (120 seconds for an agent, 24
-  hours for a person). The wait is now one organization setting for both. The 24 hours
+- The earlier default deadlines differed by recipient kind (120 seconds for an agent, 24
+  hours for a person). The wait is now one system setting for both. The 24 hours
   remains the default life of a question that is **not** required: after the asker's
   wait ends, the question stays answerable until it expires, and a late answer is
   delivered as an ordinary message.
 - ADR-0014 decision 9 stands: the ask itself is acknowledged like a send, and only
   waiting for the reply is slow. The wait is now bounded by this ADR.
-- ADR-0003 caps one held call at 60 seconds on an agent's connection. That cap stays.
+- The code caps one held call at 60 seconds on an agent's connection. That cap stays.
   The wait of this ADR spans as many held calls as it needs; `agent-os` renews the hold
   and the office keeps one timer for the whole wait.
 - The session design lists what may start a turn. The answer to a required ask is
