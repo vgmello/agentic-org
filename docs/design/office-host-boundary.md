@@ -108,7 +108,7 @@ agentic-org-office --discard <id>    # remove an unfinished office, then exit (t
 
 ### Admission and the verified rendezvous
 
-There is one launch contract (version 1), in `crates/org-office-launch`. It covers every child the host
+There is one launch contract, in `crates/org-office-launch`. It covers every child the host
 supervises: office workers and the web process (owner-delegated decision 2026-11-17). No secret is ever on
 argv, in the environment or on the first line. The steps for an office worker are below; the web process
 uses the same steps with its own identifier, image and listener handoff (see "The web process" below):
@@ -385,6 +385,7 @@ it restarts the worker; it never races a live worker over its agents.
 | --- | --- | --- |
 | A1 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/v3.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
 | A1, A3 | People are authorized by grants; no application token | The older first line still carries `app_token`, and the host still has `app_auth.rs`; the worker stores the grant key unused. |
+| A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
 | A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
 | A1 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
