@@ -7,6 +7,158 @@ use serde_json::{json, Value};
 const HOST: &str = "crates/org-host/build.rs";
 const PIN: &str = "crates/org-office/src/store/tests/opener_build_pins.rs";
 const HOST_SOURCE: &str = include_str!("../../../../../crates/org-host/build.rs");
+const HOST_MANIFEST: &str = "crates/org-host/Cargo.toml";
+const RELEASE_HELPER: &[(&str, &str)] = &[
+    (
+        "crates/org-release/Cargo.toml",
+        include_str!("../../../../../crates/org-release/Cargo.toml"),
+    ),
+    (
+        "crates/org-release/src/lib.rs",
+        include_str!("../../../../../crates/org-release/src/lib.rs"),
+    ),
+    (
+        "crates/org-release/src/decode.rs",
+        include_str!("../../../../../crates/org-release/src/decode.rs"),
+    ),
+    (
+        "crates/org-release/src/payload.rs",
+        include_str!("../../../../../crates/org-release/src/payload.rs"),
+    ),
+];
+
+fn reviewed_host_fixture() -> tempfile::TempDir {
+    let mut files = vec![
+        ("Cargo.toml", "[workspace]"),
+        ("src/lib.rs", "pub struct Allowed;"),
+        (HOST_MANIFEST, "[package]\nname='org-host'\nversion='0.0.0'"),
+        (HOST, HOST_SOURCE),
+        (PIN, "// Protected pin fixture."),
+    ];
+    files.extend_from_slice(RELEASE_HELPER);
+    fixture(&files)
+}
+
+fn reviewed_dependencies(scope: &SourceScope) -> Vec<Value> {
+    vec![
+        json!({"name":"cc","source":"registry+https://github.com/rust-lang/crates.io-index",
+            "req":"=1.11.1","kind":"build","rename":null,"optional":false,
+            "uses_default_features":true,"features":[],"target":null,"registry":null}),
+        json!({"name":"org-release","source":null,"req":"*","kind":"build",
+            "rename":null,"optional":false,"uses_default_features":true,"features":[],
+            "target":null,"registry":null,"path":scope.root.join("crates/org-release")}),
+    ]
+}
+
+fn reviewed_host_inventory(scope: &SourceScope, dependencies: Vec<Value>) -> Value {
+    let mut host = package(
+        scope,
+        "opaque-host-package-id",
+        HOST,
+        json!(["custom-build"]),
+    );
+    host["manifest_path"] = json!(scope.root.join(HOST_MANIFEST));
+    host["dependencies"] = json!(dependencies);
+    inventory(scope, vec![host])
+}
+
+#[test]
+fn sqlcipher_build_inventory_allows_only_the_reviewed_host_build_edges() {
+    let dir = reviewed_host_fixture();
+    let scope = tracked(dir.path());
+    metadata(
+        &scope,
+        &reviewed_host_inventory(&scope, reviewed_dependencies(&scope)),
+    );
+    // The package ID is opaque; its name cannot impersonate the confined caller.
+    let mut wrong_caller = reviewed_host_inventory(&scope, reviewed_dependencies(&scope));
+    wrong_caller["packages"][0]["id"] = json!("org-host");
+    wrong_caller["workspace_members"] = json!(["org-host"]);
+    wrong_caller["packages"][0]["manifest_path"] = json!(scope.root.join("Cargo.toml"));
+    error(|| {
+        metadata(&scope, &wrong_caller);
+    });
+}
+
+#[test]
+fn sqlcipher_build_inventory_refuses_changes_to_reviewed_dependency_metadata() {
+    let dir = reviewed_host_fixture();
+    let scope = tracked(dir.path());
+    for original in reviewed_dependencies(&scope) {
+        for (key, replacement) in [
+            ("name", json!("helper")),
+            ("source", json!("registry+https://example.invalid/index")),
+            ("req", json!("^1")),
+            ("kind", json!("unknown")),
+            ("rename", json!("alias")),
+            ("optional", json!(true)),
+            ("uses_default_features", json!(false)),
+            ("features", json!(["unreviewed"])),
+            ("target", json!("cfg(any())")),
+            ("registry", json!("other")),
+            ("path", json!(scope.root.join("other-helper"))),
+            ("extra", json!(true)),
+        ] {
+            let mut changed = original.clone();
+            changed[key] = replacement;
+            error(|| {
+                metadata(&scope, &reviewed_host_inventory(&scope, vec![changed]));
+            });
+        }
+        for key in original.as_object().unwrap().keys() {
+            let mut missing = original.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            error(|| {
+                metadata(&scope, &reviewed_host_inventory(&scope, vec![missing]));
+            });
+        }
+    }
+}
+
+#[test]
+fn sqlcipher_build_inventory_pins_the_complete_local_build_helper() {
+    let dir = reviewed_host_fixture();
+    let scope = tracked(dir.path());
+    let value = reviewed_host_inventory(&scope, reviewed_dependencies(&scope));
+    for (relative, source) in RELEASE_HELPER {
+        let path = scope.root.join(relative);
+        std::fs::write(&path, format!("{source}\n// changed helper bytes\n")).unwrap();
+        let message = error(|| {
+            metadata(&scope, &value);
+        });
+        assert!(message.contains("changed build helper") && message.contains(relative));
+        std::fs::write(&path, source).unwrap();
+
+        let mut untracked = tracked(dir.path());
+        untracked.files.remove(&path);
+        error(|| {
+            metadata(&untracked, &value);
+        });
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            let mut wrong_kind = tracked(dir.path());
+            wrong_kind
+                .files
+                .insert(path.clone(), super::opener_scope::SourceKind::Config);
+            error(|| {
+                metadata(&wrong_kind, &value);
+            });
+        }
+        #[cfg(unix)]
+        {
+            // Identical bytes through a symlink still fail before being read.
+            let copied = scope.root.join("copied-helper");
+            std::fs::write(&copied, source).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(&copied, &path).unwrap();
+            error(|| {
+                metadata(&scope, &value);
+            });
+            std::fs::remove_file(&path).unwrap();
+            std::fs::write(&path, source).unwrap();
+        }
+    }
+    metadata(&scope, &value);
+}
 
 fn package(scope: &SourceScope, id: &str, path: &str, kind: Value) -> Value {
     json!({"id":id,"manifest_path":scope.root.join("Cargo.toml"),

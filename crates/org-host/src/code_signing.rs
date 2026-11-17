@@ -153,6 +153,7 @@ extern "C" {
     ) -> i32;
     static kSecCodeInfoFlags: core_foundation::string::CFStringRef;
     static kSecCodeInfoEntitlementsDict: core_foundation::string::CFStringRef;
+    static kSecCodeInfoUnique: core_foundation::string::CFStringRef;
 }
 
 /// `code`'s signing information: its flags and entitlements (`SecCodeCopySigningInformation`).
@@ -185,6 +186,37 @@ pub(crate) fn signing(
     let information: CFDictionary<CFString, CFType> =
         unsafe { CFDictionary::wrap_under_create_rule(information) };
     parse_signing(&information)
+}
+
+/// Static signed-file information, never evidence of the image a process loaded.
+/// The caller must use the separate kernel/audit-token adapter for that purpose.
+#[cfg(target_os = "macos")]
+pub(crate) fn static_signing(
+    code: &security_framework::os::macos::code_signing::SecStaticCode,
+) -> Option<(Signing, [u8; 20])> {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::data::CFData;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::string::CFString;
+    let mut information: CFDictionaryRef = std::ptr::null();
+    // SAFETY: a live static code object and create-rule dictionary out-pointer.
+    let status = unsafe {
+        SecCodeCopySigningInformation(
+            code.as_concrete_TypeRef().cast(),
+            (1 << 1) | (1 << 2),
+            &mut information,
+        )
+    };
+    if status != 0 || information.is_null() {
+        return None;
+    }
+    let information: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_create_rule(information) };
+    // SAFETY: the Security framework owns this process-lifetime constant.
+    let key = unsafe { CFString::wrap_under_get_rule(kSecCodeInfoUnique) };
+    let hash = information.find(&key)?.downcast::<CFData>()?;
+    let hash: [u8; 20] = hash.bytes().try_into().ok()?;
+    Some((parse_signing(&information)?, hash))
 }
 
 /// What the host reads from a signing-information dictionary. Fails closed: an entitlements

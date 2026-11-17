@@ -34,7 +34,6 @@ impl Drop for DevSecrets {
 
 impl DevSecrets {
     /// `base` already exists, is owner-only, and is the shared development-key base.
-    #[cfg_attr(not(test), expect(dead_code, reason = "hostdb staging"))]
     pub(crate) fn open(base: &Path, home: &Path, instance: &str) -> Result<Self, Error> {
         if !base.is_absolute()
             || base.components().any(|c| matches!(c, Component::ParentDir))
@@ -174,6 +173,13 @@ impl HostSecrets for DevSecrets {
             owned(&file, false)?;
             file.write_all(value.expose())?;
             file.sync_all()?;
+            #[cfg(target_os = "macos")]
+            {
+                // SAFETY: live writable file, no pointer argument for F_FULLFSYNC.
+                if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
+                    return Err(io::Error::last_os_error().into());
+                }
+            }
             #[cfg(test)]
             super::tests::before_publish(&self.path);
             let (from, to) = (cstring(&temporary)?, cstring(name.as_str())?);
@@ -199,6 +205,15 @@ impl HostSecrets for DevSecrets {
                 self.remove(&temporary)?;
             }
             self.sync_directory()?;
+            #[cfg(target_os = "macos")]
+            {
+                // Flush publication after its parent sync, in addition to the
+                // payload flush before publication. Not a power-loss proof.
+                // SAFETY: retained live file; F_FULLFSYNC has no pointer argument.
+                if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
+                    return Err(io::Error::last_os_error().into());
+                }
+            }
             Ok(())
         })();
         if result.is_err() && self.remove(&temporary).is_err() {

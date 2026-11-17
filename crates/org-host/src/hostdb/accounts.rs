@@ -16,6 +16,7 @@ pub(crate) struct Account {
     login: String,
     admin: bool,
     revoked_at_ms: Option<i64>,
+    password_changed_at_ms: i64,
     links: Vec<Link>,
 }
 
@@ -45,6 +46,9 @@ impl Account {
     }
     pub(crate) fn revoked_at_ms(&self) -> Option<i64> {
         self.revoked_at_ms
+    }
+    pub(crate) fn password_changed_at_ms(&self) -> i64 {
+        self.password_changed_at_ms
     }
     pub(crate) fn links(&self) -> &[Link] {
         &self.links
@@ -103,7 +107,7 @@ impl HostDb {
 fn read(db: &Connection, account_id: &AccountId) -> Result<Option<Account>, Error> {
     let row = db
         .query_row(
-            "SELECT account_id,login,admin,revoked_at_ms FROM accounts WHERE account_id=?1",
+            "SELECT account_id,login,admin,revoked_at_ms,password_changed_at_ms FROM accounts WHERE account_id=?1",
             [account_id.as_str()],
             |r| {
                 Ok(Account {
@@ -111,6 +115,7 @@ fn read(db: &Connection, account_id: &AccountId) -> Result<Option<Account>, Erro
                     login: r.get(1)?,
                     admin: r.get(2)?,
                     revoked_at_ms: r.get(3)?,
+                    password_changed_at_ms: r.get(4)?,
                     links: vec![],
                 })
             },
@@ -135,3 +140,23 @@ fn read(db: &Connection, account_id: &AccountId) -> Result<Option<Account>, Erro
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+impl HostDb {
+    pub(crate) fn change_authority_fixture(
+        &self,
+        id: &AccountId,
+        revoke: bool,
+    ) -> Result<(), Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        if revoke {
+            db.execute(
+                "UPDATE accounts SET revoked_at_ms=1 WHERE account_id=?1",
+                [id.as_str()],
+            )?;
+        } else {
+            db.execute("UPDATE accounts SET password_changed_at_ms=password_changed_at_ms+1 WHERE account_id=?1", [id.as_str()])?;
+        }
+        Ok(())
+    }
+}

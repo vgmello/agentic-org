@@ -386,7 +386,10 @@ fn first_lines_check_their_rules_both_ways() {
 #[test]
 fn ready_for_secrets_has_its_wire_shape() {
     let wire = serde_json::to_value(ReadyForSecrets).unwrap();
-    assert_eq!(wire, json!({"v": 3, "event": "ready_for_secrets"}));
+    assert_eq!(
+        wire,
+        json!({"v": 3, "event": "ready_for_secrets", "channel_profile": CHANNEL_PROFILE})
+    );
     assert_eq!(
         serde_json::from_value::<ReadyForSecrets>(wire).unwrap(),
         ReadyForSecrets
@@ -1003,4 +1006,47 @@ fn hq_creation_context_is_explicit_versioned_and_strictly_decoded_from_raw_bytes
     let mut out = Vec::new();
     assert!(write_first_line(&mut out, &HostFirstLine::Create(creation)).is_err());
     assert!(out.is_empty());
+}
+
+#[test]
+fn channel_profile_is_required_before_secret_handoff() {
+    let ready = serde_json::to_value(ReadyForSecrets).unwrap();
+    assert_eq!(ready["channel_profile"], "office-channels/1");
+    for raw in [
+        r#"{"v":3,"event":"ready_for_secrets"}"#,
+        r#"{"v":3,"event":"ready_for_secrets","channel_profile":"other"}"#,
+        r#"{"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1","channel_profile":"office-channels/1"}"#,
+    ] {
+        assert!(serde_json::from_str::<ReadyForSecrets>(raw).is_err());
+    }
+}
+
+#[test]
+fn lifecycle_events_keep_exact_strict_fields_and_refusal_reason() {
+    for event in [
+        RendezvousEvent::ChannelClosed { of: "c".into() },
+        RendezvousEvent::FdsRefused {
+            of: "c".into(),
+            reason: RefusalReason::Capacity,
+        },
+    ] {
+        let mut bytes = Vec::new();
+        write_rendezvous_event(&mut bytes, &event).unwrap();
+        assert_eq!(
+            read_server_event(&mut Cursor::new(bytes)).unwrap(),
+            Some(event)
+        );
+    }
+    for wire in [
+        r#"{"v":3,"event":"channel_closed","of":"c","reason":"capacity"}"#,
+        r#"{"v":3,"event":"channel_closed","of":"c","of":"d"}"#,
+        r#"{"v":3,"event":"fds_refused","of":"c"}"#,
+        r#"{"v":3,"event":"fds_refused","of":"c","reason":"unknown"}"#,
+        r#"{"v":3,"event":"fds_refused","of":"c","reason":"capacity","extra":0}"#,
+    ] {
+        assert!(
+            read_server_event(&mut Cursor::new(format!("{wire}\n"))).is_err(),
+            "{wire}"
+        );
+    }
 }

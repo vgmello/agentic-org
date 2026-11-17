@@ -101,7 +101,7 @@ pub(super) fn metadata(
             .as_array()
             .expect("missing Cargo dependencies")
         {
-            super::opener_build::dependency(package_id, dependency);
+            super::opener_build::dependency(scope, package_id, manifest, dependency);
             if let Some(path) = dependency.get("path") {
                 scope.require(
                     &Path::new(path.as_str().expect("invalid local dependency path"))

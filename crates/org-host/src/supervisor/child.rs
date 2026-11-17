@@ -62,6 +62,7 @@ pub(crate) struct Spawner {
     pub(crate) runtime_dir: Option<PathBuf>,
     /// Who may get a first line: every child is checked before it's written (`server_check`).
     pub(crate) check: Arc<ServerCheck>,
+    pub(super) broker: Option<Arc<super::channels::Broker>>,
 }
 
 /// Why a server wasn't started.
@@ -120,11 +121,19 @@ pub(crate) enum Mode<'a> {
 /// neither [`AppToken`] nor [`DbKey`] is `Clone`: writing it never copies them, and dropping it
 /// zeroes them. It lives on the heap (a `Box`), so moving it moves a pointer, not the secrets.
 /// Building it still leaves the usual stack copies behind (see `AppToken`'s docs).
-pub(crate) struct CreateLine(Box<CreateOffice>);
+pub(crate) struct CreateLine(Box<CreateOffice>, Option<HqCreate>);
+pub(crate) struct HqCreate {
+    pub first: org_office_launch::v3::CreateLine,
+    pub recovery: org_proto::RecoveryCode,
+}
 
 impl CreateLine {
     pub(crate) fn new(create: CreateOffice) -> Self {
-        Self(Box::new(create))
+        Self(Box::new(create), None)
+    }
+
+    pub(crate) fn hq(create: CreateOffice, context: HqCreate) -> Self {
+        Self(Box::new(create), Some(context))
     }
 
     /// The id of the office it creates.
@@ -140,7 +149,8 @@ impl CreateLine {
     /// Zeroes the database key in place, once the first line is written (or can't be): from then
     /// on only the key store holds it.
     pub(crate) fn drop_key(&mut self) {
-        // Replaced in place, leaving zeros; the old key is zeroed as it drops.
+        self.1.take(); // the delivered recovery-code copy is no longer needed
+                       // Replaced in place, leaving zeros; the old key is zeroed as it drops.
         drop(std::mem::replace(
             &mut self.0.db_key,
             DbKey::from_bytes([0; DB_KEY_BYTES]),
@@ -163,12 +173,20 @@ impl CreateLine {
 pub(crate) struct RunningChild {
     process: Process,
     stdin: Option<File>,
+    channel: Option<Arc<super::channels::Endpoint>>,
     pub(crate) generation: u64,
     pub(crate) started: Instant,
 }
 
 impl Spawner {
     pub(crate) fn socket_path(&self, office_id: &str) -> Option<PathBuf> {
+        if org_office_launch::is_selected_entity_id(office_id) {
+            let runtime = self
+                .runtime_dir
+                .clone()
+                .unwrap_or_else(|| self.home.join("run"));
+            return location::selected_office_socket_in(&runtime, office_id);
+        }
         match &self.runtime_dir {
             Some(runtime) => location::office_socket_in(runtime, office_id),
             None => location::office_socket_path(&self.home, office_id),
@@ -193,6 +211,14 @@ impl Spawner {
             host_log::log(&format!("didn't start an office server: {why}"));
             SpawnError::Untrusted(why)
         })?;
+        let rendezvous = match (&self.broker, mode) {
+            (Some(broker), Mode::Office(..)) => Some(broker.bind()?),
+            (Some(broker), Mode::Create(line)) if line.1.is_some() => Some(broker.bind()?),
+            (_, Mode::Create(line)) if line.1.is_some() => {
+                return Err(io::Error::other("registered HQ creation requires launch v3").into())
+            }
+            _ => None,
+        };
         let args: Vec<&OsStr> = match mode {
             Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
             Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
@@ -236,13 +262,19 @@ impl Spawner {
         let mut running = RunningChild {
             process,
             stdin: Some(stdin),
+            channel: None,
             generation,
             started: Instant::now(),
         };
         running.process.resume()?;
-        thread::Builder::new()
-            .name(format!("office-{pid}-out"))
-            .spawn(move || read_events(stdout, generation, &signals))?;
+        let v3_signals = signals.clone();
+        if rendezvous.is_none() {
+            thread::Builder::new()
+                .name(format!("office-{pid}-out"))
+                .spawn(move || read_events(stdout, generation, &signals))?;
+        } else {
+            drop(stdout);
+        }
         thread::Builder::new()
             .name(format!("office-{pid}-err"))
             .spawn(move || copy_stderr(stderr, &log))?;
@@ -255,8 +287,96 @@ impl Spawner {
             running.kill();
             return Err(SpawnError::Untrusted(why));
         }
-        running.write_first_line(mode);
+        self.attach_control(&mut running, mode, rendezvous, admitted, v3_signals)?;
         Ok(running)
+    }
+    fn attach_control(
+        &self,
+        running: &mut RunningChild,
+        mode: Mode<'_>,
+        rendezvous: Option<super::channels::Rendezvous>,
+        admitted: Option<crate::peer::AuditToken>,
+        v3_signals: Sender<Signal>,
+    ) -> Result<(), SpawnError> {
+        match (&self.broker, rendezvous, mode) {
+            (Some(broker), Some(rendezvous), Mode::Office(id, _, db_key)) => {
+                let first = org_office_launch::v3::HostFirstLine::Start(
+                    org_office_launch::v3::OfficeLine {
+                        id_profile: org_office_launch::is_selected_entity_id(id)
+                            .then_some(org_office_launch::v3::IdProfile::SelectedV1),
+                        selected_writer_required: broker.writer_required(id)?,
+                        instance_id: broker.instance.clone(),
+                        office_id: id.into(),
+                        rendezvous: rendezvous
+                            .path()
+                            .to_str()
+                            .ok_or_else(|| io::Error::other("invalid rendezvous path"))?
+                            .into(),
+                    },
+                );
+                org_office_launch::v3::write_first_line(
+                    running
+                        .stdin
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("missing worker stdin"))?,
+                    &first,
+                )
+                .map_err(|_| io::Error::other("worker start line failed"))?;
+                running.channel = Some(broker.accept(
+                    rendezvous,
+                    id,
+                    running.process.id(),
+                    admitted,
+                    &self.check,
+                    db_key,
+                    None,
+                    running.generation,
+                    v3_signals,
+                )?);
+            }
+            (Some(broker), Some(context), Mode::Create(line)) => {
+                let hq = line
+                    .1
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("missing HQ creation context"))?;
+                let mut first = hq.first.clone();
+                if first.office.instance_id != broker.instance
+                    || first.office.office_id != line.0.office_id
+                    || first.org_id != line.0.org_id
+                    || first.org_name != line.0.org_name
+                    || first.office_name != line.0.office_name
+                    || first.role != line.0.role
+                {
+                    return Err(io::Error::other("HQ create scope mismatch").into());
+                }
+                first.office.rendezvous = context
+                    .path()
+                    .to_str()
+                    .ok_or_else(|| io::Error::other("invalid rendezvous"))?
+                    .into();
+                org_office_launch::v3::write_first_line(
+                    running
+                        .stdin
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("missing stdin"))?,
+                    &org_office_launch::v3::HostFirstLine::Create(first),
+                )
+                .map_err(|_| io::Error::other("HQ create line refused"))?;
+                running.channel = Some(broker.accept(
+                    context,
+                    line.office_id(),
+                    running.process.id(),
+                    admitted,
+                    &self.check,
+                    line.db_key(),
+                    Some(&hq.recovery),
+                    running.generation,
+                    v3_signals,
+                )?);
+            }
+            _ => running.write_first_line(mode),
+        }
+        Ok(())
     }
 }
 
@@ -271,7 +391,8 @@ impl RunningChild {
             return;
         };
         let line = match mode {
-            Mode::Create(CreateLine(create)) => HostLine::Create(create),
+            Mode::Create(CreateLine(create, None)) => HostLine::Create(create),
+            Mode::Create(CreateLine(_, Some(_))) => return,
             Mode::Office(_, app_token, db_key) => HostLine::Start { app_token, db_key },
             Mode::Discard(_, db_key) => HostLine::Discard { db_key },
         };
@@ -286,6 +407,9 @@ impl RunningChild {
 
     /// Closes the control pipe: the server shuts down cleanly.
     pub(crate) fn close_stdin(&mut self) {
+        if let Some(channel) = self.channel.take() {
+            channel.fail();
+        }
         self.stdin = None;
     }
 

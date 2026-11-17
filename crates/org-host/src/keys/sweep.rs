@@ -45,7 +45,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use org_office_launch::is_plain_id;
+use org_office_launch::is_storage_id;
 use serde::{Deserialize, Serialize};
 
 use super::KeyStore;
@@ -234,7 +234,7 @@ fn load_record(path: &Path) -> Result<OrphanRecord, String> {
     if stored.v != RECORD_VERSION {
         return Err(format!("its version {} isn't {RECORD_VERSION}", stored.v));
     }
-    if !stored.first_seen_ms.keys().all(|id| is_plain_id(id)) {
+    if !stored.first_seen_ms.keys().all(|id| is_storage_id(id)) {
         return Err("it names an office id that isn't plain".into());
     }
     Ok(OrphanRecord {

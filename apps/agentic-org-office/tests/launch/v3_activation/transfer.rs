@@ -237,7 +237,12 @@ fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live
             assert_eq!(answer["id"], 41);
             assert_eq!(answer["error"]["code"], "unsupported_version");
             assert!(frame::read_line(&mut peer).unwrap().is_none());
-            // EOF means the old live ID is released before the next record uses it.
+            // The worker has disposed its endpoint; consume this ID's close before reuse.
+            drop(peer);
+            assert_eq!(
+                session.event(),
+                json!({"v":3,"event":"channel_closed","of":"opaque/Exact:id"})
+            );
         } else {
             frame::write_message(peer.get_mut(), &json!({"id":42,"method":"hello","params":{"api":{"min":1,"max":3}},"principal":{"malformed":"ignored-on-hello"}})).unwrap();
             let answer: Value = frame::read_message(&mut peer).unwrap().unwrap();
@@ -611,76 +616,157 @@ fn open_live_channel(session: &mut Session, kind: ChannelKind, id: &str) -> BufR
     drop(source);
     BufReader::with_capacity(1, peer)
 }
+fn assert_channel_hello(peer: &mut BufReader<UnixStream>) {
+    frame::write_message(
+        peer.get_mut(),
+        &json!({"id":1,"method":"hello","params":{"api":{"min":2,"max":2}}}),
+    )
+    .unwrap();
+    let answer: Value = frame::read_message(peer).unwrap().unwrap();
+    assert_eq!(answer["id"], 1);
+    assert_eq!(answer["result"]["api_version"], 2);
+    assert_eq!(answer["result"]["instance_id"], INSTANCE);
+    assert_eq!(answer["result"]["office"]["office"]["id"], OFFICE);
+}
+
+fn assert_capacity_refused(session: &mut Session, kind: ChannelKind) {
+    let (source, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        kind,
+        office_id: OFFICE.into(),
+        channel_id: "over-limit".into(),
+    })
+    .unwrap();
+    send_record(
+        session.transfer.as_ref().unwrap(),
+        &record,
+        &[source.as_raw_fd()],
+    );
+    assert_eq!(
+        session.event(),
+        json!({"v":3,"event":"fds_refused","of":"over-limit","reason":"capacity"})
+    );
+    // The refusal proves worker disposal. Only then release the sender copy.
+    drop(source);
+    assert!(frame::read_line(&mut BufReader::new(peer))
+        .unwrap()
+        .is_none());
+    assert!(session.run.child.try_wait().unwrap().is_none());
+}
+
+fn close_live_channel(session: &mut Session, id: &str, peer: BufReader<UnixStream>) {
+    // No source descriptor remains after its positive ACK. Closing this peer
+    // causes actual EOF, disposal, and the one precisely correlated close event.
+    drop(peer);
+    assert_eq!(
+        session.event(),
+        json!({"v":3,"event":"channel_closed","of":id})
+    );
+}
+
 #[test]
-fn real_channel_limits_accept_boundary_and_refuse_next_without_ack_then_reap_every_live_peer() {
+fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
     let _process = process_isolation();
     for case in [
         "eighth-gateway",
         "ninth-local",
         "ninth-gateway",
         "ninth-all-local",
-        "duplicate-live",
     ] {
         let world = World::new();
         let mut session = ready_create(&world);
-        let initial = if case == "duplicate-live" { 1 } else { 7 };
         let mut peers = Vec::new();
-        for n in 0..initial {
-            peers.push(open_live_channel(
+        for n in 0..7 {
+            let id = format!("live-{n}");
+            let peer = open_live_channel(
                 &mut session,
                 if case == "ninth-all-local" {
                     ChannelKind::Local
                 } else {
                     ChannelKind::Gateway
                 },
-                &format!("live-{n}"),
-            ));
+                &id,
+            );
+            peers.push((id, peer));
         }
         if case.starts_with("ninth-") {
-            peers.push(open_live_channel(
-                &mut session,
-                ChannelKind::Local,
-                "eighth-local",
+            peers.push((
+                "eighth-local".into(),
+                open_live_channel(&mut session, ChannelKind::Local, "eighth-local"),
             ));
         }
-        let (source, peer) = UnixStream::pair().unwrap();
-        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let record = v3::encode_transfer_record(&TransferRecord::Channel {
-            kind: if case.ends_with("gateway") {
-                ChannelKind::Gateway
-            } else {
-                ChannelKind::Local
-            },
-            office_id: OFFICE.into(),
-            channel_id: if case == "duplicate-live" {
-                "live-0"
-            } else {
-                "over-limit"
-            }
-            .into(),
-        })
-        .unwrap();
-        send_record(
-            session.transfer.as_ref().unwrap(),
-            &record,
-            &[source.as_raw_fd()],
-        );
-        assert_transfer_fatal(&mut session.run, case);
-        session.no_stdout();
-        assert!(
-            frame::read_line(&mut session.reader).unwrap().is_none(),
-            "{case}: unexpected ACK"
-        );
-        drop(source);
-        peers.push(BufReader::new(peer));
-        for peer in &mut peers {
-            assert!(
-                frame::read_line(peer).unwrap().is_none(),
-                "{case}: worker retained channel"
-            );
+        let refused_kind = if case.ends_with("gateway") {
+            ChannelKind::Gateway
+        } else {
+            ChannelKind::Local
+        };
+        assert_capacity_refused(&mut session, refused_kind);
+        // Every existing channel still serves real API-2 RPC after the refusal.
+        for (_, peer) in &mut peers {
+            assert_channel_hello(peer);
         }
+        let (closed_id, closed_peer) = peers.remove(0);
+        close_live_channel(&mut session, &closed_id, closed_peer);
+        // The refused ID was never registered; freed physical capacity admits it.
+        let mut replacement = open_live_channel(&mut session, refused_kind, "over-limit");
+        assert_channel_hello(&mut replacement);
+        peers.push(("over-limit".into(), replacement));
+        for (id, mut peer) in peers {
+            frame::write_message(
+                peer.get_mut(),
+                &json!({"id":2,"method":"org.snapshot","params":{}}),
+            )
+            .unwrap();
+            let answer: Value = frame::read_message(&mut peer).unwrap().unwrap();
+            assert_eq!(answer["id"], 2);
+            assert_eq!(answer["error"]["code"], "not_authorized");
+            close_live_channel(&mut session, &id, peer);
+        }
+        assert!(session.run.child.try_wait().unwrap().is_none(), "{case}");
+        assert!(
+            !org_socket::poll_readable(session.stream.as_raw_fd(), Duration::from_millis(10))
+                .unwrap(),
+            "{case}: unexpected ownership/lifecycle event"
+        );
+        session.stop();
         assert_reopens(&world);
     }
+}
+
+#[test]
+fn duplicate_live_channel_remains_fatal_without_ack_and_reaps_every_peer() {
+    let _process = process_isolation();
+    let world = World::new();
+    let mut session = ready_create(&world);
+    let mut existing = open_live_channel(&mut session, ChannelKind::Gateway, "live-0");
+    let (source, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        kind: ChannelKind::Local,
+        office_id: OFFICE.into(),
+        channel_id: "live-0".into(),
+    })
+    .unwrap();
+    send_record(
+        session.transfer.as_ref().unwrap(),
+        &record,
+        &[source.as_raw_fd()],
+    );
+    assert_transfer_fatal(&mut session.run, "duplicate-live");
+    session.no_stdout();
+    assert!(
+        frame::read_line(&mut session.reader).unwrap().is_none(),
+        "duplicate-live: unexpected ACK"
+    );
+    drop(source);
+    for peer in [&mut existing, &mut BufReader::new(peer)] {
+        assert!(
+            frame::read_line(peer).unwrap().is_none(),
+            "duplicate-live: worker retained channel"
+        );
+    }
+    assert_reopens(&world);
 }
 #[test]
 fn real_channel_admission_rejects_each_reserved_identity_and_wrong_descriptor_without_ack() {

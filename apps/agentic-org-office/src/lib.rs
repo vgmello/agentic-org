@@ -538,6 +538,7 @@ fn serve_office(
         .map(|transport| {
             let mut channels = transfer::Channels::new(
                 Arc::clone(&shared),
+                Arc::clone(&office),
                 instance.expect("verified v3 instance"),
                 control.writer().expect("v3 rendezvous writer"),
                 Arc::clone(&revocations),

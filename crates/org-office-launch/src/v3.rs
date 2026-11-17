@@ -24,6 +24,10 @@
 //!   `org-host-control` doesn't re-export it, which keeps that crate's dependencies to
 //!   `org-proto`, serde, `serde_json` and `sha2` (X-02 §5.2, §11): the gateway imports it from
 //!   here.
+//! - Selected REC-DEL-1 adds a mandatory-known `recovery_public_read` record with
+//!   exactly one connected descriptor. Its one-shot, EOF-terminated 16 KiB
+//!   public exchange is defined by [`crate::recovery`]; it is not writer control
+//!   and cannot carry private CA material.
 //!
 //! The "first line only, then drain unparsed" rule of v2 stays for the pipe. A v3 line is
 //! `{"v": 3, ...}`; a v2 build refuses it as another version, and [`read_first_line`] refuses a
@@ -50,6 +54,13 @@ pub use org_proto::RecoveryCode;
 
 /// The version of v3 pipe lines and rendezvous lines.
 pub const LAUNCH_VERSION: u32 = 3;
+
+/// Matched host/worker channel ownership and closure contract (CH-LIFE-1).
+pub const CHANNEL_PROFILE: &str = "office-channels/1";
+/// Maximum ordinary physical channels, including pending transfers and public recovery.
+pub const MAX_CHANNELS: usize = 8;
+/// Gateway allowance leaves one ordinary slot available for a local caller.
+pub const MAX_GATEWAY_CHANNELS: usize = 7;
 
 /// The largest transfer-record header, in bytes (a contract choice, X-02 §5.2).
 pub const TRANSFER_HEADER_MAX_BYTES: usize = 1024;
@@ -473,9 +484,21 @@ pub enum RendezvousEvent {
     /// Sent after taking ownership of a handoff's or channel's descriptors. `of` is its
     /// correlation value (`handoff` or a channel ID); the host checks its pending records.
     FdsReceived { of: String },
+    /// The worker closed a rejected descriptor without starting a serving thread.
+    FdsRefused { of: String, reason: RefusalReason },
+    /// An acknowledged channel's serving owner and shutdown descriptors are gone.
+    ChannelClosed { of: String },
     /// An ordinary worker event, carried on the authenticated connection in v3.
     #[serde(untagged)]
     Server(ServerEvent),
+}
+
+/// The only ordinary transfer refusal; malformed or uncertain transfers remain fatal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalReason {
+    /// The worker has no physical channel slot available.
+    Capacity,
 }
 
 /// Write a v3 rendezvous event, including a descriptor receipt, and flush.
@@ -486,7 +509,9 @@ pub fn write_rendezvous_event(
 ) -> Result<(), LaunchError> {
     match event {
         RendezvousEvent::Server(event) => write_server_event(w, event),
-        RendezvousEvent::FdsReceived { .. } => frame::write_message(
+        RendezvousEvent::FdsReceived { .. }
+        | RendezvousEvent::FdsRefused { .. }
+        | RendezvousEvent::ChannelClosed { .. } => frame::write_message(
             w,
             &Line {
                 v: LAUNCH_VERSION,
@@ -527,6 +552,17 @@ enum RawServerEvent {
         _version: u32,
         of: String,
     },
+    FdsRefused {
+        #[serde(rename = "v")]
+        _version: u32,
+        of: String,
+        reason: RefusalReason,
+    },
+    ChannelClosed {
+        #[serde(rename = "v")]
+        _version: u32,
+        of: String,
+    },
     Created {
         #[allow(dead_code)]
         v: u32,
@@ -556,6 +592,10 @@ impl RawServerEvent {
     fn into_event(self) -> RendezvousEvent {
         let event = match self {
             Self::FdsReceived { of, .. } => return RendezvousEvent::FdsReceived { of },
+            Self::FdsRefused { of, reason, .. } => {
+                return RendezvousEvent::FdsRefused { of, reason };
+            }
+            Self::ChannelClosed { of, .. } => return RendezvousEvent::ChannelClosed { of },
             Self::Created { office, .. } => ServerEvent::Created { office },
             Self::Ready { socket, pid, .. } => ServerEvent::Ready { socket, pid },
             Self::Discarded { .. } => ServerEvent::Discarded,
@@ -567,7 +607,7 @@ impl RawServerEvent {
 }
 
 /// The server's first line on the rendezvous connection: `{"v": 3, "event":
-/// "ready_for_secrets"}`. The host accepts it only after its post-accept checks (it starts after
+/// "ready_for_secrets", "channel_profile":"office-channels/1"}`. The host accepts it only after its post-accept checks (it starts after
 /// anything buffered at accept, nothing follows it, and the peer's token is still the admitted
 /// one), then sends the [`Handoff`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -581,10 +621,12 @@ impl Serialize for ReadyForSecrets {
         struct Wire {
             v: u32,
             event: &'static str,
+            channel_profile: &'static str,
         }
         Wire {
             v: LAUNCH_VERSION,
             event: READY_FOR_SECRETS,
+            channel_profile: CHANNEL_PROFILE,
         }
         .serialize(s)
     }
@@ -597,9 +639,13 @@ impl<'de> Deserialize<'de> for ReadyForSecrets {
         struct Wire {
             v: u32,
             event: String,
+            channel_profile: String,
         }
         let wire = Wire::deserialize(d)?;
-        if wire.v != LAUNCH_VERSION || wire.event != READY_FOR_SECRETS {
+        if wire.v != LAUNCH_VERSION
+            || wire.event != READY_FOR_SECRETS
+            || wire.channel_profile != CHANNEL_PROFILE
+        {
             return Err(serde::de::Error::custom("not a v3 ready_for_secrets"));
         }
         Ok(ReadyForSecrets)
@@ -745,6 +791,52 @@ impl Handoff {
 /// refused. The bytes hold the keys: zero them after sending.
 pub fn encode_handoff(handoff: &Handoff) -> Result<Vec<u8>, LaunchError> {
     handoff.check()?;
+    encode_secret(handoff)
+}
+
+/// Borrow host-held keys for a start without creating another owned key copy.
+/// The returned line is secret and must be zeroed by the sender on every path.
+pub fn encode_start_handoff(db_key: &DbKey, grant_key: &GrantKey) -> Result<Vec<u8>, LaunchError> {
+    #[derive(Serialize)]
+    struct Start<'a> {
+        op: &'static str,
+        db_key: &'a DbKey,
+        grant_key: &'a GrantKey,
+        fds: [HandoffFd; 1],
+    }
+    encode_secret(&Start {
+        op: "start",
+        db_key,
+        grant_key,
+        fds: [HandoffFd::Transfer],
+    })
+}
+
+/// Borrow the frozen host-held creation material. No owned secret copies and no
+/// alternative framing to the existing create handoff; caller zeroes every line.
+pub fn encode_create_handoff(
+    db_key: &DbKey,
+    grant_key: &GrantKey,
+    recovery_code: &RecoveryCode,
+) -> Result<Vec<u8>, LaunchError> {
+    #[derive(Serialize)]
+    struct Create<'a> {
+        op: &'static str,
+        db_key: &'a DbKey,
+        grant_key: &'a GrantKey,
+        recovery_code: &'a RecoveryCode,
+        fds: [HandoffFd; 1],
+    }
+    encode_secret(&Create {
+        op: "create",
+        db_key,
+        grant_key,
+        recovery_code,
+        fds: [HandoffFd::Transfer],
+    })
+}
+
+fn encode_secret(handoff: &impl Serialize) -> Result<Vec<u8>, LaunchError> {
     let body = Line {
         v: LAUNCH_VERSION,
         body: handoff,
@@ -788,7 +880,14 @@ pub enum ChannelKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransferRecord {
-    /// Private protected writer channel; not a human session.
+    /// One-shot public committed HQ escrow read, on a separate connected FD.
+    RecoveryPublicRead {
+        version: u32,
+        office_id: String,
+        channel_id: String,
+    },
+    /// Private writer admission/checkpoint channel, never a human or agent task
+    /// channel. Sent only for a previously provisioned selected office.
     WriterControl {
         office_id: String,
         channel_id: String,
@@ -808,7 +907,9 @@ impl TransferRecord {
     /// How many descriptors arrive with this record.
     pub fn fd_count(&self) -> usize {
         match self {
-            TransferRecord::Channel { .. } | TransferRecord::WriterControl { .. } => 1,
+            TransferRecord::Channel { .. }
+            | TransferRecord::WriterControl { .. }
+            | TransferRecord::RecoveryPublicRead { .. } => 1,
             TransferRecord::Revoked { .. } => 0,
         }
     }
@@ -817,6 +918,11 @@ impl TransferRecord {
 /// Encode a record's header. Over [`TRANSFER_HEADER_MAX_BYTES`] is refused
 /// ([`FrameError::TooLargeToSend`]): split a long revocation into several records.
 pub fn encode_transfer_record(record: &TransferRecord) -> Result<Vec<u8>, LaunchError> {
+    if matches!(record, TransferRecord::RecoveryPublicRead { version, .. } if *version != 1) {
+        return Err(LaunchError::Invalid(
+            "unsupported recovery transfer version",
+        ));
+    }
     let bytes = serde_json::to_vec(record).map_err(LaunchError::Json)?;
     if bytes.len() > TRANSFER_HEADER_MAX_BYTES {
         return Err(LaunchError::Frame(FrameError::TooLargeToSend));
@@ -830,7 +936,13 @@ pub fn decode_transfer_record(bytes: &[u8]) -> Result<TransferRecord, LaunchErro
     if bytes.len() > TRANSFER_HEADER_MAX_BYTES {
         return Err(LaunchError::Frame(FrameError::TooLarge));
     }
-    serde_json::from_slice(bytes).map_err(LaunchError::Json)
+    let record = serde_json::from_slice(bytes).map_err(LaunchError::Json)?;
+    if matches!(record, TransferRecord::RecoveryPublicRead { version, .. } if version != 1) {
+        return Err(LaunchError::Invalid(
+            "unsupported recovery transfer version",
+        ));
+    }
+    Ok(record)
 }
 
 #[cfg(test)]

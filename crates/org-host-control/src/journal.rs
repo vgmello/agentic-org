@@ -91,6 +91,49 @@ pub fn fingerprint<J: Journaled>(params: &J) -> Result<[u8; 32], serde_json::Err
     Ok(Sha256::digest(fingerprint_input(params)?).into())
 }
 
+fn bootstrap_fields(login: &str, hq_operation_id: &str) -> Result<String, serde_json::Error> {
+    #[derive(Serialize)]
+    struct Fields<'a> {
+        login: &'a str,
+        hq_operation_id: &'a str,
+    }
+    serde_json::to_string(&Fields {
+        login,
+        hq_operation_id,
+    })
+}
+
+/// The same bootstrap fingerprint after the host normalizes the login. This
+/// borrowed interface does not construct, clone or fingerprint a password.
+pub fn bootstrap_fingerprint(
+    normalized_login: &str,
+    hq_operation_id: &str,
+) -> Result<[u8; 32], serde_json::Error> {
+    use sha2::{Digest, Sha256};
+    let fields = bootstrap_fields(normalized_login, hq_operation_id)?;
+    let mut hash = Sha256::new();
+    hash.update(Bootstrap::METHOD.as_bytes());
+    hash.update([0]);
+    hash.update(fields.as_bytes());
+    Ok(hash.finalize().into())
+}
+
+#[cfg(test)]
+#[test]
+fn borrowed_bootstrap_fingerprint_is_the_existing_typed_fingerprint() {
+    let params = BootstrapParams {
+        operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        hq_operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
+        login: "admin".into(),
+        password: crate::Password::new("synthetic password".into()).unwrap(),
+        tls: None,
+    };
+    assert_eq!(
+        bootstrap_fingerprint(&params.login, &params.hq_operation_id).unwrap(),
+        fingerprint(&params).unwrap()
+    );
+}
+
 impl Journaled for OrganizationCreateParams {
     const METHOD: &'static str = OrganizationCreate::METHOD;
 
@@ -186,11 +229,6 @@ impl Journaled for BootstrapParams {
     /// `login` is used as given: callers pass it **normalized** (NFC, case-folded; X-02 §6.2,
     /// §6.3), because this crate doesn't normalize.
     fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
-        #[derive(Serialize)]
-        struct Fields<'a> {
-            login: &'a str,
-            hq_operation_id: &'a str,
-        }
         let BootstrapParams {
             operation_id: _,
             password: _,
@@ -198,10 +236,7 @@ impl Journaled for BootstrapParams {
             login,
             hq_operation_id,
         } = self;
-        serde_json::to_string(&Fields {
-            login,
-            hq_operation_id,
-        })
+        bootstrap_fields(login, hq_operation_id)
     }
 }
 

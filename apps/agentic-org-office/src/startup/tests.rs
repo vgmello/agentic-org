@@ -140,7 +140,7 @@ fn accept(listener: UnixListener) -> (UnixStream, BufReader<UnixStream>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(
         event(&mut reader),
-        json!({"v":3,"event":"ready_for_secrets"})
+        json!({"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
     );
     (stream, reader)
 }

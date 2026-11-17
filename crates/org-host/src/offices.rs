@@ -76,6 +76,12 @@ pub(crate) struct Offices {
 }
 
 impl Offices {
+    pub(crate) fn endpoint(
+        &self,
+        office: &str,
+    ) -> Option<Arc<crate::supervisor::channels::Endpoint>> {
+        self.supervisor.endpoint(office)
+    }
     /// Moves the folders holding another office's `office.json` to `offices/.refused/`, starts
     /// supervising every office in `catalog`, and discards the `unfinished` office folders in
     /// the background, [`STARTUP_DISCARDS_AT_ONCE`] at a time.
@@ -327,6 +333,82 @@ impl Offices {
             .into_iter()
             .flat_map(|org| org.offices)
             .collect()
+    }
+
+    /// Actual selected create on the existing supervisor. A lost/failed attempt
+    /// retains all intent, data and custody; no legacy discard or key sweep runs.
+    pub(crate) fn provision_hq(
+        &self,
+        first: org_office_launch::v3::CreateLine,
+        recovery: org_proto::RecoveryCode,
+    ) -> Result<bool, ApiError> {
+        let deadline = Instant::now() + self.create_wait;
+        self.wait_for_startup(deadline)?;
+        let p = first
+            .hq_creation
+            .as_ref()
+            .and_then(|c| c.bootstrap.as_ref())
+            .ok_or_else(storage_error)?;
+        let office = p.office_id.clone();
+        let stored = lock(&self.catalog).office(&office).cloned();
+        if let Some(stored) = stored {
+            if stored.org_id != p.organization_id
+                || stored.org_name != p.plan.name
+                || stored.version() != 2
+            {
+                return Err(storage_error());
+            }
+            return Ok(self.state_of(&office).status == OfficeStatus::Active);
+        }
+        lock(&self.catalog)
+            .reserve_selected(p)
+            .map_err(|_| already_exists())?;
+        let _slot = self.create_slot(deadline)?;
+        let org = first.org_id.clone();
+        let name = first.org_name.clone();
+        let pending = self
+            .supervisor
+            .begin_hq_create(first, recovery)
+            .map_err(|error| {
+                let phase = match error {
+                    CreateStartError::NotStarted(_) => "selected HQ launch preparation refused",
+                    CreateStartError::KeyStored(_) => "selected HQ admitted launch/handoff failed",
+                };
+                host_log::log(phase);
+                selected_create_unresolved()
+            })?;
+        match pending.wait(self.create_timeout) {
+            CreateOutcome::Created(adoptable) => {
+                let file = &adoptable.office;
+                if file.office_id != office
+                    || file.org_id != org
+                    || file.org_name != name
+                    || file.role != org_proto::OfficeRole::Hq
+                    || file.version() != 2
+                {
+                    host_log::log("selected HQ returned mismatched office metadata");
+                    adoptable.stop();
+                    return Err(selected_create_unresolved());
+                }
+                let file = file.clone();
+                self.supervisor.adopt(*adoptable);
+                self.add_created(&file, |_| {});
+                Ok(self.state_of(&office).status == OfficeStatus::Active)
+            }
+            // Published effects may exist after every such outcome. The caller
+            // retains its original operation and reconciles; never a rejection.
+            outcome => {
+                let phase = match outcome {
+                    CreateOutcome::Failed(_) => "selected HQ worker reported creation failure",
+                    CreateOutcome::Crashed => "selected HQ worker closed before created",
+                    CreateOutcome::TimedOut => "selected HQ worker creation timed out",
+                    CreateOutcome::Stopped => "selected HQ creation interrupted by host stop",
+                    CreateOutcome::Created(_) => unreachable!(),
+                };
+                host_log::log(phase);
+                Err(selected_create_unresolved())
+            }
+        }
     }
 
     /// `organization.create`: makes the organization and its HQ office (with a new database key,
@@ -751,6 +833,13 @@ fn storage_error() -> ApiError {
     ApiError::new(
         ErrorCode::StorageError,
         "the organization couldn't be created; try again",
+    )
+}
+
+fn selected_create_unresolved() -> ApiError {
+    ApiError::new(
+        ErrorCode::Unavailable,
+        "HQ creation is unresolved; retry the original operation",
     )
 }
 

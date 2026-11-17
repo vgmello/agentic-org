@@ -63,6 +63,25 @@ pub struct SessionParams {
     pub session: SessionHandle,
 }
 
+/// Live account/session facts, on its issuing control connection. Inspection
+/// rechecks protected registry authority; it never recreates an expired session.
+pub struct SessionInspect;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionInspectResult {
+    pub account: String,
+    pub login: String,
+    pub admin: bool,
+    pub orgs: Vec<LinkedOrg>,
+    pub server_time_ms: u64,
+    pub absolute_expires_at_ms: u64,
+    pub idle_expires_at_ms: u64,
+}
+impl Call for SessionInspect {
+    const METHOD: &'static str = "session.inspect";
+    type Params = SessionParams;
+    type Result = SessionInspectResult;
+}
+
 /// `session.renew`: extend the session's idle timer, without the password.
 pub struct SessionRenew;
 
@@ -245,6 +264,20 @@ impl Call for OfficeOpenChannel {
     const METHOD: &'static str = "office.open_channel";
     type Params = OfficeOpenChannelParams;
     type Result = OfficeOpenChannelResult;
+}
+
+/// Local descriptor ownership receipt, on the connection that opened it. A
+/// receipt cannot authorize another call or nominate an office/channel.
+pub struct FdsReceived;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FdsReceivedParams {
+    pub of: String,
+}
+impl Call for FdsReceived {
+    const METHOD: &'static str = "fds.received";
+    type Params = FdsReceivedParams;
+    type Result = Empty;
 }
 
 /// `operation.get` (the same account): a journaled op's stored result, by its `operation_id`.
@@ -742,6 +775,7 @@ impl Call for AccountCreate {
 pub struct RecoveryRelease;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecoveryReleaseParams {
     pub session: SessionHandle,
     pub org_id: String,
@@ -766,6 +800,7 @@ impl Call for RecoveryRelease {
 pub struct RecoveryAcknowledge;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecoveryAcknowledgeParams {
     pub session: SessionHandle,
     pub org_id: String,
