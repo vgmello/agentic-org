@@ -41,17 +41,24 @@ HTML. Unknown operations are never forwarded to a local socket.
 | --- | --- | --- |
 | GET `/api/v1/version` | `{api_version:1, contract_revision}` | Public. Constant protocol metadata only; nothing about the instance, organization or accounts |
 | POST `/api/v1/session/sign-in` | `{login,password}` → session view plus proof | Host `account.verify`; configured-origin validation, bounded limits |
+| POST `/api/v1/links/register` | `{link,login,password}` → session view plus proof | Public; redeems a registration link once (§4) |
+| POST `/api/v1/links/set-password` | `{link,password}` → `{}` | Public; redeems a set-new-password link once and ends every session of that account |
+| POST `/api/v1/links/approve` | `{link,decision:"approve"\|"decline"}` → `{}` | Pair; signs a terminal in as this account, or declines (§4) |
+| POST `/api/v1/session/password` | `{current_password,new_password}` → `{}` | Pair; ends every other session of the account |
+| POST `/api/v1/instance/administrator` | `{account_id,password}` → `{}` | Pair; the administrator only; hands the role over in one operation |
 | GET `/api/v1/session` | Session view, without proof | Cookie and proof pair; a proof is never recovered from the cookie alone |
 | POST `/api/v1/session/refresh` | `{}` → session view plus rotated proof | Pair; host `session.renew`; both browser values rotate atomically |
 | POST `/api/v1/session/sign-out` | `{}` → `{}` | Pair; ends the host session, clears the browser pair and closes streams |
 | GET `/api/v1/capabilities` | Capability view (§7) | Pair; authorized scopes only |
 | GET `/api/v1/instance` | Instance view (§3) | Pair; host-derived status, no paths, sockets or credentials |
 | GET `/api/v1/organizations` | `{organizations:[...]}` | Pair; host `organization.list`, linked organizations only |
-| POST `/api/v1/organizations` | Command envelope with the [create payload](#selected-create-organization-payload) | Pair; host `organization.create`, instance administrator only |
-| POST `/api/v1/organizations/operations/{id}/cancel` | `{}` → cancellation result (§5) | Pair; host `organization.cancel`; same account or an administrator; the original create ID |
+| POST `/api/v1/organizations` | Command envelope with the [create payload](#selected-create-organization-payload) | Pair; host `organization.create`, the administrator only |
+| POST `/api/v1/organizations/operations/{id}/cancel` | `{}` → cancellation result (§5) | Pair; host `organization.cancel`; the same account or the administrator; the original create ID |
+| POST `/api/v1/organizations/{org}/people/{person}/access` | Envelope with `{action:"invite"\|"new_link"\|"remove"}` → `{link}` for the first two, `{}` for remove | Pair; the organization's owner or the administrator; a link is returned once and never again |
+| POST `/api/v1/organizations/{org}/owner` | Envelope with `{person_id,password}` → `{}` | Pair; the owner only; the person must have an account |
 | GET `/api/v1/organizations/{org}/offices` | `{offices:[...]}` | Pair; host `office.list` narrowed to an authorized organization |
 | GET `/api/v1/organizations/{org}/snapshot` | `{snapshot,resume_cursor}` | Pair; organization snapshot at HQ with a cursor at the same position |
-| POST `/api/v1/organizations/{org}/offices/{office}/restart` | Office-scoped envelope with `{}` | Pair; host `office.restart`; account linked to the organization; no administrator bypass |
+| POST `/api/v1/organizations/{org}/offices/{office}/restart` | Office-scoped envelope with `{}` | Pair; host `office.restart`; the organization's owner or the server's administrator |
 | GET `/api/v1/operations/{kind}/{id}` | Scoped lookup (§5) | Pair; `kind=host\|org\|work\|msg`; query fields below, checked before lookup |
 | POST `/api/v1/events` | Subscriptions and cursors (§6) → SSE | Pair; streaming fetch, no proof in the URL |
 | POST `/api/v1/events/poll` | Same body → bounded frame batch | Pair; short-poll alternative with no held connection |
@@ -86,11 +93,13 @@ browser resume token.
 | `slug` | yes | Lowercase kebab-case, unique in the instance's organization catalog; never recalculated after a rename |
 | `organization_repository` | yes | Registration of the remote Git repository that holds the organization's files: `kind: remote`, a `remote_url`, and a reference to an office-held credential. Never a secret value. Validation checks syntax only and makes no network request. |
 | `state_branch` | yes | The branch organization files are published to. There is no default. |
-| `initial_team` | when the plan includes bootstrap employees | The root team to create at HQ for them, by name; HQ allocates its number. A resumed plan may name an existing team instead. No lead, team name or reporting line is inferred. |
 
-The result is the organization view (§3) with `slug` and, when a team was created,
-its ID and reference. Connectivity and publication of the remote repository are
-reported as unverified until online operation is authorized.
+There is no team field. Creation makes one top-level team named after the
+organization, with the creator's person as its lead and the built-in HR lead as
+its other member ([create-organization design](create-organization.md)). The
+result is the organization view (§3) with `slug`. Connectivity and publication of
+the remote repository are reported as unverified until online operation is
+authorized.
 
 ### Tasks
 
@@ -122,9 +131,15 @@ read is `task.selected.read`, an object query tagged by `kind` (`status`, `list`
 - **Revisions are decimal strings** in browser JSON, up to `9223372036854775807`,
   in every card, reference, result and refusal. Decode raw bytes straight into
   strict DTOs; never collapse duplicate keys through a generic JSON value.
-- **Outcome.** `completed`, or `rejected` with `code` and, for a conflict, the
-  current assignment state (organization, office, task, revision, both assignment
-  fields) at the decision point. Work lookup of the operation returns the same.
+- **Outcome.** `completed` with `result:{task_id,task_ref,revision,event_id,
+  assigned_team_id,assignee_id,office_id}`: the task's ID and reference, its new
+  revision and the identity of the history event it wrote, the assignment pair
+  after the change, and the office that admitted it. Or `rejected` with `code`
+  and, for a conflict, the current assignment state (organization, office, task,
+  revision, both assignment fields) at the decision point. Work lookup of the
+  operation returns the same. No codec defines the completed result yet;
+  `org_work::selected_assignment::AssignmentPlan` holds the planned organization,
+  task, next revision and change.
 - **Content references** name the task, exact revision, kind, digest and byte
   length. A chunk is at most 256 KiB of raw bytes, sent as hexadecimal; clients
   concatenate bytes before decoding UTF-8. A chunk request rechecks the task and
@@ -230,7 +245,8 @@ criteria SES-1 to SES-8. In short: the host stores each browser session as a rec
 holding digests of the cookie and proof; the web process keeps an in-memory cache,
 validates an unknown cookie with one host call, and stores nothing. A restart of
 either process, an update or a lost control connection does not end a session.
-Sign-out, expiry, password change, unlink and revoke end it at once: the host
+Sign-out, expiry, a password set from a link and removed access end it at once,
+and a password change ends every other session of the account: the host
 deletes the record, then tells the web process to drop the cache entry and close
 its streams. The host owns accounts, password checks, expiry, grants and
 revocation; the office owns domain authorization. The web process opens no database
@@ -247,8 +263,25 @@ redirect or cookie-only recovery. The web process checks the configured Host and
 the browser Origin; when Origin is absent on a same-origin GET, the valid proof
 carries the origin binding.
 
+**Accounts and principals.** Every account is tied to a person in each
+organization it can open; the session view's `employee_id` for an organization is
+that person, and the principal the office receives carries it, so what the account
+does there is recorded under that person's name. An account is never tied to an
+agent, and an agent never holds a browser session. One account carries the
+administrator flag; `admin: true` in the session view marks it. Accounts are
+created only by redeeming a registration link; no route creates one from a
+supplied login.
+
+**One-time links.** Registration, set-new-password and terminal-approval links are
+made by the host, which keeps only a digest of each. The secret travels after `#`
+and the page sends it in a JSON body, so it never appears in a request line, log or
+redirect. A link works once and expires (24 hours for registration and
+set-new-password, 10 minutes for approval); a used, expired or cancelled link is
+HTTP 404 `not_found` with no detail about the account.
+
 Credentials go straight into redacting, zeroizing secret types and are never
-logged. Only sign-in accepts a password. An unknown login and a wrong password get
+logged. Only sign-in, the link routes, password change and the two hand-over
+routes accept a password. An unknown login and a wrong password get
 the same `not_authorized` shape. Sign-in limits may return `retry_after_ms` and
 never reveal whether an account exists.
 
@@ -476,7 +509,7 @@ its scope and identity private and hides business values in debug output.
 - A native `not_authorized` makes the web process check whether the host session is
   alive. If it is, the web process renews once and dispatches once more with the
   same operation ID. A second refusal is 403. If renewal is refused, a
-  host-confirmed session end is 401, an unlinked organization is 404, and anything
+  host-confirmed session end is 401, an organization the account can no longer open is 404, and anything
   else is 503. A refusal code alone never proves the session ended.
 
 Each operation stays unavailable, and is refused with 503 before native dispatch,
