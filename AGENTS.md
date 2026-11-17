@@ -100,6 +100,14 @@ this preservation requirement does not require contacting offline developers.
   gap, failure or contradiction. Required source inspection, independent reviews,
   author validation and complete feature checks remain mandatory.
 
+### Fixing review findings (trial, PI-01)
+
+- Fix the class, not the line: state the violated invariant and check sibling operations/outcomes (success, transient, refusal, timeout,
+  abandoned reply, crash). Fix a sibling only when a test that fails first proves the same defect; name an out-of-scope sibling in the fix summary (`unaddressed_ids` holds review finding IDs only);
+  record "invariant / siblings checked / tests added" in the fix summary.
+- For session, connection, process or provisioning lifecycles, use the project skill `.agent-kit/project-skills/stateful-protocol-changes/SKILL.md`
+  and the decision's Invariants table if present (otherwise derive and state the invariant; its absence alone never makes a review incomplete).
+
 ### Communication for the lead and delegates
 
 - The main lead answers concisely in normal prose. Include the evidence, risks

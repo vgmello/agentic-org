@@ -30,6 +30,14 @@ the chosen mechanism fails. Record concise justification, not private transcript
 - Known limits, failure cases, migration/rollback and operational implications:
 - Checks that establish feasibility and would falsify key assumptions:
 
+## Invariants and outcome matrix (required for stateful, concurrent or lifecycle work)
+
+- Invariants the code must keep (e.g. "a shared connection closes only on proven desync"; "logout invalidates locally before the remote end"):
+- Operation × outcome matrix: one row per lifecycle operation; columns success, transient failure, definitive refusal, timeout, caller
+  abandonment (reply undeliverable), crash/restart; each cell states the resulting state and names its test:
+- Shared limits/constants and their single owning contract; fakes that must conform to the real rule:
+- Durable-format guards checked before deciding (frozen schemas, wire/first-line versioning, migrations):
+
 ## Architecture review
 
 - Exact decision revision and relevant source baseline reviewed:

@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "f7d9e3f1305c468695f9684694ad31cd3d0eff60c33f448b0a4eccfd6b52c557"
+      "sha256": "00b20b7852f830a04645c6273482a4001436bd929973b2771d8c59b4b8f30455"
     },
     {
       "path": "Cargo.lock",
@@ -195,6 +195,10 @@
     {
       "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
       "sha256": "9624f8714b0c5ff44b7fbd43a7963588cf81c5596ca3130499a111284a1b3b9f"
+    },
+    {
+      "path": ".agent-kit/project-skills/stateful-protocol-changes/SKILL.md",
+      "sha256": "9b701dae375448be7f4ce6aedf96565a6a3a35e18cbfa3e831dcdd8be5de9d50"
     }
   ],
   "roles": {
@@ -508,6 +512,33 @@
         ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
       ],
       "critical": true
+    },
+    {
+      "id": "stateful-protocol-changes",
+      "description": "Lifecycle exit paths, shared-resource timing, single-owner limits and refusal causes for session/connection/process/provisioning work (PI-01 trial)",
+      "paths": [
+        "apps/agentic-org-web/src",
+        "crates/org-host/src/gateway.rs",
+        "crates/org-host/src/service",
+        "crates/org-host/src/supervisor",
+        "crates/org-host-control/src",
+        "crates/org-office-sessions",
+        "crates/org-supervise/src",
+        "crates/org-office/src/execution",
+        "crates/org-office/src/organization/hire",
+        "apps/agentic-org-office/src/serve",
+        "apps/agentic-org-ui/e2e/fakes",
+        "crates/org-host/src/lib.rs",
+        "apps/agentic-org-office/src/serve.rs"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/stateful-protocol-changes/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/stateful-protocol-changes/SKILL.md"
+      ],
+      "critical": false
     }
   ]
 }
