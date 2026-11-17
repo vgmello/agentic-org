@@ -3,6 +3,13 @@
 Status: ACTIVE for implementation architecture, revision 1; not implementation acceptance. Owner: local Codex lead.
 Canonical path: docs/adr/0007-hq-creation-escrow.md.
 
+**Amendment required (2026-11-17).** [ADR-0016](0016-no-application-level-data-encryption.md)
+removes SQLCipher. This ADR keeps the usable CA key in office-local SQLCipher storage
+and commits it in the worker's initial SQLCipher transaction. Before SQLCipher is
+removed, the CA private key needs a protected location outside any plaintext
+database, such as the host's credential provider, and the atomic-commit steps below
+must be restated for it. The escrow envelope format and recovery code are unaffected.
+
 ## Why this decision is needed
 
 The original fullstack/architecture author (session 01a1dfb4-1d26-7100-9ea4-72b53756ef23) found a planned missing prerequisite while implementing ADR-0006 P6/P9 and plan section 4: authorities mandate Argon2id/encrypted CA escrow but no concrete envelope/KDF/code format exists. This is not evidence that task acceptance or its reviewed writer/journal architecture is invalid. Preserve ADR-0006 revision 4 and its other verified premises. Pause dependent escrow/setup completion only; authenticated selected transport and UI can continue. The original author remains implementation owner; this lead proposal answers its format question and requires independent architecture review before activation.

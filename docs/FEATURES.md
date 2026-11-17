@@ -28,12 +28,12 @@ Done reflects the linked source evidence, **not a fresh execution of all accepta
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 58 |
-| Planned | 48 |
-| Blocked | 3 |
+| In progress | 60 |
+| Planned | 51 |
+| Blocked | 2 |
 | Deferred | 40 |
 | Needs verification | 0 |
-| **Total** | **158** |
+| **Total** | **162** |
 
 ## Feature tables
 
@@ -85,6 +85,8 @@ Full requirements: [Installation, access and office operations](specs/server-ins
 | [ ] | FC-153 | [Account administration and organization ownership grants](specs/server-installation-and-access-ux.md) | Planned | Target account create/link/unlink/revoke and owner grants require protected backend; [UI] claims no real sign-in/setup behavior. |
 | [ ] | FC-154 | [Verified downloads and signed offline bundles](specs/server-installation-and-access-ux.md) | Planned | [Executable status] explicitly lists downloads, signed bundles and update activation as pending integration.  Owner defers signing setup and authentic signed-release verification to the final phase after other implementation; preserve fail-closed release code. This does not block ordinary functional development. See [phase amendment](../.agent-kit/tasks/v1-release-signing-deferral.md). |
 | [ ] | FC-155 | [Browser CSP and production asset security](design/rust-browser-bff-and-static-sveltekit.md) | In progress | [UI] documents production-static CSP harness and browser security checks; authenticated production service remains blocked. |
+| [ ] | FC-159 | [Stored browser sessions that survive restarts](adr/0013-stored-browser-sessions.md) | Planned | Owner decision 2026-11-17. Sessions are in memory in both the web process and the host today and end with the control connection; criteria SES-1 to SES-6 are unmet. Changes the connection-bound browser session work recorded under FC-014; native CLI sessions stay connection-bound. |
+| [ ] | FC-162 | [No application-level data encryption; secrets relocated](adr/0016-no-application-level-data-encryption.md) | Planned | Owner decision 2026-11-17. SQLCipher and database-key custody are still in place; a protected location for the CA private key, office TLS identity key and invitation key must be designed first. Does not wait for FC-161. Criteria ENC-1 to ENC-5 are unmet. |
 
 ### Organization, people and teams
 
@@ -183,6 +185,7 @@ Full requirements: [Chat and agent messaging](specs/chat-ux.md).
 | [ ] | FC-081 | [Uninterrupting delivery, pause and waiting](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-081): SQL-backed office mailbox send/inbox/read/held-wait is wired; execution-aware wake/holds/noninterrupting delivery remain. |
 | [ ] | FC-082 | [Live transport cutover with triage preservation](adr/0003-agent-messaging-office-first.md) | Planned | [Agent CLI] explicitly retains installed Phase A tooling/spool until verified replacement; no automatic switch. |
 | [ ] | FC-083 | [External chat bridges](specs/chat-ux.md) | Deferred | Optional bridge engines require separate selection and privacy/identity contracts. |
+| [ ] | FC-160 | [Acknowledgement classes and the agent-os session mode](adr/0014-acknowledgement-classes-and-agent-os-latency.md) | Planned | Owner direction 2026-11-17; operation list awaits confirmation. Every write waits for a full flush and agent-os starts a process per call today; criteria ACK-1 to ACK-5 are unmet. |
 
 ### Usage, costs and budgets
 
@@ -225,6 +228,7 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 | [ ] | FC-105 | [Extra model-policy slots and role overrides](specs/agent-run-modes-ux.md) | Deferred | Additional selection/Why policy requires its own contract; data fields do not activate routing policy. |
 | [ ] | FC-106 | [Goals, reminders and automatic memory consolidation](specs/employee-supervision-ux.md) | Deferred | Scheduling/memory engine remains separate pending selection. |
 | [ ] | FC-107 | [Private specialists and child delegation engines](specs/employee-supervision-ux.md) | Deferred | Native delegate/replica orchestration requires separate selection and execution/accounting boundaries. |
+| [ ] | FC-161 | [Selectable agent isolation with a dedicated OS user](adr/0015-agent-isolation-modes.md) | Planned | Owner decision 2026-11-17. The launch contract has no isolation setting and agents share the service user; the macOS spike of decision 6 and criteria ISO-1 to ISO-6 are unmet. |
 
 ### Roles, processes and retrospectives
 

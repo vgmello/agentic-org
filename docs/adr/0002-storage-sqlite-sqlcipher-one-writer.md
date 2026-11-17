@@ -14,6 +14,16 @@ one root with sources under `durable/` and the SQLite projection under
 `runtime/<office-id>/`. The per-office `org.db` and `office.db` described here are
 the current implementation and stay authoritative until an approved migration.
 
+**Amended 2026-11-17 by two owner decisions.**
+[ADR-0016](0016-no-application-level-data-encryption.md) supersedes the SQLCipher
+requirement of decision 1 and the database-key custody of decision 2: organization
+data is no longer encrypted by the application, and no database key exists. The
+choice of SQLite, the single writer and WAL stand.
+[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) amends decision 4:
+named operations may be acknowledged once committed, with the full flush following
+within a bounded interval; every other operation keeps the full-flush rule. Until the
+code changes, the text below describes the current implementation.
+
 ## Context
 - Many agents will talk to an office server at once, and their writes must not fail or stall each other.
 - Organizations will hold confidential information, so the server's database must be encrypted at rest.

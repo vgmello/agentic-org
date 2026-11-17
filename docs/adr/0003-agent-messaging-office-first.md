@@ -851,6 +851,13 @@ pub trait ThreadStore {
 
 ### 5. Performance and Size Targets
 
+> **Amended by [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md)
+> (2026-11-17).** The owner's target for `agent-os` is a median of at most 1 ms and a
+> 95th percentile of at most 2 ms for office-local reads and sends in session mode.
+> The figures below are design estimates built on a full flush per send and a process
+> per call; ADR-0014 replaces both assumptions and requires measurements on the
+> reference Mac.
+
 Accounting for ADR-0002's `PRAGMA synchronous = FULL` + `PRAGMA fullfsync = ON` and single-writer batching on macOS Apple Silicon:
 
 | Metric | Target | Rationale / How Achieved |

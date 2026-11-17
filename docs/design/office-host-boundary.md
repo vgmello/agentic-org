@@ -1,5 +1,12 @@
 # Host library ↔ agentic-org-office: the boundary (phase 1, HQ only)
 
+> **Amended by [ADR-0016](../adr/0016-no-application-level-data-encryption.md)
+> (2026-11-17).** Organization data is no longer encrypted by the application. The
+> database key, its custody, its passing in the launch protocol and the `key_missing`
+> failure described in this document are to be removed. Writer custody and the
+> private launch itself stay. Until the code changes, this document describes the
+> current implementation.
+
 Status: **current launch-v2 evidence plus selected target adaptation**, reconciled
 2026-11-15. The host library is `crates/org-host`, composed by `agentic-org serve`;
 the office executable is `agentic-org-office`. [Executable migration](executable-migration.md)
@@ -90,7 +97,9 @@ distinct from `host.sock`: only it can fetch the per-bind listener snapshot.
 Gateway office channels travel as `ChannelKind::Gateway` records on its admitted
 datagram transfer socket; native channels retain the existing stream-marker
 delivery and `ChannelKind::Local`. Both retain descriptors until their correlated
-receipt; sessions/grants remain connection-bound and end at control EOF.
+receipt; sessions/grants remain connection-bound and end at control EOF. (Amended by
+[ADR-0013](../adr/0013-stored-browser-sessions.md): browser sessions are stored at the
+host and no longer end at control EOF; native sessions stay connection-bound.)
 
 The private version-1 instance configuration has an optional `browser` listener
 snapshot, absent for existing native-only installations. Protected setup writes

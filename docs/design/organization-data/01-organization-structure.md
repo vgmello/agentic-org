@@ -158,7 +158,8 @@ An office file stores its stable ID, slug, name, revision and `role: hq` or `sat
 
 `security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
 package from [ADR-0007](../../adr/0007-hq-creation-escrow.md). The usable CA key is
-an HQ-local SQLCipher record, excluded from copied organization projections and
+an HQ-local SQLCipher record (a location to be redesigned under
+[ADR-0016](../../adr/0016-no-application-level-data-encryption.md) before SQLCipher is removed), excluded from copied organization projections and
 all selected journals/history. The delivery code stays in protected host custody
 until acknowledged; neither secret is organization Git content. The public
 package alone supplies no account, epoch or writer authority.

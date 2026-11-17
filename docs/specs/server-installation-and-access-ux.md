@@ -178,6 +178,15 @@ cannot create competing identities.
 
 ## 2. Wizard and automation
 
+> **Amended 2026-11-17.** Setup gains two steps. Under
+> [ADR-0015](../adr/0015-agent-isolation-modes.md) it offers the agent isolation mode
+> and, for `dedicated-user`, performs one administrator step that creates the agent
+> account and installs its launcher; without administrator rights it continues in
+> `same-user` and says so. Under
+> [ADR-0016](../adr/0016-no-application-level-data-encryption.md) it reports whether
+> operating-system disk encryption is on and which file permissions it set, because
+> organization data is no longer encrypted by the application.
+
 For a new instance the wizard establishes, in order:
 
 1. Instance name and data location, using platform defaults unless explicitly set.
@@ -787,13 +796,17 @@ A note above the form says why the visitor is here, when the page knows:
 | Arrived because | Note |
 | --- | --- |
 | They signed out | "You signed out." |
-| HQ restarted (when HQ says so, A84) | "HQ restarted, so everyone was signed out. Sign in again." |
+| HQ restarted (when HQ says so, A84). *No longer occurs under ADR-0013.* | "HQ restarted, so everyone was signed out. Sign in again." |
 | Their session ended for any other reason, or the reason is unknown | "Your session ended. Sign in again." |
 
 When HQ is stopped, the browser can't load this page at all and shows its own
 error. The table covers a page that loaded and then can't reach HQ.
 
 ### 4a.4 Session end, signing in again, and sign out
+
+> **Amended by [ADR-0013](../adr/0013-stored-browser-sessions.md) (2026-11-17).** A
+> restart or update of the service no longer signs people out. The "session ended"
+> states below still apply to sign-out, expiry, password change and removed access.
 
 **When a session ends.** It expires (A83), the account's password is changed or
 reset *(rev 5: X-02 §4.1, §6.2; A85 resolved)*, the account is unlinked from
@@ -1273,6 +1286,7 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
 - A83 · Session lifetime: idle and absolute expiry, whether activity extends it,
   and whether an idle expiry should also hide what the page shows (§4a.4 keeps
   the page visible).
+- **A84 is answered by [ADR-0013](../adr/0013-stored-browser-sessions.md) (2026-11-17): a restart does not end browser sessions.** The original question follows for the record.
 - A84 · Does an HQ restart end every session (the plan's starting point for B1-06),
   or do sessions survive it? When HQ refuses a request because the session ended,
   does it say why (expired, signed out, HQ restarted, password changed, and,
@@ -1427,7 +1441,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-14 · *(rev 5)* With two tabs of the same HQ showing the dialog, signing in in one closes the dialog in the other, and the other stays on its page with its text, except when its page belongs to an organization the account no longer owns (SIGN-43).
 - SIGN-15 · *(rev 9)* On a page without editable fields, Not now closes the dialog and shows "You're signed out." with Sign in. On an editable page it shows "You're signed out. Text you haven't saved is still here…" with Sign in (after an unlink from that page's organization, SIGN-43's bar instead); the page sends no changes while signed out.
 - SIGN-16 · Sign in as someone else asks before discarding text that isn't saved, then opens the sign-in page.
-- SIGN-17 · When an HQ restart ends the session (A84), an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
+- SIGN-17 · *(Superseded by [ADR-0013](../adr/0013-stored-browser-sessions.md): an HQ restart no longer ends a browser session, so the restart-specific dialog is not shown. The rest applies when the host ends a session for another reason.)* When an HQ restart ends the session (A84), an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
 - SIGN-18 · The account menu in the top bar shows "Signed in as <username>", "Instance admin" only for an account with the grant, and Sign out. It has no password or account form.
 - SIGN-19 · Sign out with text that isn't saved asks "Sign out? Text you haven't saved in any open tab of this HQ will be lost." first. Stay keeps the page.
 - SIGN-20 · Sign out ends the session at HQ: every open tab of that HQ shows the sign-in page with "You signed out.", Back shows no organization data, and a session in another browser still works.
