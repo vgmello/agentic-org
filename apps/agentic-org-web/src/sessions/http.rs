@@ -166,10 +166,10 @@ impl ApiBackend for SessionApi {
                 StatusCode::OK,
                 serde_json::json!({ "result": Version::default() }),
             ),
+            // The reply is built before the binding is committed.
             Command::SignIn { login, password } => self
                 .sessions
-                .sign_in_watched(login, password, watch)
-                .and_then(|result| self.established(result))
+                .sign_in_with(login, password, watch, |result| self.established(result))
                 .unwrap_or_else(|reply| reply),
             Command::Get(ticket) => match self.sessions.get(ticket) {
                 Ok(view) => ApiReply::json(StatusCode::OK, serde_json::json!({"result":view})),
@@ -177,8 +177,7 @@ impl ApiBackend for SessionApi {
             },
             Command::Refresh(ticket) => self
                 .sessions
-                .refresh(ticket)
-                .and_then(|result| self.established(result))
+                .refresh_with(ticket, |result| self.established(result))
                 .unwrap_or_else(|reply| reply),
             // Every sign-out reply clears the browser's cookie half.
             Command::SignOut(ticket) => match self.sessions.sign_out(ticket) {

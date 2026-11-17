@@ -180,14 +180,24 @@ impl BrowserSessions {
     pub fn sign_in(&self, login: String, password: Password) -> Result<Established, ApiReply> {
         self.sign_in_watched(login, password, &Watch::never())
     }
-    /// `watch` reports that the HTTP waiter gave up: the issued host session is
-    /// then ended rather than bound to a cookie nobody will receive.
     pub fn sign_in_watched(
         &self,
         login: String,
         password: Password,
         watch: &Watch<'_>,
     ) -> Result<Established, ApiReply> {
+        self.sign_in_with(login, password, watch, Ok)
+    }
+    /// `watch` reports that the HTTP waiter gave up: the issued host session is
+    /// then ended rather than bound to a cookie nobody will receive. `respond`
+    /// builds the reply; a failure there binds nothing and ends the host session.
+    pub fn sign_in_with<R>(
+        &self,
+        login: String,
+        password: Password,
+        watch: &Watch<'_>,
+        respond: impl FnOnce(Established) -> Result<R, ApiReply>,
+    ) -> Result<R, ApiReply> {
         let result = self.host.verify(&login, &password).map_err(|e| {
             if e == control::Failure::Denied {
                 denied()
@@ -215,7 +225,7 @@ impl BrowserSessions {
             created: Instant::now(),
             touched: Mutex::new(Instant::now()),
         };
-        self.establish(session, watch)
+        self.establish(session, watch, respond)
     }
     fn prepare_established(
         &self,
@@ -234,12 +244,19 @@ impl BrowserSessions {
         };
         Ok((key, session, result))
     }
-    fn establish(&self, session: Session, watch: &Watch<'_>) -> Result<Established, ApiReply> {
+    fn establish<R>(
+        &self,
+        session: Session,
+        watch: &Watch<'_>,
+        respond: impl FnOnce(Established) -> Result<R, ApiReply>,
+    ) -> Result<R, ApiReply> {
         // Keep cleanup ownership until the newly issued host session has a
         // browser binding, including when preparation's inspection fails.
         let handle = Arc::clone(&session.handle);
         let admission = (|| {
             let (key, session, result) = self.prepare_established(session)?;
+            // Build the reply before binding: a construction failure binds nothing.
+            let reply = respond(result)?;
             self.reap()?;
             self.reclaim_capacity()?;
             let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
@@ -266,7 +283,7 @@ impl BrowserSessions {
                 }
                 let _ = cleanup.try_send(bound);
             });
-            Ok(result)
+            Ok(reply)
         })();
         if admission.is_err() {
             let _ = self.host.end(&handle);
@@ -436,6 +453,14 @@ impl BrowserSessions {
         Ok(())
     }
     pub fn refresh(&self, ticket: Ticket) -> Result<Established, ApiReply> {
+        self.refresh_with(ticket, Ok)
+    }
+    /// `respond` builds the reply; a failure there leaves the old pair bound.
+    pub fn refresh_with<R>(
+        &self,
+        ticket: Ticket,
+        respond: impl FnOnce(Established) -> Result<R, ApiReply>,
+    ) -> Result<R, ApiReply> {
         self.current(&ticket)?;
         self.host
             .renew(&ticket.session.handle)
@@ -451,7 +476,9 @@ impl BrowserSessions {
             created: ticket.session.created,
             touched: Mutex::new(Instant::now()),
         };
-        let established = self.prepare_established(session)?;
+        let (key, session, result) = self.prepare_established(session)?;
+        // Build the reply before swapping: a construction failure keeps the old pair.
+        let reply = respond(result)?;
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
         if !sessions
             .get(&ticket.key)
@@ -459,13 +486,12 @@ impl BrowserSessions {
         {
             return Err(denied());
         }
-        let (key, session, result) = established;
         if sessions.contains_key(&key) {
             return Err(unavailable());
         }
         sessions.remove(&ticket.key);
         sessions.insert(key, Arc::new(session));
-        Ok(result)
+        Ok(reply)
     }
 }
 impl Session {

@@ -480,6 +480,39 @@ fn an_undelivered_sign_in_reply_evicts_its_pair_and_ends_the_host_session() {
 }
 
 #[test]
+fn a_failed_reply_construction_binds_nothing_and_keeps_the_old_pair() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    let refused = f.sessions.sign_in_with(
+        LOGIN.into(),
+        Password::new(PASSWORD.into()).unwrap(),
+        &Watch::never(),
+        |_| Err::<(), _>(unavailable()),
+    );
+    assert!(refused.is_err());
+    // Nothing was bound and the unused new host session was ended.
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+    assert!(f
+        .ended
+        .lock()
+        .unwrap()
+        .contains("synthetic native handle 2"));
+    let refreshed = f
+        .sessions
+        .refresh_with(ticket(&f.sessions, &live), |_| Err::<(), _>(unavailable()));
+    assert!(refreshed.is_err());
+    // The old pair stays bound and usable; its host session stays open.
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+    assert!(!f
+        .ended
+        .lock()
+        .unwrap()
+        .contains("synthetic native handle 1"));
+    assert!(f.sessions.host.live());
+}
+
+#[test]
 fn sign_in_reclaims_unpresented_host_revocations_at_capacity() {
     for keep_live in [false, true] {
         let f = Fixture::new();
