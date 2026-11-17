@@ -5,6 +5,8 @@ with a static browser application served by HQ. Offices execute agents and serve
 authorized organization data; teams and projects belong to the organization.
 Tauri is deferred to v2.
 
+**New here? Read [docs/START-HERE.md](docs/START-HERE.md), then the [implementation plan](docs/implementation-plan.md).**
+
 Use the [feature checklist](docs/FEATURES.md) to see every capability's delivery
 status, remaining work and link to its full specification. It distinguishes
 completed foundations from partial UI work, planned integration and deferred scope.
