@@ -9,9 +9,10 @@ written, and how to go from "what do I build?" to "it is done".
 Agentic Org is a self-hosted server that runs an organization of people and AI agents:
 teams, projects, tasks, chat and spend. An owner installs one server, creates an
 organization and staffs it with employees, some of them agents. People use a browser.
-Agents use a command-line tool, `agent-os`. The server keeps the organization's work as
-files in a Git repository and starts and supervises each agent on machines the owner
-controls.
+Agents use a command-line tool, `agent-os`. The server keeps the organization's shared
+records as files and publishes them to a Git repository; chat, usage and budgets stay
+as protected files on the server. It starts and supervises each agent on machines the
+owner controls.
 
 Two pages explain it with diagrams. Read them once before anything else:
 
@@ -36,13 +37,10 @@ They explain; they do not decide. The documents below decide.
 | How code must be organized | [Architecture rules](architecture-rules.md), [project structure](design/project-structure.md), [Rust style guide](rust-style-guide.md) | Dependency direction, where logic lives, naming |
 | Which document wins when two disagree | [Documentation authority map](design/documentation-authority.md) | The owning document for each topic |
 | How to work here | [`AGENTS.md`](../AGENTS.md), [branch and merge](processes/branch-and-merge.md) | Branches, checks, reviews |
-| How to run it locally | [`DEVELOPMENT.md`](../DEVELOPMENT.md), [local HQ runbook](runbooks/local-hq.md) | Build, run and test commands |
+| How to build and test it | [`DEVELOPMENT.md`](../DEVELOPMENT.md), [local HQ runbook](runbooks/local-hq.md) | Build and test commands, and what can be run today: a disposable foreground host, until increment A2 makes setup work |
 
-Two folders are records, not requirements: [`docs/research/`](research/) holds what was
-learned about vendor tools, and [`docs/verification/`](verification/) holds dated audits
-of the code. The [conflict resolution plan](design/conflict-resolution-plan.md) is the
-record of the 2026-11-17 architecture review; everything it decided is already written
-into the documents above, so you do not need it to build.
+[`docs/research/`](research/) holds what was learned about vendor tools. It informs a
+design; it is not a requirement.
 
 ## From a feature to working code
 

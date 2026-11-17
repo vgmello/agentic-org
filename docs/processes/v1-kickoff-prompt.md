@@ -42,4 +42,5 @@ v1-integration. Never push to main. Tests never touch a real organization's data
 
 Suggested start: one engineer takes Track A from A1, the other takes Track B from B1.
 B1, the store foundation, is the largest increment and starts with a written plan
-recorded in the repository.
+recorded in the repository. A1 and B1 both change the office store: A1's change lands
+first, while B1 is being planned.

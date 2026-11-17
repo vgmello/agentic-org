@@ -3,12 +3,12 @@
 <a id="design-and-plan-projects-as-git-repositories-connected-to-github"></a>
 <a id="design-and-plan-projects-repository-registrations-and-github"></a>
 
-Revision 3 · 2026-11-17. **Status: design only.** Nothing in this document is implemented. The workspace has no crate, command or handler that runs Git: `org-git` is a planned crate with no code, and `org-github` is v2. Sentences in the present tense describe the selected design, not shipped behaviour.
+**Status: design only.** Nothing in this document is implemented. The workspace has no crate, command or handler that runs Git: `org-git` is a planned crate with no code, and `org-github` is v2. Sentences in the present tense describe the selected design, not shipped behaviour.
 
-This revision applies two decisions the owner made on 2026-11-17 in the [conflict plan](conflict-resolution-plan.md):
+Two rules frame everything below:
 
-- [A-11](conflict-resolution-plan.md#a-11): every algorithm, path and wire sketch here now uses the selected storage layout, with one bare cache per repository per office, many repositories per project and per task, and one worktree per employee, task and repository.
-- [A-10](conflict-resolution-plan.md#a-10): hosting-provider integrations are v2. v1 is plain Git with the office's own Git credentials.
+- Every algorithm, path and wire sketch uses the selected storage layout, with one bare cache per repository per office, many repositories per project and per task, and one worktree per employee, task and repository.
+- Hosting-provider integrations are v2. v1 is plain Git with the office's own Git credentials.
 
 The [organization repository registrations](organization-data/01-organization-structure.md), [project links](organization-data/02-project-structure.md), [task repository targets](organization-data/03-features-and-work.md), the [shared storage contract](organization-data/README.md#shared-storage-contract) and the [authority map](documentation-authority.md) own the data model. Where this document and those contracts differ, they win. Nothing is deployed, so there is no existing layout to migrate from and no compatibility obligation.
 
@@ -225,7 +225,7 @@ The organization repository is a registered `kind: remote` repository and must s
 
 ## v2: hosting-provider integrations
 
-**Not selected for v1** ([A-10](conflict-resolution-plan.md#a-10)). Nothing here is built, and none of it is a prerequisite for the v1 part. It is kept short so that v1 work is not read as depending on it. The detailed text of the earlier revision (provider app registration steps, the permission table, the token request and the provider wire calls) is in this file's history at commit `e840ea3`.
+**Not selected for v1.** Nothing here is built, and none of it is a prerequisite for the v1 part. It is kept short so that v1 work is not read as depending on it.
 
 - **A provider app managed by HQ.** One GitHub App whose private key HQ holds in the host's credential provider. HQ mints short-lived installation tokens, each limited to one repository and to the permissions one job needs, and hands them to offices on request. Satellites keep no provider credential. The key is never in a database in plaintext or in Git content (ADR-0016).
 - **Creating repositories through the provider.** HQ creates a private repository before submitting the registration, with an idempotent marker so a retry adopts the repository instead of duplicating it.
@@ -295,7 +295,85 @@ These are gaps or tensions between this design and the selected contracts. They 
 8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os push` would otherwise do for a local repository.
 9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
 10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
-11. **Branch names for unnumbered tasks (settled 2026-11-17).** There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
+11. **Branch names for unnumbered tasks.** Not open. There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
+
+## What the code does today
+
+Nothing runs Git. `org-process` has pure one-open-branch rules and `org-runtime` has sandbox specification types. Both were written before this design, name a different clone layout in their comments, and are adapted when `org-git` is built.
+
+## v2: hosting-provider integrations
+
+**Not selected for v1.** Nothing here is built, and none of it is a prerequisite for the v1 part. It is kept short so that v1 work is not read as depending on it.
+
+- **A provider app managed by HQ.** One GitHub App whose private key HQ holds in the host's credential provider. HQ mints short-lived installation tokens, each limited to one repository and to the permissions one job needs, and hands them to offices on request. Satellites keep no provider credential. The key is never in a database in plaintext or in Git content (ADR-0016).
+- **Creating repositories through the provider.** HQ creates a private repository before submitting the registration, with an idempotent marker so a retry adopts the repository instead of duplicating it.
+- **Pull requests and CI.** The office, or an agent holding a token that cannot push, opens a pull request for a pushed task branch and reads workflow results.
+- **Promotion.** A promoted HQ needs a new provider key, and the old one is revoked.
+- **Other providers and webhooks** are also v2.
+
+When v2 is planned, it should change only how the office obtains the credential for one invocation and add the provider calls. The cache, worktree, push and cleanup rules of the v1 part stay as they are. The owner's earlier choices for this part (one app managed by HQ; new repositories private, under the owner's account) are recorded under "Decisions" and are to be confirmed again then, together with whether agents may change CI workflow files.
+
+## Code layout (architecture rules)
+
+Follow the [architecture rules](../architecture-rules.md) and the [v1 project structure](project-structure.md). No crate named here exists yet.
+
+- **`org-git`** (planned, no code): runs the host's `git` through the hardened runner. It owns cache creation and fetch, worktree add, move and remove, push, tagging, the compare-and-swap deletes and the per-repository lock. It knows paths, URLs and commit IDs. It does not know projects, tasks, the office database or the office's domain types.
+- **The office's domain** defines the small contracts it needs from Git (prepare a cache, create a workspace, push a task branch, clean up) and owns the records and admission rules. It does not depend on `org-git`.
+- **`agentic-org-office`** composes the two: it implements the domain's contracts by calling `org-git`, supplies the credential, and derives the session's writable roots and deny rules.
+- **`agent-os`** gains `push`. It is a socket call only and does not depend on `org-git`.
+- **`org-github`** is v2 and absent.
+
+## Implementation plan
+
+Every step is planned; none has started. Each step is a separate acceptance and merge unit under the [independent delivery rules](../independent-delivery.md) and the [dependency boundaries](../architecture-rules.md#independent-delivery-and-dependency-boundaries). Each starts on its own branch from `origin/v1-integration`, is reviewed locally and is merged into `v1-integration`. The [feature checklist](../FEATURES.md) rows FC-139 and FC-140 track delivery; this plan does not replace them.
+
+| Step | What | Kind | Depends on |
+| --- | --- | --- | --- |
+| G1 | The wire contract below in `org-proto`, checked against what `org-proto` actually supports | Internal foundation | Open questions 2 and 4 answered |
+| G2 | `org-git`: the hardened runner, cache creation and fetch, worktree add, move and remove, push, tags and compare-and-swap deletes, the per-repository lock. Prove the smallest real path first: create a cache from a temporary remote, add a worktree, commit, push | Internal foundation | G1 |
+| G3 | Office composition in `agentic-org-office`: registration and link checks, cache status, workspace and branch records, the push handler, credential supply, permissions for each isolation mode, and deny rules derived and verified for the selected paths | Internal foundation | G1, G2, open questions 1, 3 and 5 to 9 answered, the isolation launcher of ADR-0015 for `dedicated-user` |
+| G4 | `agent-os push` | Usable outcome: an agent's committed work reaches the remote through its office | G3 |
+| G5 | Web UI: register a repository, link it to a project with its integration branch, cache status per office | Usable outcome | G1, then G3 |
+| G6 | End-to-end acceptance: register a remote repository, link it, start a task with two repositories, commit, push through the office, merge as a person, close, clean up; then the same for a handoff and for a local-only repository | Acceptance | All |
+
+Tests use temporary directories only and never a user's organization workspace. `org-git` is tested against a real authenticated transport (a local server running `git http-backend` with authentication, and SSH where available), because the `file` transport would skip authentication. Required cases include: a hostile cache configuration (a credential helper, a URL rewrite, a proxy, a filter, an include) that must neither leak the credential nor take effect; a planted hook that must not run; grafts and replacement objects that must be refused; a push to a default or integration branch and a non-fast-forward push that must fail; and, in `dedicated-user` mode, the ISO-1 and ISO-7 evidence of ADR-0015 for the Git paths.
+
+**G1 wire sketch** (a proposal; nothing here is in `org-proto` today):
+
+- **`agent-os` to its office:** `git.push { task_id, repository_id } -> { branch, commit }`. The branch is not a parameter. The CLI may fill in `repository_id` when the task targets exactly one repository; the wire call always carries it.
+- **Web to the office:** `repository.status { repository_id } -> { state: cloning | ready | failed, reason? }` for this office, and the task's per-repository workspace state in the task read model.
+- **Events:** `repository.cache_status { office_id, repository_id, state, reason? }`.
+- **Work change** (office-first stream): `repository.branch_pushed { repository_id, branch, commit, task_id }`.
+- **Internal:** the periodic fetch, and the push before a move between offices.
+
+Registration and project-link writes belong to the organization and project contracts, not to this sketch. Keys are always office and repository, or task and repository, never a project alone.
+
+## Decisions
+
+1. **2026-11-17, A-10:** hosting-provider integrations are v2. v1 is plain Git over the registered remote with the office's own Git credentials, local-only repositories, per-office caches and per-task worktrees. After a push a person opens any pull request and merges.
+2. **2026-11-17, A-11:** the algorithms use the selected layout: one bare cache per repository per office, many repositories per project and per task, one worktree per employee, task and repository.
+3. **2026-11-17, [ADR-0015](../adr/0015-agent-isolation-modes.md):** agents run in `same-user` or `dedicated-user` mode. This replaces the earlier note that a separate OS user for agents was v2.
+4. **2026-11-17, [ADR-0016](../adr/0016-no-application-level-data-encryption.md):** no application-level encryption of data; credentials and private keys never in plaintext in a database or in Git content.
+5. **2026-11-08, kept:** the office runs all Git that reaches a remote, and agents never hold a credential that can push. The office never pushes a default or integration branch of a code repository and never force-pushes.
+6. **2026-11-08, kept:** commits are authored as the owner, with the agent as co-author.
+7. **2026-11-08, kept:** cleanup happens only after task closure, with a `merged/<branch>` or `archive/<branch>` tag and a compare-and-swap delete. Handoff never triggers cleanup.
+8. **2026-11-08, now v2 and to be confirmed again:** one provider app managed by HQ, with short-lived tokens scoped to one repository; new repositories private, under the owner's account.
+
+## Open questions
+
+These are gaps or tensions between this design and the selected contracts. They are listed, not resolved here. Where the v1 part needs an answer to be written at all, it states the assumption it made.
+
+1. **Git credentials have no selected record.** No contract says where an office's credential for a remote is bound, how it is entered, or where the office's known-hosts file lives. This document only fixes where it must not be.
+2. **Branch records have no durable home.** `task_repositories` holds `branch` and `integrated_commit`; `task_workspaces` holds `worktree_path`. Nothing selected holds the base commit, the pushed head, the branch state or the worktree's administrative directory name.
+3. **Cache writes in `dedicated-user` mode.** ADR-0015 says the agent account owns only its workspaces. A linked worktree must also write into the cache, which is outside them. This document assumes group-shared write access to the listed cache directories. The alternative is a self-contained clone in each workspace that the office fetches from, which would restore a cache agents never write but is not the "one bare clone and worktrees" shape of the storage contract.
+4. **Identifier format (settled 2026-11-17).** Stable IDs are UUIDv7 here and in the [identity contract](organization-data/06-identity-and-numbering.md).
+5. **The owner's commit identity.** No selected field holds the owner's commit name and email, or an agent's co-author address.
+6. **Projectless tasks.** A team task can target a repository but has no project link, so nothing selects its base branch or the branch that proves it merged.
+7. **Organization publication.** Which office pushes `state_branch`, and how `durable/state/` becomes a commit, is not defined. This document assumes only the transport.
+8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os push` would otherwise do for a local repository.
+9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
+10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
+11. **Branch names for unnumbered tasks.** Not open. There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
 
 ## What changed from the earlier design
 

@@ -40,10 +40,6 @@ in the "What the code does today" section of each design.
 | What must be preserved from before | Nothing: [no compatibility obligations before v1 ships](organization-data/README.md#no-compatibility-obligations-before-v1-ships) |
 | Names | The executables are `agentic-org`, `agentic-org-office`, `agentic-org-web` and `agent-os`. The browser-facing process is "web"; `gateway` survives only in code identifiers until they are renamed. |
 
-The [conflict resolution plan](conflict-resolution-plan.md) records the 2026-11-17
-architecture review. Everything it decided is written into the documents above;
-it is not needed to build.
-
 ## Designs and UX guides by topic
 
 | Concern | Detailed guides | Owning data documents |

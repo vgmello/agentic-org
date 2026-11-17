@@ -2,17 +2,18 @@
 
 ## Current working mode
 
-Codex works alone as the lead and owns implementation across this repository,
-including UI, backend, database, shared contracts, documentation and integration.
-The former named developers and Ada are offline. Do not message them, check or
-wait on their inboxes, request their agreement, or wait for their review or merge
-approval. Former path ownership does not restrict the current lead's work.
+Two engineers build v1, each with their own agents. An engineer's lead agent takes an
+increment from the [implementation plan](docs/implementation-plan.md) and owns it end
+to end: UI, backend, database, shared contracts, documentation and integration. No
+path belongs to a named person. Who owns which files is stated in the increment's
+short plan, written before code. One writer per file at a time; a file that two
+increments need is handed over explicitly.
 
-Use local subagents when useful under `.agent-kit/WORKFLOW.md` and the active
-`codex-only` model-routing policy. The lead owns the complete vertical feature and
-integration; give implementation subagents bounded scopes and use fresh local
-reviewers. Preserve interface compatibility and update affected trait
-implementations together. No external developer or PR response is a prerequisite.
+Use local subagents when useful under `.agent-kit/WORKFLOW.md`. The lead owns the
+complete vertical feature and its integration; give implementation subagents bounded
+scopes and use fresh local reviewers. Agree a shared interface before a second
+increment depends on it, and update affected trait implementations together. No pull
+request and no outside reviewer is a prerequisite.
 
 Keep working toward the full v1 goal. If one feature is blocked, preserve its
 checkpoint and continue an independent feature. A partial delivery is not v1
@@ -23,11 +24,10 @@ canonical files and selected execution/control contracts, start with
 [`docs/design/organization-data/README.md`](docs/design/organization-data/README.md)
 and the [documentation authority map](docs/design/documentation-authority.md).
 The other designs in `docs/design/`, ADRs in `docs/adr/` and UX specs in
-`docs/specs/` explain those contracts in their own contexts. Their older code/API
-observations do not override the selected model. Conversely, draft SQL and target
-acceptance criteria do not establish that a migration, command or service ships.
-Read the owning primary document before changing a dependent example or rule;
-keep implemented wire/security evidence explicitly scoped to its version.
+`docs/specs/` explain those contracts in their own contexts; where one differs from
+the data contract, the data contract wins. A requirement document says what is to be
+built. It does not establish that a command or service exists: what exists is in the
+checklist row's evidence and in the executable status document named below.
 
 [`docs/FEATURES.md`](docs/FEATURES.md) is the single feature delivery checklist.
 Update its relevant row when changing implementation or selecting/deferring scope;
@@ -48,10 +48,10 @@ Engineers and their agents make architectural decisions themselves, inside the
 
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin.
-2. **Branches and integration:** follow [`docs/processes/branch-and-merge.md`](docs/processes/branch-and-merge.md) with the current solo workflow below taking precedence over older team instructions.
+2. **Branches and integration:** follow [`docs/processes/branch-and-merge.md`](docs/processes/branch-and-merge.md).
    - Start feature branches from `origin/v1-integration`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
-   - Keep one active implementation branch at a time. Preserve blocked branches/checkpoints and move to independent work rather than stopping all delivery.
-   - Review completed work locally, then `git merge --no-ff` into `v1-integration` and push that branch. It is the integration branch for **all v1 features**. Do not wait for a PR, external reviewer or Ada's go.
+   - Each lead keeps one active implementation branch at a time. Preserve blocked branches/checkpoints and move to independent work rather than stopping all delivery.
+   - Review completed work locally, then `git merge --no-ff` into `v1-integration` and push that branch. It is the integration branch for **all v1 features**. Do not wait for a pull request or an outside reviewer.
    - Never push to `main` or merge into release `v1` without an explicit release instruction. Never delete unmerged work; verify integration before cleaning up merged branches/worktrees.
 3. **Checks and local review:** use the installed kit's task-routing, skill-routing and review-cycle. Keep the original author context, fix confirmed findings, validate original intent and obtain the separate fresh final local review for the exact commit. The lead merges after current checks and local acceptance pass.
    - For Rust changes, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
@@ -83,15 +83,15 @@ and this repository.
 
 ### Architecture ownership and efficient parallel work
 
-- The lead owns one overall plan, acceptance contract, architecture, shared
-  interfaces, dependency order and integration. Keep one fullstack integration
-  owner; return material contract/security/storage changes to the lead before
-  dependent implementation.
+- Each lead owns its increment's plan, acceptance contract, architecture, shared
+  interfaces, dependency order and integration. A change to a contract, security
+  rule or storage rule that another increment depends on is agreed between the two
+  leads before dependent implementation.
 - At planning and meaningful checkpoints, assess ready independent slices. Use
   parallel work when its expected benefit justifies the handoff; record the split
   and dependencies, or why serial work is preferable, in the current plan.
-- Allow at most two concurrent source writers across the task, including the
-  lead, with separate worktrees, nonoverlapping files and agreed interfaces.
+- Within one increment, allow at most two concurrent source writers, including
+  the lead, with separate worktrees, nonoverlapping files and agreed interfaces.
   While two workers write, the lead coordinates and verifies without becoming a
   third writer. Agree an explicit ownership handoff before changing shared files.
 - Before dispatch, specify the worktree/base, exact owned files, interfaces,
@@ -134,9 +134,13 @@ The app's look uses Tailwind Plus components, which the licence allows in our op
 # Starter kit workflow
 
 Read `.agent-kit/WORKFLOW.md` and the active profile in
-`.agent-kit/policy/model-routing.json`. Preserve this project's ownership,
-engineering conventions, architecture decisions and the solo integration rules
-above. Older named-owner, messaging and approval instructions are superseded. Skills live in
+`.agent-kit/policy/model-routing.json`. Preserve this project's engineering
+conventions, architecture decisions and the integration rules above. The policy
+names a model for each phase. A lead that runs on another model keeps every phase
+and gate (plan, implement, fresh read-only review, repairs, original-author
+validation, separate fresh final review), runs them with fresh-context subagents of
+its own model, and records which model ran each phase. No gate is skipped because a
+named model is unavailable. Skills live in
 `.agents/skills/`; load only the current phase. Do not load whole task/review archives.
 Use project-capabilities during adoption/maintenance and skill-routing before work.
 Load only the selected project role brief and relevant skills; preserve full-stack
