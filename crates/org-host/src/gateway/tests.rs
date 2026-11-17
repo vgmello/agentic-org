@@ -575,6 +575,62 @@ fn a_mismatched_ready_line_names_that_cause() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn a_ready_line_reporting_landlock_on_macos_names_that_cause() {
+    let error = start_scripted(
+        &connecting_script(
+            r#"{"v":1,"event":"ready_for_secrets","landlock":{"abi":4,"enforcement":"fully_enforced"}}"#,
+        ),
+        |_, _, _| Ok(None),
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("gateway start failed: the ready line reports landlock on macOS"),
+        "{message}"
+    );
+}
+
+#[test]
+fn only_the_exact_handoff_ack_is_accepted() {
+    check_ack(br#"{"v":1,"event":"fds.received","of":"handoff"}"#).unwrap();
+    for malformed in [
+        &b"not json"[..],
+        br#"{"v":1,"event":"fds.received"}"#,
+        br#"{"v":1,"event":"fds.received","of":"handoff","extra":1}"#,
+        br#"{"v":"1","event":"fds.received","of":"handoff"}"#,
+    ] {
+        let message = check_ack(malformed).unwrap_err().to_string();
+        assert_eq!(
+            message, "gateway start failed: the handoff ACK is malformed",
+            "{malformed:?}"
+        );
+    }
+    for wrong in [
+        &br#"{"v":2,"event":"fds.received","of":"handoff"}"#[..],
+        br#"{"v":1,"event":"ready_for_secrets","of":"handoff"}"#,
+        br#"{"v":1,"event":"fds.received","of":"hello"}"#,
+    ] {
+        let message = check_ack(wrong).unwrap_err().to_string();
+        assert_eq!(
+            message, "gateway start failed: the handoff ACK does not acknowledge the handoff",
+            "{wrong:?}"
+        );
+    }
+}
+
+#[test]
+fn a_fatal_receive_logs_its_step_and_error_kind_escaped() {
+    let line = fatal_receive("handoff ACK", io::ErrorKind::InvalidData);
+    assert_eq!(
+        line,
+        "gateway start failed fatally while receiving the handoff ACK (InvalidData); the host exits"
+    );
+    // A step label is fixed text, but the line is escaped all the same.
+    let forged = fatal_receive("ready line\nagentic-org: forged", io::ErrorKind::Other);
+    assert!(!forged.contains('\n'), "{forged}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn a_child_that_exits_before_connecting_names_its_status() {
     let error = start_scripted("#!/bin/zsh -f\nIFS= read -r first\nexit 3\n", |_, _, _| {
         Ok(None)

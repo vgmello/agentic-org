@@ -134,7 +134,8 @@ impl Supervisor {
                     &|line| crate::host_log::log(line),
                     || Running::start(&config, Arc::clone(&handler)),
                 )
-            })?;
+            })
+            .map_err(os_failed("start the supervisor thread"))?;
         Ok(Self {
             stop,
             state,
@@ -283,7 +284,9 @@ impl Rendezvous {
         loop {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    stream.set_nonblocking(false)?;
+                    stream
+                        .set_nonblocking(false)
+                        .map_err(os_failed("make the control stream blocking"))?;
                     return Ok(stream);
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() < until => {
@@ -444,21 +447,7 @@ impl Running {
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)
             .map_err(os_failed("send the descriptor handoff"))?;
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Ack {
-            v: u32,
-            event: String,
-            of: String,
-        }
-        let ack: Ack = serde_json::from_slice(&line(&mut receiver, until, "handoff ACK")?)
-            .map_err(|_| failed("the handoff ACK is malformed"))?;
-        if ack.v != org_host_control::API_VERSION
-            || ack.event != "fds.received"
-            || ack.of != "handoff"
-        {
-            return Err(failed("the handoff ACK does not acknowledge the handoff"));
-        }
+        check_ack(&line(&mut receiver, until, "handoff ACK")?)?;
         drop(receiver);
         drop(child);
         drop(listener);
@@ -474,6 +463,25 @@ impl Running {
             _stdin: spawned.stdin,
         })
     }
+}
+
+/// Accepts only the gateway's `{"v":1,"event":"fds.received","of":"handoff"}` line.
+/// Each refusal has a fixed, secret-free cause for the supervisor's log line.
+fn check_ack(bytes: &[u8]) -> io::Result<()> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Ack {
+        v: u32,
+        event: String,
+        of: String,
+    }
+    let ack: Ack =
+        serde_json::from_slice(bytes).map_err(|_| failed("the handoff ACK is malformed"))?;
+    if ack.v != org_host_control::API_VERSION || ack.event != "fds.received" || ack.of != "handoff"
+    {
+        return Err(failed("the handoff ACK does not acknowledge the handoff"));
+    }
+    Ok(())
 }
 
 /// The host's transfer end (send-only) and the gateway's end (receive-only).
@@ -553,9 +561,20 @@ fn line(
             {
                 return Err(failed(&format!("control EOF before the {what}")))
             }
-            Err(org_socket::rights::ReceiveError::Fatal(_)) => std::process::exit(1),
+            Err(org_socket::rights::ReceiveError::Fatal(e)) => {
+                crate::host_log::log(&fatal_receive(what, e.kind()));
+                std::process::exit(1)
+            }
         }
     }
+}
+
+/// The host's last log line before a fatal ancillary frame terminates it: the
+/// step and the error's kind only, never its text, escaped for one log line.
+fn fatal_receive(what: &str, kind: io::ErrorKind) -> String {
+    crate::host_log::untrusted(&format!(
+        "gateway start failed fatally while receiving the {what} ({kind:?}); the host exits"
+    ))
 }
 
 #[cfg(test)]
