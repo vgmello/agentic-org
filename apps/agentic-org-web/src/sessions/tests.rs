@@ -417,6 +417,33 @@ fn failed_sign_in_preparation_ends_only_the_new_host_session() {
 }
 
 #[test]
+fn an_abandoned_sign_in_ends_its_new_host_session_instead_of_binding_it() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    let gone = || true;
+    let error = f
+        .sessions
+        .sign_in_watched(
+            LOGIN.into(),
+            Password::new(PASSWORD.into()).unwrap(),
+            &crate::blocking::Watch::new(&gone),
+        )
+        .err()
+        .expect("an abandoned sign-in must not bind a session");
+    assert_eq!(error.inspected().0, StatusCode::SERVICE_UNAVAILABLE);
+    // The newly issued host session is ended; the existing binding is kept.
+    assert_eq!(f.count("session.end"), 1);
+    assert!(f
+        .ended
+        .lock()
+        .unwrap()
+        .contains("synthetic native handle 2"));
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+    assert!(f.sessions.host.live());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+}
+
+#[test]
 fn sign_in_reclaims_unpresented_host_revocations_at_capacity() {
     for keep_live in [false, true] {
         let f = Fixture::new();

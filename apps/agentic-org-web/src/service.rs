@@ -60,6 +60,12 @@ pub trait ApiBackend: Send + Sync + 'static {
     ) -> Result<PreparedCall<Self::Call>, ApiReply>;
     /// Runs on a dedicated worker and must use finite native deadlines.
     fn execute(&self, call: Self::Call) -> ApiReply;
+    /// As [`Self::execute`]; `watch` reports when the HTTP waiter has given up,
+    /// so work that issues authority can end it instead of committing it.
+    fn execute_watched(&self, call: Self::Call, watch: &crate::blocking::Watch<'_>) -> ApiReply {
+        let _ = watch;
+        self.execute(call)
+    }
 }
 
 pub struct ApiReply {
@@ -399,8 +405,8 @@ impl<B: ApiBackend> Gateway<B> {
         let call = prepared.call;
         let ticket = match self
             .workers
-            .submit(bytes.max(prepared.input_bytes), move || {
-                backend.execute(call)
+            .submit_watched(bytes.max(prepared.input_bytes), move |watch| {
+                backend.execute_watched(call, watch)
             }) {
             Ok(ticket) => ticket,
             Err(_) => return prepared.kind.unavailable(),

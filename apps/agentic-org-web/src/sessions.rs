@@ -9,7 +9,7 @@ pub use control::HostControl;
 pub use http::SessionApi;
 pub use ingress::{read_secret_body, SecretBody};
 
-use crate::service::ApiReply;
+use crate::{blocking::Watch, service::ApiReply};
 use hmac::{Hmac, Mac};
 use hyper::{http::request::Parts, StatusCode};
 use org_host_control::{Password, SessionHandle};
@@ -34,7 +34,14 @@ const IDLE: Duration = Duration::from_secs(30 * 60);
 /// The browser map holds at most the host's gateway budget, never more, so the
 /// host's local reserve stays free for local sign-in.
 const MAX_SESSIONS: usize = org_host_control::ops::GATEWAY_SESSIONS;
-const CAPACITY_RECHECK: Duration = Duration::from_secs(5);
+/// When capacity probes may start during one sign-in. Expected worst case on a
+/// healthy host, against the default 10 s `backend_timeout`: account.verify
+/// (password hashing, under 1 s) + the new session's inspect (milliseconds) +
+/// probes started within these 2 s + the last probe (milliseconds) is about
+/// 3 s, leaving over 6 s for pool queueing. A degraded host can still exceed it
+/// (each call keeps its 5 s deadline); the abandonment check before insertion
+/// then ends the new host session instead of binding it.
+const CAPACITY_RECHECK: Duration = Duration::from_secs(2);
 /// Host ends queued behind one cleanup thread. A full queue drops the end: the
 /// host's own idle/absolute expiry still reclaims that session.
 const CLEANUP_QUEUE: usize = 64;
@@ -165,6 +172,16 @@ impl BrowserSessions {
         set_cookie(&self.cookie_name, "", self.secure, true)
     }
     pub fn sign_in(&self, login: String, password: Password) -> Result<Established, ApiReply> {
+        self.sign_in_watched(login, password, &Watch::never())
+    }
+    /// `watch` reports that the HTTP waiter gave up: the issued host session is
+    /// then ended rather than bound to a cookie nobody will receive.
+    pub fn sign_in_watched(
+        &self,
+        login: String,
+        password: Password,
+        watch: &Watch<'_>,
+    ) -> Result<Established, ApiReply> {
         let result = self.host.verify(&login, &password).map_err(|e| {
             if e == control::Failure::Denied {
                 denied()
@@ -192,7 +209,7 @@ impl BrowserSessions {
             created: Instant::now(),
             touched: Mutex::new(Instant::now()),
         };
-        self.establish(session)
+        self.establish(session, watch)
     }
     fn prepare_established(
         &self,
@@ -211,7 +228,7 @@ impl BrowserSessions {
         };
         Ok((key, session, result))
     }
-    fn establish(&self, session: Session) -> Result<Established, ApiReply> {
+    fn establish(&self, session: Session, watch: &Watch<'_>) -> Result<Established, ApiReply> {
         // Keep cleanup ownership until the newly issued host session has a
         // browser binding, including when preparation's inspection fails.
         let handle = Arc::clone(&session.handle);
@@ -221,6 +238,10 @@ impl BrowserSessions {
             self.reclaim_capacity()?;
             let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
             if sessions.len() >= MAX_SESSIONS || sessions.contains_key(&key) {
+                return Err(unavailable());
+            }
+            // Checked under the map lock, last: an abandoned request binds nothing.
+            if watch.abandoned() {
                 return Err(unavailable());
             }
             sessions.insert(key, Arc::new(session));

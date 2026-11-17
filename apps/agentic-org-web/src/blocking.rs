@@ -25,6 +25,26 @@ pub struct Ticket<T> {
     receiver: oneshot::Receiver<T>,
 }
 
+/// Lets admitted work observe that its waiter is gone (the HTTP side timed out
+/// or disconnected), so work that creates authority can undo it instead of
+/// committing a result nobody will receive.
+pub struct Watch<'a>(&'a dyn Fn() -> bool);
+
+static NEVER: fn() -> bool = || false;
+
+impl<'a> Watch<'a> {
+    pub fn new(abandoned: &'a dyn Fn() -> bool) -> Self {
+        Self(abandoned)
+    }
+    /// A waiter that is never abandoned, for direct (non-pool) callers.
+    pub fn never() -> Watch<'static> {
+        Watch(&NEVER)
+    }
+    pub fn abandoned(&self) -> bool {
+        (self.0)()
+    }
+}
+
 impl<T> Ticket<T> {
     pub async fn wait(self) -> Result<T, oneshot::error::RecvError> {
         self.receiver.await
@@ -101,6 +121,15 @@ impl BlockingPool {
         input_bytes: usize,
         work: impl FnOnce() -> T + Send + 'static,
     ) -> Result<Ticket<T>, SubmitError> {
+        self.submit_watched(input_bytes, move |_| work())
+    }
+
+    /// As [`Self::submit`], and the work can see whether its ticket was dropped.
+    pub fn submit_watched<T: Send + 'static>(
+        &self,
+        input_bytes: usize,
+        work: impl FnOnce(&Watch<'_>) -> T + Send + 'static,
+    ) -> Result<Ticket<T>, SubmitError> {
         let sender = self.sender.as_ref().ok_or(SubmitError::Stopped)?;
         self.budget
             .used
@@ -116,7 +145,7 @@ impl BlockingPool {
         let (reply, receiver) = oneshot::channel();
         let job = Box::new(move || {
             drop(reservation);
-            let result = work();
+            let result = work(&Watch(&|| reply.is_closed()));
             let _ = reply.send(result);
         });
         sender.try_send(job).map_err(|error| match error {
@@ -153,6 +182,27 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async { tokio::time::timeout(GUARD, ticket.wait()).await.unwrap() })
+    }
+
+    #[test]
+    fn watched_work_observes_a_dropped_ticket() {
+        let pool = BlockingPool::new(1, 1, 32).unwrap();
+        let (started, observed) = mpsc::channel();
+        let (release, gate) = mpsc::channel::<()>();
+        let (seen, abandoned) = mpsc::channel();
+        let ticket = pool
+            .submit_watched(8, move |watch| {
+                let before = watch.abandoned();
+                started.send(()).unwrap();
+                gate.recv_timeout(GUARD).unwrap();
+                seen.send((before, watch.abandoned())).unwrap();
+            })
+            .unwrap();
+        wait_started(&observed);
+        drop(ticket);
+        release.send(()).unwrap();
+        assert_eq!(abandoned.recv_timeout(GUARD).unwrap(), (false, true));
+        assert!(!Watch::never().abandoned());
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! `/api/v1` route is a JSON 404; nothing forwards to a local socket.
 use super::{BrowserSessions, Established, SecretBody, Ticket};
 use crate::{
+    blocking::Watch,
     body::BusinessBody,
     path::RequestPath,
     service::{ApiBackend, ApiReply, PreparedCall},
@@ -157,6 +158,9 @@ impl ApiBackend for SessionApi {
         Ok(PreparedCall::read(call, bytes))
     }
     fn execute(&self, call: Command) -> ApiReply {
+        self.execute_watched(call, &Watch::never())
+    }
+    fn execute_watched(&self, call: Command, watch: &Watch<'_>) -> ApiReply {
         match call {
             Command::Version => ApiReply::json(
                 StatusCode::OK,
@@ -164,7 +168,7 @@ impl ApiBackend for SessionApi {
             ),
             Command::SignIn { login, password } => self
                 .sessions
-                .sign_in(login, password)
+                .sign_in_watched(login, password, watch)
                 .and_then(|result| self.established(result))
                 .unwrap_or_else(|reply| reply),
             Command::Get(ticket) => match self.sessions.get(ticket) {
