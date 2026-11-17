@@ -54,6 +54,27 @@ fn refused_gateway_start_never_becomes_ready() {
     assert!(!crate::service::gateway_serving(true, true, observed));
 }
 
+#[test]
+fn an_admission_refusal_inside_start_keeps_its_cause() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = Configuration {
+        program: dir.path().join("agentic-org-web"),
+        instance: "instance".into(),
+        runtime: dir.path().to_owned(),
+        listen: loopback(),
+        check: ServerCheck::gateway_for_build(false, None).unwrap(),
+        critical_paths: vec![],
+        release: None,
+    };
+    let Err(error) = Running::start(&config, Arc::new(NoOps)) else {
+        panic!("a release build without a team never spawns")
+    };
+    // The supervisor logs this text, so the refusal cause must survive.
+    let message = error.to_string();
+    assert!(message.contains("gateway admission refused"), "{message}");
+    assert!(message.contains("no app team id"), "{message}");
+}
+
 /// A started gateway: `live` is the child/control state, `reported` its `gateway.serving`.
 struct Fake {
     live: Arc<AtomicBool>,

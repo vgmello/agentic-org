@@ -68,6 +68,11 @@ fn unavailable() -> io::Error {
 fn invalid<T>(_: T) -> io::Error {
     unavailable()
 }
+/// The launch check refused the gateway. Its cause names only the check and the
+/// executable's identity, so it is kept for the supervisor's log line.
+fn refused(why: String) -> io::Error {
+    io::Error::other(format!("gateway admission refused: {why}"))
+}
 
 pub(crate) struct Configuration {
     pub program: PathBuf,
@@ -198,7 +203,10 @@ fn supervise<S: Serving>(
                 *lock(state) = GatewayState::Failed;
                 drop(child); // end sessions/control, then kill/reap before restart
             }
-            Err(_) => crate::host_log::log("authenticated browser startup failed"),
+            Err(error) => crate::host_log::log(&format!(
+                "authenticated browser startup failed: {}",
+                crate::host_log::untrusted(&error.to_string())
+            )),
         }
         *lock(state) = GatewayState::Failed;
         if stopping.load(Ordering::SeqCst) {
@@ -287,7 +295,7 @@ impl Serving for Running {
 }
 impl Running {
     fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Self> {
-        config.check.may_spawn().map_err(invalid)?;
+        config.check.may_spawn().map_err(refused)?;
         // Validated configuration is frozen before bind. No port-zero substitution.
         let listener = {
             let _fence = lock(&SPAWN_LOCK);
@@ -301,11 +309,11 @@ impl Running {
             let _fence = lock(&SPAWN_LOCK);
             spawn::spawn_suspended(&config.program, &[OsStr::new("--serve")], &[])?
         };
-        let admitted = config.check.admit(spawned.process.id()).map_err(invalid)?;
+        let admitted = config.check.admit(spawned.process.id()).map_err(refused)?;
         config
             .check
             .still(spawned.process.id(), admitted)
-            .map_err(invalid)?;
+            .map_err(refused)?;
         spawned.process.resume()?;
         let first = GatewayFirstLine {
             rendezvous: rendezvous.path.to_str().ok_or_else(unavailable)?.into(),
