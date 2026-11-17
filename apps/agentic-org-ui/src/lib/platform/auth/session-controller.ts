@@ -173,8 +173,14 @@ export function createSessionController({ store, gateway, http, locks, channel, 
 				const stored = await store.read();
 				if (!authoritative(version)) return;
 				if (!stored || !sameAccount(expected, stored)) { ended(stored ? 'changed-account' : 'signed-out', stored?.login); return; }
-				await gateway.signOut(stored.proof, signal);
+				// Every gateway reply on this route clears the cookie half, so a typed refusal
+				// (401, 503 or timeout) ends this browser's pair as surely as success does.
+				// Only a failure without a reply keeps the pair: HQ may not have been reached.
+				let refusal: SessionRequestError | undefined;
+				try { await gateway.signOut(stored.proof, signal); }
+				catch (error) { if (!(error instanceof SessionRequestError)) throw error; refusal = error; }
 				await store.clear(); if (authoritative(version)) ended('signed-out'); notify({ kind: 'signed-out' });
+				if (refusal) throw refusal;
 			});
 		},
 		async read(path: string, signal?: AbortSignal) {

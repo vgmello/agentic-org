@@ -133,9 +133,12 @@ test.describe('P6a auth foundation @webkit', () => {
 				)
 			)
 		).toBe('Session request failed');
-		expect(await storedProof(page)).toBe(secondPair.proof);
-		await api.setSignOutFails(false);
-		await page.evaluate(() => window.p6.controller.signOut());
+		// The 503 reply cleared the cookie half, so this browser's pair ends in every tab despite the refusal.
+		expect(await storedProof(page)).toBeUndefined();
+		expect(await page.evaluate(() => window.p6.states.at(-1))).toEqual({
+			kind: 'signed-out',
+			reason: 'signed-out'
+		});
 		await expect
 			.poll(() => second.evaluate(() => window.p6.states.at(-1)))
 			.toEqual({ kind: 'signed-out', reason: 'signed-out' });

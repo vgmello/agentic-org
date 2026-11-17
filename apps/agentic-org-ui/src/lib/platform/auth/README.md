@@ -23,8 +23,10 @@ URLs, localStorage/sessionStorage or published state. Missing proof has no
 cookie-only recovery. Another account clears prior views and requires Reload.
 
 Until the final P4 trigger policy lands, refresh is an explicit locked
-`refresh(triggered_at_ms)` only: no timer or guessed scheduling. Logout failure
-preserves storage and state; success clears the record before notification.
+`refresh(triggered_at_ms)` only: no timer or guessed scheduling. Every gateway
+reply to logout (success, 401, 503 or timeout) clears the cookie half, so each
+clears the record before notification and then surfaces any refusal. A logout
+failure without a reply (HQ unreachable) preserves storage and state.
 Dispose detaches notifications and rejects new operations/late read results.
 Already-dispatched pair changes may finish persisting, without publishing to the
 disposed view. HTTP errors expose status, validated duration and session reason,

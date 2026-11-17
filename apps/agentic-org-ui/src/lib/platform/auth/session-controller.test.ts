@@ -129,7 +129,33 @@ describe('P6a session ownership', () => {
 		expect(s.states.at(-1)).toEqual({ kind: 'signed-in', session: view, reauth: 'hq_restarted' }); expect(s.stored()).toEqual(record);
 		expect(s.gateway.refresh).toHaveBeenCalledTimes(1);
 	});
-	it('keeps session and storage unchanged if the HQ cannot sign out', async () => {
+	it.each([
+		['success', undefined],
+		['503 pool refusal or timeout', () => new SessionRequestError(503, { code: 'unavailable', message: proof, retry_after_ms: 1000 })],
+		['401 refusal', unauthorized]
+	] as const)('every gateway sign-out reply (%s) ends the pair locally and in every tab', async (_outcome, failure) => {
+		const s = setup(); await s.controller.boot();
+		const error = failure?.();
+		if (error) s.gateway.signOut.mockRejectedValueOnce(error);
+		const logout = s.controller.signOut();
+		if (error) await expect(logout).rejects.toBe(error); else await logout;
+		expect(s.stored()).toBeUndefined(); expect(s.states.at(-1)).toEqual({ kind: 'signed-out', reason: 'signed-out' });
+		expect(s.postMessage.mock.calls).toEqual([[{ kind: 'signed-out' }]]);
+		expect(s.store.clear.mock.invocationCallOrder[0]).toBeLessThan(s.postMessage.mock.invocationCallOrder[0]);
+		// The ended pair is never presented again: a repeated sign-out or a read dispatches nothing.
+		await s.controller.signOut(); await expect(s.controller.read('/api/v1/capabilities')).rejects.toThrow('Sign in required');
+		expect(s.gateway.signOut).toHaveBeenCalledTimes(1); expect(s.http).not.toHaveBeenCalled();
+	});
+	it('a typed sign-out refusal under an incompatible renegotiation clears storage but keeps update-required', async () => {
+		const s = setup(); await s.controller.boot(); const reply = deferred<{}>(); s.gateway.signOut.mockReturnValueOnce(reply.promise);
+		const logout = s.controller.signOut(); await tick();
+		s.gateway.version.mockResolvedValueOnce({ api_version: 2, contract_revision: 2 }); await s.controller.boot();
+		reply.reject(new SessionRequestError(503, { code: 'unavailable', message: 'x' })); await expect(logout).rejects.toMatchObject({ status: 503 });
+		expect(s.stored()).toBeUndefined(); expect(s.states.at(-1)).toEqual({ kind: 'update-required' });
+		expect(s.postMessage.mock.calls).toEqual([[{ kind: 'signed-out' }]]);
+	});
+	// No reply means the cookie half may be intact: the UX spec keeps the session until HQ ends it.
+	it('keeps session and storage unchanged if the HQ cannot be reached to sign out', async () => {
 		const s = setup(); await s.controller.boot(); s.gateway.signOut.mockRejectedValue(new Error('offline'));
 		await expect(s.controller.signOut()).rejects.toThrow('offline');
 		expect(s.states).toEqual([{ kind: 'signed-in', session: view }]); expect(s.stored()).toEqual(record);

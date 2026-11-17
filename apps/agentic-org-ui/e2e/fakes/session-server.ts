@@ -147,6 +147,9 @@ export function sessionTestMiddleware() {
 				establish();
 				return;
 			}
+			// Like the gateway, every reply on the sign-out route (success, 401 or 503) clears the cookie half.
+			const signOut = url.pathname === '/api/v1/session/sign-out' && req.method === 'POST';
+			const ended = signOut ? { value: '', clear: true } : undefined;
 			// Cookie-only, proof-only, stale and mismatched pairs share the gateway's single denial shape.
 			const presented = presentedPair(req);
 			if (
@@ -163,7 +166,8 @@ export function sessionTestMiddleware() {
 							session_reason: 'session_ended'
 						}
 					},
-					401
+					401,
+					ended
 				);
 				return;
 			}
@@ -181,11 +185,12 @@ export function sessionTestMiddleware() {
 				establish();
 				return;
 			}
-			if (url.pathname === '/api/v1/session/sign-out' && req.method === 'POST') {
-				if (state.signOutFails) json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+			if (signOut) {
+				// A pool refusal or timeout leaves the HQ session alive, but the browser's pair still ends.
+				if (state.signOutFails) json({ error: { code: 'unavailable', message: 'Offline.' } }, 503, ended);
 				else {
 					state.pair = undefined;
-					respond({}, { value: '', clear: true });
+					respond({}, ended);
 				}
 				return;
 			}
