@@ -416,7 +416,30 @@ fn a_reply_delivered_as_the_caller_deadline_passes_is_used_without_closing() {
     answer.send(Ok(reply)).unwrap();
     // The actor had claimed the job and answered it as the caller's wait ended.
     let claimed = AtomicBool::new(true);
-    let result = control.settle::<serde_json::Value>(&claimed, &receiver, 7);
+    let result = control.settle::<serde_json::Value>(&claimed, &receiver, 7, Instant::now());
+    assert_eq!(result, Ok(serde_json::json!({})));
+    assert!(control.live());
+    drop(control);
+    host.join().unwrap();
+}
+
+#[test]
+fn a_claimed_job_waits_for_an_actor_delayed_after_reading_its_reply() {
+    let (control, host) = scripted(|_| None);
+    let (answer, receiver) = mpsc::sync_channel(1);
+    // The actor read the complete reply by the deadline but is descheduled
+    // before handing it over; its answer arrives well after the old grace.
+    let actor = thread::spawn(move || {
+        let mut reply = Reply::new();
+        for byte in br#"{"id":7,"result":{}}"# {
+            reply.push(*byte).unwrap();
+        }
+        thread::sleep(Duration::from_millis(300));
+        answer.send(Ok(reply)).unwrap();
+    });
+    let claimed = AtomicBool::new(true);
+    let result = control.settle::<serde_json::Value>(&claimed, &receiver, 7, Instant::now());
+    actor.join().unwrap();
     assert_eq!(result, Ok(serde_json::json!({})));
     assert!(control.live());
     drop(control);

@@ -28,9 +28,9 @@ const DEADLINE: Duration = Duration::from_secs(5);
 /// A job dequeued later stays unclaimed and is refused unwritten: a write with
 /// almost no reply budget would expire in flight and close the connection.
 const MIN_WRITE_BUDGET: Duration = Duration::from_millis(250);
-/// After the caller's own deadline, how long it waits for a reply the actor
-/// may be delivering at that same deadline before declaring the stream lost.
-const REPLY_GRACE: Duration = Duration::from_millis(50);
+/// Scheduling slack on top of the actor's own bound for a claimed job (its
+/// deadline plus one write timeout) before the caller treats the actor as stuck.
+const ACTOR_SLACK: Duration = Duration::from_secs(1);
 const MAX_CONTROL_BYTES: usize = org_proto::MAX_FRAME_BYTES;
 static SPAWN_FENCE: Mutex<()> = Mutex::new(());
 #[cfg(test)]
@@ -232,10 +232,9 @@ impl HostControl {
         }
         self.borrowed::<Verify, _>(&Params { login, password })
     }
-    /// Every call gets the full per-call deadline. Expiry after the actor took
-    /// the request (it may have been written) leaves the stream out of step, so
-    /// it closes the connection unless the reply arrives within the grace;
-    /// callers must never shorten this budget. Expiry while still queued, or
+    /// Every call gets the full per-call deadline. After the actor took the
+    /// request, the caller waits for the actor's own answer (bounded by the
+    /// actor's deadline and write timeout); callers must never shorten this budget. Expiry while still queued, or
     /// dequeuing with less than [`MIN_WRITE_BUDGET`] left, abandons the unwritten
     /// request and keeps the connection.
     fn borrowed<C: Call, T: Serialize>(&self, params: &T) -> Result<C::Result, Failure> {
@@ -277,23 +276,27 @@ impl HostControl {
             .map_err(|_| Failure::Unavailable)?;
         match receiver.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(reply) => decode(&reply?.bytes, id, &|| self.close()),
-            Err(_) => self.settle(&claimed, &receiver, id),
+            Err(_) => self.settle(&claimed, &receiver, id, until),
         }
     }
     /// The caller's deadline passed. Unclaimed: the actor will skip it unwritten.
-    /// Claimed: the actor shares this deadline, so its reply may be arriving
-    /// now; a reply delivered within [`REPLY_GRACE`] keeps the stream in step.
-    /// Otherwise a late reply would desynchronize, so the connection closes.
+    /// Claimed: the actor owns the stream for this job and always answers it;
+    /// its work ends by `until` plus one write timeout. Wait for that answer:
+    /// a reply keeps the stream in step, and only an actor failure or a reply
+    /// for another id closes the connection. An actor that misses its own bound
+    /// (or is gone) cannot be trusted with the stream, so that closes too.
     fn settle<T: DeserializeOwned>(
         &self,
         claimed: &AtomicBool,
         receiver: &mpsc::Receiver<Result<Reply, Failure>>,
         id: u64,
+        until: Instant,
     ) -> Result<T, Failure> {
         if !claimed.swap(true, Ordering::SeqCst) {
             return Err(Failure::Unavailable);
         }
-        match receiver.recv_timeout(REPLY_GRACE) {
+        let bound = until.saturating_duration_since(Instant::now()) + DEADLINE + ACTOR_SLACK;
+        match receiver.recv_timeout(bound) {
             Ok(Ok(reply)) => decode(&reply.bytes, id, &|| self.close()),
             // The actor failed this job and is already ending the connection.
             Ok(Err(error)) => {
