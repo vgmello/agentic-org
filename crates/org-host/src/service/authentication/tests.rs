@@ -354,6 +354,70 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
 }
 
 #[test]
+fn gateway_connection_holds_browser_capacity_while_local_and_global_caps_hold() {
+    use crate::service::listener::{GatewayConnection, Handler};
+    use std::os::unix::net::{UnixDatagram, UnixStream};
+    struct Idle;
+    impl Handler for Idle {
+        fn handle(&self, _: org_proto::Request, _: &Arc<Connection>, _: crate::peer::Received) {}
+    }
+    let (_root, auth, local) = fixture();
+    // The real admitted gateway control connection, as the gateway supervisor builds it.
+    let (host, _peer) = UnixStream::pair().unwrap();
+    let (transfer, _child) = UnixDatagram::pair().unwrap();
+    let listen = serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap();
+    let admitted = GatewayConnection::start(host, transfer, listen, Arc::new(Idle)).unwrap();
+    let gateway = admitted.connection_for_test();
+    assert_eq!(
+        gateway.channel_kind(),
+        org_office_launch::v3::ChannelKind::Gateway
+    );
+    assert_eq!(
+        local.channel_kind(),
+        org_office_launch::v3::ChannelKind::Local
+    );
+
+    // One full sign-in, then the remaining browser sessions go straight to issuance
+    // (Argon2 per sign-in would only slow the test; issuance owns the budget).
+    let first = login(&auth, gateway);
+    let id = AccountId::parse(&first.account).unwrap();
+    let account = || auth.db.account_authority(&id).unwrap().unwrap();
+    const BROWSERS: usize = 40;
+    const _: () = assert!(BROWSERS > MAX_CONNECTION_SESSIONS);
+    for _ in 1..BROWSERS {
+        auth.issue(gateway, account()).unwrap();
+    }
+    assert!(auth.authorize(gateway, &first.session).is_ok());
+
+    // A local connection still refuses session 33.
+    for _ in 0..MAX_CONNECTION_SESSIONS {
+        auth.issue(&local, account()).unwrap();
+    }
+    assert_eq!(
+        auth.issue(&local, account()).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+
+    // The global cap still bounds every connection, the gateway included.
+    let held = auth.sessions.lock().unwrap().len();
+    assert_eq!(held, BROWSERS + MAX_CONNECTION_SESSIONS);
+    for _ in held..MAX_SESSIONS {
+        auth.issue(gateway, account()).unwrap();
+    }
+    assert_eq!(
+        auth.issue(gateway, account()).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(
+        auth.issue(&Connection::for_test(), account())
+            .unwrap_err()
+            .code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(auth.sessions.lock().unwrap().len(), MAX_SESSIONS);
+}
+
+#[test]
 fn session_absolute_and_idle_expiry_remain_independent_of_wall_clock() {
     let (_root, auth, connection) = fixture();
     for absolute in [false, true] {

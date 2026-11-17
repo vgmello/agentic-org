@@ -134,6 +134,10 @@ impl GatewayConnection {
     pub(crate) fn live(&self) -> bool {
         !self.connection.closed.load(Ordering::SeqCst)
     }
+    #[cfg(test)]
+    pub(crate) fn connection_for_test(&self) -> &Arc<Connection> {
+        &self.connection
+    }
 }
 impl Drop for GatewayConnection {
     fn drop(&mut self) {

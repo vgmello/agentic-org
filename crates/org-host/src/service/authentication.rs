@@ -407,12 +407,22 @@ impl Authentication {
         {
             return Err(denied());
         }
+        // Every browser sign-in arrives over the single admitted gateway control
+        // connection, so that connection gets the whole host budget (matching the web
+        // gateway's own 1024-session map). Local and setup connections keep the small
+        // per-connection cap; the global MAX_SESSIONS cap applies to every connection.
+        let per_connection =
+            if connection.channel_kind() == org_office_launch::v3::ChannelKind::Gateway {
+                MAX_SESSIONS
+            } else {
+                MAX_CONNECTION_SESSIONS
+            };
         if sessions.len() >= MAX_SESSIONS
             || sessions
                 .values()
                 .filter(|s| s.connection.ptr_eq(&alive))
                 .count()
-                >= MAX_CONNECTION_SESSIONS
+                >= per_connection
         {
             return Err(unavailable());
         }
