@@ -396,8 +396,102 @@ launcher; it is designed then.
 
 ## 4. Supporting capabilities
 
+Not contracts of ADR-0017, but operating-system differences all the same, so they
+live in `org-platform` and LNX-5's check covers them.
+
+- **`fs`.** `full_sync(&File)`: `fsync`, and on macOS also `F_FULLFSYNC`, with no
+  downgrade when it fails. `rename_noreplace_at(dir, from, dir, to)`: `renameatx_np`
+  with `RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux; a
+  filesystem without it refuses. `set_errno`. `check_instance_root(dir)`: Linux
+  refuses a case-folding directory and a filesystem other than ext4, XFS without
+  case-insensitive names, Btrfs, F2FS or bcachefs (the checks in
+  `instance/directory.rs` today); macOS keeps its rules. `require_disk(dir)`: refuses
+  `tmpfs`, `ramfs` and `hugetlbfs` where data must persist. These replace the copies
+  in `org-host` (`writer.rs`, `hostdb.rs`, `release/files.rs`,
+  `release/files/output.rs`, `human/recovery.rs`, `instance/directory.rs`),
+  `org-office/src/store/acceptance/durable.rs`, `org-client/src/agent.rs` and
+  `org-spool/src/safe_read.rs`.
+- **`dirs`.** The application base, the user temp base and the runtime base for
+  sockets, with the socket path limit. macOS: `~/Library/Application Support/`,
+  `_CS_DARWIN_USER_TEMP_DIR`, 103 bytes. Linux:
+  `${XDG_DATA_HOME:-~/.local/share}/agentic-org/`,
+  `${XDG_CACHE_HOME:-~/.cache}/agentic-org/tmp/` (on disk; `require_disk` applies)
+  and `$XDG_RUNTIME_DIR/agentic-org/` (or `/run/agentic-org/` in the container), 107
+  bytes. These replace `OFFICE_HOME_IN_ACCOUNT` in `org-host/src/home.rs`, the path
+  in `instance/setup.rs`, the `/var/tmp` and `/private/tmp` choice in
+  `instance/mod.rs`, `instance/temp.rs` and `human.rs` (`user_temp`).
+- **`process`.** Everything `org-supervise` asks of the kernel: credential checks,
+  exit notification (kqueue or pidfd), process start identity (`proc_pidinfo` or
+  `/proc/<pid>/stat`), process-group membership, the native recovery scan, and spawn
+  flags (`POSIX_SPAWN_SETSID`, `closefrom`, `pipe2`).
+- **`socket`.** Peer UID (`getpeereid` or `SO_PEERCRED`), the receive flags for
+  descriptors (`MSG_CMSG_CLOEXEC` on Linux, a fenced `FD_CLOEXEC` on macOS), and
+  whether a descriptor is a listening socket. `org-socket` calls these.
+- **`presence`.** The recovery release's local-context query and confirmation
+  (ADR-0011). macOS: today's bridge, returning `Confirmation::OsDialog`. Linux:
+  `local` requires that the peer (by `SO_PEERCRED` PID, read from `/proc/<pid>/stat`)
+  has a controlling terminal and is its foreground process group; `confirm` returns
+  `Confirmation::BrowserApproval`, and `org-host` then requires the signed-in
+  administrator's approval of this run in the browser as the one confirmation. A
+  remote shell is a local context on Linux; a run without a terminal receives no code.
+  The host branches on the returned confirmation kind, never on the system.
+
 ## 5. What a local attacker can still do on Linux
 
+A process of another ordinary user can do nothing beyond what file permissions allow:
+the data root, the credential store, `host.sock` and the office sockets are owner-only,
+and every socket checks the peer's UID. Root and the container runtime can do
+everything. The cases that matter run as the service user:
+
+- **Read every host secret.** The credential store is files the service user can
+  read: the office secrets keys, which unwrap each office's private keys, the web TLS
+  key and a pending recovery code. On macOS the Keychain gives them only to the
+  signed host. This is the largest difference, and it includes a `same-user` agent
+  that escapes its vendor sandbox. `dedicated-user` (L6) closes it for agents; a
+  separate service account closes it for the person's other programs.
+- **Read and change the organization's data** directly, as on macOS (ADR-0016).
+- **Replace the host's own executable** before its next start. The replacement then
+  skips every check. Replacing the worker or the web executable is detected, because
+  their digest is checked against the signed manifest, but only by an honest host.
+- **Trace or alter what the person runs**: the `agentic-org` command, and agent
+  processes, are ordinary dumpable processes. The host, the workers and the web
+  process are not (section 3.1).
+- **Connect to `host.sock`.** Admission is by UID only; nothing is granted without a
+  session the person approved in the browser.
+- **Stop the service**: kill or stop the host or its children. This denies service and
+  exposes nothing; recovery is as after a crash.
+- **Make the web process refuse to start** on a kernel without Landlock or under a
+  restrictive profile. That is lost availability, never a web process without
+  confinement.
+
+What the Linux design does not lose against macOS: a worker or web process that is not
+the verified image never receives a secret, and nothing resumes a child before its
+check, because there is no suspended child to resume.
+
 ## 6. What this design was checked against
+
+The kernel facilities were probed in this repository's Linux development container
+(x86-64, kernel 6.18, no Yama, running as root and, for the dumpable checks, as an
+unprivileged user):
+
+| Facility | Result |
+| --- | --- |
+| Landlock | ABI 7 |
+| seccomp filters, `SECCOMP_RET_KILL_PROCESS` | available; the container itself runs without a filter |
+| `pidfd_open`, `clone3` with `CLONE_PIDFD`, `pidfd_send_signal` | available |
+| `memfd_create` with `MFD_EXEC`, sealing with `F_SEAL_WRITE \| GROW \| SHRINK \| SEAL` | available; a write after sealing fails with `EPERM`; `vm.memfd_noexec` is 0 |
+| `execveat(AT_EMPTY_PATH)` of a sealed image set to `0111` | the child runs non-dumpable: `/proc/<pid>/mem` is root-owned and `/proc/<pid>/exe` is refused to the same user; without `0111` the child is dumpable |
+| Writing an executing file | refused with `ETXTBSY`; the design does not rely on it |
+| Docker | CLI 29.9.2, `dockerd`, `containerd` and `runc` installed; no daemon running |
+
+Docker Desktop's kernel on a Mac, the target of LNX-2, was not probed; X5 checks it
+first (section 7 and the plan).
+
+Code today, checked against the source: the host refuses to start a worker on Linux
+(`spawn.rs`, "office servers run only on macOS"), `reader_is_child` refuses on every
+system but macOS and six tests in `supervisor/channels/tests.rs` fail on Linux because
+of it, and `cargo clippy -p org-host -p agentic-org --all-targets -- -D warnings`
+fails on Linux with unused items that only macOS code reaches (the reason CI allows
+`dead_code` and `unused_imports` for those two crates on Linux).
 
 ## 7. Working in parallel with the macOS track
