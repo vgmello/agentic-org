@@ -1,6 +1,6 @@
 # Features and work structure
 
-Structural draft for v1. Document revision 2.6. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Status: **selected** data contract, revision 2.6. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -249,7 +249,7 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
-Status values represent data. This document does not implement v1's triage, Undo, checklist promotion, automatic feature transitions or request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
+**Task status is one closed list (owner decision 2026-11-17):** `todo`, `in_progress`, `blocked`, `done`, the same for every task type. `done` is the last value and the only one that means finished; it is the first-class marker that milestone and release completion are derived from ([document 02](02-project-structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
 
 Private notes attached to tasks are a required, separate capability defined by [operational data](05-operational-data.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. Shared [comments](05-operational-data.md) do not satisfy that requirement; [document 05](05-operational-data.md#private-notes-attached-to-tasks) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
 
@@ -317,7 +317,7 @@ CREATE TABLE tasks (
   type TEXT NOT NULL DEFAULT 'task' CHECK (length(type) > 0),
   work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('todo', 'in_progress', 'blocked', 'done')),
   assignee_id TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
   feature_id TEXT,

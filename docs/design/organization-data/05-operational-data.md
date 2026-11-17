@@ -1,6 +1,6 @@
 # Operational data structure
 
-Structural draft for v1. Document revision 2.7. Shared comments, checklist entries, watchers, owner questions, waiting spans, task activity history and private task notes are selected for implementation. This document owns their data models, relationships and storage boundaries; application authorization, notification delivery and process execution remain implementation work. It extends [typed tasks](03-features-and-work.md).
+Status: **selected** data contract, revision 2.7. Shared comments, checklist entries, watchers, owner questions, waiting spans, task activity history and private task notes are selected for implementation. This document owns their data models, relationships and storage boundaries; application authorization, notification delivery and process execution remain implementation work. It extends [typed tasks](03-features-and-work.md).
 
 ## Scope and related data
 
@@ -249,6 +249,8 @@ The event's stable identity is `(organization_id, task_id, revision)`, preservin
 
 The service commits the resulting task snapshot, its event(s), and the command's idempotency result as one recoverable operation before acknowledging. Under [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) comments, checklist ticks and watching are acknowledged at that commit, with the flush to the drive following within a bounded interval; every other task change waits for the flush. The durable local journal must retain everything needed to finish materializing these files after a crash, using the platform durability guarantees in [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md). Hourly Git publication includes the task and its events together; it is not the acknowledgement boundary. A machine restore requires unpublished journal records as well as the published organization state. Rebuilding SQLite projects the same event identities; it creates no new history.
 
+**Why history is published to Git, and when to revisit (owner decision 2026-11-17).** One file per accepted change is kept as specified. It is what lets an office database be rebuilt with the same history and what answers who changed what after a task closes. Revisit the shape if the organization repository holds more than 100,000 history files, or a single task more than 1,000. The fallback is one append-only file per task, or keeping events only under `durable/` and publishing a summary when a task closes.
+
 Task commands have one accepting writer and use expected revisions; raw replicated files do not become an independent mutation authority. A newly created offline task may have a local history before readable-number registration. Concurrent edits to an already shared task must stay pending or conflict until its accepting writer resolves them; never publish two different accepted events for the same task/revision or silently choose the last file. Writer handover/fencing and remote delivery remain part of the mutation/replication implementation contract, not permission to bypass it. Work assignment does not by itself transfer write authority.
 
 New tasks start with a `created` event at revision 1, including their initial public task state. Subsequent events capture every accepted task-content/metadata change, including assignments, ownership/scope, status/resolution, fields/body, checklist, comments, links, watchers, questions and waiting spans. `change.type` is a versioned event tag; its payload carries the facts and old/new values needed to explain that change. Unknown future tags are retained and shown as an unknown change, never silently discarded. Automated changes record system attribution and their cause when known. Optional `operation_id` identifies the accepted command and may repeat across events from that command; it is not the event identity or the complete command-receipt store.
@@ -406,7 +408,7 @@ erDiagram
         TEXT task_id PK, FK "required"
         INTEGER revision PK "required"
         INTEGER schema_version "required"
-        TEXT occurred_at "required"
+        TEXT occurred_at "required for new events"
         TEXT actor_kind "required"
         TEXT actor_id FK "optional"
         TEXT operation_id "optional"
@@ -522,7 +524,7 @@ erDiagram
 
 | Note field | Contract |
 | --- | --- |
-| `id` | Stable UUIDv7 for new notes; no readable number; retained after deletion |
+| `id` | Stable ULID for new notes; no readable number; retained after deletion |
 | `organization_id`, `task_id` | Immutable attachment; an existing task of any type, including projectless tasks |
 | `author_kind`, `author_id` | Immutable original author and exclusive default reader/editor; derived from the bound actor |
 | `schema_version`, `revision` | Format 1; revision starts at 1 and advances by exactly one on each edit/deletion |

@@ -1,6 +1,6 @@
 # Messaging and chat data structure
 
-Data specification for the selected organization model. This document adds conversations and messages to the same organization data model; it does not implement a transport, chat UI, wake scheduler or external platform bridge. It does select who stores and routes messages at run time: see [Runtime ownership and routing](#runtime-ownership-and-routing), merged from ADR-0003. It preserves existing v1 directed-message facts and defines the core channel/group-conversation relationships already described in the chat UX. External bridges and their credentials remain outside this change.
+Status: **selected** data contract, revision 2. Data specification for the selected organization model. This document adds conversations and messages to the same organization data model; it does not implement a transport, chat UI, wake scheduler or external platform bridge. It does select who stores and routes messages at run time: see [Runtime ownership and routing](#runtime-ownership-and-routing), merged from ADR-0003. It preserves existing v1 directed-message facts and defines the core channel/group-conversation relationships already described in the chat UX. External bridges and their credentials remain outside this change.
 
 ## Relationships and identity
 
@@ -10,7 +10,7 @@ Stable IDs follow document 06, preserving all existing message IDs. There are no
 
 ## Storage and durability
 
-Messages, DM/channel memberships, preferences and bodies are protected operational data, **not shared organization Git content**. The consolidated SQL is a query projection of the protected source files below, not a claim that anyone with organization Git access may read all conversations. Enforce actor/conversation visibility on every read, search, attachment access and write. Owner reading authority follows the explicitly authorized chat policy; `is_owner` alone is not an authentication grant. Private task notes remain in their separate database and are never included in chat automatically.
+Messages, DM/channel memberships, preferences and bodies are protected operational data, **not shared organization Git content**. The consolidated SQL is a query projection of the protected source files below, not a claim that anyone with organization Git access may read all conversations. Enforce actor/conversation visibility on every read, search, attachment access and write. Owner reading authority follows the explicitly authorized chat policy; No field on an employee record is an authentication grant. Private task notes remain in their separate database and are never included in chat automatically.
 
 Use `durable/messaging/` under the one selected [storage root](README.md#shared-storage-contract), outside disposable office state, with private filesystem permissions and authorized backups. Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) the application does not encrypt it. The root is configured and never derived from client IDs without validating paths. Agent office movement does not move conversation ownership. Losing only office caches must not lose acknowledged unresolved asks, pending handoffs or undelivered messages. Losing both the durable source and its backups can lose chat; organization Git alone cannot restore it. No new replication/recovery algorithm or purge policy is selected here.
 

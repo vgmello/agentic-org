@@ -1,6 +1,6 @@
 # Organization structure
 
-Structural draft for v1. Document revision 2.6. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Status: **selected** data contract, revision 2.6. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
@@ -66,7 +66,7 @@ erDiagram
     teams {
         TEXT organization_id PK, FK "required"
         TEXT id PK, FK "required"
-        INTEGER number "optional"
+        INTEGER number "required"
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
@@ -322,7 +322,7 @@ UNIQUE (organization_id, key),
 CREATE TABLE teams (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'TEAM-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),

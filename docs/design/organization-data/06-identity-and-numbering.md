@@ -1,10 +1,10 @@
 # Identity and numbering
 
-Structural draft for v1. Document revision 2.6. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
+Status: **selected** data contract, revision 2.6. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
 
 ## Stable IDs, readable references and scopes
 
-Generate new UUIDv7 IDs before submitting creation, and preserve all existing v1 IDs. An ID is not an incrementing number. Slugs/handles are explicit identity fields. Numeric `key` columns are generated from stored `number`, using `TEAM-`, `P-`, `T-`, `F-`, `R-` and `M-`. Numbered records use positive integers; null is limited to tasks/features pending organization registration or import staging. Resolve slugs and handles by their documented scope rather than by display names.
+Generate new ULID IDs before submitting creation, and preserve all existing v1 IDs. An ID is not an incrementing number. Slugs/handles are explicit identity fields. Numeric `key` columns are generated from stored `number`, using `TEAM-`, `P-`, `T-`, `F-`, `R-` and `M-`. Numbered records use positive integers; null is limited to tasks/features pending organization registration or import staging. Resolve slugs and handles by their documented scope rather than by display names.
 
 Counter rows identify `(organization_id, scope_kind, scope_id, entity_kind)`:
 

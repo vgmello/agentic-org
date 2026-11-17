@@ -144,7 +144,7 @@ Selected budget controls follow [document 17](../design/organization-data/17-bud
 
 ## 5. Data sources the UX depends on (for ada and codex-dev)
 
-New stable ledger/price/budget IDs use UUIDv7; existing imported IDs remain unchanged. Retain archived identities/tombstones for referenced tasks, consumers and historical scopes; closure/deletion never erases their usage or policy history.
+New stable ledger/price/budget IDs use ULID; existing imported IDs remain unchanged. Retain archived identities/tombstones for referenced tasks, consumers and historical scopes; closure/deletion never erases their usage or policy history.
 
 The runtime contract can carry token/cost deltas and cumulative scopes independently. Each adapter must prove its source scopes, process epoch/baseline, provider cache semantics and actual model/connection context before capture. Claude print-mode list prices remain **Runtime estimate**, interactive token pricing is **Token estimate**, and any runtime (including Codex/Antigravity) with missing/ambiguous data is partial/unavailable with an issue reason; a product name alone proves no complete coverage.
 

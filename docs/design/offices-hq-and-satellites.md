@@ -172,7 +172,7 @@ automatic scheduling engine is selected.
    above, rather than becoming a second HQ writer.
 2. Validate required target fields/references and expected revision. The remote
    organization repository, state branch, home teams and accountable owner teams
-   must round-trip at canonical stable-ID paths. New stable entities use UUIDv7;
+   must round-trip at canonical stable-ID paths. New stable entities use ULID;
    current ULID command/change admission remains a separate versioned contract.
 3. The admitting writer commits domain changes, required source journal evidence
    and the bound receipt/outcome at one recoverable boundary. One operation ID
@@ -201,7 +201,7 @@ automatic scheduling engine is selected.
 Current command admission retains ULID age/skew windows (29-day admission,
 30-day result retention; future skew at most five minutes) and lookup-before-age
 behavior with monotonic clock high-water. Those are existing wire semantics,
-not UUIDv7 stable-ID rules. Retention/expiry needs equivalent durable retry evidence;
+not ULID stable-ID rules. Retention/expiry needs equivalent durable retry evidence;
 do not silently purge receipts during cache rebuild. Hidden/unauthorized outcomes
 remain scoped, and rejection never authorizes an automatic fresh-ID retry.
 

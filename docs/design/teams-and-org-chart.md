@@ -14,13 +14,13 @@ Revision 3, 2026-11-15. Selected target relationships are owned by [organization
 
 ## The model
 
-All records use stable IDs, `schema_version`, entity `revision` and common creator/update attribution. New stable IDs are UUIDv7; existing IDs remain unchanged. [Numbering](organization-data/06-identity-and-numbering.md) owns readable references and durable allocation. TEAM- and P- numbers are organization-scoped; names are display text, not IDs.
+All records use stable IDs, `schema_version`, entity `revision` and common creator/update attribution. New stable IDs are ULID; existing IDs remain unchanged. [Numbering](organization-data/06-identity-and-numbering.md) owns readable references and durable allocation. TEAM- and P- numbers are organization-scoped; names are display text, not IDs.
 
 | Entity | Selected fields and meaning |
 | --- | --- |
 | Team | `id`, `number`, `name`, nullable `parent_team_id`, nullable `lead_employee_id`, `status: active | archived`, `revision`. Null parent means root. `TEAM-<number>` is derived. |
 | Employee | `id`, organization-unique lowercase `handle` stored without `@`, `kind: agent | person`, `name`, required `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, body, `status: active | inactive`, `revision`. |
-| Retained employee detail | Optional `contact`, `title`, `focus`, `role_text`, `title_in_team`, plus `is_owner`, optional agent-only `agent_status` and `offboarded_at`. `role_text` does not fabricate a normalized role ID. |
+| Retained employee detail | Optional `contact`, `title`, `focus`, `role_text`, `title_in_team` and `offboarded_at`. State is the single `status` field (`active`, `paused` for agents, `inactive`); there is no owner field on an employee. `role_text` does not fabricate a normalized role ID. |
 | Project | `id`, `number`, organization-unique `slug`, `name`, required `owner_team_id`, optional `contributing_team_ids`, repository associations and revision. |
 | Placement | Agent `employee_id`, `office_id`, `placement_generation`; separate from employee identity. Rebuild from durable placement authority, not from a folder's existence. |
 | Execution | Separate `execution.md` selects `model_profile_id`, canonical `model_id`, tools, enabled state and prompt. Profiles contain ordered provider connections; credentials remain office-local. |
@@ -103,7 +103,7 @@ The exact source at this reconciliation's base remains [org_proto::org](https://
 | `AgentProfile` runtime/model/home/run-mode fields and `office_id` | Separate portable employee identity, execution configuration and placement. Existing managed home remains local server state. Run modes/scheduling are earlier requirements, not selected engines. |
 | `member.offboard` / `member.remove` | Existing offboarding cascades memberships and retains record/handle; target retains required home team. Hard delete remains for records without history only, subject to all references. |
 
-Existing `org.snapshot` returns teams, members, memberships, projects/project links and a position; `subscribe { from_position }` resumes there. Retain no-gap reads, version conflicts, command-ID deduplication, queued/blocked outcomes and `org.changed`/`org.rejected`. `command_id` remains the existing uppercase ULID wire identity; selecting UUIDv7 for new stable domain IDs does not change this protocol or signing namespaces.
+Existing `org.snapshot` returns teams, members, memberships, projects/project links and a position; `subscribe { from_position }` resumes there. Retain no-gap reads, version conflicts, command-ID deduplication, queued/blocked outcomes and `org.changed`/`org.rejected`. `command_id` remains the existing uppercase ULID wire identity; selecting ULID for new stable domain IDs does not change this protocol or signing namespaces.
 
 Current commands are app-only unless ADR-0003's call-by-call authorization table explicitly permits otherwise. Preserve receiving-office authorization before forwarding, enrolled-office checks, reserved `owner`/`office` and `run:` addresses, handle-vs-ID disambiguation, `owner_protected`, `cycle`, `not_empty`, `not_a_member`, `conflict`, `not_found`, `unknown_recipient`, `snapshot_required`, `expired` and `clock_skew` semantics on that wire. Existing people-name-as-handle behavior needs explicit migration to independent handle/name fields. No target UI may claim that unsupported writes already enforce new constraints.
 

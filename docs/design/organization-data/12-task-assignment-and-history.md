@@ -1,6 +1,6 @@
 # Task ownership, assignment, reporter and activity history
 
-Structural draft for v1. Document revision 4. This selects task activity history and separate team/individual assignment for the proposed data model. Private task notes are required operational data owned by document 05. The private-note data structure is defined in [operational data](05-operational-data.md#private-notes-attached-to-tasks) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+Status: **selected** data contract, revision 4. This selects task activity history and separate team/individual assignment for the proposed data model. Private task notes are required operational data owned by document 05. The private-note data structure is defined in [operational data](05-operational-data.md#private-notes-attached-to-tasks) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
 
 **Implementation scope:** F0 imports this contract over integration base
 `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9` without selected-task feature source.

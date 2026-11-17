@@ -1,5 +1,10 @@
 # LEGACY-ADOPT-1: conservative source-evidenced legacy adoption
 
+> **Withdrawn 2026-11-17.** The owner decided that nothing is deployed, so there is no
+> legacy data to adopt and no compatibility obligation before v1 ships
+> ([rule](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
+> Legacy task adoption is not built. This ADR is kept as a record only.
+
 Revision1, 2026-11-16. **ACTIVE architecture; implementation acceptance remains pending.** Focused decomposition of active ADR0006r5 TAI-P7/P9/P11, documents05/06/08/12/16 and unchanged full assignment acceptance. Root architecture/plan/integration owner. Independent focused ARCHITECTURE review returned READY; this permits the bounded implementation, not migration/code/production acceptance. The same original fullstack author continues unaffected authentication/setup work.
 
 ## Verified requirements and current evidence

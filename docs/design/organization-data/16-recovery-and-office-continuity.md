@@ -1,6 +1,6 @@
 # Recovery and office continuity data
 
-Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
+Status: **selected** data contract, revision 2. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
 
 ## What recovery means
 
@@ -181,7 +181,7 @@ stop recovery. Verified final SQL/file reads precede readiness or completion.
 
 Protected owner-account registration is separate from directory import. Selected
 directory generations and their exact source JSON pass through the same office
-writer; imported `is_owner` flags grant nothing. These library mechanisms do not
+writer; no field on an employee record grants ownership. These library mechanisms do not
 establish host lease fencing, production session verification or a usable adoption
 workflow by themselves. Their production composition remains required.
 

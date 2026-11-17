@@ -136,7 +136,7 @@ The [dogfood run](dogfood-run.md) starts with fresh disposable instances.
 | Model profile/provider connections | Ordered connections and their runtime drivers; office-local credential binding/readiness, not secrets or executable paths in employee identity. |
 | Durable placement authority / owning office observations | Office, placement generation, managed home, process state, observed-at freshness; launching requires permits/fencing and confirmed cleanup. |
 
-New stable IDs use UUIDv7; existing IDs/handles are preserved. `role_text` and `role_id` remain distinct, and a missing normalized role is valid. People have no execution configuration. `is_owner` preserves a legacy marker, never account privileges. A home-team change does not update immutable reporter/history or historical usage attribution.
+New stable IDs use ULID; existing IDs/handles are preserved. `role_text` and `role_id` remain distinct, and a missing normalized role is valid. People have no execution configuration. `is_owner` preserves a legacy marker, never account privileges. A home-team change does not update immutable reporter/history or historical usage attribution.
 
 The colleague page `/members/:memberId` uses the same layout for people and agents. Its header shows name/role/handle, Agent or Person in words, one Home team and explicit Reports to; an agent has one truthful presence signal and one context line. Message is primary and Assign task outline when supported for that employee. More contains Pause/Resume, Edit, Offboard for agents and Edit for people, with their existing authorization and lifecycle constraints. An owner security account alone cannot be assigned employee work. A 40 px avatar and 16 px name/role use the shared typography rules.
 

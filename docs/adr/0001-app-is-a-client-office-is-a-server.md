@@ -66,7 +66,7 @@ The owning relationships and field contracts are in organization-data documents
    disconnected, with a stable ID and pending final number. The shared authority
    allocates numbers and registers feature slugs; replicas never increment
    counters independently. Acknowledged allocation evidence must survive loss of
-   a cache and cannot rely on hourly Git publication. New IDs use UUIDv7; old
+   a cache and cannot rely on hourly Git publication. New IDs use ULID; old
    stable IDs and explicit legacy reference mappings are preserved. Document
    [06](../design/organization-data/06-identity-and-numbering.md) owns the scopes.
 5. **Contracts remain intentionally versioned.** Existing local `org-proto`,

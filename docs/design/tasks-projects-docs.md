@@ -10,7 +10,7 @@ There is one task entity with extensible `type`, required accountable team, opti
 
 1. **One typed task.** `type: task | bug | request | ...` is classification, not a different entity/table/folder. Optional `work_type: build | run` is a separate classification; null means unclassified.
 2. **Accountability and assignment differ.** Required task `team_id` equals `projects.owner_team_id` when project-scoped. Nullable `assigned_team_id` and `assignee_id` form one atomic current assignment pair. Neither is inferred from the other or from employee home membership.
-3. **Identity is stable.** New records use UUIDv7. Preserve existing stable IDs exactly. Readable T- references are scoped to project or to the accountable team when projectless. Type changes and assignment never renumber tasks.
+3. **Identity is stable.** New records use ULID. Preserve existing stable IDs exactly. Readable T- references are scoped to project or to the accountable team when projectless. Type changes and assignment never renumber tasks.
 4. **Sources are durable.** Task files and published immutable task events are organization Git content. Acknowledged unpublished changes require a durable journal. SQLite is their indexed projection, not the sole recovery source.
 5. **Features are definitions.** `projects/<project-id>/features/<feature-id>/feature.md` defines behavior, rules, limitations and non-goals. Its status and owner are authored fields, not values automatically calculated from task completion.
 6. **Supporting documents have explicit scope.** Required project; zero or one same-project feature, release or deployment; stable IDs and common attribution. `feature.md` is not duplicated as a supporting-document row.
@@ -72,7 +72,7 @@ Release product changelogs and deployment technical changelogs differ. Tasks rem
 
 ### 1.1 Ids and references
 
-Every foreign reference and filename uses the immutable stable ID. New IDs are UUIDv7; imported ULIDs and other accepted old IDs stay unchanged. `schema_version` identifies file format; `revision` identifies concurrency. Positive persisted `number` yields the derived readable key. Only a pending local task/feature or import staging can have a null number.
+Every foreign reference and filename uses the immutable stable ID. New IDs are ULID; imported ULIDs and other accepted old IDs stay unchanged. `schema_version` identifies file format; `revision` identifies concurrency. Positive persisted `number` yields the derived readable key. Only a pending local task/feature or import staging can have a null number.
 
 | Entity | Selected display | Scope |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ A task may have no project and no repository. A director can assign a team task 
 
 Example: Payments owns P-8 and T-42. Platform is the assigned team; Ana is the individual assignee. Payments' owned backlog queries `team_id`, Platform's queue queries `assigned_team_id`, and Ana's queue queries `assignee_id`. No assignment changes the task's scope, number, canonical file or reporter.
 
-A newly authored project task uses stable UUIDv7 IDs. This illustrative subset assumes the referenced project/team/employee/repository already exist; complete accepted records also include the common attribution and shared arrays required by documents 03/05/08.
+A newly authored project task uses stable ULID IDs. This illustrative subset assumes the referenced project/team/employee/repository already exist; complete accepted records also include the common attribution and shared arrays required by documents 03/05/08.
 
 ```yaml
 schema_version: 1
@@ -192,7 +192,7 @@ Keep authentication and command authorization separate from project ownership, l
 
 ### 2.3 Ids, idempotency and conflicts
 
-An assignment mutation supplies **both desired fields including explicit nulls** plus expected task revision; accept both fields and an `assignment_changed` event together or change neither. A stale revision conflicts even when the caller changes only one half. Retrying the same operation returns its durable result; a different request cannot reuse that operation identity. The exact public API is pending. The current `task.assign`/`expected_version` and old canonical typed-JSON hash are retained as current-contract evidence, never silently redefined to UUIDv7 or target hashing.
+An assignment mutation supplies **both desired fields including explicit nulls** plus expected task revision; accept both fields and an `assignment_changed` event together or change neither. A stale revision conflicts even when the caller changes only one half. Retrying the same operation returns its durable result; a different request cannot reuse that operation identity. The exact public API is pending. The current `task.assign`/`expected_version` and old canonical typed-JSON hash are retained as current-contract evidence, never silently redefined to ULID or target hashing.
 
 The service acknowledges only after task snapshot, event(s) and idempotency result are one recoverable operation. Concurrent writes to shared tasks wait for or conflict at the single accepting writer. Raw replicated files do not create write authority. A new task begins with `created` revision 1; unknown future change tags remain readable as unknown and retained.
 
@@ -235,7 +235,7 @@ The checked current ports are in [`crates/org-work/src/ports.rs`](../../crates/o
 | `StoredItem.created_by`, `assignee_id`; `task.assign` records individual `Assigned { from, to }` | Preserve reporter and prior individual facts; add nullable team assignment and atomic expected-revision pair |
 | Old optional `team_id`, required project for tasks/bugs | Require accountable team for all types; allow projectless tasks and enforce project-owner equality |
 | Old Task/Bug/Request identity and per-kind number scopes | One typed task identity and scoped T- allocation; explicit collision/reference mapping |
-| ULID command/entity validators and typed canonical command hashing | Keep old codec when reading/retrying old commands; separately version new UUIDv7 creation/target persistence |
+| ULID command/entity validators and typed canonical command hashing | Keep old codec when reading/retrying old commands; separately version new ULID creation/target persistence |
 | `work_events` immutable store and current-state transaction | Preserve immutable ordered events; materialize target files/journal and receipts recoverably |
 | Per-field `expected_version` conflict checks | Preserve old behavior for old methods; new assignment pair requires exact expected task revision |
 | `CommentKind::Note`, `work.comment`, shared activity | Shared comments stay shared; private notes require separate store/API/access controls |
@@ -248,7 +248,7 @@ The authoritative draft DDL is [schema.sql](organization-data/schema.sql), not t
 
 ### 3.4 Verified current codec and access evidence
 
-At the checked base commit, [`hash.rs`](../../crates/org-work/src/hash.rs) computes the command receipt digest as **SHA-256(method UTF-8 + NUL + bound member ID UTF-8 + NUL + canonical typed-params UTF-8)**. Params are decoded to their actual Rust type and re-encoded before hashing; unknown ignored input fields cannot change the request fingerprint. Canonical JSON recursively sorts object keys by their UTF-8 bytes, preserves array order, emits compact separators and uses the existing serde_json scalar encoding. Its pinned test vectors are in [`proto-fingerprints.json`](../../crates/org-proto/test-vectors/v2/proto-fingerprints.json). This is a compatibility/security contract; replacing old entity generation with UUIDv7 does not change old command IDs or digests.
+At the checked base commit, [`hash.rs`](../../crates/org-work/src/hash.rs) computes the command receipt digest as **SHA-256(method UTF-8 + NUL + bound member ID UTF-8 + NUL + canonical typed-params UTF-8)**. Params are decoded to their actual Rust type and re-encoded before hashing; unknown ignored input fields cannot change the request fingerprint. Canonical JSON recursively sorts object keys by their UTF-8 bytes, preserves array order, emits compact separators and uses the existing serde_json scalar encoding. Its pinned test vectors are in [`proto-fingerprints.json`](../../crates/org-proto/test-vectors/v2/proto-fingerprints.json). This is a compatibility/security contract; replacing old entity generation with ULID does not change old command IDs or digests.
 
 [`engine.rs`](../../crates/org-work/src/engine.rs) first enforces app-only and admitted-caller checks. An app caller may act only as a valid person/owner; another connection only as an active/paused agent, never owner/person. Then it looks up the change receipt before age/current-state validation: same ID/hash replays, changed params refuse. The old command ID remains a ULID, maximum age 29 days, future tolerance five minutes and receipt retention 30 days from its encoded time. Existing field-aspect conflicts retain their method semantics; target assignment-pair exact-revision validation is a separate adaptation. Keep canonical unknown-value decoding, request/frame bounds and stored failure behavior as implemented rather than silently recalculating old receipts. The earlier permissive binding residual risk remains in ADR-0003; this document makes no security-identity or key-namespace changes.
 

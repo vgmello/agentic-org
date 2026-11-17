@@ -1,6 +1,6 @@
 # Project structure
 
-Structural draft for v1. Document revision 2.6. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Status: **selected** data contract, revision 2.6. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -24,7 +24,7 @@ erDiagram
     projects {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        INTEGER number "optional"
+        INTEGER number "required"
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
@@ -53,14 +53,13 @@ erDiagram
     releases {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        INTEGER number "optional"
+        INTEGER number "required"
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT project_id FK "required"
         TEXT title "required"
         TEXT version_label "optional"
-        TEXT status "required"
         TEXT body_markdown "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
@@ -79,14 +78,13 @@ erDiagram
     milestones {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        INTEGER number "optional"
+        INTEGER number "required"
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT project_id FK "required"
         TEXT release_id FK "required"
         TEXT title "required"
-        TEXT status "required"
         TEXT body_markdown "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
@@ -128,6 +126,16 @@ A project may use several repositories, including shared infrastructure or libra
 A release has an `R-<number>` reference and an optional plain-text `version_label`, such as `1.4.0` or `Spring launch`. The label is independent of identity and need not follow semantic versioning. A release belongs to one project and contains zero or more milestones. Every milestone requires exactly one same-project release. A task can reference zero or one milestone. Releases are delivery records, not organization-wide repository branches.
 
 Project investment/token totals are derived from [usage records](10-usage-and-cost-accounting.md), including explicitly attributed project overhead. A project/team/task move does not retroactively change recorded consumption. Release accounting uses captured release attribution, not every later release-manifest membership.
+
+## Completion of milestones and releases
+
+Milestones and releases store no status of their own (owner decision 2026-11-17). Whether one is done is derived from task status, where `done` is the one finished value ([document 03](03-features-and-work.md)):
+
+- A milestone is done when it has at least one task and every task assigned to it is `done`.
+- A release that has milestones is done when every one of its milestones is done.
+- A release that has no milestones is done when its content manifest lists at least one task and every listed task is `done`.
+
+An empty milestone or release is not done. The views `milestone_progress` and `release_progress` compute this, with counts for showing progress. Nothing is stored, so reopening a task makes its milestone and release not done again without any other write.
 
 ## Durable project files
 
@@ -231,9 +239,9 @@ Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md
 | `projects` | `project.yaml`: common identity fields, required organization-unique `slug`, `name`, `owner_team_id`, `archived` (default false). |
 | `project_contributing_teams` | One row per `contributing_team_ids[]`; `project_id` comes from that project. |
 | `project_repositories` | One row per `repositories[]` entry with `repository_id`, `integration_branch`; `project_id` comes from the project. |
-| `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, `status`, and Markdown body; `feature_ids[]`/`task_ids[]` are projected by document 09. |
+| `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, and Markdown body; `feature_ids[]`/`task_ids[]` are projected by document 09. |
 | `release_repository_commits` | Release `repository_commits` map: repository ID to exact commit SHA; `release_id` and `project_id` come from its parent file. |
-| `milestones` | Milestone front matter: common identity fields, required `project_id`, required `release_id`, `title`, `status`, and Markdown body. Path and explicit parent IDs must agree. |
+| `milestones` | Milestone front matter: common identity fields, required `project_id`, required `release_id`, `title`, and Markdown body. Path and explicit parent IDs must agree. |
 | `documents` | Supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `release_id` or `deployment_id` (at most one), `kind`, `status`, `owner_employee_id`, common attribution, `title`, and body. Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
 
 A manifest may cover multiple code repositories. Release deployment records are defined in [document 07](07-release-deployments.md), including environment/target, outcomes, rollback references and exact commit snapshots. Build artifacts are out of scope. Dates, release gates, progression rules, budgets and delivery execution are not fixed by this structural draft. They require separate lifecycle/operations decisions; they are not automatically imported from v1.
@@ -244,7 +252,7 @@ A manifest may cover multiple code repositories. Release deployment records are 
 CREATE TABLE projects (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'P-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
@@ -300,14 +308,13 @@ CREATE TABLE project_repositories (
 CREATE TABLE releases (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'R-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
   title TEXT NOT NULL,
   version_label TEXT,
-  status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
@@ -342,14 +349,13 @@ CREATE TABLE release_repository_commits (
 CREATE TABLE milestones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'M-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
   release_id TEXT NOT NULL,
   title TEXT NOT NULL,
-  status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
@@ -367,6 +373,30 @@ UNIQUE (organization_id, release_id, number),
   FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE VIEW milestone_progress AS
+SELECT m.organization_id, m.id AS milestone_id, m.release_id,
+  COUNT(t.id) AS task_count,
+  COALESCE(SUM(t.status = 'done'), 0) AS done_task_count,
+  (COUNT(t.id) > 0 AND COUNT(t.id) = COALESCE(SUM(t.status = 'done'), 0)) AS is_done
+FROM milestones m
+LEFT JOIN tasks t ON t.organization_id = m.organization_id AND t.milestone_id = m.id
+GROUP BY m.organization_id, m.id;
+
+CREATE VIEW release_progress AS
+SELECT r.organization_id, r.id AS release_id,
+  (SELECT COUNT(*) FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id) AS milestone_count,
+  (SELECT COUNT(*) FROM release_tasks rt WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id) AS task_count,
+  CASE
+    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
+      THEN NOT EXISTS (SELECT 1 FROM milestone_progress p
+                       WHERE p.organization_id = r.organization_id AND p.release_id = r.id AND NOT p.is_done)
+    ELSE EXISTS (SELECT 1 FROM release_tasks rt WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
+      AND NOT EXISTS (SELECT 1 FROM release_tasks rt
+                      JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
+                      WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status <> 'done')
+  END AS is_done
+FROM releases r;
 
 CREATE TABLE documents (
   organization_id TEXT NOT NULL REFERENCES organizations(id),

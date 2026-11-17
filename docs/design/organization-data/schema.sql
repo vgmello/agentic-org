@@ -72,7 +72,7 @@ UNIQUE (organization_id, key),
 CREATE TABLE teams (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'TEAM-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
@@ -178,7 +178,7 @@ CREATE TABLE repository_caches (
 CREATE TABLE projects (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'P-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
@@ -234,14 +234,13 @@ CREATE TABLE project_repositories (
 CREATE TABLE releases (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'R-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
   title TEXT NOT NULL,
   version_label TEXT,
-  status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
@@ -276,14 +275,13 @@ CREATE TABLE release_repository_commits (
 CREATE TABLE milestones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'M-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
   release_id TEXT NOT NULL,
   title TEXT NOT NULL,
-  status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
@@ -404,7 +402,7 @@ CREATE TABLE tasks (
   type TEXT NOT NULL DEFAULT 'task' CHECK (length(type) > 0),
   work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('todo', 'in_progress', 'blocked', 'done')),
   assignee_id TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
   feature_id TEXT,
@@ -543,7 +541,7 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   role_id TEXT,
   reports_to_employee_id TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'inactive')),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
   created_by_id TEXT,
@@ -555,11 +553,9 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   focus TEXT,
   role_text TEXT,
   title_in_team TEXT,
-  is_owner INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1)),
-  agent_status TEXT CHECK (agent_status IN ('active','paused','offboarded')),
   offboarded_at TEXT,
-  CHECK (kind='agent' OR (agent_status IS NULL AND offboarded_at IS NULL)),
-  CHECK (offboarded_at IS NULL OR agent_status='offboarded'),
+  CHECK (kind = 'agent' OR status <> 'paused'),
+  CHECK (offboarded_at IS NULL OR status = 'inactive'),
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, handle),
   UNIQUE (organization_id, id, home_team_id),
@@ -2178,3 +2174,27 @@ BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
 CREATE TRIGGER budget_release_no_hold_update BEFORE UPDATE ON budget_holds
 WHEN EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND id=NEW.budget_id AND scope_kind='release')
 BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
+
+CREATE VIEW milestone_progress AS
+SELECT m.organization_id, m.id AS milestone_id, m.release_id,
+  COUNT(t.id) AS task_count,
+  COALESCE(SUM(t.status = 'done'), 0) AS done_task_count,
+  (COUNT(t.id) > 0 AND COUNT(t.id) = COALESCE(SUM(t.status = 'done'), 0)) AS is_done
+FROM milestones m
+LEFT JOIN tasks t ON t.organization_id = m.organization_id AND t.milestone_id = m.id
+GROUP BY m.organization_id, m.id;
+
+CREATE VIEW release_progress AS
+SELECT r.organization_id, r.id AS release_id,
+  (SELECT COUNT(*) FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id) AS milestone_count,
+  (SELECT COUNT(*) FROM release_tasks rt WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id) AS task_count,
+  CASE
+    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
+      THEN NOT EXISTS (SELECT 1 FROM milestone_progress p
+                       WHERE p.organization_id = r.organization_id AND p.release_id = r.id AND NOT p.is_done)
+    ELSE EXISTS (SELECT 1 FROM release_tasks rt WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
+      AND NOT EXISTS (SELECT 1 FROM release_tasks rt
+                      JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
+                      WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status <> 'done')
+  END AS is_done
+FROM releases r;

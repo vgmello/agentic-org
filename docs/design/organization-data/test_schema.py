@@ -19,7 +19,14 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+# Teams, projects, releases and milestones are created only by HQ and always carry a number.
+HQ_NUMBERED = {"teams", "projects", "releases", "milestones"}
+_next_number = iter(range(1000, 10**9))
+
+
 def insert(connection, table, **fields):
+    if table in HQ_NUMBERED and "number" not in fields:
+        fields["number"] = next(_next_number)
     columns = ",".join(fields)
     placeholders = ",".join("?" for _ in fields)
     connection.execute(
@@ -107,8 +114,6 @@ class DraftSchemaTests(unittest.TestCase):
     def test_consolidated_tables_and_views_match_structural_documents(self):
         sections = []
         for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
-            if path.name.startswith("14-"):
-                continue  # Field-level subset of document 11, verified independently below.
             sections.extend(re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S))
         documented = sqlite3.connect(":memory:")
         self.addCleanup(documented.close)
@@ -475,7 +480,7 @@ class IntegrityAuditTests(unittest.TestCase):
 
     def delivery(self):
         common = dict(organization_id="org", schema_version=1, revision=1)
-        insert(self.db, "releases", **common, id="release", project_id="project", title="Release", status="released")
+        insert(self.db, "releases", **common, id="release", project_id="project", title="Release")
         insert(self.db, "deployments", **common, id="deploy", project_id="project", release_id="release",
                environment="production", target="primary", operation="deploy", status="queued")
         self.db.commit()
@@ -495,19 +500,6 @@ class IntegrityAuditTests(unittest.TestCase):
         insert(self.db, "usage_stream_checkpoints", organization_id="org", origin_office_id="hq",
                producer_id="producer", high_water_sequence=1, head_sha256="a"*64, state="sealed", checkpointed_at="2026-11-15T12:00:00Z")
         self.db.commit()
-
-    def test_provider_pool_document_matches_executable_sql_subset(self):
-        documented = sqlite3.connect(":memory:")
-        self.addCleanup(documented.close)
-        source = (ROOT / "14-model-providers-and-connection-pools.md").read_text()
-        for block in re.findall(r"```sql\n(.*?)\n```", source, re.S):
-            documented.executescript(block)
-        definitions = documented.execute("SELECT name,sql FROM sqlite_schema WHERE type IN ('table','view')").fetchall()
-        self.assertEqual(len(definitions), 8)
-        for name, sql in definitions:
-            actual = self.db.execute("SELECT sql FROM sqlite_schema WHERE name=?", (name,)).fetchone()[0]
-            with self.subTest(entity=name):
-                self.assertEqual(re.sub(r"\s+", "", sql).lower(), re.sub(r"\s+", "", actual).lower())
 
     def test_execution_definitions_are_in_the_consolidated_schema(self):
         documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", (ROOT / "11-model-profiles-and-agent-execution.md").read_text(), re.S))
@@ -722,15 +714,63 @@ class GapPreservationTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
         self.db.rollback()
 
-    def test_employee_lifecycle_cannot_be_assigned_to_a_person(self):
+    def test_employee_status_is_one_enum_and_only_agents_pause(self):
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("UPDATE employees SET agent_status='paused' WHERE id='reporter'")
+            self.db.execute("UPDATE employees SET status='paused' WHERE id='reporter'")
         self.db.rollback()
-        self.db.execute("UPDATE employees SET agent_status='offboarded',offboarded_at='2026-11-15T12:00:00Z',status='inactive' WHERE id='ana'")
+        self.db.execute("UPDATE employees SET status='paused' WHERE id='ana'")
         self.db.commit()
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("UPDATE employees SET agent_status='active' WHERE id='ana'")
+            self.db.execute("UPDATE employees SET status='offboarded' WHERE id='ana'")
         self.db.rollback()
+        self.db.execute("UPDATE employees SET offboarded_at='2026-11-15T12:00:00Z',status='inactive' WHERE id='ana'")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE employees SET status='active' WHERE id='ana'")
+        self.db.rollback()
+        columns = [row[1] for row in self.db.execute("PRAGMA table_xinfo(employees)")]
+        self.assertNotIn("is_owner", columns)
+        self.assertNotIn("agent_status", columns)
+
+    def test_hq_created_records_always_have_a_number(self):
+        for table, extra in (("teams", dict(name="No number")),
+                             ("projects", dict(slug="no-number", name="No number", owner_team_id="payments"))):
+            with self.subTest(table=table), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(
+                    f"INSERT INTO {table} (organization_id,id,schema_version,revision,number,{','.join(extra)}) "
+                    f"VALUES ('org','unnumbered',1,1,NULL,{','.join('?' for _ in extra)})", list(extra.values()))
+            self.db.rollback()
+
+    def test_task_status_is_a_closed_list_ending_in_done(self):
+        for status in ("todo", "in_progress", "blocked", "done"):
+            self.db.execute("UPDATE tasks SET status=?", (status,))
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE tasks SET status='closed'")
+        self.db.rollback()
+
+    def test_milestone_and_release_are_done_when_their_tasks_are(self):
+        common = dict(organization_id="org", schema_version=1, revision=1)
+        insert(self.db, "releases", **common, id="with-milestone", project_id="project", title="Has a milestone")
+        insert(self.db, "releases", **common, id="plain", project_id="project", title="No milestones")
+        insert(self.db, "releases", **common, id="empty", project_id="project", title="Nothing in it")
+        insert(self.db, "milestones", **common, id="m1", project_id="project", release_id="with-milestone", title="M")
+        task = self.db.execute("SELECT id FROM tasks").fetchone()[0]
+        self.db.execute("UPDATE tasks SET project_id='project', team_id='payments', milestone_id='m1', status='in_progress'")
+        insert(self.db, "release_tasks", organization_id="org", release_id="plain", project_id="project", task_id=task)
+        self.db.commit()
+        done = lambda view, key, value: self.db.execute(
+            f"SELECT is_done FROM {view} WHERE {key}=?", (value,)).fetchone()[0]
+        self.assertEqual(done("milestone_progress", "milestone_id", "m1"), 0)
+        self.assertEqual(done("release_progress", "release_id", "with-milestone"), 0)
+        self.assertEqual(done("release_progress", "release_id", "plain"), 0)
+        self.assertEqual(done("release_progress", "release_id", "empty"), 0)
+        self.db.execute("UPDATE tasks SET status='done'")
+        self.db.commit()
+        self.assertEqual(done("milestone_progress", "milestone_id", "m1"), 1)
+        self.assertEqual(done("release_progress", "release_id", "with-milestone"), 1)
+        self.assertEqual(done("release_progress", "release_id", "plain"), 1)
+        self.assertEqual(done("release_progress", "release_id", "empty"), 0)
 
     def test_task_details_preserve_structured_payload_and_reject_bad_json(self):
         insert(self.db,"task_details",organization_id="org",task_id="task",what_happened="Duplicate",expected="One",steps="Retry",environment="staging",
@@ -844,7 +884,7 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.rollback()
 
     def test_release_cap_cannot_acquire_a_stop_hold(self):
-        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release",version_label="1.0",status="planned")
+        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release",version_label="1.0")
         self.db.commit()
         self.budget(scope="release");self.period()
         with self.assertRaises(sqlite3.IntegrityError):

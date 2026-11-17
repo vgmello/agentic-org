@@ -1,6 +1,6 @@
 # Release deployment records
 
-Structural draft for v1. Document revision 2.6. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
+Status: **selected** data contract, revision 2.6. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
 
 ## Relationships
 
@@ -18,8 +18,8 @@ erDiagram
         INTEGER revision "required"
         TEXT project_id FK "required"
         TEXT release_id FK "required"
-        TEXT environment FK "required"
-        TEXT target FK "required"
+        TEXT environment "required, free text"
+        TEXT target "required, free text"
         TEXT operation "required"
         TEXT rollback_of_id FK "optional"
         TEXT baseline_deployment_id FK "optional"

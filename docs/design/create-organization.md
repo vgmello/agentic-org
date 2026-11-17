@@ -17,7 +17,7 @@ Organization ownership alone never authorizes creating an organization.
 
 The owner account remains a host security principal. An optional person profile
 representing that owner must have a valid home team like every other employee;
-`is_owner` neither grants login nor creates a teamless profile. The built-in HR
+No employee field grants login or ownership, and no profile is teamless. The built-in HR
 bootstrap exception permits approved system provisioning, not invalid employees.
 HR requires a selected valid home team before its profile is committed. No team
 name, lead appointment or reporting line is inferred from the word HR.
@@ -48,7 +48,7 @@ name, lead appointment or reporting line is inferred from the word HR.
    host operation. The host verifies the web process capability and administrator
    grant. No browser HTTP parser or raw-key access lives in the host operation.
    Reserve the name, slug, IDs and plan under the catalog lock, then provision
-   outside it. New entity IDs use UUIDv7; retained IDs and current ULID operation
+   outside it. New entity IDs use ULID; retained IDs and current ULID operation
    IDs keep their existing codecs. Numbered teams use durable HQ allocation.
 4. Register the remote organization repository, persist `organization.yaml`
    (`id`, `slug`, `name`, `organization_repository_id`, `state_branch`, format and

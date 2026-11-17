@@ -1,6 +1,6 @@
 # Record ownership, attribution, lifecycle and relationships
 
-Structural draft for v1. Document revision 2.6. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
+Status: **selected** data contract, revision 2.6. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
 
 ## Accountable owners
 
@@ -30,10 +30,12 @@ For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/origi
 | Record | Fields / states |
 | --- | --- |
 | Team | `status: active | archived` (default active) |
-| Employee | `status: active | inactive` (default active) |
+| Employee | `status: active | paused | inactive` (default active); `paused` for agents only |
 | Supporting document or process/standard content | `status: draft | current | deprecated` (default draft) |
 | Project | Existing `archived: false | true` |
-| Feature/task/release/milestone | Existing status fields; this change does not port their v1 transition engines |
+| Task | `status: todo | in_progress | blocked | done`, set by an authorized actor; no transition engine |
+| Feature | `status: planned | in_progress | live | retired`, authored; no transition engine |
+| Milestone, release | No stored status; done is derived from task status (document 02) |
 
 Archiving/deactivating changes availability, not identity. Preserve profiles, handles, numbers, foreign references and historical metadata. Archived teams and inactive employees cannot receive new active assignments; import/publication checks this without erasing historical rows. Existing current documents and live features retain their recorded owners until explicitly reassigned. Document status does not create a mandatory approval workflow. Team moves still update the explicit parent and durable path together.
 
@@ -114,6 +116,8 @@ Several contracts store a SHA-256 over canonical content. They do not all canoni
 | `v1_lenprefixed_sha256` | Version byte plus seven length-prefixed fields | [ADR-0003 §3.4](../../adr/0003-agent-messaging-office-first.md) | Imported v1 message hashes only (`source_content_sha256`); never used for new records |
 | `task-event/1` (legacy) | The original schema-1 task-event bytes as stored. No selected verifier: these events stay retained or staged with unverified coverage under document 05 | [Document 05](05-operational-data.md#task-event-codec-2) | Existing schema-1 task events only; never produced for new events |
 | `raw-bytes/1` | The exact stored bytes, no canonicalization | This section | Content-addressed files: message attachments, `work-history/blobs/sha256/`, recovery snapshot and result content |
+
+The two legacy rows (`v1_lenprefixed_sha256` and `task-event/1`) exist only for imported data. Under the [pre-release rule](README.md#no-compatibility-obligations-before-v1-ships) nothing is imported, so no implementation of them is required.
 
 Rules that keep this extensible:
 

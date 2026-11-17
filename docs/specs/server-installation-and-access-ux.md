@@ -237,7 +237,7 @@ The instance resolves the configured organization data root, with protected sour
 executables live separately. Organization Git is remote and its latest content is
 mirrored as ordinary durable files. `organization.yaml` stores stable ID, slug,
 name, repository ID and state branch. Team/employee/project/task paths use stable
-IDs. New IDs use UUIDv7; existing IDs and current operation-ID codecs are preserved.
+IDs. New IDs use ULID; existing IDs and current operation-ID codecs are preserved.
 Readable task references are scoped T- for every type, never implicit B-/REQ-
 renames. [The storage tree](../design/standalone-server.md#3-instance-selection-and-storage)
 defines durable state, authority, journal, usage archive, bindings and checkpoints

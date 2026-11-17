@@ -143,7 +143,7 @@ RQS IDs are criterion identities; requests themselves use scoped T- references. 
 - RQS-17 · Disconnection retains open-page text labeled Unsaved with Copy draft. Accepted local save, pending number and pending publication are distinct; success requires recoverable task/events/receipt. Lost responses resolve by the same operation identity, without duplicate creation or an invented browser outbox.
 - RQS-18 · Accepted Send/Save/Add-to uses a quiet three-second confirmation with scoped reference or Pending number and Open, without stealing focus. Attachments stay hidden until storage design; image-only paste reports unsupported content.
 - RQS-19 · Every request supports all four nullable assignment-pair states at expected revision. Assignment changes neither owning scope, number, original creator nor canonical file; home-team moves do not rewrite assignments.
-- RQS-20 · All task types use one project/team-scoped T- allocation, new UUIDv7 stable IDs and preserved old IDs. Old REQ/B references need explicit import mappings and collision resolution, never prefix replacement.
+- RQS-20 · All task types use one project/team-scoped T- allocation, new ULID stable IDs and preserved old IDs. Old REQ/B references need explicit import mappings and collision resolution, never prefix replacement.
 - RQS-21 · Private request notes satisfy PN-01–06 in document 05: exclusive author access including against admins, separate durable recovery, no shared existence metadata, explicit publish, revision conflicts and retention/deletion. Existing shared note comments remain shared; private runtime/API/UI remain unimplemented.
 
 ## 6. Open questions

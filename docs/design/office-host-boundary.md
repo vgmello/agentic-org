@@ -116,19 +116,19 @@ connection available.
 
 ### Selected identity carrier
 
-New selected organization and office entities use canonical lowercase UUIDv7
+New selected organization and office entities use canonical lowercase ULID
 text, including hyphens. Existing IDs retain their exact spelling. Launch-v3
 adds the explicit optional `id_profile: "selected_v1"` to its office context;
 absence retains its original alphanumeric-ID validator and bytes. The selected
-profile requires UUIDv7 office/organization IDs and explicit HQ creation context
+profile requires ULID office/organization IDs and explicit HQ creation context
 on create. Instance IDs, security-member IDs and operation IDs keep their own
 existing contracts. This does not confer writer or owner authority.
 
 The plaintext runtime marker uses `office.json` version 2 for this profile,
-requiring UUIDv7 office and organization IDs. Version 1 stays unchanged; readers
+requiring ULID office and organization IDs. Version 1 stays unchanged; readers
 retain the stored version and never rewrite an existing version-1 identity into
 version 2. The safe storage-path validator accepts the union of existing plain
-IDs and canonical UUIDv7 solely as a single path component. Legacy command and
+IDs and canonical ULID solely as a single path component. Legacy command and
 wire validators retain their narrower rules. Host custody/catalog and worker
 open/discard paths use the shared safe storage validator; no arbitrary opaque ID
 is interpolated into a path. Other incompatible imported IDs remain staged.
@@ -148,7 +148,7 @@ The admitted initial profile creates one explicit root home team, an HR agent
 identity in it (execution remains unavailable without its separate configuration),
 and no owner employee. The protected owner security member remains distinct.
 
-The host freezes selected UUIDv7 entity IDs and key fingerprint in its protected
+The host freezes selected ULID entity IDs and key fingerprint in its protected
 SQLCipher reservation. The code first enters credential custody under the
 operation's opaque handle; the reservation contains no code/key. Retry verifies
 that binding and the original office key, never generates replacements for missing
