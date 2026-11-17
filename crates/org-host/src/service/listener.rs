@@ -40,6 +40,9 @@ const OUTBOUND_QUEUE: usize = 256;
 pub(crate) trait Handler: Send + Sync + 'static {
     fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received);
 
+    /// Authority ends at reader EOF, before draining outstanding responses.
+    fn disconnected(&self, _connection: &Arc<Connection>) {}
+
     /// Whether `request` is handled on the connection's reader thread, before anything more is
     /// read from the connection, including handshake decisions before later pipelined calls.
     fn inline(&self, request: &Request, connection: &Connection) -> bool {
@@ -89,6 +92,45 @@ pub(crate) struct Listener {
     stopping: Arc<AtomicBool>,
     live: Arc<Mutex<HashMap<u64, Live>>>,
     accept: Option<JoinHandle<()>>,
+}
+
+struct Gateway {
+    transfer: Arc<std::os::unix::net::UnixDatagram>,
+    listen: org_host_control::listen::ListenConfig,
+}
+
+/// Reverse control connection made by bootstrap mode to setup's listener. It
+/// has no gateway descriptor privilege and is never accepted on host.sock.
+pub(crate) struct SetupConnection {
+    connection: Arc<Connection>,
+    thread: Option<JoinHandle<()>>,
+}
+impl SetupConnection {
+    pub(crate) fn start(stream: UnixStream, handler: Arc<dyn Handler>) -> io::Result<Self> {
+        if !org_socket::peer_allowed(&stream, org_socket::effective_uid()) {
+            return Err(io::Error::other("setup peer refused"));
+        }
+        let (connection, queue) = Connection::new(stream.try_clone()?, Accepted::sample(&stream));
+        let serving = Arc::clone(&connection);
+        let thread = thread::Builder::new()
+            .name("setup-control".into())
+            .spawn(move || serve(stream, serving, queue, handler, 1))?;
+        Ok(Self {
+            connection,
+            thread: Some(thread),
+        })
+    }
+    pub(crate) fn live(&self) -> bool {
+        !self.connection.closed.load(Ordering::SeqCst)
+    }
+}
+impl Drop for SetupConnection {
+    fn drop(&mut self) {
+        self.connection.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 struct Live {
@@ -180,7 +222,7 @@ fn accept_loop(
                     io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                 ) =>
             {
-                continue
+                continue;
             }
             Err(e) => {
                 if !failing {
@@ -320,6 +362,7 @@ fn serve_with_poll(
         let request = match super::request::decode(&line) {
             Ok(request) => request,
             Err(_) => {
+                connection.clear_recovery_permission();
                 connection.send_response(Response::error(
                     super::request::salvage_id(&line).unwrap_or(UNREADABLE_REQUEST_ID),
                     ApiError::new(ErrorCode::InvalidRequest, "the request couldn't be read"),
@@ -360,12 +403,23 @@ fn serve_with_poll(
             ));
         }
     }
+    connection.closed.store(true, Ordering::SeqCst);
+    handler.disconnected(&connection);
     in_flight.wait_idle();
     connection.finish();
     if let Ok(writer) = writer {
         let _ = writer.join();
     }
     connection.close();
+}
+
+/// Run the actual connection reader/writer on a connected pair when a test
+/// environment cannot bind UNIX listeners. This does not exercise admission.
+#[cfg(test)]
+pub(in crate::service) fn serve_pair(stream: UnixStream, handler: Arc<dyn Handler>) {
+    let (connection, queue) =
+        Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+    serve(stream, connection, queue, handler, 4);
 }
 
 /// Counts a connection's running requests.
@@ -417,8 +471,15 @@ impl Drop for Release<'_> {
 enum Outbound {
     Response(Response),
     /// A response line already encoded, holding a secret: written as is, then zeroed.
-    #[expect(dead_code, reason = "activated by 2b.3 secrets")]
     Secret(SecretLine),
+    Descriptor {
+        response: Response,
+        descriptor: std::os::fd::OwnedFd,
+        receipt: Receiver<()>,
+        gateway: Option<Arc<std::os::unix::net::UnixDatagram>>,
+        office: String,
+        channel: String,
+    },
     /// `seq` is given by the writer, so it counts without gaps in the order events are written.
     Event {
         name: String,
@@ -435,7 +496,6 @@ pub(crate) struct SecretLine(Vec<u8>);
 
 impl SecretLine {
     /// `bytes` is one JSON line, `\n` included.
-    #[expect(dead_code, reason = "activated by 2b.3 secrets")]
     pub(crate) fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
@@ -452,11 +512,22 @@ pub(crate) struct Connection {
     outbound: SyncSender<Outbound>,
     stream: UnixStream,
     /// What the host noted about the client when it accepted the connection (`app_auth`).
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     accepted: Accepted,
     /// Ends the ticked reader even if shutdown misses a platform wakeup.
     closed: Arc<AtomicBool>,
     hello_completed: AtomicBool,
+    descriptor_receipts:
+        Mutex<HashMap<String, (mpsc::Sender<()>, crate::supervisor::channels::ChannelSlot)>>,
+    received_channels: Mutex<HashMap<String, crate::supervisor::channels::ChannelSlot>>,
+    gateway: Option<Gateway>,
+    pub(crate) recovery_permission: Mutex<Option<crate::recovery::Permission>>,
+}
+
+/// Capacity is a definite pre-enqueue refusal; all other delivery failures stay fatal.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DescriptorError {
+    Capacity,
+    Transport,
 }
 
 impl Connection {
@@ -468,12 +539,51 @@ impl Connection {
             accepted,
             closed: Arc::new(AtomicBool::new(false)),
             hello_completed: AtomicBool::new(false),
+            descriptor_receipts: Mutex::default(),
+            received_channels: Mutex::default(),
+            gateway: None,
+            recovery_permission: Mutex::default(),
         };
         (Arc::new(connection), queue)
     }
 
+    pub(super) fn liveness(&self) -> std::sync::Weak<AtomicBool> {
+        Arc::downgrade(&self.closed)
+    }
+
+    /// Privileged inline handlers must observe EOF without consuming another
+    /// request while waiting for OS authentication. Any pipelined byte denies.
+    pub(crate) fn recovery_peer_idle(&self) -> bool {
+        if self.closed.load(Ordering::SeqCst) {
+            return false;
+        }
+        let mut byte = 0u8;
+        // SAFETY: live socket and one writable byte, non-consuming/non-blocking.
+        let n = unsafe {
+            libc::recv(
+                self.stream.as_raw_fd(),
+                (&mut byte as *mut u8).cast(),
+                1,
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        n < 0 && std::io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock
+    }
+    pub(crate) fn clear_recovery_permission(&self) {
+        *lock(&self.recovery_permission) = None;
+    }
     pub(crate) fn hello_completed(&self) -> bool {
         self.hello_completed.load(Ordering::SeqCst)
+    }
+    pub(crate) fn channel_kind(&self) -> org_office_launch::v3::ChannelKind {
+        if self.gateway.is_some() {
+            org_office_launch::v3::ChannelKind::Gateway
+        } else {
+            org_office_launch::v3::ChannelKind::Local
+        }
+    }
+    pub(crate) fn gateway_listen(&self) -> Option<&org_host_control::listen::ListenConfig> {
+        self.gateway.as_ref().map(|g| &g.listen)
     }
 
     pub(crate) fn complete_hello(&self) {
@@ -481,9 +591,25 @@ impl Connection {
     }
 
     #[cfg(test)]
-    pub(super) fn for_test() -> Arc<Self> {
+    pub(crate) fn for_test() -> Arc<Self> {
         let (stream, _peer) = UnixStream::pair().unwrap();
         Self::new(stream.try_clone().unwrap(), Accepted::sample(&stream)).0
+    }
+    #[cfg(test)]
+    pub(super) fn record_received_channel_for_test(&self, channel: &str) {
+        self.record_received_slot_for_test(
+            channel,
+            crate::supervisor::channels::ChannelSlot::for_test(),
+        );
+    }
+
+    #[cfg(test)]
+    pub(super) fn record_received_slot_for_test(
+        &self,
+        channel: &str,
+        slot: crate::supervisor::channels::ChannelSlot,
+    ) {
+        lock(&self.received_channels).insert(channel.into(), slot);
     }
 
     /// Drain the refusal before closing, but stop even already-buffered requests.
@@ -494,20 +620,17 @@ impl Connection {
     }
 
     /// What the host noted about the client when it accepted the connection.
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     pub(crate) fn accepted(&self) -> Accepted {
         self.accepted
     }
 
     /// The connection's socket, to identify the client (`app_auth`).
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     pub(crate) fn socket(&self) -> &UnixStream {
         &self.stream
     }
 
     /// Queues an encoded response line that holds a secret. Never blocks, like
     /// [`Connection::send_response`].
-    #[expect(dead_code, reason = "activated by 2b.3 secrets")]
     pub(crate) fn send_secret_line(&self, line: SecretLine) {
         self.enqueue(Outbound::Secret(line));
     }
@@ -515,6 +638,63 @@ impl Connection {
     /// Queues a response. Never blocks: a client whose queue is full is disconnected.
     pub(crate) fn send_response(&self, response: Response) {
         self.enqueue(Outbound::Response(response));
+    }
+    pub(crate) fn send_descriptor(
+        &self,
+        response: Response,
+        channel: String,
+        descriptor: std::os::fd::OwnedFd,
+        office: &str,
+        witness: crate::supervisor::channels::ChannelSlot,
+    ) -> Result<(), DescriptorError> {
+        let (sent, receipt) = mpsc::channel();
+        {
+            // One order for every paired access. Pending reservations are never pruned.
+            let mut pending = lock(&self.descriptor_receipts);
+            let mut acknowledged = lock(&self.received_channels);
+            acknowledged.retain(|_, witness| witness.is_live());
+            if pending.contains_key(&channel) || acknowledged.contains_key(&channel) {
+                return Err(DescriptorError::Transport);
+            }
+            if pending.len() >= 16 || pending.len() + acknowledged.len() >= 512 {
+                return Err(DescriptorError::Capacity);
+            }
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(DescriptorError::Transport);
+            }
+            pending.insert(channel.clone(), (sent, witness));
+        }
+        self.enqueue(Outbound::Descriptor {
+            response,
+            descriptor,
+            receipt,
+            gateway: self.gateway.as_ref().map(|g| Arc::clone(&g.transfer)),
+            office: office.into(),
+            channel,
+        });
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(DescriptorError::Transport);
+        }
+        Ok(())
+    }
+    pub(crate) fn descriptor_received(&self, channel: &str) -> bool {
+        let mut pending = lock(&self.descriptor_receipts);
+        let mut acknowledged = lock(&self.received_channels);
+        let Some((receipt, witness)) = pending.remove(channel) else {
+            return false;
+        };
+        if receipt.send(()).is_err() {
+            return false;
+        }
+        if witness.is_live() {
+            acknowledged.insert(channel.into(), witness);
+        }
+        true
+    }
+    pub(crate) fn channel_received(&self, channel: &str) -> bool {
+        lock(&self.received_channels)
+            .get(channel)
+            .is_some_and(|witness| witness.is_live())
     }
 
     /// Queues an event. Never blocks, like [`Connection::send_response`].
@@ -586,6 +766,56 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>, closed: &AtomicBoo
                 }
                 continue;
             }
+            Outbound::Descriptor {
+                response,
+                descriptor,
+                receipt,
+                gateway,
+                office,
+                channel,
+            } => {
+                use std::os::fd::AsFd;
+                let sent = write_response(&mut out, response)
+                    .and_then(|()| io::Write::flush(&mut out).map_err(FrameError::Io));
+                let until = std::time::Instant::now() + Duration::from_secs(5);
+                let delivered = if sent.is_err() {
+                    false
+                } else if let Some(gateway) = gateway {
+                    org_office_launch::v3::encode_transfer_record(
+                        &org_office_launch::v3::TransferRecord::Channel {
+                            kind: org_office_launch::v3::ChannelKind::Gateway,
+                            office_id: office,
+                            channel_id: channel,
+                        },
+                    )
+                    .ok()
+                    .is_some_and(|header| {
+                        org_socket::rights::send(
+                            gateway.as_fd(),
+                            &header,
+                            &[descriptor.as_fd()],
+                            until,
+                        )
+                        .is_ok()
+                    })
+                } else {
+                    org_socket::rights::send(
+                        out.get_ref().as_fd(),
+                        &[org_host_control::ops::HOST_SOCK_MARKER],
+                        &[descriptor.as_fd()],
+                        until,
+                    )
+                    .is_ok()
+                };
+                if sent.is_err()
+                    || !delivered
+                    || receipt.recv_timeout(Duration::from_secs(5)).is_err()
+                {
+                    shut_down(stream);
+                    return;
+                }
+                continue;
+            }
             Outbound::Event { name, data } => {
                 seq += 1;
                 frame::write_message(
@@ -626,6 +856,190 @@ mod tests {
     use super::*;
     use std::io::{BufRead, Write};
     use std::path::PathBuf;
+
+    #[test]
+    fn gateway_descriptor_uses_datagram_and_receipt_never_stream_rights() {
+        use std::os::fd::AsFd;
+        let (host, peer) = UnixStream::pair().unwrap();
+        let (transfer, received) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let (mut connection, queue) =
+            Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+        Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
+            transfer: Arc::new(transfer),
+            listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+        });
+        assert_eq!(
+            connection.channel_kind(),
+            org_office_launch::v3::ChannelKind::Gateway
+        );
+        assert!(connection.gateway_listen().is_some());
+        let closed = Arc::clone(&connection.closed);
+        let writer = std::thread::spawn(move || write_loop(&host, queue, &closed));
+        let (channel, mut worker) = UnixStream::pair().unwrap();
+        connection
+            .send_descriptor(
+                Response::ok::<org_host_control::ops::OfficeOpenChannel>(
+                    3,
+                    &org_host_control::ops::OfficeOpenChannelResult {
+                        channel_id: "channel".into(),
+                    },
+                )
+                .unwrap(),
+                "channel".into(),
+                channel.into(),
+                "office",
+                crate::supervisor::channels::ChannelSlot::for_test(),
+            )
+            .unwrap();
+        connection.send_response(Response {
+            id: 4,
+            outcome: org_proto::Outcome::Result(Value::Bool(true)),
+        });
+        let mut stream = org_socket::rights::StreamReceiver::new(peer);
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        let mut line = Vec::new();
+        loop {
+            match stream.receive_byte(0, &SPAWN_LOCK) {
+                Ok((b'\n', fds)) => {
+                    assert!(fds.is_empty());
+                    break;
+                }
+                Ok((byte, fds)) => {
+                    assert!(fds.is_empty());
+                    line.push(byte);
+                }
+                Err(org_socket::rights::ReceiveError::WouldBlock)
+                    if std::time::Instant::now() < until =>
+                {
+                    std::thread::yield_now()
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        assert_eq!(serde_json::from_slice::<Response>(&line).unwrap().id, 3);
+        let mut datagrams = org_socket::rights::DatagramReceiver::new(received);
+        let mut header = [0; org_office_launch::v3::TRANSFER_HEADER_MAX_BYTES];
+        let mut record = loop {
+            match datagrams.receive(&mut header, 1, &SPAWN_LOCK) {
+                Ok(record) => break record,
+                Err(org_socket::rights::ReceiveError::WouldBlock)
+                    if std::time::Instant::now() < until =>
+                {
+                    std::thread::yield_now()
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        assert!(
+            matches!(org_office_launch::v3::decode_transfer_record(&header[..record.bytes]).unwrap(),
+            org_office_launch::v3::TransferRecord::Channel { kind:org_office_launch::v3::ChannelKind::Gateway, office_id, channel_id } if office_id=="office" && channel_id=="channel")
+        );
+        let mut channel =
+            org_socket::rights::connected_unix_stream(record.descriptors.pop().unwrap()).unwrap();
+        org_socket::rights::set_buffer_sizes(channel.as_fd(), 4096).unwrap();
+        channel.write_all(b"through").unwrap();
+        let mut bytes = [0; 7];
+        std::io::Read::read_exact(&mut worker, &mut bytes).unwrap();
+        assert_eq!(&bytes, b"through");
+        assert!(matches!(
+            stream.receive_byte(0, &SPAWN_LOCK),
+            Err(org_socket::rights::ReceiveError::WouldBlock)
+        ));
+        assert!(!connection.channel_received("channel"));
+        assert!(!connection.descriptor_received("foreign"));
+        assert!(connection.descriptor_received("channel"));
+        assert!(connection.channel_received("channel"));
+        assert!(!connection.descriptor_received("channel"));
+        connection.finish();
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn local_descriptor_response_is_atomic_and_kept_until_correlated_receipt() {
+        let (host, peer) = UnixStream::pair().unwrap();
+        let (connection, queue) =
+            Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+        let closed = Arc::clone(&connection.closed);
+        let writer = std::thread::spawn(move || write_loop(&host, queue, &closed));
+        let (client, mut worker) = UnixStream::pair().unwrap();
+        let result = org_host_control::ops::OfficeOpenChannelResult {
+            channel_id: "channel".into(),
+        };
+        connection
+            .send_descriptor(
+                Response::ok::<org_host_control::ops::OfficeOpenChannel>(3, &result).unwrap(),
+                "channel".into(),
+                client.into(),
+                "office",
+                crate::supervisor::channels::ChannelSlot::for_test(),
+            )
+            .unwrap();
+        connection.send_response(Response {
+            id: 4,
+            outcome: org_proto::Outcome::Result(Value::Bool(true)),
+        });
+        let mut receiver = org_socket::rights::StreamReceiver::new(peer);
+        let receive = |receiver: &mut org_socket::rights::StreamReceiver, count| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                match receiver.receive_byte(count, &SPAWN_LOCK) {
+                    Ok(value) => return value,
+                    Err(org_socket::rights::ReceiveError::WouldBlock)
+                        if std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::yield_now()
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            }
+        };
+        let mut line = Vec::new();
+        loop {
+            let (byte, fds) = receive(&mut receiver, 0);
+            assert!(fds.is_empty());
+            if byte == b'\n' {
+                break;
+            }
+            line.push(byte);
+        }
+        let response: Response = serde_json::from_slice(&line).unwrap();
+        assert_eq!(response.id, 3);
+        assert_eq!(
+            response
+                .into_result::<org_host_control::ops::OfficeOpenChannel>()
+                .unwrap(),
+            result
+        );
+        let (marker, mut descriptors) = receive(&mut receiver, 1);
+        assert_eq!(marker, org_host_control::ops::HOST_SOCK_MARKER);
+        let mut channel =
+            org_socket::rights::connected_unix_stream(descriptors.pop().unwrap()).unwrap();
+        channel.write_all(b"real channel").unwrap();
+        let mut expected = [0; 12];
+        std::io::Read::read_exact(&mut worker, &mut expected).unwrap();
+        assert_eq!(&expected, b"real channel");
+        // The next queued response is withheld until descriptor ownership is acknowledged.
+        assert!(matches!(
+            receiver.receive_byte(0, &SPAWN_LOCK),
+            Err(org_socket::rights::ReceiveError::WouldBlock)
+        ));
+        assert!(!connection.descriptor_received("other-channel"));
+        assert!(connection.descriptor_received("channel"));
+        assert!(connection.channel_received("channel"));
+        assert!(!connection.descriptor_received("channel"));
+        line.clear();
+        loop {
+            let (byte, fds) = receive(&mut receiver, 0);
+            assert!(fds.is_empty());
+            if byte == b'\n' {
+                break;
+            }
+            line.push(byte);
+        }
+        assert_eq!(serde_json::from_slice::<Response>(&line).unwrap().id, 4);
+        connection.finish();
+        writer.join().unwrap();
+    }
 
     #[test]
     fn refusal_marks_reader_closed_and_queues_response_before_close() {
@@ -1070,5 +1484,499 @@ mod tests {
         fs::write(&file, b"not a socket").unwrap();
         assert!(matches!(bind(&file), Err(BindError::NotASocket)));
         assert_eq!(fs::read(&file).unwrap(), b"not a socket");
+    }
+}
+
+#[cfg(test)]
+mod recovery_eof_tests {
+    use super::*;
+    #[test]
+    fn inline_presence_wait_observes_peer_eof_without_reading_or_authorizing_pipelined_bytes() {
+        use std::io::{Read, Write};
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let (connection, _queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        assert!(connection.recovery_peer_idle());
+        peer.write_all(b"x").unwrap();
+        assert!(!connection.recovery_peer_idle());
+        // Peek neither swallows the following request nor changes shared flags.
+        let mut read = stream;
+        let mut byte = [0];
+        read.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, [b'x']);
+        assert!(connection.recovery_peer_idle());
+        peer.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(!connection.recovery_peer_idle());
+        assert!(!connection.closed.load(Ordering::SeqCst));
+    }
+}
+
+#[cfg(test)]
+mod channel_lifecycle_tests {
+    use super::*;
+    use crate::supervisor::channels::{
+        tests::{await_closed, worker_fixture},
+        ChannelSlot,
+    };
+    use org_host_control::{ops, Password};
+    use org_proto::Outcome;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixDatagram;
+    use std::time::Instant;
+
+    fn response(id: u64) -> Response {
+        Response {
+            id,
+            outcome: Outcome::Result(serde_json::json!({})),
+        }
+    }
+    fn queued_descriptor(
+        connection: &Connection,
+        id: &str,
+        witness: ChannelSlot,
+    ) -> Result<(), DescriptorError> {
+        let (descriptor, _peer) = UnixStream::pair().unwrap();
+        connection.send_descriptor(response(1), id.into(), descriptor.into(), "office", witness)
+    }
+    #[test]
+    fn concurrent_pending_reservations_count_with_live_acknowledged_records_and_capacity_is_definite(
+    ) {
+        let (host, _peer) = UnixStream::pair().unwrap();
+        let (connection, queue) =
+            Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+        for n in 0..496 {
+            lock(&connection.received_channels).insert(format!("ack-{n}"), ChannelSlot::for_test());
+        }
+        let barrier = Arc::new(std::sync::Barrier::new(33));
+        let threads: Vec<_> = (0..32)
+            .map(|n| {
+                let connection = Arc::clone(&connection);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let id = format!("pending-{n}");
+                    let result = queued_descriptor(&connection, &id, ChannelSlot::for_test());
+                    (id, result)
+                })
+            })
+            .collect();
+        barrier.wait();
+        let mut admitted = Vec::new();
+        for thread in threads {
+            let (id, result) = thread.join().unwrap();
+            match result {
+                Ok(()) => admitted.push(id),
+                Err(error) => assert_eq!(error, DescriptorError::Capacity),
+            }
+        }
+        assert_eq!(admitted.len(), 16);
+        assert_eq!(lock(&connection.descriptor_receipts).len(), 16);
+        assert_eq!(lock(&connection.received_channels).len(), 496);
+        assert!(!connection.closed.load(Ordering::SeqCst));
+        let closed = lock(&connection.descriptor_receipts)[&admitted[0]]
+            .1
+            .clone();
+        closed.close_for_test();
+        assert_eq!(
+            queued_descriptor(&connection, "cannot-prune-pending", ChannelSlot::for_test()),
+            Err(DescriptorError::Capacity)
+        );
+        assert_eq!(
+            queued_descriptor(&connection, &admitted[0], ChannelSlot::for_test()),
+            Err(DescriptorError::Transport)
+        );
+        assert!(
+            !Connection::for_test().descriptor_received(&admitted[0]),
+            "foreign connection ACK"
+        );
+        // A late, exact ACK still resolves ownership even after physical EOF.
+        assert!(connection.descriptor_received(&admitted[0]));
+        assert!(!connection.channel_received(&admitted[0]));
+        assert!(!connection.descriptor_received(&admitted[0]));
+        assert!(queued_descriptor(&connection, "replacement", ChannelSlot::for_test()).is_ok());
+        for id in &admitted[1..] {
+            assert!(connection.descriptor_received(id));
+        }
+        assert_eq!(lock(&connection.received_channels).len(), 511);
+        assert_eq!(lock(&connection.descriptor_receipts).len(), 1);
+        assert_eq!(
+            queued_descriptor(&connection, "combined-513", ChannelSlot::for_test()),
+            Err(DescriptorError::Capacity)
+        );
+        // Losing the actual queued ownership waiter cannot turn a late ACK into authority.
+        drop(queue);
+        assert!(!connection.descriptor_received("replacement"));
+        assert!(!connection.channel_received("replacement"));
+    }
+
+    #[test]
+    fn missing_native_ownership_ack_times_out_and_late_exact_ack_cannot_grant() {
+        let (host, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+        let (connection, queue) =
+            Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+        let closed = Arc::clone(&connection.closed);
+        let writer = thread::spawn(move || write_loop(&host, queue, &closed));
+        let witness = ChannelSlot::for_test();
+        let (descriptor, _worker) = UnixStream::pair().unwrap();
+        connection
+            .send_descriptor(
+                response(1),
+                "no-ownership-ack".into(),
+                descriptor.into(),
+                "office",
+                witness,
+            )
+            .unwrap();
+        let mut wire = Wire {
+            writer: peer.try_clone().unwrap(),
+            reader: org_socket::rights::StreamReceiver::new(peer),
+            gateway: None,
+            id: 1,
+        };
+        assert_eq!(wire.response().id, 1);
+        let descriptor = wire.descriptor("no-ownership-ack");
+        let until = Instant::now() + Duration::from_secs(8);
+        while !connection.closed.load(Ordering::SeqCst) {
+            assert!(
+                Instant::now() < until,
+                "writer did not enforce ownership deadline"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        writer.join().unwrap();
+        assert!(!connection.descriptor_received("no-ownership-ack"));
+        assert!(!connection.channel_received("no-ownership-ack"));
+        drop(descriptor);
+    }
+
+    struct LiveHandler {
+        auth: Arc<super::super::authentication::Authentication>,
+        endpoint: Arc<crate::supervisor::channels::Endpoint>,
+    }
+    impl Handler for LiveHandler {
+        fn inline(&self, _: &Request, _: &Connection) -> bool {
+            true
+        }
+        fn disconnected(&self, connection: &Arc<Connection>) {
+            self.auth.disconnect(connection);
+        }
+        fn handle(&self, request: Request, connection: &Arc<Connection>, _: Received) {
+            if request.is::<ops::FdsReceived>() {
+                super::super::acknowledge_descriptors(&request, connection);
+            } else if request.is::<ops::OfficeOpenChannel>() {
+                let p = request.params::<ops::OfficeOpenChannel>().unwrap();
+                match self.auth.open_channel(
+                    connection,
+                    &p.session,
+                    Arc::clone(&self.endpoint),
+                    "org",
+                ) {
+                    Ok((id, socket, witness)) => super::super::deliver_channel(
+                        connection, request.id, id, socket, "office", witness,
+                    ),
+                    Err(error) => connection.send_response(Response::error(request.id, error)),
+                }
+            } else if request.is::<ops::SessionGrant>() {
+                let p = request.params::<ops::SessionGrant>().unwrap();
+                match self
+                    .auth
+                    .grant(connection, &p.session, &p.office_id, &p.channel_id)
+                {
+                    Ok(result) => super::super::secret_response(connection, request.id, &result),
+                    Err(error) => connection.send_response(Response::error(request.id, error)),
+                }
+            } else {
+                let p = request.params::<ops::SessionRenew>().unwrap();
+                let response = match self.auth.authorize(connection, &p.session) {
+                    Ok(_) => response(request.id),
+                    Err(error) => Response::error(request.id, error),
+                };
+                connection.send_response(response);
+            }
+        }
+    }
+    struct Wire {
+        writer: UnixStream,
+        reader: org_socket::rights::StreamReceiver,
+        gateway: Option<org_socket::rights::DatagramReceiver>,
+        id: u64,
+    }
+    impl Wire {
+        fn request(&mut self, method: &str, params: Value) {
+            self.id += 1;
+            frame::write_message(
+                &mut self.writer,
+                &serde_json::json!({"id":self.id,"method":method,"params":params}),
+            )
+            .unwrap();
+        }
+        fn byte(&mut self, count: usize) -> (u8, Vec<std::os::fd::OwnedFd>) {
+            let until = Instant::now() + Duration::from_secs(3);
+            loop {
+                match self.reader.receive_byte(count, &SPAWN_LOCK) {
+                    Ok(result) => return result,
+                    Err(org_socket::rights::ReceiveError::WouldBlock) if Instant::now() < until => {
+                        thread::yield_now()
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            }
+        }
+        fn response(&mut self) -> Response {
+            let mut line = Vec::new();
+            loop {
+                let (b, fds) = self.byte(0);
+                assert!(fds.is_empty());
+                if b == b'\n' {
+                    break;
+                }
+                line.push(b);
+            }
+            let response: Response = serde_json::from_slice(&line).unwrap();
+            assert_eq!(response.id, self.id);
+            response
+        }
+        fn descriptor(&mut self, id: &str) -> UnixStream {
+            let mut fds = if let Some(gateway) = &mut self.gateway {
+                let mut buffer = [0; org_office_launch::v3::TRANSFER_HEADER_MAX_BYTES];
+                let until = Instant::now() + Duration::from_secs(3);
+                let received = loop {
+                    match gateway.receive(&mut buffer, 1, &SPAWN_LOCK) {
+                        Ok(received) => break received,
+                        Err(org_socket::rights::ReceiveError::WouldBlock)
+                            if Instant::now() < until =>
+                        {
+                            thread::yield_now()
+                        }
+                        Err(error) => panic!("{error}"),
+                    }
+                };
+                assert!(
+                    matches!(org_office_launch::v3::decode_transfer_record(&buffer[..received.bytes]).unwrap(),
+                    org_office_launch::v3::TransferRecord::Channel { kind: org_office_launch::v3::ChannelKind::Gateway, office_id, channel_id } if office_id == "office" && channel_id == id)
+                );
+                received.descriptors
+            } else {
+                let (marker, fds) = self.byte(1);
+                assert_eq!(marker, ops::HOST_SOCK_MARKER);
+                fds
+            };
+            assert_eq!(fds.len(), 1);
+            let stream = org_socket::rights::connected_unix_stream(fds.pop().unwrap()).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            stream
+        }
+    }
+    struct Control {
+        _root: tempfile::TempDir,
+        worker: crate::supervisor::channels::tests::WorkerFixture,
+        connection: Arc<Connection>,
+        wire: Wire,
+        session: org_host_control::SessionHandle,
+        thread: Option<JoinHandle<()>>,
+    }
+    impl Control {
+        fn new(gateway: bool) -> Self {
+            let worker = worker_fixture("office");
+            let (_root, auth, _) = super::super::authentication::tests::fixture();
+            let auth = Arc::new(auth);
+            let (host, peer) = UnixStream::pair().unwrap();
+            let (mut connection, queue) =
+                Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+            let datagrams = if gateway {
+                let (transfer, peer) = UnixDatagram::pair().unwrap();
+                Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
+                transfer: Arc::new(transfer),
+                listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+            });
+                Some(org_socket::rights::DatagramReceiver::new(peer))
+            } else {
+                None
+            };
+            let signed_in = auth
+                .verify(
+                    &connection,
+                    "OWNER",
+                    &Password::new("synthetic test password".into()).unwrap(),
+                )
+                .unwrap();
+            super::super::authentication::tests::link_owner(&auth, &connection, &signed_in.session);
+            let serving = Arc::clone(&connection);
+            let handler = Arc::new(LiveHandler {
+                auth: Arc::clone(&auth),
+                endpoint: Arc::clone(&worker.endpoint),
+            });
+            let thread = thread::spawn(move || serve(host, serving, queue, handler, 4));
+            let wire = Wire {
+                writer: peer.try_clone().unwrap(),
+                reader: org_socket::rights::StreamReceiver::new(peer),
+                gateway: datagrams,
+                id: 0,
+            };
+            Self {
+                _root,
+                worker,
+                connection,
+                wire,
+                session: signed_in.session,
+                thread: Some(thread),
+            }
+        }
+        fn closed_cycle(&mut self, cycle: usize) -> String {
+            self.wire.request(
+                "office.open_channel",
+                serde_json::json!({"session":self.session,"office_id":"office"}),
+            );
+            let result = self
+                .wire
+                .response()
+                .into_result::<ops::OfficeOpenChannel>()
+                .unwrap();
+            let mut channel = self.wire.descriptor(&result.channel_id);
+            let witness = lock(&self.connection.descriptor_receipts)[&result.channel_id]
+                .1
+                .clone();
+            assert!(!self.connection.channel_received(&result.channel_id));
+            if cycle.is_multiple_of(2) {
+                // A worker-side protocol close is observable before the listener drops its
+                // retained sender FD on client ACK. Merely dropping our copy cannot be.
+                channel.write_all(b"not-json\n").unwrap();
+                drop(channel);
+                await_closed(&witness); // Late client ACK after authenticated worker close.
+            } else {
+                channel.write_all(b"actual transferred RPC").unwrap();
+                let mut bytes = [0; 22];
+                channel.read_exact(&mut bytes).unwrap();
+                assert_eq!(&bytes, b"actual transferred RPC");
+                self.wire
+                    .request("fds.received", serde_json::json!({"of":result.channel_id}));
+                assert!(self
+                    .wire
+                    .response()
+                    .into_result::<ops::FdsReceived>()
+                    .is_ok());
+                self.wire.request("session.grant", serde_json::json!({"session":self.session,"office_id":"office","channel_id":result.channel_id}));
+                assert!(self
+                    .wire
+                    .response()
+                    .into_result::<ops::SessionGrant>()
+                    .is_ok());
+                drop(channel);
+                await_closed(&witness);
+            }
+            if cycle.is_multiple_of(2) {
+                self.wire
+                    .request("fds.received", serde_json::json!({"of":result.channel_id}));
+                assert!(self
+                    .wire
+                    .response()
+                    .into_result::<ops::FdsReceived>()
+                    .is_ok());
+            }
+            assert!(!self.connection.channel_received(&result.channel_id));
+            self.wire.request("session.grant", serde_json::json!({"session":self.session,"office_id":"office","channel_id":result.channel_id}));
+            assert!(self
+                .wire
+                .response()
+                .into_result::<ops::SessionGrant>()
+                .is_err());
+            assert!(lock(&self.connection.received_channels).len() <= 1);
+            result.channel_id
+        }
+        fn capacity_preserves_channel(&mut self) {
+            // The same control connection survives genuine listener capacity refusal.
+            lock(&self.connection.received_channels).clear();
+            self.wire.request(
+                "office.open_channel",
+                serde_json::json!({"session":self.session,"office_id":"office"}),
+            );
+            let held = self
+                .wire
+                .response()
+                .into_result::<ops::OfficeOpenChannel>()
+                .unwrap();
+            let mut held_channel = self.wire.descriptor(&held.channel_id);
+            self.wire
+                .request("fds.received", serde_json::json!({"of":held.channel_id}));
+            assert!(self
+                .wire
+                .response()
+                .into_result::<ops::FdsReceived>()
+                .is_ok());
+            for n in 0..511 {
+                lock(&self.connection.received_channels)
+                    .insert(format!("live-budget-{n}"), ChannelSlot::for_test());
+            }
+            self.wire.request(
+                "office.open_channel",
+                serde_json::json!({"session":self.session,"office_id":"office"}),
+            );
+            let error = self
+                .wire
+                .response()
+                .into_result::<ops::OfficeOpenChannel>()
+                .unwrap_err();
+            assert!(
+                matches!(error, org_proto::CallError::Api(error) if error.code == ErrorCode::Unavailable)
+            );
+            self.wire
+                .request("session.renew", serde_json::json!({"session":self.session}));
+            assert!(self
+                .wire
+                .response()
+                .into_result::<ops::SessionRenew>()
+                .is_ok());
+            assert!(!self.connection.closed.load(Ordering::SeqCst));
+            held_channel.write_all(b"still live").unwrap();
+            let mut bytes = [0; 10];
+            held_channel.read_exact(&mut bytes).unwrap();
+            assert_eq!(&bytes, b"still live");
+            self.wire.request("session.grant", serde_json::json!({"session":self.session,"office_id":"office","channel_id":held.channel_id}));
+            assert!(self
+                .wire
+                .response()
+                .into_result::<ops::SessionGrant>()
+                .is_ok());
+        }
+        fn bad_receipt(&mut self, receipt: &str) {
+            // Duplicates and foreign receipts still terminate the actual control reader.
+            self.wire
+                .request("fds.received", serde_json::json!({"of":receipt}));
+            assert!(self
+                .wire
+                .response()
+                .into_result::<ops::FdsReceived>()
+                .is_err());
+            assert!(self.connection.closed.load(Ordering::SeqCst));
+        }
+    }
+    impl Drop for Control {
+        fn drop(&mut self) {
+            self.connection.close();
+            self.thread.take().unwrap().join().unwrap();
+        }
+    }
+    fn live_control_cycles(gateway: bool) {
+        let mut control = Control::new(gateway);
+        let mut last_channel = String::new();
+        for cycle in 0..520 {
+            last_channel = control.closed_cycle(cycle);
+        }
+        assert_eq!(control.worker.transferred.load(Ordering::SeqCst), 520);
+        control.capacity_preserves_channel();
+        control.bad_receipt(if gateway { &last_channel } else { "foreign" });
+    }
+    #[test]
+    fn native_live_control_exceeds_512_closed_channels_without_losing_receipt_or_authority_checks()
+    {
+        live_control_cycles(false);
+    }
+    #[test]
+    fn gateway_live_control_exceeds_512_closed_channels_without_losing_receipt_or_authority_checks()
+    {
+        live_control_cycles(true);
     }
 }

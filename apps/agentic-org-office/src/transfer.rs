@@ -1,5 +1,6 @@
 //! FIFO transfer control service, independent of Office and work execution.
 mod channels;
+mod recovery;
 mod writer;
 use crate::{revocations::Revocations, startup};
 pub(super) use channels::Channels;
@@ -21,6 +22,7 @@ use tests::poll_readable;
 use tests::Builder;
 
 pub(super) struct Channel {
+    recovery: bool,
     kind: ChannelKind,
     office_id: String,
     channel_id: String,
@@ -164,11 +166,23 @@ fn run(
                     .map_err(|_| invalid())?
                     .apply_batch(session_ids)?;
             }
+            TransferRecord::RecoveryPublicRead {
+                version: _, // Strict decoder already requires the supported version.
+                office_id,
+                channel_id,
+            } => channel(Channel {
+                recovery: true,
+                kind: ChannelKind::Local,
+                office_id,
+                channel_id,
+                fd: received.descriptors.pop().ok_or_else(invalid)?,
+            })?,
             TransferRecord::Channel {
                 kind,
                 office_id,
                 channel_id,
             } => channel(Channel {
+                recovery: false,
                 kind,
                 office_id,
                 channel_id,

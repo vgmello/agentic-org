@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1, reviewed F3b provider ownership boundary and current capability selection2026-11-16",
-  "rationale": "F3b611.181s safe handoff: production workerlib,83launch,5HQ,bootstrap generation/counter,scopedClippy/fmt pass, no acceptance. Root verified33hashes/1406nonowned+4newmetadata/6guards; complete actual manifest/lock diff only4internaledges in2packages, all158existing package identities/sources/checksums unchanged. Refresh only those3assessed manifests/lock evidence. Exact additional5path grant closes real DTO fixture/UUID socket carrier gaps, retaining old opaque validator and admitted selected profile; focused reviewed interface/all4conditions unchanged. No framework/tool/provider/security mechanism or unrelated feature. Full existing gates and owner policy intact; host producer/human sessions/signing/usefulU1 remain open. Prior rationale in Git.",
+  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17",
+  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "27c8e37a7d9da6d6a2c344c0e248e9084c422da6c3215a3ed9faef5acea3edbe"
+      "sha256": "bf25d67008453dcac110692de24c7deaf5a13cf3c93bcf6a07a093ec79e3b0dd"
     },
     {
       "path": "Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "9f5152558625bb4781ae9d9d401cab0bf7afeed0acbad10c4a2eb198e1081ae6"
+      "sha256": "13e7acfe81cc8df1214261b653bc3801c8f3584a3f101f04f660b267cd4101ce"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",

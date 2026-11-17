@@ -101,7 +101,7 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(
         line(&mut reader),
-        json!({"v":3,"event":"ready_for_secrets"})
+        json!({"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
     );
     // The host may fill stdin before supplying secrets. Handoff must not gate draining.
     let mut stdin = run.stdin.take().unwrap();
@@ -236,7 +236,7 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(
         line(&mut reader),
-        json!({"v":3,"event":"ready_for_secrets"})
+        json!({"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
     );
     let header = match op {
         FirstLine::Create => Handoff::Create {

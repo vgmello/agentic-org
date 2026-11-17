@@ -141,7 +141,7 @@ fn schema_has_pinned_columns_storage_flags_link_index_and_foreign_key() {
             "NO ACTION".into()
         )
     );
-    assert_eq!(scalar(&c, "user_version"), 1);
+    assert_eq!(scalar(&c, "user_version"), 3);
 }
 
 fn constraint(c: &Connection, sql: &str) {

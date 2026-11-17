@@ -8,6 +8,8 @@ mod verifier;
 pub(crate) use first_account::FirstAccount;
 pub(crate) mod journal;
 pub(crate) mod lockout;
+pub(crate) mod provisioning;
+pub(crate) mod recovery;
 mod schema;
 mod sqlcipher;
 #[cfg(test)]
@@ -88,7 +90,126 @@ pub(crate) struct HostDbInit {
 pub(crate) struct HostDb {
     connection: Mutex<Connection>,
 }
+fn cleanup_uncommitted_registry(home: &Path) -> Result<(), Error> {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let path = home.join(format!("{DB}{suffix}"));
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        if !metadata.is_file() || metadata.uid() != crate::home::euid() {
+            return Err(Error::Unsafe);
+        }
+        fs::remove_file(path)?;
+        crate::host_log::log(&format!("removed orphan host registry sidecar {suffix}"));
+    }
+    // Interrupted creates leave only temps; no installed registry needs rollback recovery.
+    for name in [
+        TMP,
+        "host-registry.db.tmp-journal",
+        "host-registry.db.tmp-wal",
+        "host-registry.db.tmp-shm",
+    ] {
+        match fs::remove_file(home.join(name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 impl HostDb {
+    pub(crate) fn bootstrap_record(&self) -> Result<BootstrapRecord, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let value: String =
+            db.query_row("SELECT value FROM meta WHERE key='bootstrap'", [], |r| {
+                r.get(0)
+            })?;
+        serde_json::from_str(&value).map_err(|_| Error::Unsafe)
+    }
+    /// Exit is a completion only after this bootstrap's exact HQ reservation
+    /// linked. Interrupted/abandoned setup retains its original replay route.
+    pub(crate) fn finish_bootstrap(&self) -> Result<(), Error> {
+        let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let value: String =
+            tx.query_row("SELECT value FROM meta WHERE key='bootstrap'", [], |r| {
+                r.get(0)
+            })?;
+        let mut record: BootstrapRecord =
+            serde_json::from_str(&value).map_err(|_| Error::Unsafe)?;
+        let linked: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE operation_id=?1 AND account=?2 AND linked=1)", (&record.hq_operation_id, &record.account), |r|r.get(0))?;
+        if linked && !record.finished {
+            record.finished = true;
+            tx.execute(
+                "UPDATE meta SET value=?1 WHERE key='bootstrap'",
+                [serde_json::to_string(&record).map_err(|_| Error::Unsafe)?],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// Protected provisioning only. Recheck administrator authority inside the
+    /// transaction; a legacy/member profile cannot establish organization ownership.
+    pub(crate) fn establish_organization_owner(
+        &self,
+        administrator: &accounts::Account,
+        org: &str,
+        member: &str,
+    ) -> Result<(), Error> {
+        if !org_office_launch::is_storage_id(org) || !org_proto::is_valid_member_id(member) {
+            return Err(Error::Unsafe);
+        }
+        let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id = administrator.account_id();
+        let admin: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 AND admin=1 AND revoked_at_ms IS NULL)", [id], |r|r.get(0))?;
+        if !admin {
+            return Err(Error::Unsafe);
+        }
+        tx.execute(
+            "INSERT INTO org_owners VALUES(?1,?2,?3) ON CONFLICT(org_id) DO NOTHING",
+            (org, id, member),
+        )?;
+        tx.execute(
+            "INSERT INTO account_links VALUES(?1,?2,?3) ON CONFLICT(account_id,org_id) DO NOTHING",
+            (id, org, member),
+        )?;
+        let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM org_owners o JOIN account_links l ON l.account_id=o.account AND l.org_id=o.org_id AND l.member_id=o.owner_member_id WHERE o.org_id=?1 AND o.account=?2 AND o.owner_member_id=?3)", (org,id,member), |r|r.get(0))?;
+        if !valid {
+            return Err(Error::Conflict);
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    pub(crate) fn verify_selected_owner(
+        &self,
+        org: &str,
+        account: &str,
+        member: &str,
+    ) -> Result<(), Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let valid: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM org_owners o JOIN accounts a ON a.account_id=o.account JOIN account_links l ON l.account_id=a.account_id AND l.org_id=o.org_id WHERE o.org_id=?1 AND o.account=?2 AND o.owner_member_id=?3 AND l.member_id=o.owner_member_id AND a.revoked_at_ms IS NULL)", (org,account,member), |r|r.get(0))?;
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::Unsafe)
+        }
+    }
+    pub(crate) fn verify_instance(&self, instance: &str) -> Result<(), Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let recorded: String =
+            db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
+                r.get(0)
+            })?;
+        if recorded != instance {
+            return Err(Error::Unsafe);
+        }
+        Ok(())
+    }
+
     pub(crate) fn create(
         home: &Path,
         secrets: &dyn HostSecrets,
@@ -99,35 +220,17 @@ impl HostDb {
         }
         let home = checked_home(home)?;
         absent(&home.join(DB), Error::Exists)?;
-        for suffix in ["-wal", "-shm", "-journal"] {
-            let path = home.join(format!("{DB}{suffix}"));
-            let metadata = match fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e.into()),
-            };
-            if !metadata.is_file() || metadata.uid() != crate::home::euid() {
-                return Err(Error::Unsafe);
-            }
-            fs::remove_file(path)?;
-            crate::host_log::log(&format!("removed orphan host registry sidecar {suffix}"));
+        let names = secrets.list()?;
+        if names
+            .iter()
+            .any(|n| n.as_str() == "writer-device" || n.as_str().starts_with("writer."))
+        {
+            return Err(Error::Unsafe);
         }
-        // Interrupted creates leave only temps; no installed registry needs rollback recovery.
-        for name in [
-            TMP,
-            "host-registry.db.tmp-journal",
-            "host-registry.db.tmp-wal",
-            "host-registry.db.tmp-shm",
-        ] {
-            match fs::remove_file(home.join(name)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
+        cleanup_uncommitted_registry(&home)?;
         // A .put.* temp left when put's own cleanup failed is invisible to list/delete;
         // DevSecrets::open removes it on the next open (Rowan's accepted residual).
-        for name in secrets.list()? {
+        for name in names {
             secrets.delete(&name)?;
         }
         checkpoint(1)?;
@@ -156,7 +259,9 @@ impl HostDb {
         db.pragma_update(None, "journal_mode", "DELETE")?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(schema::DDL)?;
-        tx.pragma_update(None, "user_version", 1)?;
+        tx.execute_batch(provisioning::DDL)?;
+        tx.execute_batch(recovery::DDL)?;
+        tx.pragma_update(None, "user_version", 3)?;
         let bootstrap = serde_json::to_string(&init.bootstrap).map_err(|_| Error::Unsafe)?;
         for (name, value) in [
             ("instance_id", init.instance_id.clone()),
@@ -224,17 +329,62 @@ impl HostDb {
         let key = secrets
             .load(&Name::parse("registry")?)?
             .ok_or(Error::KeyMissing)?;
-        let db = connect(&path, &key)?;
+        let mut db = connect(&path, &key)?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version != 1 {
+        if version == 1 || version == 2 {
+            require_legacy_schema(&db)?;
+            if version == 2 {
+                require_schema(&db, provisioning::DDL)?;
+            }
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if version == 1 {
+                tx.execute_batch(provisioning::DDL)?;
+            }
+            tx.execute_batch(recovery::DDL)?;
+            tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
+        } else if version != 3 {
             return Err(Error::Version);
         }
+        require_legacy_schema(&db)?;
+        require_schema(&db, provisioning::DDL)?;
+        require_schema(&db, recovery::DDL)?;
+        recovery::verify_all(&db)?;
         enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         Ok(Self {
             connection: Mutex::new(db),
         })
     }
+}
+
+/// Only the known registry schema may be upgraded. A version number alone is
+/// not evidence that an unknown/corrupt database is this host's registry. Check
+/// before any migration write, retaining all legacy rows and unknown state.
+fn require_legacy_schema(db: &Connection) -> Result<(), Error> {
+    require_schema(db, schema::DDL)
+}
+fn require_schema(db: &Connection, source: &str) -> Result<(), Error> {
+    for ddl in source.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        let words: Vec<_> = ddl.split_whitespace().collect();
+        let kind = match words.get(1).copied() {
+            Some("TABLE") => "table",
+            Some("INDEX") => "index",
+            _ => return Err(Error::Unsafe),
+        };
+        let name = words.get(2).ok_or(Error::Unsafe)?;
+        let actual: String = db
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type=?1 AND name=?2",
+                (kind, name),
+                |r| r.get(0),
+            )
+            .map_err(|_| Error::Unsafe)?;
+        if actual.split_whitespace().ne(ddl.split_whitespace()) {
+            return Err(Error::Unsafe);
+        }
+    }
+    Ok(())
 }
 
 fn absent(path: &Path, present: Error) -> Result<(), Error> {

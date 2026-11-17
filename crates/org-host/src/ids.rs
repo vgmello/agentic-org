@@ -28,6 +28,31 @@ pub(crate) fn generate() -> io::Result<String> {
     Ok(encode(now_ms, random))
 }
 
+/// Canonical selected entity identity. Legacy ULID generation remains unchanged.
+pub(crate) fn uuid_v7() -> io::Result<String> {
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| io::Error::other("clock unavailable"))?
+        .as_millis();
+    if ms > 0xffff_ffff_ffff {
+        return Err(io::Error::other("UUID clock exhausted"));
+    }
+    let mut bytes = [0u8; 16];
+    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    bytes[..6].copy_from_slice(&(ms as u64).to_be_bytes()[2..]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let h: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &h[..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..]
+    ))
+}
+
 fn encode(ms: u64, random: [u8; 10]) -> String {
     let mut tail = [0u8; 16];
     tail[6..].copy_from_slice(&random);

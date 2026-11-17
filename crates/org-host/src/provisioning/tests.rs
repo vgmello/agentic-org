@@ -1,0 +1,340 @@
+use super::*;
+use crate::{
+    accounts::identity::LoginKey,
+    broadcast::Broadcast,
+    catalog::Catalog,
+    server_check::ServerCheck,
+    supervisor::{Supervisor, SupervisorConfig},
+    Timings,
+};
+use org_host_control::SessionHandle;
+use org_proto::selected_bootstrap::PlanV1;
+use std::os::unix::fs::PermissionsExt;
+
+fn plan() -> PlanV1 {
+    PlanV1 {
+        version: 1,
+        name: "Example".into(),
+        slug: "example".into(),
+        repository_remote_url: "https://example.test/organization.git".into(),
+        state_branch: "org/state".into(),
+        home_team_name: "Core".into(),
+    }
+}
+fn params() -> Params {
+    Params {
+        session: SessionHandle::new("unused-by-storage-fixture".into()).unwrap(),
+        operation_id: crate::ids::generate().unwrap(),
+        plan: plan(),
+    }
+}
+fn account(db: &HostDb) -> Account {
+    let c = db
+        .account_credentials(&LoginKey::new("Owner").unwrap())
+        .unwrap()
+        .unwrap();
+    let id = crate::accounts::identity::AccountId::parse(c.account().account_id()).unwrap();
+    db.account_authority(&id).unwrap().unwrap()
+}
+fn offices(
+    root: &Path,
+    keys: Arc<dyn KeyStore>,
+    writers: Arc<Writers>,
+    instance: &str,
+    check: ServerCheck,
+    program: PathBuf,
+) -> Arc<Offices> {
+    for name in ["offices", "logs", "run"] {
+        private(&root.join(name)).unwrap();
+    }
+    let supervisor = Supervisor::new(SupervisorConfig {
+        program,
+        home: root.into(),
+        runtime_dir: Some(root.join("run")),
+        logs_dir: root.join("logs"),
+        log_max_bytes: 1024 * 1024,
+        timings: Timings::default(),
+        keys,
+        server_check: Arc::new(check),
+        sweep_orphans: false,
+    })
+    .with_v3(instance)
+    .with_writers(writers);
+    Offices::start(
+        root,
+        Catalog::default(),
+        vec![],
+        supervisor,
+        Arc::new(Broadcast::default()),
+        &Timings::default(),
+    )
+}
+#[test]
+fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_missing_key() {
+    let instance = crate::ids::generate().unwrap();
+    let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let root = dir.path().canonicalize().unwrap();
+    let (db, custody) = auth.provisioning_storage();
+    let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
+    let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+    let office_home = root.join("office-state");
+    private(&office_home).unwrap();
+    let offices = offices(
+        &office_home,
+        keys.clone(),
+        writers.clone(),
+        &instance,
+        ServerCheck::Refuse,
+        root.join("absent"),
+    );
+    let controller = Provisioning::new(
+        db.clone(),
+        custody.clone(),
+        keys.clone(),
+        writers.clone(),
+        &instance,
+        &root,
+        &office_home,
+    );
+    let p = params();
+    let actor = account(&db);
+    assert!(controller.run(&actor, &p, &offices).is_err());
+    let fp = journal::fingerprint(&p).unwrap();
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let r = db
+        .provisioning(&actor, &p.operation_id, &fp, wall)
+        .unwrap()
+        .unwrap();
+    let key = keys.load(&r.prepared.office_id).unwrap().unwrap();
+    let before = fingerprint(&key);
+    drop(key);
+    assert_eq!(r.key_fingerprint.as_ref(), Some(&before));
+    assert!(!r.linked);
+    db.verify_selected_owner(&r.prepared.organization_id, &r.account, &r.owner_member)
+        .unwrap();
+    assert!(writers.required(&r.prepared.office_id).unwrap());
+    assert!(crate::catalog::unfinished_folders(&office_home)
+        .unwrap()
+        .is_empty());
+    let handle = Name::parse(&r.recovery_handle).unwrap();
+    let staged = custody.load(&handle).unwrap().unwrap();
+    assert!(controller.run(&actor, &p, &offices).is_err());
+    assert_eq!(
+        custody.load(&handle).unwrap().unwrap().expose(),
+        staged.expose()
+    );
+    assert_eq!(
+        fingerprint(&keys.load(&r.prepared.office_id).unwrap().unwrap()),
+        before
+    );
+    keys.delete(&r.prepared.office_id).unwrap();
+    assert!(controller.run(&actor, &p, &offices).is_err());
+    assert!(keys.load(&r.prepared.office_id).unwrap().is_none());
+    // Another plan never attaches to the original code/IDs.
+    let mut other = params();
+    other.operation_id = p.operation_id.clone();
+    other.plan.slug = "different".into();
+    assert!(controller.run(&actor, &other, &offices).is_err());
+    assert_eq!(
+        db.provisioning_offices().unwrap(),
+        [r.prepared.office_id].into()
+    );
+    offices.shutdown();
+}
+
+#[test]
+fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
+    let instance = crate::ids::generate().unwrap();
+    let (_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (db, _) = auth.provisioning_storage();
+    let actor = account(&db);
+    let p = params();
+    let fp = journal::fingerprint(&p).unwrap();
+    let prepared = PreparedV1 {
+        plan: p.plan.clone(),
+        organization_id: crate::ids::uuid_v7().unwrap(),
+        office_id: crate::ids::uuid_v7().unwrap(),
+        repository_id: crate::ids::uuid_v7().unwrap(),
+        home_team_id: crate::ids::uuid_v7().unwrap(),
+        hr_employee_id: crate::ids::uuid_v7().unwrap(),
+    };
+    let r = Reservation {
+        operation_id: p.operation_id.clone(),
+        account: actor.account_id().into(),
+        fingerprint: fp,
+        prepared,
+        owner_member: crate::ids::generate().unwrap(),
+        recovery_handle: format!("recovery.{}", p.operation_id),
+        key_fingerprint: None,
+        linked: false,
+    };
+    db.reserve_provisioning(&actor, &r).unwrap();
+    assert_eq!(
+        db.reserve_provisioning(&actor, &r).unwrap().prepared,
+        r.prepared
+    );
+    let wall = org_proto::ulid_time_ms(&r.operation_id).unwrap() as i64;
+    assert!(matches!(
+        db.provisioning(&actor, &r.operation_id, &[0; 32], wall),
+        Err(crate::hostdb::Error::OperationReused)
+    ));
+    assert!(matches!(
+        db.provisioning(&actor, &r.operation_id, &fp, wall + 30 * 86_400_000),
+        Err(crate::hostdb::Error::Expired)
+    ));
+    // Retention is explicit even when the ordinary retry window has expired.
+    assert!(db
+        .provisioning_offices()
+        .unwrap()
+        .contains(&r.prepared.office_id));
+    db.change_authority_fixture(
+        &crate::accounts::identity::AccountId::parse(actor.account_id()).unwrap(),
+        true,
+    )
+    .unwrap();
+    assert!(matches!(
+        db.reserve_provisioning(&actor, &r),
+        Err(crate::hostdb::Error::Unsafe)
+    ));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN; actual worker rendezvous requires permitted local bind"]
+fn actual_selected_hq_provisioning_native_route_and_exact_retry() {
+    use crate::service::{
+        listener::{Listener, ListenerConfig},
+        Service,
+    };
+    use org_proto::{frame, Call, Hello, HelloParams};
+    use std::{
+        io::BufReader,
+        os::unix::net::UnixStream,
+        time::{Duration, Instant},
+    };
+    let binary = std::env::var_os("ORG_TEST_OFFICE_BIN").expect("explicit built office binary");
+    let instance = crate::ids::generate().unwrap();
+    let (_account_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (db, custody) = auth.provisioning_storage();
+    let auth = Arc::new(auth);
+    let dir = tempfile::tempdir_in("/private/tmp").unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
+    let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+    let office_home = root.join("office-state");
+    private(&office_home).unwrap();
+    let offices = offices(
+        &office_home,
+        keys.clone(),
+        writers.clone(),
+        &instance,
+        ServerCheck::Skip,
+        binary.into(),
+    );
+    let controller = Arc::new(Provisioning::new(
+        db.clone(),
+        custody,
+        keys,
+        writers,
+        &instance,
+        &root,
+        &office_home,
+    ));
+    let service = Arc::new(
+        Service::new(
+            offices.clone(),
+            Arc::new(Broadcast::default()),
+            Some(instance.clone()),
+        )
+        .with_authentication(Some(auth))
+        .with_provisioning(Some(controller)),
+    );
+    let socket = root.join("host.sock");
+    let bound = crate::service::listener::bind(&socket).unwrap();
+    let listener = Listener::start(
+        bound,
+        ListenerConfig {
+            max_connections: 4,
+            max_in_flight: 4,
+            expected_uid: crate::home::euid(),
+        },
+        service,
+    )
+    .unwrap();
+    struct Cleanup(Option<Listener>, Arc<Offices>);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            if let Some(mut l) = self.0.take() {
+                l.close();
+                l.join();
+            }
+            self.1.shutdown();
+        }
+    }
+    let _cleanup = Cleanup(Some(listener), offices.clone());
+    let stream = UnixStream::connect(&socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    let mut wire = BufReader::new(stream);
+    fn call<C: Call>(wire: &mut BufReader<UnixStream>, id: u64, p: &C::Params) -> C::Result {
+        frame::write_message(
+            wire.get_mut(),
+            &org_proto::Request::new::<C>(id, p).unwrap(),
+        )
+        .unwrap();
+        let response: org_proto::Response = frame::read_message(wire).unwrap().unwrap();
+        assert_eq!(response.id, id);
+        response.into_result::<C>().unwrap()
+    }
+    let _: org_proto::HelloResult = call::<Hello>(&mut wire, 1, &HelloParams::default());
+    let login = call::<org_host_control::ops::AccountVerify>(
+        &mut wire,
+        2,
+        &org_host_control::ops::AccountVerifyParams {
+            login: "Owner".into(),
+            password: org_host_control::Password::new("synthetic test password".into()).unwrap(),
+        },
+    );
+    assert!(login.admin);
+    assert!(login.orgs.is_empty());
+    let mut p = params();
+    p.session = login.session;
+    let deadline = Instant::now() + Duration::from_secs(25);
+    let mut id = 3;
+    let result = loop {
+        let answer = call::<org_host_control::provision::OrganizationProvision>(&mut wire, id, &p);
+        id += 1;
+        match answer {
+            HostOpResult::Completed { result } => break result,
+            HostOpResult::Accepted => {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            _ => panic!("unexpected provisioning result"),
+        }
+    };
+    assert_eq!(result.remote_readiness, RemoteReadiness::Unverified);
+    let state = root.join("durable/state").join(&result.organization_id);
+    let initial = std::fs::read(state.join("organization.yaml")).unwrap();
+    assert!(!initial.is_empty());
+    let replay = call::<org_host_control::provision::OrganizationProvision>(&mut wire, id, &p);
+    assert!(matches!(replay,HostOpResult::Completed{result:r} if r==result));
+    let inspection = call::<org_host_control::ops::SessionInspect>(
+        &mut wire,
+        id + 1,
+        &org_host_control::ops::SessionParams { session: p.session },
+    );
+    assert_eq!(inspection.orgs.len(), 1);
+    assert!(!inspection.orgs[0].member_id.is_empty());
+    // Exact public bytes and identities, no optional owner employee or credentials.
+    assert_eq!(
+        std::fs::read(state.join("organization.yaml")).unwrap(),
+        initial
+    );
+    assert!(state.join("security/ca-escrow.v1.bin").is_file());
+}

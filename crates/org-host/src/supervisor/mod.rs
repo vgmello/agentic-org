@@ -20,6 +20,7 @@
 //! [`StatusObserver`]. Shutdown closes every child's stdin, waits up to the grace period, then
 //! SIGKILLs what's left.
 
+pub(crate) mod channels;
 mod child;
 mod office;
 mod state;
@@ -75,6 +76,7 @@ pub(crate) struct Supervisor {
     /// file apart. Held weakly: a log (and its open file) goes once nothing writes it.
     logs: Mutex<HashMap<String, Weak<Mutex<RotatingLog>>>>,
     observer: Observer,
+    protected_offices: std::collections::BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -212,6 +214,7 @@ impl Supervisor {
             home: config.home.clone(),
             runtime_dir: config.runtime_dir.clone(),
             check: Arc::clone(&config.server_check),
+            broker: None,
         };
         Self {
             config,
@@ -219,7 +222,36 @@ impl Supervisor {
             state: Mutex::new(State::default()),
             logs: Mutex::new(HashMap::new()),
             observer: Arc::new(OnceLock::new()),
+            protected_offices: std::collections::BTreeSet::new(),
         }
+    }
+
+    pub(crate) fn with_protected_offices(
+        mut self,
+        offices: std::collections::BTreeSet<String>,
+    ) -> Self {
+        self.protected_offices = offices;
+        self
+    }
+    /// Only the registered protected host enables v3. Legacy unregistered
+    /// fixtures retain their v2 launch contract until explicit admission.
+    pub(crate) fn with_v3(mut self, instance: &str) -> Self {
+        let runtime = self
+            .config
+            .runtime_dir
+            .clone()
+            .unwrap_or_else(|| self.config.home.join("run"));
+        self.spawner.broker = Some(Arc::new(channels::Broker::new(instance.into(), runtime)));
+        self
+    }
+    pub(crate) fn endpoint(&self, office: &str) -> Option<Arc<channels::Endpoint>> {
+        self.spawner.broker.as_ref()?.endpoint(office)
+    }
+    pub(crate) fn with_writers(mut self, writers: Arc<crate::writer::Writers>) -> Self {
+        if let Some(broker) = &mut self.spawner.broker {
+            Arc::get_mut(broker).expect("unstarted broker").writers = Some(writers);
+        }
+        self
     }
 
     /// Where every office's state changes are announced from now on (set once).
@@ -239,7 +271,11 @@ impl Supervisor {
             crate::keys::sweep_orphans(
                 &*self.config.keys,
                 &self.config.home,
-                find_orphans,
+                |ids| {
+                    let mut orphans = find_orphans(ids)?;
+                    orphans.retain(|id| !self.protected_offices.contains(id));
+                    Ok(orphans)
+                },
                 std::time::SystemTime::now(),
             );
         }
@@ -322,6 +358,54 @@ impl Supervisor {
                 "couldn't store the new office's key: {e}"
             )));
         }
+        let log = self.log_for(line.office_id());
+        let spawned = self
+            .spawner
+            .spawn(Mode::Create(&line), 0, sender.clone(), Arc::clone(&log));
+        line.drop_key();
+        let child = spawned.map_err(|e| CreateStartError::KeyStored(e.into()))?;
+        Ok(PendingCreate {
+            registration,
+            line,
+            child,
+            signals,
+            sender,
+            log,
+        })
+    }
+
+    /// Protected selected reservation has already installed its original key and
+    /// writer custody. No create/discard cleanup is permitted on this path.
+    pub(crate) fn begin_hq_create(
+        &self,
+        first: org_office_launch::v3::CreateLine,
+        recovery: org_proto::RecoveryCode,
+    ) -> Result<PendingCreate<'_>, CreateStartError> {
+        let (sender, signals) = mpsc::channel();
+        let registration = self
+            .register(&sender)
+            .map_err(|e| CreateStartError::NotStarted(e.to_string()))?;
+        self.config
+            .server_check
+            .may_spawn()
+            .map_err(CreateStartError::NotStarted)?;
+        let db_key = self
+            .config
+            .keys
+            .load(&first.office.office_id)
+            .map_err(|_| CreateStartError::NotStarted("original HQ key unavailable".into()))?
+            .ok_or_else(|| CreateStartError::NotStarted("original HQ key missing".into()))?;
+        let create = CreateOffice {
+            office_id: first.office.office_id.clone(),
+            office_name: first.office_name.clone(),
+            org_id: first.org_id.clone(),
+            org_name: first.org_name.clone(),
+            role: first.role,
+            app_token: secrets::generate_app_token()
+                .map_err(|e| CreateStartError::NotStarted(e.to_string()))?,
+            db_key,
+        };
+        let mut line = CreateLine::hq(create, child::HqCreate { first, recovery });
         let log = self.log_for(line.office_id());
         let spawned = self
             .spawner

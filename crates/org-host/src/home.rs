@@ -84,7 +84,7 @@ impl Layout {
 }
 
 /// Checks `dir` is a directory (not a symlink) owned by us, and sets it to 0700.
-fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
+pub(crate) fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
     let meta = fs::symlink_metadata(dir).map_err(|source| HostError::Io {
         context: "reading the office home",
         source,

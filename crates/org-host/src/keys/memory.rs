@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Mutex;
 
-use org_office_launch::is_plain_id;
+use org_office_launch::is_storage_id;
 use org_proto::DbKey;
 
 use super::{KeyStore, KeyStoreError};
@@ -84,7 +84,7 @@ impl MemoryKeys {
 
     fn begin(&self, op: Op, office_id: &str) -> Result<(), KeyStoreError> {
         lock(&self.calls).push((op, office_id.to_owned()));
-        if !is_plain_id(office_id) {
+        if !is_storage_id(office_id) {
             return Err(KeyStoreError::NotPlainId);
         }
         match lock(&self.faults).get(&op) {

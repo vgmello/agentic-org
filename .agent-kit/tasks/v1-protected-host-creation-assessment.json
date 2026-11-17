@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "task_id": "v1-protected-host-creation",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": false,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": null,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "Retained b77 host provisioning/recovery implementation and original author intake; accepted F3b provider."
+    ],
+    "precise_scope": [
+      "v1-protected-host-creation-source-grant.json:93exactcandidatepaths with native-only hunk limits and frozen-channel/b77 provenance; source grant cannot widen itself."
+    ],
+    "localized_change": [
+      "Crosses host/account/custody, supervisor, launch and authenticated human session boundaries."
+    ],
+    "deterministic_checks": [
+      "Retained temporary root writer/recovery/crash/native lifecycle checks; actual composition must be exercised early."
+    ],
+    "low_risk": [
+      "Protected ownership, custody, durable recovery deletion and same-connection authority are critical."
+    ],
+    "no_prior_failure": [],
+    "ambiguity_resolved": [
+      "v1-native-host-boundary.md rev1 independently READY/activated with all5conditions; actual early compile/exercise falsifies source-closure premise. Protected owner before Writers::reserve is already correctly ordered; no new atomic redesign."
+    ]
+  }
+}

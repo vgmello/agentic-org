@@ -66,9 +66,11 @@ fn memory_obeys_the_operation_matrix() {
     conformance(&Memory::default());
 }
 #[test]
-fn names_accept_only_the_three_frozen_forms() {
+fn names_accept_only_the_versioned_custody_forms() {
     for valid in [
         "registry".to_owned(),
+        "writer-device".to_owned(),
+        format!("writer.{}", "a".repeat(64)),
         format!("tls.{}", "0123456789abcdef".repeat(4)),
         format!("recovery.{}", "Z".repeat(64)),
         "recovery.a".into(),
@@ -101,7 +103,8 @@ fn names_accept_only_the_three_frozen_forms() {
     }
 }
 #[test]
-fn only_tls_names_are_add_only() {
+fn tls_and_device_identity_are_add_only() {
+    assert!(Name::parse("writer-device").unwrap().is_add_only());
     assert!(Name::parse(&format!("tls.{}", "a".repeat(64)))
         .unwrap()
         .is_add_only());

@@ -1,7 +1,9 @@
 //! host.sock's private control boundary: registered-instance hello and count-only status.
-//! Only the two open operations are dispatched; session capabilities arrive in 2b.3.
+//! Registered hosts additionally dispatch live account sign-in, renewal and logout.
 
+pub(crate) mod authentication;
 pub(crate) mod listener;
+use authentication::Authentication;
 mod request;
 
 use std::sync::Arc;
@@ -21,6 +23,10 @@ pub(crate) struct Service {
     offices: Arc<Offices>,
     broadcast: Arc<Broadcast>,
     instance_id: Option<String>,
+    pub(crate) authentication: Option<Arc<Authentication>>,
+    gateway: Arc<std::sync::Mutex<GatewayState>>,
+    provisioning: Option<Arc<crate::provisioning::Provisioning>>,
+    recovery: Option<Arc<crate::recovery::Recovery>>,
 }
 
 impl Service {
@@ -33,17 +39,283 @@ impl Service {
             offices,
             broadcast,
             instance_id,
+            authentication: None,
+            provisioning: None,
+            recovery: None,
+            gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
+        }
+    }
+    pub(crate) fn with_authentication(
+        mut self,
+        authentication: Option<Arc<Authentication>>,
+    ) -> Self {
+        self.authentication = authentication;
+        self
+    }
+    pub(crate) fn with_provisioning(
+        mut self,
+        provisioning: Option<Arc<crate::provisioning::Provisioning>>,
+    ) -> Self {
+        self.provisioning = provisioning;
+        self
+    }
+    pub(crate) fn with_recovery(
+        mut self,
+        recovery: Option<Arc<crate::recovery::Recovery>>,
+    ) -> Self {
+        self.recovery = recovery;
+        self
+    }
+    fn recover(&self, request: &Request, connection: &Arc<Connection>, received: Received) -> bool {
+        use org_host_control::{
+            ops::{RecoveryAcknowledge, RecoveryRelease},
+            recovery::{Package, Status},
+        };
+        if !crate::recovery::handles(request) {
+            return false;
+        }
+        if request.is::<RecoveryAcknowledge>() && request.params::<RecoveryAcknowledge>().is_err() {
+            connection.clear_recovery_permission();
+        }
+        let Some(recovery) = &self.recovery else {
+            connection.send_response(Response::error(
+                request.id,
+                ApiError::new(ErrorCode::Unavailable, "recovery unavailable"),
+            ));
+            return true;
+        };
+        if request.is::<RecoveryRelease>() {
+            connection.clear_recovery_permission();
+            let result = request
+                .params::<RecoveryRelease>()
+                .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid recovery request"))
+                .and_then(|p| recovery.release(connection, received, p));
+            match result {
+                Ok(result) => secret_response(connection, request.id, &result),
+                Err(e) => connection.send_response(Response::error(request.id, e)),
+            }
+        } else if request.is::<RecoveryAcknowledge>() {
+            connection.send_response(answer::<RecoveryAcknowledge>(request, |p| {
+                recovery.acknowledge(connection, received, p)
+            }));
+        } else if request.is::<Status>() {
+            connection.send_response(answer::<Status>(request, |p| {
+                recovery.status(connection, received, p)
+            }));
+        } else {
+            connection.send_response(answer::<Package>(request, |p| {
+                recovery.package(connection, received, p)
+            }));
+        }
+        true
+    }
+    pub(crate) fn with_gateway_state(mut self, state: Arc<std::sync::Mutex<GatewayState>>) -> Self {
+        self.gateway = state;
+        self
+    }
+    #[cfg(test)]
+    pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
+        Arc::clone(self.recovery.as_ref().expect("selected test host"))
+    }
+    fn authenticate(&self, request: &Request, connection: &Arc<Connection>) -> bool {
+        use org_host_control::ops::{
+            AccountVerify, FdsReceived, OfficeOpenChannel, SessionEnd, SessionGrant,
+            SessionInspect, SessionRenew,
+        };
+        if request.is::<FdsReceived>() {
+            acknowledge_descriptors(request, connection);
+            return true;
+        }
+        if !session_auth_method(request) {
+            return false;
+        }
+        let Some(authentication) = &self.authentication else {
+            // An inactive protected registry grants no session-method authority.
+            // Refuse before interpreting either valid or malformed credentials.
+            connection.send_response(not_authorized(request.id));
+            return true;
+        };
+        if request.is::<AccountVerify>() {
+            self.sign_in(authentication, request, connection);
+        } else if request.is::<OfficeOpenChannel>() {
+            self.open_authenticated_channel(authentication, request, connection);
+        } else if request.is::<SessionGrant>() {
+            let result = request
+                .params::<SessionGrant>()
+                .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid grant request"))
+                .and_then(|p| {
+                    authentication.grant(connection, &p.session, &p.office_id, &p.channel_id)
+                });
+            match result {
+                Ok(result) => secret_response(connection, request.id, &result),
+                Err(error) => connection.send_response(Response::error(request.id, error)),
+            }
+        } else if request.is::<SessionInspect>() {
+            connection.send_response(answer::<SessionInspect>(request, |params| {
+                let mut result = authentication.inspect(connection, &params.session)?;
+                let offices = self.offices.offices();
+                for link in &mut result.orgs {
+                    link.office_ids = offices
+                        .iter()
+                        .filter(|o| o.organization_id == link.org_id)
+                        .map(|o| o.id.clone())
+                        .collect();
+                }
+                Ok(result)
+            }));
+        } else if request.is::<SessionRenew>() {
+            connection.send_response(answer::<SessionRenew>(request, |params| {
+                authentication.authorize(connection, &params.session)?;
+                Ok(org_proto::Empty {})
+            }));
+        } else {
+            connection.send_response(answer::<SessionEnd>(request, |params| {
+                // Dropping the bound session sends revocation to each worker;
+                // a failed transfer closes that worker's authenticated channel.
+                connection.clear_recovery_permission();
+                authentication.end(connection, &params.session)?;
+                Ok(org_proto::Empty {})
+            }));
+        }
+        true
+    }
+    fn sign_in(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::ops::AccountVerify;
+        let result = request
+            .params::<AccountVerify>()
+            .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid sign-in request"))
+            .and_then(|params| {
+                let mut result =
+                    authentication.verify(connection, &params.login, &params.password)?;
+                let offices = self.offices.offices();
+                for link in &mut result.orgs {
+                    link.office_ids = offices
+                        .iter()
+                        .filter(|o| o.organization_id == link.org_id)
+                        .map(|o| o.id.clone())
+                        .collect();
+                }
+                Ok(result)
+            });
+        match result {
+            Ok(result) => {
+                secret_response(connection, request.id, &result);
+            }
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    }
+    fn open_authenticated_channel(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::ops::OfficeOpenChannel;
+        let result = request
+            .params::<OfficeOpenChannel>()
+            .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid channel request"))
+            .and_then(|p| {
+                let account = authentication.authorize(connection, &p.session)?;
+                let office = self
+                    .offices
+                    .offices()
+                    .into_iter()
+                    .find(|o| o.id == p.office_id)
+                    .filter(|o| {
+                        account
+                            .links()
+                            .iter()
+                            .any(|l| l.org_id() == o.organization_id)
+                    })
+                    .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "office not found"))?;
+                let endpoint = self.offices.endpoint(&p.office_id).ok_or_else(|| {
+                    ApiError::new(ErrorCode::Unavailable, "office channel unavailable")
+                })?;
+                authentication
+                    .open_channel(connection, &p.session, endpoint, &office.organization_id)
+                    .map(|(id, socket, witness)| (id, socket, witness, p.office_id))
+            });
+        match result {
+            Ok((id, socket, witness, office)) => {
+                deliver_channel(connection, request.id, id, socket, &office, witness);
+            }
+            Err(error) => connection.send_response(Response::error(request.id, error)),
         }
     }
 }
 
+/// Deliver an already authorized channel. A definite local reservation refusal
+/// answers this request; uncertain transport still terminates the connection.
+fn deliver_channel(
+    connection: &Connection,
+    request_id: u64,
+    id: String,
+    socket: std::os::unix::net::UnixStream,
+    office: &str,
+    witness: crate::supervisor::channels::ChannelSlot,
+) {
+    let response = ok::<org_host_control::ops::OfficeOpenChannel>(
+        request_id,
+        &org_host_control::ops::OfficeOpenChannelResult {
+            channel_id: id.clone(),
+        },
+    );
+    match connection.send_descriptor(response, id, socket.into(), office, witness) {
+        Ok(()) => {}
+        Err(listener::DescriptorError::Capacity) => connection.send_response(Response::error(
+            request_id,
+            ApiError::new(ErrorCode::Unavailable, "office channel unavailable"),
+        )),
+        Err(listener::DescriptorError::Transport) => connection.close(),
+    }
+}
+
+fn session_auth_method(request: &Request) -> bool {
+    use org_host_control::ops::{
+        AccountVerify, OfficeOpenChannel, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
+    };
+    request.is::<AccountVerify>()
+        || request.is::<SessionRenew>()
+        || request.is::<SessionEnd>()
+        || request.is::<OfficeOpenChannel>()
+        || request.is::<SessionGrant>()
+        || request.is::<SessionInspect>()
+}
+
+fn acknowledge_descriptors(request: &Request, connection: &Arc<Connection>) {
+    use org_host_control::ops::FdsReceived;
+    let acknowledged = request
+        .params::<FdsReceived>()
+        .ok()
+        .is_some_and(|p| connection.descriptor_received(&p.of));
+    if acknowledged {
+        connection.send_response(ok::<FdsReceived>(request.id, &org_proto::Empty {}));
+    } else {
+        connection.refuse_and_finish(not_authorized(request.id));
+    }
+}
+
 impl Handler for Service {
+    fn disconnected(&self, connection: &Arc<Connection>) {
+        connection.clear_recovery_permission();
+        if let Some(authentication) = &self.authentication {
+            authentication.disconnect(connection);
+        }
+    }
     /// Decide handshake refusals before a later pipelined request can change the state.
     fn inline(&self, request: &Request, connection: &Connection) -> bool {
-        !connection.hello_completed() || request.is::<Hello>()
+        !connection.hello_completed()
+            || request.is::<Hello>()
+            || request.is::<org_host_control::ops::FdsReceived>()
+            || crate::recovery::handles(request)
     }
 
-    fn handle(&self, request: Request, connection: &Arc<Connection>, _received: Received) {
+    fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
         let Some(instance_id) = self.instance_id.as_deref() else {
             connection.send_response(Response::error(
                 request.id,
@@ -59,6 +331,48 @@ impl Handler for Service {
                 request.id,
                 ApiError::new(ErrorCode::InvalidRequest, "hello must come first"),
             ));
+            return;
+        }
+        if request.is::<org_host_control::ops::TlsFetch>() {
+            connection.send_response(answer::<org_host_control::ops::TlsFetch>(&request, |_| {
+                let snapshot = connection.gateway_listen().ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::NotAuthorized,
+                        "private gateway connection required",
+                    )
+                })?;
+                if snapshot.scheme() != org_host_control::listen::ListenMode::HttpLoopback {
+                    return Err(ApiError::new(
+                        ErrorCode::Unavailable,
+                        "verified TLS pair unavailable",
+                    ));
+                }
+                Ok(org_host_control::ops::TlsFetchResult::HttpLoopback {
+                    origin: snapshot.origin().clone(),
+                    hsts: snapshot.hsts(),
+                })
+            }));
+            return;
+        }
+        if request.is::<org_host_control::provision::OrganizationProvision>() {
+            connection.send_response(
+                answer::<org_host_control::provision::OrganizationProvision>(&request, |params| {
+                    let authentication = self.authentication.as_ref().ok_or_else(|| {
+                        ApiError::new(ErrorCode::Unavailable, "protected registry unavailable")
+                    })?;
+                    let account = authentication.authorize(connection, &params.session)?;
+                    let provisioning = self.provisioning.as_ref().ok_or_else(|| {
+                        ApiError::new(ErrorCode::Unavailable, "selected provisioning unavailable")
+                    })?;
+                    provisioning.run(&account, &params, &self.offices)
+                }),
+            );
+            return;
+        }
+        if self.recover(&request, connection, received) {
+            return;
+        }
+        if self.authenticate(&request, connection) {
             return;
         }
         let Some(operation) = OpenOperation::from_method(&request.method) else {
@@ -95,7 +409,7 @@ impl Handler for Service {
                             instance_id: instance_id.to_owned(),
                             mode: InstanceMode::Service,
                             gateway: GatewayStatus {
-                                state: GatewayState::NotConfigured,
+                                state: *crate::sync::lock(&self.gateway),
                             },
                             offices: OfficeCounts {
                                 total: offices.len() as u64,
@@ -114,6 +428,44 @@ impl Handler for Service {
             }
         }
     }
+}
+
+pub(crate) fn secret_response(connection: &Connection, id: u64, result: &impl serde::Serialize) {
+    #[derive(serde::Serialize)]
+    struct SecretResponse<'a, T: ?Sized> {
+        id: u64,
+        result: &'a T,
+    }
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self
+                .0
+                .checked_add(bytes.len())
+                .filter(|n| *n < org_proto::MAX_FRAME_BYTES)
+                .ok_or_else(|| std::io::Error::other("secret response limit"))?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let value = SecretResponse { id, result };
+    let mut count = Count(0);
+    if serde_json::to_writer(&mut count, &value).is_ok() {
+        // Measure first so encoding cannot leave a secret in a grown buffer.
+        let mut bytes = Vec::with_capacity(count.0 + 1);
+        if serde_json::to_writer(&mut bytes, &value).is_ok() {
+            bytes.push(b'\n');
+            connection.send_secret_line(listener::SecretLine::new(bytes));
+            return;
+        }
+        crate::secrets::zero(&mut bytes);
+    }
+    connection.send_response(Response::error(
+        id,
+        ApiError::new(ErrorCode::StorageError, "secret result unavailable"),
+    ));
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -171,7 +523,7 @@ fn answer<C: Call>(
                     ErrorCode::InvalidRequest,
                     "the params don't fit this method",
                 ),
-            )
+            );
         }
     };
     match handler(params) {
@@ -181,7 +533,7 @@ fn answer<C: Call>(
 }
 
 /// A successful answer to request `id` (or `storage_error` if it can't be encoded).
-fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
+pub(crate) fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
     Response::ok::<C>(id, result).unwrap_or_else(|_| {
         Response::error(
             id,
@@ -238,7 +590,7 @@ mod tests {
         }
     }
 
-    fn service(home: &Path) -> Service {
+    pub(super) fn service(home: &Path) -> Service {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),

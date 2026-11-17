@@ -21,6 +21,13 @@ impl Name {
     )]
     pub(crate) fn parse(name: &str) -> Result<Self, Error> {
         let valid = name == "registry"
+            || name == "writer-device"
+            || name.strip_prefix("writer.").is_some_and(|hex| {
+                hex.len() == 64
+                    && hex
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
             || name.strip_prefix("tls.").is_some_and(|hex| {
                 hex.len() == 64
                     && hex
@@ -46,14 +53,13 @@ impl Name {
         expect(dead_code, reason = "host custody adapters")
     )]
     fn is_add_only(&self) -> bool {
-        self.0.starts_with("tls.")
+        self.0.starts_with("tls.") || self.0 == "writer-device"
     }
 }
 
 pub(crate) struct Value(Vec<u8>);
 
 impl Value {
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.2b hostdb"))]
     pub(crate) fn new(mut bytes: Vec<u8>) -> Result<Self, Error> {
         if bytes.len() > MAX_BYTES {
             crate::secrets::zero(&mut bytes);
@@ -90,7 +96,6 @@ impl fmt::Debug for Value {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.2b hostdb"))]
 pub(crate) trait HostSecrets: Send + Sync {
     /// TLS items are add-only; a duplicate preserves the first stored value.
     /// In development custody, an error may follow publication without durability;
@@ -125,7 +130,7 @@ impl From<io::Error> for Error {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum SelectionError {
+pub(crate) enum SelectionError {
     InvalidInstance,
     #[cfg(debug_assertions)]
     NoDevBase,
@@ -137,8 +142,7 @@ enum SelectionError {
     #[cfg(debug_assertions)]
     Storage(Error),
 }
-#[cfg_attr(not(test), expect(dead_code, reason = "hostdb activation"))]
-fn store_for(
+pub(crate) fn store_for(
     dev_base: Option<&std::path::Path>,
     home: &std::path::Path,
     instance: &str,

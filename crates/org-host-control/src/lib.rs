@@ -57,6 +57,8 @@ pub mod journal;
 pub mod listen;
 pub mod ops;
 pub mod pem;
+pub mod provision;
+pub mod recovery;
 mod secret;
 mod status;
 pub use status::{

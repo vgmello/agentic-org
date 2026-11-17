@@ -23,6 +23,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         [command, rest @ ..] if command == "serve" => serve::run(rest.to_vec()),
+        [command, rest @ ..] if command == "recovery" => org_host::human::recovery(rest),
         [command, rest @ ..] if command == "setup" => {
             // Never write a fake HQ, register a broken service or bypass bootstrap authority.
             if rest.iter().any(|arg| {
