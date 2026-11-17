@@ -1,52 +1,86 @@
 # Design: teams and the org chart
 
-Revision 3, 2026-11-15. Selected target relationships are owned by [organization structure](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md) and [employees](organization-data/04-agent-structure.md). This design applies them to the chart. It does not implement new commands. See the [authority map](documentation-authority.md).
+The relationships are owned by [organization structure](organization-data/01-organization-structure.md),
+[projects](organization-data/02-project-structure.md) and
+[employees](organization-data/04-agent-structure.md). This design applies them to the
+chart and to the rules HQ enforces when the structure changes. The screens and their
+acceptance criteria are in the [offices and teams UX](../specs/offices-and-teams-ux.md).
 
-## The user's model, in short
+## The model in short
 
-- An organization has a recursive forest of teams. A division, portfolio or guild name does not introduce another entity type.
-- Every employee, agent or person, has exactly one required home team. A team can have direct agents, direct people and child teams at once.
-- An optional lead must be a direct employee of the team. The lead manages the entire subtree, including child-team leads. An ordinary ancestor-team member has no automatic management authority.
-- Explicit person-to-person reporting stays separate from the team tree and must be acyclic. A reporting reference does not remove ancestor-lead responsibility.
-- Every project has one accountable owner team and may name contributing teams. Working on a task never requires joining another team.
-- Offices place agents; they own neither teams nor projects. People have no execution placement.
-- The authenticated owner is a security principal. If represented by an employee record, that record obeys the required home-team rule. An owner bar is a presentation of account authority, not an exemption from employee data constraints.
+- An organization has a recursive forest of teams. A division, portfolio or guild
+  name does not introduce another entity type.
+- Every employee, agent or person, has exactly one required home team. A team can
+  have direct agents, direct people and child teams at once.
+- An optional lead is a direct employee of the team and manages its entire subtree,
+  including child-team leads. An ordinary member of an ancestor team has no
+  management authority.
+- Explicit person-to-person reporting is separate from the team tree and acyclic. A
+  reporting line does not remove an ancestor lead's responsibility.
+- Every project has one accountable owner team and may name contributing teams.
+  Working on a task never requires joining another team.
+- Offices place agents; they own neither teams nor projects. People have no placement.
+- The authenticated owner is a security principal held by the host. A person record
+  for the owner obeys the home-team rule. An owner bar on the chart presents account
+  authority; it is not an exemption from the employee rules.
 
 ## The model
 
-All records use stable IDs, `schema_version`, entity `revision` and common creator/update attribution. Stable IDs are UUIDv7. [Numbering](organization-data/06-identity-and-numbering.md) owns readable references and durable allocation. TEAM- and P- numbers are organization-scoped; names are display text, not IDs.
+Every record has a stable UUIDv7 ID, `schema_version`, entity `revision` and common
+creator and update attribution. [Numbering](organization-data/06-identity-and-numbering.md)
+owns readable references: `TEAM-` and `P-` numbers are allocated by HQ for the whole
+organization. Names are display text, not IDs.
 
-| Entity | Selected fields and meaning |
+| Entity | Fields and meaning |
 | --- | --- |
-| Team | `id`, `number`, `name`, nullable `parent_team_id`, nullable `lead_employee_id`, `status: active | archived`, `revision`. Null parent means root. `TEAM-<number>` is derived. |
-| Employee | `id`, organization-unique lowercase `handle` stored without `@`, `kind: agent | person`, `name`, required `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, body, `status: active | inactive`, `revision`. |
-| Retained employee detail | Optional `contact`, `title`, `focus`, `role_text`, `title_in_team` and `offboarded_at`. State is the single `status` field (`active`, `paused` for agents, `inactive`); there is no owner field on an employee. `role_text` does not fabricate a normalized role ID. |
-| Project | `id`, `number`, organization-unique `slug`, `name`, required `owner_team_id`, optional `contributing_team_ids`, repository associations and revision. |
-| Placement | Agent `employee_id`, `office_id`, `placement_generation`; separate from employee identity. Rebuild from durable placement authority, not from a folder's existence. |
-| Execution | Separate `execution.md` selects `model_profile_id`, canonical `model_id`, tools, enabled state and prompt. Profiles contain ordered provider connections; credentials remain office-local. |
+| Team | `id`, `number`, `name`, nullable `parent_team_id`, nullable `lead_employee_id`, `status: active \| archived`, `revision`. A null parent means a root team. `TEAM-<number>` is derived. |
+| Employee | `id`, organization-unique lowercase `handle` stored without `@`, `kind: agent \| person`, `name`, required `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, body, `status: active \| paused \| inactive` (`paused` for agents only), `revision`. |
+| Employee detail | Optional `contact`, `title`, `focus`, `role_text`, `title_in_team` and `offboarded_at`. There is no owner field. `role_text` never produces a normalized role ID. |
+| Project | `id`, `number`, organization-unique `slug`, `name`, required `owner_team_id`, optional `contributing_team_ids`, repository associations, revision. |
+| Placement | An agent's `employee_id`, `office_id` and `placement_generation`, separate from its identity and rebuilt from durable placement authority, never from a folder's existence. |
+| Execution | A separate `execution.md` selecting the model profile, model, tools, enabled state and prompt ([document 11](organization-data/11-model-profiles-and-agent-execution.md)). Credentials stay office-local. |
 
-An employee has no membership rows in the selected model. `title_in_team` describes its sole home-team appointment. A move changes `home_team_id` and canonical path together, preserving ID/handle/history; it never silently changes task assignment. Null `reports_to_employee_id` means no explicit employee manager recorded. The UI may group these records below an owner bar without inventing an owner employee foreign key.
-
-An employee has no owner field (document 04); no employee field grants login or administrator rights. The built-in HR employee likewise requires a valid home team. Bootstrap must receive or create a valid team through an explicitly chosen setup operation; this design does not choose its name, ID or lead.
+An employee has no membership rows. `title_in_team` describes the one home-team
+appointment. A move changes `home_team_id` and the canonical path together and keeps
+ID, handle and history; it never changes task assignment by itself. A null
+`reports_to_employee_id` means no manager is recorded. The UI may group records
+below an owner bar without inventing an owner employee reference.
 
 ## Rules HQ enforces
 
-These are target write invariants, not claims about existing handlers:
+- Reject team and reporting cycles, references to another organization, path and
+  field mismatches, and a lead whose home team is elsewhere.
+- Creating an employee, including the HR agent and an owner person at bootstrap,
+  requires a valid home team. A runnable agent also needs a valid execution
+  configuration and placement.
+- A home-team move is one revision-checked, recoverable operation. A lead
+  appointment that the move would invalidate is resolved first, and paths change
+  with the move. Moving an agent to another office is separate: it needs a safe
+  workspace transfer and fencing.
+- A project cannot be created or left without its owner team. Contributors do not
+  share accountability. Changing the owner updates the accountable `team_id` of the
+  project's tasks in the same recoverable operation and records history; current
+  assignments stay.
+- Teams are archived to keep history. Deleting one first resolves its child teams,
+  home employees, owned projects and tasks and every other reference. Employees are
+  never cascaded into teamless records, nor projects into an unassigned group.
+- An inactive employee keeps profile, home team, ID and handle. Leadership,
+  reporting and assignment references are cleared or replaced explicitly. New
+  assignment and ownership targets must be active. Offboarding does not delete files
+  or task worktrees.
+- Assignment is separate from structure: every task has an accountable `team_id`, an
+  optional project and an independently nullable `assigned_team_id` and
+  `assignee_id`, replaced together at an expected revision with a history event
+  ([document 12](organization-data/12-task-assignment-and-history.md)). Clearing the
+  assignee keeps accountability and does not change status.
+- Messaging checks registered participants under
+  [messaging](organization-data/15-messaging-and-chat.md). Employee identity grants
+  no tools, repository access or security authority. Authority never comes from role
+  text, a YAML flag or a position on the chart.
 
-- Reject team and reporting cycles, cross-organization references, path/field mismatches and a lead whose home team is elsewhere.
-- Employee creation, including owner/HR employee bootstrap, requires a valid home team. A runnable agent additionally needs separate valid execution configuration and placement/readiness evidence.
-- A home-team move is one revision-checked, recoverable operation. Resolve an old-team lead appointment before it would become invalid; update paths with the same identity change. An office move requires safe workspace transfer and fencing, independently of membership.
-- A project cannot be created or left without its owner team. Optional contributors do not share accountable ownership. Changing the owner updates project tasks' accountable `team_id` in the same recoverable operation and records history, retaining current assignments.
-- Archive teams to preserve history. A destructive delete must first resolve child teams, home employees, owned projects/tasks and other referenced records; never cascade employees into teamless records or projects into an unassigned group.
-- Inactive/offboarded employees retain profiles, home team, stable ID and handle. Clear/replace live leadership and resolve reporting/assignment references explicitly. New assignment/ownership targets must be active. Do not infer that offboarding deletes files or task worktrees.
-- Assignment is separate: every task has accountable `team_id`, optional project, independently nullable `assigned_team_id` and `assignee_id`. Replace the complete assignment pair atomically with expected revision and durable event history. Clearing an assignee preserves accountability and does not itself change task status.
-- Messaging checks registered participants under [messaging/chat](organization-data/15-messaging-and-chat.md). Employee identity alone grants no tools, repository access or security authority.
+## Files
 
-Authorization, reserved messaging addresses and cryptographic identity namespaces are governed by their own contracts. The data model never derives authority from role text, YAML flags or chart position.
-
-## How it changes
-
-Selected canonical organization Git paths:
+Canonical paths in the organization repository:
 
 ```text
 organization.yaml
@@ -61,63 +95,49 @@ teams/<root-team-id>/
 projects/<project-id>/project.yaml
 ```
 
-The organization repository must be remote. Register code repositories once in `repositories.yaml`; each project's repository association supplies its required `integration_branch`. One office cache per repository serves all those associations. Canonical employee files and task history are durable; runtime worktrees and indexed projections are not their sole source. Protected messages, private notes, usage and authority require their own durable sources; Git alone is not a full restore.
+The organization repository is remote. Code repositories are registered once in
+`repositories.yaml`; each project's association with a repository carries its
+required `integration_branch`, and one office cache per repository serves every
+association. Protected messages, private notes, usage and authority have their own
+durable sources; Git alone is not a full restore.
 
-Target mutation services must validate revisions, commit recoverable related changes and expose pending/rejected outcomes.
+## Teams, Members and the org chart
 
-## Teams, Members and Org chart
+The Teams area has an indented Teams index, a mixed Members directory (All · People ·
+Agents) and one vertical reporting tree. `/teams`, `/teams/members`,
+`/teams/org-chart`, `/teams/:teamId` and `/members/:memberId` use stable IDs.
+Employee discovery uses Members and the shell search.
 
-The shared Teams area has an indented Teams index, a mixed Members directory
-(All · People · Agents), and one vertical reporting tree. `/teams`,
-`/teams/members`, `/teams/org-chart`, `/teams/:teamId` and `/members/:memberId`
-use stable IDs. The earlier Teams/People/Reporting lines canvases and their
-View menu, Fit/zoom and chart-specific search are replaced. Employee discovery
-uses Members and the shell search. [The UX specification](../specs/offices-and-teams-ux.md)
-owns row fields, team-page tabs, keyboard interaction and acceptance.
+Team rows show the hierarchy, direct employee counts, the lead and the team's Owner
+or Contributor role on projects. Reporting nodes show explicit reporting, the home
+team and subtree-lead responsibility. An owner account card is a visual root, never
+an employee reference; a linked owner employee stays in its real home team and
+reporting position. HR is likewise an employee in a home team.
 
-Team rows retain recursive hierarchy, direct employee counts/lead and project
-Owner/Contributor roles. Reporting nodes retain explicit reporting, home team
-and distinct subtree-lead responsibility. An owner account card is a visual
-root, never an employee foreign key; any linked owner employee remains in its
-real home team/reporting position. HR is likewise a home-team employee.
+The actions are New team, Move team, Move home team, Change manager, and editing a
+project's owner and contributors. Every drag has a menu or dialog equivalent.
+Switching view focuses its heading; removing an item focuses a surviving neighbour or
+ancestor. Invalid home-team or ownership data appears in an explicit repair state,
+never in a teamless tray. Offices are managed in Organization settings and only
+place agents.
 
-Preserve New team, Move team, Move home team, Change manager and accountable
-project owner/contributor editing under the selected rules above. Every drag
-shortcut has a menu/dialog equivalent. View-switch navigation focuses its
-heading; removal focuses a surviving neighbor or stable ancestor. Invalid
-home-team/ownership data stays in explicit repair, never a teamless tray.
-Offices move to Organization settings and still place agents only.
+## What the code does today
 
-## In org-proto
+`crates/org-proto/src/org.rs` and `crates/org-office/src/organization` implement an
+older model. It is replaced, not adapted (implementation plan B2):
 
-### Current-contract evidence at c6e520a
-
-The exact source at this reconciliation's base remains [org_proto::org](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/crates/org-proto/src/org.rs). Existing wire APIs must not be reinterpreted as the target fields:
-
-| Code today | Target |
+| Code | Replaced by |
 | --- | --- |
-| `Team.owner_team_id`, `lead_member_id`, `version` | Replaced by `parent_team_id`, `lead_employee_id` and revision with validated direct home membership. |
-| `Member`, `Membership`, `team.add_member`, `team.remove_member`, `team.set_title` | One home team; the appointment title lives on the employee. No target counterpart for additional memberships or removing the last team. |
-| `member.move { membership_id, expected_version, new_membership_id, to_team_id, title_in_team? }` | Atomic remove/add of a membership; replaced by an employee-revision home-team move with coordinated file/lead updates. |
-| `ProjectTeam`, `project.add_team`, `project.remove_team`, optional team lists | Require an accountable owner plus optional contributors; no current list-order inference of owner is permitted. Areas remain unselected. |
-| `AgentProfile` runtime/model/home/run-mode fields and `office_id` | Separate portable employee identity, execution configuration and placement. Existing managed home remains local server state. Run modes/scheduling are earlier requirements, not selected engines. |
-| `member.offboard` / `member.remove` | Existing offboarding cascades memberships and retains record/handle; target retains required home team. Hard delete remains for records without history only, subject to all references. |
+| `Team.owner_team_id`, `lead_member_id`, `version` | `parent_team_id`, `lead_employee_id`, `revision`, with the lead a direct member |
+| `Member`, `Membership`, `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | One home team per employee and a revision-checked home-team move |
+| `ProjectTeam`, `project.add_team`, `project.remove_team` | A required owner team plus optional contributors |
+| `AgentProfile` runtime, model, home and run-mode fields and `office_id` | Separate employee identity, execution configuration and placement |
+| A person's name used as the handle | Independent `handle` and `name` |
+| ULID `command_id` | UUIDv7 |
 
-Existing `org.snapshot` returns teams, members, memberships, projects/project links and a position; `subscribe { from_position }` resumes there. Keep no-gap reads, version conflicts, command-ID deduplication and queued/blocked outcomes. `command_id` is an uppercase ULID in the code today; in the target every ID is a UUIDv7, command IDs included (identity contract).
-
-Current commands are app-only unless ADR-0003's call-by-call authorization table explicitly permits otherwise. Keep receiving-office authorization before forwarding, enrolled-office checks and the reserved `owner`/`office` and `run:` addresses. The code today also has handle-vs-ID disambiguation and the `owner_protected`, `cycle`, `not_empty`, `not_a_member`, `conflict`, `not_found`, `unknown_recipient`, `snapshot_required`, `expired` and `clock_skew` results, and uses a person's name as the handle; the target has independent handle and name fields. No target UI may claim that unsupported writes already enforce new constraints.
-
-## Plan
-
-| Step | Remaining target work | Responsibility |
-| --- | --- | --- |
-| T0 | Chart forms and criteria for home team, subtree leads and accountable projects | Product design / app owner |
-| T1 | Target contract replacing current memberships/project links | Contract owner |
-| T2 | Recoverable domain writes, canonical files and projection | Domain/store owners |
-| T3 | Integrate live browser reads, pending outcomes and accessible editing after supported contracts exist | App owner |
-
-Implementation needs its own review. No step is claimed complete by this documentation change.
-
-## Decisions (the user, 2026-11-08)
-
-The earlier decisions established recursive teams, optional human/agent leads, distinct people, reporting and shared project participation. The later IA replaces three chart views with the Teams index, Members directory and one reporting tree. Later organization-data decisions replace multi-membership with one home team and replace symmetric project-team links with one owner plus contributors. The earlier teamless owner is superseded for employee records; authenticated owner authority remains separate. Full earlier requirements and wire discussion remain in [the pre-reconciliation design](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/teams-and-org-chart.md). No `Workflows` GitHub App permission is selected here; see the GitHub design.
+The snapshot-and-subscribe read, version conflicts, command-ID deduplication and the
+refusals `owner_protected`, `cycle`, `not_empty`, `conflict`, `not_found`,
+`snapshot_required`, `expired` and `clock_skew` carry over to the new model. The
+rules in `crates/org-office/src/rules` have tests worth keeping where a rule is
+unchanged. The UI dialogs and charts in `apps/agentic-org-ui/src/lib/components`
+run against fakes.
