@@ -81,7 +81,7 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Boundary:** Owns work behavior and task-private notes. Feature definitions and delivery records belong to AREA-05; chat transport belongs to AREA-06; profile memory belongs to AREA-13. Plain checklist steps do not select an execution engine.
 
-**Verification focus:** Check unified task identities and old-reference mappings; assignment, reporter/history and transitions; bug triage/fix verification; request routing/outcomes; persisted checklists/output/time; comments/questions and needs-me visibility. Following/requested-by, backlog planning and subtask cascades remain Deferred.
+**Verification focus:** Check unified task identities and office-minted references; assignment, reporter/history and transitions; bug triage/fix verification; request routing/outcomes; persisted checklists/output/time; comments/questions and needs-me visibility. Following/requested-by, backlog planning and subtask cascades remain Deferred.
 
 **Requirements:** [Work UX](specs/work-items-ux.md), [Request UX](specs/feature-requests-ux.md), [Work design](design/tasks-projects-docs.md), [Assignment/history](design/organization-data/12-task-assignment-and-history.md), [Private task notes](design/organization-data/13-private-task-notes.md).
 
@@ -101,7 +101,7 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Chat and agent messaging** · [Feature checklist](FEATURES.md#chat-and-agent-messaging)
 
-**Scope:** Agent CLI messaging, local mailbox delivery, conversations/channels/group DMs, threads, asks, attachments/reactions, handoffs, history, delivery and the protected-source transport cutover.
+**Scope:** Agent CLI messaging, local mailbox delivery, conversations/channels/group DMs, threads, asks, attachments/reactions, handoffs, history and delivery.
 
 **Boundary:** Owns conversation behavior and delivery. Assignment semantics belong to AREA-04; execution wake/stop primitives belong to AREA-08; durable cross-office restoration belongs to AREA-12. Shared Git is never chat storage.
 

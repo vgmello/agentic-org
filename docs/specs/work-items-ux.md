@@ -140,7 +140,7 @@ Editing one field clears only its marker. A new attempt or Dismiss clears that
 panel's stale error while preserving typed text, Undo draft and the ordinary
 manual Report bug confirmation. See the existing [copilot contract](../design/smart-features.md#2-bugfrom_sentence-implemented-library-entry-version-2).
 
-After three title characters show up to three similar open bug-typed tasks in the selected scope. “This is the same bug” adds the report as an explicitly shared comment on the chosen existing record; it preserves that record's reporter and creates no second task. Clearly label suggestions from other scopes with qualified references. No match does not block reporting.
+After three title characters show up to three similar open bug-typed tasks in the selected scope. “This is the same bug” adds the report as an explicitly shared comment on the chosen existing record; it preserves that record's reporter and creates no second task. Clearly label suggestions from other projects or teams with where they belong. No match does not block reporting.
 
 Environment capture is visible/editable: office/app version and per-repository branch/commit only when actually known, never guessed from a single project cache. Attachments remain hidden until their storage is designed. Closing dirty capture asks before discarding. Submit reports success only after durable acceptance; an accepted bug always has its reference at once, so it says “Bug T-A42 saved”, whereas an unsubmitted draft says **Unsaved**. In place of an old B- toast use “Bug T-A42 saved”.
 
@@ -345,7 +345,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - FIX-7 · **Lifecycle-dependent:** Duplicate requires a resolvable original, rejects self-reference, and retains navigation/evidence; duplicate metadata uses details.duplicate_of_task_id and selected same-organization target/cycle validation.
 - FIX-8 · **Lifecycle-dependent:** Won’t fix/Can’t reproduce require a retained reason and identify any actual notification audience; no delivery is claimed before acknowledgment.
 - FIX-9 · **Lifecycle-dependent:** explicit reopen requires note, actor/time and retained original history; exact resolution/count/duplicate-edge disposition requires a transition decision.
-- FIX-10 · **Adapter-dependent:** known commits/branches resolve via stored per-repository task identity and explicit reference mappings; textual old-prefix rewrites never create target links.
+- FIX-10 · **Adapter-dependent:** known commits/branches resolve via stored per-repository task identity; text that merely looks like a reference never creates a link.
 - FIX-11 · **Deferred:** reporter departure/area-lead verification fallback needs a selected routing model; historical reporter remains visible even inactive.
 
 **Areas (AREA)**

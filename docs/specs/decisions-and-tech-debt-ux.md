@@ -43,7 +43,7 @@ ada already writes decisions and designs in a consistent way. The app adopts it 
 
 ## 0. Decisions in this spec
 
-0. **Written through the tool, kept in organization Git.** Decisions, designs, findings and the project brief are durable knowledge. A project may use several code repositories, but its authored definitions do not inherit any one code repository's `docs/` layout. Tool-driven authoring is the UX proposal; edits/imports must preserve canonical fields, existing stable IDs and authenticated actor attribution.
+0. **Written through the tool, kept in organization Git.** Decisions, designs, findings and the project brief are durable knowledge. A project may use several code repositories, but its authored definitions do not inherit any one code repository's `docs/` layout. Tool-driven authoring is the UX proposal; edits must keep canonical fields, stable IDs and authenticated actor attribution.
 
 ### 0.1 The project structure (in organization Git, on its state branch)
 
@@ -75,7 +75,7 @@ projects/<project-id>/
 
 Supporting `documents` use `kind: brief | decision | design | report | changelog`. Every one requires project; at most one feature/release/deployment ID is present and must belong to the same project. `brief` is project-wide; feature support is design/decision/report; changelogs belong only to a release or deployment. `feature.md` projects into `features`, not a duplicate document. Shared architecture stays at project scope and links from several features rather than becoming several canonical copies. Process/standard content uses the separate selected structural contract at organization, recursive team or project scope, not another general document kind.
 
-A document has stable `id`, optional display `key`, schema/revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and common creation/update attribution. Current requires an active accountable owner. New IDs use UUIDv7; retain imported stable IDs and keys. Documents have no selected ADR/EVAL/DEBT numeric allocation engine. Existing labels can remain keys; they are not primary keys. Rename a title/key without renaming the stable-ID file or breaking ID links. No automatic renumbering of imported records.
+A document has stable `id`, optional display `key`, schema/revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and common creation/update attribution. Current requires an active accountable owner. IDs are UUIDv7. Documents have no selected ADR/EVAL/DEBT numeric allocation engine. Existing labels can remain keys; they are not primary keys. Rename a title/key without renaming the stable-ID file or breaking ID links. No automatic renumbering of imported records.
 
 Organization/team process and standard files share this organization repository (`processes/<id>.md`, `standards/<id>.md`, recursively nested `teams/<id>/.../processes/<id>.md`). Their overrides default allowed unless explicitly prohibited. Private process storage/access is an unresolved deferred proposal; shared Git cannot provide author-only visibility.
 
@@ -99,7 +99,7 @@ The earlier “persistent in Git, transitional only in SQL” rule is obsolete. 
 7. **Deferred debt subsystem:** the earlier DEBT records, payment states, category views and automation below remain a proposal. Selected task details share task identity/revision and are saved atomically with its activity event. They preserve definition-of-done, branch, done-anyway evidence, reproduction/expected/steps/environment, closure/reopen/duplicate/merge context, separate same-project affects_feature_id, request content/routing/outcome, draft IDs and proposal estimates. Suggested triager/verifier fields are suggestions, not assignments/authority. Selected `details.shortcut` holds `{type: none}` or `{type: debt, ids: [...]}` without creating a debt table/kind/counter. A selected decision/report can already explain a shortcut; it must not silently acquire the proposed debt schema.
 8. **Deferred capture workflow:** capture at the shortcut, a review finding, a TODO or a decision; one sentence can begin a draft. Prompts/scans create nothing without explicit acceptance.
 9. **Debt is never shaming.** A shortcut records a trade-off, who took it and why. Area grouping and automated payback/Undo are individually deferred.
-10. **Import our history deliberately.** This repository's software `docs/` remains its own source documentation. Importing knowledge into an organization is an explicit copy/mapping with stable-ID provenance, not a request to move this repository's files now. Old v0 decisions retain distinct identities even when display numbers collide.
+10. **No import of this repository's documents (owner, 2026-11-17).** This repository's software `docs/` stays where it is. Copying it into an organization is not a v1 feature; new decisions are written in the product.
 
 ## 1. Words (glossary additions)
 
@@ -143,7 +143,7 @@ ADR labels in this example are retained optional display keys; the canonical rec
 - **Header** (reader): selected metadata from front matter (§3.0): kind, optional key, title, lifecycle, owner, creation/update attribution/time and explicit scope. Show authored links as links and the canonical path as read-only. A quoted “accepted by” or “superseded by” statement may appear in the Decision body; it is not inferred as authenticated approval or read from unsupported front-matter fields.
 - **Footer:** **Led to** (items and docs linked from this one, or that link it as their Why) and **Mentioned in**.
 - **Filters:** Status · Owner · search. Search matches permitted canonical title, stable ID/display key and body text; feature definitions appear as feature results linked to their single canonical record. Group by record type, include scope/status and label body-match excerpts as excerpts. Declare actual indexed scope/freshness and title-only, truncated-body or unavailable coverage; no matches never proves absent content outside that coverage. Author-private notes, protected chat and inaccessible records never enter these shared results. **Earlier decisions (v0)** is a read-only group with a note: "From ada's notes before offices. Some are superseded by current decisions." (A18).
-- **States:** a doc whose front matter is missing or invalid shows "Details not recognized: <field> <problem>" with **Fix** (opens the Details panel), and the body still shows, and the doc still shows · a duplicate imported display key shows both with scope/provenance and **Resolve key…**; stable IDs and imported numbers are never silently renumbered · everything else as work-items Flow 8 (conflicts, history, git errors).
+- **States:** a doc whose front matter is missing or invalid shows "Details not recognized: <field> <problem>" with **Fix** (opens the Details panel), and the body still shows, and the doc still shows · a duplicate display key shows both with scope and **Resolve key…**; stable IDs are never changed · everything else as work-items Flow 8 (conflicts, history, git errors).
 
 ## 3. Templates: front matter and sections
 
@@ -273,7 +273,7 @@ status: open                 # open | planned | paid | accepted; planned and pai
 cost: medium                 # cost of leaving it: low | medium | high
 effort: s                    # to pay it back: s | m | l
 area: Office server
-taken: { by: ac-software-engineer-river, on: 2026-11-08, task: T-A17, commit: 9c1e0b2, branch: task/ac-T-17-office-client }
+taken: { by: ac-software-engineer-river, on: 2026-11-08, task: T-A17, commit: 9c1e0b2, branch: task/T-A17-office-client }
 because: [ADR-0004]          # the decision that accepted it, if any
 payback: []                  # tasks that pay it back, e.g. [T-A40]
 accepted: null               # { on, by, reason } when we decide to live with it
@@ -348,12 +348,8 @@ The tool helps agents work the way the organization wants by **prompting them at
 
 ## 7. Bringing our own project in (dogfood)
 
-When an owner explicitly imports this software project's knowledge into an organization:
-- Read the chosen code repository/ref as an import source; show every proposed destination and scope in organization Git. Never automatically move this repository's software documentation.
-- Offer **Add front matter** as a per-file diff with Apply/Skip, mapping old status/owner/time into selected fields without fabricating missing actors. Keep original path, commit and display key as provenance.
-- Allocate stable UUIDv7 IDs for new imported records; preserve any existing stable IDs. Map ADRs to decisions, designs/specs/plans to design content and evaluations/reviews to reports. Explain unmatched custom debt/limitation/exception fields as deferred rather than silently importing unsupported kinds.
-- Offer v0 notes as Earlier decisions (v0), with distinct stable IDs and retained keys/provenance; duplicate ADR labels require explicit resolution, not global renumbering.
-- Show **Copy / Skip** file by file and a source pointer only if its owner requests one. Knowledge publication and code changes have separate review/failure states.
+Withdrawn (owner, 2026-11-17). An earlier revision described an owner-run import of this repository's documents into an organization, with a per-file preview. It is not built in v1: the repository's documents stay in the repository, and the team writes new decisions and designs in the product. It may be proposed again later as an ordinary feature.
+
 - Debt scanning from TODOs, review findings and “Not covered here” remains a deferred capture proposal. Draft candidates require Record/Skip, never silent record creation.
 
 ## 8. UX acceptance criteria
@@ -367,7 +363,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - DEC-4 · **Deferred specialized approval workflow:** Accept/Reject/Request changes may propose decision-body changes with actor/time evidence and a reason, or use a separately selected authenticated approval extension. They cannot put accepted/rejected in selected document status or invent decided front matter. Proposed publication remains visible until merged.
 - DEC-5 · **Deferred specialized editor/approval workflow:** Proposed ADRs appear in the owner's Needs you, one row each.
 - DEC-6 · **Deferred specialized editor/approval workflow:** Supersede drafts a new decision body linked to the old stable record and proposes reciprocal supersession evidence. Preserve selected Draft/Current/Deprecated lifecycle; a specialized Superseded state needs a separately selected extension.
-- DEC-7 · Invalid metadata names the field and offers Fix while retaining a readable body. Display-key clashes show both identities/provenance and Resolve key; preserve stable IDs and imported numbers.
+- DEC-7 · Invalid metadata names the field and offers Fix while retaining a readable body. Display-key clashes show both identities/provenance and Resolve key; stable IDs never change.
 - DEC-8 · Deprecated content collapses under Older; richer superseded/rejected/obsolete classifications remain proposed decision/body metadata.
 
 **Why and evaluations (WHY)**
@@ -390,8 +386,8 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - DBT-11 · **Deferred debt workflow:** Draft debt found by a scan (TODOs, review findings, "Not covered here") is never created without Record.
 
 **Our project (OURDOC)**
-- OURDOC-1 · Explicit import previews software docs at the chosen repository/ref and v0 notes as distinct retained identities; no hard-coded document counts or automatic source move.
-- OURDOC-2 · Explicit import previews canonical organization-Git destinations and per-file Copy/Skip; source deletion or pointers require an explicit choice.
+- OURDOC-1 · Withdrawn 2026-11-17: no import of repository documents in v1.
+- OURDOC-2 · Withdrawn 2026-11-17: no import of repository documents in v1.
 
 **Authoring through the tool (AUTH)**
 - AUTH-1 · Tool authoring writes selected documents at canonical organization-Git scopes with stable IDs, required metadata and admitted attribution; reviewed branch publication remains a proposal. Code-task --here convenience requires explicit cross-repository adaptation.

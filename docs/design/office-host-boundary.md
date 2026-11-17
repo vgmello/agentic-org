@@ -400,7 +400,7 @@ agentic-org-office --discard <id>    # remove an unfinished office, then exit (t
 >
 > Pending in X-02 §12 Q9, not yet in its §5: the office temp handle on the first line (at startup,
 > before it starts any worker, the host allocates and claims one for every catalog office that lacks
-> one, so offices created under v2 aren't stranded), the `joined` event, moving the watchdog's `child`/`child_gone` lines (below) off stdout, and a `layout_changed`
+> one), the `joined` event, moving the watchdog's `child`/`child_gone` lines (below) off stdout, and a `layout_changed`
 > record that asks workers to refresh sandbox policies.
 >
 > **Until then:** a satellite create is refused (below); office-run sessions don't launch, because they need

@@ -130,7 +130,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
 | Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md` |
 | Accountability and lifecycle | Feature/document owners; active/archived teams; employees `active`, `paused` (agents) or `inactive` in one status field; draft/current/deprecated documents |
-| Task, milestone and release completion | Task status is the closed list `todo`, `in_progress`, `blocked`, `done`. Milestones and releases store no status; done is derived from their tasks |
+| Task, milestone and release completion | Task status is the closed list `todo`, `in_progress`, `blocked`, `cancelled`, `done`; done or cancelled is finished. Milestones and releases store no status; done is derived from their tasks |
 | Compatibility before v1 ships | None. Nothing is deployed: no migration, import, alias or legacy shape is kept ([rule](#no-compatibility-obligations-before-v1-ships)) |
 | Attribution and relationships | Common creation/update actors and times; typed authored links and derived inverse/scope relationships |
 | Encryption at rest | None for data at the application level (ADR-0016); disk encryption, file permissions and agent isolation (ADR-0015) protect it. An office's private keys are stored wrapped by a host-held key |

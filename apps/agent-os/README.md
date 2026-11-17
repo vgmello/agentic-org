@@ -2,7 +2,7 @@
 
 Fast, zero-runtime CLI for agent-to-agent messaging, directory lookup (`who`), self-reported status (`status`), and message triage (`defer`, `done`, `notify`, `due`) over `crates/org-spool`.
 
-## Build and cutover
+## Build
 
 ```bash
 cargo build --release -p agent-os --bin agent-os
@@ -11,7 +11,7 @@ cargo build --release -p agent-os --bin agent-os
 
 Install the reviewed agent-os artifact through the pinned release. The new CLI keeps the existing spool layout and ORG_AGENT/ORG_OFFICE bindings.
 
-Use agent-os relay run/status directly. Legacy relay argv[0] dispatch remains compatible for existing deployments; a fresh release needs no relay alias or additional service executable.
+Use agent-os relay run/status directly. A release needs no relay alias or additional service executable.
 
 ## Selected organization-data target (adapter work)
 
@@ -20,8 +20,8 @@ The commands and Phase A/opt-in Phase B behavior below describe the current exec
 | Current behavior | Target mapping and remaining work |
 | --- | --- |
 | Spool profile/status and ORG_AGENT/ORG_OFFICE binding | Employee identity requires one home team; role/reporting are optional. Model profile, local connection credentials and office placement remain separate. Spool owner flags are Phase A compatibility data, never authenticated owner authority. |
-| Directed sends/replies and thread root IDs | Import original IDs as `directed_thread`, preserving per-message sender/recipient visibility, read/triage and pending asks. Participant unions must not reveal other directed messages or their counts/previews. Preserve original v1 hash/envelope separately from normalized hashes. |
-| Local spool / office message SQL | Protected durable conversation/message envelopes and attachments outside disposable office caches; SQL is a projection. Implement recoverable source writes/actor-bound receipts before acknowledgement. The Phase A flush limitation below remains real until verified cutover. |
+| Directed sends/replies and thread root IDs | Conversations are DMs, group DMs and channels with per-employee state files (document 15). Nothing is imported from the current store. |
+| Local spool / office message SQL | Protected durable conversation/message envelopes and attachments outside disposable office caches; SQL is a projection. Implement recoverable source writes/actor-bound receipts before acknowledgement. The flush limitation below applies to the current code. |
 | Existing messaging/directory tools | Channel discovery, group conversations, typed task mutations and execution/budget commands require reviewed adapters/contracts; no syntax for those is implemented by this target description. |
 
 Target IDs are UUIDv7. Target task references are T- for every type, minted by the creating office and complete on their own, for example `T-B37`. A handoff is not task closure and cannot discard its worktree. Chat does not copy author-only private task notes or become project/feature knowledge automatically.
@@ -80,7 +80,7 @@ right after a send can still lose it.
 
 ## Through the office (Phase B, in progress)
 
-**Opt-in during the cutover.** `msg send`, `msg inbox`, `msg read`, `msg wait` and `who` go
+**Opt-in today.** `msg send`, `msg inbox`, `msg read`, `msg wait` and `who` go
 through an office only when one is named: `--office <id>` or `$ORG_OFFICE`. With neither, they
 use the local spool exactly as before, even on a Mac that has an office. (Once the office serves
 `notify`, `reply`, `defer` and `done`, the default becomes ADR-0003 §2.1's: the only office with

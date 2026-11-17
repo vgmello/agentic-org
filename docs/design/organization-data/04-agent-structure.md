@@ -91,7 +91,7 @@ reports_to_employee_id: null
 Reservations team employee identity. Execution configuration is stored separately in execution.md, as defined in document 11.
 ```
 
-Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Preserve existing v1 handles on import where valid and resolve collisions explicitly. Agent provisioning and messaging transport remain pending specifications. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling remain outside this specification.
+Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Agent provisioning and messaging transport remain pending specifications. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling remain outside this specification.
 
 ## Runtime location
 
@@ -197,9 +197,9 @@ The same-named scalar fields below live in `profile.md` front matter and project
 
 **Employee state is one field (owner decision 2026-11-17).** `status` is a closed list: `active`, `paused`, `inactive`. `paused` applies to agents only: the agent keeps its employment, handle and history and is not started. `inactive` is a person who has left or an agent that has been offboarded; `offboarded_at` may be set only then, and the profile keeps its handle. There is no second state field. Whether an agent may run is one rule: its status is `active`, it has an enabled execution configuration ([document 11](11-model-profiles-and-agent-execution.md)), and no unreleased budget hold applies ([document 17](17-budgets-and-controls.md)). Holds stay separate records because they belong to a budget and a period, not to the employee.
 
-`role_text` preserves v1's descriptive role independently of the normalized `role_id`; import must not invent a role ID from arbitrary text. `title_in_team` describes the home-team appointment, not a second membership. **There is no owner field on an employee.** The organization owner is an authenticated account held by the host, described in the [index](README.md#outside-this-set-what-the-host-owns). If that account is also represented by a person record, the record is an ordinary employee with a home team. Team leadership remains a separate appointment.
+`role_text` is a free descriptive role, independent of the normalized `role_id`; a role ID is never invented from that text. `title_in_team` describes the home-team appointment, not a second membership. **There is no owner field on an employee.** The organization owner is an authenticated account held by the host, described in the [index](README.md#outside-this-set-what-the-host-owns). If that account is also represented by a person record, the record is an ordinary employee with a home team. Team leadership remains a separate appointment.
 
-V1 members can have several memberships. Runtime/model move to document 11's execution configuration; machine-specific home remains managed local state. Run modes, scheduling and memory remain deferred; no schedule engine or schedule table is introduced here.
+Runtime and model belong to document 11's execution configuration; machine-specific home remains managed local state. Run modes, scheduling and memory remain deferred; no schedule engine or schedule table is introduced here.
 
 ```yaml
 contact: "product@example.invalid"

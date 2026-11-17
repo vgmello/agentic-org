@@ -284,7 +284,7 @@ Optional and unselected for this data change; the following is an earlier UX pro
 
 - CHAT-36 · Protected envelopes/attachments and required receipts survive office-cache loss; SQL is rebuildable and Git alone is insufficient. Private task notes never appear automatically in chat, search or attachments.
 - CHAT-37 · Message content is verified by its normalized canonical-JSON hash. Retries retain original delivery identity.
-- CHAT-38 · Scoped task links use T- for task/bug/request and qualify project/team scope outside it; there are no B-/REQ- links.
+- CHAT-38 · Task links use T- for task/bug/request and are complete on their own (`T-B37`); there are no B-/REQ- links.
 - CHAT-39 · Accepting a handoff does not close a task/delete a worktree. Any assignment mutation commits both assignment fields atomically with expected revision and durable task history.
 - CHAT-40 · Concurrent card updates surface revision conflicts; an unknown command/send outcome is reconciled through its retained operation/message identity before retry, without duplicate replies or approvals.
 

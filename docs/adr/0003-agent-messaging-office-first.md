@@ -4,12 +4,12 @@
 
 [Messaging data](../design/organization-data/15-messaging-and-chat.md) owns the selected conversation/source model; [recovery](../design/organization-data/16-recovery-and-office-continuity.md) owns acknowledged receipts, checkpoints and process evidence. This ADR retains the exact v1 directed-message storage, codecs and security contracts in §§1–5 as compatibility/implementation evidence. Those sections do not prescribe the selected canonical file layout or establish that every planned slice shipped. §6 reconciles the selected data with the earlier chat proposals; sketches remain unimplemented contracts. See the [authority map](../design/documentation-authority.md).
 
-| Existing v1 contract/evidence | Selected target adaptation |
+| What the code has today | Selected target |
 | --- | --- |
 | `msg_headers`, `msg_bodies`, `msg_state`, thread/unread indexes in `office.db` | Access-controlled SQL projections of protected conversation/message envelopes and attachments outside disposable office state. The adapter must make source durability, receipt and projection writes recoverable before acknowledgement. |
-| `thread_id`, participant union and per-message `from_member_id`/`to_member_id` | Import one `directed_thread` with the original thread/root IDs; preserve each message's sender/recipient visibility. A participant union never authorizes another message. Filter subject, last-message, counts, previews and search by visible messages. |
-| v1 `content_hash` (§3.4, version byte + seven length-prefixed fields) | Preserve as `source_content_sha256`, `source_hash_codec: v1_lenprefixed_sha256` and immutable `source_envelope`; verify the original codec separately from normalized RFC 8785 `content_sha256`. Do not rename or recompute the old wire hash with the new algorithm. |
-| v1 origin/incarnation/sequence and recipient triage generation | Retain original delivery identities and independent state origin. Content/state share the old allocator/high-water; import must not split it into overlapping sequences. Local cursors remain derived. |
+| `thread_id`, participant union and per-message `from_member_id`/`to_member_id` | Not carried over. Conversations are `dm`, `group_dm` or `channel` (document 15); nothing is imported. |
+| `content_hash` (§3.4, version byte + seven length-prefixed fields) | Not carried over. Messages use the one `content_sha256` of document 15. |
+| Origin/incarnation/sequence and recipient triage generation | The selected stores keep one allocator and high-water for content and state; local cursors remain derived. Nothing is imported. |
 | Cutover of the former development team's message queue: **withdrawn 2026-11-17**, nothing is carried over | Not built. The executable is `agent-os`. |
 
 The target office/session integration also follows [Chat's noninterrupting
@@ -33,7 +33,7 @@ authorized service-managed credential/start contract if bridges ship; it cannot
 depend on a Tauri window. Native deep links become normal HQ URLs. No desktop
 application/data migration is required, and no earlier message queue is carried
 over (owner, 2026-11-17). Person-started spool behavior remains separate from office-managed authentication.
-The first standalone local protocol advances to API_VERSION 2 under ADR-0001;
+The local protocol is API version 1 and changes in place until v1 ships (ADR-0001);
 historical statements that additive chat additions keep version 1 apply to that
 version only, not breaking removals or changed authority in the standalone pivot. See the
 [removal inventory](../design/standalone-server-removal-inventory.md).

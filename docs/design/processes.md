@@ -308,9 +308,8 @@ Each step: its own branch, an independent review, the reviewer's READY, a merge 
 
 ## Appendix A. Migration
 
-**Deferred sketch.** No backfill or data move is authorized/enacted by this document.
-- **R2 backfill.** Records come from each task's `branch`: `base_sha` is its merge base with the integration branch, `own_tip` its tip when not in the integration branch. Merged when the tip is in the integration branch and the task is Done · Completed; archived (with its tag) for a cancelled or deleted task, or a closed one with no own work; open otherwise. An existing `integration_branch` with a reserved prefix goes to the owner's Needs you. A squash-merged Done task shows as stuck, for **Mark merged…**.
-- **Software repository documentation remains here.** Earlier plans to move branch-and-merge.md into a handbook are superseded for selected storage. A future explicit organization import may map generic/project-specific content to selected scoped process records; this documentation reconciliation moves no files and changes no AGENTS.md rules.
+Nothing is migrated or backfilled: no tasks exist before the product is first used (owner, 2026-11-17).
+- **Software repository documentation remains here.** Earlier plans to move branch-and-merge.md into a handbook are superseded for selected storage. This documentation reconciliation moves no files and changes no AGENTS.md rules.
 
 ## Appendix B. The CLI (PROC-8)
 

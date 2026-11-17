@@ -220,7 +220,7 @@ stale placement, and symlink redirection without creating an external directory.
    - Antigravity: the earlier `<runtime dir>/.agents/agents/<id>.md` / `--add-dir` / `--agent` mapping is **unverified research**, not an established native format. Keep it unavailable until installed-version fixtures prove loading/selection and isolation; do not synthesize a format.
 
    New instruction revisions apply to the next logical turn; recovery preserves the admitted input/policy. An explicit authorized new input is not a silent mutation of the frozen turn.
-9. **Office-run sessions load no mods and no inbox hooks.** The office owns admitted input, presence and control. This does not select automatic wake/goal behavior. Existing inbox hooks stay for sessions people start interactively until their separate transport cutover.
+9. **Office-run sessions load no mods and no inbox hooks.** The office owns admitted input, presence and control. This does not select automatic wake/goal behavior. Existing inbox hooks stay for sessions people start interactively.
 
 ## The model
 

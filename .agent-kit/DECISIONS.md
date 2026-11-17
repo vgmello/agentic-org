@@ -24,7 +24,7 @@ assignment-pair domain boundary and its separate service-acceptance obligations.
 [ADR-0006 / TAI-01](../docs/adr/0006-selected-task-acceptance.md) revision 5 is
 **active for implementation architecture**, after fresh independent review and a focused READY recheck. It covers selected
 assignment’s authenticated vertical path and focused private web transport edges, codec 2, snapshot preservation,
-recoverable acceptance, adoption and UI; it does not claim implemented support.
+recoverable acceptance and UI (adoption is withdrawn); it does not claim implemented support.
 
 [ADR-0007 / REC-ESC-1](../docs/adr/0007-hq-creation-escrow.md) revision 1 is **active for implementation architecture**, following independent READY review and a bounded primitive probe. It fills the missing HQ-creation escrow format prerequisite for ADR-0006 P6/P9: fixed Argon2id/AEAD envelope, high-entropy code, worker-local CA key, protected delivery and idempotent provisioning. It preserves ADR-0006 and REC-1; production setup/recovery acceptance remains unverified.
 
@@ -32,7 +32,7 @@ recoverable acceptance, adoption and UI; it does not claim implemented support.
 
 [ADR-0009 / RLS-1](../docs/adr/0009-complete-release-verification.md) revision2 is **active for implementation architecture**, after fresh independent READY and exact-version signature/archive plus generated macOS loaded-image probes. It selects build-pinned exact-byte signed complete directory/tar.gz bundles, publisher-bound runtime images/authenticated static assets, host-owned durable staging/pins and a narrow shared org-release verifier. Revision2 preserves the gateway64MiB/4096-entry UI budget including inferred directories and source-backed kernel-loaded image binding; one focused architecture finding was corrected and independently rechecked READY. Production key provisioning and full setup/adoption/browser/code acceptance remain unverified.
 
-- [ADR-0010 / LEGACY-ADOPT-1 r1](../docs/adr/0010-legacy-task-adoption.md): independently READY conservative legacy version1 adoption, explicit baseline1/import facts with complete original Created evidence, strict mapping/public classification and intact staged unsupported histories. No full migration/code acceptance.
+- [ADR-0010](../docs/adr/0010-legacy-task-adoption.md): **withdrawn by the owner 2026-11-17.** Nothing has shipped, so there is no legacy work to adopt; no adoption, staging or import is built.
 
 - [ADR-0011 / REC-DEL-1 r1](../docs/adr/0011-protected-recovery-delivery.md): independently READY protected native OS-presence delivery, same-run ACK, durable audit/deletion/reopen and bounded committed public escrow transfer/export. Exact cc1.11.1 SDK bridge, no crypto/key boundary change. Actual physical-auth/production implementation and full feature acceptance remain unverified.
 

@@ -280,7 +280,7 @@ Every task event uses `schema_version: 2` and the `canonical-json/2` codec in th
 [hash codec registry](08-record-contracts.md#hash-codec-registry). There is one event
 codec. The number 2 is kept because the code already implements the codec under that
 name; there is no version 1 to read. Admission accepts only this codec and refuses
-anything else. Never hide known missing history behind a fabricated baseline.
+anything else. History starts at revision 1 with the task's creation; never fabricate an event.
 
 Codec 2 accepts one complete UTF-8 JSON value with JSON whitespace only around it.
 Reject BOM, trailing content, malformed numbers, unpaired surrogates and duplicate
@@ -332,7 +332,7 @@ encoded envelope budget as well.
 
 History is append-only. Fix a mistaken assignment or status with a new event; do not edit earlier facts. Preserve events when a task closes or its active file becomes a tombstone. The tombstone retains the final revision, reporter and last assignment pair in `record_metadata`, and `record_refs` continues resolving the task. The archive is shared task information under the task's visibility rules. Private notes, agent memory and credentials must not be copied into comments, event payloads or provenance metadata by default.
 
-Before publishing/rebuilding an accepted projection, validate event hashes, unique identities, contiguous revision coverage from the known baseline, and agreement between the final event revision and the current task/tombstone revision. A missing middle event is an incomplete history that needs recovery. SQL's foreign keys and uniqueness constraints do not implement this whole validator or the atomic file-write protocol. A current snapshot alone is not proof of complete history.
+Before publishing/rebuilding an accepted projection, validate event hashes, unique identities, contiguous revision coverage from revision 1, and agreement between the final event revision and the current task/tombstone revision. A missing middle event is an incomplete history that needs recovery. SQL's foreign keys and uniqueness constraints do not implement this whole validator or the atomic file-write protocol. A current snapshot alone is not proof of complete history.
 
 
 ```mermaid

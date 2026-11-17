@@ -33,7 +33,7 @@ For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/origi
 | Employee | `status: active | paused | inactive` (default active); `paused` for agents only |
 | Supporting document or process/standard content | `status: draft | current | deprecated` (default draft) |
 | Project | Existing `archived: false | true` |
-| Task | `status: todo | in_progress | blocked | done`, set by an authorized actor; no transition engine |
+| Task | `status: todo | in_progress | blocked | cancelled | done`, set by an authorized actor; `done` or `cancelled` is finished; no transition engine |
 | Feature | `status: planned | in_progress | live | retired`, authored; no transition engine |
 | Milestone, release | No stored status; done is derived from task status (document 02) |
 
@@ -118,7 +118,7 @@ Several contracts store a SHA-256 over canonical content. They do not all canoni
 
 Rules that keep this extensible:
 
-1. **One codec per stored hash, known without guessing.** The record's `schema_version`, or an explicit codec column such as `source_hash_codec`, selects the codec. A verifier never tries codecs in turn until one matches.
+1. **One codec per stored hash, known without guessing.** The record's `schema_version` selects the codec. A verifier never tries codecs in turn until one matches.
 2. **Additive only.** A new canonical form gets a new codec ID and a new `schema_version` on the records that use it. Existing bytes and hashes are never re-encoded, recomputed or renamed.
 3. **New record families reuse a registered codec.** The default for new JSON records is `canonical-json/2`: it is specified to the byte, keeps integer amounts and ordinals as exact tokens instead of floating-point numbers, and already has an implementation. Introducing another form needs a row here first.
 4. **SHA-256 throughout, lowercase hexadecimal, 64 characters.** A different algorithm is a new codec ID, not a parameter.

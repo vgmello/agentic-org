@@ -119,7 +119,7 @@ Until the store is rebuilt, the code holds an older receipt store beside the sel
 one. A work operation ID retained by either cannot be admitted again under the other.
 That coexistence rule goes away with the older store; nothing is imported from it.
 
-A checkpoint cannot establish authority by itself. Verify organization identity, trusted HQ/CA pins, codec compatibility, contiguous event sequence and digest chain before applying/rebuilding. Host credentials and CA pins stay in existing protected custody; they are not synthesized from Git or these tables. Higher observed epochs fence stale authority; a restored old office never promotes itself. Snapshot bytes must hash-match their transfer metadata before installation; rejected/partial artifacts confer no authority. Import keeps v1 native/base/pending fields and opaque snapshot install payload where needed; SQL is not a lossy replacement for the existing binary/state-machine journal.
+A checkpoint cannot establish authority by itself. Verify organization identity, trusted HQ/CA pins, codec compatibility, contiguous event sequence and digest chain before applying/rebuilding. Host credentials and CA pins stay in existing protected custody; they are not synthesized from Git or these tables. Higher observed epochs fence stale authority; a restored old office never promotes itself. Snapshot bytes must hash-match their transfer metadata before installation; rejected/partial artifacts confer no authority. SQL is not a lossy replacement for the binary/state-machine journal.
 
 The selected local writer admission binds the registered instance/root filesystem
 identity, protected organization/HQ/office binding, writer epoch, device-local
@@ -189,8 +189,11 @@ earlier store. Nothing has shipped, so there is nothing to adopt: no such comman
 interface is built, and no staging area exists. The organization's directory of
 teams, employees and projects comes from creating the organization and from ordinary
 organization commands, through the same office writer and acceptance journal as every
-other change. How the first directory generation is admitted on that path is to be
-stated with the store rebuild (conflict plan entry B-01).
+other change. Two things the withdrawn interface used to provide must be restated with
+the store rebuild (conflict plan entry B-01): how the first directory generation is
+admitted, and how a newly created task first enters the acceptance journal
+([ADR-0006](../../adr/0006-selected-task-acceptance.md) covers changes to an existing
+task, not its creation).
 
 ## Moving agents and moving offices
 
