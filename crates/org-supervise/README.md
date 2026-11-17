@@ -6,9 +6,10 @@ no office, employee, protocol, storage or adapter implementation.
 
 Piped spawning, generated files, owned graceful/fast stopping, socket cleanup and
 probe preparation are implemented. Native orphan discovery is available through
-the recovery API on macOS and Linux. PTYs follow in a separate delivery.
-Integrate native recovery before launching real Claude. Its tools can leave its
-process group.
+the recovery API on macOS and Linux, and the office worker uses it
+(`apps/agentic-org-office/src/owned_recovery.rs`). PTYs are not implemented; agents
+run headless. Integrate native recovery before launching a real agent runtime: its
+tools can leave its process group. Increment C3 starts agents with this library.
 
 The required platforms are macOS 13+, Linux kernel 5.10+/glibc 2.34+. Root and
 setuid/setgid executable launches are refused. Missing/restricted process APIs
@@ -21,8 +22,8 @@ selects the office worker's internal supervisor/router/session runner as this
 library's caller. That integration owns employee identity versus execution config,
 ordered connection pools, private local bindings, HQ permits, logical turns and
 attempts. org-supervise does not implement any of those services or select a
-scheduler, memory helper or native delegate engine. The current APIs below remain
-the implemented process contract; target schema tables are not applied migrations.
+scheduler, memory helper or native delegate engine. The APIs below are the
+implemented process contract.
 
 Persist this library's ownership/cleanup evidence outside disposable projections,
 as [recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md)
@@ -96,16 +97,16 @@ Credential checks reject real/effective/saved root IDs on Linux and real/effecti
 root or `issetugid()` provenance on macOS. Credential policy is unit tested;
 running the real privileged-credential queries under root requires a privileged
 harness. Core-dump limits are inherited unchanged, and preparation/spawn refuse either
-limit being nonzero. Ada's revised D-B32 assigns `RLIMIT_CORE` soft/hard0 to
-host/server startup H-1, before concurrency. Tests set both to0 before their
-harness starts; a private policy seam covers nonzero values/query errors even
+limit being nonzero. The host and worker set `RLIMIT_CORE` soft and hard to 0 at
+startup, before concurrency (`apps/agentic-org/src/main.rs`). Tests set both to 0
+before their harness starts; a private policy seam covers nonzero values/query errors even
 when a developer already inherited hard0 (which fixtures cannot raise).
 
 `runtime::prepare` maps a piped `LaunchPlan`, creates its directories and atomically
 replaces planned files without following symlinks. It returns the plan's stop,
 cleanup, redaction and conversation metadata explicitly for the lifecycle layer;
 it does not execute a stop. PTYs and `git_exclude` fail before any file writes.
-`git_exclude` requires the caller-owned repository capability being settled in X-09.
+`git_exclude` needs a caller-owned repository capability that does not exist yet.
 `runtime::stop_policy` and `runtime::socket_cleanup` translate those retained
 instructions into generic core types. `runtime::prepare_probe` uses the same
 mark/identity persistence callbacks and refuses all context-only environment names
@@ -117,9 +118,7 @@ exit before reaping. Preparation/spawn/persistence failures use ownership guards
 emergency Drop cleanup is best effort and may leave a cwd for recovery.
 Relative dotfiles stay inside that fresh directory.
 
-No changes to `org-runtime` or adoption by the host are part of this delivery.
-
-## Recovery policy (B3-02.4a)
+## Recovery policy
 
 `recovery::recover_startup` reads a consumer-owned `RecoveryRecords` port and uses
 `RecoveryCheckpoint` for durable target inventory. It never retires a storage row,
@@ -209,11 +208,10 @@ and `kill`. Kqueue wakes exit observation, and the adapter confirms the identity
 again without reaping. Processes that clear their environment and double-fork
 remain a containment limit.
 
-Existing owned stop/cleanup is unchanged and does not call this recovery policy yet.
-The later probe cleanup integration uses the shared coordinator after successful
-owned group kill, then reaps last; no new runtime may start before cleanup completes.
-No SQL, host/server wiring, or real-runtime admission is added here. Crate dependencies
-are unchanged: first-party Ce=1 (`org-runtime`), Ce=2 including `libc`. Policy and its
+Owned stop/cleanup does not call this recovery policy. Probe cleanup is to use the
+shared coordinator after a successful owned group kill, then reap last; no new
+runtime may start before cleanup completes. This crate holds no SQL and no host or
+worker wiring. Dependencies: first-party `org-runtime`, and `libc`. Policy and its
 sealed capability contracts remain in `org-supervise`; future storage adapters depend
 on this consumer-owned read port, without adding a dependency from process policy to SQL.
 
@@ -221,7 +219,7 @@ Socket cleanup walks real paths from `/` using pinned no-follow dirfds. The fina
 parent must already be a current-UID directory with mode exactly 0700; nothing
 repairs permissions. It checks the leaf with `fstatat(AT_SYMLINK_NOFOLLOW)` and
 unlinks only current-UID sockets. The private parent narrows the window, not
-atomic: deliberate same-UID replacement is outside v1's threat model (D-B22/D-B33).
+atomic: deliberate same-UID replacement is outside v1's threat model.
 A missing/unsafe parent or unsafe leaf leaves cleanup unresolved and the leader
 unreaped. Missing socket leaves are recorded as absent.
 
@@ -229,7 +227,7 @@ On macOS a zombie-only group can make `killpg` return EPERM: XNU's
 [killpg1](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c#L1612-L1621)
 filters zombies before deciding whether any member was signalled. EPERM is
 accepted only after WNOWAIT proves the owned leader exited, a complete libproc
-snapshot contains exactly that leader, and ownership is rechecked (D-B34). An
+snapshot contains exactly that leader, and ownership is rechecked. An
 extra member, unavailable enumeration or lost ownership fails closed. The query
 sizes the buffer first, adds headroom, and refuses a full/truncated result.
 Linux handling is unchanged.
@@ -246,7 +244,7 @@ an opened directory may have been substituted after creation. A created-path ino
 is accepted only when it is a no-follow directory owned by the current user with
 mode exactly `0700`. Common umasks (`002`, `022`, `027`, `077`) already produce that
 mode. Owner-bit-masking umasks such as `0100` or `0777` are explicitly refused;
-universal umask support is not required for v1.0 (ada's decision). Existing planned
+universal umask support is not required for v1. Existing planned
 directories are validated for ownership and keep their modes. No helper or
 process-wide umask mutation is used. Preparation may leave a partial directory on
 failure; the caller/operator must resolve its permissions before retrying. No child

@@ -1,4 +1,4 @@
-These are public, synthetic test identities for `gateway.test` and loopback. They
+These are public, synthetic test identities for the test host name `gateway.test` and loopback. They
 grant no instance, host or organization authority. Never use them in a deployment.
 
 Generated 2026-11-10 with OpenSSL, independently for suffixes `a` and `b`:

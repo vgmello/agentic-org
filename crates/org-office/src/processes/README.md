@@ -1,6 +1,7 @@
 # Processes domain
 
-Documentation only in B1-04. No process capability, empty compiled module or new
-crate is introduced. Office integration will live here when its approved use cases
-exist; pure process rules belong to the planned org-process crate. See
-`docs/design/project-structure.md` and `docs/design/processes.md`.
+No code lives here yet. The pure process rules (reading process files, resolving the
+effective set across levels) are in `crates/org-process`. The office's use of them
+belongs in this module when an increment needs it. See
+[project structure](../../../../docs/design/project-structure.md) and the
+[process design](../../../../docs/design/processes.md).

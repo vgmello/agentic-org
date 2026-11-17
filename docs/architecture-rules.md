@@ -65,7 +65,7 @@ The [independent delivery and dependency rules](independent-delivery.md) are a
 required part of this architecture. Apply them when scoping, implementing,
 delegating and reviewing increments. They define usable acceptance/merge units,
 stable prerequisite contracts, early production-path verification and escalation
-of unexpected coupling. Preserve the existing author, testing and review gates.
+of unexpected coupling. The author validation, testing and review gates still apply.
 
 # Shared Code and Ownership
 
@@ -187,14 +187,14 @@ Examples include:
 
 However:
 
-> The higher the Ca, the greater the required stability and backward compatibility.
+> The higher the Ca, the greater the required stability.
 
 When modifying a high-Ca component:
 
 - Evaluate the blast radius before making the change.
 - Prefer additive changes over breaking changes.
 - Avoid leaking implementation details into its public contract.
-- Preserve backward compatibility whenever practical.
+- Change a breaking contract and every consumer in the same change. Until the owner declares v1 shipped, keep no compatibility layer for the old form ([non-negotiable 14](architecture-non-negotiables.md)).
 - Explicitly identify downstream consumers when making a breaking change.
 - Be especially cautious about adding volatile responsibilities to highly depended-upon components.
 

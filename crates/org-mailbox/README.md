@@ -1,98 +1,68 @@
 # org-mailbox
 
-The office's message broker library (ADR-0003): the messaging domain over storage and
-directory ports. Database implementations, sockets, binding and authorization stay outside it.
+The office's messaging library for directed messages between members
+([ADR-0003](../../docs/adr/0003-agent-messaging-office-first.md)): the domain rules over
+storage and directory ports. Database implementations, sockets, binding and
+authorization stay outside it. Dependencies: `org-proto`, `serde_json`, `sha2`; no
+database and no async runtime.
 
-## Status: slice 1 done; not release-ready
+Increment B6 of the [implementation plan](../../docs/implementation-plan.md) replaces this
+model with the conversations (DMs, group DMs and channels) of the
+[messaging data contract](../../docs/design/organization-data/15-messaging-and-chat.md).
+Nothing here is carried over into that model.
 
-Slice 1 is local delivery at HQ for a hand-run agent: `msg.send`, `msg.inbox`, `msg.read` and
-`msg.wait`. It is tested against the in-memory testkit only. Nothing calls it yet: the office
-server doesn't wire it in, and no SQL store runs the conformance suite yet.
+## What it does today
 
-What slice 1 does:
+`Mailbox` implements:
 
-- **send** validates sizes and kinds per `org_proto::msg`, resolves the recipient (Addressing:
-  trimmed of ASCII whitespace; `owner` first; an exact id beats a handle; `office` refused),
-  refuses an offboarded or `Unknown`-status agent (`unknown_recipient`) while a paused one still
-  receives, computes the canonical `content_hash` (ADR §3.4) and commits with this office's
-  origin. The store allocates `local_seq` and `origin_seq` from one local counter. A retry with
-  the same id and content returns the first result. Send never creates an expiring message.
-- Sending to an agent placed in another office is `unavailable`: cross-office routing isn't
-  in slice 1.
-- **inbox** lists headers newest first by `local_seq`, unread only unless `include_all`.
-- **read** claims a message once (the named one, or the oldest unread) and marks it read.
-- **wait** follows ADR §2.2: register, then check, then block. A commit between the check and
-  the block still wakes the waiter. It returns the oldest unread message without claiming it.
+- **send:** validates sizes and kinds per `org_proto::msg`, resolves the recipient
+  (trimmed of ASCII whitespace; `owner` first; an exact id beats a handle; `office`
+  refused), refuses an offboarded or `Unknown`-status agent (`unknown_recipient`) while
+  a paused one still receives, computes a content hash and commits with this office's
+  origin. A retry with the same id and content returns the first result. Sending to an
+  agent placed in another office is `unavailable`.
+- **inbox:** headers newest first, unread only unless `include_all`.
+- **read:** claims a message once (the named one, or the oldest unread) and marks it read.
+- **wait:** registers, checks, then blocks, so a commit between the check and the block
+  still wakes the waiter. It returns the oldest unread message without claiming it.
+- **defer**, **done** and **expire_due**, over a `TriageStore`.
 
-The server passes the bound member id from its authenticated binding, never from request JSON.
-The Mailbox rechecks that member on every call: an offboarded, removed or moved member gets
-`not_bound`.
-
-## Selected target mapping (not implemented by slice 1)
-
-[Document 15](../../docs/design/organization-data/15-messaging-and-chat.md) owns the new data model. The ports and hashes described here retain their current v1 meaning; this README does not rename methods or advertise channel support.
-
-| Slice 1/current contract | Required target adapter |
-| --- | --- |
-| `MessageStore` delivery envelope and `content_hash` | Protected `messaging/conversations/<conversation-id>/messages/<message-id>.json`, with one RFC 8785 content hash (document 15). The code's seven-field hash is not carried over. |
-| Directed message/thread ID and sender/recipient | Replaced by DMs, group DMs and channels with per-employee state (document 15). Nothing is imported. |
-| Office SQL/store commit and events | SQL becomes a projection of protected durable source envelopes/attachments. Integrate document 16 actor-bound receipts and recoverable source/journal commit before acknowledgement; losing an office cache must not lose acknowledged asks/handoffs. |
-| Member directory and authenticated bound member | Employee identity has one required home team, separate execution config/placement. Conversation membership and authorized owner principal are separate grants; no profile flag authorizes a read. |
-
-Target message IDs are UUIDv7. New channel/group-DM admission, per-member states, expected envelope revisions, card/attachment validation and visibility-safe search are target work, not slice 1 features. Chat is never shared organization Git; private task notes stay author-only in their own durable database with no owner/admin exception. Git alone cannot recover chat or receipts. Typed task links use office-minted T- references such as `T-B37`; there are no B-/REQ- references.
+The office worker calls `send`, `inbox`, `read` and `wait` from
+`apps/agentic-org-office/src/msg_calls.rs`; the store and directory adapters are in
+`crates/org-office/src/messaging.rs`. The server passes the bound member id from its
+authenticated binding, never from request JSON, and the mailbox rechecks that member
+on every call: an offboarded, removed or moved member gets `not_bound`.
 
 ## Ports
 
-ADR-0003 §4.3, as amended (store split). `MemberDirectory` reads org.db. `MessageStore`,
-`TriageStore`, `SyncStore` and `ThreadStore` cover office.db. No transaction spans both
-databases. Slice 1 uses only `MessageStore` and `MemberDirectory`. The directory returns
-members with their stored status, and the Mailbox applies the policy. `peek_next_unread` is
-read-only: it reports expired ids and deletes nothing. `SessionAuth` (binding) is the server's.
+`MemberDirectory`, `MessageStore`, `TriageStore`, `SyncStore`, `ThreadStore`,
+`MessageEvents` and `SessionAuth` (`src/ports.rs`). The directory returns members with
+their stored status, and the mailbox applies the policy. `peek_next_unread` is
+read-only: it reports expired ids and deletes nothing.
 
 ## Held calls
 
 `Mailbox::wait` takes a deadline and a `Cancellation`. The server keeps the matching
-`CancelHandle` per connection, runs each held call on its own worker thread and enforces the
-per-connection held-call limit. Dropping or cancelling the handle (a closed connection or a
-re-bind) ends blocked waits with `not_bound` and removes their registrations. A wait never
-blocks past the earlier of its deadline and `timeout_ms`, but a store call already running
-can't be interrupted, so stores must bound their own calls. No Mailbox lock is held across a
-store call: the `WaiterRegistry` lock covers only register and notify. `held_waits()` reports
-live registrations.
+`CancelHandle` per connection, runs each held call on its own worker thread and
+enforces the per-connection held-call limit. Cancelling the handle (a closed connection
+or a re-bind) ends blocked waits with `not_bound` and removes their registrations. A
+wait never blocks past the earlier of its deadline and `timeout_ms`, but a store call
+already running cannot be interrupted, so stores must bound their own calls. No mailbox
+lock is held across a store call. `held_waits()` reports live registrations.
 
 ## Events and errors
 
-After each commit, and after each claim this call made, the Mailbox calls `MessageEvents`
-(`NoMessageEvents` in slice 1). Events never carry bodies. `MailboxError` maps 1:1 to
-`org_proto::ErrorCode` (`From<MailboxError> for ErrorCode`).
+After each commit, and after each claim, the mailbox calls `MessageEvents`. Events
+never carry bodies. `MailboxError` maps one to one to `org_proto::ErrorCode`.
 
 ## Testkit and the conformance suite
 
-The `testkit` feature exports `InMemoryStore` (delivery port only), `InMemoryDirectory`, a
-standard fixture (`testkit::fixture`) and the generic conformance suite
-(`testkit::conformance`): store, directory and Mailbox cases over any backend. The backend
-seeds the fixture's members raw: one agent's handle is deliberately shaped like another
-member's id (HQ would refuse it) to pin that an exact id beats a handle. To run it against
-another backend:
+The `testkit` feature exports `InMemoryStore`, `InMemoryDirectory`, a standard fixture
+(`testkit::fixture`) and the conformance suites (`testkit::conformance`,
+`testkit::triage_conformance`): store, directory and mailbox cases over any backend. To
+run them against another backend:
 
 ```rust
 fn open(members: &[Member], position: Position) -> (MyStore, MyDirectory) { /* fresh, seeded */ }
 org_mailbox::mailbox_conformance_tests!(open);
 ```
-
-## Follow-ups (not in slice 1)
-
-- `ask`, `reply`, the claim-before-commit reply hand-off and `find_reply_for_ask` use.
-- Triage: `defer`, `done`, `notify`/`due`, snoozes and the snooze timer heap (`TriageStore`).
-- Expiry: acting on peek's `expired_ids` (`update_state_local(Expired)`), dead letters.
-- `msg.list`, `msg.get`, `msg.threads`, `msg.human_needs_you` (`ThreadStore`).
-- Sync and cross-office routing (`SyncStore`, per-origin streams, relay, `resolve_pending_references`).
-- Events wired to subscribers, and body compression (`flate2`).
-- Server wiring (`msg.bind` with `SessionAuth`, worker threads, held-call limit), `store.rs`
-  running this suite, and `org-agent` switching to the office server.
-
-Codex-dev's draft in-memory triage, sync and thread implementations are in commit `cc67d64`.
-
-## Dependencies
-
-`org-proto`, `serde_json`, `sha2` (Ce = 3). No SQLite, no async runtime.
