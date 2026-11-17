@@ -616,7 +616,7 @@ fn v3_preflight_preserves_a_wal_beside_an_empty_missing_or_non_file_database() {
 
 // Compare every pre-existing row using SQLite values, including blob and NULL cells.
 fn released_rows(db: &rusqlite::Connection) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
-    let names = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'selected_%' ORDER BY name")
+    let names = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'selected_%' AND name <> 'local_hq_creation' ORDER BY name")
         .unwrap().query_map([], |r| r.get::<_, String>(0)).unwrap()
         .collect::<rusqlite::Result<Vec<_>>>().unwrap();
     names
@@ -651,6 +651,7 @@ fn genuine_v6_constraints_metadata_and_all_rows_survive_v7_and_reopen() {
     old.write(|db| {
         assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),6);
         assert_eq!(db.query_row("SELECT count(*) FROM sqlite_schema WHERE name LIKE 'selected_%'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert_eq!(db.query_row("SELECT count(*) FROM sqlite_schema WHERE name='local_hq_creation'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
         assert_eq!(db.query_row("SELECT [notnull] FROM pragma_table_info('member_status') WHERE name='status_text'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
         assert_eq!(db.query_row("SELECT count(*) FROM pragma_index_list('work_items') WHERE [unique]=1 AND name IN ('idx_work_items_project_number','idx_work_items_request_number')",[],|r|r.get::<_,i64>(0)).unwrap(),2);
         db.execute_batch("INSERT INTO member_status VALUES
@@ -709,6 +710,13 @@ fn genuine_v6_constraints_metadata_and_all_rows_survive_v7_and_reopen() {
                         OFFICE_SCHEMA.version
                     );
                     assert_eq!(released_rows(db), before);
+                    assert_eq!(
+                        db.query_row("SELECT count(*) FROM local_hq_creation", [], |r| {
+                            r.get::<_, i64>(0)
+                        })
+                        .unwrap(),
+                        0
+                    );
                     assert_eq!(
                         db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
                             r.get::<_, String>(0)

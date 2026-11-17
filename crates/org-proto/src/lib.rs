@@ -83,6 +83,9 @@
 // No unsafe code, except the one function that zeroes a secret's bytes (see `token`).
 #![deny(unsafe_code)]
 
+mod identity;
+pub mod selected_bootstrap;
+pub use identity::is_uuid_v7;
 pub mod directory;
 pub mod frame;
 pub mod gateway;

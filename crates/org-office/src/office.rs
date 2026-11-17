@@ -1,3 +1,4 @@
+pub(crate) mod hq_creation;
 use std::fs::{self, File, TryLockError};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -44,7 +45,8 @@ const WORKSPACE: &str = "workspace";
 
 /// Everything an office folder can hold besides its lock; `create` refuses a folder with any
 /// of it, and a failed `create` removes what it made.
-const OFFICE_ENTRIES: [&str; 11] = [
+const OFFICE_ENTRIES: [&str; 12] = [
+    "hq-creation.v1.json",
     office_file::FILE_NAME,
     "office.json.tmp",
     WORKSPACE,
@@ -66,10 +68,12 @@ const OFFICE_ENTRIES: [&str; 11] = [
 /// Version 5 adds change results, number counters and a clock, and is closed.
 /// Version 6 decouples current tasks from status lines and adds the owned-process rows recovery
 /// reads (B1-12). Work number keys are unique; pre-final v6 files are admitted atomically.
-/// Version 7 adds selected projections and gates; the protected journal remains authoritative.
+/// Version 7 adds selected projections and gates. The protected immutable journal
+/// remains outside this rebuildable encrypted projection. Version 8 adds the
+/// worker-local, nonreplicated HQ creation/CA receipt.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
     admit: Some(work::admit_v6),
-    version: 7,
+    version: 8,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
@@ -78,7 +82,8 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         work::create_tables(tx)?;
         work::create_v5_tables(tx)?;
         crate::store::owned_processes::create_table(tx)?;
-        crate::store::acceptance::schema::create(tx)
+        crate::store::acceptance::schema::create(tx)?;
+        crate::store::hq_creation::create_table(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -101,6 +106,9 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 7 {
             crate::store::acceptance::schema::create(tx)?;
+        }
+        if from < 8 {
+            crate::store::hq_creation::create_table(tx)?;
         }
         Ok(())
     },
@@ -204,6 +212,15 @@ impl OrgStore for Office {
 }
 
 impl Office {
+    /// Bind a host-verified account without deriving authority from a profile.
+    pub fn bind_selected_owner(
+        &self,
+        authority: Arc<dyn crate::OwnerAuthority>,
+    ) -> Result<(), OfficeError> {
+        self.retained_hq_creation_binding()?;
+        crate::organization::admission::bind_owner(&self.stores.local, authority)
+    }
+
     /// Install host-issued recovery configuration before exposing selected work.
     /// The composition root must verify its protected writer lease first.
     pub fn install_selected_acceptance(
@@ -216,6 +233,7 @@ impl Office {
         {
             return Err(OfficeError::Invalid("work acceptance scope mismatch"));
         }
+        self.validate_hq_creation_root(&config)?;
         self.stores.local.install_acceptance(config)
     }
 
@@ -354,7 +372,7 @@ impl Office {
             Ok(metadata) if metadata.is_dir() => {}
             Ok(_) => return Err(OfficeError::Invalid("the office folder is not a folder")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(OfficeError::NotFound)
+                return Err(OfficeError::NotFound);
             }
             Err(e) => return Err(OfficeError::storage(e)),
         }
@@ -362,6 +380,7 @@ impl Office {
         let lock = lock_folder(&folder, lock_wait)?;
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
+        hq_creation::verify_intent(&folder, &info, instance)?;
 
         // Refuse before either database migrates or changes journal mode. The office lock
         // keeps this read and the later transactional adoption under one owner.
@@ -396,6 +415,11 @@ impl Office {
             return Err(OfficeError::Invalid(
                 "the databases belong to another office",
             ));
+        }
+        if let Some(binding) =
+            hq_creation::verify_retained_binding(&folder, &info, instance, &local)?
+        {
+            hq_creation::publish_public(&folder, &local, &binding)?;
         }
         org_db::sweep_snapshot_scratch(&folder)?;
         let stores = stores(org, local, &info.office_id)?;
@@ -437,7 +461,7 @@ impl Office {
         key: Option<&Key>,
         lock_wait: Duration,
     ) -> Result<(), OfficeError> {
-        if !is_plain_id(office_id) {
+        if !office_file::is_storage_id(office_id) {
             return Err(OfficeError::Invalid(
                 "an office id is 1 to 64 letters and digits",
             ));
@@ -452,7 +476,9 @@ impl Office {
         }
         let _lock = lock_folder(&folder, lock_wait)?;
 
-        if exists(&folder.join(office_file::FILE_NAME))? {
+        if exists(&folder.join(office_file::FILE_NAME))?
+            || exists(&folder.join("hq-creation.v1.json"))?
+        {
             return Err(OfficeError::OfficeExists);
         }
         let org_db = folder.join(ORG_DB);
@@ -872,7 +898,7 @@ fn lock_folder_with(
             Ok(lock) => lock,
             // The folder was removed under us (a discard): there is nothing to lock.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(OfficeError::NotFound)
+                return Err(OfficeError::NotFound);
             }
             Err(e) => return Err(OfficeError::storage(e)),
         };

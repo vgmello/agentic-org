@@ -43,6 +43,7 @@ dependencies = [
  "org-mailbox",
  "org-office",
  "org-office-launch",
+ "org-pki",
  "org-proto",
  "org-socket",
  "org-supervise",
@@ -54,6 +55,7 @@ dependencies = [
  "sha2",
  "syn 2.0.119",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -631,6 +633,7 @@ name = "org-office"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "org-docs",
  "org-mailbox",
  "org-proto",
  "org-sync",
@@ -644,6 +647,7 @@ dependencies = [
  "sqlcipher-src",
  "syn 2.0.119",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]

@@ -47,6 +47,58 @@ fn office_file() -> OfficeFile {
     )
 }
 
+#[test]
+fn selected_marker_round_trip_keeps_version_and_explicit_uuid_identity() {
+    let office = "019a8928-1337-7456-8456-0123456789ac";
+    let org = "019a8928-1337-7123-8123-0123456789ab";
+    assert!(!is_plain_id(office));
+    assert!(is_storage_id(office));
+    for invalid in [
+        "019a8928-1337-4456-8456-0123456789ac",
+        "019A8928-1337-7456-8456-0123456789ac",
+        "019a8928-1337-7456-7456-0123456789ac",
+        "../019a8928-1337-7456-8456-0123456789ac",
+    ] {
+        assert!(!is_selected_entity_id(invalid));
+        assert!(!is_storage_id(invalid));
+    }
+    assert!(OfficeFile::new(
+        office,
+        "HQ",
+        OfficeRole::Hq,
+        org,
+        "Example",
+        "2026-11-15T00:00:00.000Z"
+    )
+    .to_vec()
+    .is_err());
+    let selected = OfficeFile::selected(
+        office,
+        "HQ",
+        OfficeRole::Hq,
+        org,
+        "Example",
+        "2026-11-15T00:00:00.000Z",
+    )
+    .unwrap();
+    let bytes = selected.to_vec().unwrap();
+    assert_eq!(OfficeFile::from_slice(&bytes).unwrap(), selected);
+    assert_eq!(selected.version(), 2);
+    assert_eq!(office_file().version(), 1);
+    let mut extended = json(&bytes);
+    extended["extension"] = serde_json::json!({"unknown":"retained"});
+    let parsed = OfficeFile::from_slice(&serde_json::to_vec(&extended).unwrap()).unwrap();
+    assert_eq!(
+        json(&parsed.to_vec().unwrap())["extension"],
+        extended["extension"]
+    );
+    assert_eq!(json(&parsed.to_vec().unwrap())["v"], 2);
+    assert_eq!(
+        office_dir(Path::new("/tmp/private"), office),
+        Some(Path::new("/tmp/private/offices").join(office))
+    );
+}
+
 fn json(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes).unwrap()
 }
@@ -304,11 +356,11 @@ fn errors_say_whether_the_pipe_is_still_in_step() {
         supported: &[LAUNCH_VERSION],
     };
     assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
-    let err = LaunchError::UnsupportedOfficeFileVersion(2);
+    let err = LaunchError::UnsupportedOfficeFileVersion(3);
     assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
     assert_eq!(
         err.to_string(),
-        "office.json version 2 isn't supported (this build reads 1)"
+        "office.json version 3 isn't supported (this build reads 1 or 2)"
     );
     assert_eq!(
         LaunchError::UnsupportedVersion {
@@ -453,12 +505,12 @@ fn discarded_has_its_shape_and_fail_codes_map_errors() {
 
 #[test]
 fn office_file_checks_version_and_ids() {
-    // office.json has its own version: the pipe's version 2 isn't one it reads.
+    // The selected marker version is not permission to reinterpret legacy IDs.
     let mut value = serde_json::to_value(office_file()).unwrap();
     value["v"] = 2.into();
     assert!(matches!(
         OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()),
-        Err(LaunchError::UnsupportedOfficeFileVersion(2))
+        Err(LaunchError::Invalid(_))
     ));
 
     let mut value = serde_json::to_value(office_file()).unwrap();
@@ -671,8 +723,8 @@ fn host_messages_are_flushed_as_one_line() {
 #[test]
 fn a_newer_office_file_reports_its_version_even_with_another_shape() {
     assert!(matches!(
-        OfficeFile::from_slice(br#"{"v":2,"office":{"id":"x"}}"#),
-        Err(LaunchError::UnsupportedOfficeFileVersion(2))
+        OfficeFile::from_slice(br#"{"v":3,"office":{"id":"x"}}"#),
+        Err(LaunchError::UnsupportedOfficeFileVersion(3))
     ));
 }
 

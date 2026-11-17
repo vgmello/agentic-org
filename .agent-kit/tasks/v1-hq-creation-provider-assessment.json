@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "task_id": "v1-hq-creation-provider",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": false,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": null,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "Retained b77 HQ creation, launch/control and bootstrap source; exact original-author source closure original-author-f3b-closure-1/result.txt. F3a actual accepted library and F2b accepted storage available."
+    ],
+    "precise_scope": [
+      "v1-hq-creation-provider-contract.md: exact worker-provider paths and existing-file hunks; no host/task/U1 imports; selected_read/transaction ownership corrected to store/acceptance.rs."
+    ],
+    "localized_change": [
+      "Crosses pure contracts, org-owned admission/bootstrap, worker composition and schema8; preserve failure ordering and F2b repairs."
+    ],
+    "deterministic_checks": [
+      "Retained seven publication/material boundaries, original owner/MAX/generation assertions; real early provider compile and temporary executable create/fault/reopen required. Existing source is evidence, not current passing extracted checks."
+    ],
+    "low_risk": [
+      "Credentials, live owner/scope admission, encrypted immutable CA, phase ordering and selected journal/durability are critical."
+    ],
+    "no_prior_failure": [],
+    "ambiguity_resolved": [
+      "v1-creation-admission-interface.md revision1 independently READY with four mandatory conditions; worker-only provider is internal and test driver does not supply missing production host authority. Escalate any contradicted compile/authority premise."
+    ]
+  }
+}

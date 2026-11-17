@@ -82,6 +82,10 @@ pub enum HostFirstLine {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawOfficeLine")]
 pub struct OfficeLine {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_profile: Option<IdProfile>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub selected_writer_required: bool,
     /// The instance the office belongs to (a ULID). The server stores it at create and refuses a
     /// `start` naming another; an office created before v3 adopts it on its first v3 `start`.
     pub instance_id: String,
@@ -90,11 +94,22 @@ pub struct OfficeLine {
     pub rendezvous: String,
 }
 
+/// Explicit additive identity profile; omission retains legacy launch rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdProfile {
+    SelectedV1,
+}
+
 /// A first line refuses a field it doesn't define (a v2 key such as `db_key` included); `v` is the
 /// line's own, checked before the decode.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawOfficeLine {
+    #[serde(default)]
+    id_profile: Option<IdProfile>,
+    #[serde(default)]
+    selected_writer_required: bool,
     #[serde(default, rename = "v")]
     _version: Option<IgnoredAny>,
     instance_id: String,
@@ -107,6 +122,8 @@ impl TryFrom<RawOfficeLine> for OfficeLine {
 
     fn try_from(raw: RawOfficeLine) -> Result<Self, Self::Error> {
         let line = OfficeLine {
+            id_profile: raw.id_profile,
+            selected_writer_required: raw.selected_writer_required,
             instance_id: raw.instance_id,
             office_id: raw.office_id,
             rendezvous: raw.rendezvous,
@@ -118,7 +135,11 @@ impl TryFrom<RawOfficeLine> for OfficeLine {
 
 impl OfficeLine {
     fn check(&self) -> Result<(), &'static str> {
-        if !is_plain_id(&self.instance_id) || !is_plain_id(&self.office_id) {
+        let office_valid = match self.id_profile {
+            None => is_plain_id(&self.office_id),
+            Some(IdProfile::SelectedV1) => crate::is_selected_entity_id(&self.office_id),
+        };
+        if !is_plain_id(&self.instance_id) || !office_valid {
             return Err("the first line holds an id that isn't plain");
         }
         if !self.rendezvous.starts_with('/') || self.rendezvous.contains('\0') {
@@ -143,12 +164,55 @@ pub struct CreateLine {
     /// The organization's owner member, chosen by the host so a retried create uses the same
     /// one ([`org_proto::is_valid_member_id`]).
     pub owner_member_id: String,
+    /// Explicit REC-ESC-1 preparation; absence preserves legacy create behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hq_creation: Option<HqCreationV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HqCreationV1 {
+    pub version: u32,
+    pub operation_id: String,
+    pub escrow_profile: u32,
+    /// Host-resolved canonical state root; never supplied by a browser request.
+    pub public_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap: Option<Box<org_proto::selected_bootstrap::PreparedV1>>,
+}
+
+impl HqCreationV1 {
+    fn check(&self) -> Result<(), &'static str> {
+        if self.bootstrap.as_ref().is_some_and(|b| !b.valid())
+            || self.version != 1
+            || self.escrow_profile != 1
+            || org_proto::ulid_time_ms(&self.operation_id).is_none()
+            || !std::path::Path::new(&self.public_root).is_absolute()
+            || self.public_root.contains('\0')
+            || std::path::Path::new(&self.public_root).parent().is_none()
+            || std::path::Path::new(&self.public_root)
+                .components()
+                .any(|c| {
+                    !matches!(
+                        c,
+                        std::path::Component::RootDir | std::path::Component::Normal(_)
+                    )
+                })
+        {
+            return Err("unsupported HQ creation context");
+        }
+        Ok(())
+    }
 }
 
 /// As [`RawOfficeLine`]: no field the line doesn't define.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCreateLine {
+    #[serde(default)]
+    id_profile: Option<IdProfile>,
+    #[serde(default)]
+    selected_writer_required: bool,
     #[serde(default, rename = "v")]
     _version: Option<IgnoredAny>,
     instance_id: String,
@@ -160,6 +224,8 @@ struct RawCreateLine {
     #[serde(default)]
     role: OfficeRole,
     owner_member_id: String,
+    #[serde(default)]
+    hq_creation: Option<HqCreationV1>,
 }
 
 impl TryFrom<RawCreateLine> for CreateLine {
@@ -168,6 +234,8 @@ impl TryFrom<RawCreateLine> for CreateLine {
     fn try_from(raw: RawCreateLine) -> Result<Self, Self::Error> {
         let line = CreateLine {
             office: OfficeLine {
+                id_profile: raw.id_profile,
+                selected_writer_required: raw.selected_writer_required,
                 instance_id: raw.instance_id,
                 office_id: raw.office_id,
                 rendezvous: raw.rendezvous,
@@ -177,6 +245,7 @@ impl TryFrom<RawCreateLine> for CreateLine {
             office_name: raw.office_name,
             role: raw.role,
             owner_member_id: raw.owner_member_id,
+            hq_creation: raw.hq_creation,
         };
         line.check()?;
         Ok(line)
@@ -186,7 +255,14 @@ impl TryFrom<RawCreateLine> for CreateLine {
 impl CreateLine {
     fn check(&self) -> Result<(), &'static str> {
         self.office.check()?;
-        if !is_plain_id(&self.org_id) {
+        self.check_bootstrap_context()?;
+        let org_valid = match self.office.id_profile {
+            None => is_plain_id(&self.org_id),
+            Some(IdProfile::SelectedV1) => {
+                crate::is_selected_entity_id(&self.org_id) && self.hq_creation.is_some()
+            }
+        };
+        if !org_valid {
             return Err("the create line holds an id that isn't plain");
         }
         if !org_proto::is_valid_member_id(&self.owner_member_id) {
@@ -194,6 +270,32 @@ impl CreateLine {
         }
         if self.role != OfficeRole::Hq {
             return Err("this version creates only HQ offices");
+        }
+        Ok(())
+    }
+
+    fn check_bootstrap_context(&self) -> Result<(), &'static str> {
+        if self.office.selected_writer_required
+            && self
+                .hq_creation
+                .as_ref()
+                .and_then(|c| c.bootstrap.as_ref())
+                .is_none()
+        {
+            return Err("selected writer admission requires the explicit bootstrap profile");
+        }
+        if let Some(context) = &self.hq_creation {
+            context.check()?;
+            if let Some(b) = &context.bootstrap {
+                if b.organization_id != self.org_id
+                    || b.office_id != self.office.office_id
+                    || b.plan.name != self.org_name
+                    || self.office.id_profile != Some(IdProfile::SelectedV1)
+                    || !self.office.selected_writer_required
+                {
+                    return Err("selected bootstrap scope mismatch");
+                }
+            }
         }
         Ok(())
     }
@@ -686,6 +788,11 @@ pub enum ChannelKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransferRecord {
+    /// Private protected writer channel; not a human session.
+    WriterControl {
+        office_id: String,
+        channel_id: String,
+    },
     /// A new host-made channel to this office: one `SOCK_STREAM` descriptor.
     Channel {
         kind: ChannelKind,
@@ -701,7 +808,7 @@ impl TransferRecord {
     /// How many descriptors arrive with this record.
     pub fn fd_count(&self) -> usize {
         match self {
-            TransferRecord::Channel { .. } => 1,
+            TransferRecord::Channel { .. } | TransferRecord::WriterControl { .. } => 1,
             TransferRecord::Revoked { .. } => 0,
         }
     }
