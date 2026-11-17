@@ -113,14 +113,17 @@ supervises: office workers and the web process (owner-delegated decision 2026-11
 argv, in the environment or on the first line. The steps for an office worker are below; the web process
 uses the same steps with its own identifier, image and listener handoff (see "The web process" below):
 
-1. The host spawns the worker **suspended**, with only its three pipes.
-2. It checks that the suspended child is the intended program through the platform's
-   process-admission adapter. On macOS: the child's audit token, its code object, the
-   identifier `com.vgmello.agentic-org.office` with the compiled Developer ID
-   team, the hardened runtime and none of the refused entitlements. On Linux: the
-   pinned path of the verified release image, its content digest from the release
-   manifest, and the child's identity from the kernel. A child that fails is killed
-   while still suspended.
+1. The host starts the worker, with only its three pipes, through the platform's
+   process-admission adapter. On macOS the child is spawned **suspended**. On Linux
+   it is started from a sealed, execute-only copy of the pinned image whose digest the
+   host has already checked, so there is nothing to suspend
+   ([Linux host design](linux-host.md#31-process-admission)).
+2. The adapter checks that the child is the intended program. On macOS: the child's
+   audit token, its code object, the identifier `com.vgmello.agentic-org.office` with
+   the compiled Developer ID team, the hardened runtime and none of the refused
+   entitlements; a child that fails is killed while still suspended. On Linux: the
+   image's SHA-256 against the release manifest before `exec`, no loader variables in
+   its environment, and the child held by a pidfd.
 3. Only then does the host create a per-spawn **rendezvous** socket and write the
    worker's first line on stdin. The first line holds **no secret**: the instance, the
    office, the rendezvous path and, for a create, the organization, the names, the role,
@@ -206,9 +209,12 @@ unverified.
 The verified release's `agentic-org-web --serve` loads its `ui/` build before
 confinement. The host spawns it with `POSIX_SPAWN_CLOEXEC_DEFAULT`, keeping only its
 three pipes, and the child checks that exactly descriptors 0 to 2 remain; anything
-else makes it exit before readiness. After the confinement checks of
-[ADR-0008](../adr/0008-gateway-macos-sandbox.md) (Landlock and seccomp on Linux)
-succeed, it connects only to its exact rendezvous. It accepts no descriptors in the
+else makes it exit before readiness. It connects only to its exact
+rendezvous, and reads nothing from it and reports nothing until confinement holds:
+on macOS it confines itself first ([ADR-0008](../adr/0008-gateway-macos-sandbox.md));
+on Linux it connects first, because the seccomp filter then forbids any new
+connection, and applies Landlock and seccomp before reading
+([Linux host design](linux-host.md#33-confinement-of-the-web-process)). It accepts no descriptors in the
 header; the next marker carries the transfer socket and then the listener, each checked
 for socket type and close-on-exec before `fds.received`. The same connection then
 carries host control; neither `host.sock` nor an office path is a fallback. `tls.fetch`
@@ -346,8 +352,8 @@ restarted.
   `allow-dyld-environment-variables` or `disable-library-validation`. A release-profile
   build with debug assertions on fails to compile.
 - **Only the admitted worker receives a key,** and only over the authenticated
-  rendezvous after the peer check of step 4. A same-user process that resumes a
-  suspended child before the host checks it cannot receive the key, because the key goes
+  rendezvous after the peer check of step 4. On macOS, a same-user process that
+  resumes a suspended child before the host checks it cannot receive the key, because the key goes
   only to the connected peer that matches the admitted identity.
 
 ## 4. Recovery before launch

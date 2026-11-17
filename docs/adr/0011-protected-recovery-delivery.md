@@ -24,8 +24,10 @@ redisplayed or regenerated.
 
 `recovery.release` (with its `redeliver` parameter) and `recovery.acknowledge` are
 dispatched only through the native `host.sock` service to the verified signed
-`agentic-org` client. Strict raw request decoding, the peer's kernel identity and
-loaded-image revalidation apply before and after the asynchronous OS confirmation
+`agentic-org` client; on Linux, which has no code identity for a client, to a peer
+with the service user's kernel UID ([ADR-0017](0017-linux-and-container-hosting.md)
+decision 11), where loaded-image revalidation does not apply. Strict raw request
+decoding, the peer's kernel identity and, on macOS, loaded-image revalidation apply before and after the asynchronous OS confirmation
 and again immediately before the response and before deletion is authorized. No
 caller-supplied presence flag, SSH environment variable, terminal string, bare PID
 or account cookie proves presence. Web and agent peers cannot invoke these methods,
