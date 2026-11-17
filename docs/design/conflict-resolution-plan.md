@@ -14,7 +14,7 @@ The interactive register with per-entry status is the companion view. This file 
 
 ## Status
 
-43 findings. 7 applied, 36 proposed and waiting for a decision.
+44 findings. 7 applied, 37 proposed and waiting for a decision.
 
 | ID | Finding | Priority | Size | State | Commit |
 | --- | --- | --- | --- | --- | --- |
@@ -30,6 +30,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [A-10](#a-10) | Is GitHub part of v1 | Before building the area | S | Proposed |  |
 | [A-11](#a-11) | Git design algorithms still use the old two-clone, one-repository-per-project shape | Before building the area | M | Proposed |  |
 | [A-12](#a-12) | Which local API version the first standalone release speaks | Cleanup | S | Proposed |  |
+| [A-13](#a-13) | A message file has one owning writer, but each recipient's state belongs to that recipient's office | Before building the area | M | Proposed |  |
 | [B-01](#b-01) | Storage: files are canonical in the design, databases are authoritative in the code | Decide first | L | Proposed |  |
 | [B-02](#b-02) | Single home team is selected; the code is many-to-many | Decide first | M | Proposed |  |
 | [B-03](#b-03) | One typed task is selected; the code has per-kind work items | Decide first | L | Proposed |  |
@@ -109,7 +110,7 @@ Priority: Before building the area · Size: S · State: Applied
 - **What we lose:** The permit coordinator now depends on budget-control state, so those two HQ responsibilities can no longer be built or deployed apart. A satellite cut off from HQ cannot start a held or an unheld turn, but that was already true for permits. Budgets still never stop a running turn, so some overshoot remains.
 - **Impact of applying it:** Documentation now; one extra read in the permit transaction when execution is built (FC-098 to FC-100). New outcome code `BUDGET_HELD` and acceptance criterion AE-19.
 - **Owner note:** "What is your recomendations wnat what does it gives us or make us lose ?"
-- **Applied in `2e44b70`:** Applied on my recommendation; you asked for the trade-off, so say if you want it reverted. Document 11 section 6 step 3: HQ grants no permit while an unreleased hold applies to the task or agent, and the turn blocks with `BUDGET_HELD`. Permit renewal for a running turn is never refused, so the current turn finishes as document 17 requires. Added the outcome row, AE-19, and the pointer from document 17.
+- **Applied in `2e44b70`:** Applied on my recommendation; you asked for the trade-off, so say if you want it reverted. Document 11 section 6 step 3: HQ grants no permit while an unreleased hold applies to the task or agent, and the turn blocks with `BUDGET_HELD`. A running turn is never refused: neither permit renewal nor a failover switch permit is checked, so the current turn finishes as document 17 requires. Resuming a blocked turn under a hold is refused. Added the outcome row, AE-19, and the pointer from document 17.
 
 ### A-03
 
@@ -160,7 +161,7 @@ Priority: Before building the area · Size: S · State: Applied
 - **What we lose:** A little freedom: adding a canonical form now needs a registry row first. Three forms stay in use for existing records; unifying them would mean rehashing written data, which the rules forbid.
 - **Impact of applying it:** Documentation now. When each family is implemented it needs its test vectors. Document 11 said "canonical" without a definition; it is now assigned `canonical-json/2`, the form the acceptance journal already implements.
 - **Owner note:** "We recommend a suggestion to make sure the system is scalable and flexible."
-- **Applied in `c71e33b`:** Document 08 has a hash codec registry with five entries (`canonical-json/2`, `sorted-compact-json/1`, `jcs-rfc8785/1`, `v1_lenprefixed_sha256`, `raw-bytes/1`) and five rules. Default for new JSON records is `canonical-json/2` because it keeps integer amounts and ordinals as exact tokens. Documents 05, 10, 11 and 15 point at it.
+- **Applied in `c71e33b`:** Document 08 has a hash codec registry with six entries (`canonical-json/2`, `sorted-compact-json/1`, `jcs-rfc8785/1`, `v1_lenprefixed_sha256`, legacy `task-event/1`, `raw-bytes/1`) and five rules. Default for new JSON records is `canonical-json/2` because it keeps integer amounts and ordinals as exact tokens. Documents 05, 10, 11 and 15 point at it.
 
 ### A-06
 
@@ -177,7 +178,7 @@ Priority: Before building the area · Size: S · State: Applied
 - **What we lose:** The ADR's SQL storage design stops being the source and becomes a projection. Its latency targets (same-office send p50 under 15 ms) assumed one batched database commit; one protected file per message needs its own flush discipline, so those targets must be re-measured or restated. There are now two documents to keep consistent, with a stated tie-break.
 - **Impact of applying it:** Documentation now. Opens one design question for the messaging adapter (envelope batching, tracked as E-02). The live Phase A spool is untouched.
 - **Owner note:** "I think the ADR3 is right, but it should also be merged with the the organization data. How do they play together? I think we have to merge them. And what are the trade-offs?"
-- **Applied in `7a552bf`:** How they play together: document 15 owns the data and where it is stored; ADR-0003 owns how messages move. Document 15 now has a "Runtime ownership and routing" section with eleven rules taken from the ADR (office-first commit, routing through HQ, the placing office as single writer of recipient state, hand-off by organization position, single-owner failure notices, deadlines, idempotent re-ask). ADR-0003 is marked accepted for those rules. Tie-break: document 15 wins on data shape and storage, the ADR applies where document 15 is silent on runtime behaviour.
+- **Applied in `7a552bf`:** How they play together: document 15 owns the data and where it is stored; ADR-0003 owns how messages move. Document 15 now has a "Runtime ownership and routing" section with eleven rules taken from the ADR (office-first commit, routing through HQ, the placing office as single writer of recipient state, hand-off by organization position, single-owner failure notices, deadlines, idempotent re-ask). ADR-0003 is marked accepted for exactly those rules (its section 2.2 and sections 3.1 to 3.4). The rest of the ADR, including the app token, the old CLI surface, urgent interruption and the spool, stays compatibility evidence. Tie-break: document 15 wins wherever the two differ. The merge exposed one new open question, recorded as A-13.
 
 ### A-07
 
@@ -268,6 +269,21 @@ Priority: Cleanup · Size: S · State: Proposed
 - **What we gain:** One boundary at which removed calls (managed-home overrides, `app_token`, per-kind work commands, area commands) all go.
 - **What we lose:** Compatibility with version 1 clients, of which none are deployed.
 - **Impact of applying it:** Record the decision and the list of calls removed at that boundary. The code already accepts 1 and 2.
+
+### A-13
+
+**A message file has one owning writer, but each recipient's state belongs to that recipient's office**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **One document:** "Save a whole envelope atomically under a single owning writer before acknowledging it." The message envelope embeds `recipients[]`. *(15-messaging-and-chat.md storage and durability)*
+- **Another document:** The origin office writes message content. The office where each recipient is placed is the single writer of that recipient's state. *(15-messaging-and-chat.md runtime ownership and routing; adr/0003 sections 3.1 to 3.2)*
+- **Why it matters:** A message to recipients in two offices has three writers for one file. Envelope revisions cannot order their changes.
+- **Which source wins:** Undecided; needs a layout choice in organization data
+- **Recommendation:** Store recipient state per recipient (one small file per message and recipient, owned by the recipient's office), keeping the message envelope immutable after send. Until decided, cross-office recipient state follows the ADR's ordering rule, which document 15 now states.
+- **What we gain:** Each office can save its own recipient state durably without rewriting a file another office owns, which is what office-first routing needs.
+- **What we lose:** The simplicity of one self-contained file per message. Recipient state becomes separate files, or the envelope needs a defined merge rule.
+- **Impact of applying it:** A source-layout decision in document 15 before the messaging adapter is built. Until then the ADR's ordering rule applies to cross-office recipient state. Found by the independent review of the A-06 merge.
 
 ## B. Design against code
 

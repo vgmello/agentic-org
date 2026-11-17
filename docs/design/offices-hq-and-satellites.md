@@ -331,7 +331,7 @@ new address from its administrator without accepting a different HQ identity.
   - Organization changes wait in the satellite's **outbox**, in order. A queued edit to something already edited in the outbox expects the version that earlier edit will produce, so two queued edits of one thing don't conflict with each other. When HQ is back, they're sent **one at a time, in order**.
   - If HQ rejects one, the commands queued after it are held, not sent. The app shows them as **blocked** for the owner to retry or discard, because they may depend on the rejected one.
   - Until they're committed, queued changes show in the app as **pending**. They aren't in the copy.
-- **Messages between agents** (ADR-0003, proposed):
+- **Messages between agents** (ADR-0003; routing and ownership in §2.2 and §§3.1–3.4 accepted 2026-11-17):
   - A message between two agents **in the same office** is delivered by that office directly, even with HQ unreachable.
   - A message to an agent **in another office** goes through HQ, which delivers it to the recipient's office. While HQ is unreachable it waits in the sender office's **message queue**, which is separate from the command outbox, so a blocked command never holds messages back.
 - **The browser when HQ is unavailable:** HQ's application cannot be reached.
@@ -422,7 +422,7 @@ use the model/process sections above and the current launch contract.
   - A key is created only for a create, by the host. The host never makes one for an existing office: a key item it doesn't have is `key_missing`, set by the host without starting the server, and a key that doesn't open the databases is `key_missing` (fatal), a `failed` code on the launch pipe.
   - Layout `<home>/offices/<office-id>/`.
   - HQ's `org.db` holds the event log. SQLCipher, one writer per database, durability and the swap point hold per office.
-- **ADR-0003 (proposed):**
+- **ADR-0003 (routing and ownership accepted 2026-11-17; the rest is compatibility evidence):**
   - `org-agent` talks to **its own office**, so binding needs only the agent.
   - Messages are office-first: committed and delivered locally, then synced to HQ, and through HQ to other offices. The storage structure for heavy traffic and the cross-office `ask` are defined there.
 - **`org-proto`** (client ↔ office):

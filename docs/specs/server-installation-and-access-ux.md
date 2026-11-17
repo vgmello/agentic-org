@@ -224,7 +224,7 @@ Before-login macOS execution is outside this v1 default.
 
 ## 3. Files, identity and tools
 
-The instance resolves configured organization data and protected operational roots;
+The instance resolves the configured organization data root, with protected sources under `durable/` and caches under `runtime/<office-id>/`;
 executables live separately. Organization Git is remote and its latest content is
 mirrored as ordinary durable files. `organization.yaml` stores stable ID, slug,
 name, repository ID and state branch. Team/employee/project/task paths use stable

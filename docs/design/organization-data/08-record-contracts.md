@@ -104,14 +104,15 @@ erDiagram
 
 ## Hash codec registry
 
-Several contracts store a SHA-256 over canonical content. They do not all canonicalize the same way, on purpose: each form is frozen with the records already written in it. This registry is the one list of those forms. The owning document keeps the field list (what is hashed); this section owns the set of forms (how bytes are produced).
+Several contracts store a SHA-256 over canonical content. They do not all canonicalize the same way, on purpose: each form is frozen with the records already written in it. This registry lists those forms. The owning document keeps the field list (what is hashed); this section owns the set of forms (how bytes are produced).
 
 | Codec ID | Canonical form | Defined in | Used for |
 | --- | --- | --- | --- |
-| `canonical-json/2` | Task-event codec 2: keys sorted by Unicode scalar order, compact UTF-8, exact original number tokens, duplicate decoded keys rejected, only the top-level checksum field omitted | [Document 05](05-operational-data.md#task-event-codec-2) | Task events; assignment fingerprint version 1 ([12](12-task-assignment-and-history.md)); work-acceptance journal envelope digests ([16](16-recovery-and-office-continuity.md)); execution command and supervisor-journal digests ([11](11-model-profiles-and-agent-execution.md)) |
+| `canonical-json/2` | Task-event codec 2: keys sorted by Unicode scalar order, compact UTF-8, exact original number tokens, duplicate decoded keys rejected. Exactly one top-level field is omitted: the record's own checksum field, named by the owning document (`payload_sha256` for task events, `envelope_sha256` for document 11 journal envelopes, whose `payload_sha256` is hashed as content) | [Document 05](05-operational-data.md#task-event-codec-2) | Task events; assignment fingerprint version 1 ([12](12-task-assignment-and-history.md)); work-acceptance journal envelope digests ([16](16-recovery-and-office-continuity.md)); execution command and supervisor-journal digests ([11](11-model-profiles-and-agent-execution.md)) |
 | `sorted-compact-json/1` | UTF-8 JSON, lexically sorted keys, compact separators, no ASCII escaping, nullable fields expanded, checksum field omitted | [Document 10](10-usage-and-cost-accounting.md#durable-storage-and-multi-office-recovery) | Usage event `payload_sha256` |
 | `jcs-rfc8785/1` | RFC 8785 canonical JSON over the listed immutable message columns | [Document 15](15-messaging-and-chat.md#storage-and-durability) | Message `content_sha256` |
 | `v1_lenprefixed_sha256` | Version byte plus seven length-prefixed fields | [ADR-0003 §3.4](../../adr/0003-agent-messaging-office-first.md) | Imported v1 message hashes only (`source_content_sha256`); never used for new records |
+| `task-event/1` (legacy) | The original schema-1 task-event bytes as stored. No selected verifier: these events stay retained or staged with unverified coverage under document 05 | [Document 05](05-operational-data.md#task-event-codec-2) | Existing schema-1 task events only; never produced for new events |
 | `raw-bytes/1` | The exact stored bytes, no canonicalization | This section | Content-addressed files: message attachments, `work-history/blobs/sha256/`, recovery snapshot and result content |
 
 Rules that keep this extensible:
