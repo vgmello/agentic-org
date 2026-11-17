@@ -1,0 +1,756 @@
+# Conflict resolution plan
+
+Working file for resolving every contradiction found between the design documents, the organization data contract and the code on `v1-integration`. It records, per finding, both sides, the recommended resolution, what it gains, what it costs, the impact of applying it, the owner's note where one exists, and whether it has been applied.
+
+The interactive register with per-entry status is the companion view. This file is the durable record in the repository; update it in the same change that applies a fix.
+
+## Precedence rules used for every recommendation
+
+1. **The organization data is newer than the ADRs and the older designs.** For data relationships, storage layout and durability it wins.
+2. **An ADR decision that the organization data does not cover is not dropped.** It is merged into the organization data, and the ADR keeps its detail as evidence (A-03, A-06, E-01, E-02).
+3. **An ADR decision the organization data does not contradict stands.** Engine, single writer, key custody and process boundaries remain as decided (ADR-0001, ADR-0002, ADR-0005, ADR-0008, ADR-0009).
+4. **Code is evidence of current behaviour, never of the target.** Where code and the selected design differ, the design wins and the code gets a migration item, unless a recorded decision changes the design instead (B-04).
+5. **Nothing is deployed.** No user data needs migrating. Removals happen at the local API version boundary (A-12).
+
+## Status
+
+43 findings. 7 applied, 36 proposed and waiting for a decision.
+
+| ID | Finding | Priority | Size | State | Commit |
+| --- | --- | --- | --- | --- | --- |
+| [A-01](#a-01) | Three vocabularies for where data lives on disk | Decide first | S | Applied | `cd36075` |
+| [A-02](#a-02) | Budget holds are required before a turn, but the dispatch steps have no budget check | Before building the area | S | Applied | `2e44b70` |
+| [A-03](#a-03) | Who hosts the numbering authority is never stated in the data contract | Before building the area | S | Applied | `5f3e225` |
+| [A-04](#a-04) | Moving an agent between machines: supported in one contract, unsupported in another | Before building the area | S | Applied | `4b7e893` |
+| [A-05](#a-05) | Three hash canonicalizations with no registry | Before building the area | S | Applied | `c71e33b` |
+| [A-06](#a-06) | Messaging has a data model and no named runtime owner | Before building the area | S | Applied | `7a552bf` |
+| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Proposed |  |
+| [A-08](#a-08) | Agent credentials: the user's own vendor sign-in, or office-local bindings | Before building the area | S | Proposed |  |
+| [A-09](#a-09) | Create organization: the published API takes a name, provisioning needs four more fields | Decide first | M | Proposed |  |
+| [A-10](#a-10) | Is GitHub part of v1 | Before building the area | S | Proposed |  |
+| [A-11](#a-11) | Git design algorithms still use the old two-clone, one-repository-per-project shape | Before building the area | M | Proposed |  |
+| [A-12](#a-12) | Which local API version the first standalone release speaks | Cleanup | S | Proposed |  |
+| [B-01](#b-01) | Storage: files are canonical in the design, databases are authoritative in the code | Decide first | L | Proposed |  |
+| [B-02](#b-02) | Single home team is selected; the code is many-to-many | Decide first | M | Proposed |  |
+| [B-03](#b-03) | One typed task is selected; the code has per-kind work items | Decide first | L | Proposed |  |
+| [B-04](#b-04) | New record IDs: UUIDv7 in the contract, ULID in the code | Before building the area | S | Proposed |  |
+| [B-05](#b-05) | Areas are deferred in the design and live in the code | Before building the area | S | Proposed |  |
+| [B-06](#b-06) | Launch protocol: the host writes v2, the worker implements v3, three ADRs need v3 | Decide first | M | Proposed |  |
+| [B-07](#b-07) | Human authorization: grants are designed, the app token is still what is checked | Before building the area | M | Proposed |  |
+| [B-08](#b-08) | Gateway channel limit: host allows 63, worker rejects the eighth | Cleanup | S | Proposed |  |
+| [B-09](#b-09) | v1 targets macOS and Linux; workers only start on macOS | Before building the area | S to decide, L to build | Proposed |  |
+| [B-10](#b-10) | Calls defined in the contract and not served by the office | Before building the area | M | Proposed |  |
+| [B-11](#b-11) | Libraries with no consumer | Cleanup | S | Proposed |  |
+| [B-12](#b-12) | Setup is described in the present tense and refuses in the code | Cleanup | S | Proposed |  |
+| [C-01](#c-01) | Draft SQL allows an empty number on records only HQ creates | Before building the area | S | Proposed |  |
+| [C-02](#c-02) | Task, release and milestone status have no published vocabulary | Before building the area | S | Proposed |  |
+| [C-03](#c-03) | Employee state is spread over three fields and two documents | Before building the area | S | Proposed |  |
+| [C-04](#c-04) | The owner is represented three different ways | Before building the area | S | Proposed |  |
+| [C-05](#c-05) | The set depends on an Instance and never defines one | Before building the area | S | Proposed |  |
+| [C-06](#c-06) | The README storage tree is incomplete | Cleanup | S | Applied | `cd36075` |
+| [C-07](#c-07) | Diagrams that disagree with their own DDL | Cleanup | S | Proposed |  |
+| [C-08](#c-08) | Documents 11 and 14 define the same records | Cleanup | S | Proposed |  |
+| [C-09](#c-09) | Status labels and revisions differ across the set | Cleanup | S | Proposed |  |
+| [C-10](#c-10) | The usage ledger has no named writer | Before building the area | S | Proposed |  |
+| [C-11](#c-11) | No traceability from the draft schema to the code | Before building the area | S | Proposed |  |
+| [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Proposed |  |
+| [D-02](#d-02) | Named owners and approval gates that no longer exist | Cleanup | S | Proposed |  |
+| [D-03](#d-03) | Crates described as absent that exist | Cleanup | S | Proposed |  |
+| [D-04](#d-04) | ADR-0004 is referenced and does not exist | Cleanup | S | Proposed |  |
+| [D-05](#d-05) | The implemented-entry-points record lags the branch | Cleanup | S | Proposed |  |
+| [D-06](#d-06) | Code comments that still describe the desktop app | Cleanup | S | Proposed |  |
+| [E-01](#e-01) | Encryption at rest is decided for databases and unstated for the files that replace them | Decide first | M | Proposed |  |
+| [E-02](#e-02) | Messaging latency targets assume a batched database commit; the data contract stores one file per message | Before building the area | M | Proposed |  |
+
+Size: S is one documentation change, M is several documents or a bounded code change, L is a code migration.
+
+## Order of work
+
+1. **Done.** The six findings with owner notes (A-01 to A-06), plus C-06 which A-01 closes.
+2. **Decisions that only need a yes, then a documentation change.** A-07, A-08, A-10, A-12, B-04, B-05, B-09, B-11, B-12, C-01 to C-05, C-07 to C-11, D-01 to D-06. These can be applied in one pass once decided.
+3. **Contract changes that gate code.** E-01 (encryption at rest) and A-09 (create-organization payload) first, then A-11 (Git paths) and E-02 (message flush discipline).
+4. **Host increment.** B-06 (launch v3 in the host), then B-07 (grants) and B-08 (channel limit) with it. This unlocks the browser gateway.
+5. **Model changes at the API version boundary.** B-02 (single home team), B-03 (typed tasks), B-05 (areas), B-10 (work reads).
+6. **Storage migration, one record family at a time.** B-01, tracked by C-11. Needs explicit go-ahead.
+
+## A. Contract against contract
+
+Two design documents or data contracts say different things.
+
+### A-01
+
+**Three vocabularies for where data lives on disk**
+
+Priority: Decide first · Size: S · State: Applied
+
+- **One document:** Usage, execution and the README use `<data-root>/<organization-id>/durable/…` and `runtime/<office-id>/office.db`. *(organization-data/README · shared storage contract; 10 line 51; 11 line 98)*
+- **Another document:** Messaging, recovery and budgets use `<organization-operational-root>/…` and `<office-state>/cache/`. The standalone design uses `office-state/offices/<office-id>/`. *(15 lines 18, 23; 16 line 22; 17 lines 46, 53; standalone-server.md line 261)*
+- **Why it matters:** Nobody can implement the durable layout, a backup, or a cache rebuild without knowing whether these are the same directory. This is the first decision the storage migration needs.
+- **Which source wins:** Organization data (newer than the ADRs and designs)
+- **Recommendation:** Define each root once in the organization-data README, with one complete tree, and make documents 10, 11, 14, 15, 16 and 17 reference it. State plainly whether the operational root is `durable/` or a sibling of it.
+- **What we gain:** One rule everyone can hold in their head: back up `durable/`, delete `runtime/`. Backup, restore and cache-rebuild can each be specified against one tree. C-06 closes at the same time.
+- **What we lose:** The separately named operational root implied chat, receipts and budgets could sit on a different volume from the rest. That is still possible by mounting `durable/` elsewhere, but only as a whole, not per kind of data.
+- **Impact of applying it:** Documentation only. No code moves: the code still uses `offices/<office-id>/` and migrates under B-01. The acceptance journal's relative path (`offices/<id>/journals/work-acceptance/…`) already matches `durable/recovery/`.
+- **Owner note:** "OK the document on the organization data root I thinnk makes more sense right ? can we leverage that for evertyhing else can that be applied ?"
+- **Applied in `cd36075`:** Yes, it applies to everything. The organization-data README now holds the one complete tree. Messaging, recovery and budgets moved under `durable/`; the private-notes database is shown; the three older root names are mapped once. Documents 15, 16, 17, the standalone and offices designs, the chat and cost specs and ADR-0003 use the same paths. ADR-0002 records that the data contract owns layout while its engine, single-writer and key-custody decisions stand.
+
+### A-02
+
+**Budget holds are required before a turn, but the dispatch steps have no budget check**
+
+Priority: Before building the area · Size: S · State: Applied
+
+- **One document:** "All offices consult the same authorized budget-control state before admitting new affected turns." *(17-budgets-and-controls.md line 41)*
+- **Another document:** Delivery scope excludes "budget-triggered pausing". The dispatch cycle goes validate, route, permit, spawn with no hold check. A footer acknowledges document 17 without changing the steps. *(11-model-profiles-and-agent-execution.md lines 37, 314, 946)*
+- **Why it matters:** Whoever builds the turn dispatcher from document 11 will ship execution that ignores budget holds, and document 17 will read as satisfied by data alone.
+- **Which source wins:** Organization data document 17, with the check placed in document 11
+- **Recommendation:** Add one admission step to document 11's dispatch: "reject when a task or agent hold is active". Keep mid-turn pausing excluded. Document 17 owns the rule; document 11 owns where it runs.
+- **What we gain:** Budget holds are enforced by construction. HQ already issues every turn permit, so checking the hold there costs no extra round trip and no office decides from a stale copy. It also satisfies "an unreachable coordinator cannot clear a hold" for free.
+- **What we lose:** The permit coordinator now depends on budget-control state, so those two HQ responsibilities can no longer be built or deployed apart. A satellite cut off from HQ cannot start a held or an unheld turn, but that was already true for permits. Budgets still never stop a running turn, so some overshoot remains.
+- **Impact of applying it:** Documentation now; one extra read in the permit transaction when execution is built (FC-098 to FC-100). New outcome code `BUDGET_HELD` and acceptance criterion AE-19.
+- **Owner note:** "What is your recomendations wnat what does it gives us or make us lose ?"
+- **Applied in `2e44b70`:** Applied on my recommendation; you asked for the trade-off, so say if you want it reverted. Document 11 section 6 step 3: HQ grants no permit while an unreleased hold applies to the task or agent, and the turn blocks with `BUDGET_HELD`. Permit renewal for a running turn is never refused, so the current turn finishes as document 17 requires. Added the outcome row, AE-19, and the pointer from document 17.
+
+### A-03
+
+**Who hosts the numbering authority is never stated in the data contract**
+
+Priority: Before building the area · Size: S · State: Applied
+
+- **One document:** "The shared logical organization authority registers final numbers" and serializes allocations. The host of that authority is not named. *(06-identity-and-numbering.md line 36)*
+- **Another document:** HQ is the organization authority: it creates teams and projects and allocates numbers. *(ADR-0001 decision 4; offices-hq-and-satellites.md)*
+- **Why it matters:** "Logical authority" leaves room for a separate allocation service. Numbering durability and recovery depend on knowing which process owns the ledger.
+- **Which source wins:** ADR-0001 and the offices design, merged into organization data
+- **Recommendation:** State in document 06: in v1 the HQ office worker is the organization authority and owns `durable/authority/`. Promotion to another office stays deferred.
+- **What we gain:** One named owner for numbering, slug and key registration, permits, placement generations, budget state and corrections. Nobody builds a separate allocation service by reading "logical authority" literally.
+- **What we lose:** Nothing in v1. It does commit to HQ being a single point for those functions until promotion is designed.
+- **Impact of applying it:** Documentation only.
+- **Owner note:** "lets follow your recommendations hq is the organization authority that is easy to understand"
+- **Applied in `5f3e225`:** The README has a new "Organization authority" section: in v1 it is a role of the HQ office worker, not a separate service. Document 06 points to it, and the decisions table has a row for it. Promotion stays deferred.
+
+### A-04
+
+**Moving an agent between machines: supported in one contract, unsupported in another**
+
+Priority: Before building the area · Size: S · State: Applied
+
+- **One document:** Moving an agent needs the previous supervisor's verified cleanup acknowledgement, or a machine fence, and a new placement generation. *(11-model-profiles-and-agent-execution.md line 132)*
+- **Another document:** "Restoring host custody itself, machine migration and handover remain explicit unsupported recovery cases." *(16-recovery-and-office-continuity.md lines 152 to 153)*
+- **Why it matters:** These are probably two different things (re-placing one agent at another office, versus moving a whole office to new hardware), but the words overlap and the text does not separate them.
+- **Which source wins:** Both, once the two operations are named separately
+- **Recommendation:** Name them separately in both documents: *agent re-placement* (supported, document 11) and *office relocation* (unsupported, document 16), with a cross-reference.
+- **What we gain:** No one reads "machine migration unsupported" as forbidding agent moves, or reads the agent-move rule as permission to copy an office to new hardware. The v2 path is protected: the records that relocation needs are named, so a later change cannot quietly remove them.
+- **What we lose:** Replacing the HQ machine is not possible in v1. If that machine dies, recovery is restore-from-backup on the same custody, not a move. That is the accepted v1 limit.
+- **Impact of applying it:** Documentation only. Adds one guard for future work: binding a durable record to a machine identity without an incarnation, epoch or generation now needs a recorded decision.
+- **Owner note:** "well fix it, lets we should be able to do that but that can be a v2 feature, the architecture should be extensible enough to support this."
+- **Applied in `4b7e893`:** Document 16 has a new section, "Moving agents and moving offices". Agent re-placement stays selected (document 11 owns the fencing rule). Office relocation, including replacing the HQ machine, is marked v2, with the list of existing records that keep it possible: incarnation, epoch, placement generation, writer custody and hash-chained journals. Document 11 cross-references it. I read your note as putting office relocation in v2; tell me if you also meant agent re-placement.
+
+### A-05
+
+**Three hash canonicalizations with no registry**
+
+Priority: Before building the area · Size: S · State: Applied
+
+- **One document:** Usage and execution payloads: SHA-256 of UTF-8 JSON with lexically sorted keys and compact separators. *(10-usage-and-cost-accounting.md line 61)*
+- **Another document:** Messaging envelopes use RFC 8785 canonical JSON, and keep a legacy `v1_lenprefixed_sha256` codec. Task events use "codec 2". *(15-messaging-and-chat.md lines 26, 134; 05-operational-data.md task-event codec 2)*
+- **Why it matters:** Each is defensible alone. Without one list, an implementer will reuse the wrong canonicalizer and produce hashes that verify in tests and fail on recovery.
+- **Which source wins:** New decision, recorded in organization data document 08
+- **Recommendation:** Add a small codec registry to document 08: name, canonicalization, where it is used, and a statement that the differences are intentional. The architecture rules already say hashing semantics stay with their owner.
+- **What we gain:** Scales by rule instead of by memory: a stored hash always names its codec through schema version or an explicit column, new codecs are additive, old bytes are never recoded, and shared test vectors keep Rust and TypeScript in agreement. New record families get a default instead of inventing a fourth form.
+- **What we lose:** A little freedom: adding a canonical form now needs a registry row first. Three forms stay in use for existing records; unifying them would mean rehashing written data, which the rules forbid.
+- **Impact of applying it:** Documentation now. When each family is implemented it needs its test vectors. Document 11 said "canonical" without a definition; it is now assigned `canonical-json/2`, the form the acceptance journal already implements.
+- **Owner note:** "We recommend a suggestion to make sure the system is scalable and flexible."
+- **Applied in `c71e33b`:** Document 08 has a hash codec registry with five entries (`canonical-json/2`, `sorted-compact-json/1`, `jcs-rfc8785/1`, `v1_lenprefixed_sha256`, `raw-bytes/1`) and five rules. Default for new JSON records is `canonical-json/2` because it keeps integer amounts and ordinals as exact tokens. Documents 05, 10, 11 and 15 point at it.
+
+### A-06
+
+**Messaging has a data model and no named runtime owner**
+
+Priority: Before building the area · Size: S · State: Applied
+
+- **One document:** Document 15 owns conversations, messages and recipient state, and excludes "transport/wake engines". *(organization-data/README boundaries table; 15-messaging-and-chat.md)*
+- **Another document:** ADR-0003 assigns storage and routing to the office (office first, then through HQ). The ADR's status is still Proposed, with sections kept as compatibility evidence. *(adr/0003-agent-messaging-office-first.md)*
+- **Why it matters:** The component that stores and routes chat is only decided in a proposed ADR. The live Phase A spool cutover depends on it.
+- **Which source wins:** ADR-0003 for runtime rules, merged into organization data; organization data for storage
+- **Recommendation:** Accept ADR-0003's routing decision (or replace it), then add one line to document 15 naming the office worker as the single owning writer for its conversations.
+- **What we gain:** The messaging contract is complete in one place: what the records are and who stores and routes them. The ADR keeps the detailed v1 algorithms as evidence, so nothing proven is thrown away.
+- **What we lose:** The ADR's SQL storage design stops being the source and becomes a projection. Its latency targets (same-office send p50 under 15 ms) assumed one batched database commit; one protected file per message needs its own flush discipline, so those targets must be re-measured or restated. There are now two documents to keep consistent, with a stated tie-break.
+- **Impact of applying it:** Documentation now. Opens one design question for the messaging adapter (envelope batching, tracked as E-02). The live Phase A spool is untouched.
+- **Owner note:** "I think the ADR3 is right, but it should also be merged with the the organization data. How do they play together? I think we have to merge them. And what are the trade-offs?"
+- **Applied in `7a552bf`:** How they play together: document 15 owns the data and where it is stored; ADR-0003 owns how messages move. Document 15 now has a "Runtime ownership and routing" section with eleven rules taken from the ADR (office-first commit, routing through HQ, the placing office as single writer of recipient state, hand-off by organization position, single-owner failure notices, deadlines, idempotent re-ask). ADR-0003 is marked accepted for those rules. Tie-break: document 15 wins on data shape and storage, the ADR applies where document 15 is silent on runtime behaviour.
+
+### A-07
+
+**Human takeover: browser attaches to the agent terminal, or local CLI only**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **One document:** "The app attaches to the office's PTY" using pty-host frames of at most 64 KiB. *(agent-sessions.md line 414)*
+- **Another document:** Takeover is a "local CLI operation until a separate browser-terminal contract is approved". *(agent-sessions.md line 24; standalone-server.md section 5)*
+- **Why it matters:** A browser terminal is a large security surface. The body of the design still describes it as the mechanism.
+- **Which source wins:** The newer header (local CLI only)
+- **Recommendation:** Mark the PTY-attach section as post-v1 and move it under a clearly labelled future heading.
+- **What we gain:** v1 ships without a browser terminal, which is a large attack surface and a separate contract.
+- **What we lose:** No in-browser takeover in v1; a person takes over an agent from a local terminal.
+- **Impact of applying it:** Move the PTY-attach section of the session design under a post-v1 heading. No code exists for it.
+
+### A-08
+
+**Agent credentials: the user's own vendor sign-in, or office-local bindings**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **One document:** Claude runs with "the user's real `~/.claude`", isolated by three switches. *(agent-sessions.md line 145)*
+- **Another document:** Each office holds a private credential binding per provider connection; credentials never leave the office and are referenced, not shared. *(11-model-profiles-and-agent-execution.md sections 3, 4; 14)*
+- **Why it matters:** The first makes the agent share a person's sign-in and quota. The second is the selected model and is what pools, permits and cost attribution assume.
+- **Which source wins:** Organization data documents 11 and 14
+- **Recommendation:** Document 11 wins. Rewrite the session design's decision to: an office binding may explicitly point at a sign-in directory, and that is one binding type among several.
+- **What we gain:** Quota, permits and cost attribution work, because they all assume one connection per subscription with an office-local binding.
+- **What we lose:** The zero-setup path where an agent just uses whoever is signed in. It becomes one explicit binding type.
+- **Impact of applying it:** Rewrite decision 6 of the session design. The three isolation switches it verified stay valid as the adapter's launch rules.
+
+### A-09
+
+**Create organization: the published API takes a name, provisioning needs four more fields**
+
+Priority: Decide first · Size: M · State: Proposed
+
+- **One document:** `POST /api/v1/organizations` takes a command envelope with `{name}`. *(gateway-api-v1.md line 54)*
+- **Another document:** Create needs an explicit slug, remote organization repository registration, state branch, and valid team references for bootstrap employees. *(gateway-api-v1.md line 174; create-organization.md line 97)*
+- **Why it matters:** Organization creation is on the critical path (HQ bootstrap). The UI and the host operation cannot be wired to a contract that both sides know is incomplete.
+- **Which source wins:** Organization data and the create-organization design
+- **Recommendation:** Publish the provisioning contract as the next API revision and bump what `/version` reports. Retire the name-only form before any client ships.
+- **What we gain:** Unblocks the critical path: setup, host operation and the Create screen can be wired to one complete contract.
+- **What we lose:** The name-only form. Nothing depends on it in production.
+- **Impact of applying it:** Publish the provisioning payload as the next HTTP contract revision; update the DTOs in `org-proto` and the UI create form together. Depends on A-12 for the version number.
+
+### A-10
+
+**Is GitHub part of v1**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **One document:** FC-140 "Git worktrees and GitHub integration" is one Planned v1 row. *(FEATURES.md line 296)*
+- **Another document:** `org-github` is "Deferred v2 integration, not a standalone-v1 dependency". The Git design builds against a fake GitHub. *(project-structure.md line 137; projects-git-github.md)*
+- **Why it matters:** Local Git and worktrees are needed for any agent to do code work. GitHub token minting and pull requests are a much larger piece.
+- **Which source wins:** The project structure (GitHub is v2)
+- **Recommendation:** Split FC-140 into two rows: local repositories, caches and worktrees (v1), and GitHub App tokens and pull requests (v2 or explicitly gated).
+- **What we gain:** v1 scope gets a reachable target: local repositories, caches and worktrees are enough for agents to do code work.
+- **What we lose:** No pull requests or token minting from the product in v1; a person pushes or opens the pull request.
+- **Impact of applying it:** Split FC-140 into two checklist rows and update the area summary counts.
+
+### A-11
+
+**Git design algorithms still use the old two-clone, one-repository-per-project shape**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **One document:** Hardening algorithms keep `mirror.git` and `work.git` under a project folder as "legacy adapter roles". *(projects-git-github.md lines 19 to 21, 97)*
+- **Another document:** One bare cache per office per repository; many repositories per project; worktrees under the employee path. *(organization-data/README runtime tree; 04-agent-structure.md runtime location)*
+- **Why it matters:** The design flags this itself, but the algorithms an implementer would follow are the old ones. Deny rules derived from the old paths do not transfer.
+- **Which source wins:** Organization data (one cache per office per repository)
+- **Recommendation:** Rewrite the algorithm sections against the selected paths before `org-git` is started. Re-derive the credential and other-task denies for the new layout.
+- **What we gain:** The Git adapter is designed once against the real paths, with deny rules that match them.
+- **What we lose:** The hardening analysis done for the two-clone shape has to be re-derived, not copied.
+- **Impact of applying it:** Rewrite the algorithm sections of the Git design before `org-git` starts. No code exists yet, so no rework.
+
+### A-12
+
+**Which local API version the first standalone release speaks**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **One document:** "`API_VERSION` stays 1: everything is additive." *(tasks-projects-docs.md line 273)*
+- **Another document:** "The first standalone release uses local API_VERSION 2." Code declares version 1 and accepts 1 and 2. *(processes.md line 233; standalone-server-removal-inventory.md line 56; org-proto/src/lib.rs)*
+- **Why it matters:** Low risk today because nothing is deployed, but removing `member.update_agent.home` is tied to the version number.
+- **Which source wins:** The standalone decision (version 2)
+- **Recommendation:** Record one decision: version 2 for the first standalone release, with the list of calls removed at that boundary.
+- **What we gain:** One boundary at which removed calls (managed-home overrides, `app_token`, per-kind work commands, area commands) all go.
+- **What we lose:** Compatibility with version 1 clients, of which none are deployed.
+- **Impact of applying it:** Record the decision and the list of calls removed at that boundary. The code already accepts 1 and 2.
+
+## B. Design against code
+
+The selected design and the source on v1-integration disagree.
+
+### B-01
+
+**Storage: files are canonical in the design, databases are authoritative in the code**
+
+Priority: Decide first · Size: L · State: Proposed
+
+- **Design says:** "Shared SQLite is the indexed projection." Domain records are YAML and Markdown in organization Git; the office database can be deleted and rebuilt. *(organization-data/README line 80; 16-recovery-and-office-continuity.md loss boundaries)*
+- **Code does:** Each office has two authoritative SQLCipher databases, `org.db` (schema 3) and `office.db` (schema 8). Only 3 of the 75 draft table names exist in code (organizations, projects, teams). There is no Git code and no reader for the canonical domain files. *(crates/org-office/src/office.rs line 76; crates/org-office/src/store.rs; docs/design/organization-data/schema.sql)*
+- **Why it matters:** This is the largest gap because it changes the base under working code instead of adding to it. Every existing command's persistence, the ID format, numbering, membership and task shapes all move. Recovery, federation, usage and budgets are all specified against the target layout, so none can be built correctly on the current one.
+- **Which source wins:** Organization data, by an approved migration
+- **Recommendation:** Decide the approach before more domain work lands: (1) settle the disk layout (A-01), (2) pick one record family to move end to end as the pattern (the acceptance journal for task assignment already does this), (3) add a projection-rebuild test so "the cache is disposable" is proven, (4) authorize the migration, which the data contract currently says it does not do.
+- **What we gain:** The properties the whole design is specified on: caches are disposable, organization data is reviewable in Git, recovery and federation have defined sources.
+- **What we lose:** Speed while it happens. It touches 49k lines of working office code. One file per record costs more per write than a batched database commit. Until it is finished there are two shapes to keep straight.
+- **Impact of applying it:** Largest item on the list. Do it per record family, not all at once: layout (done in A-01), then tasks through the existing acceptance journal, then organization records, then messaging. Add a rebuild-the-projection test per family. Needs your explicit go-ahead because the data contract says it authorizes no migration.
+
+### B-02
+
+**Single home team is selected; the code is many-to-many**
+
+Priority: Decide first · Size: M · State: Proposed
+
+- **Design says:** Each employee has exactly one `home_team_id`. A project has one owner team and optional contributors. *(01-organization-structure.md; 04-agent-structure.md)*
+- **Code does:** `memberships` and `project_teams` tables, with `team.add_member` and `project.add_team` on the wire. The checklist records the conflict. *(crates/org-proto/src/tests.rs lines 730, 743; FEATURES.md FC-028)*
+- **Why it matters:** Lead authority, accountable ownership and the runtime folder path (`teams/…/agents/<employee-id>`) all assume one home team. Screens built on the current wire will need rework.
+- **Which source wins:** Organization data
+- **Recommendation:** Change the model and wire contract together under the new API version. Nothing is deployed, so no data migration is needed.
+- **What we gain:** Lead authority, accountable ownership and the runtime folder path all become well-defined.
+- **What we lose:** An agent can no longer sit in two teams. Cross-team work is expressed through project contributors and assignment.
+- **Impact of applying it:** Change the organization model, the wire contract and the UI together at the API version boundary. No data migration, since nothing is deployed.
+
+### B-03
+
+**One typed task is selected; the code has per-kind work items**
+
+Priority: Decide first · Size: L · State: Proposed
+
+- **Design says:** One task entity with `type: task | bug | request`, `T-` numbers scoped by project or team, an independent assignment pair, immutable reporter. *(03-features-and-work.md; 12-task-assignment-and-history.md)*
+- **Code does:** `work_items` with `task.*` and `bug.*` command families, ULID identifiers, and per-kind number scopes such as `requests` and `project:<id>:task`. *(crates/org-work; crates/org-office/src/office/tests/instance.rs line 663; tasks-projects-docs.md section 3.2 mapping table)*
+- **Why it matters:** Work is the product's core object. Assignment, history, numbering and every work screen sit on this shape.
+- **Which source wins:** Organization data
+- **Recommendation:** Finish the selected-task path that the acceptance journal started, then retire the per-kind commands at the API version boundary.
+- **What we gain:** One work object for the UI, the CLI and agents; one numbering scheme; history that survives type changes.
+- **What we lose:** Separate bug and request command families and their per-kind numbers. Old `B-` and `REQ-` references need an explicit mapping.
+- **Impact of applying it:** Finish the selected-task path on the acceptance journal, then retire `bug.*` at the API version boundary. Part of B-01's first family.
+
+### B-04
+
+**New record IDs: UUIDv7 in the contract, ULID in the code**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Design says:** "New records use UUIDv7; preserve existing v1 IDs exactly." *(organization-data/README shared identity contract)*
+- **Code does:** The code mints ULIDs and uses the ULID timestamp for receipt retention. *(crates/org-proto/src/lib.rs line 108; crates/org-work/src/lib.rs line 104; 16 line 217)*
+- **Why it matters:** Either works, but file names, sort order and the 30-day receipt rule depend on which one is used. Nothing is deployed, so there are no existing IDs to preserve yet.
+- **Which source wins:** Your choice; I recommend keeping ULIDs and changing the contract
+- **Recommendation:** Choose once. If UUIDv7, switch minting before the first install and restate the receipt-retention rule without "operation-ULID time". If ULID, change the contract.
+- **What we gain:** Keeping ULIDs costs nothing: the code, tests and the 30-day receipt rule already use them, and they sort by time just as UUIDv7 does.
+- **What we lose:** The standard UUID format, which some external tools expect. Switching later would mean two ID formats forever, since IDs are never rewritten.
+- **Impact of applying it:** Either a one-line contract change (keep ULID) or a minting change plus a restated receipt rule (switch). Decide before the first real install.
+
+### B-05
+
+**Areas are deferred in the design and live in the code**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Design says:** FC-056 "Areas and advanced checklist execution": Deferred, not selected. *(FEATURES.md line 137)*
+- **Code does:** `area.create` and `area.rename` are served, an `areas` table exists, and the bug-drafting feature attaches `area` context. *(crates/org-proto/src/tests.rs lines 2038 to 2039; smart-features.md line 102)*
+- **Why it matters:** Deferred-but-present features get built on by accident.
+- **Which source wins:** Organization data (areas are deferred)
+- **Recommendation:** Decide: remove the area commands at the API version boundary, or mark them as retained legacy with no new callers. Update the bug-drafting schema to use accountable team.
+- **What we gain:** Nothing new gets built on a deferred concept.
+- **What we lose:** The area field on bugs, which the bug-drafting feature currently uses for context.
+- **Impact of applying it:** Remove `area.*` at the API version boundary and switch the drafting schema to accountable team.
+
+### B-06
+
+**Launch protocol: the host writes v2, the worker implements v3, three ADRs need v3**
+
+Priority: Decide first · Size: M · State: Proposed
+
+- **Design says:** "Launch v3 and satellite create remain separate pending contracts." *(office-host-boundary.md line 166)*
+- **Code does:** `crates/org-office-launch/src/v3.rs` exists and the worker handles it. Nothing in `org-host` uses it. ADR-0007, 0011 and 0012 depend on v3. *(crates/org-office-launch/src/v3.rs; apps/agentic-org-office/src/launch.rs line 80)*
+- **Why it matters:** The browser gateway handoff, grants, HQ creation with escrow and channel transfer all ride on v3. Until the host drives it, none is reachable.
+- **Which source wins:** The ADRs (launch v3 is the contract)
+- **Recommendation:** Make host-side v3 the next host increment and update the boundary design to say v3 is the contract.
+- **What we gain:** Unlocks the browser gateway, per-person grants, HQ creation with escrow and channel transfer in one host increment.
+- **What we lose:** Launch v2 simplicity. Both must be handled until v2 is removed.
+- **Impact of applying it:** Host-side code change in `org-host`; update the host boundary design to say v3 is current. Prerequisite for B-07 and B-08.
+
+### B-07
+
+**Human authorization: grants are designed, the app token is still what is checked**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **Design says:** Every gateway request carries a human principal and a host-issued grant. *(ADR-0006 revision 5 amendment; ADR-0012)*
+- **Code does:** The launch line still carries `app_token`. The worker receives the grant key and stores it unused: `LaunchAuth::Grants { _key }`. *(crates/org-office-launch/src/lib.rs line 541; apps/agentic-org-office/src/launch.rs line 94)*
+- **Why it matters:** A browser request cannot be authorized per person until grants are verified by the worker.
+- **Which source wins:** The ADRs (principal plus grant)
+- **Recommendation:** Implement grant verification with the v3 host work (B-06) and remove `app_token` at the same boundary.
+- **What we gain:** Browser requests are authorized per person, which sign-in needs.
+- **What we lose:** The single shared app token, which was simpler and only suited one desktop app.
+- **Impact of applying it:** Worker verifies grants; remove `app_token`. Rides on B-06.
+
+### B-08
+
+**Gateway channel limit: host allows 63, worker rejects the eighth**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Design says:** Eight channels per office, seven for the gateway. *(adr/0012-office-channel-lifecycle.md)*
+- **Code does:** "Actual host Endpoint::open allows 63 gateway, worker rejects eighth." Recorded as a defect in the ADR. *(adr/0012-office-channel-lifecycle.md line 18)*
+- **Why it matters:** Harmless until the gateway runs, then it becomes confusing refusals under load.
+- **Which source wins:** ADR-0012
+- **Recommendation:** Set the host limit to seven when the host-side v3 work lands.
+- **What we gain:** Host and worker agree, so capacity refusals are predictable.
+- **What we lose:** Nothing.
+- **Impact of applying it:** One constant in the host, changed with B-06.
+
+### B-09
+
+**v1 targets macOS and Linux; workers only start on macOS**
+
+Priority: Before building the area · Size: S to decide, L to build · State: Proposed
+
+- **Design says:** FC-011 "macOS/Linux installation and named instances". *(FEATURES.md line 71)*
+- **Code does:** Non-macOS spawn returns "office servers run only on macOS". The Linux key provider is undecided and the Landlock and seccomp adapter is absent, so the gateway fails closed. *(crates/org-host/src/spawn.rs line 252; ADR-0002 decision 2; ADR-0008)*
+- **Why it matters:** Linux is a different amount of work from a port: key custody, process admission and confinement all need a design.
+- **Which source wins:** Your choice; I recommend macOS first and Linux as a named follow-up
+- **Recommendation:** Decide whether Linux ships in the first release or the one after, and record it on FC-011.
+- **What we gain:** A first release that is actually verified on one platform, with Linux's key custody and confinement designed properly instead of rushed.
+- **What we lose:** Linux servers in the first release, which matters if you intend to host on a Linux machine.
+- **Impact of applying it:** Update FC-011 to say which. Linux needs a credential provider decision, process admission and a Landlock and seccomp adapter.
+
+### B-10
+
+**Calls defined in the contract and not served by the office**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **Design says:** `org-proto` defines `work.get`, `work.list`, `work.snapshot`, `work.activity`, and `msg.ask`, `msg.reply`, `msg.defer`, `msg.done`, `msg.threads`. *(crates/org-proto/src/work.rs; crates/org-proto/src/msg.rs)*
+- **Code does:** The office dispatch serves work writes and `msg.send | inbox | read | wait` only. *(apps/agentic-org-office/src/serve.rs)*
+- **Why it matters:** The UI needs reads before any work screen can be real. A contract that is wider than the server hides this.
+- **Which source wins:** The contract; serve the calls
+- **Recommendation:** List unserved calls in the crate README, and serve the work reads as part of the first real work screen.
+- **What we gain:** Work screens can show real data. The contract stops overstating the server.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Serve the work reads with the first real work screen; list unserved calls in the crate README meanwhile.
+
+### B-11
+
+**Libraries with no consumer**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Design says:** Internal foundations are labelled and are not counted as features; each increment proves its smallest production path early. *(docs/independent-delivery.md)*
+- **Code does:** `org-process`, `org-copilot` and `org-release` have no dependents. The host database module is marked dead code outside tests. *(Cargo.toml files; crates/org-host/src/hostdb)*
+- **Why it matters:** About 12k lines that compile and test green without being reachable. They age against contracts that are still moving.
+- **Which source wins:** The independent-delivery rule
+- **Recommendation:** For each: name the increment that will consume it, or park it explicitly. `org-release` is consumed by setup; `org-process` is tied to a deferred engine.
+- **What we gain:** Each unused library has a named consumer or an explicit parked status, so it stops drifting unnoticed.
+- **What we lose:** Nothing; no code is deleted.
+- **Impact of applying it:** Three short notes. `org-release` is consumed by setup; `org-copilot` needs a runtime adapter; `org-process` is tied to a deferred engine.
+
+### B-12
+
+**Setup is described in the present tense and refuses in the code**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Design says:** Sections of the standalone design describe setup journals, release pins and launchd registration as how setup works. *(standalone-server.md sections 2 and 4)*
+- **Code does:** `setup` returns "HQ setup is unavailable … no setup state was changed". *(apps/agentic-org/src/lib.rs line 37)*
+- **Why it matters:** A reader cannot tell target from built without cross-checking `executable-migration.md`.
+- **Which source wins:** The code (it refuses), reflected in the design
+- **Recommendation:** Add a one-line status marker at the top of each affected section, in the same vocabulary the feature checklist uses.
+- **What we gain:** Readers can tell target from built without cross-checking a second file.
+- **What we lose:** Nothing.
+- **Impact of applying it:** One status line per affected section of the standalone design.
+
+## C. Organization data improvements
+
+Gaps and inconsistencies inside docs/design/organization-data itself.
+
+### C-01
+
+**Draft SQL allows an empty number on records only HQ creates**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** Only locally created tasks and features, or unresolved imports, may have `number: null`. *(06-identity-and-numbering.md; organization-data/README)*
+- **But:** `teams`, `projects`, `releases` and `milestones` all declare `number INTEGER CHECK (number > 0)` with no `NOT NULL`. *(schema.sql table definitions)*
+- **Why it matters:** The schema is meant to enforce the contract. As written, a team without a number is valid.
+- **Which source wins:** The contract text; fix the SQL
+- **Recommendation:** Add `NOT NULL` on those four, or add an explicit import-staging state column and constrain null to it. Add a case to `test_schema.py`.
+- **What we gain:** The schema enforces the rule it documents.
+- **What we lose:** The ability to stage an HQ-created record without a number. If import staging needs that, it gets an explicit state.
+- **Impact of applying it:** Four `NOT NULL` constraints in `schema.sql` and one test case.
+
+### C-02
+
+**Task, release and milestone status have no published vocabulary**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** "Status values represent data"; no transition engine is selected. Feature status is guarded: `in_progress` and `live` need an owner. *(03-features-and-work.md; 08-record-contracts.md)*
+- **But:** `status TEXT NOT NULL` with no allowed set for tasks, releases and milestones. Deployments, teams and documents do have enumerated values. *(schema.sql)*
+- **Why it matters:** Without a transition engine you still need one list of valid values, or the UI, the CLI and each agent will invent their own. Budget holds already refer to an "in-progress task" becoming blocked.
+- **Which source wins:** New decision in organization data
+- **Recommendation:** Publish the value list per record type in document 03 (values only, no transitions) and add CHECK constraints or a lookup table.
+- **What we gain:** The UI, the CLI and every agent use the same status words. Budget holds and reports can rely on them.
+- **What we lose:** Free-form statuses. Adding a value becomes a contract change.
+- **Impact of applying it:** A value table in document 03 and CHECK constraints. No engine is implied.
+
+### C-03
+
+**Employee state is spread over three fields and two documents**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** Lifecycle is `active | inactive`. Pause and hold are separate operational states owned by execution and budgets. *(08-record-contracts.md; 11; 17)*
+- **But:** The employees table also keeps `agent_status IN ('active','paused','offboarded')` and `offboarded_at` as legacy fields. *(schema.sql lines 559 to 562; 04-agent-structure.md field reconciliation)*
+- **Why it matters:** "Is this agent allowed to run" currently needs four inputs: employment status, legacy agent status, a pause command and budget holds.
+- **Which source wins:** New decision in organization data
+- **Recommendation:** Add one short state table to document 04: employment (active, inactive) × runtime (running, paused) × holds, with the single rule for runnable. Drop `agent_status` from the target or define its one-way mapping.
+- **What we gain:** One rule for "may this agent run", instead of four inputs read in different places.
+- **What we lose:** The legacy `agent_status` field as a second source.
+- **Impact of applying it:** A short state table in document 04; drop or map `agent_status` in the draft schema.
+
+### C-04
+
+**The owner is represented three different ways**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** Shared metadata records the owner as `kind: owner` with no employee ID. The owner account is a host security principal. *(05-operational-data.md relationships; documentation-authority.md)*
+- **But:** `employees.is_owner` remains as a marker that "grants nothing". Private notes key on the authenticated subject ID instead. *(schema.sql line 558; 04-agent-structure.md; 05 private notes)*
+- **Why it matters:** A column named `is_owner` that grants nothing is an authorization bug waiting for someone to trust it.
+- **Which source wins:** The security model (owner is a host principal)
+- **Recommendation:** Remove `is_owner` from the target schema or rename it `legacy_owner_marker`. Add one paragraph that says how an owner principal maps to an optional person record.
+- **What we gain:** Removes a column that looks like an authorization grant and is not one.
+- **What we lose:** Nothing functional.
+- **Impact of applying it:** Remove or rename `is_owner` in the draft schema; one explanatory paragraph.
+
+### C-05
+
+**The set depends on an Instance and never defines one**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** Assignment fingerprints include `instance_id`, and creating an organization needs "instance-administrator authority". *(12-task-assignment-and-history.md; create-organization.md)*
+- **But:** No document in the set defines instance, account or administrator records. They live in the host database. *(organization-data/README boundaries table; crates/org-host/src/hostdb/schema.rs)*
+- **Why it matters:** The boundary between host-owned identity and organization-owned data is the main trust boundary, and it is only implied.
+- **Which source wins:** New text in organization data
+- **Recommendation:** Add a short "outside this set" section to the README: instance, accounts, sessions and the owner principal belong to the host, with the one field by which organization data refers to each.
+- **What we gain:** The host-owned and organization-owned boundary is written down, which is the main trust boundary.
+- **What we lose:** Nothing.
+- **Impact of applying it:** One "outside this set" section in the README.
+
+### C-06
+
+**The README storage tree is incomplete**
+
+Priority: Cleanup · Size: S · State: Applied
+
+- **Contract says:** The shared storage tree lists `state`, `accounting`, `authority`, `journal`, `local`, `checkpoints`. *(organization-data/README lines 62 to 76)*
+- **But:** The private-notes database lives at `durable/private/task-notes.db`. Messaging, recovery and budgets live under a root the tree does not show. *(05-operational-data.md line 551; 15; 16; 17)*
+- **Why it matters:** The README is the entry point. A backup built from its tree would miss chat, budgets, receipts and private notes.
+- **Which source wins:** Organization data
+- **Recommendation:** Resolve with A-01: one complete tree, each directory tagged source or cache, and tagged with what a backup must include.
+- **What we gain:** A backup built from the README tree is complete.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Closed by A-01.
+- **Applied in `cd36075`:** Closed with A-01: the README tree now shows `messaging/`, `recovery/`, `budgets/` and `private/task-notes.db`, each marked as a source.
+
+### C-07
+
+**Diagrams that disagree with their own DDL**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Contract says:** Task events: `occurred_at` "required". Deployments: `environment` and `target` marked as foreign keys. *(05-operational-data.md line 407; 07-release-deployments.md lines 21 to 22)*
+- **But:** `occurred_at TEXT` is nullable (for adopted legacy events). `environment` and `target` are free text. *(05-operational-data.md line 428; schema.sql line 1064; 07 line 47)*
+- **Why it matters:** Small, but the diagrams are what people read first.
+- **Which source wins:** The DDL
+- **Recommendation:** Fix both labels. For deployments, decide whether environment names should be a per-project list; free text will drift (prod, production, Production).
+- **What we gain:** Diagrams match the tables.
+- **What we lose:** Nothing. Optionally a decision on whether environments become a per-project list.
+- **Impact of applying it:** Two diagram label fixes.
+
+### C-08
+
+**Documents 11 and 14 define the same records**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Contract says:** Document 11 is the "data and execution specification" and says "Implement the decisions here". *(11-model-profiles-and-agent-execution.md line 3)*
+- **But:** Document 14 is "the data-model view of the selected execution contract, using the same records and SQL". *(14-model-providers-and-connection-pools.md line 3)*
+- **Why it matters:** Two places to edit one table. They agree today. Document 13 shows the fix already applied once: it is now a redirect.
+- **Which source wins:** Document 11 keeps behaviour, document 14 keeps the data view
+- **Recommendation:** Keep the DDL in one of them and have the other link to it.
+- **What we gain:** One place to edit each table.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Move or link the duplicated DDL.
+
+### C-09
+
+**Status labels and revisions differ across the set**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Contract says:** The README says the set is at revision 2.8 and is a "structural draft" that authorizes no migration. *(organization-data/README line 3)*
+- **But:** Documents sit at 2.6, 2.7 and 2.8; document 12 is revision 4, 11 is revision 6, 14 is revision 1, 17 is revision 2. Document 11 says implement; 17 calls itself a data and behavior specification. *(line 3 of each numbered document)*
+- **Why it matters:** A reader cannot tell which documents are settled enough to build from.
+- **Which source wins:** New convention
+- **Recommendation:** Use one status vocabulary on every document (draft, selected, implemented) and a set-level changelog in the README.
+- **What we gain:** A reader can tell which documents are settled enough to build from.
+- **What we lose:** Nothing.
+- **Impact of applying it:** One status line convention on 17 documents and a changelog in the README.
+
+### C-10
+
+**The usage ledger has no named writer**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** Events append to per-producer JSONL with a checkpoint before acknowledgement. The collection protocol must satisfy the contract before it ships. *(10-usage-and-cost-accounting.md durable storage)*
+- **But:** Only document 11's dispatch step places capture in the office supervisor path, and only in passing. *(11-model-profiles-and-agent-execution.md section 6)*
+- **Why it matters:** The ledger gates every cost and budget feature (FC-084). It needs the same single-writer statement the other durable sources have.
+- **Which source wins:** New text in organization data
+- **Recommendation:** State in document 10: the office worker that ran the turn is the producer and the only appender for its stream.
+- **What we gain:** The ledger gets the same single-writer statement as every other durable source.
+- **What we lose:** Nothing.
+- **Impact of applying it:** One sentence in document 10.
+
+### C-11
+
+**No traceability from the draft schema to the code**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** The draft has 75 tables and 8 views, with executable checks in `test_schema.py`. *(organization-data/SCHEMA-COVERAGE.md)*
+- **But:** The code has its own in-code schemas keyed on `user_version`. Three table names overlap. *(crates/org-office/src/office.rs; crates/org-office/src/store.rs)*
+- **Why it matters:** There is no artefact that says which draft tables are implemented, renamed, or still missing, so drift is invisible.
+- **Which source wins:** New practice
+- **Recommendation:** Add a status column to SCHEMA-COVERAGE (absent, legacy shape, implemented) and update it in the same change as each storage increment.
+- **What we gain:** Drift between the draft schema and the code becomes visible, and B-01 gets a progress measure.
+- **What we lose:** A small upkeep cost on each storage increment.
+- **Impact of applying it:** One status column in SCHEMA-COVERAGE.
+
+## D. Stale documentation
+
+Text that was true once and now points people at the wrong name, owner or status.
+
+### D-01
+
+**Old executable names in live design text**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Text says:** Agents push with `org-agent push`. `org-server` is the composition root. *(projects-git-github.md lines 103, 150; adr/0003 throughout)*
+- **Now:** The executables are `agent-os` and `agentic-org-office`. *(executable-migration.md; AGENTS.md)*
+- **Why it matters:** The installed live tool is still called `org-agent`, so this is easy to get wrong in both directions.
+- **Which source wins:** Current names
+- **Recommendation:** Sweep the designs. Keep `org-agent` only where the text means the installed Phase A tool, and say so.
+- **What we gain:** Designs name the executables that exist.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Text sweep. Keep `org-agent` only where it means the installed Phase A tool.
+
+### D-02
+
+**Named owners and approval gates that no longer exist**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Text says:** "Owner: ada", steps that need a named person's go, and merges into `v1`. *(processes.md line 3; projects-git-github.md; standalone-server.md section 8; FEATURES.md review line)*
+- **Now:** One lead owns everything; merge to `v1-integration` after local review; no external approval. *(AGENTS.md current working mode)*
+- **Why it matters:** An agent that reads the design before AGENTS.md will wait for an approval that cannot come.
+- **Which source wins:** AGENTS.md
+- **Recommendation:** Replace owner lines with "lead" and delete approval gates, in one documentation change.
+- **What we gain:** No agent waits for an approval that cannot come.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Text sweep of owner lines and approval gates.
+
+### D-03
+
+**Crates described as absent that exist**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Text says:** `org-sync`, `org-sync-proto` and `org-pki` "are absent on the inspected branch". `org-pki` is listed under planned components. *(standalone-server-removal-inventory.md line 227; project-structure.md line 135; adr/0007 line 15)*
+- **Now:** All three are workspace members with source and tests. *(Cargo.toml)*
+- **Why it matters:** Someone will plan to write a crate that is already there.
+- **Which source wins:** The code
+- **Recommendation:** Update the three lists. In ADR-0007, keep the observation as dated evidence and add the current state.
+- **What we gain:** Nobody plans to write a crate that exists.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Three list updates.
+
+### D-04
+
+**ADR-0004 is referenced and does not exist**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Text says:** The session design replaces "the unmerged ADR-0004 draft" and plans to rewrite it. *(agent-sessions.md lines 56, 799)*
+- **Now:** `docs/adr` goes from 0003 to 0005. *(docs/adr directory)*
+- **Why it matters:** The headless-first execution decision has no ADR of its own.
+- **Which source wins:** The session design's decision
+- **Recommendation:** Write ADR-0004 as the headless-first decision, or add a stub that points to the section of the session design that holds it.
+- **What we gain:** The headless-first execution decision has an ADR number that resolves.
+- **What we lose:** Nothing.
+- **Impact of applying it:** One new short ADR or a stub.
+
+### D-05
+
+**The implemented-entry-points record lags the branch**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Text says:** The F0 baseline table says the office has not imported the writer, bootstrap, adoption or escrow additions. *(executable-migration.md F0 integration baseline)*
+- **Now:** The branch has since merged the durable journal, native replay, CA escrow, and HQ creation with admitted bootstrap. *(git log on v1-integration: eacb505, 0d4035d, 55c7d76)*
+- **Why it matters:** This file is named by the authority map as the answer to "what is implemented".
+- **Which source wins:** The branch
+- **Recommendation:** Update the table in the same change as each delivered unit, as the feature checklist already requires.
+- **What we gain:** The file named as the answer to "what is implemented" is current.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Update the table per delivered unit.
+
+### D-06
+
+**Code comments that still describe the desktop app**
+
+Priority: Cleanup · Size: S · State: Proposed
+
+- **Text says:** `org-client` is "used by the desktop app's Tauri shell and by agent-os". *(crates/org-client/src/lib.rs lines 4 to 5)*
+- **Now:** The Tauri shell is removed. *(standalone-server-removal-inventory.md; project-structure.md)*
+- **Why it matters:** Minor, and cheap to fix.
+- **Which source wins:** The code
+- **Recommendation:** Update the crate documentation.
+- **What we gain:** Accurate crate documentation.
+- **What we lose:** Nothing.
+- **Impact of applying it:** Two lines.
+
+## E. ADR decisions the data contract did not carry over
+
+The organization data was written after the ADRs. These are ADR decisions it replaces without restating, found on a second pass.
+
+### E-01
+
+**Encryption at rest is decided for databases and unstated for the files that replace them**
+
+Priority: Decide first · Size: M · State: Proposed
+
+- **ADR says:** "Organizations will hold confidential information, so the server's database must be encrypted at rest." Every reader and writer keys SQLCipher with a host-held key. *(adr/0002-storage-sqlite-sqlcipher-one-writer.md context and decisions 1 to 2)*
+- **Organization data says:** Sources move to files under `durable/`. Only the private-notes database is stated as SQLCipher. Document 15 asks for "encrypted storage … according to the existing storage boundary" without defining it; documents 10, 16 and 17 say "protected". *(05-operational-data.md lines 551, 563; 15-messaging-and-chat.md line 15; 10; 16; 17)*
+- **Why it matters:** Today chat bodies and receipts sit in an encrypted database. Moved to files as specified, they could lose encryption at rest without anyone deciding that.
+- **Which source wins:** ADR-0002 (encryption at rest), merged into organization data
+- **Recommendation:** Add an at-rest rule to the storage contract: which directories under `durable/` are encrypted, with which key, and how host key custody covers them. The simplest consistent choice is that every protected source directory is encrypted under a key the host hands the worker at launch, exactly as it does the database key.
+- **What we gain:** Chat bodies, receipts, budgets and usage keep the confidentiality the databases have today.
+- **What we lose:** Plain files are easy to inspect and repair by hand; encrypted ones are not. Encrypting per file also costs throughput.
+- **Impact of applying it:** A decision in the storage contract: which directories under `durable/` are encrypted, with what key, and how the host's key custody extends to them. Must be settled before B-01 moves any protected family.
+
+### E-02
+
+**Messaging latency targets assume a batched database commit; the data contract stores one file per message**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **ADR says:** Same-office send p50 under 15 ms and p95 under 30 ms, cross-office ask and reply p50 under 60 ms, achieved by sharing one full-flush commit across concurrent senders. *(adr/0003-agent-messaging-office-first.md section 5, lines 852 to 865)*
+- **Organization data says:** "Save a whole envelope atomically under a single owning writer before acknowledging it", one JSON file per message under `durable/messaging/`. *(15-messaging-and-chat.md storage and durability)*
+- **Why it matters:** One durable flush per message file under a 16-agent burst will not meet targets that were designed around one shared flush.
+- **Which source wins:** ADR-0003's targets, re-measured against the new storage
+- **Recommendation:** Design the envelope flush discipline before the messaging adapter is built: either batch several envelopes behind one directory flush, or journal first and materialize files after, as the acceptance journal does. Measure, then keep or restate the targets.
+- **What we gain:** Messaging stays fast enough for many agents after the move to protected files.
+- **What we lose:** Either some durability granularity (batching several envelopes behind one flush) or the current latency targets.
+- **Impact of applying it:** Design the envelope flush discipline and measure it before the messaging adapter is built. Recorded as an open item in document 15.
+
+## Checks
+
+Documentation changes in this plan are verified with `python3 docs/design/organization-data/test_schema.py` when the draft schema is touched and `python3 .agent-kit/runtime/kit_skills.py validate` when a hashed evidence file changes. Line numbers in the findings refer to `v1-integration` at `55c7d76`, the commit the analysis was made against.
