@@ -101,6 +101,8 @@ struct Gateway {
     fetched: AtomicBool,
     /// The gateway's one `gateway.serving` was accepted.
     serving: AtomicBool,
+    /// The host refused a `gateway.serving` as a protocol error and closed control.
+    serving_refused: AtomicBool,
 }
 
 /// How the host takes a `gateway.serving` notification.
@@ -138,6 +140,7 @@ impl GatewayConnection {
             listen,
             fetched: AtomicBool::new(false),
             serving: AtomicBool::new(false),
+            serving_refused: AtomicBool::new(false),
         });
         let serving = Arc::clone(&connection);
         let thread = thread::Builder::new()
@@ -150,6 +153,13 @@ impl GatewayConnection {
     }
     pub(crate) fn live(&self) -> bool {
         !self.connection.closed.load(Ordering::SeqCst)
+    }
+    /// The host refused the gateway's `gateway.serving` as a protocol error.
+    pub(crate) fn serving_refused(&self) -> bool {
+        self.connection
+            .gateway
+            .as_ref()
+            .is_some_and(|g| g.serving_refused.load(Ordering::SeqCst))
     }
     /// The gateway reported, in order, that its HTTP server is serving.
     pub(crate) fn reported_serving(&self) -> bool {
@@ -708,6 +718,15 @@ impl Connection {
         lock(&self.received_channels).insert(channel.into(), slot);
     }
 
+    /// Refuses a gateway's `gateway.serving` as a protocol error, noting it so the
+    /// supervisor logs that cause rather than only the control EOF that follows.
+    pub(crate) fn refuse_serving(&self, response: Response) {
+        if let Some(gateway) = &self.gateway {
+            gateway.serving_refused.store(true, Ordering::SeqCst);
+        }
+        self.refuse_and_finish(response);
+    }
+
     /// Drain the refusal before closing, but stop even already-buffered requests.
     pub(crate) fn refuse_and_finish(&self, response: Response) {
         self.closed.store(true, Ordering::SeqCst);
@@ -965,6 +984,7 @@ mod tests {
             listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
             fetched: AtomicBool::new(false),
             serving: AtomicBool::new(false),
+            serving_refused: AtomicBool::new(false),
         });
         assert_eq!(
             connection.channel_kind(),
@@ -1958,6 +1978,7 @@ mod channel_lifecycle_tests {
                 listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
                 fetched: AtomicBool::new(false),
                 serving: AtomicBool::new(false),
+                serving_refused: AtomicBool::new(false),
             });
                 Some(org_socket::rights::DatagramReceiver::new(peer))
             } else {

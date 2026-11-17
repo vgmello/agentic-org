@@ -68,10 +68,19 @@ fn unavailable() -> io::Error {
 fn invalid<T>(_: T) -> io::Error {
     unavailable()
 }
-/// The launch check refused the gateway. Its cause names only the check and the
-/// executable's identity, so it is kept for the supervisor's log line.
-fn refused(why: String) -> io::Error {
-    io::Error::other(format!("gateway admission refused: {why}"))
+/// The launch check refused the gateway at `step`. Its cause names only the check
+/// and the executable's identity, so it is kept for the supervisor's log line.
+fn refused(step: &'static str) -> impl FnOnce(String) -> io::Error {
+    move |why| io::Error::other(format!("gateway admission refused at {step}: {why}"))
+}
+/// A failed start step with a fixed, secret-free cause for the supervisor's log line.
+fn failed(cause: &str) -> io::Error {
+    io::Error::other(format!("gateway start failed: {cause}"))
+}
+/// A failed start step caused by an OS error. Only the error's kind is kept, never
+/// its text, so the cause stays fixed and secret-free.
+fn os_failed(cause: &'static str) -> impl FnOnce(io::Error) -> io::Error {
+    move |error| failed(&format!("{cause} ({:?})", error.kind()))
 }
 
 pub(crate) struct Configuration {
@@ -122,6 +131,7 @@ impl Supervisor {
                     &observing,
                     &*eligible,
                     Timing::PRODUCTION,
+                    &|line| crate::host_log::log(line),
                     || Running::start(&config, Arc::clone(&handler)),
                 )
             })?;
@@ -149,6 +159,8 @@ trait Serving {
     fn serving(&mut self) -> bool;
     /// Whether the admitted gateway reported, in order, that its HTTP server serves.
     fn reported(&mut self) -> bool;
+    /// Why it stopped serving: fixed, secret-free text for the host log.
+    fn ended(&mut self) -> String;
 }
 
 /// Starts the gateway once `eligible`. It stays `Starting` until the admitted
@@ -157,12 +169,14 @@ trait Serving {
 /// publishes `Failed` and stops/reaps the child, before any bounded restart.
 /// Only consecutive failed starts count toward [`MAX_STARTS`]: a gateway that
 /// stayed `Running` for `timing.stable` resets the count. No backoff follows
-/// the final failed start.
+/// the final failed start. Every failed start and every exit is passed to `log`
+/// with its cause, escaped, together with the restart it leads to.
 fn supervise<S: Serving>(
     stopping: &AtomicBool,
     state: &Mutex<GatewayState>,
     eligible: &dyn Fn() -> bool,
     timing: Timing,
+    log: &dyn Fn(&str),
     mut start: impl FnMut() -> io::Result<S>,
 ) {
     let mut failures = 0usize;
@@ -179,7 +193,7 @@ fn supervise<S: Serving>(
         }
         *lock(state) = GatewayState::Starting;
         let mut stable = false;
-        match start() {
+        let reason = match start() {
             Ok(mut child) => {
                 // HTTP initialization is still pending until the child reports it.
                 let until = Instant::now() + timing.serving;
@@ -190,35 +204,45 @@ fn supervise<S: Serving>(
                 {
                     thread::park_timeout(POLL);
                 }
-                if !stopping.load(Ordering::SeqCst) && child.serving() && child.reported() {
+                let reason = if stopping.load(Ordering::SeqCst) {
+                    String::new()
+                } else if child.serving() && child.reported() {
                     *lock(state) = GatewayState::Running;
                     let running = Instant::now();
                     while !stopping.load(Ordering::SeqCst) && child.serving() {
                         thread::park_timeout(POLL);
                     }
                     stable = running.elapsed() >= timing.stable;
-                } else if !stopping.load(Ordering::SeqCst) {
-                    crate::host_log::log("authenticated browser did not report serving");
-                }
+                    format!("the running gateway stopped: {}", child.ended())
+                } else if child.serving() {
+                    "it did not report gateway.serving before the deadline".to_owned()
+                } else {
+                    format!("it stopped before serving: {}", child.ended())
+                };
                 *lock(state) = GatewayState::Failed;
                 drop(child); // end sessions/control, then kill/reap before restart
+                reason
             }
-            Err(error) => crate::host_log::log(&format!(
-                "authenticated browser startup failed: {}",
-                crate::host_log::untrusted(&error.to_string())
-            )),
-        }
+            Err(error) => error.to_string(),
+        };
         *lock(state) = GatewayState::Failed;
         if stopping.load(Ordering::SeqCst) {
             break;
         }
+        let reason = crate::host_log::untrusted(&reason);
         failures = if stable { 0 } else { failures + 1 };
         if failures >= MAX_STARTS {
-            crate::host_log::log("authenticated browser restart limit reached");
+            log(&format!(
+                "authenticated browser restart limit reached after {failures} failed starts; last: {reason}"
+            ));
             break;
         }
         // 1x after a stable run or the first failure, then 2x, 4x, 8x.
-        let retry = Instant::now() + timing.backoff * (1 << failures.saturating_sub(1));
+        let delay = timing.backoff * (1 << failures.saturating_sub(1));
+        log(&format!(
+            "authenticated browser restarting in {delay:?} because {reason}"
+        ));
+        let retry = Instant::now() + delay;
         while !stopping.load(Ordering::SeqCst) && Instant::now() < retry {
             thread::park_timeout(POLL);
         }
@@ -263,15 +287,30 @@ impl Rendezvous {
                     return Ok(stream);
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() < until => {
-                    if process.try_wait()? {
-                        return Err(unavailable());
+                    if process
+                        .try_wait()
+                        .map_err(os_failed("wait for the child"))?
+                    {
+                        return Err(failed(&format!(
+                            "the child exited before connecting ({})",
+                            exited(process)
+                        )));
                     }
                     thread::sleep(Duration::from_millis(10));
                 }
-                Err(e) => return Err(e),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    return Err(failed("the child did not connect before the deadline"))
+                }
+                Err(e) => return Err(os_failed("accept the rendezvous")(e)),
             }
         }
     }
+}
+/// How the reaped child ended, for a log line.
+fn exited(process: &Process) -> String {
+    process
+        .ended()
+        .unwrap_or_else(|| "status unknown".to_owned())
 }
 impl Drop for Rendezvous {
     fn drop(&mut self) {
@@ -292,75 +331,119 @@ impl Serving for Running {
     fn reported(&mut self) -> bool {
         self.control.reported_serving()
     }
+    fn ended(&mut self) -> String {
+        if self.control.serving_refused() {
+            "the host refused its gateway.serving as a protocol error".to_owned()
+        } else if matches!(self.process.try_wait(), Ok(true)) {
+            format!("the child exited ({})", exited(&self.process))
+        } else if !self.control.live() {
+            "its control connection reached EOF".to_owned()
+        } else {
+            "it stopped serving".to_owned()
+        }
+    }
 }
 impl Running {
     fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Self> {
-        config.check.may_spawn().map_err(refused)?;
+        config
+            .check
+            .may_spawn()
+            .map_err(refused("the pre-spawn check"))?;
         // Validated configuration is frozen before bind. No port-zero substitution.
         let listener = {
             let _fence = lock(&SPAWN_LOCK);
-            TcpListener::bind((config.listen.address(), config.listen.port()))?
+            TcpListener::bind((config.listen.address(), config.listen.port()))
+                .map_err(os_failed("bind the browser listener"))?
         };
-        if listener.local_addr()?.port() != config.listen.port() {
-            return Err(unavailable());
+        let bound = listener
+            .local_addr()
+            .map_err(os_failed("read the browser listener address"))?;
+        if bound.port() != config.listen.port() {
+            return Err(failed("the browser listener is not on its configured port"));
         }
-        let rendezvous = Rendezvous::bind(&config.runtime)?;
+        let rendezvous =
+            Rendezvous::bind(&config.runtime).map_err(os_failed("bind the rendezvous"))?;
         let mut spawned = {
             let _fence = lock(&SPAWN_LOCK);
-            spawn::spawn_suspended(&config.program, &[OsStr::new("--serve")], &[])?
+            spawn::spawn_suspended(&config.program, &[OsStr::new("--serve")], &[])
+                .map_err(os_failed("spawn the gateway suspended"))?
         };
-        let admitted = config.check.admit(spawned.process.id()).map_err(refused)?;
+        let pid = spawned.process.id();
+        let admitted = config.check.admit(pid).map_err(refused("admission"))?;
         config
             .check
-            .still(spawned.process.id(), admitted)
-            .map_err(refused)?;
-        spawned.process.resume()?;
+            .still(pid, admitted)
+            .map_err(refused("the pre-resume re-check"))?;
+        spawned
+            .process
+            .resume()
+            .map_err(os_failed("resume the gateway"))?;
         let first = GatewayFirstLine {
-            rendezvous: rendezvous.path.to_str().ok_or_else(unavailable)?.into(),
+            rendezvous: rendezvous
+                .path
+                .to_str()
+                .ok_or_else(|| failed("the rendezvous path is not UTF-8"))?
+                .into(),
             instance_id: config.instance.clone(),
             release: config.release.clone(),
         };
-        let mut first = serde_json::to_vec(&first).map_err(invalid)?;
+        let mut first = serde_json::to_vec(&first).map_err(|_| failed("encode the first line"))?;
         if first.len() >= 1024 {
-            return Err(unavailable());
+            return Err(failed("the first line exceeds 1023 bytes"));
         }
         first.push(b'\n');
-        spawned.stdin.write_all(&first)?;
+        spawned
+            .stdin
+            .write_all(&first)
+            .map_err(os_failed("write the first line"))?;
         // Drain bounded chunks without retaining any child output in logs.
         let mut stdout = spawned.stdout;
         thread::Builder::new()
             .name("gateway-stdout".into())
             .spawn(move || {
                 let _ = io::copy(&mut stdout, &mut io::sink());
-            })?;
+            })
+            .map_err(os_failed("start the stdout drain"))?;
         let mut stderr = spawned.stderr;
         thread::Builder::new()
             .name("gateway-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
                 while matches!(stderr.read(&mut bytes), Ok(n) if n > 0) {}
-            })?;
+            })
+            .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + WAIT;
         let mut stream = rendezvous.accept(&mut spawned.process, until)?;
-        crate::supervisor::channels::reader_is_child(&stream, spawned.process.id(), admitted)?;
-        let mut receiver = org_socket::rights::StreamReceiver::new(stream.try_clone()?);
+        crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
+            .map_err(|_| failed("the rendezvous peer is not the admitted child"))?;
+        let mut receiver = org_socket::rights::StreamReceiver::new(
+            stream
+                .try_clone()
+                .map_err(os_failed("clone the control stream"))?,
+        );
         let ready: GatewayReadyForSecrets =
-            serde_json::from_slice(&line(&mut receiver, until)?).map_err(invalid)?;
+            serde_json::from_slice(&line(&mut receiver, until, "ready line")?)
+                .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
         if ready.landlock.is_some() {
-            return Err(unavailable());
+            return Err(failed("the ready line reports landlock on macOS"));
         }
-        crate::supervisor::channels::reader_is_child(&stream, spawned.process.id(), admitted)?;
+        crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
+            .map_err(|_| failed("the ready-line peer is not the admitted child"))?;
         config
             .check
-            .still(spawned.process.id(), admitted)
-            .map_err(refused)?;
-        if config.check.admit(spawned.process.id()).map_err(refused)? != admitted {
-            return Err(unavailable());
+            .still(pid, admitted)
+            .map_err(refused("the post-ready re-check"))?;
+        if config.check.admit(pid).map_err(refused("re-admission"))? != admitted {
+            return Err(io::Error::other(
+                "gateway admission refused at re-admission: the identity changed",
+            ));
         }
         let paths: Vec<_> = config.critical_paths.iter().map(PathBuf::as_path).collect();
-        org_socket::confinement::verify_gateway(spawned.process.id(), &paths)?;
-        let (transfer, child) = transfer_pair()?;
-        send_handoff(&mut stream, &child, &listener, until)?;
+        org_socket::confinement::verify_gateway(pid, &paths)
+            .map_err(os_failed("verify the gateway sandbox"))?;
+        let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
+        send_handoff(&mut stream, &child, &listener, until)
+            .map_err(os_failed("send the descriptor handoff"))?;
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Ack {
@@ -368,19 +451,23 @@ impl Running {
             event: String,
             of: String,
         }
-        let ack: Ack = serde_json::from_slice(&line(&mut receiver, until)?).map_err(invalid)?;
+        let ack: Ack = serde_json::from_slice(&line(&mut receiver, until, "handoff ACK")?)
+            .map_err(|_| failed("the handoff ACK is malformed"))?;
         if ack.v != org_host_control::API_VERSION
             || ack.event != "fds.received"
             || ack.of != "handoff"
         {
-            return Err(unavailable());
+            return Err(failed("the handoff ACK does not acknowledge the handoff"));
         }
         drop(receiver);
         drop(child);
         drop(listener);
         drop(rendezvous);
-        stream.set_write_timeout(None)?;
-        let control = GatewayConnection::start(stream, transfer, config.listen.clone(), handler)?;
+        stream
+            .set_write_timeout(None)
+            .map_err(os_failed("clear the control write timeout"))?;
+        let control = GatewayConnection::start(stream, transfer, config.listen.clone(), handler)
+            .map_err(os_failed("start the control connection"))?;
         Ok(Self {
             control,
             process: spawned.process,
@@ -436,28 +523,35 @@ fn send_handoff(
 // recvmsg reads exactly through LF, never consuming a pipelined hello or silently
 // discarding early descriptors. A fatal ancillary frame terminates the host as
 // required by X-02; none of its possibly unreported descriptors may survive.
-fn line(receiver: &mut org_socket::rights::StreamReceiver, until: Instant) -> io::Result<Vec<u8>> {
+fn line(
+    receiver: &mut org_socket::rights::StreamReceiver,
+    until: Instant,
+    what: &str,
+) -> io::Result<Vec<u8>> {
+    let timed_out = || failed(&format!("the {what} did not arrive before the deadline"));
     let mut bytes = Vec::new();
     loop {
         match receiver.receive_byte(0, &SPAWN_LOCK) {
             Ok((b'\n', _)) => return Ok(bytes),
             Ok((b, _)) if bytes.len() < 1023 => bytes.push(b),
-            Ok(_) => return Err(unavailable()),
+            Ok(_) => return Err(failed(&format!("the {what} exceeds 1023 bytes"))),
             Err(org_socket::rights::ReceiveError::WouldBlock) => {
                 let left = until
                     .checked_duration_since(Instant::now())
-                    .ok_or_else(unavailable)?;
-                if !org_socket::poll_readable(
-                    receiver.fd().ok_or_else(unavailable)?.as_raw_fd(),
-                    left,
-                )? {
-                    return Err(unavailable());
+                    .ok_or_else(timed_out)?;
+                let fd = receiver
+                    .fd()
+                    .ok_or_else(|| failed(&format!("the {what} stream is closed")))?;
+                if !org_socket::poll_readable(fd.as_raw_fd(), left)
+                    .map_err(os_failed("poll the control stream"))?
+                {
+                    return Err(timed_out());
                 }
             }
             Err(org_socket::rights::ReceiveError::Fatal(e))
                 if e.kind() == io::ErrorKind::UnexpectedEof =>
             {
-                return Err(unavailable())
+                return Err(failed(&format!("control EOF before the {what}")))
             }
             Err(org_socket::rights::ReceiveError::Fatal(_)) => std::process::exit(1),
         }

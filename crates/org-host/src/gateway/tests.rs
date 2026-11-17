@@ -16,6 +16,9 @@ fn loopback() -> ListenConfig {
     .unwrap()
 }
 
+/// A supervisor log sink for tests that do not read the log.
+fn quiet(_: &str) {}
+
 fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
     let until = Instant::now() + Duration::from_secs(5);
     while !done() {
@@ -97,6 +100,9 @@ impl Serving for Fake {
     fn reported(&mut self) -> bool {
         self.reported.load(Ordering::SeqCst)
     }
+    fn ended(&mut self) -> String {
+        "the fake exited".to_owned()
+    }
 }
 impl Drop for Fake {
     fn drop(&mut self) {
@@ -118,13 +124,20 @@ fn running_is_published_only_after_the_gateway_reports_serving() {
             Arc::clone(&reported),
         );
         thread::spawn(move || {
-            supervise(&stopping, &state, &|| true, Timing::PRODUCTION, || {
-                Ok(Fake {
-                    live: Arc::clone(&live),
-                    reported: Arc::clone(&reported),
-                    dropped: Arc::new(AtomicBool::new(false)),
-                })
-            })
+            supervise(
+                &stopping,
+                &state,
+                &|| true,
+                Timing::PRODUCTION,
+                &quiet,
+                || {
+                    Ok(Fake {
+                        live: Arc::clone(&live),
+                        reported: Arc::clone(&reported),
+                        dropped: Arc::new(AtomicBool::new(false)),
+                    })
+                },
+            )
         })
     };
     wait_for("starting", || *lock(&state) == GatewayState::Starting);
@@ -163,6 +176,7 @@ fn a_gateway_that_never_reports_serving_fails_after_the_deadline_and_is_stopped(
                     serving: Duration::from_millis(300),
                     ..Timing::PRODUCTION
                 },
+                &quiet,
                 || {
                     Ok(Fake {
                         live: Arc::clone(&live),
@@ -204,10 +218,17 @@ fn readiness_turns_false_when_the_gateway_exits_or_its_control_reaches_eof() {
             Arc::clone(&starts),
         );
         thread::spawn(move || {
-            supervise(&stopping, &state, &|| true, Timing::PRODUCTION, || {
-                starts.fetch_add(1, Ordering::SeqCst);
-                Ok(Fake::reporting(&live))
-            })
+            supervise(
+                &stopping,
+                &state,
+                &|| true,
+                Timing::PRODUCTION,
+                &quiet,
+                || {
+                    starts.fetch_add(1, Ordering::SeqCst);
+                    Ok(Fake::reporting(&live))
+                },
+            )
         })
     };
     wait_for("running", || *lock(&state) == GatewayState::Running);
@@ -234,6 +255,7 @@ fn an_ineligible_host_never_starts_the_gateway() {
                 &state,
                 &|| false,
                 Timing::PRODUCTION,
+                &quiet,
                 || -> io::Result<Fake> { panic!("started without HQ/authentication") },
             )
         })
@@ -321,6 +343,9 @@ impl Serving for Brief {
     fn reported(&mut self) -> bool {
         true
     }
+    fn ended(&mut self) -> String {
+        "the brief run ended".to_owned()
+    }
 }
 
 #[test]
@@ -340,7 +365,7 @@ fn only_consecutive_failed_starts_count_and_a_stable_run_resets_them() {
             Arc::clone(&starts),
         );
         thread::spawn(move || {
-            supervise(&stopping, &state, &|| true, timing, || {
+            supervise(&stopping, &state, &|| true, timing, &quiet, || {
                 starts.fetch_add(1, Ordering::SeqCst);
                 // Each run stays Running past `stable`, then dies.
                 Ok(Brief {
@@ -379,7 +404,7 @@ fn a_stable_run_resets_failures_accumulated_before_it() {
     };
     // MAX_STARTS - 1 failed starts, one stable run, MAX_STARTS - 1 more failed
     // starts (still restarting), then one more failed start: the limit.
-    supervise(&stopping, &state, &|| true, timing, || {
+    supervise(&stopping, &state, &|| true, timing, &quiet, || {
         let n = starts.fetch_add(1, Ordering::SeqCst) + 1;
         assert!(n <= 2 * MAX_STARTS, "restarted past the limit");
         if n == MAX_STARTS {
@@ -405,7 +430,7 @@ fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
         stable: Duration::from_millis(100),
         backoff: Duration::from_millis(40),
     };
-    supervise(&stopping, &state, &|| true, timing, || {
+    supervise(&stopping, &state, &|| true, timing, &quiet, || {
         starts.fetch_add(1, Ordering::SeqCst);
         *lock(&last) = Instant::now();
         // Exits before it ever reports serving.
@@ -423,35 +448,42 @@ fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
     );
 }
 
-/// Starts a gateway whose child is a zsh script that reads the first line,
-/// connects to the rendezvous and reports ready. The scripted admission
-/// answers the child's real token when `tokens` (no token otherwise, so the
-/// child passes the peer-pid check and reaches the post-ready re-admission),
-/// except that the `nth` call (1-based) of `refuse` fails with `cause`.
+/// A child script that reads the first line, connects to the rendezvous and
+/// sends `ready` as its ready line, then waits.
 #[cfg(target_os = "macos")]
-fn start_refusing(
-    refuse: crate::server_check::Step,
-    nth: usize,
-    tokens: bool,
-    cause: &'static str,
+fn connecting_script(ready: &str) -> String {
+    format!(
+        "#!/bin/zsh -f\n\
+         IFS= read -r first || exit 1\n\
+         p=${{first#*\\\"rendezvous\\\":\\\"}}\n\
+         p=${{p%%\\\"*}}\n\
+         zmodload zsh/net/socket || exit 1\n\
+         zsocket \"$p\" || exit 1\n\
+         print -r -u $REPLY '{ready}'\n\
+         read -r -t 20 -u $REPLY _\n"
+    )
+}
+
+/// The ready line a well-behaved gateway sends.
+#[cfg(target_os = "macos")]
+const READY: &str = r#"{"v":1,"event":"ready_for_secrets"}"#;
+
+/// Starts a gateway whose child runs `script`. The scripted admission answers
+/// `answer(step, nth, pid)`, with `nth` counting calls of that step (1-based).
+#[cfg(target_os = "macos")]
+fn start_scripted(
+    script: &str,
+    answer: impl Fn(crate::server_check::Step, usize, u32) -> Result<Option<crate::peer::AuditToken>, String>
+        + Send
+        + Sync
+        + 'static,
 ) -> io::Error {
     use crate::server_check::{Scripted, Step};
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::AtomicUsize;
     let dir = tempfile::tempdir().unwrap();
     let program = dir.path().join("agentic-org-web");
-    fs::write(
-        &program,
-        "#!/bin/zsh -f\n\
-         IFS= read -r first || exit 1\n\
-         p=${first#*\\\"rendezvous\\\":\\\"}\n\
-         p=${p%%\\\"*}\n\
-         zmodload zsh/net/socket || exit 1\n\
-         zsocket \"$p\" || exit 1\n\
-         print -r -u $REPLY '{\"v\":1,\"event\":\"ready_for_secrets\"}'\n\
-         read -r -t 20 -u $REPLY _\n",
-    )
-    .unwrap();
+    fs::write(&program, script).unwrap();
     fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -465,15 +497,7 @@ fn start_refusing(
     let calls = [AtomicUsize::new(0), AtomicUsize::new(0)];
     let check = ServerCheck::Scripted(Scripted(Arc::new(move |step: Step, pid: u32| {
         let n = calls[usize::from(step == Step::Still)].fetch_add(1, Ordering::SeqCst) + 1;
-        if step == refuse && n == nth {
-            return Err(cause.to_owned());
-        }
-        if !tokens {
-            return Ok(None);
-        }
-        crate::spawn::audit_token_of_child(pid)
-            .map(Some)
-            .map_err(|e| e.to_string())
+        answer(step, n, pid)
     })));
     let config = Configuration {
         program,
@@ -488,6 +512,169 @@ fn start_refusing(
         Err(error) => error,
         Ok(_) => panic!("the scripted check refuses this start"),
     }
+}
+
+/// Starts a scripted gateway whose admission answers the child's real token when
+/// `tokens` (no token otherwise, so the child passes the peer-pid check and
+/// reaches the post-ready re-admission), except that the `nth` call (1-based)
+/// of `refuse` fails with `cause`.
+#[cfg(target_os = "macos")]
+fn start_refusing(
+    refuse: crate::server_check::Step,
+    nth: usize,
+    tokens: bool,
+    cause: &'static str,
+) -> io::Error {
+    start_scripted(&connecting_script(READY), move |step, n, pid| {
+        if step == refuse && n == nth {
+            return Err(cause.to_owned());
+        }
+        if !tokens {
+            return Ok(None);
+        }
+        crate::spawn::audit_token_of_child(pid)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_changed_identity_at_re_admission_names_that_cause() {
+    use crate::server_check::Step;
+    // Admitted with no token; re-admission after the ready line returns one.
+    let error = start_scripted(&connecting_script(READY), |step, n, pid| {
+        if step == Step::Admit && n == 2 {
+            crate::spawn::audit_token_of_child(pid)
+                .map(Some)
+                .map_err(|e| e.to_string())
+        } else {
+            Ok(None)
+        }
+    });
+    let message = error.to_string();
+    assert!(
+        message.contains("gateway admission refused at re-admission: the identity changed"),
+        "{message}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_mismatched_ready_line_names_that_cause() {
+    let error = start_scripted(
+        &connecting_script(r#"{"v":1,"event":"other"}"#),
+        |_, _, _| Ok(None),
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("the ready line does not match ready_for_secrets"),
+        "{message}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_child_that_exits_before_connecting_names_its_status() {
+    let error = start_scripted("#!/bin/zsh -f\nIFS= read -r first\nexit 3\n", |_, _, _| {
+        Ok(None)
+    });
+    let message = error.to_string();
+    assert!(
+        message.contains("the child exited before connecting (exit code 3)"),
+        "{message}"
+    );
+}
+
+/// Collects supervisor log lines.
+fn recording() -> (Arc<Mutex<Vec<String>>>, impl Fn(&str) + Send + 'static) {
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&lines);
+    (lines, move |line: &str| lock(&sink).push(line.to_owned()))
+}
+
+#[test]
+fn the_exit_of_a_running_gateway_is_logged_with_its_reason_and_restart() {
+    let stopping = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let live = Arc::new(AtomicBool::new(true));
+    let (lines, log) = recording();
+    let supervisor = {
+        let (stopping, state, live) =
+            (Arc::clone(&stopping), Arc::clone(&state), Arc::clone(&live));
+        thread::spawn(move || {
+            let mut first = true;
+            supervise(
+                &stopping,
+                &state,
+                &|| true,
+                Timing::PRODUCTION,
+                &log,
+                || {
+                    if std::mem::take(&mut first) {
+                        Ok(Fake::reporting(&live))
+                    } else {
+                        Err(io::Error::other("second start"))
+                    }
+                },
+            )
+        })
+    };
+    wait_for("running", || *lock(&state) == GatewayState::Running);
+    live.store(false, Ordering::SeqCst);
+    wait_for("restart logged", || !lock(&lines).is_empty());
+    stopping.store(true, Ordering::SeqCst);
+    supervisor.thread().unpark();
+    supervisor.join().unwrap();
+    let logged = lock(&lines).clone();
+    assert_eq!(
+        logged,
+        ["authenticated browser restarting in 1s because the running gateway stopped: the fake exited"],
+    );
+}
+
+#[test]
+fn every_failed_start_is_logged_escaped_with_its_restart_until_the_limit() {
+    let stopping = AtomicBool::new(false);
+    let state = Mutex::new(GatewayState::NotConfigured);
+    let (lines, log) = recording();
+    let timing = Timing {
+        serving: Duration::from_millis(50),
+        stable: Duration::from_secs(60),
+        backoff: Duration::from_millis(1),
+    };
+    let mut n = 0;
+    supervise(&stopping, &state, &|| true, timing, &log, || {
+        n += 1;
+        match n {
+            // Never reports serving: the deadline.
+            1 => Ok(Fake {
+                live: Arc::new(AtomicBool::new(true)),
+                reported: Arc::new(AtomicBool::new(false)),
+                dropped: Arc::new(AtomicBool::new(false)),
+            }),
+            // Exits before reporting serving.
+            2 => Ok(Fake {
+                live: Arc::new(AtomicBool::new(false)),
+                reported: Arc::new(AtomicBool::new(false)),
+                dropped: Arc::new(AtomicBool::new(false)),
+            }),
+            _ => Err(io::Error::other("refused\nforged line")),
+        }
+    });
+    let logged = lock(&lines).clone();
+    assert_eq!(logged.len(), MAX_STARTS, "{logged:?}");
+    assert!(logged[0].ends_with("because it did not report gateway.serving before the deadline"));
+    assert!(logged[1].ends_with("because it stopped before serving: the fake exited"));
+    assert!(
+        logged[2].ends_with("because refused\\nforged line"),
+        "{logged:?}"
+    );
+    assert!(logged.iter().all(|line| !line.contains('\n')));
+    assert_eq!(
+        logged[MAX_STARTS - 1],
+        format!("authenticated browser restart limit reached after {MAX_STARTS} failed starts; last: refused\\nforged line")
+    );
 }
 
 #[cfg(target_os = "macos")]

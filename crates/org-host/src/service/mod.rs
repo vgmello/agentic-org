@@ -310,7 +310,7 @@ fn gateway_reports_serving(request: &Request, connection: &Arc<Connection>) {
         return;
     }
     if request.params::<GatewayServing>().is_err() {
-        connection.refuse_and_finish(refused(
+        connection.refuse_serving(refused(
             ErrorCode::InvalidRequest,
             "the params don't fit this method",
         ));
@@ -321,7 +321,7 @@ fn gateway_reports_serving(request: &Request, connection: &Arc<Connection>) {
             connection.send_response(ok::<GatewayServing>(request.id, &Default::default()));
         }
         ServingReport::OutOfOrder | ServingReport::NotGateway => {
-            connection.refuse_and_finish(refused(
+            connection.refuse_serving(refused(
                 ErrorCode::InvalidRequest,
                 "gateway.serving is sent once, after hello and tls.fetch",
             ));
@@ -761,12 +761,15 @@ mod tests {
             .unwrap();
         assert!(gateway.reported_serving());
         assert!(gateway.live());
+        assert!(!gateway.serving_refused());
         // A duplicate is refused and closes the control connection.
         assert!(refused(
             exchange::<GatewayServing>(&mut peer, 4, &Default::default()),
             ErrorCode::InvalidRequest
         ));
         wait_closed(&gateway);
+        // The supervisor logs the refusal, not only the EOF that follows it.
+        assert!(gateway.serving_refused());
         drop(gateway);
         offices.shutdown();
     }
@@ -786,6 +789,7 @@ mod tests {
         ));
         wait_closed(&gateway);
         assert!(!gateway.reported_serving());
+        assert!(gateway.serving_refused());
         drop(gateway);
         offices.shutdown();
     }

@@ -52,6 +52,8 @@ pub(crate) struct Spawned {
 pub(crate) struct Process {
     pid: libc::pid_t,
     reaped: bool,
+    /// Its `waitpid` status, once reaped here.
+    status: Option<libc::c_int>,
 }
 
 impl Process {
@@ -82,6 +84,19 @@ impl Process {
         Ok(self.reaped)
     }
 
+    /// How it ended once reaped here, as fixed text: its exit code or signal.
+    /// `None` while it runs, or when it was reaped elsewhere.
+    pub(crate) fn ended(&self) -> Option<String> {
+        let status = self.status?;
+        Some(if libc::WIFEXITED(status) {
+            format!("exit code {}", libc::WEXITSTATUS(status))
+        } else if libc::WIFSIGNALED(status) {
+            format!("signal {}", libc::WTERMSIG(status))
+        } else {
+            format!("wait status {status}")
+        })
+    }
+
     /// SIGKILLs it (suspended or not) and reaps it.
     pub(crate) fn kill(&mut self) {
         if self.reaped {
@@ -100,12 +115,13 @@ impl Process {
     }
 
     /// `waitpid` with `options`, retried on `EINTR`: whether it reaped the child.
-    fn wait_pid(&self, options: libc::c_int) -> io::Result<bool> {
+    fn wait_pid(&mut self, options: libc::c_int) -> io::Result<bool> {
         loop {
             let mut status = 0;
             // SAFETY: our own unreaped child, and a valid out-pointer.
             let rc = unsafe { libc::waitpid(self.pid, &mut status, options) };
             if rc == self.pid {
+                self.status = Some(status);
                 return Ok(true);
             }
             if rc == 0 {
@@ -234,7 +250,11 @@ pub(crate) fn spawn_suspended(
         unsafe { File::from_raw_fd(std::os::fd::IntoRawFd::into_raw_fd(fd)) }
     };
     Ok(Spawned {
-        process: Process { pid, reaped: false },
+        process: Process {
+            pid,
+            reaped: false,
+            status: None,
+        },
         stdin: file(stdin_ours),
         stdout: file(stdout_ours),
         stderr: file(stderr_ours),
