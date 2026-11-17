@@ -275,7 +275,9 @@ different content conflicts. Import verifies the actual hash, not its SQL format
 ### Task-event codec 2
 
 New events use `schema_version: 2`, explicitly selecting a new codec rather than
-redefining schema 1. Keep existing event bytes, hashes and identities unchanged.
+redefining schema 1. It is registered as `canonical-json/2` in the
+[hash codec registry](08-record-contracts.md#hash-codec-registry), which lists every
+other canonical form in this set. Keep existing event bytes, hashes and identities unchanged.
 Admission dispatches only to supported codecs; unsupported schema-1 or future
 codecs remain retained/staged with unverified/unavailable coverage. Never hide
 known missing history behind a fabricated baseline.
