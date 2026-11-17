@@ -1,20 +1,26 @@
-> Current workflow update (2026-11-15): the owner replaced named-developer
-> coordination with solo Codex development and local kit subagents. AGENTS.md and
-> docs/processes/branch-and-merge.md govern current work; old ownership/approval
-> statements below describe adoption history, not active gates. All accepted v1
-> features integrate into v1-integration after local checks and reviews.
+# Agentic Org kit adoption
 
-# Agentic Org Codex-only adoption
+The agent kit in `.agent-kit/` and `.agents/skills/` supports the workflow in
+[AGENTS.md](../AGENTS.md) and [branch and merge](../docs/processes/branch-and-merge.md);
+it does not change them.
 
-Installed on 2026-11-15 directly in `/Users/vgmello/projects/agentic-org`, branch **codex/install-agent-kit**, from origin/v1 at b1256c9771b15c0b47198828164e5efe78db2e96, as explicitly requested by the user.
+## What is installed
 
-The earlier installation in `/Users/vgmello/projects/app-codex-starter-kit` was the wrong location. That checkout and its branch `codex/starter-kit-adoption` are retained; neither was merged into v1. This branch uses an actual fresh installer run and reapplies reviewed, versioned project adaptations. Ignored environments, indexes and receipts were not copied. The starter-kit source remains separate at `/tmp/agent-kit-source.DOXDvU`. The owner subsequently selected local review and merging all v1 features into `v1-integration`, without waiting for a PR. The feature branch is retained as the implementation branch; no v1 release merge is authorized here.
+- Base kit 0.10.0, pinned to
+  https://github.com/vgmello/agents/tree/01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1 .
+  Local adaptations of upstream runtime files are recorded with their upstream and
+  current hashes in `.starter-kit-manifest.json`.
+- Mode `codex-only` (`policy/model-routing.json`): Sol with the profile's effort levels.
+- Repowise 0.61.0 for structural discovery, in an isolated per-checkout environment.
+- Hindsight 1.2.1 as the local `hindsight-embed` daemon for memory recall.
+- Four project role briefs (`project-roles/`), five project skills (`project-skills/`),
+  the skill catalog (`skill-catalog.json`), project maps and real verification commands
+  (`verification.json`).
 
-The base kit version 0.10.0 is pinned to https://github.com/vgmello/agents/tree/01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1 . Mode is **codex-only**. The owner explicitly replaced its Docker memory deployment with `hindsight-embed` and native Codex memory. Three upstream runtime files, one new adapter/deployment policy and the plan-review skill/native role implement that local adaptation; `.starter-kit-manifest.json` records the upstream/current hashes and reason. This is a documented local adaptation, not a claim that the runtime remains pristine upstream. Managed runtime/native Codex roles and hooks, four project role briefs, four project skills, nine catalog rules, project maps, real verification commands and two reviewed source-backed knowledge records are installed. Existing ownership, canonical designs, application code, Rust/Svelte tooling, credentials and installed org-agent/spool are preserved.
+## Prepare a checkout
 
-## Current checkout evidence
-
-Fresh checkout-bound context/memory setup, catalog evidence and verification are recorded under ignored `.agent-kit/logs/`. Runtime preparation must run independently in every checkout. Use:
+Every checkout and worktree is prepared on its own; never copy caches, receipts or
+logs between checkouts. From the repository root:
 
 ```sh
 python3 .agent-kit/runtime/kit_context.py setup --query canonical --expect-path docs/design/organization-data/test_schema.py
@@ -23,13 +29,14 @@ python3 .agent-kit/runtime/kit_skills.py validate
 python3 .agent-kit/runtime/kit_doctor.py --project . --live --checks --json
 ```
 
-**CONFIGURED: true. CHECKS_VERIFIED: true** for the fresh root-checkout gate, including Rust formatting, schema tests, skill validation, Python compilation, eight daemon/review-isolation checks, UI type check, all 1,929 UI tests and production build. Current root Rust Clippy/workspace tests and UI lint/format also passed; original raw logs are under `/tmp/agent-kit-root-*`. Fresh health is in `logs/health/latest.json`; implementation commits receive their own source-bound receipt.
+Results go to the ignored `.agent-kit/logs/`. Report three things separately and only
+from current evidence: CONFIGURED, CHECKS_VERIFIED and LIVE_VALIDATED. A saved login or
+a version probe does not prove that a model is available. Native hooks need trust in a
+fresh client session; they do not replace explicit checks.
 
-**LIVE_VALIDATED remains false for interactive native hook trust.** Actual daemon storage/recall and native MCP initialize/list passed. A real Codex `gpt-6.1-sol` extraction/store/recall probe passed with nonzero model usage, and its disposable bank was deleted (`logs/adoption/native-codex-memory-probe.json`). `logs/adoption/native-mcp.json` records all eight native tools. Open this directory in a fresh trusted Codex session to load/trust the exact installed native hooks; this running session cannot hot-reload them. CLI model cycles and native hook trust are separate evidence.
+## Local memory daemon
 
-## Local daemon and native Codex memory
-
-The installed commands are pinned:
+The pinned install and check commands:
 
 ```sh
 uv tool install --python python3.12 --with hindsight-api==1.2.1 --with psutil==7.2.2 hindsight-embed==1.2.1
@@ -39,19 +46,13 @@ hindsight-embed -p coding-agent daemon status
 python3 .agent-kit/runtime/kit_hindsight_embed.py test
 ```
 
-`hindsight-embed` uses profile `coding-agent`, embedded pg0, loopback `http://127.0.0.1:9077`, pinned CPU ONNX embeddings/reranking and the existing Codex OAuth login (`openai-codex`, `gpt-6.1-sol`) for native memory extraction/summaries. No API key was copied or changed. The project setup verifies the live process environment, its owner and loopback listener, the package versions and exact saved profile; drift or a foreign port owner fails closed without stopping that process. Stop/restart commands preserve its database.
+`hindsight-embed` uses the profile `coding-agent`, embedded pg0, the loopback address
+`http://127.0.0.1:9077`, local CPU embeddings and reranking, and the existing Codex
+sign-in for its native memory bank. No API key is stored. Setup checks the live
+process, its owner and listener, the package versions and the saved profile; drift or a
+foreign port owner fails closed without stopping that process. The kit's own bank of
+reviewed Git records keeps chunks only, with no model calls. Memory is a hint: current
+source and the owning documents decide.
 
-Native installer runtime: `~/.hindsight/coding-agents`; settings: `~/.hindsight/coding-agent.json`; Codex user hooks/config: `~/.codex/hooks.json` and `~/.codex/config.toml`; companion skill: `~/.agents/skills/hindsight-coding-agent`. Installer backups preserve previous config. Native settings opt into **only `/Users/vgmello/projects/agentic-org`**, pin embed 1.2.1/runtime 0.8.7 (automatic updates disabled), and disable the optional whole-codebase survey. Native hook commands and MCP environment explicitly select Codex so cold starts cannot choose another assistant. Re-running the native installer can replace that extra environment wiring; preserve/verify it after updates. The native integration captures normal future conversations and Git knowledge in its own per-repository bank; it is separate from the kit's approved Git-record bank. The latter remains chunk-only with consolidation disabled and no model calls for its retain/recall operations. Native memory is a hint; current source, ownership and contracts remain authoritative.
-
-The previous Docker service `agent-kit-hindsight-f531ba3cb2d7` is **stopped**. Its image/container/persistent volume were retained; no Docker/Podman user data was removed. The root kit now points exclusively at the embed daemon.
-The generated `.claude/skills/shadcn-svelte` link is untracked, consistent with its existing ignore rule, while its local link and canonical `.agents/skills/shadcn-svelte` are preserved. Tracking that directory symlink caused the workspace's tracked-source security scanner to fail. No application/test source was changed.
-
-## Historical evidence and preserved services
-
-The earlier checkout retains the full historical adoption report at commit 7afb592e51333cd07d425c9bed514d8eda71dda2 and its private logs. Its full Rust formatting, Clippy and workspace tests passed after untracking the generated link. Frontend type check, 1,929 tests, build, lint and formatting passed. Fresh managed-context fixture, dirty/new/rename/delete and separate-checkout isolation, skill guidance rejection, controlled check failure/recovery and metric round-trip checks passed. The upstream kit had 244/245 passing cases initially; the single timeout passed unchanged in isolation. These are historical checks of the same runtime/adaptations, not root-bound receipts.
-
-The historical real Sol review/original-author/fresh final cycle was ACCEPTED at 4369e97993ab1ec10c6c883ca80ab43e1e5a5e2f. An earlier clean review was explicitly rejected after MCP approval failed. Narrow project-local lookup/recall approval defaults fixed that failure; both methods succeeded in the corrected fresh reviewer. These two defaults remain outside the generated context config block; shell permissions are unchanged. Historical model acceptance does not approve this new branch's exact commit. Whole-task cost/token/cache-TTL totals remain unknown; no savings are claimed.
-
-Host Python 3.12.16 and Docker Desktop 4.99.0 were installed during that adoption. Repowise 0.61.0 is managed in an isolated per-checkout environment. Hindsight 1.2.1 uses a loopback-only local service, CPU embeddings/reranking, embedded pg0 and no paid LLM. Its historical container `agent-kit-hindsight-f531ba3cb2d7` and persistent data volume are retained, now stopped after the requested switch to the local daemon. Both reviewed Git knowledge records were synced to its shared project bank. Existing Podman data/containers/context remain; the original `/var/run/docker.sock` Podman alias was restored with administrator authentication. Docker's selected context is desktop-linux for the kit service.
-
-Independent review of the earlier complete change found one maintenance-command working-directory error, which was fixed. The final earlier review was clean. Independent local review found a P1 interaction: native hooks/MCP could inject past review conclusions and retain reviewer transcripts. Review-runner children now explicitly disable hooks/native hindsight MCP and set HINDSIGHT_DISABLED=true, while preserving bounded kit recall; a regression covers fresh review, resumed repair and final turns. Fresh local Sol review found the same gap in the separate plan-review CLI/native-role route. Its repair was blocked by the child sandbox protecting .agents; the author corrected the launch recipe and restricted native architecture review to an already memory-isolated parent. An executable recipe regression covers the documented shell launch. This relocated/daemon candidate receives re-review and a fresh local Sol review cycle. The owner directed sending the exact finished commit to reviewer and merging locally into v1-integration without PR waiting. v1 release gates remain separate; no release merge is claimed. Native hook trust is a separate user-session step, not inferred from CLI probes. Existing root instructions exceed the memory audit's soft length alarm; they were retained to preserve active constraints.
+Re-running the native installer can replace its environment wiring; check it after an
+update.
