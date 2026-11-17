@@ -80,3 +80,4 @@
 - Final review 3 (split, run cd4a1635) CHANGES_REQUIRED (10 P3) → 5851ecae A1-A5, 9f9d5782 B1-B2, df13568a C1, 1209c581 C2; C3 via the gates-10 SHA-bound dep-tree + browser steps.
 - Final review 4 (split, run bcbd328c) CHANGES_REQUIRED (A1 P2 sign-out on transient host failure; A2/A3/B1 P3) → 98415839 B1, dd79966d A2, 16760bb9 A1, 1e6ab65d A3.
 - Final review 5 (split, run e1c9161b) CHANGES_REQUIRED (A1 P2 undelivered refresh; A2/B1/B2/C1 P3) → 3d599a51 A1, 4e6055b3 A2, 325a25ec B1, f965ff54 B2, c8998f8b C1 (the writer stopped at its turn cap after committing; verification by gates-13).
+- Sol run 12 (2039dc9d) BLOCKED: R1 P2 UI controller kept the signed-in state after a cookie-clearing sign-out error (sibling of 4e6055b3, outside the authorized paths) → aca98f11 (typed sign-out replies clear the proof, end the session and broadcast; unreachable HQ unchanged per server-installation-and-access-ux.md:906-908; the fake clears the cookie on every sign-out reply).
