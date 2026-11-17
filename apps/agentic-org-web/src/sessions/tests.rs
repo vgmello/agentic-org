@@ -527,6 +527,25 @@ fn host_denial_of_an_inflight_read_evicts_a_concurrently_rotated_pair() {
 }
 
 #[test]
+fn sign_out_evicts_a_concurrently_rotated_pair_of_the_ended_session() {
+    let f = Fixture::new();
+    let first = f.sign_in();
+    let other = f.sign_in();
+    let queued = ticket(&f.sessions, &first);
+    // Sign-out can pass current() before a refresh rotates the pair, then end
+    // the host session afterwards. Both pairs refer to the same host handle.
+    let rotated = f
+        .sessions
+        .refresh(ticket(&f.sessions, &first))
+        .unwrap_or_else(|_| panic!("refresh"));
+    assert!(f.sessions.end_bound(&queued).is_ok());
+    assert!(f.refused(&rotated.cookie, rotated.proof.expose()));
+    assert!(f.refused(&first.cookie, first.proof.expose()));
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+    assert!(f.sessions.get(ticket(&f.sessions, &other)).is_ok());
+}
+
+#[test]
 fn idle_and_absolute_expiry_end_the_pair() {
     let f = Fixture::new();
     let idle = f.sign_in();

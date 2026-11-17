@@ -358,13 +358,18 @@ impl BrowserSessions {
     }
     pub fn sign_out(&self, ticket: Ticket) -> Result<(), ApiReply> {
         self.current(&ticket)?;
+        self.end_bound(&ticket)
+    }
+    fn end_bound(&self, ticket: &Ticket) -> Result<(), ApiReply> {
         self.host
             .end(&ticket.session.handle)
             .map_err(|error| self.session_failure(&ticket.session, error))?;
+        // The host session is gone: evict every pair bound to it, including one
+        // a concurrent refresh rotated after this request passed current().
         self.sessions
             .lock()
             .map_err(|_| unavailable())?
-            .remove(&ticket.key);
+            .retain(|_, current| !Arc::ptr_eq(&current.handle, &ticket.session.handle));
         Ok(())
     }
     pub fn refresh(&self, ticket: Ticket) -> Result<Established, ApiReply> {
