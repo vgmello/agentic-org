@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "keys": [
+    {
+      "key_id": "522253efe6c825e4a2b144f58b11c34c6771915a02456ed8579f68cccaf7a15d",
+      "public_key_hex": "5ce102e95eff2af2feeff13e9300d9dbd8ed9d998ef1b6ff9a0ae167dc40bfc6",
+      "min_sequence": 1,
+      "max_sequence": 1
+    }
+  ]
+}

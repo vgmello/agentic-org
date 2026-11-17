@@ -49,3 +49,9 @@
      the `agentic-org serve` launcher owns production instance start (and thus production gateway spawn).
   Readiness may lag exit/EOF by up to ~50 ms (supervise poll); accepted.
 - Writer 4 dispatched: CHECKPOINT C (web sessions).
+- Writer 4 (subagent a5eb8b109dd4df8f3, Opus High): implemented CHECKPOINT C (web sessions, process handoff, release, service
+  hunks) and stopped at the 40-turn limit with no receipt and nothing committed. The lead re-ran and verified it: fmt clean; clippy
+  -p agentic-org-web clean; test -p agentic-org-web 89+1+1+12 passed / 0 failed; cargo tree normal has no org-host/org-office/
+  org-work/org-client. Every Cargo edge is annotated with the symbol that uses it. All required tests are present, including the
+  source guard `the_f4_gateway_sends_no_office_channel_request` and handoff decode/refusal. P-5 is VERIFIED: the selected-task
+  coupling was removed cleanly. The lead committed the work as writer 4's output. Writer 4's preflight ack: see preflight-writer4.json if present.

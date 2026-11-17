@@ -1,4 +1,5 @@
-//! Process entry point reserved for the authenticated host handoff.
+//! Thin single-thread process entry; secrets arrive only after confinement.
+#![deny(unsafe_code)]
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -9,12 +10,26 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [flag] if matches!(flag.as_str(), "--help" | "-h") => {
-            println!("agentic-org-web: host-managed browser service\nStarted by agentic-org serve using an authenticated listener handoff.\nProduction handoff/authentication composition is not wired in v1 yet.");
+            println!("agentic-org-web: host-managed browser service\nStarted with --serve by agentic-org serve using an authenticated listener handoff.");
             ExitCode::SUCCESS
         }
+        [flag] if flag == "--serve" => {
+            let result = std::env::current_exe().and_then(|exe| {
+                let root = exe
+                    .parent()
+                    .ok_or_else(|| std::io::Error::other("missing release root"))?;
+                agentic_org_web::process::serve(&root.join("ui"))
+            });
+            match result {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => {
+                    eprintln!("agentic-org-web: authenticated startup unavailable");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         _ => {
-            // Do not promote the test-only CSP listener or fabricate authenticated backends.
-            eprintln!("agentic-org-web: unavailable: authenticated host handoff and browser backend are not wired in v1 yet; no listener was opened");
+            eprintln!("agentic-org-web: a verified host --serve handoff is required; no listener was opened");
             ExitCode::FAILURE
         }
     }
