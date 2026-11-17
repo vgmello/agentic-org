@@ -426,7 +426,7 @@ offices/
     workspace/            <span class="c"># empty</span>
   .refused/
 
-<span class="c"># separate, legacy Phase A, still live</span>
+<span class="c"># the agent CLI's offline queue in the code today</span>
 ~/.agency/spool/{outbox,inbox,dead}</pre>
     </div>
     <div>
@@ -501,7 +501,7 @@ offices/
     <li>One write connection on one thread per database, batching with savepoints. Readers use a small pool.</li>
     <li>Schemas are versioned in code by <code>user_version</code>. There are no SQL migration files.</li>
     <li>The host creates each office key once and never recreates it. A missing key is an error, <code>key_missing</code>.</li>
-    <li>The draft target schema is 75 tables and 8 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
+    <li>The draft target schema is 77 tables and 10 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
   </ul>
 </section>
 
@@ -688,7 +688,7 @@ offices/
     <div>
       <h4>State</h4>
       <ul>
-        <li><span class="st ok">Runs today</span> Phase A: <code>agent-os</code> over the file spool, and send, inbox, read, wait on the office socket.</li>
+        <li><span class="st ok">Runs today</span> <code>agent-os</code> over its file queue, and send, inbox, read, wait on the office socket.</li>
         <li><span class="st part">Built, not reachable</span> ask, reply, defer, done, notify and threads are defined in <code>org-proto</code> and not served by the office.</li>
         <li><span class="st target">Designed</span> protected envelope sources, channels, cross-office relay, and the cutover.</li>
       </ul>

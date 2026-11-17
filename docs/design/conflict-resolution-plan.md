@@ -14,7 +14,7 @@ The interactive register with per-entry status is the companion view. This file 
 
 ## Status
 
-52 findings, all reviewed by the owner on 2026-11-17. 34 are fixed in the documents. 18 are decided and recorded as requirements, with code still to change. A few questions remain for the owner; they are listed under "Questions still with the owner".
+52 findings, all reviewed by the owner on 2026-11-17. 34 are fixed in the documents. 18 are decided and recorded as requirements, with code still to change. No question is waiting for the owner.
 
 | ID | Finding | Priority | Size | State | Commit |
 | --- | --- | --- | --- | --- | --- |
@@ -24,28 +24,28 @@ The interactive register with per-entry status is the companion view. This file 
 | [A-04](#a-04) | Moving an agent between machines: supported in one contract, unsupported in another | Before building the area | S | Fixed in documents | `4b7e893` |
 | [A-05](#a-05) | Three hash canonicalizations with no registry | Before building the area | S | Fixed in documents | `c71e33b` |
 | [A-06](#a-06) | Messaging has a data model and no named runtime owner | Before building the area | S | Fixed in documents | `7a552bf` |
-| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `e2ad9ec` |
-| [A-08](#a-08) | Agent credentials: the user's own vendor sign-in, or office-local bindings | Before building the area | S | Decided; code pending | `cb49e54` |
-| [A-09](#a-09) | Create organization: the published API takes a name, provisioning needs four more fields | Decide first | M | Decided; code pending | `cb49e54` |
+| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `8757a9c` |
+| [A-08](#a-08) | Agent credentials: the user's own vendor sign-in, or office-local bindings | Before building the area | S | Decided; code pending | `8757a9c` |
+| [A-09](#a-09) | Create organization: the published API takes a name, provisioning needs four more fields | Decide first | M | Decided; code pending | `8757a9c` |
 | [A-10](#a-10) | Is GitHub part of v1 | Before building the area | S | Fixed in documents | `817c4c2` |
 | [A-11](#a-11) | Git design algorithms still use the old two-clone, one-repository-per-project shape | Before building the area | M | Fixed in documents | `817c4c2` |
 | [A-12](#a-12) | Which local API version the first standalone release speaks | Cleanup | S | Fixed in documents | `17c3964` |
-| [A-13](#a-13) | A message file has one owning writer, but each recipient's state belongs to that recipient's office | Before building the area | M | Fixed in documents | `cb49e54` |
+| [A-13](#a-13) | A message file has one owning writer, but each recipient's state belongs to that recipient's office | Before building the area | M | Fixed in documents | `8757a9c` |
 | [B-01](#b-01) | Storage: files are canonical in the design, databases are authoritative in the code | Decide first | L | Decided; code pending | `11464ce` |
 | [B-02](#b-02) | Single home team is selected; the code is many-to-many | Decide first | M | Decided; code pending | `47e1596` |
 | [B-03](#b-03) | One typed task is selected; the code has per-kind work items | Decide first | L | Decided; code pending | `47e1596` |
-| [B-04](#b-04) | New record IDs: UUIDv7 in the contract, ULID in the code | Before building the area | S | Decided; code pending | `3bbc57f` |
+| [B-04](#b-04) | New record IDs: UUIDv7 in the contract, ULID in the code | Before building the area | S | Decided; code pending | `8757a9c` |
 | [B-05](#b-05) | Areas are deferred in the design and live in the code | Before building the area | S | Decided; code pending | `47e1596` |
-| [B-06](#b-06) | Launch protocol: the host writes v2, the worker implements v3, three ADRs need v3 | Decide first | M | Decided; code pending | `cb49e54` |
+| [B-06](#b-06) | Launch protocol: the host writes v2, the worker implements v3, three ADRs need v3 | Decide first | M | Decided; code pending | `8757a9c` |
 | [B-07](#b-07) | Human authorization: grants are designed, the app token is still what is checked | Before building the area | M | Decided; code pending | `11464ce` |
-| [B-08](#b-08) | Gateway channel limit: host allows 63, worker rejects the eighth | Cleanup | S | Fixed in documents | `cb49e54` |
+| [B-08](#b-08) | Gateway channel limit: host allows 63, worker rejects the eighth | Cleanup | S | Fixed in documents | `8757a9c` |
 | [B-09](#b-09) | v1 targets macOS and Linux; workers only start on macOS | Before building the area | S to decide, L to build | Decided; code pending | `11464ce` |
 | [B-10](#b-10) | Calls defined in the contract and not served by the office | Before building the area | M | Decided; code pending | `11464ce` |
 | [B-11](#b-11) | Libraries with no consumer | Cleanup | S | Fixed in documents | `11464ce` |
 | [B-12](#b-12) | Setup is described in the present tense and refuses in the code | Cleanup | S | Fixed in documents | `11464ce` |
-| [B-13](#b-13) | The storage engine should stay replaceable; three files and some contract wording tie it to SQLite | Before building the area | M | Decided; code pending | `cb49e54` |
+| [B-13](#b-13) | The storage engine should stay replaceable; three files and some contract wording tie it to SQLite | Before building the area | M | Decided; code pending | `8757a9c` |
 | [C-01](#c-01) | Draft SQL allows an empty number on records only HQ creates | Before building the area | S | Fixed in documents | `17c3964` |
-| [C-02](#c-02) | Task, release and milestone status have no published vocabulary | Before building the area | S | Fixed in documents | `5b92fb4` |
+| [C-02](#c-02) | Task, release and milestone status have no published vocabulary | Before building the area | S | Fixed in documents | `8757a9c` |
 | [C-03](#c-03) | Employee state is spread over three fields and two documents | Before building the area | S | Fixed in documents | `17c3964` |
 | [C-04](#c-04) | The owner is represented three different ways | Before building the area | S | Fixed in documents | `17c3964` |
 | [C-05](#c-05) | The set depends on an Instance and never defines one | Before building the area | S | Fixed in documents | `17c3964` |
@@ -55,10 +55,10 @@ The interactive register with per-entry status is the companion view. This file 
 | [C-09](#c-09) | Status labels and revisions differ across the set | Cleanup | S | Fixed in documents | `17c3964` |
 | [C-10](#c-10) | The usage ledger has no named writer | Before building the area | S | Fixed in documents | `17c3964` |
 | [C-11](#c-11) | No traceability from the draft schema to the code | Before building the area | S | Fixed in documents | `17c3964` |
-| [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Decided; code pending | `5b92fb4` |
+| [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Decided; code pending | `8757a9c` |
 | [C-13](#c-13) | Task history is published to Git as one file per change | Before building the area | S to keep, L to change | Fixed in documents | `17c3964` |
 | [C-14](#c-14) | Process and standard inheritance is stored but not applied in v1 | Before building the area | M | Fixed in documents | `11464ce` |
-| [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Fixed in documents | `e2ad9ec` |
+| [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Fixed in documents | `8757a9c` |
 | [D-02](#d-02) | Named owners and approval gates that no longer exist | Cleanup | S | Fixed in documents | `e840ea3` |
 | [D-03](#d-03) | Crates described as absent that exist | Cleanup | S | Fixed in documents | `11464ce` |
 | [D-04](#d-04) | ADR-0004 is referenced and does not exist | Cleanup | S | Fixed in documents | `11464ce` |
@@ -66,7 +66,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [D-06](#d-06) | Code comments that still describe the desktop app | Cleanup | S | Fixed in documents | `47e1596` |
 | [D-07](#d-07) | The web process is still called the gateway in designs and code | Cleanup | S for prose, M for code | Decided; code pending | `e840ea3` |
 | [E-01](#e-01) | Encryption at rest: decided for databases, unstated for the files that replace them, and questioned by the owner | Decide first | S to decide, M to apply | Decided; code pending | `b59b4e3` |
-| [E-02](#e-02) | Messaging latency targets assume a batched database commit; the data contract stores one file per message | Before building the area | M | Fixed in documents | `cb49e54` |
+| [E-02](#e-02) | Messaging latency targets assume a batched database commit; the data contract stores one file per message | Before building the area | M | Fixed in documents | `8757a9c` |
 | [F-01](#f-01) | Browser sessions live in memory, so every restart signs everyone out | Before building the area | M | Decided; code pending | `b59b4e3` |
 | [F-02](#f-02) | A 15 ms send target for agent-os, against an owner target of 1 to 2 ms | Before building the area | M | Decided; code pending | `b59b4e3` |
 | [F-03](#f-03) | Agents run as the same OS user as the data; isolation is not a replaceable part of the launch contract | Decide first | S for the setting, M to L for the separate user | Decided; code pending | `b59b4e3` |
@@ -96,7 +96,9 @@ Implementation was paused on 2026-11-17 while the architecture was reviewed. Bef
 | macOS and Linux, including containers | [ADR-0017](../adr/0017-linux-and-container-hosting.md) | FC-164 | Five platform contracts; nothing else branches on the operating system. |
 | Replaceable storage engine | [ADR-0018](../adr/0018-storage-engine-independence.md) | FC-165 | SQL only inside store adapters; engine-independent suites. |
 | One launch contract, grants, seven web channels, host work reads | [Host boundary](office-host-boundary.md#owner-decisions-2026-11-17-that-this-document-must-be-read-with) | FC-013, FC-017, FC-162 | The rendezvous contract is the only one; `app_token` and `db_key` are removed. |
-| Organization data revision 2.10 | [Index](organization-data/README.md#status-and-changelog) | several | Task status list, derived milestone and release completion, one employee status, ULIDs, one writer per messaging file. |
+| Organization data revision 2.13 | [Index](organization-data/README.md#status-and-changelog) | several | Task status list with `cancelled`, derived milestone and release completion, one employee status, UUIDv7 IDs, one writer per messaging file, no legacy structures. |
+| Task numbers | [ADR-0019](../adr/0019-office-coded-task-numbers.md) | FC-142 | Minted by the creating office, one sequence per office, `T-B37`; tasks only; creation uses the fast acknowledgement. |
+| Asking and waiting | [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) | FC-166 | Bounded wait; a required ask suspends the agent and the answer resumes it. |
 | Process and standard resolution | [Processes design](processes.md), decision 4 | FC-110, FC-112 | One chain: organization, team, project. Non-overridable documents go into the agent's system instructions. |
 | Create-organization payload | [Web API](web-api-v1.md#selected-create-organization-payload) | FC-018 | Slug, organization repository, state branch, bootstrap team. |
 | Local Git only in v1 | [Git design](projects-git-github.md) | FC-140, FC-163 | Plain remotes with office credentials; provider integrations are v2. |
@@ -249,7 +251,7 @@ Priority: Before building the area · Size: S · State: Fixed in documents
 - **What we lose:** No in-browser takeover in v1; a person takes over an agent from a local terminal.
 - **Impact of applying it:** Move the PTY-attach section of the session design under a post-v1 heading. No code exists for it.
 - **Owner note:** "there is not browser terminal that is just read only, but I will send you two documents on how you that i visualized, the agent interaction is via chat"
-- **Applied in `e2ad9ec`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components, built with shadcn-svelte and Bits UI (both already in the UI) in the product's own chat. No external channels and no React libraries, as you said. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one. How long an agent waits is its own record, ADR-0020: an ask waits 10 minutes by default; a required ask left unanswered stops the agent after telling it, and the answer starts it again in the same session.
+- **Applied in `8757a9c`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components, built with shadcn-svelte and Bits UI (both already in the UI) in the product's own chat. No external channels and no React libraries, as you said. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one. How long an agent waits is its own record, ADR-0020: an ask waits 10 minutes by default; a required ask left unanswered stops the agent after telling it, and the answer starts it again in the same session.
 
 ### A-08
 
@@ -266,7 +268,7 @@ Priority: Before building the area · Size: S · State: Decided; code pending
 - **What we lose:** The zero-setup path where an agent just uses whoever is signed in. It becomes one explicit binding type.
 - **Impact of applying it:** Rewrite decision 6 of the session design. The three isolation switches it verified stay valid as the adapter's launch rules.
 - **Owner note:** "ok yes we will use that existing setup on who is signed in but we have have the whole agent subscriptipon pool that you need to consider, so we need to be able to replace the agent ~ folder almost chrooting the agent into its own directory actually that could be a good isolation approach for non vms then we would chroot that and have a " virtual claude folder". when we would ocntrol that would go into it, which would only belong to that agent, that would also be a cheap " sandbox" lets evalute that"
-- **Applied in `cb49e54`:** ADR-0015 gains three decisions. (10) Every agent has a private home that the office controls, in both isolation modes, at `durable/local/offices/<office-id>/agents/<employee-id>/home/`; the vendor folders are redirected into it and contain only what the office put there. The user's own `~/.claude`, Codex home and `~/.gemini` are never used by an office-run agent. (11) The sign-in comes from the subscription pool: the office keeps each connection's sign-in in its own binding and places a copy in the agent's home for the run. An agent can read the sign-in it runs with, which cannot be avoided, and no other. (12) Changing the filesystem root was evaluated: `chroot` needs privilege on both systems and is not workable on macOS, where tools and Xcode need the system volume; the same effect is a mount namespace on Linux and a Seatbelt profile on macOS. That is specified as the reserved `os-sandbox` mode, not v1. The private home gives the "virtual folder" now without privilege.
+- **Applied in `8757a9c`:** ADR-0015 gains three decisions. (10) Every agent has a private home that the office controls, in both isolation modes, at `durable/local/offices/<office-id>/agents/<employee-id>/home/`; the vendor folders are redirected into it and contain only what the office put there. The user's own `~/.claude`, Codex home and `~/.gemini` are never used by an office-run agent. (11) The sign-in comes from the subscription pool: the office keeps each connection's sign-in in its own binding and places a copy in the agent's home for the run. An agent can read the sign-in it runs with, which cannot be avoided, and no other. (12) Changing the filesystem root was evaluated: `chroot` needs privilege on both systems and is not workable on macOS, where tools and Xcode need the system volume; the same effect is a mount namespace on Linux and a Seatbelt profile on macOS. That is specified as the reserved `os-sandbox` mode, not v1. The private home gives the "virtual folder" now without privilege.
 - **Still to do:** A spike per vendor runtime: how each is pointed at a relocated sign-in, and on macOS where the Keychain entry is looked up. Then the launch code (FC-161).
 
 ### A-09
@@ -284,7 +286,7 @@ Priority: Decide first · Size: M · State: Decided; code pending
 - **What we lose:** The name-only form. Nothing depends on it in production.
 - **Impact of applying it:** Publish the provisioning payload as the next HTTP contract revision; update the DTOs in `org-proto` and the UI create form together. Depends on A-12 for the version number.
 - **Owner note:** "whe never shopped anything os everything is in v1, if we need to fix it lets fix it, what is needed for the organization the api should support it,"
-- **Applied in `cb49e54`:** The browser API design has a "Selected create-organization payload" and the create-organization design now agrees with it: name, slug, the organization repository registration (a remote URL and a reference to an office-held credential), the state branch, and the initial team when bootstrap employees are planned. The fields are the ones the create flow already required; none was invented. The name-only request is what the code accepts today, not a second supported shape.
+- **Applied in `8757a9c`:** The browser API design has a "Selected create-organization payload" and the create-organization design now agrees with it: name, slug, the organization repository registration (a remote URL and a reference to an office-held credential), the state branch, and the initial team when bootstrap employees are planned. The fields are the ones the create flow already required; none was invented. The name-only request is what the code accepts today, not a second supported shape.
 - **Still to do:** Code: the host command and the web route accept the selected payload (FC-018).
 
 ### A-10
@@ -320,7 +322,7 @@ Priority: Before building the area · Size: M · State: Fixed in documents
 - **Impact of applying it:** Rewrite the algorithm sections of the Git design before `org-git` starts. No code exists yet, so no rework.
 - **Owner note:** "doe it"
 - **Applied in `817c4c2`:** The Git design was rewritten against the selected layout: one bare cache per repository per office, many repositories per project and per task, one worktree per employee, task and repository. The old two-clone shape is gone and the guarantees that depended on it are listed under "Known limits". The rewrite found eleven gaps in the contracts (for example no record for office Git credentials, and no durable home for a branch's base commit); they are listed as open questions in the design.
-- **Still to do:** The eleven open questions at the end of the Git design need answers before FC-140 is built. Two are already settled (ULIDs; unnumbered tasks go away if ADR-0019 is accepted).
+- **Still to do:** The eleven open questions at the end of the Git design need answers before FC-140 is built. Two are already settled: IDs are UUIDv7, and a task always has its reference.
 
 ### A-12
 
@@ -354,7 +356,7 @@ Priority: Before building the area · Size: M · State: Fixed in documents
 - **What we lose:** The simplicity of one self-contained file per message. Recipient state becomes separate files, or the envelope needs a defined merge rule.
 - **Impact of applying it:** A source-layout decision in document 15 before the messaging adapter is built. Until then the ADR's ordering rule applies to cross-office recipient state. Found by the independent review of the A-06 merge.
 - **Owner note:** "sure as long its still fast"
-- **Applied in `cb49e54`:** Every messaging file now has exactly one writing office. A message file is written once by the sender's office. Everything that belongs to one employee (the state of each received message, answers, read markers, preferences, reactions) is in that employee's own `participants/<employee-id>/` folder, written only by the office that owns that employee's state. A read, done or answer writes one small local file, so it stays in the fast class and nobody waits for another office. A DM is created by the sender's office with its first message, so starting a conversation never waits for HQ. A pin belongs to the conversation file. One new open point is recorded: two disconnected offices could each create a DM between the same two people.
+- **Applied in `8757a9c`:** Every messaging file now has exactly one writing office. A message file is written once by the sender's office. Everything that belongs to one employee (the state of each received message, answers, read markers, preferences, reactions) is in that employee's own `participants/<employee-id>/` folder, written only by the office that owns that employee's state. A read, done or answer writes one small local file, so it stays in the fast class and nobody waits for another office. A DM is created by the sender's office with its first message, so starting a conversation never waits for HQ. A pin belongs to the conversation file. One new open point is recorded: two disconnected offices could each create a DM between the same two people.
 
 ## B. Design against code
 
@@ -411,8 +413,8 @@ Priority: Decide first · Size: L · State: Decided; code pending
 - **What we lose:** Separate bug and request command families and their per-kind numbers. Old `B-` and `REQ-` references need an explicit mapping.
 - **Impact of applying it:** Finish the selected-task path on the acceptance journal, then retire `bug.*` at the API version boundary. Part of B-01's first family.
 - **Owner note:** "again as mentioned there is not old thing, everything can be deleted this is not live yet, apply this for anything else like this"
-- **Applied in `47e1596`:** Checklist row FC-040 now says the separate bug and request entities are replaced by typed tasks outright, with no import mapping. The same rule was applied wherever it came up: ADR-0010 is withdrawn and the legacy import row FC-143 is deferred.
-- **Still to do:** Code: replace the per-kind work items. A follow-up removes the legacy-import tables from the draft schema.
+- **Applied in `47e1596`:** Checklist row FC-040 now says the separate bug and request entities are replaced by typed tasks outright, with no import mapping. The same rule was applied wherever it came up: ADR-0010 is withdrawn, the legacy import row FC-143 is closed, and on your instruction all legacy structures were removed from the data contract and the draft schema: the task adoption profile, the adoption and staging interface, the imported conversation kind, the old hash formats and every rule about preserving or mapping old IDs and references.
+- **Still to do:** Code: replace the per-kind work items.
 
 ### B-04
 
@@ -429,7 +431,7 @@ Priority: Before building the area · Size: S · State: Decided; code pending
 - **What we lose:** The standard UUID format, which some external tools expect. Switching later would mean two ID formats forever, since IDs are never rewritten.
 - **Impact of applying it:** Either a one-line contract change (keep ULID) or a minting change plus a restated receipt rule (switch). Decide before the first real install.
 - **Owner note:** "sure lets do it"
-- **Applied in `3bbc57f`:** Your decision: use whatever is the industry standard. That is UUIDv7 (RFC 9562), so every ID the product mints is a UUIDv7, written as lowercase hyphenated text. This reverses the ULID choice I had first recommended on a premise that was only partly true. The identity contract states the rule and the reason; example IDs in the documents are UUID-shaped; SQLite stores them as text and a database with a native UUID type uses that.
+- **Applied in `8757a9c`:** Your decision: use whatever is the industry standard. That is UUIDv7 (RFC 9562), so every ID the product mints is a UUIDv7, written as lowercase hyphenated text. This reverses the ULID choice I had first recommended on a premise that was only partly true. The identity contract states the rule and the reason; example IDs in the documents are UUID-shaped; SQLite stores them as text and a database with a native UUID type uses that.
 - **Still to do:** Code: most of it mints ULIDs today and changes with the store rebuild; the newer HQ-creation path already mints UUIDv7 (FC-142).
 
 ### B-05
@@ -465,7 +467,7 @@ Priority: Decide first · Size: M · State: Decided; code pending
 - **What we lose:** Launch v2 simplicity. Both must be handled until v2 is removed.
 - **Impact of applying it:** Host-side code change in `org-host`; update the host boundary design to say v3 is current. Prerequisite for B-07 and B-08.
 - **Owner note:** "why v3 we didn't ship v1,  just fix it"
-- **Applied in `cb49e54`:** The host boundary design opens with the requirement: there is one launch contract, the verified-rendezvous design, and its version restarts at 1. A correction: the host already implements the rendezvous form and uses it for a registered, protected instance; it falls back to the older first-line form otherwise.
+- **Applied in `8757a9c`:** The host boundary design opens with the requirement: there is one launch contract, the verified-rendezvous design, and its version restarts at 1. A correction: the host already implements the rendezvous form and uses it for a registered, protected instance; it falls back to the older first-line form otherwise.
 - **Still to do:** Code: remove the first-line form and the switch between the two, in host and worker.
 
 ### B-07
@@ -501,7 +503,7 @@ Priority: Cleanup · Size: S · State: Fixed in documents
 - **What we lose:** Nothing.
 - **Impact of applying it:** One constant in the host, changed with B-06.
 - **Owner note:** "sure lets fix it"
-- **Applied in `cb49e54`:** Nothing to change. The host already refuses the eighth web channel: its channel registry enforces seven and a test asserts it. The figure of 63 was an observation at an older commit, quoted in ADR-0012, which now carries a note. My finding was out of date.
+- **Applied in `8757a9c`:** Nothing to change. The host already refuses the eighth web channel: its channel registry enforces seven and a test asserts it. The figure of 63 was an observation at an older commit, quoted in ADR-0012, which now carries a note. My finding was out of date.
 
 ### B-09
 
@@ -588,7 +590,7 @@ Priority: Before building the area · Size: M · State: Decided; code pending
 - **What we lose:** A small refactor now for a move that may never happen. Nothing is built for PostgreSQL.
 - **Impact of applying it:** Three files in `org-office`, and wording in documents 06 and 11. Best done alongside B-01, which touches the same code. One step is already a requirement: ADR-0014 decision 8 makes the acknowledgement class part of the storage contract. Raised by the owner's review of the overview.
 - **Owner note:** "we will need to support. postgresl we need to be able to abstract what we need there. so your reocmmendation + extran thigns might be needed"
-- **Applied in `cb49e54`:** Recorded as ADR-0018 and checklist row FC-165. Only store adapters know an engine. Invariants are stated without one (one accepting writer per stream, not one database connection). The store is chosen at one seam at start-up. Every storage contract gets an engine-independent test suite; replication and messaging already have one, and a new engine is accepted only when it passes them all. The extra things beyond my first recommendation: portable value types, constraints the SQLite schema enforces with triggers also listed in words, and backup and file layout treated as adapter properties. Documents 06 and 11 no longer name a database statement.
+- **Applied in `8757a9c`:** Recorded as ADR-0018 and checklist row FC-165. Only store adapters know an engine. Invariants are stated without one (one accepting writer per stream, not one database connection). The store is chosen at one seam at start-up. Every storage contract gets an engine-independent test suite; replication and messaging already have one, and a new engine is accepted only when it passes them all. The extra things beyond my first recommendation: portable value types, constraints the SQLite schema enforces with triggers also listed in words, and backup and file layout treated as adapter properties. Documents 06 and 11 no longer name a database statement.
 - **Still to do:** Code: move two files behind the store, add the seam, write three suites (work, organization, host). No PostgreSQL adapter is built now.
 
 ## C. Organization data improvements
@@ -627,7 +629,7 @@ Priority: Before building the area · Size: S · State: Fixed in documents
 - **What we lose:** Free-form statuses. Adding a value becomes a contract change.
 - **Impact of applying it:** A value table in document 03 and CHECK constraints. No engine is implied.
 - **Owner note:** "we will need to mark stasks and release and milestones as done, the releation and milestones could be the agregation of their assigned tasks, it dont not need to have an ACTUAL status but if all the tasks under the milestone are done, then the milestone is done. And then if all milestones under the release is done, then the release is done. And then if there's no milestones, which is also possible, then all the tasks on the release is done, then the release is done. But we just yes, but we do need a first class citizen field to indicate when the task is done whatever that is. It could be the status or it could be another field. If the status then I think there would be need a num. So to keep things flexible, we can just have markers done and then honestly, let's just simplify this and create any numb for the test status on the things that we we we know what we need to do like normal inum for the statuses those are supposed to be well known at this point let's create the statuses the enum the last value in the enum is done if it's there that's it"
-- **Applied in `5b92fb4`:** Task status is a closed list: `todo`, `in_progress`, `blocked`, `cancelled`, `done`. Milestones and releases have no status column. Two views compute completion as you described: a milestone is done when all its tasks are finished; a release is done when all its milestones are done, or, with no milestones, when all its tasks are finished. As you confirmed, an empty milestone is not done, and a cancelled task counts as done. The views also return task and finished counts for progress bars. Tests cover each case.
+- **Applied in `8757a9c`:** Task status is a closed list: `todo`, `in_progress`, `blocked`, `cancelled`, `done`. Milestones and releases have no status column. Two views compute completion as you described: a milestone is done when all its tasks are finished; a release is done when all its milestones are done, or, with no milestones, when all its tasks are finished. As you confirmed, an empty milestone is not done, and a cancelled task counts as done. The views also return task and finished counts for progress bars. Tests cover each case.
 
 ### C-03
 
@@ -796,7 +798,7 @@ Priority: Before building the area · Size: S · State: Decided; code pending
 - **What we lose:** Readable numbers while offline. People and agents use the long permanent ID until HQ is reachable.
 - **Impact of applying it:** One rule in document 06 and matching behaviour in `agent-os` when typed tasks are built. Raised by the owner's review of the overview.
 - **Owner note:** "the problem problem I have with this is if an agent is creating a new task in a remote office it needs to align with that hq first, which will be slow, we if we implement a task convention per office that would go away, the problem is agents will reference the task I key or project key whatever, right? Projects are fine to be centralized at HQ level. But tasks aren't right because we want them to be incredibly fast so the problem  it's how long that scene could take for creating or updating or managing tasks. I don't want to go to HQ, that's too long of a round trip. So we need to think it's smarter and be efficient. we might just add the office index in front of the task id, all tasks start with T-{OFFICEINDEX}{TASKID}, so the first task would immediately start with T-11, and on the second office it would be T-21, etc, this is incredibly problematic issue. I need you to once you get to this point to do some extra analysis on this and how to get this properly implemented. Use the sub-agent for this.   For Everything the agents need to do a lot on a day-to-day, they should be VERY fast, things that they don't happen very often, like creating milestones, creating releases, creating you know projects that can wait for HQ sync, but tasks and things that happen that can happen inline and offline, that has to happen incredibly fast."
-- **Applied in `5b92fb4`:** Decided and written into the data contract. A task reference is `T-`, the creating office's letter and a number: HQ's first task is `T-A1`, the second office's thirty-seventh is `T-B37`. Each office counts all its tasks in one sequence, as you settled ("by office, keep it simple"), so a reference is unique in the organization on its own and never needs a project in front. The office numbers the task itself, so creating a task never waits for HQ and a task never shows "Pending number". Creating a task uses the fast acknowledgement, as you decided. Tasks only: features and everything else keep their HQ numbers. Commands that need a project take it from the agent's context and require it otherwise. The draft schema has the office codes and counters, with tests.
+- **Applied in `8757a9c`:** Decided and written into the data contract. A task reference is `T-`, the creating office's letter and a number: HQ's first task is `T-A1`, the second office's thirty-seventh is `T-B37`. Each office counts all its tasks in one sequence, as you settled ("by office, keep it simple"), so a reference is unique in the organization on its own and never needs a project in front. The office numbers the task itself, so creating a task never waits for HQ and a task never shows "Pending number". Creating a task uses the fast acknowledgement, as you decided. Tasks only: features and everything else keep their HQ numbers. Commands that need a project take it from the agent's context and require it otherwise. The draft schema has the office codes and counters, with tests.
 - **Still to do:** Code (FC-142): office codes and counters, the reference parser in `agent-os`, the default project.
 
 ### C-13
@@ -853,7 +855,7 @@ Priority: Cleanup · Size: S · State: Fixed in documents
 - **What we lose:** Nothing.
 - **Impact of applying it:** Text sweep. Keep `org-agent` only where it means the installed Phase A tool.
 - **Owner note:** "There is no such thing called org agent, it's org or is agent OS for everything. Start doing the replacements on the on the names. Just get it replaced. There's no more let's remove the old names all like everywhere."
-- **Applied in `e2ad9ec`:** Replaced across the design documents, ADRs and specs: `org-agent` is `agent-os` and `org-server` is `agentic-org-office`. As you decided, nothing from before is carried over: the procedure for carrying the former development team's message queue into the product is withdrawn, its checklist row is closed, and AGENTS.md and the agent guidance no longer protect the earlier tool or its queue. AGENTS.md now states the goal instead: onboard the two engineers and their agents onto the product as early as it can carry them. Research notes and dated verification records were left as written.
+- **Applied in `8757a9c`:** Replaced across the design documents, ADRs and specs: `org-agent` is `agent-os` and `org-server` is `agentic-org-office`. As you decided, nothing from before is carried over: the procedure for carrying the former development team's message queue into the product is withdrawn, its checklist row is closed, and AGENTS.md and the agent guidance no longer protect the earlier tool or its queue. AGENTS.md now states the goal instead: onboard the two engineers and their agents onto the product as early as it can carry them. Research notes and dated verification records were left as written.
 
 ### D-02
 
@@ -995,7 +997,7 @@ Priority: Before building the area · Size: M · State: Fixed in documents
 - **What we lose:** Either some durability granularity (batching several envelopes behind one flush) or the current latency targets.
 - **Impact of applying it:** Design the envelope flush discipline and measure it before the messaging adapter is built. Recorded as an open item in document 15.
 - **Owner note:** "We need to be faster than this. I want a single digit millisecond for messages sending out. Unless if course is an ask, which can take a little bit longer, especially for talking in between offices and then that could take even a little bit longer so cross office is fine intra office should be incredibly fast single digit millesecond, we might want to relay the message first and start it later. Like so you know especially interoffice, we're talking about interoffice, which is pretty much where the team is going to be working on kind of interoffice should be single digit if it's fine forget it should be single digit as well so we we need to architecture this properly. If we if it's interoffice we could relay the message first or or or just cache it and then save it afterwards. You know? And then if if if if we if we we we we can put a retry there also so we we should optimize for 80% of the time and then if there's a problem we just retry it also the ask would also have to have a timeout no matter what saying oh the agent didn't reply in in a in in in the particular time but we should also allow the agents to specify depending of the messages how long he would expect a reply for this, depending on the question, it would take longer. But the ask is a holding operation, right? I'm gonna ask and then sometime I'm gonna come back with the information. The agent should be able to ask on a super thread and then you know and then the ask will be waiting for the reply for the other agent. But they just send a message which is asynchronous, like it's like, you just send it noncessary waiting for the part to continue work, that should be incredibly fast. Whenever doing the just the send, it should be single digit. Ask can be more. Just the send should save it locally and then get relayed elsewhere, however that happens."
-- **Applied in `cb49e54`:** ADR-0014 gains decision 9 and two acceptance criteria, and document 15 a matching paragraph. A plain send answers in single-digit milliseconds in every topology, including to another office: the sender's office saves it locally and answers; relaying through HQ happens afterwards and is retried until it succeeds or the message expires. A failure becomes a delivery notice, never a slower send. An ask is the one holding operation: it always has a deadline, the sender may say how long a reply is expected to take (otherwise 120 seconds for an agent and 24 hours for a person), and it returns a timeout when the deadline passes.
+- **Applied in `8757a9c`:** ADR-0014 gains decision 9 and two acceptance criteria, and document 15 a matching paragraph. A plain send answers in single-digit milliseconds in every topology, including to another office: the sender's office saves it locally and answers; relaying through HQ happens afterwards and is retried until it succeeds or the message expires. A failure becomes a delivery notice, never a slower send. An ask is the one holding operation: it always has a deadline, the sender may say how long a reply is expected to take (otherwise 120 seconds for an agent and 24 hours for a person), and it returns a timeout when the deadline passes.
 - **Still to do:** Code and measurement on a Mac (FC-160).
 
 ## F. Design choices the owner challenged
