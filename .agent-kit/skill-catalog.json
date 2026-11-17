@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "a15b6116e8a91665610d61634b7e41a0127fc35f82d360344388e153f0da36fe"
+      "sha256": "8fc5db20419dc4d0f210b91bc5287e18493770150f8f5b6b354a1edcb7df771f"
     },
     {
       "path": "Cargo.lock",
@@ -158,7 +158,7 @@
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "7d4aca69ed6594a9df1d474e0e2342d1ccf16d526d7b2645ebd14ef65c7d26ac"
+      "sha256": "ed3b12fb21460703a3666bb575b2cd894fdf82ee86ac00898db663fd98ed4f1e"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
