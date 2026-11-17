@@ -107,7 +107,9 @@ pub(crate) fn load(assets: &Path, pin: Option<&WebRelease>) -> Result<BuildFiles
     preload(&root, &manifest, &signature)
 }
 
-#[cfg(target_os = "macos")]
+/// The running image must be the manifest's `agentic-org-web`. The image adapter
+/// (`org_socket::image`) refuses on a platform without a loaded-image query, so a
+/// valid manifest alone never admits this process or permits asset preload.
 fn verify_running_image(manifest: &VerifiedManifest) -> Result<(), BuildError> {
     let expected = manifest
         .file("agentic-org-web")
@@ -119,13 +121,6 @@ fn verify_running_image(manifest: &VerifiedManifest) -> Result<(), BuildError> {
         return Err(BuildError::ReleaseImageMismatch);
     }
     Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn verify_running_image(_: &VerifiedManifest) -> Result<(), BuildError> {
-    // Linux runtime confinement remains unavailable. A valid manifest alone
-    // never admits this process or permits asset preload.
-    Err(BuildError::ReleaseImageMismatch)
 }
 
 fn authenticate(

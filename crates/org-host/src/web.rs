@@ -129,13 +129,10 @@ impl Supervisor {
         state: Arc<Mutex<GatewayState>>,
         eligible: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> io::Result<Self> {
-        // No bind, child or secret handoff for unverified TLS or an unsupported OS.
+        // No bind, child or secret handoff for unverified TLS or a platform without a
+        // web process confinement adapter.
         // Each refusal names its cause for the host log.
-        if !cfg!(target_os = "macos") {
-            return Err(io::Error::other(
-                "the web process requires macOS process confinement",
-            ));
-        }
+        org_socket::confinement::web_confinement_supported()?;
         if config.listen.scheme() != ListenMode::HttpLoopback {
             return Err(io::Error::other(
                 "the web process requires a verified HTTP loopback listener",
@@ -454,9 +451,8 @@ impl Running {
         let ready: GatewayReadyForSecrets =
             serde_json::from_slice(&line(&mut receiver, until, "ready line")?)
                 .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
-        if ready.landlock.is_some() {
-            return Err(failed("the ready line reports landlock on macOS"));
-        }
+        org_socket::confinement::verify_ready_report(ready.landlock.is_some())
+            .map_err(|error| failed(&error.to_string()))?;
         crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
             .map_err(|_| failed("the ready-line peer is not the admitted child"))?;
         config
