@@ -68,27 +68,27 @@ They must be preserved through any target adapter. Filenames do not rename
 The selected target separates data by durability:
 
 ```text
-<organization-data-root>/<organization-id>/
-├── durable/
-│   ├── state/                       # ordinary tracked organization files
-│   ├── journal/                     # acknowledged unpublished persistence
-│   ├── authority/                   # numbering and recovery evidence
-│   ├── accounting/                  # durable usage archive/checkpoints
-│   ├── local/offices/               # private bindings; never Git
-│   └── checkpoints/                 # local/unpushed code recovery
-└── runtime/<office-id>/
-    ├── office.db                    # projections and explicitly transient data
+<data-root>/<organization-id>/
+├── durable/                  # sources: back up all of it; never removed by cleanup
+│   ├── state/                # ordinary organization Git files
+│   ├── journal/              # acknowledged unpublished changes
+│   ├── authority/            # numbering, placement generations, permits (06, 11)
+│   ├── accounting/           # durable usage streams/checkpoints (10)
+│   ├── messaging/            # protected envelopes and attachments (15)
+│   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
+│   ├── budgets/              # policies, periods, events, extensions/holds (17)
+│   ├── private/              # HQ only: author-private task notes (05)
+│   ├── local/offices/        # private local bindings, never Git
+│   └── checkpoints/          # local/unpushed code recovery
+└── runtime/<office-id>/      # caches: rebuildable
+    ├── office.db             # projections and explicitly transient state
     ├── repositories/<repository-id>.git/
     └── teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/
-<organization-operational-root>/
-├── messaging/                       # protected envelopes and attachments (15)
-├── recovery/                        # receipts/streams/snapshots/cleanup (16)
-└── budgets/                         # policies, periods, events, holds (17)
 ```
 
-Provision and protect the operational root independently of disposable caches.
+The [organization-data index](organization-data/README.md#shared-storage-contract) owns this layout. Provision and protect `durable/` independently of the disposable `runtime/<office-id>/` caches.
 Private task notes use a separate durable author-private DB; host credentials/CA
 pins and execution journals retain their protected custody. The current runtime
 still uses encrypted `org.db`/`office.db`, `office-state/` markers and legacy

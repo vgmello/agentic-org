@@ -224,36 +224,37 @@ configuration is server-managed and readable only by authorized local users. It
 names office IDs, release pin, endpoints and references to credentials, not inline
 private keys. Binaries live outside mutable data and file modes remain private.
 
-The instance resolver must provision each organization's selected data root and a
-protected organization operational root. The [authority map](documentation-authority.md)
-links the owning contracts. The target hierarchy is:
+The instance resolver must provision each organization's selected data root. The
+[organization-data index](organization-data/README.md#shared-storage-contract) owns
+the layout: one root, with protected sources under `durable/` and rebuildable
+caches under `runtime/<office-id>/`. The target hierarchy is:
 
 ```text
-<organization-data-root>/<organization-id>/
-├── durable/
+<data-root>/<organization-id>/
+├── durable/                  # sources: back up all of it; never removed by cleanup
 │   ├── state/                # ordinary organization Git files
 │   ├── journal/              # acknowledged unpublished changes
-│   ├── authority/            # numbering and recovery evidence
-│   ├── accounting/           # durable usage streams/checkpoints
+│   ├── authority/            # numbering, placement generations, permits (06, 11)
+│   ├── accounting/           # durable usage streams/checkpoints (10)
+│   ├── messaging/            # protected envelopes and attachments (15)
+│   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
+│   ├── budgets/              # policies, periods, events, extensions/holds (17)
+│   ├── private/              # HQ only: author-private task notes (05)
 │   ├── local/offices/        # private local bindings, never Git
 │   └── checkpoints/          # local/unpushed code recovery
-└── runtime/<office-id>/
+└── runtime/<office-id>/      # caches: rebuildable
     ├── office.db             # projections and explicitly transient state
     ├── repositories/<repository-id>.git/
     └── teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/
-<organization-operational-root>/
-├── messaging/                # protected envelopes and attachments (15)
-├── recovery/                 # receipts, streams, snapshots, cleanup (16)
-└── budgets/                  # policies, periods, events, extensions/holds (17)
 ```
 
 Private task notes are a separate durable author-private database, with no owner
 or administrator read exception. Authentication/CA pins, local credentials and
-execution journals retain their protected stores outside Git. The operational
-root and private stores cannot be children whose only copies disappear on cache
-cleanup. Organization Git must be remote, using explicit organization slug,
+execution journals retain their protected stores outside Git. Nothing under
+`durable/` may be a child of a directory that cache cleanup removes; cleanup
+is limited to `runtime/<office-id>/`. Organization Git must be remote, using explicit organization slug,
 repository ID and state branch. Code repositories may be local-only. Projects
 associate many registered repos, each with required integration branch; each
 office caches a repo once regardless of how many projects use it.

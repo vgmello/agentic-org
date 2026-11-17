@@ -43,14 +43,14 @@ Hard limits are operational controls, not a promise of exact provider spend: rep
 ## Files and SQL mapping
 
 ```text
-<organization-operational-root>/budgets/<budget-id>/ # protected, never shared org Git
+<data-root>/<organization-id>/durable/budgets/<budget-id>/ # protected, never shared org Git
 ├── budget.md                    # immutable target/current revision and latest policy
 ├── versions/<revision>.yaml      # append-only policy history, including limits
 ├── periods/<period-id>.json      # evaluation and extension/kept-pause state
 ├── events/<event-id>.json        # immutable actor-bound decisions/evaluation snapshots
 ├── notices/<notice-id>.json      # durable notification/outcome state
 └── holds/<period-id>/<revision>-<stage>.json
-<office-state>/cache/            # access-controlled SQL/rollups; not sole source
+<data-root>/<organization-id>/runtime/<office-id>/ # access-controlled SQL/rollups; not sole source
 ```
 
 budget.md has schema_version, organization_id, id, current_revision, scope_kind, nullable task_id/agent_id/release_id, period_kind, time_zone, time_zone_source, time_zone_subject_ref, created_at and optional Markdown body. Version YAML has organization_id, budget_id, revision, state, unit, limit_amount, changed_by_kind/id, changed_at, reason. The latest version fields shown in budget.md must exactly match its version file, not form a second independently writable policy. Preserve task/release identities as archived records when budget history references them; deletion must archive, not cascade away budget history.

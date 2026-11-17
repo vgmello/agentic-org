@@ -7,6 +7,13 @@ The selected source/storage contract follows the
 [authority map](../design/documentation-authority.md); no schema migration or
 production recovery implementation is performed by this decision.
 
+**Layout precedence (2026-11-17).** The engine, single-writer, durability and
+key-custody decisions below stand. Where data lives on disk is owned by the newer
+[organization-data storage contract](../design/organization-data/README.md#shared-storage-contract):
+one root with sources under `durable/` and the SQLite projection under
+`runtime/<office-id>/`. The per-office `org.db` and `office.db` described here are
+the current implementation and stay authoritative until an approved migration.
+
 ## Context
 - Many agents will talk to an office server at once, and their writes must not fail or stall each other.
 - Organizations will hold confidential information, so the server's database must be encrypted at rest.

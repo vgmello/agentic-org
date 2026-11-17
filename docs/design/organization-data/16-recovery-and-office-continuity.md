@@ -16,10 +16,10 @@ Recovery is answering, after a crash or lost cache: “Did this command already 
 
 ## Ownership, storage and rebuilding
 
-Organization domain records live in organization Git; these operational records do not. They can contain actor/command relationships and machine-local details. Keep source records, append journals and protected result blobs in the configured durable operational root outside disposable office databases. Owner-verified backup/restore must include these sources and the separately managed credentials. The consolidated SQL is their indexed projection, not a substitute for durable journal evidence.
+Organization domain records live in organization Git; these operational records do not. They can contain actor/command relationships and machine-local details. Keep source records, append journals and protected result blobs in `durable/recovery/` under the one selected [storage root](README.md#shared-storage-contract), outside disposable office databases. Owner-verified backup/restore must include these sources and the separately managed credentials. The consolidated SQL is their indexed projection, not a substitute for durable journal evidence.
 
 ```text
-<organization-operational-root>/recovery/          # protected, never org Git
+<data-root>/<organization-id>/durable/recovery/     # protected, never org Git
 ├── commands/<command-id>.json                    # receipt, immutable fingerprint/actor
 ├── results/<content-id>                          # protected command outcome
 ├── offices/<office-id>/

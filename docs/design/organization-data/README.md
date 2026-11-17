@@ -60,20 +60,31 @@ The organization repository must be remote. Its tracked content is mirrored as o
 
 ```text
 <data-root>/<organization-id>/
-├── durable/
-│   ├── state/                 # Latest organization repository content
-│   ├── accounting/            # Durable usage streams/checkpoints; separately backed up
-│   ├── authority/             # Durable numbering ledger and recovery journal
-│   ├── journal/               # Pending local persistence; not Git content
-│   ├── local/offices/         # Machine-specific bindings; not Git content
-│   └── checkpoints/           # Local-only/unpushed code recovery bundles and edits
-└── runtime/<office-id>/
-    ├── office.db              # Projection + explicitly transient state
-    ├── repositories/          # One bare clone per repository used by this office
+├── durable/                         # Sources. Back up all of it. Cache cleanup never touches it.
+│   ├── state/                       # Latest organization repository content (published to Git)
+│   ├── journal/                     # Pending local persistence; not Git content
+│   ├── authority/                   # Numbering ledger and its recovery journal (06); HQ placement
+│   │                                #   generations, permits and cooldowns (11)
+│   ├── accounting/                  # Usage streams/checkpoints (10)
+│   ├── messaging/                   # Protected conversations, messages, attachments (15)
+│   ├── recovery/                    # Receipts, origin streams, acceptance journals, checkpoints (16)
+│   ├── budgets/                     # Protected policies, periods, events, holds (17)
+│   ├── private/task-notes.db        # HQ only: author-private task notes (05)
+│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11)
+│   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
+└── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
+    ├── office.db                    # Projection + explicitly transient state
+    ├── repositories/                # One bare clone per repository used by this office
     └── teams/<team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/  # Team tasks
 ```
+
+**One root, two halves.** This tree is the only selected on-disk layout; every numbered document and every design or UX guide refers to it. `durable/` holds every source: nothing under it is rebuilt from anything else, a backup must include all of it, and no cleanup may remove it. `runtime/<office-id>/` holds only what can be rebuilt from `durable/`, organization Git and verified probes. Only `durable/state/` is published to organization Git. `messaging/`, `recovery/`, `budgets/`, `accounting/`, `authority/`, `private/` and `local/` are protected local sources and never become Git content.
+
+`<data-root>` is resolved once by the instance under the [standalone design](../standalone-server.md#3-instance-selection-and-storage) and saved in instance configuration; it is never inferred from a client ID, a shell's working directory or `HOME`. An operator may place `durable/` on separate storage, but its logical location stays `<data-root>/<organization-id>/durable/`. Earlier revisions used other names for parts of this tree: `<organization-data-root>` is `<data-root>`, `<organization-operational-root>` is `<data-root>/<organization-id>/durable`, and `<office-state>/cache/` is `<data-root>/<organization-id>/runtime/<office-id>/`. Do not introduce another root name.
+
+This is the selected target. The checked code still keeps its authoritative `org.db` and `office.db` under `offices/<office-id>/` of the host home ([ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md), [host boundary](../office-host-boundary.md)); those databases are sources, not caches, until an approved migration moves each record family here.
 
 Durable scalar values are explicit YAML/front-matter fields. Association rows come from ID arrays or maps in their owning documents. Markdown bodies map to `body_markdown`. Array positions and resolver indexes are derived and have no independently authored source. Generated numeric keys are derived from persisted numbers. Null optional fields and documented defaults round-trip identically.
 
