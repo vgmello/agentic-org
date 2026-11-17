@@ -316,6 +316,9 @@ fn idle_and_absolute_expiry_end_the_pair() {
     assert!(f.refused(&idle.cookie, idle.proof.expose()));
     assert!(f.refused(&absolute.cookie, absolute.proof.expose()));
     assert!(f.sessions.sessions.lock().unwrap().is_empty());
+    // Browser expiry also ends both host sessions instead of leaving their
+    // host slots held until the host's own idle timeout.
+    assert_eq!(f.count("session.end"), 2);
 }
 
 #[test]

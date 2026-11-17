@@ -199,13 +199,29 @@ impl BrowserSessions {
         Ok(result)
     }
     fn reap(&self) -> Result<(), ApiReply> {
-        // No remote bulk session sweep: the host owns expiry and revocation,
+        // The host owns expiry and revocation (its own reap stays authoritative),
         // and control EOF ends every host session on this connection.
         let host_live = self.host.live();
+        let mut expired = Vec::new();
         self.sessions
             .lock()
             .map_err(|_| unavailable())?
-            .retain(|_, session| host_live && session.live());
+            .retain(|_, session| {
+                let keep = host_live && session.live();
+                if !keep {
+                    expired.push(Arc::clone(session));
+                }
+                keep
+            });
+        // Browser expiry ends the host session too (§4), so an expired pair
+        // never holds a host slot until the host's own idle timeout. Best
+        // effort, outside the map lock; after control EOF the host has
+        // already ended every session on this connection.
+        if host_live {
+            for session in expired {
+                let _ = self.host.end(&session.handle);
+            }
+        }
         Ok(())
     }
     fn view(&self, session: &Session) -> Result<SessionView, ApiReply> {
