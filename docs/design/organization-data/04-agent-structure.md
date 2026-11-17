@@ -70,11 +70,23 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 
 - In each organization an account can open, the account is tied to exactly one employee whose `kind` is `person`. A person can open several organizations; it is then tied to one person record in each, because a person record belongs to one organization.
 - A person record does not need an account. An account is never tied to an agent.
-- The creator's account is tied to the person record made when the organization is created. Further accounts are registered by the person in the browser, through a one-time registration link an instance administrator issues on the server machine; each is tied to a person in the organization, either an existing person record or a new one created in the top-level team. That person is then moved between teams like anyone else.
+- The creator's account is tied to the person record made when the organization is created. Further accounts are registered by the person in the browser, through a one-time registration link that the server's administrator or the organization's owner issues from People for an existing person record. That person is placed and moved between teams like anyone else.
 - The link between an account and its person record is host data. No employee field names an account, and the link grants no authority by itself: what the account may do is decided at the host and checked by the office on every call.
 - What an account does in an organization is recorded under its person record: the actor is kind `employee` with that person's ID. No record names an account or "the owner" as the one who did something.
 
-**The organization owner** is the person whose account created the organization. Ownership is a permission of that account at the host; there is no owner field on an employee, and no record field grants authority. Where a record *addresses* the owner rather than recording what someone did (a watcher, a waiting span or a budget notice of kind `owner`, an owner question, a budget's `owner_account` time zone), `owner` means the person whose account owns the organization at the time the record is read ([document 05](05-operational-data.md#relationships)).
+**The organization owner** is the person whose account currently holds ownership: the creator, until they hand ownership to another person who has an account. An organization has exactly one owner. Ownership is a permission of that account at the host; there is no owner field on an employee, and no record field grants authority. Where a record *addresses* the owner rather than recording what someone did (a watcher, a waiting span or a budget notice of kind `owner`, an owner question, a budget's `owner_account` time zone), `owner` means the person whose account owns the organization at the time the record is read ([document 05](05-operational-data.md#relationships)).
+
+**Who may change what.** There are no access roles. A person is whatever place the owner gives them in the hierarchy, and any person can read the organization, work on tasks and talk to any person or agent. The rights that are not everyone's are these, and each is checked by the office from the caller's principal and host grant, never from a record field:
+
+| Action | Who |
+| --- | --- |
+| Create an organization; hand over the administrator role | The server's administrator |
+| Change the organization's structure: create, rename, move or archive a team; add, place, move or deactivate a person; appoint a lead; create a project (and with it its team) | The organization's owner |
+| Invite a person to sign in, issue a new link, remove access | The owner or the administrator |
+| Hand over ownership | The owner |
+| Approve a hire | The owner, or a person in the lead chain of the team the agent joins |
+| Pause or resume an agent, or give it an instruction it must follow | The owner, or a person above the agent in the hierarchy |
+| See a project's costs; set or change a task budget in it | The owner, or the project's manager: the lead of the project's accountable team. "Project manager" in the cost and budget documents means that position, not an access role |
 
 ## The HR lead and how agents are onboarded
 

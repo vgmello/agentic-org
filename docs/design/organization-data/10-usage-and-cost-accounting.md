@@ -8,7 +8,7 @@ At v1 commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`, [the runtime usage cont
 
 ## One ledger; derived totals
 
-Each accepted normalized report is one immutable `usage_records` event. The record identifies the actual consuming agent or one-off invocation, runtime/model, occurrence time and origin. A run can span several tasks; its identifier is an opaque correlation field, not a foreign key into transient session state. Several agents may contribute to the same task, including reviewers/helpers. Their costs belong to the actual consumers rather than the task's current assignee.
+Each accepted normalized report is one immutable `usage_records` event. The record identifies the actual consuming agent, or a one-off invocation, with the runtime/model, occurrence time and origin. A one-off invocation (`actor_kind: one_off`, no employee) is a model call the product makes itself, such as a drafting feature; it is not an agent, and no agent runs outside an employee record. A run can span several tasks; its identifier is an opaque correlation field, not a foreign key into transient session state. Several agents may contribute to the same task, including reviewers/helpers. Their costs belong to the actual consumers rather than the task's current assignee.
 
 `effective_usage_records` selects records without a replacement. Task, agent and project total views aggregate that same effective set, never independently increment totals on parent entities. Task views sum all contributing agents; agent views include task work and overhead across projects; project views include task work and explicitly attributed project overhead. One-off usage still contributes to task/project/organization totals even when no agent profile exists.
 

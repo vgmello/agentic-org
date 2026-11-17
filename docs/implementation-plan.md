@@ -28,7 +28,7 @@ single office on macOS. Its steps, in order:
 | Step | A person can | Increments |
 | --- | --- | --- |
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
-| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer | B1, B2, B3, O1, A6, U1 |
+| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
 | 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
@@ -114,7 +114,8 @@ Three things to know about the order:
   - Setup reports the state of disk encryption and the file permissions it set.
   - Setup creates no account, no organization and no office (A3, A4).
 - **Read:** [standalone server design](design/standalone-server.md),
-  [installation and access UX](specs/server-installation-and-access-ux.md) (SRV criteria),
+  [installation and access UX](specs/server-installation-and-access-ux.md) (the SRV
+  criteria for a single machine; the satellite ones belong to S1),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-3). Rows FC-011,
   FC-012.
 - **Code today:**
@@ -125,7 +126,7 @@ Three things to know about the order:
   - `crates/org-host/src/hostdb` holds the account and registry storage and is unused
     outside tests. `hostdb/first_account.rs` creates the first account from a typed
     password, which the link replaces.
-- **Done when:** the SRV criteria for a fresh install pass on macOS; a second run of
+- **Done when:** the single-machine SRV criteria for a fresh install pass on macOS; a second run of
   setup changes nothing; a used or replaced link is refused; ENC-3 passes.
 - **Needs:** nothing. It is where Track A starts.
 
@@ -195,9 +196,9 @@ Three things to know about the order:
 - **Read:** [create organization design](design/create-organization.md),
   [web API design](design/web-api-v1.md) (selected create payload),
   [organization structure](design/organization-data/01-organization-structure.md),
-  [offices and teams UX](specs/offices-and-teams-ux.md) (OPEN criteria),
-  [installation and access UX](specs/server-installation-and-access-ux.md) (accounts,
-  recovery), [ADR-0007](adr/0007-hq-creation-escrow.md),
+  [offices and teams UX](specs/offices-and-teams-ux.md) (create organization; OFC-15),
+  [installation and access UX](specs/server-installation-and-access-ux.md) (SRV-24,
+  accounts, recovery), [ADR-0007](adr/0007-hq-creation-escrow.md),
   [ADR-0011](adr/0011-protected-recovery-delivery.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-2). Rows FC-016,
   FC-018, FC-029, FC-031.
@@ -206,7 +207,9 @@ Three things to know about the order:
     `organization.provision.v1` already carries the selected payload (name, slug,
     repository address, state branch, home team name: `crates/org-proto/src/selected_bootstrap.rs`)
     and is implemented by `crates/org-host/src/provisioning.rs` with the office's
-    `hq_creation`. Keep the second, delete the first.
+    `hq_creation`. One command remains, named `organization.create` as the web API
+    design has it, with the second one's payload and implementation; the name-only
+    handler and the versioned name are deleted.
   - The UI flow runs against fakes (`apps/agentic-org-ui/src/lib/create-flow.ts`).
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
@@ -224,6 +227,10 @@ Three things to know about the order:
     browser: the terminal prints a one-time link, and the person opens it where they
     are signed in and approves. No password is typed in a terminal. The session ends
     when its connection closes.
+  - The person's executable is `agentic-org`. After `agentic-org sign-in` it offers the
+    same office commands that `agent-os` offers an agent (teams, people, tasks,
+    messages), from one shared library, under the person's name. `agent-os` is for
+    agents only and refuses to run without the binding of a run the office started.
   - A person-started command names the instance and the office, or uses a saved context
     bound to those two IDs. With neither it fails and says how to select one.
   - Each call reaches the office with the person's principal and a host-issued grant,
@@ -234,7 +241,7 @@ Three things to know about the order:
 - **Read:** [ADR-0003](adr/0003-agent-messaging-office-first.md) decisions 12 and 13 and
   "Person-started commands", [ADR-0013](adr/0013-stored-browser-sessions.md) (SES-8),
   [host boundary design](design/office-host-boundary.md),
-  [`apps/agent-os/README.md`](../apps/agent-os/README.md). Row FC-015.
+  [`apps/agent-os/README.md`](../apps/agent-os/README.md). Row FC-014.
 - **Code today:** a person or the owner binds to the office with `app_token`
   (`apps/agentic-org-office/src/serve.rs`), which A1 removes; `agent-os` talks to an
   office only when one is named and otherwise writes to a file queue, which B6 deletes.
@@ -287,8 +294,9 @@ Three things to know about the order:
 
 ### B2 · Organization, teams and people
 
-- **Outcome:** through the command line and the API, a person creates teams, adds people
-  and agents, sets a team lead, and moves someone to another team.
+- **Outcome:** through the command line and the API, the owner creates teams, adds
+  people, sets a team lead, and moves someone to another team. Agents are not added
+  here: an agent comes to exist only through a hire (C2).
 - **Build:** the organization, teams, employees and roles of the data contract. One home
   team per employee. One status field. A team lead who is a direct member. HQ gives
   teams their numbers. The many-to-many membership model is deleted.
@@ -358,9 +366,10 @@ Three things to know about the order:
     a member of a team that an agent leads, the lead of a team of agents, or a lead of
     leads. There are no access roles. Any person can interact with any agent; position
     only decides whose instructions an agent follows
-    ([supervision design](design/employee-supervision.md), decision 6). Only inviting
-    people, removing access, handing over ownership or the administrator role, and
-    creating organizations are reserved to the owner or the administrator.
+    ([supervision design](design/employee-supervision.md), decision 6). The few rights
+    that are not everyone's (changing the structure, inviting and removing access,
+    the two hand-overs, approving a hire, creating organizations) and who holds each
+    are one table in the [agent structure contract](design/organization-data/04-agent-structure.md#accounts-people-and-the-organization-owner).
 - **Read:** [installation and access UX](specs/server-installation-and-access-ux.md)
   (accounts), [agent structure](design/organization-data/04-agent-structure.md),
   [index, what the host owns](design/organization-data/STATUS.md#outside-this-set-what-the-host-owns).
@@ -374,6 +383,26 @@ Three things to know about the order:
 - **Done when:** two people are signed in at once from two browsers, and a change each
   makes carries their own name.
 - **Needs:** A3, B2.
+
+### R1 · Open an existing organization
+
+- **Outcome:** on a server that has lost its database, or on a new server, the
+  administrator registers again, opens the organization from its repository, and finds
+  its teams, people, projects and records as they were.
+- **Build:** the "open an existing organization" choice beside "create"; validation of
+  the files against the data contract; registration at the host under the existing ID;
+  the office's projection rebuilt from the files; the administrator choosing their
+  person record and becoming the owner; people invited again; a plain statement of
+  what did not come back.
+- **Read:** [recovery contract, opening an existing organization](design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization)
+  and its loss boundaries, [identity contract](design/organization-data/06-identity-and-numbering.md),
+  [ADR-0007](adr/0007-hq-creation-escrow.md). Row FC-167.
+- **Code today:** nothing opens an organization from files; the office's store is the
+  source of truth until B1.
+- **Done when:** with `runtime/` and the host's database deleted, the organization is
+  opened again from its repository and every record published before the loss is
+  there; an invalid organization record refuses the open and names the file.
+- **Needs:** B1, A4, A6.
 
 ### U1 · Offices, teams, people and projects in the browser
 
@@ -442,7 +471,8 @@ Three things to know about the order:
   [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
   [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
   FC-098, FC-100, FC-101.
-- **Code today:** `crates/org-runtime` is the contract and has no caller.
+- **Code today:** `crates/org-runtime` is the contract; only `crates/org-supervise`
+  uses its types, and nothing launches an agent.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
   recover processes the office owned before a restart, not to launch an agent.
 - **Done when:** a hired agent completes an instruction given from its page, and the HR
@@ -649,6 +679,28 @@ product without it.
 | L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | mechanical; any time |
+
+## Checklist rows that ride with an increment
+
+Rows of the [feature checklist](FEATURES.md) that no increment above names, and where
+each is finished.
+
+| Rows | What | Finished with |
+| --- | --- | --- |
+| FC-004, FC-005 | Responsive layout, keyboard access, shared forms and feedback | Every browser increment, first U1 |
+| FC-108 | Role records and assigning a role | C2 |
+| FC-036, FC-102 | Live activity, presence, progress and health of a run | C3 |
+| FC-111 | Process list and editor in the browser | C5 |
+| FC-080, FC-081 | Task handoff notices; delivery that never interrupts, pause and waiting | B6, C6 |
+| FC-035 | Home and the inbox of things that need you | B7 |
+| FC-047, FC-048, FC-049 | Requests: capture, routing, scoping and approval | B4, B5 |
+| FC-051, FC-052, FC-055 | Task output, work and waiting time, needs-me views | B5 |
+| FC-024 | Release acceptance run with a second office | S1 |
+| FC-006, FC-007, FC-008 | Search and New, device preferences, account time zone | Later |
+| FC-023 | Logs, doctor and support diagnostics | Later, with L9 |
+| FC-123, FC-124 | Drafting text and a bug from a sentence | Later |
+| FC-147, FC-148 | Restore of protected data; credential rebind and cache rebuild | Later |
+| FC-151 | Taking over an agent's session from a terminal and handing it back | Later |
 
 ## For every increment
 

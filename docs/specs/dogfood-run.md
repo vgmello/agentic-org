@@ -17,6 +17,19 @@ fakes support lower-level tests but never satisfy this run. Selected-model data
 checks are in §6a. Undo, advanced checklists, retrospectives, automatic
 scheduling and memory are not in v1 and are not checked.
 
+## Which sections apply when
+
+The run grows with the [implementation plan](../implementation-plan.md)'s milestones.
+
+| Milestone | What is run | Sections |
+| --- | --- | --- |
+| One: one office on a Mac | One macOS machine, HQ only. Hires are placed at HQ. | §1, §2 (rows that need one machine), §3a, §3b, §6, §6a |
+| Two: Linux | The same on Linux, including in a container | The same sections on Linux |
+| Three: a second office | The full run below, with a satellite and both operating systems. This is the release acceptance run. | All sections, including §3, §4 and §5 |
+
+In milestones one and two, a row that needs a second machine or a satellite is not
+run and is recorded as not yet applicable, never as passed.
+
 ## 0. Preconditions and evidence
 
 Use the same verified release on two supported machines, one macOS and one Linux.
@@ -120,7 +133,8 @@ semantics separately.
 
 ## 3a. Manage the team (HQ)
 
-Run after §3, with the employee from 3.4 still placed and able to work. The owner
+In the full run, do this after §3, with the employee from 3.4 still placed and able to
+work; in a single-office run, do it after §1 with a hire placed at HQ. The owner
 does every browser step signed in at HQ. Keep a **second browser** on the other
 machine signed in as the same owner, with the org chart in one tab and Activity in
 another, and never reload it: it shows whether each change arrives live (3a.14).

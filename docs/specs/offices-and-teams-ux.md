@@ -234,6 +234,13 @@ none. Whoever creates it owns it. The mechanics are in
 - The administrator with no organizations gets **Create organization** on the
   empty page after sign-in, which is the first page it sees after registering
   from setup's link (`server-installation-and-access-ux.md` §4a.5).
+- Beside it the administrator has **Open an existing organization**, for a server
+  that has no record of an organization whose files exist: after the server's
+  database was lost, or on a new server. It asks for the remote organization
+  repository and the state branch (and offers any organization found in the data
+  folder), checks the files, shows what will and will not come back, and asks which
+  person the administrator is. The rules are in the
+  [recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization).
 
 **The form** (slide-over, as for other forms in §2):
 
@@ -363,7 +370,9 @@ Agents never sign in, and neither does a person without an account.
 | Sign in | Any account | Browser |
 | Create an organization | The administrator only. Setup creates none | Browser (§5a) |
 | Open an organization | Any account tied to a person in it. The administrator flag alone doesn't open it | Browser |
-| Act in it as its owner (teams, people, approvals, and inviting, approving and removing satellite offices) | Its owner | Browser |
+| Change its structure (teams, people and their places, leads, projects), and invite, approve and remove satellite offices | Its owner | Browser |
+| Approve a hire | The owner, or a person in the lead chain of the team the agent joins | Browser |
+| Read the organization, work on tasks, and talk to any person or agent | Any person with an account in it | Browser |
 | Give a person an account (Invite to sign in), a new sign-in link, or remove their access | The administrator or the organization's owner | Browser, People (§7.4) |
 | Hand ownership to another person who has an account | The owner | Browser (§7.1) |
 | Hand the administrator role to another account | The administrator | Browser (`server-installation-and-access-ux.md` §4a.2) |

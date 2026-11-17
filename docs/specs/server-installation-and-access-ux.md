@@ -1024,7 +1024,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-18 · Production browser paths use the HTTP API, with an explicit unavailable state for missing features. An API failure never selects sample data. The unavailable pages' copy is in `app-shell-ux.md` §3 (SHELL-18 to SHELL-21).
 - SRV-19 · Withdrawn: there is no native application.
 - SRV-20 · Superseded code is deleted, not adapted, and nothing is imported. Domain rules, storage durability, office identity and supervision invariants stay covered.
-- SRV-21 · A fresh HQ and satellite complete the cross-platform walkthrough in [dogfood-run.md](dogfood-run.md), including disconnect/reconnect and a real agent. Mock-only success is insufficient.
+- SRV-21 · A fresh HQ completes the single-office walkthrough in [dogfood-run.md](dogfood-run.md) with a real agent; with a satellite and on both operating systems it completes the full walkthrough, including disconnect/reconnect, as the release acceptance run of milestone three. Mock-only success is insufficient.
 
 - SRV-22 · The retained browser application's source/package is `apps/agentic-org-ui` / `agentic-org-ui`; worker source/package/executable are apps/agentic-org-office / agentic-org-office. Browser server and agent CLI use apps/agentic-org-web / agentic-org-web and apps/agent-os / agent-os; host library crates/org-host is composed by agentic-org serve. Workspace, imports, tests, build, packaging and ownership references agree; the rename preserves the per-office worker and host credential boundaries.
 
@@ -1133,6 +1133,12 @@ rules, which are distinct from uninstalling software on a machine.
 **REC-1 remains open:** a reviewed manual HQ-loss recovery/re-certification/fencing
 procedure and disaster-recovery evidence are required before production recovery
 claims. V1 still provisions CA escrow and its owner recovery code under SRV-25.
+The way back after losing the server or its database is to open the organization
+again from its files
+([recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization),
+implementation plan R1). Once that works, the sentence "Recovering an organization
+after losing the HQ machine isn't supported yet" is replaced, everywhere it appears,
+by one that says how.
 
 The server and installer document the supported OS and architecture matrix,
 minimum versions and Linux service prerequisites. The host's credential custody on

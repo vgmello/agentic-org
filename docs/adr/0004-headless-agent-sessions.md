@@ -1,6 +1,6 @@
 # ADR-0004 · Agent sessions run headless; people interact through chat
 
-Status: **accepted by the owner 2026-11-17** (conflict plan entries D-04 and A-07).
+Status: **accepted by the owner 2026-11-17**.
 This number was reserved for an unmerged draft, "session panel embedded terminal", which
 proposed running Claude with `--bg` and attaching to it. That draft was replaced before
 it merged; this ADR records the decision that replaced it, which until now lived only in

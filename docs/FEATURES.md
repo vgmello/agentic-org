@@ -29,11 +29,11 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | --- | ---: |
 | Done | 9 |
 | In progress | 61 |
-| Planned | 53 |
+| Planned | 54 |
 | Blocked | 1 |
 | Deferred | 42 |
 | Needs verification | 0 |
-| **Total** | **166** |
+| **Total** | **167** |
 
 ## Feature tables
 
@@ -82,7 +82,7 @@ Full requirements: [Installation, access and office operations](specs/server-ins
 | [ ] | FC-022 | [Updates, uninstall and instance lifecycle](specs/server-installation-and-access-ux.md) | In progress | Host instance registry/foreground lifecycle exists; update activation, uninstall and service setup remain. |
 | [ ] | FC-023 | [Logs, doctor and support diagnostics](specs/server-installation-and-access-ux.md) | In progress | Owner-only capped/rotating log files exist; usable logs/doctor/support CLI and end-to-end redaction remain. |
 | [ ] | FC-024 | [Fresh-HQ and satellite release acceptance](specs/dogfood-run.md) | Blocked | Depends on real installation, authenticated browser APIs and both-platform service and recovery validation. Signing setup and authentic signed-release verification come in the final phase; release code stays fail-closed. This does not block ordinary functional development. |
-| [ ] | FC-153 | [Account administration through registration links](specs/server-installation-and-access-ux.md) | Planned | Accounts are administered on the server machine by an instance administrator: each new account is created by a one-time registration link issued for a person, and the person chooses a username and password in the browser; a forgotten password is reset through a one-time link issued the same way. Every account is tied to a person: in each organization it can open, to exactly one person record, existing or created in the top-level team; never to an agent ([what the host owns](design/organization-data/STATUS.md#outside-this-set-what-the-host-owns)). Code today: account storage in `crates/org-host/src/hostdb` (`accounts.rs`, `first_account.rs`); `account.create` is defined in `crates/org-host-control` with no handler, and nothing issues registration links. [UI] claims no real sign-in or setup behavior. |
+| [ ] | FC-153 | [Account administration through registration links](specs/server-installation-and-access-ux.md) | Planned | Accounts are administered in the browser, from People, by the server's one administrator or the organization's owner: each new account is created by a one-time registration link issued for an existing person, and the person chooses a username and password in the browser; a forgotten password is reset through a one-time link issued the same way. The only account command is `agentic-org admin reset`, for the administrator account. The administrator role and an organization's ownership are each handed over in the browser. Every account is tied to a person: in each organization it can open, to exactly one person record; never to an agent ([what the host owns](design/organization-data/STATUS.md#outside-this-set-what-the-host-owns)). Code today: account storage in `crates/org-host/src/hostdb` (`accounts.rs`, `first_account.rs`); `account.create` is defined in `crates/org-host-control` with no handler, and nothing issues registration links. [UI] claims no real sign-in or setup behavior. |
 | [ ] | FC-154 | [Verified downloads and signed offline bundles](specs/server-installation-and-access-ux.md) | Planned | [Executable status] lists downloads, signed bundles and update activation as pending. Signing setup and authentic signed-release verification come in the final phase; release code stays fail-closed. |
 | [ ] | FC-155 | [Browser CSP and production asset security](design/rust-browser-bff-and-static-sveltekit.md) | In progress | [UI] documents production-static CSP harness and browser security checks; authenticated production service remains blocked. |
 | [ ] | FC-159 | [Stored browser sessions that survive restarts](adr/0013-stored-browser-sessions.md) | Planned | Sessions are held in memory in both the web process and the host today and end with the control connection; criteria SES-1 to SES-6 are unmet. Native CLI sessions stay connection-bound. |
@@ -311,6 +311,7 @@ Full requirements: [Git, identity, synchronization and recovery](design/organiza
 | [ ] | FC-148 | [Credential rebind and process-safe cache rebuild](design/organization-data/16-recovery-and-office-continuity.md) | Planned | Implement durable authority/process reconciliation before execution; [supervisor] is only a lower-level primitive. |
 | [ ] | FC-149 | [Automatic promotion and backup automation](design/organization-data/16-recovery-and-office-continuity.md) | Deferred | No automatic failover/backup engine selected by the record schema. |
 | [ ] | FC-165 | [Replaceable storage engine](adr/0018-storage-engine-independence.md) | Planned | PostgreSQL must be possible later. SQL is used outside the store folder in two office files, one concrete store type is wired, and replication and messaging have engine-independent suites while work, organization and host storage do not (not verified); criteria ENG-1 to ENG-5 are unmet. |
+| [ ] | FC-167 | [Open an existing organization from its files](design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization) | Planned | Owner decision 2026-11-17. On an instance with no record of an organization (the host's database lost, or a new server), the administrator opens it from its repository and state branch: the files are validated against the data contract, the host registers the organization under its existing ID, the office rebuilds its projection, the administrator becomes the owner as their person record, and people are invited again. Records kept only in protected local files come back only if `durable/` survived or from a backup. Nothing opens an organization from files today. |
 
 ### Session inspection and private memory
 

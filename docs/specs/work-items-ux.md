@@ -391,7 +391,7 @@ Criteria marked "Not in v1" belong to §16.
 - **Automatic propagation** from fix tasks to the bug they fix.
 - **Advanced checklists:** completion gates with Mark done anyway, promotion of a step to a task, named templates and steps derived from processes.
 - **Undo**, automatic feature and decision propagation, scheduling and memory.
-- **Attachments**, until attachment storage exists.
+- **Attachments on a task.** Chat attachments are v1 ([chat UX](chat-ux.md)).
 - **Following:** per-reader unseen tracking distinct from Inbox, with follow reasons, never revealing private notes.
 - **Requested-by:** a verified link from a directly addressed message, distinct from the reporter.
 - **Review** of a task by a named reviewer, with no self-approval.
