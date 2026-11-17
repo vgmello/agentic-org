@@ -63,10 +63,10 @@ The `entity_relationships` view presents both authored and derived relationships
 
 ```yaml
 links:
-  - id: 01J00000000000000000000095
+  - id: 01930000-0000-7000-8000-000000000095
     kind: depends_on
     target_kind: task
-    target_id: 01J00000000000000000000041
+    target_id: 01930000-0000-7000-8000-000000000041
 ```
 
 ## Relationships

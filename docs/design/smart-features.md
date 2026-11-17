@@ -119,7 +119,7 @@ The selected domain destination is one extensible task entity of type bug, with
 required accountable team, optional project, immutable creator/reporter and
 independent nullable assigned_team_id/assignee_id (changed atomically with expected
 revision). A project bug uses its project's owner team; a projectless bug uses its
-team scope. New records use T- references such as P-8/T-42 or TEAM-12/T-42; legacy
+team scope. New records use T- references such as T-A42; legacy
 B-/REQ- IDs require explicit mappings, never prefix substitution or renumbering.
 The confirmation form must resolve these fields through the normal task mutation,
 retain bug detail and create its durable event history. Areas are removed (owner decision 2026-11-17, conflict plan entry B-05: the `area.*` calls and tables leave the code, and a task's accountable team supplies that context). Areas are unselected:

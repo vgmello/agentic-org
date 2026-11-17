@@ -171,15 +171,15 @@ Tasks stay in the project work folder even when linked to a milestone; their exp
 
 ```yaml
 schema_version: 1
-id: 01J00000000000000000000010
+id: 01930000-0000-7000-8000-000000000010
 number: 8
 slug: reservations
 revision: 1
 name: Reservations
-owner_team_id: 01J00000000000000000000020
+owner_team_id: 01930000-0000-7000-8000-000000000020
 contributing_team_ids: []
 repositories:
-  - repository_id: 01J00000000000000000000002
+  - repository_id: 01930000-0000-7000-8000-000000000002
     integration_branch: release/reservations-v1
 ```
 
@@ -205,19 +205,19 @@ For Restaurant SaaS, shared Reservations architecture is a project design (`feat
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000070
+id: 01930000-0000-7000-8000-000000000070
 revision: 1
-project_id: 01J00000000000000000000010
-feature_id: 01J00000000000000000000034
+project_id: 01930000-0000-7000-8000-000000000010
+feature_id: 01930000-0000-7000-8000-000000000034
 kind: design
 status: draft
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 created_at: "2026-11-14T10:00:00Z"
 created_by_kind: employee
-created_by_id: 01J00000000000000000000030
+created_by_id: 01930000-0000-7000-8000-000000000030
 updated_at: "2026-11-14T10:00:00Z"
 updated_by_kind: employee
-updated_by_id: 01J00000000000000000000030
+updated_by_id: 01930000-0000-7000-8000-000000000030
 title: Prevent overlapping table bookings
 ---
 ## Design

@@ -18,7 +18,7 @@ selected target contracts from implemented protocols and deferred engines.
 - **A task** has a required accountable team and an optional project. A project
   task's accountable team is its project's owner. Current assigned team and
   individual assignee are independent nullable fields. Task, bug and request are
-  types of the same task entity and use the same scoped T- sequence. Assigning
+  types of the same task entity and use the same T- references. Assigning
   work changes neither its reporter nor its stable identity or number.
 - **An office** belongs to one organization. The organization has one HQ and may
   have satellites. Offices place agents and execute work; they do not own teams,
@@ -66,7 +66,7 @@ The owning relationships and field contracts are in organization-data documents
    disconnected, with a stable ID and pending final number. The shared authority
    allocates numbers and registers feature slugs; replicas never increment
    counters independently. Acknowledged allocation evidence must survive loss of
-   a cache and cannot rely on hourly Git publication. New IDs use ULID; old
+   a cache and cannot rely on hourly Git publication. New IDs use UUIDv7; old
    stable IDs and explicit legacy reference mappings are preserved. Document
    [06](../design/organization-data/06-identity-and-numbering.md) owns the scopes.
 5. **Contracts remain intentionally versioned.** Existing local `org-proto`,

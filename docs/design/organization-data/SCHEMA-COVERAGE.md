@@ -11,7 +11,7 @@ The primary design documents define two SQL artifacts. Load `schema.sql` once in
 | [03](03-features-and-work.md) | [schema.sql](schema.sql) | `features`, `tasks`, `task_repositories`, `record_refs`, `tombstones`, `feature_slugs` |
 | [04](04-agent-structure.md) | [schema.sql](schema.sql) | `employees`, `agent_placements`, `task_workspaces` |
 | [05](05-operational-data.md) | [schema.sql](schema.sql) | `comments`, `checklist_steps`, `watchers`, `owner_questions`, `waiting_spans`, `task_events` |
-| [06](06-identity-and-numbering.md) | [schema.sql](schema.sql) | `reference_counters`, `reference_allocations` |
+| [06](06-identity-and-numbering.md) | [schema.sql](schema.sql) | `reference_counters`, `reference_allocations`, `office_codes`, `office_task_counters` |
 | [07](07-release-deployments.md) | [schema.sql](schema.sql) | `deployments`, `deployment_repository_commits` |
 | [08](08-record-contracts.md) | [schema.sql](schema.sql) | `links`, `entity_relationships` |
 | [09](09-release-content-and-flags.md) | [schema.sql](schema.sql) | `release_features`, `release_tasks`, `feature_flags`, `release_flag_settings`, `deployment_flag_settings` |
@@ -32,7 +32,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code has this table with these columns), **Legacy shape** (the code holds the same facts in a different table or columns), **Absent** (no code).
 
-As of 2026-11-17 none of the 75 tables or 10 views is implemented as drafted. 16 have a legacy counterpart and 69 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
+As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16 have a legacy counterpart and 71 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -79,6 +79,8 @@ As of 2026-11-17 none of the 75 tables or 10 views is implemented as drafted. 16
 | `office_origin_streams` | table | Legacy shape | Closest current table: `work_origin_counter`, `work_origin_log` |
 | `office_recovery_checkpoints` | table | Legacy shape | Closest current table: `org_replica`, `org_replica_base` |
 | `offices` | table | Absent |  |
+| `office_codes` | table | Absent |  |
+| `office_task_counters` | table | Absent |  |
 | `organizations` | table | Legacy shape | Same name in `org.db`, different columns |
 | `owner_questions` | table | Absent |  |
 | `process_cleanup_records` | table | Legacy shape | Closest current table: `owned_processes` |

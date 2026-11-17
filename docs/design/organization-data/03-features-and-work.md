@@ -54,7 +54,8 @@ erDiagram
     tasks {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        INTEGER number "optional"
+        TEXT office_code FK "required"
+        INTEGER number "required"
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
@@ -137,30 +138,30 @@ Task token/cost totals are derived from the [usage ledger](10-usage-and-cost-acc
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000040
+id: 01930000-0000-7000-8000-000000000040
 number: 42
 type: bug
 work_type: build
-team_id: 01J00000000000000000000020
+team_id: 01930000-0000-7000-8000-000000000020
 assigned_team_id: null
 revision: 1
-project_id: 01J00000000000000000000010
+project_id: 01930000-0000-7000-8000-000000000010
 title: Prevent overlapping reservations
 status: todo
 assignee_id: null
 created_at: "2026-11-14T10:00:00Z"
 updated_at: "2026-11-14T10:00:00Z"
 created_by_kind: employee
-created_by_id: 01J00000000000000000000030
+created_by_id: 01930000-0000-7000-8000-000000000030
 updated_by_kind: employee
-updated_by_id: 01J00000000000000000000030
+updated_by_id: 01930000-0000-7000-8000-000000000030
 feature_id: null
 milestone_id: null
 priority: high
 severity: major
 resolution: null
 blocked_reason: null
-repository_ids: [01J00000000000000000000002]
+repository_ids: [01930000-0000-7000-8000-000000000002]
 branches: {}
 integrated_commits: {}
 checklist: []
@@ -174,19 +175,19 @@ operations:
 Reject overlapping reservations for the same table. Include concurrent requests in the tests.
 ```
 
-The readable reference is derived as `T-42`, and all foreign references use the stable ID. To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
+The readable reference is derived as `T-A42`, and all foreign references use the stable ID. To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
 
-Tasks and features may be created in any office. (For tasks the numbering described here is under revision: the creating office mints the reference, see the note in [document 06](06-identity-and-numbering.md#multiple-offices).) Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
+Tasks and features may be created in any office. A task gets its final reference from the creating office at once ([document 06](06-identity-and-numbering.md#multiple-offices)); what follows about registration applies to features. Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
 
 ```yaml
 schema_version: 1
-id: 01J00000000000000000000034
+id: 01930000-0000-7000-8000-000000000034
 number: 6
 local_slug: table-booking
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 work_type: build
 revision: 1
-project_id: 01J00000000000000000000010
+project_id: 01930000-0000-7000-8000-000000000010
 title: Table booking
 status: planned
 ```
@@ -307,8 +308,9 @@ UNIQUE (organization_id, project_id, number),
 CREATE TABLE tasks (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
-  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'T-' || number END) VIRTUAL,
+  office_code TEXT NOT NULL,
+  number INTEGER NOT NULL CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS ('T-' || office_code || number) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   team_id TEXT NOT NULL,
@@ -334,7 +336,8 @@ CREATE TABLE tasks (
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
-  UNIQUE (organization_id, project_id, number),
+  UNIQUE (organization_id, office_code, number),
+  FOREIGN KEY (organization_id, office_code) REFERENCES office_codes(organization_id, code) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, assigned_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, project_id, team_id) REFERENCES projects(organization_id, id, owner_team_id) DEFERRABLE INITIALLY DEFERRED,

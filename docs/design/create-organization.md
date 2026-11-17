@@ -49,7 +49,7 @@ name, lead appointment or reporting line is inferred from the word HR.
    host operation. The host verifies the web process capability and administrator
    grant. No browser HTTP parser or raw-key access lives in the host operation.
    Reserve the name, slug, IDs and plan under the catalog lock, then provision
-   outside it. New entity IDs use ULID; retained IDs and current ULID operation
+   outside it. New entity IDs use UUIDv7; retained IDs and current ULID operation
    IDs keep their existing codecs. Numbered teams use durable HQ allocation.
 4. Register the remote organization repository, persist `organization.yaml`
    (`id`, `slug`, `name`, `organization_repository_id`, `state_branch`, format and

@@ -1,15 +1,13 @@
 # ADR-0019 · Task numbers are minted by the creating office
 
-Status: **accepted in part by the owner 2026-11-17** (conflict plan entry C-12).
-Accepted: the office part of a task reference is a letter code (`T-B37`), and the
-scheme applies to tasks only. Features and every other numbered record keep their
-HQ-allocated numbers. Two points are still open (see "Still open"): whether an office
-counts all its tasks in one sequence or per project, and whether creating a task may
-use the fast acknowledgement. Decisions 2 and 4 to 7 below, and the details of the
-grammar (which letters, how many), are the lead's design for the accepted form; the
-owner accepted the letter and the tasks-only scope. The data contract is rewritten when
-that is settled; until then document 06 carries a note and must not be built as written
-for tasks.
+Status: **accepted by the owner 2026-11-17** (conflict plan entry C-12), and applied to
+the data contract ([document 06](../design/organization-data/06-identity-and-numbering.md)).
+The owner accepted three things: the office part of a task reference is a letter
+(`T-B37`); the scheme applies to tasks only; and an office counts all its tasks in one
+sequence ("let's just do it by office and keep it simple"). The details of the grammar
+(which letters, how many) and decisions 2 and 4 to 7 are the lead's design for that
+choice. One point is still open: whether creating a task may use the fast
+acknowledgement.
 
 The owner's requirement, in his words: tasks "happen inline and offline" and "have to
 happen incredibly fast"; going to HQ to create or manage a task is "too long of a round
@@ -38,7 +36,7 @@ final the moment it is created.
 | HQ unprefixed, satellites prefixed | Rejected: a dropped prefix silently names a real HQ task. |
 | Number blocks leased by HQ, plain `T-n` | Rejected: fails when an office stays offline past its block, and the first task in a new scope still needs HQ. |
 | A local reference now and an HQ number later | Rejected: two names per task, and HQ registration returns. |
-| **A letter code per office and a per-office counter, `T-B37`** | **Recommended.** |
+| **A letter code per office and a per-office counter, `T-B37`** | **Chosen by the owner.** |
 
 ## Decision
 
@@ -49,8 +47,11 @@ final the moment it is created.
    is case-insensitive and output is uppercase.
 2. **The boundary between letters and digits makes it unambiguous** at any size, and a
    reference with the letter dropped does not parse, so a typo never names another task.
-3. **How an office counts (recommended, still open).** One sequence per office for all
-   its tasks, whatever project or team they belong to. See "Still open".
+3. **One sequence per office (accepted).** An office counts all its tasks in one
+   sequence, whatever project or team they belong to. A reference is therefore unique in
+   the organization and complete on its own: `T-B37` never needs a project or team in
+   front, and moving a task to another project does not change it. The owner first
+   chose a sequence per project and then settled on one per office as the simpler rule.
 4. **HQ assigns office codes** when it creates or enrols an office, which is already a
    rare HQ operation. A code is never changed and never reissued. Two letters give 600
    offices.
@@ -68,43 +69,33 @@ final the moment it is created.
    for tasks only). A feature created while HQ is unreachable keeps the pending state
    the contract already describes.
 
+## Default project for commands
+
+Finding a task by its reference never needs a project. Commands that do need one, such
+as creating or listing tasks, take it from the agent's context (owner, 2026-11-17):
+`agent-os` knows the project of the task the agent is working on, or the project the
+agent is assigned to. When the agent has no project, or means another one, the project
+is a required parameter.
+
 ## Still open
-
-**How an office counts its tasks.** Today every project counts its own tasks from 1, so
-project 8 has a `T-42` and project 9 can have a `T-42` too. That is why a full
-reference is written `P-8/T-42`: the number alone does not say which task is meant.
-With an office letter there are two ways to count.
-
-| | A. One sequence per office (recommended) | B. One sequence per office per project |
-| --- | --- | --- |
-| The second office's tasks | `T-B1`, `T-B2`, `T-B3`, in whatever projects they are | `P-8/T-B1`, `P-8/T-B2`, and also `P-9/T-B1` |
-| Is `T-B37` enough to find the task? | Yes. There is only one in the organization. | No. The project must be written in front. |
-| Moving a task to another project | The reference stays the same. | It needs a new number, or carries a number that does not fit its new project. |
-| Size of the numbers | Larger: an office's thousandth task is `T-B1000`. | Smaller inside each project. |
-| What each office must keep | One counter. | One counter per project, created when it first makes a task there. |
-
-The owner's first example (`T-11` for the first office, `T-21` for the second) was
-written without a project in front. He has since said the question was not clear to
-him, so that example is not taken as a choice. Option A is recommended: an agent can quote a task
-in a message, a branch name or a commit with nothing else, and it always resolves.
 
 **Whether creating a task may use the fast acknowledgement** of
 [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md). Today creation waits
 for the drive, which is about 0.3 ms on the Linux machine measured and several
 milliseconds on a Mac. With office-minted numbers the fast class is safe for numbering,
-because the durable high-water mark of decision 7 already prevents a number from being
-reused after a power cut. Recommended: yes.
+because the durable mark of decision 7 already prevents a number from being reused
+after a power cut. Recommended: yes.
 
-## What changes when the open point is settled
+## Where it is applied
 
-- [Document 06](../design/organization-data/06-identity-and-numbering.md): the task rows
-  of the counter table, the multiple-offices section (tasks leave "pending
-  registration"), and recovery (the high-water mark and the rule for an office that
-  cannot prove its counter).
-- The identity table of the [data index](../design/organization-data/README.md) and the
-  task references in [document 03](../design/organization-data/03-features-and-work.md).
-- The draft schema: `tasks.number` and its key, a place for the office code on a task,
-  an office-code registry written by HQ, and per-office counters.
-- The UX specs that show "Pending number" for a task, and branch names in the
-  [Git design](../design/projects-git-github.md), which then always have a reference.
-- Code: `NumberScope` in `crates/org-work` and the task reference parser in `agent-os`.
+- [Document 06](../design/organization-data/06-identity-and-numbering.md): the reference
+  rule, the multiple-offices section, files and recovery.
+- The draft schema: `tasks.office_code`, a required `tasks.number`, uniqueness of code
+  and number in the organization, `office_codes` (written by HQ) and
+  `office_task_counters` (each office's own), with tests.
+- The identity table of the [data index](../design/organization-data/README.md),
+  [document 03](../design/organization-data/03-features-and-work.md), the UX specs and
+  the [Git design](../design/projects-git-github.md), whose examples now read `T-A42`.
+
+Still to do in code (FC-142): office codes and counters, the reference parser in
+`agent-os`, the default project context, and `NumberScope` in `crates/org-work`.

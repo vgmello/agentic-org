@@ -27,6 +27,9 @@ _next_number = iter(range(1000, 10**9))
 def insert(connection, table, **fields):
     if table in HQ_NUMBERED and "number" not in fields:
         fields["number"] = next(_next_number)
+    if table == "tasks":  # a task is numbered by its creating office; the fixtures use HQ, code A
+        fields.setdefault("office_code", "A")
+        fields.setdefault("number", next(_next_number))
     columns = ",".join(fields)
     placeholders = ",".join("?" for _ in fields)
     connection.execute(
@@ -58,6 +61,12 @@ def seed_organization(connection, organization="org"):
            remote_url="https://example.com/organization.git")
     for team in ("payments", "platform", "consulting"):
         insert(connection, "teams", **common, id=team, name=team)
+    # Two offices whose only job in the fixtures is to own the task-number codes A and B. They are
+    # satellites so that tests which create their own HQ office are unaffected.
+    for office, code, role in (("numbering-a", "A", "satellite"), ("numbering-b", "B", "satellite")):
+        insert(connection, "offices", **common, id=office, slug=office, name=office, role=role)
+        insert(connection, "office_codes", organization_id=organization, code=code, office_id=office,
+               issued_at="2026-11-15T09:00:00Z")
     insert(connection, "employees", **common, id="reporter", handle="reporter",
            kind="person", name="Reporter", home_team_id="payments")
     insert(connection, "employees", **common, id="ana", handle="ana",
@@ -69,7 +78,7 @@ def seed_organization(connection, organization="org"):
 
 def seed_task(connection, task="task", project="project", task_type="bug"):
     insert(connection, "tasks", organization_id="org", id=task, schema_version=1,
-           revision=1, number=42, team_id="payments", project_id=project,
+           revision=1, number=42 if task == "task" else next(_next_number), team_id="payments", project_id=project,
            type=task_type, title="Prevent duplicate charges", status="todo",
            created_by_kind="employee", created_by_id="reporter",
            created_at="2026-11-15T10:00:00Z")
@@ -319,14 +328,15 @@ class DraftSchemaTests(unittest.TestCase):
 
     def test_projectless_task_keeps_owning_team_scope_when_assigned_elsewhere(self):
         seed_task(self.db, task="team-task", project=None, task_type="request")
+        before = self.db.execute("SELECT key FROM tasks WHERE id='team-task'").fetchone()[0]
         self.db.execute(
             "UPDATE tasks SET assigned_team_id='platform',assignee_id='ana' WHERE id='team-task'"
         )
         self.db.commit()
         row = self.db.execute(
-            "SELECT team_id,project_id,number FROM tasks WHERE id='team-task'"
+            "SELECT team_id,project_id,key FROM tasks WHERE id='team-task'"
         ).fetchone()
-        self.assertEqual(tuple(row), ("payments", None, 42))
+        self.assertEqual(tuple(row), ("payments", None, before))  # assignment never changes the reference
 
     def test_cross_organization_assignment_is_rejected(self):
         seed_organization(self.db, "other-org")
@@ -742,6 +752,52 @@ class GapPreservationTests(unittest.TestCase):
                     f"INSERT INTO {table} (organization_id,id,schema_version,revision,number,{','.join(extra)}) "
                     f"VALUES ('org','unnumbered',1,1,NULL,{','.join('?' for _ in extra)})", list(extra.values()))
             self.db.rollback()
+
+    def test_task_numbers_are_minted_per_office_and_unique_in_the_organization(self):
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='task'").fetchone()[0], "T-A42")
+        base = dict(organization_id="org", schema_version=1, revision=1, team_id="payments", type="task",
+                    title="t", status="todo")
+        # the same number under another office's code is a different task, in any project or none
+        insert(self.db, "tasks", **base, id="east-42", office_code="B", number=42)
+        insert(self.db, "record_refs", organization_id="org", kind="task", id="east-42", is_deleted=0)
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='east-42'").fetchone()[0], "T-B42")
+        # one office never gives the same number twice, whatever the project
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "tasks", **base, id="dup", office_code="A", number=42)
+        self.db.rollback()
+        # a task always has its number, and its office code must be one HQ issued
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("INSERT INTO tasks (organization_id,id,schema_version,revision,office_code,number,team_id,title,status) "
+                            "VALUES ('org','none',1,1,'A',NULL,'payments','t','todo')")
+        self.db.rollback()
+        insert(self.db, "tasks", **base, id="unknown-office", office_code="Z", number=1)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.commit()
+        self.db.rollback()
+        # codes are one or two capital letters without I and O; an office has one current code
+        for bad in ("I", "O", "a", "A1", "ABC", ""):
+            with self.subTest(code=bad), self.assertRaises(sqlite3.IntegrityError):
+                insert(self.db, "office_codes", organization_id="org", code=bad, office_id="numbering-a", issued_at="2026-11-15T09:00:00Z")
+            self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "office_codes", organization_id="org", code="C", office_id="numbering-a", issued_at="2026-11-16T09:00:00Z")
+        self.db.rollback()
+        self.db.execute("UPDATE office_codes SET retired_at='2026-11-16T09:00:00Z' WHERE code='B'")
+        insert(self.db, "office_codes", organization_id="org", code="AA", office_id="numbering-b", issued_at="2026-11-16T09:00:00Z")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='east-42'").fetchone()[0], "T-B42")
+        # the durable mark is never below the last number used
+        insert(self.db, "office_task_counters", organization_id="org", office_code="A", last_number=42, reserved_through=100)
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE office_task_counters SET last_number=101")
+        self.db.rollback()
+        # HQ no longer keeps a task counter
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "reference_counters", organization_id="org", scope_kind="project", scope_id="project",
+                   entity_kind="task", last_number=1)
+        self.db.rollback()
 
     def test_task_status_is_a_closed_list_ending_in_done(self):
         for status in ("todo", "in_progress", "blocked", "done"):

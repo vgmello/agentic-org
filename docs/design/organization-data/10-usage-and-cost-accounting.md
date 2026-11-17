@@ -75,7 +75,7 @@ Price version YAML (sample rates only):
 ```yaml
 schema_version: 1
 organization_id: existing-v1-org-id
-id: 01J00000000000000000000300
+id: 01930000-0000-7000-8000-000000000300
 provider: example-provider
 model: example-model
 effective_from: "2026-11-01T00:00:00Z"
@@ -94,16 +94,16 @@ One usage event, formatted for reading (each JSONL event is one line on disk):
 ```json
 {
   "organization_id": "existing-v1-org-id",
-  "id": "01J00000000000000000000301",
+  "id": "01930000-0000-7000-8000-000000000301",
   "schema_version": 1,
-  "origin_office_id": "01J00000000000000000000081",
+  "origin_office_id": "01930000-0000-7000-8000-000000000081",
   "producer_id": "producer-reservations-1",
   "source_event_id": "turn-1/final-usage",
   "source_sequence": 1,
-  "execution_office_id": "01J00000000000000000000081",
+  "execution_office_id": "01930000-0000-7000-8000-000000000081",
   "run_id": "opaque-runtime-run-1",
   "actor_kind": "agent",
-  "employee_id": "01J00000000000000000000030",
+  "employee_id": "01930000-0000-7000-8000-000000000030",
   "runtime": "example-runtime",
   "provider": "example-provider",
   "model": "example-model",
@@ -120,19 +120,19 @@ One usage event, formatted for reading (each JSONL event is one line on disk):
   "reasoning_tokens": 50,
   "token_status": "complete",
   "token_issue": null,
-  "price_id": "01J00000000000000000000300",
+  "price_id": "01930000-0000-7000-8000-000000000300",
   "cost_micro_usd": 1650,
   "cost_basis": "token_estimate",
   "cost_status": "complete",
   "cost_issue": null,
   "scope_kind": "task",
-  "task_id": "01J00000000000000000000040",
+  "task_id": "01930000-0000-7000-8000-000000000040",
   "task_kind": "task",
-  "project_id": "01J00000000000000000000010",
-  "team_id": "01J00000000000000000000020",
-  "feature_id": "01J00000000000000000000034",
-  "milestone_id": "01J00000000000000000000033",
-  "release_id": "01J00000000000000000000032",
+  "project_id": "01930000-0000-7000-8000-000000000010",
+  "team_id": "01930000-0000-7000-8000-000000000020",
+  "feature_id": "01930000-0000-7000-8000-000000000034",
+  "milestone_id": "01930000-0000-7000-8000-000000000033",
+  "release_id": "01930000-0000-7000-8000-000000000032",
   "task_type_snapshot": "request",
   "work_type": "build",
   "attribution_basis": "work_for",

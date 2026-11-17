@@ -30,7 +30,7 @@ A project is a long-lived scope of product work owned by one accountable team, w
 ## What lives where
 
 - **Organization Git:** `organization.yaml` selects a registered remote organization repository and its `state_branch`. `repositories.yaml` registers each repository once, with a stable ID, a `key`, `kind: remote | local` and a nullable `remote_url`. `projects/<project-id>/project.yaml` requires `owner_team_id` and lists repository links `{repository_id, integration_branch}`. A registration holds no integration branch and no credential.
-- **Authored project knowledge and work:** organization Git holds `projects/<project-id>/features/<feature-id>/feature.md`, supporting scoped documents and `work/tasks/<task-id>.md`. A task file lists `repository_ids` and, per repository, `branches` and `integrated_commits` (the `task_repositories` projection). Stable IDs are ULIDs; projects have P- references and tasks have scoped T- references.
+- **Authored project knowledge and work:** organization Git holds `projects/<project-id>/features/<feature-id>/feature.md`, supporting scoped documents and `work/tasks/<task-id>.md`. A task file lists `repository_ids` and, per repository, `branches` and `integrated_commits` (the `task_repositories` projection). Stable IDs are UUIDv7; projects have P- references and tasks have office-minted T- references.
 - **Office runtime**, under `<data-root>/<organization-id>/runtime/<office-id>/`:
   - `repositories/<repository-id>.git/`: the one bare cache of that repository in this office, shared by every project that links it. It holds no integration branch setting, no remote URL and no credential.
   - `teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/`: the worktree of a project task for one repository.
@@ -288,14 +288,14 @@ These are gaps or tensions between this design and the selected contracts. They 
 1. **Git credentials have no selected record.** No contract says where an office's credential for a remote is bound, how it is entered, or where the office's known-hosts file lives. This document only fixes where it must not be.
 2. **Branch records have no durable home.** `task_repositories` holds `branch` and `integrated_commit`; `task_workspaces` holds `worktree_path`. Nothing selected holds the base commit, the pushed head, the branch state or the worktree's administrative directory name.
 3. **Cache writes in `dedicated-user` mode.** ADR-0015 says the agent account owns only its workspaces. A linked worktree must also write into the cache, which is outside them. This document assumes group-shared write access to the listed cache directories. The alternative is a self-contained clone in each workspace that the office fetches from, which would restore a cache agents never write but is not the "one bare clone and worktrees" shape of the storage contract.
-4. **Identifier format (settled 2026-11-17).** Stable IDs are ULIDs here and in the [identity contract](organization-data/06-identity-and-numbering.md) (conflict plan entry B-04).
+4. **Identifier format (settled 2026-11-17).** Stable IDs are UUIDv7 here and in the [identity contract](organization-data/06-identity-and-numbering.md).
 5. **The owner's commit identity.** No selected field holds the owner's commit name and email, or an agent's co-author address.
 6. **Projectless tasks.** A team task can target a repository but has no project link, so nothing selects its base branch or the branch that proves it merged.
 7. **Organization publication.** Which office pushes `state_branch`, and how `durable/state/` becomes a commit, is not defined. This document assumes only the transport.
 8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os push` would otherwise do for a local repository.
 9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
 10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
-11. **Branch names for unnumbered tasks.** Under the selected contract a task created offline has no T- reference until HQ allocates its number, so `task/<ref>-<slug>` has no `<ref>` yet. [ADR-0019](../adr/0019-office-coded-task-numbers.md), accepted in part on 2026-11-17, removes this case: the creating office mints the reference at once.
+11. **Branch names for unnumbered tasks (settled 2026-11-17).** There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
 
 ## What changed from the earlier design
 

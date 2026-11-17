@@ -29,7 +29,7 @@ Revision 4 reconciles the body and criteria with [features/tasks](../design/orga
    | Feature | `projects/<project-id>/features/<feature-id>/feature.md` in organization Git | Stable ID, project-scoped F- reference, durable capability definition |
    | Task (`type: task`, `bug`, or another type) | Same task storage and model as requests | T- reference; closure does not erase retained history or release attribution |
 
-   New stable IDs use ULID. Existing IDs and imported references remain unchanged; old REQ-/FEAT-/B- values need explicit mappings rather than number reuse. Inside P-8 show T-42 or F-6; outside it show P-8/T-42 or P-8/F-6. Projectless tasks use TEAM-12/T-42.
+   Stable IDs are UUIDv7. A task reference such as T-A42 is the same everywhere. Inside P-8 show F-6; outside it show P-8/F-6.
 2. **A feature describes one capability:** purpose, intended users, current behavior, rules, known limitations, non-goals and acceptance criteria. Product requirements belong in this canonical definition; supporting designs explain implementation, decisions explain choices and reports retain findings. “PRD” describes content, not another document kind or duplicate feature record. Detailed designs and decisions are separate documents with required project and same-project feature scope. Shared architecture stays project-wide.
 3. **Request scoping is a proposed workflow.** A scoping review may draft a feature and tasks or extend an existing feature. Approval must persist each resulting record and preserve the originating request as a typed task; it does not convert a request ID into a feature ID or delete its evidence. No automatic scoping engine is selected.
 4. **Tasks do not need features.** A project task links to at most one same-project feature. Projectless team tasks cannot link to a feature. Bug/request records remain typed tasks. A bug may additionally store `details.affects_feature_id`, a same-project affected capability distinct from task `feature_id` (the feature implementing the fix). The feature page labels these relationships separately; they do not create new entities or counters. Each project task retains the project's accountable owner team; assignment is independent.
@@ -39,7 +39,7 @@ Revision 4 reconciles the body and criteria with [features/tasks](../design/orga
 
 ## 1. The feature file
 
-At `projects/<project-id>/features/<feature-id>/feature.md` (illustrative existing stable IDs; use ULIDs):
+At `projects/<project-id>/features/<feature-id>/feature.md` (illustrative stable IDs):
 
 ```markdown
 ---

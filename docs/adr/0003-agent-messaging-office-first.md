@@ -20,7 +20,7 @@ below remain versioned compatibility evidence, not the target's permission to
 interrupt. Preserve live transport behavior/state until a separately verified
 cutover; this requirement does not switch installed tooling.
 
-New stable IDs follow document 06 (ULID); old ULIDs/other IDs remain stable. Task links use T- for every task type, qualified outside their scope as `P-8/T-42` or `TEAM-12/T-42`. Retained B-/REQ- references resolve through explicit mappings, never a prefix substitution. Authentication/key namespaces and existing wire method names stay versioned contracts.
+New stable IDs follow document 06 (UUIDv7); old ULIDs/other IDs remain stable. Task links use T- for every task type, qualified outside their scope as `P-8/T-42` or `TEAM-12/T-42`. Retained B-/REQ- references resolve through explicit mappings, never a prefix substitution. Authentication/key namespaces and existing wire method names stay versioned contracts.
 
 **Standalone-v1 amendment (2026-11-09):**
 [ADR-0005](0005-standalone-server-v1.md) replaces the desktop application's human
@@ -877,7 +877,7 @@ The v1 directed contract addresses one recipient (`to_member_id`). The selected 
 #### 6.1 Conversations and members (amended 2026-11-08: chat, proposed)
 
 - Selected conversations belong to one organization and have kind `dm` (two employees), `group_dm` (up to eight), `channel`, or imported `directed_thread`. Membership is separate from employee home-team membership and office placement. The authenticated owner uses the existing owner reading/action policy; an owner employee/person record still requires a home team. A flag or participant row does not authenticate the owner.
-- A conversation has a stable `id`, `organization_id`, positive envelope `revision`, `created_at`, optional name/automatic scope and an `archived` flag. New IDs use ULID; retain existing IDs. Each message root/reply must resolve within its conversation, without cycles. A sender must be an admitted member at send time except an authorized office-system notice.
+- A conversation has a stable `id`, `organization_id`, positive envelope `revision`, `created_at`, optional name/automatic scope and an `archived` flag. New IDs use UUIDv7; retain existing IDs. Each message root/reply must resolve within its conversation, without cycles. A sender must be an admitted member at send time except an authorized office-system notice.
 - **Import preserves directed threads, not inferred group DMs or pairwise repartitioning.** A v1 A→B, B→C chain remains one internal `directed_thread` with its original thread/root ID and each original directed envelope. A/B cannot read B/C merely because their IDs occur in the thread union; a hidden parent renders no body or preview. Replies retain directed-recipient restrictions. This compatibility kind is not a creation option. New DMs/group DMs use explicit admission/cardinality validation.
 
 #### 6.2 Channels are organization data (amended 2026-11-08: chat, proposed)

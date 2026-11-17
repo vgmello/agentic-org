@@ -134,13 +134,12 @@ connection available.
 
 ### Selected identity carrier
 
-> **To change (owner decision 2026-11-17, conflict plan entry B-04).** The contract is
-> ULIDs for every record. This section describes what the code does today: a separate
-> `selected_v1` profile with UUIDv7 organization and office IDs and `office.json`
-> version 2. With one ID format there is no second profile to tell apart, so the
-> profile, the version-2 marker and the union path validator are removed with the
-> change (FC-142). The profile also switches on the check that an HQ create carries its
-> creation context; that check stays and applies to every create.
+> **Owner decision 2026-11-17 (conflict plan entry B-04): every ID is a UUIDv7.** The
+> `selected_v1` profile below is therefore the target for all records, not a second
+> profile beside an older one. Nothing has shipped, so the older alphanumeric-ID
+> validator, the version-1 marker and the union path validator are removed instead of
+> kept, and the check that an HQ create carries its creation context applies to every
+> create (FC-142).
 
 New selected organization and office entities use canonical lowercase UUIDv7
 text, including hyphens. Existing IDs retain their exact spelling. Launch-v3

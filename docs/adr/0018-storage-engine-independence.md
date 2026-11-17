@@ -47,9 +47,10 @@ pending. No PostgreSQL adapter is built now. Builds on
    schema stays the executable SQLite reference. Constraints it enforces with
    SQLite-specific features are also listed in words in schema coverage, so that
    another engine can enforce them its own way.
-7. **Portable values.** IDs are text, times are UTC text or integers in the units the
-   contracts state, and money and tokens are integers. No adapter depends on a type
-   only one engine has.
+7. **Portable values.** IDs are UUIDv7, written as text in files and on the wire; an
+   adapter stores them as text or in the engine's native UUID type. Times are UTC text
+   or integers in the units the contracts state, and money and tokens are integers. No
+   contract depends on a type only one engine has.
 8. **Encryption, backup and file layout are adapter properties.** With ADR-0016 there
    is no database encryption to carry across. Where the data lives is the storage
    contract's `durable/` and `runtime/` split; a server-based engine keeps its files

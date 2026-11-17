@@ -78,13 +78,13 @@ teams/<team-id>/
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000030
+id: 01930000-0000-7000-8000-000000000030
 handle: ana
 revision: 1
 kind: agent
 status: active
 name: Ana
-home_team_id: 01J00000000000000000000020
+home_team_id: 01930000-0000-7000-8000-000000000020
 role_id: null
 reports_to_employee_id: null
 ---

@@ -97,7 +97,7 @@ The mode icons, automatic wake history and upcoming schedule surfaces below are
 
 - **Org chart card and lists:** the status word gets the mode's detail: "Asleep · on call", "Asleep · next run 14:30", "Working · woken by ada's message". A small mode icon (`zap` Always on, `bell` On call, `clock` Scheduled) sits beside the status, always with the word in the tooltip and for screen readers ("HR lead, agent, on call, asleep").
 - **Quick view and profile header:** **How it runs:** On call · "Last run 12:04 (4 min) · next: when called". Actions: **Run now** (primary for asleep agents, with an optional note: "What should HR lead do?"), **Message**, ⋯ › Change how it runs…. **Stop** (⋯) pauses the agent: it's the same as Pause (`our-org-in-the-app.md` DEAL-3), so there's one way to stop an agent, not two.
-- **Profile › Runs tab:** one row per run: when · trigger (Schedule · Message from ada · Task P-8/T-17 assigned · Run now by you · Mention) · duration · cost · outcome (the agent's one-line summary, or "Stopped at the time limit" / "Failed: <reason>") · **Open session log**. Filter by trigger and outcome.
+- **Profile › Runs tab:** one row per run: when · trigger (Schedule · Message from ada · Task T-A17 assigned · Run now by you · Mention) · duration · cost · outcome (the agent's one-line summary, or "Stopped at the time limit" / "Failed: <reason>") · **Open session log**. Filter by trigger and outcome.
 - **Home › Working now** includes agents woken right now, with their trigger. **Upcoming** (collapsed) lists scheduled runs in the next 2 hours.
 - **Activity:** a wake and a sleep are one row per run (not two), updated live ("running 2 min…" becomes "ran 4 min").
 

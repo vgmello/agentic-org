@@ -136,7 +136,7 @@ The [dogfood run](dogfood-run.md) starts with fresh disposable instances.
 | Model profile/provider connections | Ordered connections and their runtime drivers; office-local credential binding/readiness, not secrets or executable paths in employee identity. |
 | Durable placement authority / owning office observations | Office, placement generation, managed home, process state, observed-at freshness; launching requires permits/fencing and confirmed cleanup. |
 
-New stable IDs use ULID; existing IDs/handles are preserved. `role_text` and `role_id` remain distinct, and a missing normalized role is valid. People have no execution configuration. No employee field marks the owner or grants account privileges. A home-team change does not update immutable reporter/history or historical usage attribution.
+Stable IDs are UUIDv7. `role_text` and `role_id` remain distinct, and a missing normalized role is valid. People have no execution configuration. No employee field marks the owner or grants account privileges. A home-team change does not update immutable reporter/history or historical usage attribution.
 
 The colleague page `/members/:memberId` uses the same layout for people and agents. Its header shows name/role/handle, Agent or Person in words, one Home team and explicit Reports to; an agent has one truthful presence signal and one context line. Message is primary and Assign task outline when supported for that employee. More contains Pause/Resume, Edit, Offboard for agents and Edit for people, with their existing authorization and lifecycle constraints. An owner security account alone cannot be assigned employee work. A 40 px avatar and 16 px name/role use the shared typography rules.
 
@@ -176,7 +176,7 @@ Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships
  05:33  [A] ada → 7 members · message · "PHASE 1 PUSH (the user, today)…"
  05:30  [S] server-dev · merged server-dev/create-org into v1 · 3 commits      [View]
  05:12  [R] River · status Working → Waiting · "waiting for the reviewer"
- 04:58  [E] Eden · bug P-8/T-15 reported in Agentic Org · Major
+ 04:58  [E] Eden · bug T-A15 reported in Agentic Org · Major
         ── Earlier: 14 more · [Show]
 ```
 
@@ -300,7 +300,7 @@ The historical heading is retained for links. **Remove from team** is replaced b
 
 ## 10. Accessibility and copy
 
-Task references in cross-project Activity use P-8/T-15 or TEAM-12/T-15. All task types use T-, with project or projectless-team scope. Legacy B-/REQ- references and stable IDs require explicit import mappings, never prefix replacement or renumbering.
+Task references are the same everywhere, for example T-A15. All task types use T-. Legacy B-/REQ- references and stable IDs require explicit import mappings, never prefix replacement or renumbering.
 
 - Status, runtime, Paused and Lead are always words plus icons. Screen reader: "codex-dev, agent, Agent tooling, runs on Codex, working".
 - Activity rows are list items with time, actor, kind and text. **Open thread** is a button labelled with the thread's subject.

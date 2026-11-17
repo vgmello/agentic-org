@@ -1,6 +1,6 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.10 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.11 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **selected target data relationships, fields and canonical sources**. Current code and older designs remain evidence of existing behavior until an explicit migration is approved; they do not override later selected data decisions. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes historical requirements, implementation status and deferred scope.
 
@@ -29,7 +29,7 @@ Each numbered document owns its relationships, field sources, examples and table
 
 ## Shared identity contract
 
-Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are ULIDs (owner decision 2026-11-17). Most of the code already mints ULIDs. The newer HQ-creation path in the host mints and validates UUIDv7 for organization and office IDs (`crates/org-host/src/ids.rs`, the `selected_v1` profile of the launch contract); that path changes to ULIDs under FC-142. Readable identifiers never replace stable IDs.
+Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text (owner decision 2026-11-17; [document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). The newer HQ-creation code already mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
 
 | Entity | Readable identifier | Uniqueness / counter scope |
 | --- | --- | --- |
@@ -38,13 +38,13 @@ Every entity keeps an immutable stable `id`, used for foreign keys, synchronizat
 | Agent or person | `handle`, displayed as `@ana` | Organization, shared across both employee kinds; no counter |
 | Team | `TEAM-12` | Team counter within organization |
 | Project | `P-8` and `slug`, e.g. `reservations` | Project counter and slug uniqueness within organization |
-| Task of any type | `T-42` | Counter within project, or team when projectless. Changing to office-minted `T-B37` ([ADR-0019](../../adr/0019-office-coded-task-numbers.md)) |
+| Task of any type | `T-B37`: `T-`, the creating office's letter code, a number | One sequence per office, minted by that office; unique in the organization ([document 06](06-identity-and-numbering.md)) |
 | Feature | `F-6` and full slug `reservations/table-booking` | Feature counter and `local_slug` within project; full slug unique within organization |
 | Release | `R-3` and optional text `version_label` | Release counter within project |
 | Milestone | `M-2` | Milestone counter within release |
 | Repository, role, provider connection or model profile | Descriptive `key` | Organization, separately per entity type; no counter |
 
-Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied on import it must match. `number: null` denotes a locally created task/feature awaiting allocation, or an unresolved import and exposes no final readable reference. A record accepted by the organization authority must have a number and a durable allocation; local tasks/features can be used by stable ID while registration is pending. Separate scopes can both contain `T-42`: use `P-8/T-42` or `TEAM-12/T-42` outside an already selected scope. Changing task type never changes its ID or number.
+Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied on import it must match. `number: null` denotes a locally created feature awaiting allocation and exposes no final readable reference. A task is numbered by its creating office at creation, so it is never null. Changing task type never changes its ID or number.
 
 Slugs are lowercase kebab-case identifiers; handles are lowercase identifiers using letters, digits, dots, underscores or hyphens, stored without `@`. They are explicit fields rather than values recalculated when display names change. Teams need no additional slug. Projects have both a numeric reference and an organization-unique slug. Features store `local_slug`, and their public `slug` is automatically derived as `<project.slug>/<feature.local_slug>`. Never manually enter the project prefix on a feature. The resulting path is unique within the organization because both component scopes enforce uniqueness. Release version labels are plain text, not an enforced semantic-version type or identity.
 
@@ -118,7 +118,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 
 | Topic | Current decision |
 | --- | --- |
-| Stable IDs | ULIDs, plus readable identifiers |
+| Stable IDs | UUIDv7, plus readable identifiers |
 | Tasks | One entity with required team, optional project and extensible type |
 | Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |
 | Reporter and task history | Immutable creator as reporter/originator; ordered task events preserve assignment, status and other task changes after closure/archival |

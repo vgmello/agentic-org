@@ -100,23 +100,23 @@ Shared comments, checklist entries and current watcher/question/waiting metadata
 ```yaml
 operations:
   watchers:
-    - id: 01J00000000000000000000051
+    - id: 01930000-0000-7000-8000-000000000051
       watcher_kind: owner
       watcher_id: null
   owner_questions:
-    - id: 01J00000000000000000000052
-      question_comment_id: 01J00000000000000000000050
-      asked_by_id: 01J00000000000000000000030
+    - id: 01930000-0000-7000-8000-000000000052
+      question_comment_id: 01930000-0000-7000-8000-000000000050
+      asked_by_id: 01930000-0000-7000-8000-000000000030
       state: open
       answer_comment_id: null
       created_at: "2026-11-14T10:00:00Z"
       answered_at: null
   waiting_spans:
-    - id: 01J00000000000000000000053
+    - id: 01930000-0000-7000-8000-000000000053
       reason: Owner decision needed
       waiting_on_kind: owner
       waiting_on_id: null
-      question_id: 01J00000000000000000000052
+      question_id: 01930000-0000-7000-8000-000000000052
       started_at: "2026-11-14T10:00:00Z"
       ended_at: null
 ```
@@ -524,7 +524,7 @@ erDiagram
 
 | Note field | Contract |
 | --- | --- |
-| `id` | Stable ULID for new notes; no readable number; retained after deletion |
+| `id` | Stable UUIDv7 for new notes; no readable number; retained after deletion |
 | `organization_id`, `task_id` | Immutable attachment; an existing task of any type, including projectless tasks |
 | `author_kind`, `author_id` | Immutable original author and exclusive default reader/editor; derived from the bound actor |
 | `schema_version`, `revision` | Format 1; revision starts at 1 and advances by exactly one on each edit/deletion |

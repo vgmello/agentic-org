@@ -43,7 +43,7 @@ neither access to private data nor authority to run another process.
   to its project's owner when project-scoped. Projectless tasks belong to a team.
   Nullable `assigned_team_id` and `assignee_id` are independent from that owner
   and changed atomically at an expected revision. Reporter is the immutable
-  creator. All task types use T-; use `P-8/T-42` or `TEAM-12/T-42` across scopes.
+  creator. All task types use T-; use `T-A42` or `T-A42` across scopes.
 - **Runtime placement.** One office worker supervises logical agent controllers,
   turns/attempts and owned processes. A runnable agent needs separate execution
   config, model profile, fresh local connection evidence and a shared permit.
@@ -112,7 +112,7 @@ Office-first means a permitted local write can be durable before network
 publication. It does not mean offices own accountable teams/projects or allocate
 independent counters. Persist stable IDs, revisions, domain source and required
 journal/receipt evidence before acknowledging. Hourly Git publication cannot be
-the only copy of an accepted change. Features/tasks may have `number: null` while
+the only copy of an accepted change. Features may have `number: null` while
 the shared authority registers their scope and allocates the final reference.
 Preserve every acknowledged allocation across restore; never increment a replica
 counter or renumber imported B-/REQ- records.
@@ -172,7 +172,7 @@ automatic scheduling engine is selected.
    above, rather than becoming a second HQ writer.
 2. Validate required target fields/references and expected revision. The remote
    organization repository, state branch, home teams and accountable owner teams
-   must round-trip at canonical stable-ID paths. New stable entities use ULID;
+   must round-trip at canonical stable-ID paths. New stable entities use UUIDv7;
    current ULID command/change admission remains a separate versioned contract.
 3. The admitting writer commits domain changes, required source journal evidence
    and the bound receipt/outcome at one recoverable boundary. One operation ID

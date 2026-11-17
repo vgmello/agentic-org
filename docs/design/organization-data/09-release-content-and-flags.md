@@ -37,15 +37,15 @@ Example release changelog at release `changelog.md` (selected fields):
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000110
+id: 01930000-0000-7000-8000-000000000110
 revision: 1
-project_id: 01J00000000000000000000010
+project_id: 01930000-0000-7000-8000-000000000010
 feature_id: null
-release_id: 01J00000000000000000000032
+release_id: 01930000-0000-7000-8000-000000000032
 deployment_id: null
 kind: changelog
 status: draft
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 title: R-3 product changes
 ---
 ## Added
@@ -63,15 +63,15 @@ Example technical changelog at deployment `changelog.md` (selected fields):
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000111
+id: 01930000-0000-7000-8000-000000000111
 revision: 1
-project_id: 01J00000000000000000000010
+project_id: 01930000-0000-7000-8000-000000000010
 feature_id: null
 release_id: null
-deployment_id: 01J00000000000000000000090
+deployment_id: 01930000-0000-7000-8000-000000000090
 kind: changelog
 status: draft
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 title: Production deployment technical changes
 ---
 ## Technical changes
@@ -100,13 +100,13 @@ Flags belong to a project and can span releases. Project/key uniqueness is regis
 Canonical definition front matter uses `default_value` as a typed YAML value; SQLite projects it into `default_value_json`. Flags have no additional numeric counter. A flag definition's `default_value` is not a historical release or deployment snapshot.
 
 ```yaml
-id: 01J00000000000000000000100
+id: 01930000-0000-7000-8000-000000000100
 schema_version: 1
 revision: 1
-project_id: 01J00000000000000000000010
-feature_id: 01J00000000000000000000034
+project_id: 01930000-0000-7000-8000-000000000010
+feature_id: 01930000-0000-7000-8000-000000000034
 key: table-booking
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 status: active
 value_type: boolean
 default_value: false
@@ -115,10 +115,10 @@ default_value: false
 The release's `flag-settings.yaml` stores intent. Every entry selects an environment and target explicitly; there are no implicit wildcard/default merges in this draft:
 
 ```yaml
-project_id: 01J00000000000000000000010
-release_id: 01J00000000000000000000032
+project_id: 01930000-0000-7000-8000-000000000010
+release_id: 01930000-0000-7000-8000-000000000032
 settings:
-  - flag_id: 01J00000000000000000000100
+  - flag_id: 01930000-0000-7000-8000-000000000100
     environment: production
     target: primary
     value: true
@@ -135,7 +135,7 @@ settings:
 
 ```yaml
 flag_settings:
-  - flag_id: 01J00000000000000000000100
+  - flag_id: 01930000-0000-7000-8000-000000000100
     value: true
     rollout_rules:
       percentage: 10

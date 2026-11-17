@@ -75,7 +75,7 @@ projects/<project-id>/
 
 Supporting `documents` use `kind: brief | decision | design | report | changelog`. Every one requires project; at most one feature/release/deployment ID is present and must belong to the same project. `brief` is project-wide; feature support is design/decision/report; changelogs belong only to a release or deployment. `feature.md` projects into `features`, not a duplicate document. Shared architecture stays at project scope and links from several features rather than becoming several canonical copies. Process/standard content uses the separate selected structural contract at organization, recursive team or project scope, not another general document kind.
 
-A document has stable `id`, optional display `key`, schema/revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and common creation/update attribution. Current requires an active accountable owner. New IDs use ULID; retain imported stable IDs and keys. Documents have no selected ADR/EVAL/DEBT numeric allocation engine. Existing labels can remain keys; they are not primary keys. Rename a title/key without renaming the stable-ID file or breaking ID links. No automatic renumbering of imported records.
+A document has stable `id`, optional display `key`, schema/revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and common creation/update attribution. Current requires an active accountable owner. New IDs use UUIDv7; retain imported stable IDs and keys. Documents have no selected ADR/EVAL/DEBT numeric allocation engine. Existing labels can remain keys; they are not primary keys. Rename a title/key without renaming the stable-ID file or breaking ID links. No automatic renumbering of imported records.
 
 Organization/team process and standard files share this organization repository (`processes/<id>.md`, `standards/<id>.md`, recursively nested `teams/<id>/.../processes/<id>.md`). Their overrides default allowed unless explicitly prohibited. Private process storage/access is an unresolved deferred proposal; shared Git cannot provide author-only visibility.
 
@@ -139,7 +139,7 @@ The earlier “persistent in Git, transitional only in SQL” rule is obsolete. 
 ADR labels in this example are retained optional display keys; the canonical record and filename use a separate stable ID. The Reports group includes evaluation/review content as reports. Specialized Evaluation/Spec/Review categories require a separately selected classification contract; they are not extra authored `kind` values.
 
 - **Groups** by selected kind and explicit scope, each with a count. Inside: optional display key, title and selected lifecycle badge (**Draft · Current · Deprecated**, icon plus word). Deprecated documents collapse under Older. Proposed/Accepted/Superseded/Rejected decision meanings and evaluation verdicts remain body content pending specialized metadata; they do not replace document lifecycle or create new kinds.
-- **New ▾:** Brief (project scope) · **Decision** · **Design** · **Report**; Changelog is available only in release/deployment scope. An Evaluation entry may choose the Report envelope and evaluation body template. Each opens the selected metadata and body template (§3), allocates a stable ULID ID for a new record, shows the canonical derived path and offers an optional display key. The filename follows immutable identity and is not editable. There is no next ADR/EVAL document-number counter. Save is explicit and import preserves existing IDs/keys.
+- **New ▾:** Brief (project scope) · **Decision** · **Design** · **Report**; Changelog is available only in release/deployment scope. An Evaluation entry may choose the Report envelope and evaluation body template. Each opens the selected metadata and body template (§3), allocates a stable UUIDv7 ID for a new record, shows the canonical derived path and offers an optional display key. The filename follows immutable identity and is not editable. There is no next ADR/EVAL document-number counter. Save is explicit and import preserves existing IDs/keys.
 - **Header** (reader): selected metadata from front matter (§3.0): kind, optional key, title, lifecycle, owner, creation/update attribution/time and explicit scope. Show authored links as links and the canonical path as read-only. A quoted “accepted by” or “superseded by” statement may appear in the Decision body; it is not inferred as authenticated approval or read from unsupported front-matter fields.
 - **Footer:** **Led to** (items and docs linked from this one, or that link it as their Why) and **Mentioned in**.
 - **Filters:** Status · Owner · search. Search matches permitted canonical title, stable ID/display key and body text; feature definitions appear as feature results linked to their single canonical record. Group by record type, include scope/status and label body-match excerpts as excerpts. Declare actual indexed scope/freshness and title-only, truncated-body or unavailable coverage; no matches never proves absent content outside that coverage. Author-private notes, protected chat and inaccessible records never enter these shared results. **Earlier decisions (v0)** is a read-only group with a note: "From ada's notes before offices. Some are superseded by current decisions." (A18).
@@ -200,7 +200,7 @@ links: []
  Docs storage
  Owner ada · Created 15 Nov · Updated 15 Nov
  Project Agentic Org · organization Git
- Related: T-17 · Storage evaluation report
+ Related: T-A17 · Storage evaluation report
  ────────────────────────────────────────────────────
  Context | Options considered | Decision | Consequences | Evidence
 ```
@@ -235,10 +235,10 @@ agent-os doc status ADR-0004 accepted                      sets status and decid
 agent-os doc schema adr                                    prints the fields (allowed values, required) and sections
 agent-os doc validate [path]                               checks front matter against the template
 agent-os doc supersede ADR-0002 --by ADR-0004
-agent-os doc link T-17 ADR-0004                            the "Why" link
+agent-os doc link T-A17 ADR-0004                            the "Why" link
 agent-os doc list --kind adr --status proposed
 agent-os doc show ADR-0004
-agent-os debt add "<what I did instead>" [--task T-17] [--why …] [--fix …] [--cost low|medium|high] [--docs-branch]
+agent-os debt add "<what I did instead>" [--task T-A17] [--why …] [--fix …] [--cost low|medium|high] [--docs-branch]
 ```
 
 The historical command vocabulary informed the app proposal. Target CLI/app parity and activity publication still require implementation; display a document's optional key/title while links and operation identity use its stable ID.
@@ -273,9 +273,9 @@ status: open                 # open | planned | paid | accepted; planned and pai
 cost: medium                 # cost of leaving it: low | medium | high
 effort: s                    # to pay it back: s | m | l
 area: Office server
-taken: { by: ac-software-engineer-river, on: 2026-11-08, task: T-17, commit: 9c1e0b2, branch: task/ac-T-17-office-client }
+taken: { by: ac-software-engineer-river, on: 2026-11-08, task: T-A17, commit: 9c1e0b2, branch: task/ac-T-17-office-client }
 because: [ADR-0004]          # the decision that accepted it, if any
-payback: []                  # tasks that pay it back, e.g. [T-40]
+payback: []                  # tasks that pay it back, e.g. [T-A40]
 accepted: null               # { on, by, reason } when we decide to live with it
 ---
 
@@ -301,7 +301,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 **Statuses:** **Open · Planned · Paid · Accepted.** Creating a payback task (a durable typed task) adds it to `payback` and sets Planned. When all payback tasks are Done and at least one is **Done · Completed**, the tool sets Paid in a commit on a docs branch, which lands through the merge flow (activity entry, with Undo as another commit). If they were all cancelled, the debt stays Planned. *(rev 8)* The tool writes Planned and Paid only once the debt doc is merged into the integration branch (it never writes on an agent's task branch). Until then the debt shows "**Planned once merged**" (or "Paid once merged"), and the status is written when the doc lands. **Accept…** needs a reason, written to `accepted`, and can name the ADR in `because`.
 
-**Debt page:** the header card (§3.0) · What we did · Why · The proper fix · **Taken by** ("Taken by River in T-17 · 9c1e0b2 · from git") · **Why** block (§5) · **Create payback task** · history (the file's commits).
+**Debt page:** the header card (§3.0) · What we did · Why · The proper fix · **Taken by** ("Taken by River in T-A17 · 9c1e0b2 · from git") · **Why** block (§5) · **Create payback task** · history (the file's commits).
 
 **Where debt shows up besides its tab:** the task it was taken in ("Debt taken: DEBT-0012"), the commit, the area's header in the Bugs tab ("Payments · 2 open debt"), the project Overview tile ("Tech debt 14 · 3 High"), and Work › **Debt** (the third pill: Tasks | Bugs | Debt | Requests).
 
@@ -340,7 +340,7 @@ The tool helps agents work the way the organization wants by **prompting them at
 | Procedure changed | "New from <retro>: <the change>." (`retrospectives-ux.md` decision 7) | at the agent's next start or wake after the change merges |
 | Posting to chat | "Post only what someone must answer, act on or know. Put details in the task or doc and link it." (`chat-ux.md` §5) | `agent-os msg` |
 
-- **Settings › Agent guidance** (organization) and project Settings › Agent guidance (overrides): one row per moment with **On/Off**, the text (with placeholders like `{task}`, `{area}`, `{decisions}` and a picker to insert them), and a **Preview as** an agent and task ("What River will see on T-17").
+- **Settings › Agent guidance** (organization) and project Settings › Agent guidance (overrides): one row per moment with **On/Off**, the text (with placeholders like `{task}`, `{area}`, `{decisions}` and a picker to insert them), and a **Preview as** an agent and task ("What River will see on T-A17").
 - **Add guidance…** adds a moment from a list (task started, task done, bug fixed, branch created, review requested, message to the owner) with its own text, for the owner's own practices ("Always add a screenshot for UI work").
 - **Processes add to it** *(rev 9)*: a process can add its own prompt to a moment (`processes-ux.md` decision 9). It's shown after this text, and only while the moment is On.
 - **Where it's kept:** a project's guidance is persistent, so it's a file in the repository (`docs/.guidance/<moment>.md`, Markdown with front matter: `moment`, `enabled`). The organization's defaults are settings in the office. A change shows in Activity ("You changed the guidance for Taking a shortcut").
@@ -351,7 +351,7 @@ The tool helps agents work the way the organization wants by **prompting them at
 When an owner explicitly imports this software project's knowledge into an organization:
 - Read the chosen code repository/ref as an import source; show every proposed destination and scope in organization Git. Never automatically move this repository's software documentation.
 - Offer **Add front matter** as a per-file diff with Apply/Skip, mapping old status/owner/time into selected fields without fabricating missing actors. Keep original path, commit and display key as provenance.
-- Allocate stable ULID IDs for new imported records; preserve any existing stable IDs. Map ADRs to decisions, designs/specs/plans to design content and evaluations/reviews to reports. Explain unmatched custom debt/limitation/exception fields as deferred rather than silently importing unsupported kinds.
+- Allocate stable UUIDv7 IDs for new imported records; preserve any existing stable IDs. Map ADRs to decisions, designs/specs/plans to design content and evaluations/reviews to reports. Explain unmatched custom debt/limitation/exception fields as deferred rather than silently importing unsupported kinds.
 - Offer v0 notes as Earlier decisions (v0), with distinct stable IDs and retained keys/provenance; duplicate ADR labels require explicit resolution, not global renumbering.
 - Show **Copy / Skip** file by file and a source pointer only if its owner requests one. Knowledge publication and code changes have separate review/failure states.
 - Debt scanning from TODOs, review findings and “Not covered here” remains a deferred capture proposal. Draft candidates require Record/Skip, never silent record creation.
@@ -428,7 +428,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - TPL-5 · **Deferred specialized editor/approval workflow:** Add a doc kind creates a new kind with its folder and fields, which shows as a group in the Docs tab. Built-in kinds can't be deleted.
 - TPL-6 · **Deferred specialized editor/approval workflow:** Changing a template never rewrites existing docs. New required fields show "Missing: <field>" with Fill in, and removed fields show under "Other fields".
 - TPL-7 · Moving or indexing a doc with a bold status line offers Add front matter with a per-file diff, Apply or Skip.
-- TPL-8 · Every selected document has an immutable stable ID separate from its optional display key. New IDs use ULID; imported stable IDs remain. Title/key changes preserve stable-ID filenames and relationships.
+- TPL-8 · Every selected document has an immutable stable ID separate from its optional display key. New IDs use UUIDv7; imported stable IDs remain. Title/key changes preserve stable-ID filenames and relationships.
 
 ## 9. Open questions
 

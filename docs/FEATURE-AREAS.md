@@ -177,7 +177,7 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Boundary:** Owns common durability/identity/transport mechanics. Domain payload and access rules remain in the relevant area. Organization Git alone cannot restore chat, private notes, accounting, budgets, credentials or execution authority.
 
-**Verification focus:** Check repository/project branch associations and supported plain-Git/worktree operations; canonical round-trip/concurrency/tombstones; ULID and durable scoped allocations; storage reached only through engine-independent contracts. A draft schema or core sync library is insufficient.
+**Verification focus:** Check repository/project branch associations and supported plain-Git/worktree operations; canonical round-trip/concurrency/tombstones; UUIDv7 stable IDs, office-minted task references and durable HQ allocations; storage reached only through engine-independent contracts. A draft schema or core sync library is insufficient.
 
 **Requirements:** [Git design](design/projects-git-github.md), [Identity contract](design/organization-data/06-identity-and-numbering.md), [Record contract](design/organization-data/08-record-contracts.md), [Recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
 

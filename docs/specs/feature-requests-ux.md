@@ -27,7 +27,7 @@ Capture an idea quickly in the browser and route it to someone who can scope it,
 
 1. **A request is a task with `type: request`.** It shares identity, comments, checklists, assignment and immutable task history with every other type. Type changes keep stable ID/number/relationships.
 2. **Every request has an accountable team; project is optional.** Project capture derives the project's owner team. Projectless capture requires a valid team. Never invent a default team or a dummy project to save a request.
-3. **All types use scoped T- references.** A project request is T-43 inside P-8, P-8/T-43 elsewhere. A team request is TEAM-12/T-43 outside the team scope. The word/icon Request identifies the type; it is not a separate REQ counter. Old stable IDs/readable references require an explicit import mapping, never blind prefix substitution.
+3. **All types use the same T- references.** A request is T-A43 everywhere; the creating office mints the reference and it needs no project or team in front. The word/icon Request identifies the type; it is not a separate REQ counter. Old stable IDs/readable references require an explicit import mapping, never blind prefix substitution.
 4. **Capture may need only text when scope is already valid.** Show the chosen project/team, derive accountability visibly, and require team selection when context provides none. Browser-unsent text remains a draft; accepted local content is saved even when number registration is pending.
 5. **Routing is an explicit assignment choice.** `assigned_team_id` and `assignee_id` are nullable independent fields; either, both or neither is valid. Assignment changes neither accountability nor number. Suggestions have reasons; the user decides. Just save clears the desired pair explicitly rather than inferring from employee membership.
 6. **Reporter is immutable.** The admitted actor is the original requester; rerouting/scoping/approval never overwrites it. Latest updater, current scoper and recorded outcome actor are distinct facts.
@@ -57,7 +57,7 @@ Without a copilot, an available configured rule may suggest the product designer
 
 Esc/close with text asks **Keep as a draft?** Keep retains the open-page draft (or explicitly saves an unrouted request only when valid scope and durable acceptance are available); Discard removes it; Back returns to editing. A draft has no number or shared task history. The UI must distinguish Keep draft from Just save.
 
-Submit uses a stable creation ID and durable operation identity. Success requires durable task snapshot/event/receipt acceptance; it may say “Request saved · Pending number” before organization registration. After registration: “P-8/T-43 sent to Eden · Open.” A transient banner lasts about three seconds without taking focus. A lost response remains uncertain and resolves by querying/retrying the same operation, never a second request. The target mutation/registration service remains implementation work.
+Submit uses a stable creation ID and durable operation identity. Success requires durable task snapshot/event/receipt acceptance; it says “T-A43 sent to Eden · Open.” at once, online or offline, because the creating office numbers the task. A transient banner lasts about three seconds without taking focus. A lost response remains uncertain and resolves by querying/retrying the same operation, never a second request. The target mutation/registration service remains implementation work.
 
 ### 1.1 Capture details *(rev 3)*
 
@@ -65,7 +65,7 @@ Submit uses a stable creation ID and durable operation identity. Success require
 - **Assignment controls:** allow team-only, individual-only, both and unrouted states. On an existing request save the complete pair with explicit nulls and expected revision. On conflict show current versus desired pair and actor/time; retain draft and require explicit retry. Clearing individual returns it to a retained team queue; clearing team never infers another.
 - **Message instead:** uses the chosen recipient and ordinary chat authorization, disabled with Choose who to message when none exists and a connection reason when unavailable. It does not create a request. Protected messaging storage/visibility remains governed by document 15; task history does not become chat storage. Confirmation links to Chat only after delivery acceptance.
 - **Bug hint:** copilot or simple terms such as crash/error/broken can offer **Report a bug instead · Not a bug**. Carry text/project/accountability into bug capture; with no project allow a valid projectless bug. No area/General picker is inserted. Not a bug hides the hint for this capture.
-- **Similar requests:** up to two accessible request-typed tasks matching title/body in permitted scopes show qualified references, e.g. “Looks like TEAM-12/T-9”. **Add to…** appends an explicitly shared comment and preserves the existing reporter. Do not include private notes, protected chat or private metadata in suggestions. Current `work.list` filter availability must be checked before claiming full-body search; target indexing remains adaptation work.
+- **Similar requests:** up to two accessible request-typed tasks matching title/body in permitted scopes show qualified references, e.g. “Looks like T-A9”. **Add to…** appends an explicitly shared comment and preserves the existing reporter. Do not include private notes, protected chat or private metadata in suggestions. Current `work.list` filter availability must be checked before claiming full-body search; target indexing remains adaptation work.
 - **Attachments:** hidden until storage is designed. Pasted text is accepted; an image-only paste reports that images are unsupported rather than silently claiming an attachment was saved.
 - **Unreachable service:** keep text in the open page, visibly Unsaved, with Copy draft and Retry. No native window, global shortcut, tray, background browser outbox or promised persistence through browser closure is required. An accepted locally saved task is different from a draft and can await number/publication independently.
 - **Numbering:** any office may save local tasks/features. Its replicated counter is not an allocator; the shared organization authority assigns final references. A browser success does not require a final HQ number but does require an available accepting service. Creation of a project itself remains HQ-only.
@@ -77,12 +77,12 @@ Work › Requests filters the common task projection by `type: request`. Project
 ```
  Requests  [Status ▾] [Accountable team ▾] [Assigned team ▾] [People ▾]
            [Project / No project ▾] [Search]                  [New request]
- P-8/T-43       Adjacent table booking     Payments | Platform | Eden
- TEAM-12/T-9    Review onboarding         People   | —        | Ana
- TEAM-12/T-44   New starter guide         People   | People   | Unassigned
+ T-A43       Adjacent table booking     Payments | Platform | Eden
+ T-A9    Review onboarding         People   | —        | Ana
+ T-A44   New starter guide         People   | People   | Unassigned
 ```
 
-Saved filters distinguish **Owned by my team**, **Assigned to my team**, **Assigned to me** and **Raised by me**. Selecting a team queue does not hide directly assigned individuals from their own queues. Same local T- numbers can occur in different project/team scopes; search resolves the qualified reference rather than treating T-43 as globally unique.
+Saved filters distinguish **Owned by my team**, **Assigned to my team**, **Assigned to me** and **Raised by me**. Selecting a team queue does not hide directly assigned individuals from their own queues. Same local T- numbers can occur in different project/team scopes; search resolves the qualified reference rather than treating T-A43 as globally unique.
 
 When a selected lifecycle adapter supports them, retain grouped **Needs you**, **With agents**, **Not routed**, **Approved**, **Declined and merged** presentation. Without it, group by recorded status/assignment; do not synthesize routed/accepted states from one non-null assignee. A team-only assignment is queued for that team, not necessarily accepted by a person. The old “Sent to Eden · not accepted yet” and “Eden is scoping” distinction requires actual acceptance evidence.
 
@@ -113,7 +113,7 @@ Link origin through stable registered identities and retained task history/relat
 | Request rerouted | Atomically record full old/new pair, actor/time and revision; original requester and number remain unchanged; retain route_reason/routing_source separately from assignment |
 | Assignment conflict | Change neither field; show current state and retained desired state, allow explicit retry |
 | Lost create/assignment response | Resolve using durable operation identity; show unknown/pending outcome until known, never duplicate the operation |
-| Number unavailable | Accepted locally saved task remains usable by stable ID with Pending number; do not allocate from the replica |
+| Office cannot prove its task sequence (for example after a restore) | Creation is refused with the reason until HQ issues the office a new code; nothing is numbered from a replica |
 | Unsupported lifecycle control | Preserve recorded state/outcome and explain unavailable action; never synthesize approval/acceptance |
 | Import has only a snapshot | Show history baseline and earlier history unavailable; preserve selected request outcomes through details/task_details, old events through history, and unknown unsupported values in staging |
 | No code repository | Organization Git request/feature/supporting knowledge remains available |
@@ -122,7 +122,7 @@ Link origin through stable registered identities and retained task history/relat
 
 ## 5. UX acceptance criteria (RQS)
 
-RQS IDs are criterion identities; requests themselves use scoped T- references. **Deferred** preserves earlier workflow requirements without selecting their engines.
+RQS IDs are criterion identities; requests themselves use T- references. **Deferred** preserves earlier workflow requirements without selecting their engines.
 
 - RQS-1 · New request opens an accessible in-page dialog naming the authorized organization from navigation/command palette. No native/global shortcut or separate capture window is required.
 - RQS-2 · With valid project/team context, text plus ⌘Enter saves a request. Accountable team is always required; absent context asks for one. Project/assignment/classification remain optional. Project selection derives its accountable team.
@@ -139,11 +139,11 @@ RQS IDs are criterion identities; requests themselves use scoped T- references. 
 - RQS-13 · Up to two similar permitted shared requests show qualified references; Add to explicitly appends a shared comment without changing reporter or creating a new record. Private notes never participate.
 - RQS-14 · **Deferred:** Sent but not accepted versus Scoping requires a recorded acceptance event/state; assignment alone does not prove acceptance. Team-only routing stays a team queue without invented individual ownership.
 - RQS-15 · Queue filters separate accountable team, assigned team, assignee, reporter and project/no project, remember choices, and declare actual search coverage. Loading/empty/no-match/retry/read-only states preserve last data. Project/team links open the correct scope.
-- RQS-16 · Origin links use stable task/feature/document identities and permitted relationships; shared T- references are scope-qualified outside context. **Deferred:** open-only merge/decline rules and automatic From-request task creation require a selected lifecycle schema.
-- RQS-17 · Disconnection retains open-page text labeled Unsaved with Copy draft. Accepted local save, pending number and pending publication are distinct; success requires recoverable task/events/receipt. Lost responses resolve by the same operation identity, without duplicate creation or an invented browser outbox.
-- RQS-18 · Accepted Send/Save/Add-to uses a quiet three-second confirmation with scoped reference or Pending number and Open, without stealing focus. Attachments stay hidden until storage design; image-only paste reports unsupported content.
+- RQS-16 · Origin links use stable task/feature/document identities and permitted relationships; T- references are complete on their own. **Deferred:** open-only merge/decline rules and automatic From-request task creation require a selected lifecycle schema.
+- RQS-17 · Disconnection retains open-page text labeled Unsaved with Copy draft. Accepted local save and pending publication are distinct; success requires recoverable task/events/receipt. Lost responses resolve by the same operation identity, without duplicate creation or an invented browser outbox.
+- RQS-18 · Accepted Send/Save/Add-to uses a quiet three-second confirmation with the reference and Open, without stealing focus. Attachments stay hidden until storage design; image-only paste reports unsupported content.
 - RQS-19 · Every request supports all four nullable assignment-pair states at expected revision. Assignment changes neither owning scope, number, original creator nor canonical file; home-team moves do not rewrite assignments.
-- RQS-20 · All task types use one project/team-scoped T- allocation, new ULID stable IDs and preserved old IDs. Old REQ/B references need explicit import mappings and collision resolution, never prefix replacement.
+- RQS-20 · All task types use one T- sequence per creating office and the same stable-ID rule; there are no separate REQ or B references.
 - RQS-21 · Private request notes satisfy PN-01–06 in document 05: exclusive author access including against admins, separate durable recovery, no shared existence metadata, explicit publish, revision conflicts and retention/deletion. Existing shared note comments remain shared; private runtime/API/UI remain unimplemented.
 
 ## 6. Open questions

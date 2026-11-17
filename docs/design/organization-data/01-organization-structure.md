@@ -178,19 +178,19 @@ fields implicitly. Selected Git/adoption copies retain this public file verbatim
 
 ```yaml
 repositories:
-  - id: 01J00000000000000000000001
+  - id: 01930000-0000-7000-8000-000000000001
     key: organization
     schema_version: 1
     revision: 1
     kind: remote
     remote_url: https://example.com/restaurant-saas/organization.git
-  - id: 01J00000000000000000000002
+  - id: 01930000-0000-7000-8000-000000000002
     key: infrastructure
     schema_version: 1
     revision: 1
     kind: remote
     remote_url: https://example.com/restaurant-saas/infrastructure.git
-  - id: 01J00000000000000000000003
+  - id: 01930000-0000-7000-8000-000000000003
     key: kitchen-prototype
     schema_version: 1
     revision: 1

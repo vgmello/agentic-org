@@ -392,8 +392,9 @@ UNIQUE (organization_id, project_id, number),
 CREATE TABLE tasks (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
-  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'T-' || number END) VIRTUAL,
+  office_code TEXT NOT NULL,
+  number INTEGER NOT NULL CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS ('T-' || office_code || number) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   team_id TEXT NOT NULL,
@@ -419,7 +420,8 @@ CREATE TABLE tasks (
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
-  UNIQUE (organization_id, project_id, number),
+  UNIQUE (organization_id, office_code, number),
+  FOREIGN KEY (organization_id, office_code) REFERENCES office_codes(organization_id, code) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, assigned_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, project_id, team_id) REFERENCES projects(organization_id, id, owner_team_id) DEFERRABLE INITIALLY DEFERRED,
@@ -661,7 +663,6 @@ CREATE TABLE reference_counters (
   last_number INTEGER NOT NULL CHECK (last_number >= 0),
   PRIMARY KEY (organization_id, scope_kind, scope_id, entity_kind),
   CHECK ((scope_kind = 'organization' AND scope_id = organization_id AND entity_kind IN ('team', 'project'))
-    OR (scope_kind IN ('team', 'project') AND entity_kind = 'task')
     OR (scope_kind = 'project' AND entity_kind IN ('feature', 'release'))
     OR (scope_kind = 'release' AND entity_kind = 'milestone')),
   FOREIGN KEY (organization_id, scope_kind, scope_id) REFERENCES record_refs(organization_id, kind, id)
@@ -683,6 +684,28 @@ CREATE TABLE reference_allocations (
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, entity_kind, entity_id) REFERENCES record_refs(organization_id, kind, id)
     DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE office_codes (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  code TEXT NOT NULL CHECK (code GLOB '[A-HJ-NP-Z]' OR code GLOB '[A-HJ-NP-Z][A-HJ-NP-Z]'),
+  office_id TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  retired_at TEXT,
+  PRIMARY KEY (organization_id, code),
+  FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE UNIQUE INDEX office_current_code ON office_codes(organization_id, office_id) WHERE retired_at IS NULL;
+
+CREATE TABLE office_task_counters (
+  organization_id TEXT NOT NULL,
+  office_code TEXT NOT NULL,
+  last_number INTEGER NOT NULL CHECK (last_number >= 0),
+  reserved_through INTEGER NOT NULL,
+  PRIMARY KEY (organization_id, office_code),
+  CHECK (reserved_through >= last_number),
+  FOREIGN KEY (organization_id, office_code) REFERENCES office_codes(organization_id, code) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE deployments (
