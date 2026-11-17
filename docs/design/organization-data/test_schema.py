@@ -90,7 +90,7 @@ def seed_task(connection, task="task", project="project", task_type="bug"):
 def event(revision, change, task="task", source_metadata=None):
     record = dict(
         organization_id="org", task_kind="task", task_id=task, revision=revision,
-        schema_version=1, occurred_at=f"2026-11-15T10:{revision:02d}:00Z",
+        schema_version=2, occurred_at=f"2026-11-15T10:{revision:02d}:00Z",
         actor_kind="employee", actor_id="reporter", operation_id=f"operation-{revision}",
         change=change, source_metadata=source_metadata or {},
     )
@@ -102,6 +102,8 @@ def project_event(connection, record):
     fields = dict(record)
     fields["change_json"] = canonical(fields.pop("change"))
     fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
+    fields.setdefault("resource_profile", "selected-task-resources/1")
+    fields.setdefault("event_bytes", canonical(record).encode())  # the event as accepted
     insert(connection, "task_events", **fields)
 
 
@@ -375,7 +377,7 @@ class DraftSchemaTests(unittest.TestCase):
         record.pop("source_metadata")
         record.update(schema_version=2,
                       change_json='{"type":"future_event","n":184467440737095516160001}',
-                      source_metadata_json='{"legacy_event":{"n":-0.000000000000123456789E+009}}',
+                      source_metadata_json='{"future_field":{"n":-0.000000000000123456789E+009}}',
                       resource_profile="selected-task-resources/1",
                       event_bytes=b'{"original":"retained source bytes"}')
         for missing in ("resource_profile", "event_bytes"):
@@ -456,21 +458,26 @@ class DraftSchemaTests(unittest.TestCase):
         self.assertEqual(original, restored)
         self.assertEqual(rebuilt.execute("PRAGMA foreign_key_check").fetchall(), [])
 
-    def test_legacy_event_and_unknown_future_payload_are_retained(self):
-        legacy = {
-            "target_id": "task", "version": 1, "at": "2026-11-14T10:00:00Z",
-            "actor_id": "reporter", "auto": False, "org_position": {"epoch": 1, "seq": 3},
-            "change": {"type": "assigned", "from": None, "to": "ana"},
-        }
-        record = event(1, legacy["change"], source_metadata={"legacy_event": legacy})
-        record["occurred_at"] = legacy["at"]
-        record["payload_sha256"] = hashlib.sha256(canonical({k: v for k, v in record.items() if k != "payload_sha256"}).encode()).hexdigest()
-        project_event(self.db, record)
-        project_event(self.db, event(2, {"type": "future_event", "evidence": "retain me"}))
+    def test_unknown_future_payload_is_retained(self):
+        project_event(self.db, event(1, {"type": "future_event", "evidence": "retain me"},
+                                     source_metadata={"future_field": {"keep": True}}))
         self.db.commit()
-        saved = self.db.execute("SELECT source_metadata_json FROM task_events WHERE revision=1").fetchone()[0]
-        self.assertEqual(json.loads(saved)["legacy_event"], legacy)
+        change, extra = self.db.execute("SELECT change_json, source_metadata_json FROM task_events WHERE revision=1").fetchone()
+        self.assertEqual(json.loads(change)["evidence"], "retain me")
+        self.assertEqual(json.loads(extra)["future_field"], {"keep": True})
         self.assertIsNone(self.db.execute("SELECT assigned_team_id FROM tasks").fetchone()[0])
+
+    def test_every_task_event_carries_its_profile_and_bytes(self):
+        record = event(1, {"type": "future_event"})
+        for missing, value in (("schema_version", 1), ("resource_profile", None), ("event_bytes", None)):
+            fields = dict(record)
+            fields["change_json"] = canonical(fields.pop("change"))
+            fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
+            fields.update(resource_profile="selected-task-resources/1", event_bytes=b"{}")
+            fields[missing] = value
+            with self.subTest(field=missing), self.assertRaises(sqlite3.IntegrityError):
+                insert(self.db, "task_events", **fields)
+            self.db.rollback()
 
     def test_relative_document_links_exist(self):
         for path in ROOT.glob("*.md"):

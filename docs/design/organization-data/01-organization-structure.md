@@ -170,9 +170,9 @@ with its original operation. Before create completion, the worker publishes the
 exact committed package at that root's `security/ca-escrow.v1.bin`, using immutable
 publication and the required file/parent flushes. A missing copy is repairable
 from committed bytes on reopen; a different copy is retained and refused, never
-overwritten. The binary envelope is the versioned copied record; the existing
-legacy native organization snapshot codec does not acquire secret or escrow
-fields implicitly. Selected Git/adoption copies retain this public file verbatim.
+overwritten. The binary envelope is the versioned copied record; the organization snapshot codec
+does not acquire secret or escrow fields implicitly. Copies in Git keep this public
+file verbatim.
 
 ## Repository types
 

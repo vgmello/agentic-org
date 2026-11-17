@@ -2,7 +2,7 @@
 
 Status: **selected** data and execution contract, revision 6. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
-This document owns provider connections, subscription identity, model profiles and their ordered memberships, discovered models, agent execution configuration, office-local bindings, shared admission records, and execution turns/attempts/process ownership. It is a first-class member of the [organization data specification](README.md), with its SQL included in the consolidated [schema.sql](schema.sql). The SQL is a design/import contract, not an application migration already applied to v1. Existing employee IDs and organization/team/project/task relationships are preserved.
+This document owns provider connections, subscription identity, model profiles and their ordered memberships, discovered models, agent execution configuration, office-local bindings, shared admission records, and execution turns/attempts/process ownership. It is a first-class member of the [organization data specification](README.md), with its SQL included in the consolidated [schema.sql](schema.sql). The SQL is a design contract; the code does not implement it yet.
 
 | Related document | Boundary |
 | --- | --- |
@@ -129,7 +129,7 @@ Credentials never enter organization Git, command payloads, journal events or lo
 
 Keep live ownership evidence until cleanup is proven. A fresh office cache replays identities/config, HQ authority data and supervisor journals, then performs marked-process recovery before starts. If local recovery evidence or input/checkpoints were lost while a child may exist, return `RECOVERY_REQUIRED`; do not infer that deletion of a cache ended the process. Recovery on a different machine requires a new placement generation and the old office's cleanup acknowledgement or an explicitly verified machine fence; automatic timeout-only reassignment is outside this version. This is agent re-placement between offices. Relocating an office's own durable sources and custody to another machine is a different operation and is not supported in v1 ([document 16](16-recovery-and-office-continuity.md#moving-agents-and-moving-offices)).
 
-Document 04's current placement row is a projection of the small durable coordination/fencing journal outside Git; employee home-team and organization membership remain unchanged. HQ owns monotonically increasing placement_generation per employee. Moving an agent first requires the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence; HQ then journals the new office and incremented generation atomically. Every command, permit and attempt carries that generation. The column default of one is a projection bootstrap, not permission to start a legacy process: recovery must finish before HQ admits its first generation. Lost authority evidence blocks starts until restored. Historical attempts retain their original office/generation independently of current placement.
+Document 04's current placement row is a projection of the small durable coordination/fencing journal outside Git; employee home-team and organization membership remain unchanged. HQ owns monotonically increasing placement_generation per employee. Moving an agent first requires the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence; HQ then journals the new office and incremented generation atomically. Every command, permit and attempt carries that generation. The column default of one is a projection bootstrap, not permission to start a process: recovery must finish before HQ admits its first generation. Lost authority evidence blocks starts until restored. Historical attempts retain their original office/generation independently of current placement.
 
 ## 4. Configuration transactions and discovery
 
@@ -340,7 +340,7 @@ The installed-version driver probes, authenticated production composition, compl
 
 ## 11. Implementation sequence and integration boundaries
 
-1. Implement versioned application migrations and serializers/projectors from the consolidated schema and this contract (AE-01..03 and subscription identity in AE-18). Preserve employee identity; do not create a second agents table. Document 04 and schema.sql already include these design relationships; applying an application migration is separate implementation work.
+1. Implement the schema and its serializers/projectors from the consolidated schema and this contract (AE-01..03 and subscription identity in AE-18). Preserve employee identity; do not create a second agents table. Document 04 and schema.sql already include these design relationships; implementing them is separate work.
 2. Add configuration/discovery handlers and typed local credential bindings, using fake driver fixtures first (AE-05..06, AE-18).
 3. Implement HQ permit coordinator and office command/receipt journal (AE-04, AE-07..08).
 4. Integrate supervisor/router/session-runner modules inside agentic-org-office, host startup/launch admission and the existing recovery adapter (AE-10..11, AE-15). Apply the executable names in §2 with existing signed-launch/credential tests; retain agent-os as the small separate CLI.
@@ -351,7 +351,7 @@ The first release accepts explicit turn commands only. Automatic schedules, long
 
 ## 12. SQL tables, relationships and file mapping
 
-The tables, view, indexes and triggers below are included in [schema.sql](schema.sql). Load that consolidated draft once; there is no second execution-extension apply step. [Agent structure](04-agent-structure.md) owns the agent_placements table and its placement_generation column. These triggers reject generation regression, office moves without an increment and changing a configured agent into a person. HQ still verifies cleanup/fencing; a SQL generation check alone cannot prove an old process stopped. Use schema-versioned application migrations and rebuild projections from the authorities in §3. Common attribution follows [record contracts](08-record-contracts.md); missing legacy metadata is not fabricated.
+The tables, view, indexes and triggers below are included in [schema.sql](schema.sql). Load that consolidated draft once; there is no second execution-extension apply step. [Agent structure](04-agent-structure.md) owns the agent_placements table and its placement_generation column. These triggers reject generation regression, office moves without an increment and changing a configured agent into a person. HQ still verifies cleanup/fencing; a SQL generation check alone cannot prove an old process stopped. Rebuild projections from the authorities in §3. Common attribution follows [record contracts](08-record-contracts.md); missing metadata is not fabricated.
 
 ```mermaid
 erDiagram

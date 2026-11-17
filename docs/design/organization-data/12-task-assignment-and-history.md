@@ -1,18 +1,8 @@
 # Task ownership, assignment, reporter and activity history
 
-Status: **selected** data contract, revision 4. This selects task activity history and separate team/individual assignment for the proposed data model. Private task notes are required operational data owned by document 05. The private-note data structure is defined in [operational data](05-operational-data.md#private-notes-attached-to-tasks) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+Status: **selected** data contract, revision 5. This selects task activity history and separate team/individual assignment for the proposed data model. Private task notes are required operational data owned by document 05. The private-note data structure is defined in [operational data](05-operational-data.md#private-notes-attached-to-tasks) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
 
-**Implementation scope:** F0 imports this contract over integration base
-`73a39c58d683b00ad8620d05f7d5ae10fdc17bc9` without selected-task feature source.
-This checkout retains office schema 6 and legacy work behavior. Office schema 7
-and the selected acceptance/recovery library consumers under ADR-0006 are
-observations of the **unaccepted** `codex/v1-assignment-integration` reservoir at
-`b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09`, not F0 implementation or acceptance
-evidence. The [source map](../../../.agent-kit/tasks/v1-delivery-source-map.json)
-assigns extraction to later units; [executable status](../executable-migration.md#f0-integration-baseline)
-records current availability. Protected host admission/authentication, actual
-adoption, public command transport and production UI require their own integration
-and execution evidence; storage tests alone are not vertical acceptance.
+**Implementation scope:** the code keeps an older task model with individual assignment only. The acceptance journal that this contract's writes go through exists as an internal foundation ([executable migration](../executable-migration.md#where-the-entry-points-stand-2026-11-17)); no command reaches it yet. Nothing is imported from the older model: the selected model replaces it.
 
 ## Ownership and current responsibility
 
@@ -36,7 +26,7 @@ Project ownership changes update affected project tasks' owning `team_id` togeth
 
 ## Reporter and resolution actors
 
-V1 uses the bound creator as the reporter: `StoredItem.created_by` is separate from `assignee_id`, and normal commands cannot supply another actor. Preserve that meaning as `created_by_kind`/`created_by_id`; no second mutable reporter field is introduced. For bugs this is the reporter, for requests the requester, and for other tasks the originator. An owner is represented with kind `owner` and no employee ID. Import preserves genuine unknown provenance rather than inventing a reporter. Reporting on behalf of another person would need a separate future contract.
+The bound creator is the reporter, recorded as `created_by_kind`/`created_by_id` and separate from `assignee_id`; normal commands cannot supply another actor, which is how the code already works. No second mutable reporter field is introduced. For bugs this is the reporter, for requests the requester, and for other tasks the originator. An owner is represented with kind `owner` and no employee ID. Reporting on behalf of another person would need a separate future contract.
 
 A `status_changed`, verification or closure event records who reported that transition and when. That actor, the current assignee and the actual people/agents who contributed can differ. Show the recorded facts separately; do not label the latest assignee as the historical fixer. [Usage accounting](10-usage-and-cost-accounting.md) remains the source of actual consuming agents, including reviewers/helpers.
 
@@ -49,10 +39,10 @@ uses live authenticated organization-owner authority, with stable account bindin
 kept in protected receipts. An owner has `actor_kind: owner`, null employee ID;
 instance-administrator authority for provisioning is a separate check. Assignment
 grants neither authority nor capabilities. Agents need an explicit selected mutation
-capability; legacy binding alone does not establish it. Resolve task, desired active
+capability; a session binding alone does not establish it. Resolve task, desired active
 targets and authorization against one writer-ordered directory generation.
 
-`task.set_assignment` is additive to legacy `task.assign`. Its command contains
+`task.set_assignment` replaces the code's `task.assign`. Its command contains
 exactly the complete pair and positive i64 `expected_revision`; the browser adapter
 uses canonical decimal revision strings through `9223372036854775807`. Decode raw
 wrappers/scope/commands before map conversion and reject duplicate keys. Fingerprint
@@ -69,61 +59,18 @@ containing exactly `fingerprint_version: 1`, `method: task.set_assignment`,
 channel/registry context; nullable IDs are explicit. The revision is encoded from
 the validated i64, independently of its browser string representation. Operation
 ID selects the receipt and is not hashed into the intent; actor/account binding
-is protected metadata alongside it. This fingerprint version does not redefine
-legacy hashes, task-event identities or schema versions.
+is protected metadata alongside it.
 
-## Verified v1 behavior and migration boundary
+## What the code does today
 
-Inspected `v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**:
+Read at commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`. These are facts about the code that the selected model keeps the meaning of; the code's storage is replaced, not migrated.
 
-| Capability | Source evidence | Proposed-model treatment |
+| Capability | Code evidence | In the selected model |
 | --- | --- | --- |
-| Reporter and current individual assignment | [`StoredItem`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/model.rs#L26) has `created_by` and `assignee_id`; [command identity](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L15) comes from the bound actor | Retain those meanings; add a separately assigned team |
-| Assignment history | [`task.assign`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/tasks.rs#L292) records `Assigned { from, to }` | Retain prior individual assignments; record both assignment fields for new changes |
-| Activity history | [`WorkEvent`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L758) includes version, actor, time, cause and typed change | Preserve events and their original order/provenance |
-| Durable immutable events | [`work_events` storage](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-office/src/store/work.rs#L33) rejects replacement, update and deletion; current state/events share the office write | Carry the invariant into the proposed file/journal projection |
-
-This is implemented domain/store behavior in v1, not a claim that every standalone browser/CLI workflow is wired. The new data model still requires its own application migration.
-
-An approved import keeps original task IDs, event versions, timestamps and actors.
-Map v1 bug/request history to `task_kind: task`. Newly wrapped codec-2 events retain
-the entire original `WorkEvent` object **and raw numeric tokens**, including `auto`,
-`cause`, `org_position` and original change, in `source_metadata.legacy_event`.
-Capture tokens before lossy decoding. Never replace an already accepted selected
-event at its identity or rewrite schema-1 bytes/hashes. Unsupported codecs stay
-staged/unverified. New assignments use document 05's complete pair; historical
-individual changes do not imply a team from today's membership. Legacy current
-tasks default `assigned_team_id` to null only when the source lacks that fact.
-
-Adoption supplies evidenced owner/project/home-team/scope/number mappings, preserved
-sources and verified writer/continuity evidence. Do not infer a missing owner from
-legacy optional team or first membership. Activate durable adoption gates with the
-import; every legacy mutator/cascade/Undo/replication path must refuse incompatible
-writes to adopted IDs. Nonadopted records retain legacy semantics. Unmapped records
-and opaque unsupported sources remain intact in staging.
-
-The first executable existing-work profile is
-[LEGACY-ADOPT-1](../../adr/0010-legacy-task-adoption.md), with its persistent
-metadata contract in [document 05](05-operational-data.md#explicit-legacy-work-adoption-profile-1).
-Admit only a nondeleted version-1 item and its sole matching Created event. Require
-explicit public classification and owner/project/scope/number/principal mappings;
-verify literal `B-`/`REQ-`/task references against the original type and number,
-preserving the literal reference rather than renaming an existing identity.
-An owner pseudo-recipient never becomes an employee. Missing facts, collisions,
-unknown private provenance and unsupported source/history remain staged.
-
-Default to a revision-1 baseline at import time with the migration actor, retaining
-the complete original snapshot and Created event losslessly in metadata. Preserve
-the actual original reporter/creation time in current task creation fields and
-the original event actor/time inside `legacy_event`; the migration actor/time do
-not replace either. Earlier selected facts remain unavailable, even at baseline 1.
-Do not backdate newly supplied team/project/mapping facts. Existing selected
-creation admission still requires genuine as-of full-state evidence; this bounded
-profile does not reconstruct it. After adoption, normal legacy mutation, cascade,
-Undo, replication and direct SQL all refuse the adopted ID; unadopted controls
-retain their original behavior.
-
-Where only a snapshot survives, retain it with an explicit `history_baseline` event at its current revision, capturing the import time and source provenance. Mark earlier history unavailable; do not fabricate a sequence of past assignments or backdate the baseline as a user action. A baseline permits subsequent history but never makes the earlier period complete. Preserve v1 events for unselected features/workflows in staging until an explicit disposition is chosen. Selecting task history does not automatically select Undo, every old transition engine, or organization-wide event sourcing.
+| Reporter and current individual assignment | [`StoredItem`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/model.rs#L26) has `created_by` and `assignee_id`; [command identity](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L15) comes from the bound actor | Same meaning, plus a separate assigned team |
+| Assignment history | [`task.assign`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/tasks.rs#L292) records `Assigned { from, to }` | Each change records both assignment fields |
+| Activity history | [`WorkEvent`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L758) includes version, actor, time, cause and typed change | Events keep revision, actor, time and typed change |
+| Durable immutable events | [`work_events` storage](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-office/src/store/work.rs#L33) rejects replacement, update and deletion; current state and events share the office write | The same invariant, in the file and journal projection |
 
 ## Private notes attached to tasks
 

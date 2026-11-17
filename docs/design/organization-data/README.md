@@ -1,6 +1,6 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.12 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.13 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **selected target data relationships, fields and canonical sources**. Current code and older designs remain evidence of existing behavior until an explicit migration is approved; they do not override later selected data decisions. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes historical requirements, implementation status and deferred scope.
 
@@ -19,7 +19,7 @@ This set owns the **selected target data relationships, fields and canonical sou
 | [Release content and flags](09-release-content-and-flags.md) | Explicit release contents, product/technical changelogs, flag definitions, intended settings and applied snapshots | Flag evaluation or deployment execution |
 | [Usage and cost accounting](10-usage-and-cost-accounting.md) | Durable usage events, historical attribution, price versions, checkpoints and derived totals | Budgets, automatic pausing, actual billing or execution routing |
 | [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) | Provider/subscription connections, ordered model profiles, agent execution configuration, office bindings, permits, turns/attempts/processes and durable placement generations | Agent memory, automatic scheduling, installation implementation or task lifecycle |
-| [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter semantics, v1 evidence and migration boundaries | Private task-note application implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
+| [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter semantics and what the code does today | Private task-note application implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
 | [Model providers, connections and pools](14-model-providers-and-connection-pools.md) | Provider/driver identity, connections, ordered pools, office bindings, discovered models and agent selection in the common data-structure format | A second provider system, additional tables or supervisor/failover implementation |
 | [Messaging and chat](15-messaging-and-chat.md) | Conversations, memberships, messages, recipient state, attachments, read markers and reactions; runtime ownership and routing rules merged from ADR-0003 | Transport/wake engines and external bridges |
 | [Recovery and office continuity](16-recovery-and-office-continuity.md) | Mutation receipts, origin streams, checkpoints, snapshots and process cleanup evidence | Automatic promotion, restore engines or backup automation |
@@ -44,7 +44,7 @@ Every entity keeps an immutable stable `id`, used for foreign keys, synchronizat
 | Milestone | `M-2` | Milestone counter within release |
 | Repository, role, provider connection or model profile | Descriptive `key` | Organization, separately per entity type; no counter |
 
-Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied on import it must match. `number: null` denotes a locally created feature awaiting allocation and exposes no final readable reference. A task is numbered by its creating office at creation, so it is never null. Changing task type never changes its ID or number.
+Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied it must match. `number: null` denotes a locally created feature awaiting allocation and exposes no final readable reference. A task is numbered by its creating office at creation, so it is never null. Changing task type never changes its ID or number.
 
 Slugs are lowercase kebab-case identifiers; handles are lowercase identifiers using letters, digits, dots, underscores or hyphens, stored without `@`. They are explicit fields rather than values recalculated when display names change. Teams need no additional slug. Projects have both a numeric reference and an organization-unique slug. Features store `local_slug`, and their public `slug` is automatically derived as `<project.slug>/<feature.local_slug>`. Never manually enter the project prefix on a feature. The resulting path is unique within the organization because both component scopes enforce uniqueness. Release version labels are plain text, not an enforced semantic-version type or identity.
 
@@ -101,9 +101,9 @@ Nothing has been deployed. Until the owner declares v1 shipped (owner decision 2
 
 - There are no existing users, organizations or data to preserve. No migration, import staging, alias, compatibility adapter or legacy shape is built or kept for a pre-release form.
 - Wire names, method names, file formats, schemas, identifiers and the local API version may change freely. The local API version is 1.
-- Where a document says to preserve, import, adopt, stage or map "v1", "legacy" or "existing" data, identifiers, references such as `B-` and `REQ-`, hashes or events, that requirement is withdrawn and the selected shape is built directly. This covers the legacy adoption profile of document 05 and ADR-0010, the imported `directed_thread` conversation kind, the `v1_lenprefixed_sha256` and schema-1 task-event codecs, and import staging. The draft schema still carries some of these structures; removing them is tracked in the [conflict resolution plan](../conflict-resolution-plan.md).
+- No document in this set asks for old data, identifiers, references such as `B-` and `REQ-`, hashes or events to be preserved, imported, adopted, staged or mapped. The structures that existed only for that were removed from the draft schema on 2026-11-17 (set revision 2.13): the imported conversation kind, the source-hash columns on messages, the second task-event version and the feature's old-path field. ADR-0010 is withdrawn.
 - The better design wins. When rebuilding is the cleaner architecture, rebuild; the result must be fast, memory-efficient and reliable.
-- The former development team's message queue is dropped too (owner, 2026-11-17). The `directed_thread` conversation kind, the `v1_lenprefixed_sha256` codec and import staging have no remaining purpose and leave the draft schema with the other legacy structures.
+- The former development team's message queue is dropped too (owner, 2026-11-17); nothing of it is carried over.
 
 ## Outside this set: what the host owns
 

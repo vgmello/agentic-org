@@ -199,7 +199,7 @@ The same-named scalar fields below live in `profile.md` front matter and project
 
 `role_text` preserves v1's descriptive role independently of the normalized `role_id`; import must not invent a role ID from arbitrary text. `title_in_team` describes the home-team appointment, not a second membership. **There is no owner field on an employee.** The organization owner is an authenticated account held by the host, described in the [index](README.md#outside-this-set-what-the-host-owns). If that account is also represented by a person record, the record is an ordinary employee with a home team. Team leadership remains a separate appointment.
 
-V1 members can have several memberships. Import must require an explicit chosen home team; preserve unselected associations in migration staging rather than picking the first or copying all membership titles into one field. Runtime/model move to document 11's execution configuration; machine-specific home remains managed local state. Run modes, scheduling and memory remain deferred; no schedule engine or schedule table is introduced here.
+V1 members can have several memberships. Runtime/model move to document 11's execution configuration; machine-specific home remains managed local state. Run modes, scheduling and memory remain deferred; no schedule engine or schedule table is introduced here.
 
 ```yaml
 contact: "product@example.invalid"

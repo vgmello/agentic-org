@@ -121,7 +121,7 @@ operations:
       ended_at: null
 ```
 
-The parent work file must contain the referenced comment, and the asking employee must exist. Example snippets show selected fields, not a complete import bundle. Open questions/spans and watcher subscriptions remain recoverable with pending work. Notification receipts and chat are separate data governed by [messaging](15-messaging-and-chat.md) and [recovery](16-recovery-and-office-continuity.md). Pending asks, handoffs and deliveries must survive cache loss; this paragraph does not authorize deleting them.
+The parent work file must contain the referenced comment, and the asking employee must exist. Example snippets show selected fields, not a complete file. Open questions/spans and watcher subscriptions remain recoverable with pending work. Notification receipts and chat are separate data governed by [messaging](15-messaging-and-chat.md) and [recovery](16-recovery-and-office-continuity.md). Pending asks, handoffs and deliveries must survive cache loss; this paragraph does not authorize deleting them.
 
 ## File to SQL mapping
 
@@ -245,7 +245,7 @@ The current task file remains its latest state. Each accepted task revision also
 <organization repository>/work-history/tasks/<task-id>/<revision>.json
 ```
 
-The event's stable identity is `(organization_id, task_id, revision)`, preserving v1's task/version identity. It has no new human number counter and no regenerated identity during replay. File name, task ID and revision must agree. `task_kind` is always `task`, including for bugs and requests. A command can append several consecutive events; the final task revision is the last event revision.
+The event's stable identity is `(organization_id, task_id, revision)`. It has no new human number counter and no regenerated identity during replay. File name, task ID and revision must agree. `task_kind` is always `task`, including for bugs and requests. A command can append several consecutive events; the final task revision is the last event revision.
 
 The service commits the resulting task snapshot, its event(s), and the command's idempotency result as one recoverable operation before acknowledging. Under [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) comments, checklist ticks and watching are acknowledged at that commit, with the flush to the drive following within a bounded interval; every other task change waits for the flush. The durable local journal must retain everything needed to finish materializing these files after a crash, using the platform durability guarantees in [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md). Hourly Git publication includes the task and its events together; it is not the acknowledgement boundary. A machine restore requires unpublished journal records as well as the published organization state. Rebuilding SQLite projects the same event identities; it creates no new history.
 
@@ -272,17 +272,15 @@ are objects projected into lossless canonical `change_json` and
 `source_metadata_json` text. Preserve authoritative complete event bytes and unknown
 extensions; a SQL numeric extraction or `Value` reserialization is not an event
 source. Identical event-identity retries compare the verified canonical hash;
-different content conflicts. Import verifies the actual hash, not its SQL format.
+different content conflicts. A verifier checks the actual hash, not its SQL format.
 
-### Task-event codec 2
+### Task-event codec
 
-New events use `schema_version: 2`, explicitly selecting a new codec rather than
-redefining schema 1. It is registered as `canonical-json/2` in the
-[hash codec registry](08-record-contracts.md#hash-codec-registry), which lists the
-other canonical forms in this set. Keep existing event bytes, hashes and identities unchanged.
-Admission dispatches only to supported codecs; unsupported schema-1 or future
-codecs remain retained/staged with unverified/unavailable coverage. Never hide
-known missing history behind a fabricated baseline.
+Every task event uses `schema_version: 2` and the `canonical-json/2` codec in the
+[hash codec registry](08-record-contracts.md#hash-codec-registry). There is one event
+codec. The number 2 is kept because the code already implements the codec under that
+name; there is no version 1 to read. Admission accepts only this codec and refuses
+anything else. Never hide known missing history behind a fabricated baseline.
 
 Codec 2 accepts one complete UTF-8 JSON value with JSON whitespace only around it.
 Reject BOM, trailing content, malformed numbers, unpaired surrogates and duplicate
@@ -306,75 +304,14 @@ explicit nulls; producer-side absent source metadata becomes `{}`. Verifiers nev
 repair absent required members. Header revision is a positive signed-i64 integer
 token without exponent/fraction; schema is exactly integer `2`. Filename, identity,
 attribution and timestamps must match their owning contracts. New accepted changes
-require actual known actors and UTC times. An explicit authorized import may retain
-genuine unknown actor/time values, including null `occurred_at`, consistently with
-document 08; SQL nullability is not permission to omit a new write's attribution.
+require actual known actors and UTC times; SQL nullability is not permission to omit
+attribution.
 Unknown change tags
 and extensions remain in the checksum and retained representation.
 
-### Explicit legacy-work adoption profile 1
-
-[ADR-0010](../../adr/0010-legacy-task-adoption.md) selects the first bounded
-existing-work import. It keeps the adoption Action/Manifest wire version and
-codec 2 unchanged. The first newly wrapped event has
-`source_metadata.legacy_mapping.version: 1`, complete lossless
-`legacy_snapshot` and `legacy_event` objects, exact original-source SHA-256
-digests, explicit original kind/reference and selected owner/project/scope/number
-and principal mappings. Mappings describe the authorized import, not historical
-knowledge at original creation. Original selected event identities are immutable.
-
-This profile admits only a live version-1 work item with exactly its corresponding
-version-1 `Created` event and consistent ID, generation, type, original actor and
-time. The default selected event is `history_baseline` at revision 1 and import
-time with the authenticated migration actor. It retains the exact public selected
-Markdown and the complete original Created object, including its actual actor,
-time, unknown fields and numeric tokens. Earlier selected history remains
-unavailable. This is neither fabricated creation history nor a snapshot-only
-import that conceals a surviving event. Longer/gapped histories, tombstones,
-extra events or unsupported mappings remain intact in protected staging.
-
-Every copied source component must already be public legacy work information and
-be explicitly classified for this import. Unknown extension provenance requires
-explicit classification; private-note, memory, credential or unclassified
-provenance cannot become public through an owner flag. Do not read/copy private
-tables to construct metadata. The original DB objects, event/feed/origin positions
-and message watermarks remain untouched. Install selected state and its permanent
-legacy mutation gate in the same frozen acceptance transaction, allocating one
-journal ordinal and zero new work-event positions. Directory/source comparisons,
-number collision checks and account-bound exact retries apply before completion.
-
-Profile-1 mapping scalars are `source_kind: public_legacy_work`,
-`source_snapshot_sha256`, `source_event_sha256`, `source_generation`,
-`source_version`, `original_kind`, `original_reference`, `accountable_team_id`,
-nullable `project_id`, `scope_kind`, `scope_id` and `number`. `reporter` supplies
-`legacy_id`, `kind` and nullable `id`; `assignee` supplies nullable `legacy_id`
-and `employee_id`. `public_extensions` contains `snapshot` and `event` arrays
-of unique JSON Pointer paths explicitly classifying otherwise unknown public
-subtrees. These declarations cannot override recognized private provenance.
-Known fields retain their existing public legacy-work classification. Member
-mappings are checked against retained legacy members and trusted selected
-employees; the legacy owner designation cannot be mapped to an employee.
-
-The supplied revision-1 baseline is an unaccepted import template carrying those
-classified originals and exact public state. After verification, the writer
-constructs the new selected baseline with its actual import time, authenticated
-owner attribution and original adoption operation ID, retaining change, metadata
-and unknown extensions losslessly. This is an explicit first-wrap rule, not
-rehashing or editing any accepted selected event. The original template stays in
-protected staging. Frozen acceptance records the final bytes once; exact retries
-return the original receipt without repeating mapping or event construction.
-
-The resource profile limits input and canonical output independently to 16 MiB,
-container nesting to 64 (root counts as one), nodes to 200,000 (values/containers
-and keys), and each decoded string/key or raw numeric token to 8 MiB. Enforce
-checked budgets while scanning/emitting, before commit. Resource errors do not
-disclose or truncate payloads; oversized imports remain intact in staging.
-Recovery retains each acknowledged record's profile and decoder and never silently
-substitutes smaller limits. These are byte/work limits, not numeric-magnitude bans.
-
 ### Exact public snapshots
 
-Created/baseline schema-2 events retain `change.known_facts` (an object of typed
+Created events retain `change.known_facts` (an object of typed
 known public facts) and `change.public_snapshot`,
 either `{ "encoding": "utf-8-markdown", "text": "<exact public Markdown>" }`
 or `{ "encoding": "utf-8-markdown", "sha256": "<digest>", "byte_length": 0,
@@ -383,8 +320,8 @@ The latter resolves only to immutable public bytes at
 `work-history/blobs/sha256/<digest>`. Verify length/hash and public classification;
 publish blobs with referencing events. Select the blob form when the single-string
 or canonical-event budget would be exceeded. Never convert unknown YAML extension
-numbers to JSON to construct full state. Private/unclassified originals remain
-protected staging, outside this public store.
+numbers to JSON to construct full state. Private or unclassified content never
+enters this public store.
 
 Blobs/chunks are <=64 MiB. Each manifest permits <=1,024 references and <=64 MiB
 aggregate referenced bytes, counting repeated references. All referenced bytes
@@ -415,8 +352,8 @@ erDiagram
         TEXT change_json "required"
         TEXT source_metadata_json "required"
         TEXT payload_sha256 "required"
-        TEXT resource_profile "optional for retained schema 1"
-        BLOB event_bytes "required for schema 2; retained source bytes"
+        TEXT resource_profile "required"
+        BLOB event_bytes "required; the event as accepted"
     }
 ```
 
@@ -428,7 +365,7 @@ CREATE TABLE task_events (
   task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind = 'task'),
   task_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK (revision >= 1),
-  schema_version INTEGER NOT NULL CHECK (schema_version IN (1, 2)),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 2),
   occurred_at TEXT,
   actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee', 'owner', 'system', 'unknown')),
   actor_id TEXT,
@@ -440,9 +377,8 @@ CREATE TABLE task_events (
   source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (
     json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
   payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
-  resource_profile TEXT CHECK (resource_profile IS NULL OR resource_profile = 'selected-task-resources/1'),
-  event_bytes BLOB,
-  CHECK (schema_version <> 2 OR (resource_profile IS 'selected-task-resources/1' AND event_bytes IS NOT NULL)),
+  resource_profile TEXT NOT NULL CHECK (resource_profile = 'selected-task-resources/1'),
+  event_bytes BLOB NOT NULL,
   PRIMARY KEY (organization_id, task_id, revision),
   CHECK ((actor_kind = 'employee' AND actor_id IS NOT NULL) OR (actor_kind <> 'employee' AND actor_id IS NULL)),
   CHECK (json_extract(change_json, '$.type') <> 'assignment_changed' OR (
@@ -466,7 +402,7 @@ CREATE TABLE task_events (
 
 Private task notes are **not implemented in the inspected v1 source**. Its [`CommentKind::Note`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L287) is an ordinary shared comment. [`work.comment` parameters](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L1514) have no note visibility or private owner field. The [comment handler](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/items.rs#L25) stores its body in a regular `WorkEventKind::Comment`; the [change feed](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/feed.rs#L15) emits that event. The [activity read contract](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/ports.rs#L177) has no per-note reader restriction.
 
-Consequently `note` must never be presented as private, and hiding it in the UI would not provide privacy. Existing note comments remain shared in migration; do not relabel them as private retrospectively.
+Consequently `note` must never be presented as private, and hiding it in the UI would not provide privacy.
 
 Each private note must have stable identity, organization/task references, an immutable author/owner derived from the authenticated actor, body, creation/update timestamps and a revision for conflicting edits. A task can have multiple notes from multiple authors. The author is the default exclusive reader/editor; task ownership, assignment, team leadership and organization-owner/admin roles do not implicitly grant access. Any exceptional administrative access requires an explicit policy decision before implementation, rather than inheriting ordinary task permissions.
 
@@ -570,7 +506,7 @@ Run `python3 docs/design/organization-data/test_schema.py` for structural checks
 
 ## Retained checklist evidence
 
-Checklist step front matter additionally carries `linked_task_id`, `checked_by_employee_id`, `checked_at` and `revision` (default 1). These project directly into `checklist_steps`. V1's step `task_id` maps to `linked_task_id`, while the parent task ID remains the enclosing record. V1 step version 0 (no step event yet) maps to revision 1; retain the original version in migration evidence if needed. Preserve checker/time when known; absence never fabricates an actor. Task closure/tombstones retain checklist evidence with the final record. This adds data preservation only: promotion, automatic ticking/cascades and Undo remain unselected.
+Checklist step front matter additionally carries `linked_task_id`, `checked_by_employee_id`, `checked_at` and `revision` (default 1). These project directly into `checklist_steps`. `linked_task_id` names another task the step points to; the parent task is the enclosing record. Checker and time are recorded when a step is checked; absence never fabricates an actor. Task closure/tombstones retain checklist evidence with the final record. This adds data preservation only: promotion, automatic ticking/cascades and Undo remain unselected.
 
 [Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.
 

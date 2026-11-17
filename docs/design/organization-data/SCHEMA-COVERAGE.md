@@ -30,9 +30,9 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 ## Implementation status
 
-This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code has this table with these columns), **Legacy shape** (the code holds the same facts in a different table or columns), **Absent** (no code).
+This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code has this table with these columns), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (no code).
 
-As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16 have a legacy counterpart and 71 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
+As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 71 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -54,44 +54,44 @@ As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16
 | `conversation_memberships` | table | Absent |  |
 | `conversation_preferences` | table | Absent |  |
 | `conversation_read_markers` | table | Absent |  |
-| `conversations` | table | Legacy shape | Closest current table: `msg_threads` |
+| `conversations` | table | Different shape in code | Closest current table: `msg_threads` |
 | `deployment_flag_settings` | table | Absent |  |
 | `deployment_repository_commits` | table | Absent |  |
 | `deployments` | table | Absent |  |
 | `documents` | table | Absent |  |
-| `employees` | table | Legacy shape | Closest current table: `members`, `memberships` |
+| `employees` | table | Different shape in code | Closest current table: `members`, `memberships` |
 | `feature_flags` | table | Absent |  |
 | `features` | table | Absent |  |
 | `links` | table | Absent |  |
 | `local_repository_locations` | table | Absent |  |
 | `message_attachments` | table | Absent |  |
 | `message_reactions` | table | Absent |  |
-| `message_recipient_states` | table | Legacy shape | Closest current table: `msg_state`, `msg_unread` |
-| `messages` | table | Legacy shape | Closest current table: `msg_headers`, `msg_bodies` |
+| `message_recipient_states` | table | Different shape in code | Closest current table: `msg_state`, `msg_unread` |
+| `messages` | table | Different shape in code | Closest current table: `msg_headers`, `msg_bodies` |
 | `milestones` | table | Absent |  |
 | `model_prices` | table | Absent |  |
 | `model_profile_connections` | table | Absent |  |
 | `model_profiles` | table | Absent |  |
-| `mutation_receipts` | table | Legacy shape | Closest current table: `commands`, `work_change_results`, `selected_receipts` |
+| `mutation_receipts` | table | Different shape in code | Closest current table: `commands`, `work_change_results`, `selected_receipts` |
 | `office_connection_bindings` | table | Absent |  |
 | `office_connection_models` | table | Absent |  |
 | `office_connection_state` | table | Absent |  |
-| `office_origin_streams` | table | Legacy shape | Closest current table: `work_origin_counter`, `work_origin_log` |
-| `office_recovery_checkpoints` | table | Legacy shape | Closest current table: `org_replica`, `org_replica_base` |
+| `office_origin_streams` | table | Different shape in code | Closest current table: `work_origin_counter`, `work_origin_log` |
+| `office_recovery_checkpoints` | table | Different shape in code | Closest current table: `org_replica`, `org_replica_base` |
 | `offices` | table | Absent |  |
 | `office_codes` | table | Absent |  |
 | `office_task_counters` | table | Absent |  |
-| `organizations` | table | Legacy shape | Same name in `org.db`, different columns |
+| `organizations` | table | Different shape in code | Same name in `org.db`, different columns |
 | `owner_questions` | table | Absent |  |
-| `process_cleanup_records` | table | Legacy shape | Closest current table: `owned_processes` |
-| `project_contributing_teams` | table | Legacy shape | Closest current table: `project_teams` |
+| `process_cleanup_records` | table | Different shape in code | Closest current table: `owned_processes` |
+| `project_contributing_teams` | table | Different shape in code | Closest current table: `project_teams` |
 | `project_repositories` | table | Absent |  |
-| `projects` | table | Legacy shape | Same name in `org.db`, different columns |
+| `projects` | table | Different shape in code | Same name in `org.db`, different columns |
 | `provider_connections` | table | Absent |  |
 | `record_refs` | table | Absent |  |
-| `recovery_snapshot_transfers` | table | Legacy shape | Closest current table: `org_snapshot_stage`, `org_snapshot_install` |
+| `recovery_snapshot_transfers` | table | Different shape in code | Closest current table: `org_snapshot_stage`, `org_snapshot_install` |
 | `reference_allocations` | table | Absent |  |
-| `reference_counters` | table | Legacy shape | Closest current table: `work_number_counters` |
+| `reference_counters` | table | Different shape in code | Closest current table: `work_number_counters` |
 | `release_features` | table | Absent |  |
 | `release_flag_settings` | table | Absent |  |
 | `release_repository_commits` | table | Absent |  |
@@ -103,11 +103,11 @@ As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16
 | `structure_documents` | table | Absent |  |
 | `supervisor_command_receipts` | table | Absent |  |
 | `task_details` | table | Absent |  |
-| `task_events` | table | Legacy shape | Closest current table: `work_events`, `selected_events` |
+| `task_events` | table | Different shape in code | Closest current table: `work_events`, `selected_events` |
 | `task_repositories` | table | Absent |  |
 | `task_workspaces` | table | Absent |  |
-| `tasks` | table | Legacy shape | Closest current table: `work_items` |
-| `teams` | table | Legacy shape | Same name in `org.db`, different columns |
+| `tasks` | table | Different shape in code | Closest current table: `work_items` |
+| `teams` | table | Different shape in code | Same name in `org.db`, different columns |
 | `tombstones` | table | Absent |  |
 | `usage_records` | table | Absent |  |
 | `usage_stream_checkpoints` | table | Absent |  |

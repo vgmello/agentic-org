@@ -30,7 +30,7 @@ Compute a token estimate with exact integer/decimal intermediate arithmetic, sum
 
 ## Historical attribution and corrections
 
-Capture `scope_kind`, task/project/team/feature/milestone/release IDs, task type and Build/Run classification at consumption time. A project task records its then-owning team; a team task has no project. Project/team context can also capture overhead, and genuinely unknown context stays at organization scope. New capture validates known task/project/team relationships at that time. Legacy imports may preserve unknown team/classification fields rather than reconstructing a fictional past from today's organization.
+Capture `scope_kind`, task/project/team/feature/milestone/release IDs, task type and Build/Run classification at consumption time. A project task records its then-owning team; a team task has no project. Project/team context can also capture overhead, and genuinely unknown context stays at organization scope. New capture validates known task/project/team relationships at that time.
 
 The captured `team_id` is ownership attribution. The task's current `assigned_team_id`, individual assignee and the consumer's home team can all differ; they must not be substituted for it. Assignment history is retained separately in [task events](05-operational-data.md#task-activity-history). Reassignment does not move past spend or change the actual consuming employee.
 
@@ -314,7 +314,7 @@ CREATE TABLE usage_records (
   release_id TEXT,
   task_type_snapshot TEXT,
   work_type TEXT CHECK (work_type IN ('build', 'run')),
-  attribution_basis TEXT NOT NULL CHECK (attribution_basis IN ('work_for', 'current_task', 'explicit_context', 'unattributed', 'manual_correction', 'legacy')),
+  attribution_basis TEXT NOT NULL CHECK (attribution_basis IN ('work_for', 'current_task', 'explicit_context', 'unattributed', 'manual_correction')),
   supersedes_id TEXT,
   correction_kind TEXT CHECK (correction_kind IN ('usage', 'attribution')),
   correction_reason TEXT,

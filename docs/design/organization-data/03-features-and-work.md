@@ -1,6 +1,6 @@
 # Features and work structure
 
-Status: **selected** data contract, revision 2.8. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Status: **selected** data contract, revision 2.9. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -43,7 +43,6 @@ erDiagram
         TEXT delivered_at "optional"
         TEXT retired_reason "optional"
         TEXT replaced_by_feature_id FK "optional"
-        TEXT legacy_definition_path "optional"
     }
     feature_slugs {
         TEXT organization_id "derived"
@@ -122,14 +121,13 @@ lookalikes are not properties. Reuse the strict parser's structural guards. Conv
 parser character offsets to UTF-8 byte offsets over the exact front-matter input;
 quoted token ends must exclude trailing whitespace/comments. Reparse the edited
 document and verify the intended values and unchanged nonmutable slices/body.
-Unsupported forms and numbers rejected by the safe parser stay intact in staging.
+Unsupported forms and numbers rejected by the safe parser are refused with the reason; nothing is rewritten.
 
 Profile `selected-task-resources/1` retains front matter <=64 KiB, depth <=16 and
 <=10,000 parser events; body <=8 MiB. The profile is recorded in admission/history
 metadata, not a seventh mutable property. Only classified public snapshots can
 enter [history snapshot representations](05-operational-data.md#exact-public-snapshots).
-Opaque IDs remain unchanged; IDs incompatible with literal canonical paths remain
-staged rather than renamed or concatenated unchecked into a filesystem path.
+IDs are never renamed, and an ID is never concatenated unchecked into a filesystem path.
 
 Task token/cost totals are derived from the [usage ledger](10-usage-and-cost-accounting.md), including reviewers/helpers and retained task identities after archival. They are not counters stored on task files. Attribution captures work scope and Build/Run classification when consumption occurs, rather than joining to the task's current parents later.
 
@@ -250,11 +248,11 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
-**Task status is one closed list (owner decisions 2026-11-17):** `todo`, `in_progress`, `blocked`, `cancelled`, `done`, the same for every task type. `done` is the last value. A task is finished when it is `done` or `cancelled`, and both count as done for milestone and release completion ([document 02](02-project-structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed, for example duplicate or will not fix. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
+**Task status is one closed list (owner decisions 2026-11-17):** `todo`, `in_progress`, `blocked`, `cancelled`, `done`, the same for every task type. `done` is the last value. A task is finished when it is `done` or `cancelled`, and both count as done for milestone and release completion ([document 02](02-project-structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed, for example duplicate or will not fix. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine.
 
 Private notes attached to tasks are a required, separate capability defined by [operational data](05-operational-data.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. Shared [comments](05-operational-data.md) do not satisfy that requirement; [document 05](05-operational-data.md#private-notes-attached-to-tasks) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
 
-An eventual import maps existing bug/request records into tasks with the corresponding `type`, preserving their stable IDs and mapping child references to entity kind `task`. It must detect collisions between previously separate entity namespaces before publishing anything. Existing readable references need an explicit mapping; this draft neither silently renumbers records nor implements that migration.
+Bugs and requests are tasks with the corresponding `type` from the start; there are no separate bug or request records to map.
 
 ## SQLite tables
 
@@ -286,7 +284,6 @@ project_id TEXT NOT NULL,
   delivered_at TEXT,
   retired_reason TEXT,
   replaced_by_feature_id TEXT,
-  legacy_definition_path TEXT,
   CHECK (replaced_by_feature_id IS NULL OR replaced_by_feature_id<>id),
   FOREIGN KEY (organization_id,replaced_by_feature_id,project_id)
     REFERENCES features(organization_id,id,project_id) DEFERRABLE INITIALLY DEFERRED,
@@ -404,21 +401,21 @@ JOIN projects AS p ON p.organization_id = f.organization_id AND p.id = f.project
 
 A task has zero or one `task_details` row, sharing its identity and revision. There are no new bug or request identities/counters. Existing summary fields (type, severity, resolution, priority) stay on `tasks`. Author structured details under `details:` in the same task Markdown front matter; absent optional fields become SQL NULL and absent counters/booleans use the documented defaults. Save details atomically with the task and its activity event. An absent details map produces no row; a present empty map produces a row with defaults.
 
-| Fields | Meaning and import |
+| Fields | Meaning |
 | --- | --- |
 | `definition_of_done`, `branch`, `shortcut_json` | Task acceptance text, task branch (not project integration branch), and structured shortcut provenance from `details.shortcut`: `{type: none}` or `{type: debt, ids: [...]}`; preserve IDs without creating a debt subsystem |
 | `done_anyway_json` | Front matter `details.done_anyway`: object `{reason, steps: [step-id, ...]}`; preserves exceptional completion evidence without implementing that workflow |
 | `what_happened`, `expected`, `steps`, `environment` | Bug reproduction text, kept distinct from the task description |
 | `severity_confirmed`, `reopen_count`, `closed_reason` | Confirmation flag, nonnegative reopen count, and closure explanation |
-| `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity; validate required target type and cycles at import/command boundary |
-| `affects_feature_id` | Affected feature, distinct from the feature implementing the fix; importer requires the task's project to match the affected feature's project |
-| `request_kind`, `request_text`, `route_reason`, `routing_source`, `routed_by_employee_id` | Original request content/category (`WorkItem.text` → `request_text`) and routing decision; v1 `routed_by` maps to `routing_source: person | rule | copilot`, never an employee FK. An independently known actor may populate nullable `routed_by_employee_id`; otherwise it stays NULL |
-| `request_outcome_json` | Front matter `details.request_outcome`: object with optional `feature`, `docs`, `draft_tasks`, `estimate`. Preserve v1 variant tags/IDs without execution. `feature` is `{type: new | extends, feature_id}`; each `docs[]` entry is `{project_id, doc_key}`; each `draft_tasks[]` entry has required `draft_id`, `title` and optional `description`, `assignee_id`, `team_id`, `priority`. `estimate` has `effort`, `cost_usd_cents_min`, `cost_usd_cents_max`; amounts are nonnegative and min≤max. This is a proposal estimate, not a budget. Validate nested project/feature/doc/employee references; draft IDs are not created tasks |
+| `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity; validate required target type and cycles when the command is accepted |
+| `affects_feature_id` | Affected feature, distinct from the feature implementing the fix; the task's project must match the affected feature's project |
+| `request_kind`, `request_text`, `route_reason`, `routing_source`, `routed_by_employee_id` | Original request content/category and routing decision; `routing_source` is `person | rule | copilot`, never an employee FK. An independently known actor may populate nullable `routed_by_employee_id`; otherwise it stays NULL |
+| `request_outcome_json` | Front matter `details.request_outcome`: object with optional `feature`, `docs`, `draft_tasks`, `estimate`. `feature` is `{type: new | extends, feature_id}`; each `docs[]` entry is `{project_id, doc_key}`; each `draft_tasks[]` entry has required `draft_id`, `title` and optional `description`, `assignee_id`, `team_id`, `priority`. `estimate` has `effort`, `cost_usd_cents_min`, `cost_usd_cents_max`; amounts are nonnegative and min≤max. This is a proposal estimate, not a budget. Validate nested project/feature/doc/employee references; draft IDs are not created tasks |
 | `suggested_triager_id`, `suggested_verifier_id` | Suggested employees; not assignments or permission grants |
 
-`fixes` relationships are stored once as typed links; derive `fixed_by` by reverse query. Preserve existing link IDs. Do not duplicate those arrays inside details. The file importer validates bug-only/request-only fields against task type, canonical shortcut variant tags/request-kind values against the supported v1 variants, and every nested JSON shape. Unknown legacy values stay in controlled migration staging for review rather than being dropped. A task becoming a tombstone keeps its final details in `record_metadata` alongside the last revision, and existing immutable history remains.
+`fixes` relationships are stored once as typed links; derive `fixed_by` by reverse query. Do not duplicate those arrays inside details. Validation checks bug-only/request-only fields against task type, shortcut variant tags and request-kind values against the supported variants, and every nested JSON shape; an unknown value is refused. A task becoming a tombstone keeps its final details in `record_metadata` alongside the last revision, and existing immutable history remains.
 
-Feature front matter gains `delivered_at`, `retired_reason`, `replaced_by_feature_id`, `legacy_definition_path`. The replacement must be another feature in the same project; import rejects replacement cycles. Preserve the old path as provenance, never as an executable/local filesystem instruction. Current file path still derives from stable identity. Task totals are derived, not stored. These fields preserve lifecycle facts; they do not introduce automatic feature transitions.
+Feature front matter has `delivered_at`, `retired_reason` and `replaced_by_feature_id`. The replacement must be another feature in the same project; replacement cycles are refused. The file path derives from stable identity. Task totals are derived, not stored. These fields preserve lifecycle facts; they do not introduce automatic feature transitions.
 
 ```yaml
 details:
