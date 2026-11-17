@@ -47,6 +47,19 @@ sentence in [messaging data](../design/organization-data/15-messaging-and-chat.m
    - Durable: everything on the work-acceptance journal of ADR-0006, organization
      commands, numbering, turn permits and placement, budget actions, HQ creation, and
      account and session changes.
+   **The question for the owner.** Which operations may be answered as soon as the
+   database commits, knowing that one answered in the instant before a power cut can
+   be lost? Four possible scopes:
+
+   | Scope | Committed-class operations | What a power cut can silently lose |
+   | --- | --- | --- |
+   | a. Messaging only (proposed above) | Send, reply, mark read, done or deferred, status text | A just-sent message or a read mark |
+   | b. Messaging and task activity | Scope a, plus comments, checklist ticks and watching on a task | Scope a, plus a just-added comment or tick. This needs the work-acceptance journal of ADR-0006 to allow the faster class for those changes |
+   | c. Everything `agent-os` does | Scope b, plus task creation, status changes and assignment through `agent-os` | Scope b, plus a just-made assignment or status change, so two parties may briefly disagree on who owns a task |
+   | d. Every write in the office | All writes, with one flush interval and no durable class | Any acknowledged change from the last interval, including numbering, permits and budget actions |
+
+   Scope a is the proposal. Scopes c and d conflict with the acknowledgement rule of
+   ADR-0006 and would need it amended.
 4. **A caller may always ask for durable.** An explicit option upgrades a
    committed-class call to durable for a sender that needs certainty.
 5. **`agent-os` gains a session mode.** One long-running `agent-os` process per agent

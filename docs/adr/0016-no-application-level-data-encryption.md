@@ -70,6 +70,28 @@ and WAL stand, and its durability rule stands as amended by
 8. **Linux.** The open question narrows from where database keys live to where a few
    private keys live.
 
+## Options for decision 3 (awaiting the owner)
+
+What exists today. Only the organization CA private key exists in code. It is the
+`private_pkcs8` column of the immutable `local_hq_creation` record in `office.db`,
+beside the public key and the escrow package. Nothing uses it to sign yet: its first
+use is issuing office certificates when satellite enrollment is built. The office TLS
+identity key and the invitation key are part of that unbuilt enrollment design. A
+satellite's TLS identity key must be usable unattended, every time the office starts.
+
+| Option | How it works | What it keeps | What it costs |
+| --- | --- | --- | --- |
+| 1. Sealed only | Store no usable CA key. Keep only the escrow package, which is already encrypted under the recovery code. When a CA signature is needed, the owner supplies the recovery code and the worker unlocks the key in memory for that operation. | The least machinery. All database-key custody goes now. Nothing usable at rest. The host still never receives the key. | The recovery code becomes a working credential, needed for every enrollment and every certificate renewal, which ADR-0011 treats as delivered once and kept offline. Renewal cannot be automatic. It does not answer the unattended TLS identity key, so the question returns with satellites. Changes the reviewed HQ-creation record. |
+| 2. Wrapped by a host-held key | The worker keeps the three keys in its own store, each encrypted with one key per office that the host holds in its credential provider and hands over at launch, the same handoff that carries the database key today. The databases themselves are plain. | Protection equal to today's in every isolation mode. The host never receives the keys, so ADR-0007 and ADR-0011 stand. The HQ-creation commit stays one record in one transaction. Unattended use and automatic renewal work. | A host-held key per office and its custody code remain, in a smaller role, so less is removed than hoped. If that key is lost, data is unaffected and only the three keys are, each recoverable: the CA from escrow and the code, TLS by re-enrollment, the invitation by reissue. Linux still needs a place for one key per office. |
+| 3. Host holds the keys | The three keys go into the host's existing credential store, which already holds the web TLS key and the pending recovery code. The host hands them to the worker at launch. | One existing store. No wrapping code in the worker. Database-key custody is fully removed. | Re-decides the rule that the host never receives the CA or office TLS private keys. HQ creation must write to two stores atomically, a new two-step protocol in a flow that was just reviewed. The host handles more secrets. |
+| 4. Owner-only files | Plain key files with owner-only permissions under `durable/local/offices/<office-id>/keys/`. | The simplest storage and no custody at all. | In `same-user` mode an agent that escapes its sandbox can read the CA key and issue office certificates. Copies and backups carry the key. ADR-0007 forbids plaintext key files. Only defensible with `dedicated-user`. |
+
+Recommendation: option 2. It is the only one that covers all three keys in both
+isolation modes without re-deciding an existing rule or changing the reviewed
+HQ-creation flow. A staged variant is possible if the most removal now matters more:
+option 1 for the CA key while only HQ exists, and option 2 when the first unattended
+key appears with satellites.
+
 ## Acceptance criteria
 
 | ID | Passing evidence |
