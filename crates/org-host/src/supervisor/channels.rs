@@ -532,27 +532,33 @@ impl Drop for Endpoint {
     }
 }
 
+#[cfg(target_os = "macos")]
 pub(crate) fn reader_is_child(
     stream: &UnixStream,
     pid: u32,
     admitted: Option<AuditToken>,
 ) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let token = crate::peer::audit_token(stream)?;
-        let peer_pid = u32::from_ne_bytes(token[20..24].try_into().map_err(launch)?);
-        if admitted.is_some_and(|expected| expected != token) || peer_pid != pid {
-            return Err(invalid());
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if admitted.is_some() || !org_socket::peer_process_allowed(stream, crate::home::euid(), pid)
-        {
-            return Err(invalid());
-        }
+    let token = crate::peer::audit_token(stream)?;
+    let peer_pid = u32::from_ne_bytes(token[20..24].try_into().map_err(launch)?);
+    if admitted.is_some_and(|expected| expected != token) || peer_pid != pid {
+        return Err(invalid());
     }
     Ok(())
+}
+
+/// No other operating system has a check that the reader is the started worker yet. Refuse
+/// rather than fall back to a weaker one (ADR-0017); the Linux check arrives with increment X1
+/// of the implementation plan.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn reader_is_child(
+    _stream: &UnixStream,
+    _pid: u32,
+    _admitted: Option<AuditToken>,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "checking a worker's identity is not implemented on this operating system",
+    ))
 }
 
 #[cfg(test)]
