@@ -221,10 +221,12 @@ impl HostDb {
         let home = checked_home(home)?;
         absent(&home.join(DB), Error::Exists)?;
         let names = secrets.list()?;
-        if names
-            .iter()
-            .any(|n| n.as_str() == "writer-device" || n.as_str().starts_with("writer."))
-        {
+        // Pending recovery custody can precede writer reservation. Its presence,
+        // even if malformed, requires forward repair before any cleanup/reset.
+        if names.iter().any(|name| {
+            let name = name.as_str();
+            name == "writer-device" || name.starts_with("writer.") || name.starts_with("recovery.")
+        }) {
             return Err(Error::Unsafe);
         }
         cleanup_uncommitted_registry(&home)?;

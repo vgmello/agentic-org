@@ -265,11 +265,7 @@ fn encrypted_schema_metadata_tls_and_pragmas_survive_reopen() {
 fn create_replaces_leftover_secrets_and_temps_without_tls() {
     let home = home();
     let secrets = Secrets::default();
-    for n in [
-        "registry",
-        &format!("tls.{}", "cd".repeat(32)),
-        "recovery.Abc123",
-    ] {
+    for n in ["registry", &format!("tls.{}", "cd".repeat(32))] {
         secrets
             .put(&Name::parse(n).unwrap(), &Value::new(vec![7; 32]).unwrap())
             .unwrap();
@@ -297,6 +293,56 @@ fn create_replaces_leftover_secrets_and_temps_without_tls() {
             .unwrap(),
         0
     );
+}
+#[test]
+fn retained_opaque_recovery_custody_refuses_create_before_any_cleanup() {
+    for payload in [
+        b"".as_slice(),
+        b"opaque credential",
+        br#"{"version":1}"#,
+        br#"{"version":99}"#,
+    ] {
+        let home = home();
+        let secrets = Secrets::default();
+        for (name, bytes) in [
+            ("registry".to_owned(), vec![7; 32]),
+            (
+                format!("tls.{}", "cd".repeat(32)),
+                b"unrelated TLS key".to_vec(),
+            ),
+            ("recovery.Abc123".to_owned(), payload.to_vec()),
+        ] {
+            secrets
+                .put(&Name::parse(&name).unwrap(), &Value::new(bytes).unwrap())
+                .unwrap();
+        }
+        let credentials = secrets.0.lock().unwrap().clone();
+        let retained: BTreeMap<_, _> = [
+            "host-registry.db-wal",
+            "host-registry.db-shm",
+            "host-registry.db-journal",
+            TMP,
+            "host-registry.db.tmp-wal",
+            "host-registry.db.tmp-shm",
+            "host-registry.db.tmp-journal",
+        ]
+        .into_iter()
+        .map(|name| {
+            let bytes = format!("retained {name}").into_bytes();
+            fs::write(home.path().join(name), &bytes).unwrap();
+            (name, bytes)
+        })
+        .collect();
+        assert!(matches!(
+            HostDb::create(home.path(), &secrets, &init(false)),
+            Err(Error::Unsafe)
+        ));
+        assert!(!home.path().join(DB).exists());
+        assert!(*secrets.0.lock().unwrap() == credentials);
+        for (name, bytes) in retained {
+            assert_eq!(fs::read(home.path().join(name)).unwrap(), bytes);
+        }
+    }
 }
 #[test]
 fn existing_file_and_dangling_symlink_create_have_no_effect() {
