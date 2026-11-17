@@ -497,7 +497,7 @@ fails on Linux with unused items that only macOS code reaches (the reason CI all
 ## 7. Working in parallel with the macOS track
 
 Track X (Linux) runs beside Track A (getting in) and Track B (the store). The
-increments are in the [implementation plan](../implementation-plan.md#track-x--linux-and-containers).
+increments are in the [implementation plan](../implementation-plan.md#milestone-two--linux-in-parallel-track-x).
 
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |
