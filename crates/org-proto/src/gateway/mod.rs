@@ -2,7 +2,7 @@
 //!
 //! These are wire types, not a running HTTP adapter or an authorization service. The host
 //! owns accounts/sessions, the worker owns domain authorization, and the gateway owns the
-//! cookie/proof mapping. See `docs/design/gateway-api-v1.md`. Shared conformance fixtures live
+//! cookie/proof mapping. See `docs/design/web-api-v1.md`. Shared conformance fixtures live
 //! in `crates/org-proto/test-vectors/v2/gateway-*.json`; they never enter production UI imports.
 
 use serde::{Deserialize, Serialize};

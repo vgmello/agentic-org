@@ -2612,7 +2612,7 @@
       "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
     },
     {
-      "path": "docs/design/gateway-api-v1.md",
+      "path": "docs/design/web-api-v1.md",
       "source_sha256": "8e2af66180dc89cec954429f0db5ef18466f9ea6e0b1fbb2897247050f5b678e",
       "primary_unit": "F0",
       "owner": "root",

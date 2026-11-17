@@ -53,7 +53,7 @@ Retain the following conditional acceptance groups (CER/RET IDs are from the lat
 6. **Action items are changes, not wishes.** Each has a **kind**: **Task** (work to do) · **Guidance** (a change to agent guidance, §6.2 of the decisions spec) · **Checklist** (a change to a checklist template) · **Template** (a doc template) · **Decision** (a new ADR) · **Rule** (AGENTS.md or the project brief) · **Process** (a deferred change workflow for selected structural process content, `processes-ux.md`) *(rev 3)*. Each has an owner and, for non-tasks, the exact proposed change (a diff). A Process item lands through the merge flow once the owner approves the retro's items. *(rev 4)* That approval is also the process's level approval: the owner can approve a process change at every level (`processes-ux.md` decision 8), so no second approval is needed. Selected organization/team/project processes live together in organization Git at `processes/<id>.md`, recursively nested team `processes/<id>.md`, and `projects/<project-id>/processes/<id>.md`. Review changes there against exact revisions. Private process storage/privacy and approvals remain unresolved deferred proposals; do not use shared Git to promise private visibility.
 7. **The owner approves, and then it's applied everywhere.** **Approve** creates the tasks and proposes every procedure change through the normal branch and merge flow (docs land through branches): *(rev 4)* organization-Git review branches for selected scoped process/report documents; code-rule changes may additionally require a branch in each affected code repository (decision 6). The retro shows "Applied to all agents" once every branch it produced is merged. Once merged, every agent gets it at its next start or wake: the guidance moment, the checklist or the rule. The owner can turn on **"Apply procedure changes without asking"** for low-risk kinds (guidance and checklists). That skips only the owner's approval: the changes still land through review, go and merge (`decisions-and-tech-debt-ux.md` A36).
 8. **The next retro checks the last one's actions:** "Last time: run tests on a single branch. Did it help?" with the before and after numbers when they exist (median test time 14 min → 6 min). Items that didn't help can be reverted from there.
-9. **A retro is a persistent record:** `projects/<project-id>/reports/<document-id>.md` with the selected report envelope; period, features, participants, evidence and proposed action IDs stay in body content pending a specialized workflow metadata contract. *(rev 5)* The file carries no cost amounts or budget figures (A109): its evidence gives tokens and "Budget reached" where it applies, with a link to the retro in the app. The evidence that agents and the facilitator get, in the app, by `org-agent retro show` and with the input request, has no cost amounts either (tokens and "Budget reached" only), so their answers and the synthesis can't carry amounts into the file, as `project-status-ux.md` A41 does for the Reporter. The action-item tasks are durable typed tasks linked to it.
+9. **A retro is a persistent record:** `projects/<project-id>/reports/<document-id>.md` with the selected report envelope; period, features, participants, evidence and proposed action IDs stay in body content pending a specialized workflow metadata contract. *(rev 5)* The file carries no cost amounts or budget figures (A109): its evidence gives tokens and "Budget reached" where it applies, with a link to the retro in the app. The evidence that agents and the facilitator get, in the app, by `agent-os retro show` and with the input request, has no cost amounts either (tokens and "Budget reached" only), so their answers and the synthesis can't carry amounts into the file, as `project-status-ux.md` A41 does for the Reporter. The action-item tasks are durable typed tasks linked to it.
 
 ## 1. Flow 1 · Settings (project › Settings › Retrospectives)
 
@@ -75,7 +75,7 @@ Retain the following conditional acceptance groups (CER/RET IDs are from the lat
 ## 2. Flow 2 · A retro runs
 
 1. **Gathering** (automatic, about a minute): the scope and its evidence (decision 4).
-2. **Input** (asynchronous, up to 30 min by default): each participant gets "Retro for 13:10–17:10: 3 features. Your input: keep doing, do better, stop doing, problems." Agents answer with `org-agent retro input` (or in the app), and each item can cite evidence.
+2. **Input** (asynchronous, up to 30 min by default): each participant gets "Retro for 13:10–17:10: 3 features. Your input: keep doing, do better, stop doing, problems." Agents answer with `agent-os retro input` (or in the app), and each item can cite evidence.
 3. **Synthesis** (the facilitator): groups duplicates, counts how many raised each one, writes the root cause for each problem, and proposes action items with kinds, owners and diffs.
 4. **Review** (the owner): one Needs you item, "Retro ready: 4 action items to approve".
 5. **Applied:** tasks created, procedure changes proposed through branches, and the retro doc committed.
@@ -125,9 +125,9 @@ This is the authorized owner/project-manager app view. Agents, including the fac
 
 ## 5. CLI (agents)
 
-These are retained `org-agent` command proposals, not implemented `agent-os` commands or a new wire API.
+These are retained `agent-os` command proposals, not implemented `agent-os` commands or a new wire API.
 
-`org-agent retro show [<id>]` · `retro input <id> --keep "…" --better "…" --stop "…" --problem "…" --why "…" --prevent "…" [--evidence T-17]` · `retro synthesize <id>` (facilitator) · `retro list`. The words match the app's.
+`agent-os retro show [<id>]` · `retro input <id> --keep "…" --better "…" --stop "…" --problem "…" --why "…" --prevent "…" [--evidence T-17]` · `retro synthesize <id>` (facilitator) · `retro list`. The words match the app's.
 
 ## 6. Earlier deferred acceptance criteria (RETRO)
 
@@ -142,7 +142,7 @@ These are retained `org-agent` command proposals, not implemented `agent-os` com
 - RETRO-9 · **Deferred retrospective engine:** The next retro shows the previous action items with "Did it help?" and before/after numbers when they exist, and offers to revert one.
 - RETRO-10 · **Deferred retrospective engine:** *(rev 5)* Each retro is saved as `projects/<project-id>/reports/<document-id>.md` with front matter, and listed in Docs › Retrospectives. The file has no cost amounts or budget figures: tokens and "Budget reached" instead, with a link to the retro in the app (A109). Agents' input and the synthesis are written from evidence without amounts (decision 9).
 - RETRO-11 · **Deferred retrospective engine:** The owner can turn on applying guidance and checklist changes without their own approval (they still land through review, go and merge). Other kinds always need approval.
-- RETRO-12 · **Deferred retrospective engine:** `org-agent retro input|show|synthesize|list` work like the app, with the same words.
+- RETRO-12 · **Deferred retrospective engine:** `agent-os retro input|show|synthesize|list` work like the app, with the same words.
 
 ## 7. Open questions
 

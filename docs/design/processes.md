@@ -1,6 +1,6 @@
 # Design: processes (how agents work, written down and inherited)
 
-Revision 5 · 2026-11-15. Owner: ada. [Organization structure](organization-data/01-organization-structure.md), [project structure](organization-data/02-project-structure.md), [identity](organization-data/06-identity-and-numbering.md) and [record contracts](organization-data/08-record-contracts.md) select process/standard **content**, scopes and default-allowed override flags. Effective resolution, approval workflows, private processes, timers, checklist composition and process execution remain unselected/deferred. Existing `org-process` parsing/resolution/branch helpers and read-only UI are implementation evidence of the earlier contract, not a selected end-to-end process service. The [authority map](documentation-authority.md) governs precedence.
+Revision 5 · 2026-11-15. Owner: lead. [Organization structure](organization-data/01-organization-structure.md), [project structure](organization-data/02-project-structure.md), [identity](organization-data/06-identity-and-numbering.md) and [record contracts](organization-data/08-record-contracts.md) select process/standard **content**, scopes and default-allowed override flags. Effective resolution, approval workflows, private processes, timers, checklist composition and process execution remain unselected/deferred. Existing `org-process` parsing/resolution/branch helpers and read-only UI are implementation evidence of the earlier contract, not a selected end-to-end process service. The [authority map](documentation-authority.md) governs precedence.
 
 The detailed delivery/branch algorithms below remain reviewable proposals or versioned library behavior where stated. Selected files cannot be fed to the old parser as though their lifecycles/fields were identical. No new CLI/wire command is claimed implemented by this revision. Human controls use the authenticated HQ boundary; a browser connection or office certificate alone grants no role authority.
 
@@ -112,7 +112,7 @@ Sets are cached under a fingerprint of the organization state commit, accountabl
 - **changed since last read**: the full text of each process whose winning blob isn't among the blobs the agent has read for that key (a new version, a new winner or a conflict fallback all count);
 - each process's `moments` prompt, after that moment's guidance text, only while the moment is On.
 
-**Size cap: 24 KiB**, prompts included: summaries first (past the cap, "and N more: run `org-agent process list`"), then changed texts, organization first; the rest are named with "run `org-agent process show <key>`". It goes in the instruction file at a start, the wake prompt at a wake (a message for a resumed session, `agent-sessions.md` decision 5), and `org-agent task start`'s result; `task done` returns the Finishing a task prompts. The texts actually delivered count as read once the runtime accepted the start or wake, or on `process ack`.
+**Size cap: 24 KiB**, prompts included: summaries first (past the cap, "and N more: run `agent-os process list`"), then changed texts, organization first; the rest are named with "run `agent-os process show <key>`". It goes in the instruction file at a start, the wake prompt at a wake (a message for a resumed session, `agent-sessions.md` decision 5), and `agent-os task start`'s result; `task done` returns the Finishing a task prompts. The texts actually delivered count as read once the runtime accepted the start or wake, or on `process ack`.
 
 **Checklists** (PROC-12): `task.create` in P adds the steps of P's processes (O ⊕ T ⊕ J, never G) after the project's default checklist, duplicates merged, required winning.
 
@@ -145,7 +145,7 @@ midway or mark omitted text read.
 
 **Three inputs:** processes say how to behave; standards (stack, cloud and coding
 conventions) are indexed knowledge fetched when a process/task calls for it;
-`org-agent` help explains tools, syntax and permissions. Inject concise tool help
+`agent-os` help explains tools, syntax and permissions. Inject concise tool help
 separately; retrieve detailed help progressively. Standard bodies are not bulk
 injected. Keep source/version references to audit what the agent used.
 
@@ -167,9 +167,9 @@ The following branch algorithms retain legacy mirror.git/work.git role names and
 The earlier single-repository helper record is: `{ task_id, member_id, project_id, branch, base_sha, own_tip?, state: reserved | open | closing | merged | archived, merged_by_hand?, stage?, opened_at, last_moved_at, closed_at? }`. Target records need explicit repository_id, optional project_id and a separately designed durable operation/history source. Task handoff transfers safe workspace custody only after fencing/cleanup; do not infer it from office ownership or copy a cache row as authority.
 - **Reserved** at `task start`, before any git; **open** once the branch exists. Nothing is reserved without a repository.
 - **Branch names.** `task/<ref>-<slug>` (W7), with a `-2`, `-3`… suffix whenever a record, a `merged/` or `archive/` tag, a remote branch or a local `work.git` branch already has the name (never `-B`).
-- **`own_tip`** (decided 2026-11-08) is the latest tip the office has seen on the branch (through `org-agent push`, or a fetch into `mirror.git`) that descends from `base_sha` and is reachable from no ref in `mirror.git` other than this branch's own copies (`refs/heads/task/<b>` as fetched, `refs/office/task/<b>`, `refs/office/task-head/<b>`). A fast-forward or reset onto the integration branch or someone else's branch never sets it. Residual: agents share `work.git`'s objects, so one could push another's commits first; review catches it.
+- **`own_tip`** (decided 2026-11-08) is the latest tip the office has seen on the branch (through `agent-os push`, or a fetch into `mirror.git`) that descends from `base_sha` and is reachable from no ref in `mirror.git` other than this branch's own copies (`refs/heads/task/<b>` as fetched, `refs/office/task/<b>`, `refs/office/task-head/<b>`). A fast-forward or reset onto the integration branch or someone else's branch never sets it. Residual: agents share `work.git`'s objects, so one could push another's commits first; review catches it.
 - **Merged** when `own_tip` is reachable from the **integration branch** in `mirror.git` (a `--no-ff` merge, decision 12), or when a project lead or the owner marks it **merged by hand**. `own_tip` stays checkable after the branch is deleted. Once merged, the office refuses pushes to the branch; more work needs a new branch, checked like any other.
-- **Pushes need a record.** `org-agent push` takes a `task/*` branch only from the holder of its open record.
+- **Pushes need a record.** `agent-os push` takes a `task/*` branch only from the holder of its open record.
 - **Released** (removed): a reservation whose task leaves In progress, closes, is deleted or moves before its branch exists. A failed `git worktree add` removes it and restores its exception in one transaction; startup reconciles reservations with existing branches and clears a stale closing. `task.branch` (W7) holds the current record's branch; branch → task goes through records.
 - **Stuck.** A record idle for over a day goes to the lead's Needs you, with **Mark merged…** (decision 12). Until the merge flow gives `stage`, the work state shows open or merged and the refusal says "isn't merged yet" (A63).
 
@@ -180,7 +180,7 @@ The earlier single-repository helper record is: `{ task_id, member_id, project_i
 - **An exception** on the target task allows one record for that task and assignee, then is used up. Any start that makes a record uses it up, even one nothing blocked or with the rule off; reusing the task's own reserved or open record (point 2 after point 1) uses none (ruled 2026-11-13: ada).
 
 It runs at A54's two points, each in one write transaction with the record it creates (A67):
-1. `task.set_status { in_progress }` by the assignee agent (`org-agent task start`), when the task has no reserved or open record for that assignee: check, then reserve.
+1. `task.set_status { in_progress }` by the assignee agent (`agent-os task start`), when the task has no reserved or open record for that assignee: check, then reserve.
 2. The creation of a task branch, whoever triggered it (an app move, a task session start, a hotfix): check and reserve (or reuse the task's own reservation), then create the branch (below). A refused creation ends that session's run as `blocked`.
 
 **Creating the branch** (decision 14), as one locked operation on the repository (the name's suffix included; the mirror fetch takes the same lock): the office resolves the branch the task names, else that repository association's required `integration_branch`, to a sha in `mirror.git`, fetches that sha into an office-made ref in `work.git` (`refs/office/base/<task>`, deleted after the add; an agent could move it, but the add uses the sha), runs `git worktree add -b task/… -- <path> <sha>` (it fails rather than overwrite a planted ref) and records the sha as `base_sha`. A missing `integration_branch` refuses the creation (`unavailable`, reason `integration_branch_missing`).
@@ -196,7 +196,7 @@ These permission checks, and those of §4.3, amend W7 decision 8 ("no permission
 **Refusals** use the spec §4 wording. The office keeps one open refusal per (agent, target task), a bookkeeping event that doesn't change the task's version, in the project leads' and owner's Needs you with **Allow once…** and **Open chk-T-17** (PROC-14), until the branch merges or an exception is granted.
 
 ### 4.3 Exceptions and merged by hand
-- `task.allow_second_branch { change_id, item, reason }`, from the app or `org-agent task allow-second-branch`. The caller is an explicitly authorized project approver or authenticated owner; contributor-team membership alone confers no grant, and never for their own task (PROC-11), except the owner. The reason is required (1–1,000). It's recorded as `BranchExceptionGranted { reason, open_branch, assignee }` with the actor, covers one record for that task and assignee, and a reassignment voids it.
+- `task.allow_second_branch { change_id, item, reason }`, from the app or `agent-os task allow-second-branch`. The caller is an explicitly authorized project approver or authenticated owner; contributor-team membership alone confers no grant, and never for their own task (PROC-11), except the owner. The reason is required (1–1,000). It's recorded as `BranchExceptionGranted { reason, open_branch, assignee }` with the actor, covers one record for that task and assignee, and a reassignment voids it.
 - `task.mark_branch_merged { change_id, item, integration_commit, reason }` (decision 12): the same callers; never the record's own agent. The office checks that the commit is on the integration branch in `mirror.git`, records `BranchMergedByHand` and marks the record merged. If its head isn't an ancestor of the integration branch, A58 deletes nothing remote: the office pushes `merged/<b>` at the head, removes the local worktree and branch (§4.5's local checks), and leaves the remote branch to a person.
 
 ### 4.4 Docs branches (pending U28)
@@ -265,9 +265,9 @@ A new module, `crates/org-proto/src/process.rs`. The historical sketch was addit
 The package names below are historical implementation ownership/proposals: current executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Existing org-process/org-docs/org-work helpers are partial evidence only; proposed adapters, services and commands must be verified separately.
 - **`org-process`** (new; owner TBD by ada): front matter, path → level and scope, `resolve`, the fingerprint, `render`, the checklist merge, `one_branch` (start check, guarded moves, own work from given shas), the write checks. Pure: no SQL, git, network or clock; no ports. Depends on `org-proto`, `org-docs` and `serde`: `Ce = 2` for the proposed internal package graph, or 3 including `serde`; calculate I only after identifying consumers at the same level.
 - **`org-office`** (server-dev): the index, caches, project-wide items, last reads, records, exceptions, the calls and the checks inside the work write; one new stable-ward edge, to `org-process`.
-- **`org-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
+- **`agentic-org-office`** (server-dev): repo reads through `org-git`; the handbook at organization create.
 - **`org-git`** (River): W7's `DocRepo` API, the handbook's repository and merge, branch creation at a sha, and the §4.5 cleanup.
-- **`org-agent`** (Remy): the PROC-8 commands (Appendix B), `task allow-second-branch`, the `one_branch_open` exit code.
+- **`agent-os`** (Remy): the PROC-8 commands (Appendix B), `task allow-second-branch`, the `one_branch_open` exit code.
 - **`apps/agentic-org-ui`** (app-frontend-dev): the Processes views, the profile tab, Allow once…, Mark merged…, the work state.
 
 One new library, three stable-ward dependencies, no cycle.
@@ -283,7 +283,7 @@ Every R phase is deferred product integration/earlier planning, not a selected r
 | **R4** | Writes, the write checks, approve and reject, the handbook merge, private proposals, versions, drift fixes, checklists and moments, the CLI writes, the app's views. PROC-8 writes, 9, 11, 12, 18. Project merges depend on A62. | server-dev; app-frontend-dev; Remy |
 | **R5** | Retro items of kind Process (PROC-13), with retros (W7 P5). Branch-wait insights (spec §4). | as retros |
 
-Each step: its own branch, an independent review, the reviewer's READY, my go, a merge into `v1`.
+Each step: its own branch, an independent review, the reviewer's READY, a merge into `v1-integration`.
 
 ## 9. Open questions
 - A60 · Resolved structurally: TEAM- references exist; all canonical paths use stable IDs and recursive ancestry.
@@ -305,7 +305,7 @@ Each step: its own branch, an independent review, the reviewer's READY, my go, a
 
 ## Appendix B. The CLI (PROC-8)
 
-**Deferred legacy CLI proposal:** these org-agent command names are not claims of implemented agent-os entry points.
+**Deferred legacy CLI proposal:** these agent-os command names are not claims of implemented agent-os entry points.
 `process list` is `process.effective` (`--level`: `process.view`); `why`, `show`, `ack`, `approve` and `reject` are their calls. `new`, `override`, `off`, `edit`, `rename`, `keep` and `take-parent` build the content and send it with `process.save` (handbook) or `doc.save` (project). `new --private "<name>"` slugs the key from the name, with a clash check, as for doc keys. `task allow-second-branch` and `task mark-merged` are the work calls.
 
 ## Appendix C. Tests that prove the rules

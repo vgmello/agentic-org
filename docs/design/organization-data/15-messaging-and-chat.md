@@ -27,7 +27,7 @@ Each JSON source envelope has `schema_version: 1`, stable IDs, a positive `revis
 
 ## Runtime ownership and routing
 
-[ADR-0003](../../adr/0003-agent-messaging-office-first.md) decided how messages are stored and routed at run time. The routing and ownership decisions in its §2.2 and §§3.1–3.4 are selected and are part of this contract. This section states them in the vocabulary of the model above. Everything else in ADR-0003 (the v1 tables, wire calls, `app_token` discovery, the `org-agent` CLI surface, urgent interruption in §2.3 and the spool in §3.5) stays versioned compatibility and implementation evidence, not target behaviour. Wherever this document and ADR-0003 differ, this document wins. Where this document is silent on routing or ownership, ADR-0003 §2.2 and §§3.1–3.4 apply.
+[ADR-0003](../../adr/0003-agent-messaging-office-first.md) decided how messages are stored and routed at run time. The routing and ownership decisions in its §2.2 and §§3.1–3.4 are selected and are part of this contract. This section states them in the vocabulary of the model above. Everything else in ADR-0003 (the v1 tables, wire calls, `app_token` discovery, the `agent-os` CLI surface, urgent interruption in §2.3 and the spool in §3.5) stays versioned compatibility and implementation evidence, not target behaviour. Wherever this document and ADR-0003 differ, this document wins. Where this document is silent on routing or ownership, ADR-0003 §2.2 and §§3.1–3.4 apply.
 
 | Rule | Statement | Source |
 | --- | --- | --- |

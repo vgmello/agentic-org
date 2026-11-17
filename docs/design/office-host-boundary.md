@@ -73,7 +73,7 @@ bytes are immutably published there as `security/ca-escrow.v1.bin`. Reopen can
 repair absence from the retained local record; conflicting bytes cause recovery,
 with both identities preserved. A public-only read DTO excludes the usable key.
 
-### Gateway process entry (GW-SBX-MAC-1)
+### Web process entry (GW-SBX-MAC-1)
 
 The verified release's `agentic-org-web --serve` loads its sibling `ui/` public
 build before confinement. The host spawn closes unintended inherited descriptors
@@ -87,15 +87,15 @@ early rights; the next marker must carry transfer then listener, with exact
 socket-type/CLOEXEC checks before `fds.received`. The same socket then carries
 host control; neither host.sock nor an office pathname is a fallback. Actual
 `tls.fetch` supplies the verified listener configuration before HTTP accepts.
-Host EOF terminates the gateway and all its browser/native authority.
+Host EOF terminates the web process and all its browser/native authority.
 
-Gateway admission uses `com.ellosoft.agentic-org.org-gateway`, separately from the
+Web admission uses `com.ellosoft.agentic-org.org-gateway`, separately from the
 worker signing identifier, with the compiled Developer ID team, hardened runtime,
 no debug/injection entitlements and no Keychain access-group entitlement. The
 host rechecks the accepted reader's audit token, image continuity and kernel
 sandbox before sending either descriptor. The host-owned private connection is
 distinct from `host.sock`: only it can fetch the per-bind listener snapshot.
-Gateway office channels travel as `ChannelKind::Gateway` records on its admitted
+Web office channels travel as `ChannelKind::Gateway` records on its admitted
 datagram transfer socket; native channels retain the existing stream-marker
 delivery and `ChannelKind::Local`. Both retain descriptors until their correlated
 receipt; sessions/grants remain connection-bound and end at control EOF. (Amended by
@@ -166,7 +166,7 @@ This describes the intended adapter, not completed setup or adoption evidence.
 ## Target launch and recovery gate
 
 Launch-v2 examples in §§1–6 below preserve the exact baseline protocol and security
-review. Their `org-server`/`org-office-host` names identify historical executables;
+review. Their `agentic-org-office`/`org-office-host` names identify historical executables;
 current filenames are `agentic-org-office`/`agentic-org` and reusable host code is
 `org-host`. `office.json` v1 and launch v2 are independent of organization-data
 `schema_version`/`revision`. No extra slug/repository/home-team fields are added to
@@ -271,8 +271,8 @@ or changing credential identities implicitly.
 | Path | Written by | Read by |
 | --- | --- | --- |
 | `<home>/host.lock` | host: **the single-host lock**, an exclusive `flock` held for the host's whole life. A second host on the same home exits at once, so one host creates every office. Inside it, the **catalog mutex** (in-process) guards only a create's name check and reservation (see 4). | host |
-| `<home>/host.sock` | host (0600) | app, `org-agent` (run by hand; office-run sessions compute their socket path, §3) |
-| `<home>/run/<handle>.sock` | server (0600) | app, `org-agent` (address from the host's `office.list`, or computed when `ORG_OFFICE` is set, as in office-run sessions, §3) |
+| `<home>/host.sock` | host (0600) | app, `agent-os` (run by hand; office-run sessions compute their socket path, §3) |
+| `<home>/run/<handle>.sock` | server (0600) | app, `agent-os` (address from the host's `office.list`, or computed when `ORG_OFFICE` is set, as in office-run sessions, §3) |
 | `<home>/offices/<office-id>/` | **server** creates it (0700) on `--create` | host lists the folder names |
 | `…/office.lock` | server: `flock` from before it opens anything until it exits | nobody else, ever |
 | `…/office.json` | server, **written last** on `--create` (tmp + rename + fsync): this is the "stored" marker | host (the catalog) |
@@ -285,7 +285,7 @@ A satellite whose `office.json` records a terminal join `state` stays in the cat
 The host looks only at folders named by a plain id; any other folder (such as `.refused`) is never
 started or discarded.
 - **No `office.json`:** an unfinished create. The host never starts it. At startup, or after that create
-  failed before `office.json` was in place, it runs `org-server --discard <id>`, with the office's
+  failed before `office.json` was in place, it runs `agentic-org-office --discard <id>`, with the office's
   key on the first line, or `"db_key": null` when it holds none for that id (amended 2026-11-08: key
   custody). The server takes the lock (same wait), and removes the folder only if the office never
   finished (with no folder, it takes no lock, creates nothing and reports `discarded`, see 3):
@@ -339,9 +339,9 @@ is unrelated to HQ's `OfficeInfo.status: pending` (an invited office).
 ## 2. Starting a server
 
 ```
-org-server --create          # create a new office from the pipe message, then serve it
-org-server --office <id>     # serve an existing office
-org-server --discard <id>    # remove an unfinished office, then exit (the host then deletes its key)
+agentic-org-office --create          # create a new office from the pipe message, then serve it
+agentic-org-office --office <id>     # serve an existing office
+agentic-org-office --discard <id>    # remove an unfinished office, then exit (the host then deletes its key)
 ```
 - The host always sets `ORG_OFFICE_HOME` explicitly on the child, so both use the same home.
 - No details on the command line beyond the office id (the design: details travel through the pipe).
@@ -462,7 +462,7 @@ first line is `invalid_request`.
 - (amended 2026-11-08: agent sessions rev 3.3, ada) **Children, for the watchdog.** After `ready`, the server also sends a line for each agent runtime it spawns, and one when that child is reaped and cleaned up ([`agent-sessions.md`](agent-sessions.md), "Processes and safety"):
   `{"v":2,"event":"child","pgid":4250,"pid":4250,"started_at":"…","mark":"…"}` and `{"v":2,"event":"child_gone","pgid":4250}` (amended 2026-11-08: key custody: `"v":2`, like every pipe line).
   The host keeps them in memory only, and when the server dies it runs the orphan cleanup on them before it restarts the server. The mark isn't a secret.
-  Office-run agents' tools can't connect to `host.sock` (a fixed deny in `agent-sessions.md`). `org-agent` there always has `ORG_OFFICE`, so it computes its office's socket path (`org_proto::location::office_socket_path`) and never needs `host.sock` or `office.list`.
+  Office-run agents' tools can't connect to `host.sock` (a fixed deny in `agent-sessions.md`). `agent-os` there always has `ORG_OFFICE`, so it computes its office's socket path (`org_proto::location::office_socket_path`) and never needs `host.sock` or `office.list`.
 - (amended 2026-11-08: agent sessions rev 3.3, ada) **A host ignores an event it doesn't know** (it logs the event's name once), so a server can add events without a host change. Only `failed` codes have their own unknown rule (above).
 
 ## 4. What the host does
@@ -561,7 +561,7 @@ first line is `invalid_request`.
     check). A child that fails, or whose token can't be taken, is killed and reaped and gets
     nothing; the start counts as `storage_error`. A release host with no team id compiled in starts no server at all (logged as a
     WARNING). This stops a same-user process that runs the signed host from a copy, a symlink or a
-    hard link next to its own `org-server` from receiving the keys, with one **residual
+    hard link next to its own `agentic-org-office` from receiving the keys, with one **residual
     risk (open)**: any same-user process can resume a suspended child (`SIGCONT`). An attacker that
     resumes the child before the host takes its token (stopping or starving the host, e.g. a copy
     of the host it launched itself, makes that easy), lets it fork a helper that
@@ -574,7 +574,7 @@ first line is `invalid_request`.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected
     by the owner's recovery code, comes later as a feature.
   - **Release trust inputs are compiled in:** the team id, the bundle id, the Keychain access group,
-    and the office-home rules. The server is the `org-server` next to the host's own
+    and the office-home rules. The server is the `agentic-org-office` next to the host's own
     executable (canonical path), and is admitted only if it passes the signature check. Release
     builds refuse `--home`, `--server-bin` and `--app-team-id`; debug builds keep them. (amended
     2026-11-08: review M1) At startup a release host also reads its own signing information once
@@ -589,7 +589,7 @@ first line is `invalid_request`.
     build. If it needs a provisioning profile, the host ships as a helper app bundle
     (`Contents/Library/LoginItems/…`). The legacy-ACL fallback is used only if the Data Protection
     keychain proves impossible, and then it goes back to ada first.
-  - **Why:** a same-user process could stop the host and run the signed `org-server` itself with
+  - **Why:** a same-user process could stop the host and run the signed `agentic-org-office` itself with
     its own app token, and a Keychain item owned by the server would trust that server. With the host
     holding the keys, a server started by anyone else gets no key and can't open `org.db`.
 - **host.sock:** 0600 and `run/` 0700. On accept, the host also checks the peer's uid (`getpeereid`) is its own (defence in depth).
@@ -615,14 +615,14 @@ integration tests to `apps/agentic-org`, and the worker to
   `organization.create`, `organization.list`, `office.list`, `office.restart`, `office.app_token`,
   `subscribe`), and (amended 2026-11-08: key custody) `keys` (the key store: the Data Protection
   keychain in release builds, the dev-keys files in debug builds).
-- The supervisor takes the server program's path as config (default: the `org-server` next to
+- The supervisor takes the server program's path as config (default: the `agentic-org-office` next to
   the host binary in the app bundle; a release build uses only that one, next to the host's own
   executable (canonical path), and admits it only if it passes the signature check, see Key
   custody). The host's tests use a **fake office server** (a test helper binary
   that follows section 3), so the host is tested without SQLCipher or the Keychain (its keys go to the
   dev-keys files or an in-memory store), and doesn't wait for server-dev's work to land. The fake must never ship: it's an example or a dev-only bin the bundle never picks up.
 - The host doesn't depend on `org-office` (no SQLCipher in the login service) or on
-  `org-server`'s library (an app doesn't depend on an app).
+  `agentic-org-office`'s library (an app doesn't depend on an app).
 
 ## 6. Decisions (ada, 2026-11-08)
 1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`, now 2 for the pipe lines since key custody; lines after the first are ignored, and an unknown op on the first line is `invalid_request`; unknown events and fields are ignored; unknown failed codes count as `storage_error`).

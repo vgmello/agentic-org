@@ -1,6 +1,6 @@
 # Web HTTP API v1
 
-Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. gateway in existing module names, fixtures and wire fields remains a contract namespace, not another executable. This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
+Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. web in existing module names, fixtures and wire fields remains a contract namespace, not another executable. This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
 
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
@@ -8,13 +8,13 @@ Owner naming amendment (2026-11-15): the target browser executable is agentic-or
 Wire `api_version: 1`, `contract_revision: 2`. The core follows design revision 2;
 the organization mutation codec in §9 follows Rowan's approved design revision 3.
 Both were agreed 2026-11-10 by Rowan (technical lead) and ada. This publishes types and shared
-conformance fixtures before the gateway implementation; it does not advertise
+conformance fixtures before the web process implementation; it does not advertise
 runtime availability. Basis: `standalone-server.md` §5–6 and approved X-02 rev13
 (see `office-host-boundary.md` §3 for its agents-repository location).
 
 ## 1. Scope and placement
 
-Publish the first `/api/v1` contract before gateway implementation (B1-05/06).
+Publish the first `/api/v1` contract before web implementation (B1-05/06).
 Cover version/capabilities, browser authentication, instance/organization/office
 status, operation outcomes/lookup, and multiplexed feeds. Later typed domain
 operations extend it before their screens connect. Section 9 adds their codec;
@@ -23,7 +23,7 @@ HTTP composition and enablement remain separate. This is not a JSON-RPC tunnel.
 Approved placement: `org_proto::gateway` owns transport-neutral browser wire DTOs;
 `crates/org-proto/test-vectors/v2/gateway-*.json` owns the core shared examples;
 `test-vectors/v2/gateway/` owns organization mutation and encoding-guard vectors.
-`org-host-control` remains private to host/gateway/setup; no browser import
+`org-host-control` remains private to host/web/setup; no browser import
 of host-control methods or secrets. `org-proto` versions, launch v3, host-control
 v1 and HTTP `/api/v1` remain independent version spaces.
 
@@ -63,7 +63,7 @@ SPA HTML. Unknown operations do not forward to a local socket.
 Lookup query spelling is fixed: `instance_id` is always required; `kind=host`
 forbids `org_id` and `office_id`, `kind=org` requires `org_id` and forbids
 `office_id`, and `kind=work|msg` requires both `org_id` and `office_id`.
-The gateway resolves HQ for `org`; work/message lookups go to the office that
+The web process resolves HQ for `org`; work/message lookups go to the office that
 admitted the ID. All IDs are 1..64 ASCII letters/digits, matching the existing
 plain office-ID shape. Empty values, repeated keys (even identical values), unknown
 keys and malformed IDs are HTTP 400 `invalid_request`, checked before authorization.
@@ -87,7 +87,7 @@ a raw Position alone is not a browser resume token.
 ADR-0006 r4 selects `selected_tasks_v1` as a separately negotiated contract. Its
 codecs do not make it available: runtime publication requires verified recovery,
 directory generation, writer admission, host authentication and actual service
-composition. Existing revision-2 routes/validators remain compatible; the gateway
+composition. Existing revision-2 routes/validators remain compatible; the web process
 contract revision must advance when this capability is wired.
 
 Native `task.set_assignment` takes `{change_id,task_id,command}` on an authenticated
@@ -208,7 +208,7 @@ calculation; validate a nonnegative JavaScript-safe integer at runtime.
 
 Only sign-in and refresh add `proof` in the no-store response. Host session handles,
 grant MACs and channels never appear in this view. `server_time_ms` lets FE-1 mint
-ULIDs with the server offset; gateway prechecks `clock_skew`, owner rechecks it.
+ULIDs with the server offset; web prechecks `clock_skew`, owner rechecks it.
 Host defaults are 12 h absolute/30 min idle; refresh cannot extend absolute expiry.
 
 Instance view: `{instance_id,name,server_version,gateway_status,listen_scheme,tls,
@@ -248,7 +248,7 @@ mismatch is refused before dispatch; authorized identity comes from the pair,
 never from a supplied account/member/principal. Foreign authorized-scope lookups
 use `not_found`; absent/bad pair uses `not_authorized`.
 
-There is exactly **one operation ID**. Gateway maps it to host `operation_id`, org
+There is exactly **one operation ID**. The web process maps it to host `operation_id`, org
 `command_id`, work `change_id` or `msg.send.id` without generating another ID.
 Operation IDs are idempotency keys, not ordering keys (D-GW3, ada
 `01M72X7AAJTVZZW4MCQ6GSK2RV`). Secure random ULIDs need no same-millisecond
@@ -261,7 +261,7 @@ time, never the raw local clock; HQ rejects a new ID over five minutes ahead wit
 clock_skew or over29days old with expired. No browser operation registry/outbox.
 Native field does not also appear in browser params. `expected_version` stays in
 the operation's typed params, with the existing per-entity semantics; no second
-envelope version competes with it. Gateway reconstructs the existing typed params
+envelope version competes with it. Web reconstructs the existing typed params
 before hashing/dispatch. Business params are otherwise unchanged. Retired
 `home`/`clear_home`/`profile.home`/`app_token` are refused on presence, including null.
 
@@ -279,7 +279,7 @@ to the target presented by pinned Hyper `=1.12.0` and lockfile `http` `1.5.0`.
 fragments from a request's target URI; [RFC 9112 §3.2.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.1)
 defines origin-form using only path and query. A client-sent literal `#` is
 malformed, but `http` truncates it and everything after it before routing.
-The gateway accepts this parser behavior: validation and authorization use the
+The web process accepts this parser behavior: validation and authorization use the
 same retained path, and discarded bytes do not select routes or static files
 or appear in responses. A raw wire regression pins status, body and policy
 headers to those of the equivalent effective API target. No parser fork or
@@ -302,10 +302,10 @@ unresolved: it cannot prove which of those histories occurred.
 > unlink still end a session immediately. The cookie and proof contract below is
 > unchanged. Where this section says a restart loses sessions, ADR-0013 governs.
 
-Gateway keeps only the in-memory mapping between the random browser cookie/proof
+The web process keeps only the in-memory mapping between the random browser cookie/proof
 pair and host-issued session handle on its admitted control connection. Host owns
 accounts, password verification, expiry, grants and revocation. Worker owns domain
-authorization. Gateway does not open any registry or office DB and has no DB key.
+authorization. The web process does not open any registry or office DB and has no DB key.
 
 Cookie name is instance-specific; HttpOnly, SameSite=Strict, Path=/api/v1, no
 Domain, Secure in HTTPS. Explicit configured loopback HTTP can omit Secure; pair
@@ -323,9 +323,9 @@ Only sign-in accepts passwords. Unknown login and wrong password have identical
 messages reveal no account existence. B1-06 tunes concrete budgets.
 
 On logout, expiry, password change, unlink/revoke or control EOF, invalidate the
-pair and stream. Control EOF ends all host sessions on that connection. A gateway
+pair and stream. Control EOF ends all host sessions on that connection. A web process
 restart loses mappings; require reauthentication. A browser cannot infer restart
-from an unknown cookie: use generic `session_ended` unless the gateway has trusted
+from an unknown cookie: use generic `session_ended` unless the web process has trusted
 evidence. No automatic resend after sign-in. Same-account reauth retains user
 drafts; switching account clears the old account's views in all tabs (SRV §4a).
 
@@ -347,7 +347,7 @@ Discriminated mutation response:
 ```
 
 `accepted` requires a durable owner journal/ledger record binding ID, fingerprint,
-account/scope and outcome; placing work in a gateway memory queue is insufficient.
+account/scope and outcome; placing work in a web process memory queue is insufficient.
 `completed` proves owner commit. `rejected` is confirmed refusal; it must not be
 used for timeout/connection loss after possible dispatch. `unknown` is unresolved,
 not durable success/failure; the UI keeps the ID and performs lookup. Never mint a
@@ -422,7 +422,7 @@ internal path. The JSON domain code is authoritative; HTTP is classification:
 | 410 | expired |
 | 413 | too_large (body refused before forwarding) |
 | 426 | unsupported_version (refresh/update, no mock fallback) |
-| 429 | rate_limited (new gateway code) with retry_after_ms; confirmed pre-dispatch rejected, safe to retry after delay |
+| 429 | rate_limited (new web code) with retry_after_ms; confirmed pre-dispatch rejected, safe to retry after delay |
 | 503 | not_ready, unavailable, storage_error, confirmed pre-dispatch timeout |
 | 504 | outcome unknown after possible dispatch, including timeout; never rejected or accepted |
 
@@ -459,7 +459,7 @@ SSE `event: frame`, JSON `data` tagged by `type`:
 No SSE global `id`/Last-Event-ID is used as a substitute for per-feed cursors.
 Expired/foreign/ahead cursors require resync; unauthorized subscriptions are
 refused before streaming headers, and rechecked after reconnect/session changes.
-Gateway refreshes worker subscription grants before expiry; worker revocation
+Web refreshes worker subscription grants before expiry; worker revocation
 ends subscriptions. A browser frame never contains worker grant/channel material.
 
 For organization durable feeds, the snapshot response includes `resume_cursor`
@@ -471,7 +471,7 @@ when its snapshot endpoint is published. Reconnect preserves order, drops duplic
 changes and requests snapshot_required. Coalesce reloads, not durable changes.
 For nonreplayable host status, subscribe BEFORE list on the same host connection;
 publish its baseline before buffered newer events, and re-list after every gap.
-An opaque gateway generation cursor cannot claim host journal replay support.
+An opaque web generation cursor cannot claim host journal replay support.
 Ephemeral message/presence hints trigger authoritative listings after any gap.
 
 One streaming fetch per origin/instance/principal across eight tabs, owned by a
@@ -515,13 +515,13 @@ refusal/possible-send unknown; cursor per feed, epoch/reset/slow consumer; optio
 fields and unknown enum compatibility. Typed readers assert expected values and
 reject invalid fixtures; mutation probe proves wrong expectations fail.
 
-No live gateway security claim from DTO tests. B1-05/06/08 must exercise real
+No live web security claim from DTO tests. B1-05/06/08 must exercise real
 admission, cross-port cookie attacks, session/stream revocation, limits, eight tabs
 and loss/reconnect. Domain vectors remain in org-office/org-work (B1-03).
 
 Decision record (Rowan `01M72QXR241XRPW9QBY098EB06`, ada as cited above):
 
-1. **D1 approved:** additive gateway DTO module in org-proto, routes §2 frozen;
+1. **D1 approved:** additive web DTO module in org-proto, routes §2 frozen;
    scope fields explicit, one ID, expected versions in typed params.
 2. **D2 decided:** authoritative JSON outcome; completed200, accepted202,
    unknown504; error class table above, rate_limited429 pre-dispatch only.
@@ -542,7 +542,7 @@ Decision record (Rowan `01M72QXR241XRPW9QBY098EB06`, ada as cited above):
 Architecture: existing Ca of org-proto makes changes additive and narrow; no
 host-control/public coupling and no new crates/dependencies. Shared wire types
 reference existing org/domain DTOs intentionally; domain policy never imports HTTP
-transport behavior. Gateway composition routes to typed host/client capabilities.
+transport behavior. Web composition routes to typed host/client capabilities.
 
 ## 9. Organization mutation codec (wire revision 2)
 
@@ -601,8 +601,8 @@ The classifier consumes a correlated native reply with a numeric native ID:
 - Confirmed domain refusals retain their public code/message and the §5 class.
   Literal error code unknown remains unknown504. Unexpected native errors,
   including not_bound and unknown native refusal names, become sanitized
-  unavailable503 with an invariant issue. Native errors cannot supply gateway
-  session, cancellation or identity hints. Rate limiting is gateway-owned.
+  unavailable503 with an invariant issue. Native errors cannot supply web
+  session, cancellation or identity hints. Rate limiting is web-owned.
   The native code allowlist is explicit and exhaustive: codes belonging to
   HTTP admission or other domains (including unsupported_version and timeout)
   cannot pass through with a native message. HTTP admission can still emit

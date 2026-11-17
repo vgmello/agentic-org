@@ -22,7 +22,7 @@ definitions so a delegate can use the employee's persona. An employee can also c
 private specialists and choose between those, a fresh copy of itself and a general
 purpose agent. Those choices are driven by organization processes, with defaults the
 organization can change. Processes are injected; standards are looked up. Tool help
-teaches the `agent-os` commands separately (the request used the legacy `org-agent` name). Channels let an agent ask a team when it
+teaches the `agent-os` commands separately (the request used the legacy `agent-os` name). Channels let an agent ask a team when it
 doesn't know whom to ask, then continue with the right person in a DM.
 
 Revision 4 retains Eden's unscoped remote-worker coordination question in §5;

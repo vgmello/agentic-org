@@ -160,7 +160,7 @@ deduplication, outbox writes, and sequence allocation atomic as their designs re
 Source dependencies point from adapters/composition toward policies and contracts:
 
 ```text
-instance gateway -> typed authorized host/office client operations
+web process -> typed authorized host/office client operations
 per-office server -> public use-case APIs / selected runtime and sync adapters
 office storage implementations -> work and messaging ports
 work and messaging -> their required protocol vocabulary
@@ -172,7 +172,7 @@ The standalone design chooses one `agentic-org-web` process per instance for bro
 HTTP/TLS, routing all authorized HQ organizations on the same listener. The host
 keeps office keys/catalog provisioning; each `agentic-org-office` remains one office worker.
 Create organization requires instance-admin authority, not just organization
-ownership. Keep gateway endpoint code focused on principal authorization, decoding,
+ownership. Keep web endpoint code focused on principal authorization, decoding,
 typed public operations and result mapping; never return an office key to it. A small HTTP adapter crate remains an option
 when its dependency boundary or actual callers justify extraction. Do not depend on
 one runnable application's library from another to assemble the service.

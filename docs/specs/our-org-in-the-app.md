@@ -56,17 +56,17 @@ The [dogfood run](dogfood-run.md) checks item 1 in its §1, §3 and §3a, item 2
 
 Historical dogfood roster captured 2026-11-08; runtime/account availability and ownership below are survey evidence, not current live status or selected employee fields.
 
-| Agent | In HR (agents repo) | On messaging (`org-agent`) | Runtime | Role / owns (AGENTS.md) | Reports to |
+| Agent | In HR (agents repo) | On messaging (`agent-os`) | Runtime | Role / owns (AGENTS.md) | Reports to |
 | --- | --- | --- | --- | --- | --- |
 | ada (`ac-staff-engineer-ada`) | active | yes | Claude Code | Staff Engineer: leads; contracts (org-proto) | the owner |
 | Eden (`ac-product-designer-eden`) | active (title says Principal; the user says **Senior**) | yes | Claude Code | Product Designer | the owner |
 | River (`ac-software-engineer-river`) | active | yes | Claude Code | Senior Backend: office host, sync, PKI, git and GitHub (`org-git`, `org-github`) | ada |
 | server-dev | **no** | yes | Codex | office server, storage | ada |
 | app-frontend-dev | **no** | yes | ? (A14) | the desktop app | ada |
-| agy-senior-dev | **no** | yes | Antigravity | owned messaging (org-agent CLI, spool, mailbox) until it ran out of runtime credits | ada |
+| agy-senior-dev | **no** | yes | Antigravity | owned messaging (agent-os CLI, spool, mailbox) until it ran out of runtime credits | ada |
 | codex-dev | **no** | yes | Codex | inbox adapters; the work-items library (W7) | ada |
 | reviewer | **no** | yes | ? (A14) | independent reviews ("ready" verdicts) | ada |
-| Remy (`ac-software-engineer-remy`) | active | yes (started by the user later the same day) | Claude Code | messaging: `org-agent`, spool and the messaging library (AGENTS.md on v1), and the chat extension (plan row W19) | ada |
+| Remy (`ac-software-engineer-remy`) | active | yes (started by the user later the same day) | Claude Code | messaging: `agent-os`, spool and the messaging library (AGENTS.md on v1), and the chat extension (plan row W19) | ada |
 | Riley (`ac-software-engineer-riley`) | active | **no** | Claude Code | Senior Frontend (the old prototype) | ada |
 
 **What the historical survey established:**
@@ -261,7 +261,7 @@ This preserves the earlier hire-approval workflow requirement; the selected stru
 
 **The flag.** **Can approve hires** is a flag on an **agent** (not on its role), set by the owner in the agent's Settings, at hire or later. It's typical for managers and senior managers. The roster and quick view show it as a badge, "Approves hires". Only the owner can set or clear it. An agent can't give it to itself or to the agents it hires.
 
-**The route.** A hire request (from an agent or a person, through `@hr`, `org-agent hire request` or the app's Hire) becomes a **hire proposal**, drafted by the HR lead, or built from the fields the requester filled in (Add agent record, or Hire when the HR lead can't run, §7) *(rev 21)*: optional role/title/reporting, required home team, separate execution profile/model and office choices, and any later selected run-mode/cost estimate (how it runs and the cost once those features exist, §7 Review). The proposal then goes to its **approver**:
+**The route.** A hire request (from an agent or a person, through `@hr`, `agent-os hire request` or the app's Hire) becomes a **hire proposal**, drafted by the HR lead, or built from the fields the requester filled in (Add agent record, or Hire when the HR lead can't run, §7) *(rev 21)*: optional role/title/reporting, required home team, separate execution profile/model and office choices, and any later selected run-mode/cost estimate (how it runs and the cost once those features exist, §7 Review). The proposal then goes to its **approver**:
 
 1. The requester's **manager**, if that manager has Can approve hires.
 2. Otherwise up the **reporting line** to the nearest manager with the flag.
@@ -271,7 +271,7 @@ This preserves the earlier hire-approval workflow requirement; the selected stru
 
 The owner can always approve or reject any proposal. Someone who requests a hire never approves their own request: it goes one level up. The one exception is **the owner**, who approves their own hires, since nobody is above the owner. The HR lead never approves.
 
-**An agent approver** gets the proposal in its inbox (woken if on call), with the same facts as the Hire review. It answers `org-agent hire approve <id> --reason "…"` or `hire reject <id> --reason "…"`. Approved means the office provisions the hire at once, with no human needed, whether or not the HR lead can run *(rev 21)*. The approval is recorded on the new agent ("Hired 8 Nov · requested by codex-dev · approved by ada") and in Activity. The owner sees it on Home ("ada approved hiring Cameron, QA engineer, for Office · ≈ $40/month"; *(rev 21)* until cost estimates exist, Home leaves out the cost, as the Review does (STAFF-7): "ada approved hiring Cameron, QA engineer, for Office"), with **Open** and, from the agent's profile, the usual **Offboard…** if they disagree.
+**An agent approver** gets the proposal in its inbox (woken if on call), with the same facts as the Hire review. It answers `agent-os hire approve <id> --reason "…"` or `hire reject <id> --reason "…"`. Approved means the office provisions the hire at once, with no human needed, whether or not the HR lead can run *(rev 21)*. The approval is recorded on the new agent ("Hired 8 Nov · requested by codex-dev · approved by ada") and in Activity. The owner sees it on Home ("ada approved hiring Cameron, QA engineer, for Office · ≈ $40/month"; *(rev 21)* until cost estimates exist, Home leaves out the cost, as the Review does (STAFF-7): "ada approved hiring Cameron, QA engineer, for Office"), with **Open** and, from the agent's profile, the usual **Offboard…** if they disagree.
 
 **An approver who can't act** *(rev 21)*: when a proposal's agent approver can't run (the server doesn't run agents yet, or its runtime is missing or signed out), is Paused, or is at an offline office, the proposal shows to the owner at once, not after a day, with the reason: "Waiting for ada · ada can't run right now, so you can approve it." (or "ada is paused", "ada's office is offline"). It stays waiting for ada too, and the first answer decides; a later answer is refused with "Already approved by <name>." (or "Already rejected by <name>.") When the approver is offboarded, the proposal moves to the next approver up the line (steps 2–3) and says "Was waiting for Remy, who left. Now waiting for ada."
 
@@ -365,7 +365,7 @@ The selected data contracts do not yet implement proposal routing/approval flags
 - APPR-5 · Every approved hire records who requested and who approved it, on the new agent's profile and in Activity, and the owner sees it on Home.
 - APPR-6 · The owner can approve or reject any proposal at any time, and a proposal waiting on an agent for over a day is shown to the owner.
 - APPR-7 · Above the optional weekly or cost limit, a proposal goes to the owner and says why.
-- APPR-8 · *(rev 21)* `org-agent hire request|approve|reject` work with the same words as the app, and approve and reject need a reason. When the HR lead can't run, `hire request` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire or Add agent record."
+- APPR-8 · *(rev 21)* `agent-os hire request|approve|reject` work with the same words as the app, and approve and reject need a reason. When the HR lead can't run, `hire request` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire or Add agent record."
 - APPR-9 · *(new, rev 21)* A proposal whose agent approver can't run, is Paused or is at an offline office shows to the owner at once with the reason ("Waiting for ada · ada can't run right now, so you can approve it."), and the first answer decides. A proposal whose approver is offboarded moves to the next approver up the line and says so.
 - APPR-10 · *(new, rev 21)* After approval a request shows Hiring…, then Hired. If hiring stops partway, it shows "Approved, not hired: <failed step>" with Try again, the owner gets a Needs you item, the steps already done are named, finishing needs no new approval, and the agent is shown in no chart, roster or picker until the hire completes.
 

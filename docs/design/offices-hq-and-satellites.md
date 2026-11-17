@@ -389,7 +389,7 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 - **`agentic-org-office` and `agentic-org`** stay thin; `crates/org-host` owns reusable host lifecycle. `agentic-org-web` parses browser HTTP without key custody.
 - **Owners (AGENTS.md):**
   - **River** (`ac-software-engineer-river`) owns `org-office-host`, `org-sync` and `org-pki` (this design's crates); AGENTS.md is the full ownership list.
-  - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `org-server`.
+  - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `agentic-org-office`.
   - `org-sync-proto` and `org-office-launch` are contracts, so ada owns them and reviews changes, like `org-proto`. River writes `org-office-launch`'s first version.
 
 ## Implementation scope after the standalone-v1 pivot
@@ -417,7 +417,7 @@ use the model/process sections above and the current launch contract.
 
 - **ADR-0001:**
   - An office belongs to an organization.
-  - `org-server` runs one office, and `org-office-host` is the login service.
+  - `agentic-org-office` runs one office, and `org-office-host` is the login service.
   - Offices keep running when the app quits (ADR-0001), but they run under the host: a host crash or restart stops every office on this Mac (and agents' messaging) until the host restarts them, and rotates all app tokens. This is the phase-1 trade-off.
   - The web application talks to HQ; the CLI manages named instances and enrollment (ADR-0005).
 - **ADR-0002:**
@@ -427,7 +427,7 @@ use the model/process sections above and the current launch contract.
   - Layout `<home>/offices/<office-id>/`.
   - HQ's `org.db` holds the event log. SQLCipher, one writer per database, durability and the swap point hold per office.
 - **ADR-0003 (routing and ownership accepted 2026-11-17; the rest is compatibility evidence):**
-  - `org-agent` talks to **its own office**, so binding needs only the agent.
+  - `agent-os` talks to **its own office**, so binding needs only the agent.
   - Messages are office-first: committed and delivered locally, then synced to HQ, and through HQ to other offices. The storage structure for heavy traffic and the cross-office `ask` are defined there.
 - **`org-proto`** (client ↔ office):
   - The host gains `hello`, `organization.create`, `organization.list`, `office.list` and `office.app_token` (ADR-0003 §2.1).

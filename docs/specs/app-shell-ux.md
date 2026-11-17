@@ -173,7 +173,7 @@ Every page, everyone's:
 
 ## 3. Unavailable pages
 
-Production areas the gateway doesn't serve show an unavailable page instead of
+Production areas the web process doesn't serve show an unavailable page instead of
 sample data (`server-installation-and-access-ux.md` SRV-18). Exact copy:
 
 **The root, `/`:**

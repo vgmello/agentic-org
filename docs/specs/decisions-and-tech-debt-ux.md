@@ -33,7 +33,7 @@ ada already writes decisions and designs in a consistent way. The app adopts it 
 
 | Kind | Where today | Shape today |
 | --- | --- | --- |
-| ADR | product repo `docs/adr/0001-…md` (current), ada's `knowledge/adrs/0001–0009` (v0, pre-offices) | `# ADR-0002 · Title`, then a status line "Status: **accepted** 2026-11-08 (the user). Owner: ada. Refines ADR-0001 decision 2.", then Context · Decisions (numbered) · Consequences · Not covered here |
+| ADR | product repo `docs/adr/0001-…md` (current), ada's `knowledge/adrs/0001–0009` (v0, pre-offices) | `# ADR-0002 · Title`, then a status line "Status: **accepted** 2026-11-08 (the user). Owner: lead. Refines ADR-0001 decision 2.", then Context · Decisions (numbered) · Consequences · Not covered here |
 | Evaluation (spike) | inside ADRs ("Spike S1 confirmed it: p50 ~100 ms"; "we looked at Turso…"; "the user asked for Maestro to be evaluated") and spike READMEs in worktrees | free text with evidence and numbers |
 | Design | product repo `docs/design/*.md`; drafts in ada's `knowledge/designs/drafts/` | "Status: **draft**. ada writes it with…", then Goal · The flow · … |
 | UX spec | Eden's `knowledge/specs/*.md` | Owner/Status line, changelog, decisions, flows, criteria, questions |
@@ -217,28 +217,28 @@ links: []
 - Templates are files in the repository: `docs/.templates/<kind>.md`, with the fields described in the front matter as a schema (type, required, allowed values, hint) and the sections as headings with hints. The organization has built-in defaults, and a project's files override them.
 - **Settings › Docs › Templates** (project): one row per kind with **Edit**. The editor shows fields (add, rename, reorder, required on/off, allowed values) and sections (add, rename, reorder, hint), plus a preview of a new doc. **Save** commits `docs/.templates/<kind>.md`. **Reset to default** is also available.
 - **New kinds:** **Add a doc kind…** with a name, a folder and fields, which becomes a new group in the Docs tab (for example "Runbooks"). Built-in kinds can't be deleted.
-- **Agents** can read and change templates the same way (`org-agent doc template show|edit <kind>`). A changed template shows in Activity ("ada added the field `risk` to Decision").
+- **Agents** can read and change templates the same way (`agent-os doc template show|edit <kind>`). A changed template shows in Activity ("ada added the field `risk` to Decision").
 - **Existing docs aren't rewritten** when a template changes. New required fields show "Missing: risk" on older docs with **Fill in**, and removed fields are kept and shown under "Other fields".
 
-### 3.1 The agent's side: `org-agent doc` (C16)
+### 3.1 The agent's side: `agent-os doc` (C16)
 
-**Deferred legacy CLI proposal.** These are historical `org-agent` command sketches, not available `agent-os` commands or a new wire contract. Their path/branch output requires adaptation to organization Git and selected scope; `--here` cannot put canonical metadata in an arbitrary code worktree.
+**Deferred legacy CLI proposal.** These are historical `agent-os` command sketches, not available `agent-os` commands or a new wire contract. Their path/branch output requires adaptation to organization Git and selected scope; `--here` cannot put canonical metadata in an arbitrary code worktree.
 
 The retained command words below describe the earlier specialized CLI, including its unsupported `adr` kind/accepted status and same-task-branch convenience; they are historical syntax examples only. Target adaptation must use the selected kind/lifecycle envelope, stable ID/derived organization-Git path, optional display key, admitted attribution and explicit publication result. No next-number allocation or editable stable-ID filename carries forward. `--here`/debt convenience needs an explicit cross-repository staging contract, not a canonical file in a code worktree:
 
 ```
-org-agent doc new adr "Docs storage" --project ac          → ADR-0004 · docs/adr/0004-docs-storage.md (proposed)
-org-agent doc new design|evaluation|spec|plan|review "<title>"
-org-agent doc new design "<title>" --here                   writes it into your task worktree, for you to commit
-org-agent doc edit ADR-0004                                 opens $EDITOR on the file, then commits on a docs branch
-org-agent doc status ADR-0004 accepted                      sets status and decided {on, by} in the front matter, commits
-org-agent doc schema adr                                    prints the fields (allowed values, required) and sections
-org-agent doc validate [path]                               checks front matter against the template
-org-agent doc supersede ADR-0002 --by ADR-0004
-org-agent doc link T-17 ADR-0004                            the "Why" link
-org-agent doc list --kind adr --status proposed
-org-agent doc show ADR-0004
-org-agent debt add "<what I did instead>" [--task T-17] [--why …] [--fix …] [--cost low|medium|high] [--docs-branch]
+agent-os doc new adr "Docs storage" --project ac          → ADR-0004 · docs/adr/0004-docs-storage.md (proposed)
+agent-os doc new design|evaluation|spec|plan|review "<title>"
+agent-os doc new design "<title>" --here                   writes it into your task worktree, for you to commit
+agent-os doc edit ADR-0004                                 opens $EDITOR on the file, then commits on a docs branch
+agent-os doc status ADR-0004 accepted                      sets status and decided {on, by} in the front matter, commits
+agent-os doc schema adr                                    prints the fields (allowed values, required) and sections
+agent-os doc validate [path]                               checks front matter against the template
+agent-os doc supersede ADR-0002 --by ADR-0004
+agent-os doc link T-17 ADR-0004                            the "Why" link
+agent-os doc list --kind adr --status proposed
+agent-os doc show ADR-0004
+agent-os debt add "<what I did instead>" [--task T-17] [--why …] [--fix …] [--cost low|medium|high] [--docs-branch]
 ```
 
 The historical command vocabulary informed the app proposal. Target CLI/app parity and activity publication still require implementation; display a document's optional key/title while links and operation identity use its stable ID.
@@ -288,7 +288,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 | From | How | What's prefilled |
 | --- | --- | --- |
-| An agent, while working | `org-agent debt add "<what I did instead>"` would create an organization-Git knowledge proposal linked to the code branch/commit. The earlier same-code-branch write assumption is superseded; cross-repository staging/recovery remains undecided | the agent's current task, branch and commit, and the area from the task's team |
+| An agent, while working | `agent-os debt add "<what I did instead>"` would create an organization-Git knowledge proposal linked to the code branch/commit. The earlier same-code-branch write assumption is superseded; cross-repository staging/recovery remains undecided | the agent's current task, branch and commit, and the area from the task's team |
 | Finishing a task | Marking a task Done asks "Did you take a shortcut?" **No** · **Yes, record it**. Agents get the same question from the CLI (`task done --debt "…"`, or `--no-debt`) | the task, branch, commits |
 | A review | A finding the author leaves unfixed → **Record as debt** on the finding (the reviewer's verdict can list "Deferred" findings) | the review, the finding's text, the commit |
 | An ADR | each line under "Tech debt accepted" becomes a debt doc whose `because` is the ADR | the ADR |
@@ -305,7 +305,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 **Where debt shows up besides its tab:** the task it was taken in ("Debt taken: DEBT-0012"), the commit, the area's header in the Bugs tab ("Payments · 2 open debt"), the project Overview tile ("Tech debt 14 · 3 High"), and Work › **Debt** (the third pill: Tasks | Bugs | Debt | Requests).
 
-**For agents:** the tool asks at the right moment through agent guidance (§6.2), and every agent's manual adds one rule: "When you take a shortcut (skip a test, hard-code, defer a refactor, work around a bug, leave a TODO), record it with `org-agent debt add` in the same session." The task-Done question backs this up.
+**For agents:** the tool asks at the right moment through agent guidance (§6.2), and every agent's manual adds one rule: "When you take a shortcut (skip a test, hard-code, defer a refactor, work around a bug, leave a TODO), record it with `agent-os debt add` in the same session." The task-Done question backs this up.
 
 ### 6.1 Known limitations and exceptions (docs in the repository)
 
@@ -330,15 +330,15 @@ The tool helps agents work the way the organization wants by **prompting them at
 
 | Moment | Default guidance (editable) | Where the agent sees it |
 | --- | --- | --- |
-| Starting a task | "Before you start {task}, read its Why: {decisions}. Known limitations in {area}: {limitations}." | `org-agent task start`, the inbox adapter's first message |
-| Making a design or architecture choice | "If this choice will matter later, record it: `org-agent doc new adr \"…\"`." | when an agent creates a branch or a design doc |
-| Taking a shortcut | "Did you take a shortcut (skipped a test, hard-coded, deferred a refactor, worked around a bug)? Record it: `org-agent debt add \"…\"`." | `org-agent task done`, the app's Done |
-| Departing from a rule | "This goes against {rule}. Propose an exception: `org-agent doc new exception`." | when a review or check names a rule |
-| Finishing a task | the project's checklist (work-items §9.1) and "Is anything here a known limitation? `org-agent doc new limitation`." | `org-agent task done` |
-| Asking the owner | "Say what you need, your recommendation and what happens if there's no answer." | `org-agent msg ask --to owner` |
+| Starting a task | "Before you start {task}, read its Why: {decisions}. Known limitations in {area}: {limitations}." | `agent-os task start`, the inbox adapter's first message |
+| Making a design or architecture choice | "If this choice will matter later, record it: `agent-os doc new adr \"…\"`." | when an agent creates a branch or a design doc |
+| Taking a shortcut | "Did you take a shortcut (skipped a test, hard-coded, deferred a refactor, worked around a bug)? Record it: `agent-os debt add \"…\"`." | `agent-os task done`, the app's Done |
+| Departing from a rule | "This goes against {rule}. Propose an exception: `agent-os doc new exception`." | when a review or check names a rule |
+| Finishing a task | the project's checklist (work-items §9.1) and "Is anything here a known limitation? `agent-os doc new limitation`." | `agent-os task done` |
+| Asking the owner | "Say what you need, your recommendation and what happens if there's no answer." | `agent-os msg ask --to owner` |
 | Waking up (on-call and scheduled agents) | "Read your inbox and backlog, do what's due, record what you did, then stop." (`agent-run-modes-ux.md` decision 6) | at every wake |
 | Procedure changed | "New from <retro>: <the change>." (`retrospectives-ux.md` decision 7) | at the agent's next start or wake after the change merges |
-| Posting to chat | "Post only what someone must answer, act on or know. Put details in the task or doc and link it." (`chat-ux.md` §5) | `org-agent msg` |
+| Posting to chat | "Post only what someone must answer, act on or know. Put details in the task or doc and link it." (`chat-ux.md` §5) | `agent-os msg` |
 
 - **Settings › Agent guidance** (organization) and project Settings › Agent guidance (overrides): one row per moment with **On/Off**, the text (with placeholders like `{task}`, `{area}`, `{decisions}` and a picker to insert them), and a **Preview as** an agent and task ("What River will see on T-17").
 - **Add guidance…** adds a moment from a list (task started, task done, bug fixed, branch created, review requested, message to the owner) with its own text, for the owner's own practices ("Always add a screenshot for UI work").
@@ -416,14 +416,14 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 **Agent guidance (GUIDE)** *(rev 5)*
 - GUIDE-1 · **Deferred guidance automation:** Settings › Agent guidance lists each moment with On/Off, editable text with placeholders, and Preview as an agent and task.
 - GUIDE-2 · **Deferred guidance automation:** A project's guidance overrides the organization's and is stored in `docs/.guidance/<moment>.md`.
-- GUIDE-3 · **Deferred guidance automation:** `org-agent task done` shows the Taking a shortcut guidance, and the answer (no shortcut, or a debt id) is recorded on the task.
+- GUIDE-3 · **Deferred guidance automation:** `agent-os task done` shows the Taking a shortcut guidance, and the answer (no shortcut, or a debt id) is recorded on the task.
 - GUIDE-4 · **Deferred guidance automation:** Add guidance adds a moment from the list with the owner's own text.
 - GUIDE-5 · **Deferred guidance automation:** Changing guidance appears in Activity, and turning a moment off stops its prompt everywhere (app and CLI).
 
 **Templates (TPL)**
 - TPL-1 · Every kind has a template (fields with type, required, allowed values and hint, plus sections with hints), and New fills a doc from it.
 - TPL-2 · The editor's Details panel is generated from the template's fields, and the Source toggle edits the YAML directly, with both kept in sync.
-- TPL-3 · `org-agent doc schema <kind>` prints the fields and sections, and `doc validate` reports each front-matter problem by field.
+- TPL-3 · `agent-os doc schema <kind>` prints the fields and sections, and `doc validate` reports each front-matter problem by field.
 - TPL-4 · **Deferred specialized editor/approval workflow:** Settings › Docs › Templates edits a kind's fields and sections with a preview, saves by committing `docs/.templates/<kind>.md`, and Reset to default restores it.
 - TPL-5 · **Deferred specialized editor/approval workflow:** Add a doc kind creates a new kind with its folder and fields, which shows as a group in the Docs tab. Built-in kinds can't be deleted.
 - TPL-6 · **Deferred specialized editor/approval workflow:** Changing a template never rewrites existing docs. New required fields show "Missing: <field>" with Fill in, and removed fields show under "Other fields".

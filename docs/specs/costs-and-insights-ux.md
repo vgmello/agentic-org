@@ -211,7 +211,7 @@ Accepted usage IDs/source keys, producer sequence/checkpoint hashes and correcti
 - Runtime adapter coverage (earlier C15): verify exact token/cost scopes, cache overlap, process baselines and completeness per adapter. No persisted complete ledger collector is inferred from the runtime interface.
 - Detailed analytics uses the deferred calculation requirements below. Working time remains unavailable until verified execution tracking exists; Areas, retrospectives and process/scheduling engines remain deferred.
 - Budget evaluator, notification/stop coordination, atomic source/receipt durability and protected restore services require implementation. Integrated actor rules do not establish implemented command authorization.
-- Historical A39/A21 proposed `session_usage` in office SQL and Work replication; the selected immutable archive/checkpoint model in document 10 replaces that sole-source plan. Historical C14 `org-agent task current` is not an available `agent-os` command claim. Attribution must use explicit context supplied by reviewed execution/task adapters.
+- Historical A39/A21 proposed `session_usage` in office SQL and Work replication; the selected immutable archive/checkpoint model in document 10 replaces that sole-source plan. Historical C14 `agent-os task current` is not an available `agent-os` command claim. Attribution must use explicit context supplied by reviewed execution/task adapters.
 
 ### Deferred analytics calculation requirements
 

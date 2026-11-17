@@ -11,7 +11,7 @@ from the selected organization-data target.
 
 The superseded 2026-11-08 Tauri/bundle walkthrough is available in
 [Git history](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/runbooks/local-hq.md).
-Its `org-office-host`, `org-server`, `tauri dev`, sessionless create and app-token
+Its `org-office-host`, `agentic-org-office`, `tauri dev`, sessionless create and app-token
 instructions cannot be run against the current checkout. Do not recreate them by
 bypassing the protected bootstrap gate.
 
@@ -131,7 +131,7 @@ remote-sync or execution acceptance pass. The eventual HQ run must establish:
 - Separate server and agent readiness, ordered model-profile routes, fresh local
   credential/entitlement evidence, shared permits and durable placement fencing.
 - Authenticated browser snapshot/event continuity, one logical result after a
-  lost reply, and no privileged key exposure through gateway/CLI.
+  lost reply, and no privileged key exposure through web/CLI.
 - Durable sources and acknowledged recovery evidence surviving cache loss without
   broadening message/private-note/cost access or duplicating execution.
 

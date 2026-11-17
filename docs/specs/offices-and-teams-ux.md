@@ -463,7 +463,7 @@ is **Created, then stopped** (above), never a failure, so Try again can't hit
 | `storage_error` | "Side Project wasn't created: HQ couldn't write its data on <HQ machine>. Run `agentic-org doctor` there, then try again." |
 | `not_ready` | "HQ is still starting. Try again in a moment." **Try again** |
 | `unavailable` | "Several organizations are being created right now. Try again in a moment." **Try again** |
-| Not an instance admin (refused by the gateway, A95) | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
+| Not an instance admin (refused by the web process, A95) | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
 | Any other error | "Side Project wasn't created. Try again." |
 
 Whether a recovery package that can't be created fails the create is A89; if it
@@ -1132,7 +1132,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - A8 · Is there a limit on how many people an organization can add, or on a person's name length? I've assumed the team-name rules (1–64 characters).
 - A9 · Does the agent's `delivery_failed` notice carry the name the agent used, so PEOPLE-7 can say "Couldn't reach "Sam"" and prefill Add person?
 - A91 · *(rev 14)* The name rules follow `org-proto` (trimmed, 64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively on the trimmed name). Open: is the duplicate check per HQ instance or per account?
-- A95 · *(rev 14)* Which error does the gateway return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
+- A95 · *(rev 14)* Which error does the web process return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
 - A92 · *(rev 14)* How long can a create attempt be looked up after a lost response, and what does HQ answer once it's too old?
 - ~~A101~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* a waiting create or Add office stays `accepted`, and its lookup and the instance status feed report `waiting_for_idle { sessions: n }`, so the copy gives the number. Cancel uses the original operation ID, as for Create organization. A waiting office isn't in the Offices list yet: it's a pending row driven by the operation, like a waiting organization in the switcher. A satellite join on an instance with running agents waits the same way, and setup shows "Waiting for N running agents to stop…" with "Press Ctrl-C to cancel". There's no longest wait: the person can always cancel, and `agentic-org doctor` shows the wait (§5a, §5c, §6.2; OFC-33 to OFC-38, JOIN-15, JOIN-16).
 - ~~A102~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* the status read adds `join_phase: awaiting_approval | initial_sync` under `join_pending`, so the joining instance shows Waiting for approval, then Starting · copying records (§3.1, §5c, OFC-32). `join_cancelled` also covers an invitation the owner cancelled or replaced after it was used (HQ refuses the join). An HQ identity mismatch ends the join as `join_rejected`, a security failure that isn't retried. An unsupported version keeps the join pending until the invitation expires (§5c; JOIN-7, JOIN-13, JOIN-14).

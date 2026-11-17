@@ -1,6 +1,6 @@
 # ADR-0002 · Storage: SQLite with SQLCipher, one writer
 
-Status: accepted 2026-11-08; reconciled 2026-11-15. Owner: ada.
+Status: accepted 2026-11-08; reconciled 2026-11-15. Owner: lead.
 Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md). Standalone platform
 and instance boundaries follow [ADR-0005](0005-standalone-server-v1.md).
 The selected source/storage contract follows the

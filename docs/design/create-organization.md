@@ -1,7 +1,7 @@
 # Design: create an organization through standalone HQ
 
 Status: **selected target flow; implementation pending**, revision 2, 2026-11-15.
-Owner: ada. [Organization data](organization-data/01-organization-structure.md)
+Owner: lead. [Organization data](organization-data/01-organization-structure.md)
 owns the records below; [ADR-0005](../adr/0005-standalone-server-v1.md) and
 [installation UX](../specs/server-installation-and-access-ux.md) own installation.
 The current `agentic-org setup` refuses before provisioning: protected bootstrap,
@@ -45,7 +45,7 @@ name, lead appointment or reporting line is inferred from the word HR.
    team content remains a product choice; it is not selected by this document.
 3. Submit one operation ID bound to actor, instance and the validated plan.
    `agentic-org-web` authenticates and authorizes before invoking a typed restricted
-   host operation. The host verifies the gateway capability and administrator
+   host operation. The host verifies the web process capability and administrator
    grant. No browser HTTP parser or raw-key access lives in the host operation.
    Reserve the name, slug, IDs and plan under the catalog lock, then provision
    outside it. New entity IDs use UUIDv7; retained IDs and current ULID operation
@@ -70,7 +70,7 @@ name, lead appointment or reporting line is inferred from the word HR.
 6. Provision versioned encrypted CA escrow and the same owner recovery code on
    retry. Protected delivery may remain Waiting or Shown, not confirmed while HQ
    becomes usable. Require off-HQ retention acknowledgement only before reporting
-   recovery material collected; never send the code through the gateway.
+   recovery material collected; never send the code through the web process.
    [REC-1](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate) still gates
    the supported manual HQ-loss recovery procedure.
 7. Return the durable organization/office identity and separate server, runtime
@@ -94,7 +94,7 @@ separate readiness state; do not infer them from offline validation or discard a
 already-created HQ because a later publication fails. Preserve entered safe
 fields and show the failing step; never log credentials or recovery material.
 
-The currently published [HTTP v1 contract](gateway-api-v1.md) accepts `{name}` and
+The currently published [HTTP v1 contract](web-api-v1.md) accepts `{name}` and
 returns its existing view. It must stay exact until a reviewed versioned adapter
 covers the additional target fields and validates all required references. Do not
 silently insert them into revision 2 DTOs or advertise target readiness through

@@ -1,7 +1,7 @@
 # ADR-0005 · Standalone server, HQ web application and named instances
 
 Status: **product direction accepted by the owner** 2026-11-09;
-**implementation proposal for review**. Owner: ada.
+**implementation proposal for review**. Owner: lead.
 Amends ADR-0001's desktop access/packaging, ADR-0002's platform and instance key
 scope, and ADR-0003's app-bound human authorization. It does not supersede their
 domain ownership, durability or employee permission rules.
@@ -86,7 +86,7 @@ Remaining domain-layout changes are implementation requirements. Explicit baseli
 ## Review clarifications (2026-11-10)
 
 - The instance-scoped `agentic-org-web` process (production handoff pending) terminates browser HTTP/TLS
-  separately from the key-custody host and per-office workers. The gateway holds no
+  separately from the key-custody host and per-office workers. The web process holds no
   office DB key. Create organization requires instance-admin authority; owning an
   organization alone is insufficient.
 - Browser authority requires a session cookie plus an independently generated,

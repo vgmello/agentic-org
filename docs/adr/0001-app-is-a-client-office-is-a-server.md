@@ -1,7 +1,7 @@
 # ADR-0001 · The app is a client; offices serve organization data
 
 Status: accepted 2026-11-08; reconciled with the selected organization data model
-2026-11-15. Owner: ada. [ADR-0005](0005-standalone-server-v1.md) owns standalone
+2026-11-15. Owner: lead. [ADR-0005](0005-standalone-server-v1.md) owns standalone
 deployment. The [authority map](../design/documentation-authority.md) separates
 selected target contracts from implemented protocols and deferred engines.
 
@@ -76,7 +76,7 @@ The owning relationships and field contracts are in organization-data documents
    is deployed. Retained versions are additive-only. Update host, worker, client,
    agent helpers and fixtures together and reject unsupported versions before
    dispatch. The current HTTP mutation codec is documented in
-   [gateway-api-v1.md](../design/gateway-api-v1.md); target relationship changes
+   [web-api-v1.md](../design/web-api-v1.md); target relationship changes
    require explicit mappings, not reinterpretation of existing fields.
 6. **The agent CLI stays small and office-first.** `agent-os` communicates with
    its bound office; cross-office delivery is routed through HQ. Preserve live
