@@ -1,6 +1,6 @@
 # Model profiles, provider connections and agent execution
 
-Status: **selected** data and execution contract, revision 6. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **selected** data and execution contract, revision 7. This document defines the data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
 This document owns provider connections, subscription identity, model profiles and their ordered memberships, discovered models, agent execution configuration, office-local bindings, shared admission records, and execution turns/attempts/process ownership. It is a first-class member of the [organization data specification](README.md), with its SQL included in the consolidated [schema.sql](schema.sql). The SQL is a design contract; the code does not implement it yet.
 
@@ -36,7 +36,7 @@ Requirements source: owner-supplied `requirements_design_document_subscription_p
 | Persistence | Organization config in Git; local auth and execution journal outside Git; SQLite is a projection. Accounting remains durable as defined in [usage accounting](10-usage-and-cost-accounting.md). |
 | Delivery scope | Configuration, discovery, explicit turn execution, supervision, permits, safe switching and accounting capture. Business-process engines, automatic scheduling, delegated employees, memory consolidation, budget evaluation and interrupting a running turn for a budget are excluded. Admission still honors recorded budget holds (§6 step 3, [document 17](17-budgets-and-controls.md)). |
 
-The owner-approved executable structure uses agentic-org as the human CLI/service host, agentic-org-web as the browser server, agentic-org-office as the office worker, and agent-os as the separate agent CLI. It supersedes revision 1's dedicated supervisor process. The existing-employee extension and supervision responsibilities remain. The four executable application directories/packages and entry points were aligned in merged v1 commit 700d5a37; this PR also names the static UI package agentic-org-ui. Pool routing, execution configuration and the complete agent session runner remain implementation work; naming an executable does not establish those capabilities.
+The executable structure uses agentic-org as the human CLI/service host, agentic-org-web as the browser server, agentic-org-office as the office worker, and agent-os as the separate agent CLI; there is no dedicated supervisor process. The static UI package is agentic-org-ui. Pool routing, execution configuration and the complete agent session runner remain implementation work; naming an executable does not establish those capabilities.
 
 ## 2. Executables, modules and exclusive ownership
 
@@ -81,7 +81,7 @@ The host retains office-key custody. The web process and agent-os receive only t
 
 ### 2.1 Implemented CLI versus specified behavior
 
-Verified merged v1 at 700d5a37: agentic-org serve, help/version and existing agent-os operations are implemented. agentic-org setup explicitly returns unavailable before writing state; service start/stop/status, protected HQ bootstrap, installation/download/update activation and production web handoff are not implemented by the executable migration. Model-profile configuration/routing commands in this document are internal execution-service contracts, not new public CLI commands already available to users.
+Which entry points exist is tracked in [executable migration](../executable-migration.md); `agentic-org setup` refuses today. Model-profile configuration/routing commands in this document are internal execution-service contracts, not public CLI commands.
 
 The [standalone installation contract](../standalone-server.md#4-setup-and-service-lifecycle) defines the intended HQ-only initial setup with automatic service registration/start and separately initiated satellite onboarding. It remains responsible for installers/offline bundles and lifecycle commands; this document does not define another installer.
 
@@ -135,7 +135,7 @@ Document 04's current placement row is a projection of the small durable coordin
 
 For the focused data-structure view—concepts, field diagrams, relationships, canonical files, examples and SQL mapping—see [Model providers, connections and pools](14-model-providers-and-connection-pools.md). It describes the same records as this execution contract.
 
-All IDs use the existing stable-ID contract. `workspace_id` from the upload maps to organization_id. Every foreign reference is organization-scoped. Provider/profile keys are organization-unique readable strings; no new human number counter is required.
+All IDs use the stable-ID contract. Every foreign reference is organization-scoped. Provider/profile keys are organization-unique readable strings; no new human number counter is required.
 
 For `subscription_cli`, `subscription_identity` is required: the provider adapter's canonical, non-secret identity for the actual subscription entitlement/quota account, not a connection label, credential path, model name or office ID. HQ registers it once per `(organization_id, provider_type, subscription_identity)`. Two different connection IDs for that same subscription are rejected with `SUBSCRIPTION_ALREADY_REGISTERED`, returning the existing connection ID. Disabled/archived definitions also reserve their identity; reuse/re-enable the existing definition. One connection may appear in several profiles and have one local binding per office, while all those uses share its HQ permit/cooldown state. Multiple subscription connections in a pool represent distinct subscriptions.
 
@@ -262,7 +262,7 @@ This qualifies source FR-6 deliberately: automatic mid-turn failover is required
 
 Each registered driver supplies versioned preflight/discovery, capabilities, launch planning, normalized protocol events, checkpoint export/import and stop instructions. Reuse org-runtime's sans-I/O separation: adapters plan/translate, the supervisor performs I/O and org-supervise owns OS control. The HTTP-worker protocol adapter follows the same boundary. The connection's runtime_driver selects a registered implementation; unknown or unverified installed versions cannot run.
 
-Driver manifest requirements are auth modes, supported isolation mechanism (the modes of [ADR-0015](../../adr/0015-agent-isolation-modes.md): `same-user` and `dedicated-user` in v1, with the mode carried in the launch contract and digest), model discovery evidence, tool/policy enforcement, context limits, side-effect visibility, checkpoint formats/portability, usage semantics and stop/cleanup support. A runtime cannot become eligible merely because it answers text requests. The adapter test suite uses fake drivers for deterministic core tests and installed-version fixtures for every production driver. Do not execute the upload's onboarding commands or claim its example models/variables are supported without that evidence.
+Driver manifest requirements are auth modes, supported isolation mechanism (the modes of [ADR-0015](../../adr/0015-agent-isolation-modes.md): `same-user` and `dedicated-user` in v1, with the mode carried in the launch contract and digest), model discovery evidence, tool/policy enforcement, context limits, side-effect visibility, checkpoint formats/portability, usage semantics and stop/cleanup support. A runtime cannot become eligible merely because it answers text requests. The adapter test suite uses fake drivers for deterministic core tests and installed-version fixtures for every production driver. Do not claim a model or variable is supported without that evidence.
 
 | Error code | Stable outcome |
 | --- | --- |
@@ -312,7 +312,7 @@ Provider/model and price_id describe the actual route used, not the first pool m
 
 The SQL enforces scoped references, subscription identity/replacement guards, agent-only execution configuration, unique open-turn/process slots and placement-generation monotonicity. Service transactions still enforce profile cardinality/contiguous ordering, fresh entitlement evidence, policy compatibility, quota permits and safe process cleanup/replay. A valid SQL row alone is not launch authority. Discovered catalog membership is not a guarantee of an available permit or compatible driver. Readiness and skip reasons must expose that distinction.
 
-The installed-version driver probes, authenticated production composition, complete session pump and safe checkpoint portability are acceptance work, not proven capabilities in merged v1. Memory consolidation, automatic scheduling, budget evaluation, budget-triggered interruption of a running turn and actual subscription billing remain outside this document; §6 step 3 only refuses new admission while a recorded hold exists. Schema tests verify the data contract; they do not establish production execution or deployment readiness.
+The installed-version driver probes, authenticated production composition, complete session pump and safe checkpoint portability are acceptance work, not capabilities the code has. Memory consolidation, automatic scheduling, budget evaluation, budget-triggered interruption of a running turn and actual subscription billing remain outside this document; §6 step 3 only refuses new admission while a recorded hold exists. Schema tests verify the data contract; they do not establish production execution or deployment readiness.
 
 ## 10. Required acceptance criteria
 
@@ -928,21 +928,16 @@ WHERE m.entitlement='confirmed'
 GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
 ```
 
-## Appendix A. Verified v1 starting point
+## Appendix A. What the code holds today
 
-Inspected `origin/v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**. These are repository findings, not claims about processes running on a user's machine.
+| Component | Role in the code |
+| --- | --- |
+| `crates/org-supervise` | A library for explicit environments, child spawning, ownership, stopping, cleanup and recovery primitives. It is not a supervisor daemon or a routing engine, and it does not launch agents today. |
+| `crates/org-runtime` | The runtime-adapter contract: `AgentRuntime::plan_session` produces a launch plan; the adapter does not spawn or do I/O. It has no caller. |
+| `apps/agentic-org-office` | Holds a recovery adapter over office-owned process rows (`tests/owned_recovery.rs`). The agent launch loop is not wired. |
 
-| Component | Verified role in that checkout | Evidence |
-| --- | --- | --- |
-| `org-office-host` | Starts and supervises an **office server** process, `agentic-org-office`. It is not an implemented subscription-pool agent supervisor. | [Spawner::spawn](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/apps/org-office-host/src/supervisor/child.rs#L175) calls the host's suspended-spawn path with the server executable. |
-| `org-supervise` | Implemented **library** for explicit environments, child spawning, ownership, stopping, cleanup, probes and recovery primitives. It is not a standalone supervisor daemon or a routing policy engine. | [Library boundary](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/lib.rs#L1), [spawn ownership API](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/spawn.rs#L43). |
-| `org-runtime` | Runtime-adapter contract. `AgentRuntime::plan_session` produces a launch plan and protocol session; the adapter itself does not spawn or do I/O. | [AgentRuntime](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-runtime/src/runtime.rs#L10). |
-| `org-supervise::runtime` | Maps launch plans into process preparation; its own source explicitly says it is not a complete session runner. | [Runtime mapping](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/runtime.rs#L1). |
-| `agentic-org-office` | Contains a recovery-record adapter over office-owned process rows. This is a real integration component, not proof that the whole agent launch loop is wired. | [Owned recovery adapter](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/apps/org-server/src/owned_recovery.rs#L1). |
-| Employee supervisor/session pump | **Proposed design:** the office hosts a logical employee supervisor; `org-office-sessions` is intended to implement the session pump. No `org-office-sessions`, native runtime-adapter packages or `org-agent-supervisor` executable appear in the checked Cargo workspace. A complete native-agent launch integration was not found there. | [Employee-supervision proposal](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/employee-supervision.md#L1), [planned session integration](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/agent-sessions.md#L125), [workspace](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/Cargo.toml). |
+The office hosts the logical employee supervisor, router and runner defined above; there is no separate supervisor executable.
 
-Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. The current revision retains the office-hosted control loop and defines its supervisor/router/runner responsibilities without a separate supervisor daemon. The historical evidence links intentionally retain their inspected v1 paths; §2 records the merged executable layout and still-missing integrations.
+Environment preparation in `crates/org-supervise` (`runtime.rs`, `environment.rs`) admits only a reviewed list of runtime switches, which does not include connection-specific auth-context variables. Auth isolation needs an adapter/environment-contract extension; arbitrary environment maps must not bypass that boundary.
 
-V1's environment preparation is intentionally restricted. Its reviewed runtime-switch list does not currently include the connection-specific auth-context variables shown in the upload. See [reviewed switches](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/runtime.rs#L137) and [explicit environment construction](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/environment.rs#L52). Auth isolation needs an adapter/environment-contract extension; arbitrary environment maps must not bypass that boundary.
-
-[Budgets and controls](17-budgets-and-controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. The one execution rule it adds is the admission check in §6 step 3 and criterion AE-19. Other deferred features remain unchanged.
+[Budgets and controls](17-budgets-and-controls.md) defines the budget data model. The one execution rule it adds is the admission check in §6 step 3 and criterion AE-19.

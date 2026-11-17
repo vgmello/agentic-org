@@ -82,6 +82,10 @@ Every organization has a built-in **HR lead**, created with the organization ([d
 
 An agent comes to exist in an organization only through the HR hire flow. HR drafts a hire proposal; a person with the authority to approve it approves it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before approval no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal, its approval and who may approve are specified in [our organization in the app](../../specs/our-org-in-the-app.md); this set adds no table for them, because an approved hire produces only the records already defined here and in document 11.
 
+## Who an agent takes instructions from
+
+An agent always replies to a person who messages it (owner, 2026-11-17). It follows instructions only from a person above it in the organization's hierarchy: the leads of its home team and of each ancestor team, up to the organization owner (the lead of its own home team does not count when that lead is the agent itself). A message from any other person is a request: the agent answers it, and where it conflicts with an instruction from its own chain, the chain wins. The rule is derived from `home_team_id`, `parent_team_id` and `lead_employee_id` and from who owns the organization; there is no field or table for it, and it grants no authority at the office, which still authorizes every call.
+
 ## Durable identity files
 
 ```text

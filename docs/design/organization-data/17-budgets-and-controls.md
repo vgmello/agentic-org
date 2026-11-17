@@ -87,7 +87,7 @@ The referenced employee is an agent in the restaurant Reservations team or the a
 
 ## SQL and relationships
 
-Tables are included in consolidated schema.sql. SQL enforces scope/uniqueness, organization references and retained immutable policies/events. Calendar boundaries, effective totals, permissions, notice kind versus scope, threshold/stage transitions and actor-bound idempotent state changes require the budget command/import validator. A SQL draft is not an implemented budget service.
+Tables are included in consolidated schema.sql. SQL enforces scope/uniqueness, organization references and retained immutable policies/events. Calendar boundaries, effective totals, permissions, notice kind versus scope, threshold/stage transitions and actor-bound idempotent state changes require the budget command validator. A SQL draft is not an implemented budget service.
 
 ```sql
 CREATE TABLE budgets (

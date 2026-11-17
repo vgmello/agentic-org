@@ -1,6 +1,6 @@
 # Release content, changelogs and feature flags
 
-Status: **selected** data contract, revision 2.6. This document owns release membership and flag data; [project documents](02-project-structure.md) owns document records and [deployment records](07-release-deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
+Status: **selected** data contract, revision 2.7. This document owns release membership and flag data; [project documents](02-project-structure.md) owns document records and [deployment records](07-release-deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
 
 ## Product release knowledge and technical deployment knowledge
 
@@ -91,7 +91,7 @@ Availability checks passed. Rollback must restore the recorded prior configurati
 
 `release.md` front matter contains `feature_ids: []` and `task_ids: []`, in addition to its existing fields. These are explicit membership selections, not an inference that every task in a milestone shipped. Each reference must belong to the release's project; projectless team tasks cannot be listed as project release content. Released membership describes included work, while the changelog explains product impact and flags explain availability.
 
-Retain release notes and selected membership when tasks close; links can resolve to retained tombstones if an archived task's active file is removed. `release_tasks` therefore references the stable task lookup registry as well as its project, and import validation checks the live task or tombstone's project. Before archiving a selected task, preserve its project and release references; do not silently delete the release manifest entry. Published release content is versioned knowledge; corrections are explicit revisions. Deployment snapshots retain the actual attempt even if release prose is corrected later.
+Retain release notes and selected membership when tasks close; links can resolve to retained tombstones if an archived task's active file is removed. `release_tasks` therefore references the stable task lookup registry as well as its project, and validation checks the live task or tombstone's project. Before archiving a selected task, preserve its project and release references; do not silently delete the release manifest entry. Published release content is versioned knowledge; corrections are explicit revisions. Deployment snapshots retain the actual attempt even if release prose is corrected later.
 
 ## Flag definitions and intended settings
 
@@ -324,4 +324,4 @@ CREATE TABLE deployment_flag_settings (
 ) STRICT;
 ```
 
-The consolidated schema validates flag values both when settings arrive and when a deferred definition arrives, so import order cannot bypass type checks. Used flag identity cannot be deleted or replaced. Every write connection enables recursive triggers so SQL replacement operations run the deletion guards.
+The consolidated schema validates flag values both when settings arrive and when a deferred definition arrives, so projection order cannot bypass type checks. Used flag identity cannot be deleted or replaced. Every write connection enables recursive triggers so SQL replacement operations run the deletion guards.

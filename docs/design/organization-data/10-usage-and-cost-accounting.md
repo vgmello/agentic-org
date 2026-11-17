@@ -1,6 +1,6 @@
 # Usage, token accounting and cost attribution
 
-Status: **selected** data contract, revision 2.7. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns routing/execution records; its attempts supply actual selected connection/model and consumer context for this ledger. Configuration and observations are integrated in the same schema, while immutable usage remains authoritative for accounting.
+Status: **selected** data contract, revision 2.8. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns routing/execution records; its attempts supply actual selected connection/model and consumer context for this ledger. Configuration and observations are integrated in the same schema, while immutable usage remains authoritative for accounting.
 
 ## v1 evidence and selected port
 
@@ -26,7 +26,7 @@ Counters are nullable nonnegative integers: null means unknown, while zero means
 
 Compute a token estimate with exact integer/decimal intermediate arithmetic, sum category charges, then round half up once per usage record to integer `cost_micro_usd`. Avoid overflowing a SQLite integer multiplication or using binary floats for stored ledger amounts. A zero-count category does not need a rate; a nonzero/unknown category with no rate makes the valuation incomplete. The included example's $1/M input, $2/M output and $0.50/M cache-read yield 1650 micro-USD, or $0.001650.
 
-`cost_basis` distinguishes runtime_estimate, token_estimate, unpriced and unknown. V1's runtime-reported list-price estimate remains an estimate, even where an older UX table calls it Reported. Existing events are never automatically repriced when model prices change. Actual invoices, currency conversion and billing reconciliation are not represented here.
+`cost_basis` distinguishes runtime_estimate, token_estimate, unpriced and unknown. A runtime-reported list-price estimate is an estimate, even where a UX table calls it Reported. Existing events are never automatically repriced when model prices change. Actual invoices, currency conversion and billing reconciliation are not represented here.
 
 ## Historical attribution and corrections
 
