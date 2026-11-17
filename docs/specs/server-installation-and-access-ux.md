@@ -511,7 +511,8 @@ error. The table covers a page that loaded and then can't reach HQ.
 
 ### 4a.4 Session end, signing in again, and sign out
 
-**When a session ends.** It expires (30 minutes idle or 12 hours in all), the
+**When a session ends.** It expires after 30 days without use (no fixed lifetime; the app refreshes it in
+the background while used, [ADR-0013](../adr/0013-stored-browser-sessions.md)), the
 account's password is set from a link, its access to an organization is
 removed (People › **Remove access**, §4a.1), or it is signed out by a password
 change in another browser (§4a.2).

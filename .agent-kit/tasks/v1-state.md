@@ -40,7 +40,8 @@ today" line of each increment.
 
 ## Known facts that affect the first increments
 
-- At commit 04041dc, `crates/org-host` does not compile on Linux:
-  `supervisor/channels.rs` calls `org_socket::peer_process_allowed`, which does not
-  exist. CI excludes `org-host` and `agentic-org` from its Linux workspace runs.
-  Increment X1 brings the host to Linux.
+- `crates/org-host` compiles on Linux but refuses to start an office worker there: the
+  check that a started worker is the intended program exists only for macOS, and the
+  version for every other system refuses (`supervisor/channels.rs`). CI lints the host
+  on Linux and excludes its tests from the Linux workspace run. Increment X1 brings
+  the host to Linux.

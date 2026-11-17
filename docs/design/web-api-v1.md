@@ -171,7 +171,7 @@ completed hold, and release caps warn only.
 Session view (IDs are UUIDv7 text; shortened here):
 
 ```json
-{"instance_id":"0193…","account":{"id":"0193…","login":"alex"},"admin":true,"organizations":[{"org_id":"0193…","employee_id":"0193…","office_ids":["0193…"]}],"server_time_ms":1794312000000,"absolute_expires_at":"2026-11-11T00:00:00.000Z","idle_expires_at":"2026-11-10T12:30:00.000Z"}
+{"instance_id":"0193…","account":{"id":"0193…","login":"alex"},"admin":true,"organizations":[{"org_id":"0193…","employee_id":"0193…","office_ids":["0193…"]}],"server_time_ms":1794312000000,"idle_expires_at":"2026-12-10T12:00:00.000Z"}
 ```
 
 `server_time_ms` is integer Unix milliseconds; there is no RFC 3339 alias. The
