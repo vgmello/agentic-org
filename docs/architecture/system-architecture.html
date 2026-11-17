@@ -286,7 +286,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <div class="meta">
     <span>Branch <b>v1-integration @ 55c7d76</b></span>
     <span>Data contract <b>organization-data rev 2.10</b></span>
-    <span>ADRs <b>0001 to 0019</b></span>
+    <span>ADRs <b>0001 to 0020</b></span>
     <span>Written <b>2026-11-17</b></span>
   </div>
 </header>
@@ -396,7 +396,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <tbody>
       <tr><td>Organization</td><td>Module inside <code>org-office</code></td><td>Regroup into <code>organization/features/*</code>; single home team</td></tr>
       <tr><td>Work</td><td><code>org-work</code>, with office-owned port implementations</td><td>Typed-task identity, assignment pair, private notes service</td></tr>
-      <tr><td>Messaging</td><td><code>org-mailbox</code>, with office storage</td><td>Protected envelope sources, channels, cutover from the live spool</td></tr>
+      <tr><td>Messaging</td><td><code>org-mailbox</code>, with office storage</td><td>Protected envelope sources, channels, required asks</td></tr>
       <tr><td>Employees and execution</td><td>Policy in <code>org-office</code>; planned <code>org-office-sessions</code>, <code>org-runtime-claude</code>, <code>org-runtime-codex</code>, <code>org-runtime-agy</code></td><td>All of it</td></tr>
       <tr><td>Federation</td><td><code>org-sync</code>, <code>org-sync-proto</code>, <code>org-pki</code></td><td>Transport, enrollment, certificates</td></tr>
       <tr><td>Git</td><td>Planned <code>org-git</code>; <code>org-github</code> is v2</td><td>All of it</td></tr>
@@ -690,7 +690,7 @@ offices/
       <ul>
         <li><span class="st ok">Runs today</span> <code>agent-os</code> over its file queue, and send, inbox, read, wait on the office socket.</li>
         <li><span class="st part">Built, not reachable</span> ask, reply, defer, done, notify and threads are defined in <code>org-proto</code> and not served by the office.</li>
-        <li><span class="st target">Designed</span> protected envelope sources, channels, cross-office relay, and the cutover.</li>
+        <li><span class="st target">Designed</span> protected envelope sources, channels, cross-office relay, and required asks that suspend and resume an agent.</li>
       </ul>
     </div>
   </div>
@@ -824,7 +824,7 @@ offices/
     <tbody>
       <tr><td>Host supervision of workers</td><td><span class="st ok">Runs today</span></td><td>Suspended spawn, signature check, restart with backoff, discard and quarantine. macOS only.</td><td>Linux spawn and credential provider</td></tr>
       <tr><td>Office commands over the local socket</td><td><span class="st ok">Runs today</span></td><td>About 30 organization commands, work writes, messaging subset, subscribe feed</td><td>Work reads and the remaining messaging calls</td></tr>
-      <tr><td>agent-os messaging</td><td><span class="st ok">Runs today</span></td><td>Spool by default; office when bound</td><td>Verified cutover from the installed tool</td></tr>
+      <tr><td>agent-os messaging</td><td><span class="st ok">Runs today</span></td><td>Spool by default; office when bound</td><td>The office path for every call; the long-running mode of ADR-0014</td></tr>
       <tr><td>HQ setup and service registration</td><td><span class="st part">Built, not reachable</span></td><td>Creation persistence, admitted bootstrap, CA escrow, release verifier, journal foundations</td><td>Wire <code>setup</code>; import setup journal and launchd adapter from the reservoir branch</td></tr>
       <tr><td>Host accounts and sessions</td><td><span class="st part">Built, not reachable</span></td><td><code>host-registry.db</code> with accounts, lockout, journal, TLS pair</td><td>Dispatch the operations on <code>host.sock</code> and the web control channel</td></tr>
       <tr><td>Web server for the browser</td><td><span class="st part">Built, not reachable</span></td><td>hyper + rustls server, CSP, route table, sandbox entry</td><td>A real backend, host spawn and handoff, launch v3 in the host</td></tr>
@@ -889,7 +889,7 @@ offices/
 </section>
 
 <footer class="doc-foot">
-  Built from the repository at <code>v1-integration @ 55c7d76</code>: the organization-data contracts (documents 01 to 17), ADRs 0001 to 0019, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
+  Built from the repository at <code>v1-integration @ 55c7d76</code>: the organization-data contracts (documents 01 to 17), ADRs 0001 to 0020, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
 </footer>
 </main>
 </div>

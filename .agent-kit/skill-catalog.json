@@ -154,7 +154,7 @@
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "e0a48f39d40414926c8a75c2ef859efd8d7c724f5b890bd68d07edbcfc789656"
+      "sha256": "82cecee7afe698698b98ae6f73d0e7f4e8d79d18a5d6696cfa916ecae6b03805"
     },
     {
       "path": "docs/design/project-structure.md",
@@ -186,7 +186,7 @@
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "637831250ea96e2b89c7fd3fd8e33d76d9951d87918a1ff78efefc715ae996f1"
+      "sha256": "11074695cd7b383f5ea6865de77b3e4d64eb32580925e6af7ac16b55339547cd"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
