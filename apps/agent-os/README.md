@@ -9,7 +9,7 @@ cargo build --release -p agent-os --bin agent-os
 ./target/release/agent-os --help
 ```
 
-Building the new executable does not replace the installed live CLI or move/reset its spool. Complete the verified live-message cutover in ADR-0003 before switching a running team. Install the reviewed agent-os artifact through the pinned release; do not overwrite the old installed CLI as a build step. The new CLI keeps the existing spool layout and ORG_AGENT/ORG_OFFICE bindings.
+Install the reviewed agent-os artifact through the pinned release; do not overwrite the old installed CLI as a build step. The new CLI keeps the existing spool layout and ORG_AGENT/ORG_OFFICE bindings.
 
 Use agent-os relay run/status directly. Legacy relay argv[0] dispatch remains compatible for existing deployments; a fresh release needs no relay alias or additional service executable.
 
@@ -24,7 +24,7 @@ The commands and Phase A/opt-in Phase B behavior below describe the current exec
 | Local spool / office message SQL | Protected durable conversation/message envelopes and attachments outside disposable office caches; SQL is a projection. Implement recoverable source writes/actor-bound receipts before acknowledgement. The Phase A flush limitation below remains real until verified cutover. |
 | Existing messaging/directory tools | Channel discovery, group conversations, typed task mutations and execution/budget commands require reviewed adapters/contracts; no syntax for those is implemented by this target description. |
 
-New IDs use UUIDv7; preserve old IDs and explicit legacy B-/REQ- mappings. Target task references are T- for every type, qualified as `P-8/T-42` or `TEAM-12/T-42` outside scope. A handoff is not task closure and cannot discard its worktree. Chat does not copy author-only private task notes or become project/feature knowledge automatically.
+Target IDs are UUIDv7. Target task references are T- for every type, minted by the creating office and complete on their own, for example `T-B37`. A handoff is not task closure and cannot discard its worktree. Chat does not copy author-only private task notes or become project/feature knowledge automatically.
 
 The selected accounting/budget data (documents 10/17) requires durable usage/price/checkpoint history, incomplete-data labels and independent budget/manual/security holds. The own-agent CLI exception permits only the authenticated agent's current-task budget and own daily/monthly spent/remaining amounts; it grants no raw history or other-agent totals and does not advertise an available command here. Budget evaluation/automatic stopping and model-profile routing remain implementation work. Git alone cannot recover protected chat, usage, receipts, budget extensions or authority.
 

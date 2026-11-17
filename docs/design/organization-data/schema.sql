@@ -1127,7 +1127,6 @@ CREATE INDEX documents_by_owner ON documents(organization_id, owner_employee_id,
 CREATE INDEX links_by_target ON links(organization_id, target_kind, target_id, kind);
 CREATE INDEX deployments_by_release ON deployments(organization_id, release_id, created_at);
 CREATE INDEX deployments_by_target ON deployments(organization_id, project_id, environment, target, started_at);
-CREATE UNIQUE INDEX team_task_numbers ON tasks(organization_id, team_id, number) WHERE project_id IS NULL;
 CREATE INDEX tasks_by_team_status ON tasks(organization_id, team_id, status);
 CREATE UNIQUE INDEX one_hq_per_org ON offices(organization_id) WHERE role = 'hq';
 CREATE INDEX teams_by_parent ON teams(organization_id, parent_team_id);

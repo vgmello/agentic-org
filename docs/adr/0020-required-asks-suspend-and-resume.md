@@ -2,8 +2,11 @@
 
 Status: **accepted by the owner 2026-11-17**. Implementation pending. The rule in
 decisions 1 to 8 is the owner's, stated when he answered the open point in
-[REQ-04](../specs/req-04-channel-messaging-and-question-components.md). Decisions 9 to 13
-are the lead's design for it; the owner confirmed the two default values. Amends
+[REQ-04](../specs/req-04-channel-messaging-and-question-components.md), and he confirmed
+the two default values. These details inside decisions 1 to 8 are the lead's: the
+configured maximum (1), false as the default (2), "ask someone else" (4), and
+withdrawal or cancellation of a required ask (7). Decisions 9 to 13 are the lead's
+design. Decision 14 is the lead's recommendation, which the owner accepted. Amends
 [ADR-0003](0003-agent-messaging-office-first.md) §2.5 and §3.3,
 [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 9, the
 [session design](../design/agent-sessions.md) and the [chat spec](../specs/chat-ux.md).
@@ -24,8 +27,8 @@ arrives. For the person, the agent is simply idle until they reply.
 
 ## Decision
 
-1. **Every ask waits for a bounded time.** The default wait is an organization setting,
-   10 minutes unless changed. It is the same whether the recipient is a
+1. **Every ask waits for a bounded time.** The default wait is a system setting for the
+   organization, 10 minutes unless changed. It is the same whether the recipient is a
    person or an agent. The asker may state how long it expects a reply to take, up to
    a configured maximum.
 2. **The asker says whether the answer is required.** `required: true` means: I cannot
@@ -43,7 +46,9 @@ arrives. For the person, the agent is simply idle until they reply.
    Its context is already on disk, so nothing is lost.
 7. **The question stays open while the agent is suspended.** A required ask does not
    expire under its asker. It ends when it is answered, when the asker withdraws it,
-   or when a person with authority over the work cancels it.
+   or when a person with authority over the work cancels it. A required ask therefore
+   carries no `expires_at`, and an office that receives it late delivers it; the
+   expiry and skew rule of ADR-0003 §3.3 applies only to asks that are not required.
 8. **The answer starts the agent again, in the same context.** When the answer arrives,
    the system starts the agent by resuming the same session and gives it the answer as
    its next input. To the agent it is as if it had been working all along; to the
@@ -91,6 +96,9 @@ The lead's design for the rule:
   delivered as an ordinary message.
 - ADR-0014 decision 9 stands: the ask itself is acknowledged like a send, and only
   waiting for the reply is slow. The wait is now bounded by this ADR.
+- ADR-0003 caps one held call at 60 seconds on an agent's connection. That cap stays.
+  The wait of this ADR spans as many held calls as it needs; `agent-os` renews the hold
+  and the office keeps one timer for the whole wait.
 - The session design lists what may start a turn. The answer to a required ask is
   added as one of them.
 
@@ -117,8 +125,8 @@ The lead's design for the rule:
 
 ## Consequences
 
-- An agent never burns a model turn, a subscription slot or budget while it waits for
-  a person.
+- An agent holds a model turn and a subscription slot for at most the wait, 10 minutes
+  by default, and nothing while it is suspended.
 - The office gains a durable "suspended on an ask" state and one more reason to start
   a turn. Stopping and resuming a session becomes a routine path, so the resume of
   each vendor tool must be reliable; that is already required for restarts.

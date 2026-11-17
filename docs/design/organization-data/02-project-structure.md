@@ -129,7 +129,7 @@ Project investment/token totals are derived from [usage records](10-usage-and-co
 
 ## Completion of milestones and releases
 
-Milestones and releases store no status of their own (owner decision 2026-11-17). Whether one is done is derived from task status, where `done` is the one finished value ([document 03](03-features-and-work.md)):
+Milestones and releases store no status of their own (owner decision 2026-11-17). Whether one is done is derived from task status ([document 03](03-features-and-work.md)):
 
 - A milestone is done when it has at least one task and every task assigned to it is finished.
 - A release that has milestones is done when every one of its milestones is done.

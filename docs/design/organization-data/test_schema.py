@@ -769,6 +769,17 @@ class GapPreservationTests(unittest.TestCase):
         insert(self.db, "record_refs", organization_id="org", kind="task", id="east-42", is_deleted=0)
         self.db.commit()
         self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='east-42'").fetchone()[0], "T-B42")
+        # two projectless tasks of one team may carry the same number under different office codes,
+        # and a task may move out of its project into that team without changing its reference
+        insert(self.db, "tasks", **base, id="team-a7", office_code="A", number=7)
+        insert(self.db, "tasks", **base, id="team-b7", office_code="B", number=7)
+        insert(self.db, "tasks", **base, id="proj-b8", office_code="B", number=8, project_id="project")
+        for identity in ("team-a7", "team-b7", "proj-b8"):
+            insert(self.db, "record_refs", organization_id="org", kind="task", id=identity, is_deleted=0)
+        self.db.commit()
+        self.db.execute("UPDATE tasks SET project_id=NULL WHERE id='proj-b8'")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='proj-b8'").fetchone()[0], "T-B8")
         # one office never gives the same number twice, whatever the project
         with self.assertRaises(sqlite3.IntegrityError):
             insert(self.db, "tasks", **base, id="dup", office_code="A", number=42)

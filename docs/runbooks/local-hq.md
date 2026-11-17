@@ -35,7 +35,7 @@ workaround. Do not edit registry/DB/marker files by hand to make them available.
 ## 1. One folder for everything dev, apart from a real install
 
 Use an empty, short, owner-private disposable root, never a user's office home,
-Keychain items, installed CLI or live Phase A spool. In a development terminal:
+or Keychain items. In a development terminal:
 
 ```sh
 export HQ_REPO="$(pwd -P)"  # run at the repository root
@@ -178,5 +178,4 @@ runtime-path sandbox migration remain implementation gates. Satellite networking
 and selected profile/permit/session-runner integration need their own evidence.
 Manual HQ-loss recovery remains REC-1; an escrow round-trip is not promotion.
 Automatic promotion, scheduling/memory, Areas, Undo and process execution are not
-selected by this runbook. Keep active Phase A communication intact until its
-separately verified conditional transport cutover.
+selected by this runbook.

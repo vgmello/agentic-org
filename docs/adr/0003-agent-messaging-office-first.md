@@ -10,17 +10,16 @@
 | `thread_id`, participant union and per-message `from_member_id`/`to_member_id` | Import one `directed_thread` with the original thread/root IDs; preserve each message's sender/recipient visibility. A participant union never authorizes another message. Filter subject, last-message, counts, previews and search by visible messages. |
 | v1 `content_hash` (§3.4, version byte + seven length-prefixed fields) | Preserve as `source_content_sha256`, `source_hash_codec: v1_lenprefixed_sha256` and immutable `source_envelope`; verify the original codec separately from normalized RFC 8785 `content_sha256`. Do not rename or recompute the old wire hash with the new algorithm. |
 | v1 origin/incarnation/sequence and recipient triage generation | Retain original delivery identities and independent state origin. Content/state share the old allocator/high-water; import must not split it into overlapping sequences. Local cursors remain derived. |
-| Cutover of the former development team's message queue: **withdrawn 2026-11-17**, nothing is carried over | Preserve the commands and source state in the final cutover section. The current built executable is `agent-os`; a documentation edit never switches a live transport. |
+| Cutover of the former development team's message queue: **withdrawn 2026-11-17**, nothing is carried over | Not built. The executable is `agent-os`. |
 
 The target office/session integration also follows [Chat's noninterrupting
 message-delivery policy](../specs/chat-ux.md#42-system-notices-and-delivery).
 Urgency controls order and visibility, not automatic interruption of a busy
 turn. Existing Phase A wake tags/watchers and urgent runtime-adapter behavior
 below remain versioned compatibility evidence, not the target's permission to
-interrupt. Preserve live transport behavior/state until a separately verified
-cutover; this requirement does not switch installed tooling.
+interrupt.
 
-New stable IDs follow document 06 (UUIDv7); old ULIDs/other IDs remain stable. Task links use T- for every task type, qualified outside their scope as `P-8/T-42` or `TEAM-12/T-42`. Retained B-/REQ- references resolve through explicit mappings, never a prefix substitution. Authentication/key namespaces and existing wire method names stay versioned contracts.
+Stable IDs follow document 06 (UUIDv7). Task links use T- for every task type; a task reference such as `T-B37` is minted by the creating office and is complete on its own (document 06). There are no B- or REQ- references. Authentication/key namespaces and existing wire method names stay versioned contracts.
 
 **Standalone-v1 amendment (2026-11-09):**
 [ADR-0005](0005-standalone-server-v1.md) replaces the desktop application's human
@@ -32,10 +31,8 @@ office-first messaging still apply. An office certificate is not owner authority
 The desktop-owned bridge token/start lifetime in §6.6 must become an explicitly
 authorized service-managed credential/start contract if bridges ship; it cannot
 depend on a Tauri window. Native deep links become normal HQ URLs. No desktop
-application/data migration is required. However, the team's live Phase A spool
-coordination state is retained under the cutover contract below; it must not be
-dropped when switching transports. Fresh organizations need no import. Retained
-person-started spool behavior remains separate from office-managed authentication.
+application/data migration is required, and no earlier message queue is carried
+over (owner, 2026-11-17). Person-started spool behavior remains separate from office-managed authentication.
 The first standalone local protocol advances to API_VERSION 2 under ADR-0001;
 historical statements that additive chat additions keep version 1 apply to that
 version only, not breaking removals or changed authority in the standalone pivot. See the
@@ -461,6 +458,8 @@ Agents must be able to discover everyone in the organization (agents, people, an
 
 #### 2.5 Talking to Humans (Owner and Added People)
 
+> Amended 2026-11-17 by [ADR-0020](0020-required-asks-suspend-and-resume.md): how long an asker waits is one system setting (10 minutes), the same for a person or an agent, and an ask may be marked required, in which case it does not expire and the asker is suspended until it is answered. The 24-hour default below is now the life of a question that is not required.
+
 Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md), agents can message, `ask`, or assign tasks to any **person** added to the organization (`MemberKind::Person`) and always to the **owner** (`owner: true`):
 
 1. **HQ Owns All Human Inboxes:**
@@ -586,6 +585,8 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
    - A `msg.ask` whose wake-up is a `delivery_failed` with `run_ended` returns `unknown_recipient` (exit code `3`), as for a removed member.
 
 #### 3.3 Cross-Office `ask` with Deadlines, Bounded Clock-Skew Grace, and Idempotent Re-Ask
+
+> Amended 2026-11-17 by [ADR-0020](0020-required-asks-suspend-and-resume.md): the expiry and skew rule below applies to asks that are not required. A required ask carries no `expires_at` and is delivered whenever it arrives.
 
 1. **Sending a cross-office `ask`:**
    - Agent 1 in Office A runs `agent-os msg ask --to agent-2 --timeout 120s "…"`.
@@ -987,8 +988,8 @@ for the narrowly scoped agent calls below. Bridge bindings gain no new rights. U
   Tool help documents syntax and access; an overridable process governs when to
   ask a channel and whether to move to DM. Final wire fields, join-policy values,
   and limits remain contract work for Remy/server-dev/ada. The standalone-v1
-  amendment removes desktop data migration, while the live Phase A coordination
-  cutover below preserves pending asks and read/triage history when that state exists.
+  amendment removes desktop data migration, and nothing from an earlier message queue
+  is carried over.
 
 ## Live Phase A coordination cutover and person-started context
 

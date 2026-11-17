@@ -132,7 +132,7 @@ and the acknowledgement sentence in
 | ACK-6 | No domain crate refers to an engine-specific durability mechanism; the store adapter alone maps the two classes, and the engine-independent suite passes against it. |
 | ACK-7 | A committed-class task change killed mid-write is either fully present or fully absent after restart, with its event and idempotency result consistent. |
 | ACK-8 | With the recipient in another office and HQ unreachable, `msg.send` still returns within the session-mode target of decision 1, and the message is delivered after HQ returns. |
-| ACK-9 | An ask with no stated deadline uses the default for the recipient's kind; an ask whose deadline passes returns a timeout to the caller, and a late reply is handled as the messaging contract states. |
+| ACK-9 | An ask with no stated wait uses the system setting of ADR-0020; an ask whose deadline passes returns a timeout to the caller, and a late reply is handled as the messaging contract states. |
 
 ## Consequences
 

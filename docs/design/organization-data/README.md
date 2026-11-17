@@ -29,7 +29,7 @@ Each numbered document owns its relationships, field sources, examples and table
 
 ## Shared identity contract
 
-Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text (owner decision 2026-11-17; [document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). The newer HQ-creation code already mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
+Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text (selected 2026-11-17 at the owner's request for the industry standard; [document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). The newer HQ-creation code already mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
 
 | Entity | Readable identifier | Uniqueness / counter scope |
 | --- | --- | --- |

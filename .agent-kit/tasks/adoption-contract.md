@@ -3,7 +3,7 @@
 Request: apply https://github.com/vgmello/agents/blob/codex/claude-code-starter-kit/ADOPT.md to the Agentic Org monorepo. The user explicitly selected **codex only** on 2026-11-15.
 
 Acceptance:
-- Preserve application code, existing ownership, architecture, branch/review/merge rules, credentials, installed org-agent and live spool state.
+- Preserve application code, existing ownership, architecture, branch/review/merge rules, and credentials. Nothing from the earlier coordination tool or its message queue is preserved (owner, 2026-11-17).
 - Install the pinned starter-kit revision 01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1 in codex-only mode with an effective instruction entry point, native roles/hooks, real verification commands and a source-backed skill catalog/role briefs.
 - Deploy and probe Repowise 0.61.0 and Hindsight 1.2.1; preserve existing host containers/data. Record any host/access blockers accurately.
 - Seed concise project maps, decisions and reviewed memory; validate scoped packets/preflight and deterministic failure/recovery in disposable fixtures.

@@ -59,9 +59,9 @@ The owner-requested [v1 project structure](docs/design/project-structure.md) def
 Owner direction, 2026-11-17. Two engineers and their agents are building this
 product, and they are to be onboarded onto it as early as it can carry them, so that
 they talk to each other, track their tasks and run their agents through the product
-they are building. Order the work towards v1 with that in mind: creating an
-organization, signing in, people and teams, tasks and chat come first, because they
-are what onboarding needs. As each milestone lands, the people and agents building
+they are building. The lead's reading of what that means for the order of work:
+creating an organization, signing in, people and teams, tasks and chat come first,
+because they are what onboarding needs. As each milestone lands, the people and agents building
 the product start using that feature.
 
 Nothing from before is carried over. The earlier command-line tool that the former
