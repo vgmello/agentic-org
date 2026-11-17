@@ -521,7 +521,7 @@ offices/
     </tbody>
   </table></div>
   <ul>
-    <li>The stable <code>id</code> is immutable and is what foreign keys, sync and file names use. IDs are ULIDs, which the code already uses.</li>
+    <li>The stable <code>id</code> is immutable and is what foreign keys, sync and file names use. IDs are ULIDs. Most of the code already uses them; the newer HQ-creation path in the host uses UUIDv7 and is to change.</li>
     <li>An office that creates a task or feature while disconnected saves it with <code>number: null</code>. The organization authority allocates the number in one serialized transaction. No client ever computes <code>MAX + 1</code>.</li>
     <li>Gaps are allowed and numbers are never reused. A type change or reassignment never renumbers.</li>
     <li>Outside a selected scope, references are qualified: <code>P-8/T-42</code>, <code>TEAM-12/T-42</code>, <code>P-8/R-3/M-2</code>.</li>
@@ -856,14 +856,13 @@ offices/
     <thead><tr><th>Topic</th><th>Requirement</th><th>Code today</th><th>Recorded in</th></tr></thead>
     <tbody>
       <tr><td>Storage</td><td>Files are the source; rebuild the store against the selected contract.</td><td>Two encrypted databases with older tables are the source.</td><td class="k">B-01, organization data</td></tr>
-      <tr><td>Storage engine</td><td>Only store adapters know the database; PostgreSQL must be possible.</td><td>One concrete store; three files use SQL outside it.</td><td class="k">B-13, ADR-0018</td></tr>
-      <tr><td>Launch contract</td><td>One contract, the verified rendezvous; no older form.</td><td>The host writes the older first-line form; the worker implements the rendezvous.</td><td class="k">B-06, host boundary design</td></tr>
+      <tr><td>Storage engine</td><td>Only store adapters know the database; PostgreSQL must be possible.</td><td>One concrete store; two files use SQL outside it. Messaging and replication already have engine-independent tests.</td><td class="k">B-13, ADR-0018</td></tr>
+      <tr><td>Launch contract</td><td>One contract, the verified rendezvous; no older form.</td><td>Host and worker implement both forms; the host uses the rendezvous only for a registered, protected instance.</td><td class="k">B-06, host boundary design</td></tr>
       <tr><td>Authorization of people</td><td>Principal plus a host-issued grant, verified by the worker.</td><td>The launch line carries an app token; the grant key is unused.</td><td class="k">B-07</td></tr>
-      <tr><td>Web channels</td><td>Seven per office.</td><td>The host allows 63; the worker rejects the eighth.</td><td class="k">B-08</td></tr>
       <tr><td>Work reads for the browser</td><td>Served through the host and office channel.</td><td>The host socket answers two calls.</td><td class="k">B-10</td></tr>
       <tr><td>Platforms</td><td>macOS and Linux, including a container.</td><td>Workers start on macOS only.</td><td class="k">B-09, ADR-0017</td></tr>
       <tr><td>Membership, task shape, areas</td><td>One home team; one typed task; no areas.</td><td>Many-to-many membership; separate task and bug families; <code>area.*</code> served.</td><td class="k">B-02, B-03, B-05</td></tr>
-      <tr><td>Create organization</td><td>Name, slug, organization repository, state branch, bootstrap team.</td><td>Name only.</td><td class="k">A-09, web API design</td></tr>
+      <tr><td>Create organization</td><td>Name, slug, organization repository, state branch, and the initial team when bootstrap employees are planned.</td><td>Name only.</td><td class="k">A-09, web API design</td></tr>
       <tr><td>Agent home and sign-in</td><td>A private home per agent; sign-in from the subscription pool; never the user's own vendor folders.</td><td>No agent is launched.</td><td class="k">A-08, ADR-0015</td></tr>
       <tr><td>Agent isolation</td><td>Same user or a dedicated user, chosen per agent.</td><td>No isolation setting in the launch description.</td><td class="k">F-03, ADR-0015</td></tr>
       <tr><td>Browser sessions</td><td>Stored at the host; survive restarts.</td><td>In memory.</td><td class="k">F-01, ADR-0013</td></tr>
@@ -874,13 +873,14 @@ offices/
   </table></div>
   <h3>Waiting for the owner</h3>
   <div class="tbl wide"><table>
-    <thead><tr><th>Topic</th><th>Requirement decided</th><th>Proposal</th><th>Recorded in</th></tr></thead>
+    <thead><tr><th>Topic</th><th>Decided</th><th>What is open</th><th>Recorded in</th></tr></thead>
     <tbody>
-      <tr><td>Task and feature numbers</td><td>Creating a task never waits for HQ, and a reference never changes.</td><td>References minted by the creating office, with a letter for the office: <code>T-A1</code>, <code>T-B37</code>.</td><td class="k">C-12, ADR-0019 (proposed)</td></tr>
+      <tr><td>Task numbers</td><td>Creating a task never waits for HQ. Accepted: references minted by the creating office with a letter for the office (<code>T-A1</code>, <code>T-B37</code>), for tasks only.</td><td>Still open: one count per office, or one per office per project.</td><td class="k">C-12, ADR-0019 (accepted in part)</td></tr>
+      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components (REQ-04).</td><td>Still open: external channels in v1 or v2; own components instead of the React libraries named; an ask to a person must not hold a turn for hours.</td><td class="k">A-07, REQ-04</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>
-  <p>Storage layout; HQ as the organization authority; the budget check at the turn permit; moving agents versus moving offices; the hash format registry; messaging rules merged from ADR-0003 and one writing office per messaging file; no browser terminal (ADR-0004); hosting providers moved to v2 and the Git design rewritten; the API version; the data contract clean-ups (closed status lists, derived milestone and release completion, one employee status, no owner marker, the instance defined, diagrams, one home for provider records, status labels, the usage writer, schema traceability, history files); process and standard resolution; the table of libraries not yet reached; setup status markers; and old names, owners, missing ADR and stale records in the documents.</p>
+  <p>Storage layout; HQ as the organization authority; the budget check at the turn permit; moving agents versus moving offices; the hash format registry; messaging rules merged from ADR-0003 and one writing office per messaging file; no browser terminal, with the session view built from conversation files (ADR-0004, REQ-05); seven web channels per office, which the code already enforces; hosting providers moved to v2 and the Git design rewritten; the API version; the data contract clean-ups (closed status lists, derived milestone and release completion, one employee status, no owner marker, the instance defined, diagrams, one home for provider records, status labels, the usage writer, schema traceability, history files); process and standard resolution; the table of libraries not yet reached; setup status markers; and old names, owners, missing ADR and stale records in the documents.</p>
 </section>
 
 <footer class="doc-foot">

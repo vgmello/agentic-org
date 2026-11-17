@@ -541,7 +541,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <li><b>Files are canonical</b><span>SQLite is an indexed projection. A valid row is never launch authority or an authorization grant.</span></li>
     <li><b>Acknowledge after durable evidence</b><span>A command completes only when its journal record is readable. ADR-0006.</span></li>
     <li><b>HQ is the authority</b><span>Offices never increment shared counters. Numbers are allocated once, in one serialized place, and never reused.</span></li>
-    <li><b>Stable IDs never change</b><span>ULIDs, which the code already uses.</span></li>
+    <li><b>Stable IDs never change</b><span>ULIDs. Most of the code already uses them; the newer HQ-creation path uses UUIDv7 and is to change.</span></li>
     <li><b>Every mutation is idempotent</b><span>One operation ID per intent. An unknown outcome is resolved by lookup, never by a fresh ID.</span></li>
     <li><b>Credentials stay office-local</b><span>Never in Git, command payloads, journals or logs. Agents never hold a push token.</span></li>
     <li><b>Fail closed, no mocks</b><span>A missing capability shows unavailable. Missing trust or platform support refuses to start.</span></li>
@@ -571,8 +571,8 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     </tbody>
   </table></div>
   <p>What "extensible to PostgreSQL" still needs, when the time comes: the store's own entry points become selectable at start-up (today the office uses one concrete store type), and each area gets a second implementation behind the same interfaces. Nothing in the domain rules, the wire contract or the UI changes.</p>
-  <p>With PostgreSQL the single connection would no longer be needed; the ordering guarantee would come from transactions. Three things would make a move harder than it should be: three files outside the store module use SQL directly, the contracts name SQLite mechanisms such as <code>BEGIN IMMEDIATE</code>, and encryption is tied to SQLCipher. Nothing needs to be built for PostgreSQL now.</p>
-  <p><strong>Decided 2026-11-17 (register entry B-13, ADR-0018).</strong> PostgreSQL must be possible later, so the rule is written down now: only the storage adapters know which database is in use; the guarantees are stated without naming a database; the store is chosen at one place at start-up; and every storage contract gets a test suite that any database must pass, as replication already has. The contract wording no longer names a database statement. The code work is to move the three stray files behind the store, add the selection point and write four suites. It is best done together with the storage rebuild, which touches the same code.</p>
+  <p>With PostgreSQL the single connection would no longer be needed; the ordering guarantee would come from transactions. Three things would make a move harder than it should be: two files outside the store module use SQL directly, the contracts name SQLite mechanisms such as <code>BEGIN IMMEDIATE</code>, and encryption is tied to SQLCipher. Nothing needs to be built for PostgreSQL now.</p>
+  <p><strong>Decided 2026-11-17 (register entry B-13, ADR-0018).</strong> PostgreSQL must be possible later, so the rule is written down now: only the storage adapters know which database is in use; the guarantees are stated without naming a database; the store is chosen at one place at start-up; and every storage contract gets a test suite that any database must pass, as replication already has. The contract wording no longer names a database statement. The code work is to move the two stray files behind the store, add the selection point and write three suites; messaging and replication already have one. It is best done together with the storage rebuild, which touches the same code.</p>
 
   <h3>Numbers when an office is offline</h3>
   <p>A remote office is never given a block of numbers to hand out. That keeps numbering in one place, with no gaps to reconcile between offices.</p>
@@ -582,7 +582,18 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <li>When the office reconnects, HQ allocates the next number once. The number is added to the record. It is never changed afterwards.</li>
   </ul>
   <p><strong>Nothing is replaced, so a model cannot be left holding a dead reference.</strong> There is no temporary number. The permanent ID is the identity before and after, and it keeps resolving forever; the readable number is an extra name added later.</p>
-  <div class="note warn"><p><b>Proposed change, waiting for you (register entry C-12, ADR-0019).</b> You asked that creating a task never waits for HQ, and suggested putting the office in front of the number. A separate analysis agrees with the idea and changes one detail. Written with digits, <code>T-111</code> could mean office 1 task 11 or office 11 task 1. So the office part is a letter: HQ is <code>A</code>, the second office <code>B</code>. HQ's first task is <code>T-A1</code>; the second office's thirty-seventh is <code>T-B37</code>. Each office counts on its own, so there is no round trip, online or offline, and "Pending number" disappears for tasks and features. Teams, projects, releases and milestones keep waiting for HQ, as you said they may. Three things need your yes: the letter, one counter per office for the whole organization (which removes the <code>P-8/T-42</code> form), and whether creating a task may use the fast acknowledgement. Until then the contract above stands.</p></div>
+  <div class="note warn"><p><b>Decided in part on 2026-11-17 (register entry C-12, ADR-0019).</b> You asked that creating a task never waits for HQ, and suggested putting the office in front of the number. You accepted the letter form: HQ is <code>A</code>, the second office <code>B</code>, so HQ's first task is <code>T-A1</code> and the second office's thirty-seventh is <code>T-B37</code>. (With digits, <code>T-111</code> could mean office 1 task 11 or office 11 task 1.) It applies to tasks only: features, teams, projects, releases and milestones keep waiting for HQ. Each office mints the number itself, so there is no round trip, online or offline, and "Pending number" disappears for tasks.</p>
+  <p><b>The one point still open: how an office counts.</b> Today every project counts its own tasks from 1, so project 8 has a <code>T-42</code> and project 9 can have one too. That is why a full reference is written <code>P-8/T-42</code>.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th></th><th>A. One count per office (recommended)</th><th>B. One count per office per project</th></tr></thead>
+    <tbody>
+      <tr><td>The second office's tasks</td><td><code>T-B1</code>, <code>T-B2</code>, <code>T-B3</code>, in whatever projects they are</td><td><code>P-8/T-B1</code>, <code>P-8/T-B2</code>, and also <code>P-9/T-B1</code></td></tr>
+      <tr><td>Is <code>T-B37</code> enough to find the task?</td><td>Yes. There is only one.</td><td>No. The project must be written in front.</td></tr>
+      <tr><td>Moving a task to another project</td><td>The reference stays the same.</td><td>It needs a new number.</td></tr>
+      <tr><td>Size of the numbers</td><td>Larger: an office's thousandth task is <code>T-B1000</code>.</td><td>Smaller inside each project.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Your own example, <code>T-11</code> and <code>T-21</code>, had no project in front, which is A. I recommend A. Until you choose, the task rules above carry a note in the contract telling agents not to build HQ allocation for tasks.</p></div>
 </section>
 
 <section id="authority">
@@ -662,18 +673,19 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <div class="tbl wide"><table>
     <thead><tr><th>Topic</th><th>Decision</th><th>What is left</th><th>Entry</th></tr></thead>
     <tbody>
-      <tr><td>Task numbers</td><td>Creating a task must never wait for HQ. Proposal: office-coded references such as <code>T-B37</code>.</td><td><strong>Your confirmation.</strong></td><td class="k">C-12</td></tr>
+      <tr><td>Task numbers</td><td>Creating a task never waits for HQ. Tasks get an office letter, such as <code>T-B37</code>; tasks only.</td><td><strong>Your choice:</strong> one count per office, or per office per project (part 06).</td><td class="k">C-12</td></tr>
+      <tr><td>Session view and questions</td><td>Your two requirement documents are in the repository: a read-only console built from the agent tool's conversation files (REQ-05), and structured questions rendered as choice, yes/no or free-text components (REQ-04).</td><td><strong>Three answers from you:</strong> external channels in v1 or v2; our own Svelte components instead of the React libraries named; an ask to a person must not hold an agent's turn for hours.</td><td class="k">A-07</td></tr>
       <tr><td>Storage</td><td>Rebuild the store against the selected files and tables; no migration of the old tables. Keep the database replaceable.</td><td>Code. The largest piece of v1; needs its own plan.</td><td class="k">B-01, B-13</td></tr>
       <tr><td>Host and web</td><td>One launch contract, per-person grants instead of the app token, seven web channels, host serves work reads, stored sessions.</td><td>Code.</td><td class="k">B-06 to B-08, B-10, F-01</td></tr>
       <tr><td>Platforms</td><td>macOS and Linux, including an office in a container.</td><td>Three short designs, then code.</td><td class="k">B-09</td></tr>
       <tr><td>Agents</td><td>Isolation modes, a private home per agent, sign-in from the subscription pool.</td><td>A test per vendor tool, then code.</td><td class="k">F-03, A-08</td></tr>
       <tr><td>Model shapes</td><td>Single home team, one typed task, no areas. Remove the old shapes.</td><td>Code.</td><td class="k">B-02, B-03, B-05</td></tr>
-      <tr><td>Create organization</td><td>The request carries slug, repository, state branch and bootstrap team.</td><td>Code.</td><td class="k">A-09</td></tr>
+      <tr><td>Create organization</td><td>The request carries slug, repository, state branch and, when bootstrap employees are planned, the initial team.</td><td>Code.</td><td class="k">A-09</td></tr>
       <tr><td>Speed and encryption</td><td>Fast acknowledgement for messaging; no application-level encryption.</td><td>Code and measurement on a Mac.</td><td class="k">F-02, E-01</td></tr>
       <tr><td>Names in code</td><td>"gateway" becomes "web" in the code too.</td><td>A mechanical rename in 83 source files.</td><td class="k">D-07</td></tr>
     </tbody>
   </table></div>
-  <p>Fixed in the documents with nothing left: the storage layout, HQ as authority, budget checks, relocation, hash formats, the messaging merge and its file layout, the session view without a terminal, GitHub moved to v2 and the Git design rewritten, the data contract clean-ups (status lists, derived completion, one employee status, the owner marker, the instance, diagrams, the usage writer, traceability), process and standard resolution, the library table, and the old names in the documents.</p>
+  <p>Fixed in the documents with nothing left: the storage layout, HQ as authority, budget checks, relocation, hash formats, the messaging merge and its file layout, GitHub moved to v2 and the Git design rewritten, the data contract clean-ups (status lists, derived completion, one employee status, the owner marker, the instance, diagrams, the usage writer, traceability), process and standard resolution, the library table, and the old names in the documents.</p>
 </section>
 
 <section id="followups">
