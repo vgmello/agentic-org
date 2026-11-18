@@ -1,5 +1,5 @@
 //! Ordered, per-request authority checks. The worker supplies clock, MAC and live state.
-use super::super::{live_owner, Binding, LaunchAuth, Shared};
+use super::super::{live_owner, Binding, Shared};
 use crate::revocations::Revocations;
 use org_proto::{ErrorCode, Grant, OfficeInfo, Request};
 use std::sync::Mutex;
@@ -10,10 +10,7 @@ pub(super) struct Live<'a> {
 }
 impl Checks for Live<'_> {
     fn verify(&self, grant: &Grant) -> bool {
-        match &self.shared.auth {
-            LaunchAuth::Grants { _key } => crate::grant::verify(_key, grant),
-            LaunchAuth::Legacy(_) => false,
-        }
+        self.shared.auth.verifies(grant)
     }
     fn now_ms(&self) -> Option<u64> {
         std::time::SystemTime::now()
@@ -30,7 +27,7 @@ impl Checks for Live<'_> {
     fn owner(&self, id: &str) -> Option<String> {
         let binding = Binding::Member {
             id: id.to_owned(),
-            with_app_token: true,
+            via_grant: true,
         };
         matches!(live_owner(self.shared, &binding), Ok(true)).then(|| id.to_owned())
     }

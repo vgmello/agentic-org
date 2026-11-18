@@ -150,7 +150,7 @@ fn shared_work_cases_use_the_canonical_service() {
         let store = Arc::new(MemStore::new(org.clone()));
         let clock = TestClock::at(base_time);
         let service = WorkService::new(Arc::clone(&store), clock.clone(), "office-1");
-        let caller = Caller::app(context["actor"].as_str().unwrap());
+        let caller = Caller::grant_bound(context["actor"].as_str().unwrap());
         for (n, legacy) in case["steps"].as_array().unwrap().iter().enumerate() {
             let step = canonical_step(legacy);
             let now = parse_ms(

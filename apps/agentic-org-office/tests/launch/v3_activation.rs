@@ -24,8 +24,30 @@ fn create_line(path: &Path) -> HostFirstLine {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
-        hq_creation: None,
+        hq_creation: Some(hq_creation(path)),
     })
+}
+
+/// HQ creation-v1 without a selected bootstrap: the only create the worker accepts.
+fn hq_creation(rendezvous: &Path) -> v3::HqCreationV1 {
+    let public = rendezvous.parent().unwrap().join("state");
+    std::fs::create_dir_all(&public).unwrap();
+    v3::HqCreationV1 {
+        version: 1,
+        operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
+        escrow_profile: 1,
+        public_root: std::fs::canonicalize(public)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .into(),
+        bootstrap: None,
+    }
+}
+
+/// A recovery code in the form the host makes.
+fn recovery_code() -> RecoveryCode {
+    RecoveryCode::new("0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213".into()).unwrap()
 }
 
 fn accepted(listener: &UnixListener, run: &mut Run) -> UnixStream {
@@ -121,7 +143,7 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
     let handoff = Handoff::Create {
         db_key: db_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
-        recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+        recovery_code: recovery_code(),
         fds: vec![HandoffFd::Transfer],
     };
     let mut header = v3::encode_handoff(&handoff).unwrap();
@@ -157,7 +179,7 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
     assert!(!socket(&world).exists());
     assert!(host_end.send(b"after shutdown").is_err());
     let logs = run.stderr();
-    for secret in ["0707070707070707", "TEST-RECOVERY-SECRET", DB_KEY_HEX] {
+    for secret in ["0707070707070707", "0001-0203-0405", DB_KEY_HEX] {
         assert!(!logs.contains(secret));
     }
 }
@@ -201,8 +223,20 @@ impl Session {
 }
 
 fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -> Session {
+    handshake_with(world, op, instance, key, |_| {})
+}
+
+/// `handshake`, with the create line changed first. The rendezvous sits beside the home, so a
+/// home whose own paths are too long can still be reached.
+fn handshake_with(
+    world: &World,
+    op: FirstLine,
+    instance: &str,
+    key: Option<DbKey>,
+    edit: impl FnOnce(&mut CreateLine),
+) -> Session {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let path = world.home.join(format!(
+    let path = world.home.parent().unwrap().join(format!(
         "r{}",
         NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     ));
@@ -213,6 +247,7 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
                 unreachable!()
             };
             create.office.instance_id = instance.into();
+            edit(&mut create);
             (vec!["--create"], HostFirstLine::Create(create))
         }
         FirstLine::Start => (
@@ -248,7 +283,7 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
         FirstLine::Create => Handoff::Create {
             db_key: key.unwrap(),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+            recovery_code: recovery_code(),
             fds: vec![HandoffFd::Transfer],
         },
         FirstLine::Start => Handoff::Start {
@@ -310,6 +345,87 @@ fn assert_reopens(world: &World) {
     drop(office);
 }
 
+/// A create the worker refuses: the reason, a failed exit and no stdout.
+fn refused_create(world: &World, edit: impl FnOnce(&mut CreateLine)) -> Value {
+    let mut session = handshake_with(world, FirstLine::Create, INSTANCE, Some(db_key()), edit);
+    let failed = session.event();
+    assert_eq!(failed["event"], "failed", "{failed}");
+    assert!(!session.run.wait().success());
+    session.no_stdout();
+    failed["code"].clone()
+}
+
+#[test]
+fn hq_creation_stores_the_office_serves_hello_and_closes_on_rendezvous_eof() {
+    let _process = process_isolation();
+    let world = World::new();
+    let session = ready_create(&world);
+    let identity = hello(&world);
+    assert_eq!(identity.organization_name, "Acme");
+    assert_eq!(identity.office.id, OFFICE);
+    assert_eq!(identity.office.organization_id, ORG);
+    assert_eq!(identity.office.name, "HQ");
+    assert_eq!(identity.office.role, OfficeRole::Hq);
+    // What the host reads is there, valid, and names this office.
+    let json = std::fs::read(world.folder(OFFICE).join("office.json")).unwrap();
+    let stored = OfficeFile::from_slice(&json).unwrap();
+    assert_eq!(
+        (stored.office_id.as_str(), stored.org_name.as_str()),
+        (OFFICE, "Acme")
+    );
+    session.stop();
+    assert!(!socket(&world).exists(), "the socket file was left behind");
+}
+
+#[test]
+fn hq_creation_of_an_existing_office_by_another_operation_is_refused_and_changes_nothing() {
+    let _process = process_isolation();
+    let world = World::new();
+    ready_create(&world).stop();
+    let before = database_bytes(&world.home);
+    // The same operation id resumes its own creation (ADR-0011). Another operation does not
+    // match the retained creation record, so it is refused as stored state, not a new office.
+    let code = refused_create(&world, |create| {
+        create.hq_creation.as_mut().unwrap().operation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAY".into();
+    });
+    assert_eq!(code, "storage_error");
+    assert_eq!(database_bytes(&world.home), before);
+    assert!(world.folder(OFFICE).join("office.json").exists());
+}
+
+#[test]
+fn hq_creation_with_a_bad_or_untrimmed_name_is_invalid_name_and_leaves_nothing() {
+    let _process = process_isolation();
+    let world = World::new();
+    for (org_name, office_name) in [
+        ("zero\u{200B}width", "HQ"),
+        (" Acme", "HQ"),
+        ("Acme", "HQ "),
+    ] {
+        let code = refused_create(&world, |create| {
+            create.org_name = org_name.into();
+            create.office_name = office_name.into();
+        });
+        assert_eq!(code, "invalid_name", "{org_name:?} / {office_name:?}");
+        assert!(!world.folder(OFFICE).join("office.json").exists());
+    }
+}
+
+#[test]
+fn hq_creation_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
+    let _process = process_isolation();
+    let dir = tempfile::Builder::new().prefix("oo").tempdir().unwrap();
+    let home = dir.path().join("x".repeat(90));
+    std::fs::create_dir_all(home.join("offices")).unwrap();
+    std::fs::create_dir_all(home.join("run")).unwrap();
+    let world = World { _dir: dir, home };
+    assert_eq!(refused_create(&world, |_| {}), "invalid_request");
+    assert!(
+        !office_dir(&world.home, OFFICE).unwrap().exists(),
+        "an office was stored"
+    );
+}
+
 #[test]
 fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
     let _process = process_isolation();
@@ -325,39 +441,31 @@ fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
 #[test]
 fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() {
     let _process = process_isolation();
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-    };
+    use org_proto::org::MemberAddAgent;
     let world = World::new();
-    // Seed through the supported Legacy owner path, then adopt/start the same office under v3.
-    let mut legacy = create(&world);
-    let seed = Client::connect(socket(&world)).unwrap();
-    bind(&seed, token()).unwrap();
+    // Seed through the library, then start under v3 and hire through the owner's grant.
+    seed(&world);
+    let owner_id = {
+        let office =
+            org_office::Office::open(world.folder(OFFICE), org_office::Key::from_db_key(db_key()))
+                .unwrap();
+        let owner = office
+            .org_snapshot()
+            .unwrap()
+            .members
+            .into_iter()
+            .find(|m| m.owner)
+            .unwrap()
+            .id;
+        drop(office);
+        owner
+    };
     let member_id = "AGENT00000000000000000000A";
-    seed.call::<MemberAddAgent>(&MemberAddAgentParams {
-        command_id: command_id(6),
-        member_id: member_id.into(),
-        name: "Ada".into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: "ada".into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    })
-    .unwrap();
-    drop(seed);
-    assert!(legacy.host_goes_away().success());
-    let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
-    assert_eq!(session.event()["event"], "ready");
+    let mut live = owner::live(&world);
+    live.caller(Some(&owner_id))
+        .call::<MemberAddAgent>(&owner::hire(6, member_id, "Ada", "ada"))
+        .unwrap();
+    let mut session = live.session;
     let mut stdin = session.run.stdin.take().unwrap();
     let (sent, complete) = std::sync::mpsc::channel();
     let writer = std::thread::spawn(move || {
@@ -373,19 +481,22 @@ fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() 
     writer.join().unwrap();
     let client = Client::connect(socket(&world)).unwrap();
     assert_eq!(client.hello().unwrap().api_version, 1);
+    // No member is not a bind at all (the app-wide bind is gone); a person, with or without
+    // a token, is refused the same way as an unknown member.
     for (member, app_token, expected) in [
         (None, None, ErrorCode::InvalidRequest),
-        (None, Some(token()), ErrorCode::NotAuthorized),
+        (None, Some(token()), ErrorCode::InvalidRequest),
         (
             None,
             Some(AppToken::from_bytes([7; 32])),
-            ErrorCode::NotAuthorized,
+            ErrorCode::InvalidRequest,
         ),
         (
             Some("owner".into()),
             Some(token()),
             ErrorCode::NotAuthorized,
         ),
+        (Some("owner".into()), None, ErrorCode::NotAuthorized),
     ] {
         assert!(
             matches!(client.call::<MsgBind>(&MsgBindParams{member,app_token}),Err(org_client::ClientError::Api(error)) if error.code==expected)
@@ -425,7 +536,7 @@ fn database_bytes(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
 fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() {
     let _process = process_isolation();
     let world = World::new();
-    let mut legacy = create(&world);
+    let mut legacy = started(&world);
     assert!(legacy.host_goes_away().success());
     for _ in 0..2 {
         let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
@@ -622,7 +733,7 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
         let header = v3::encode_handoff(&Handoff::Create {
             db_key: db_key(),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+            recovery_code: recovery_code(),
             fds: vec![HandoffFd::Transfer],
         })
         .unwrap();
@@ -667,6 +778,9 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
 
 #[path = "v3_activation/transfer.rs"]
 mod transfer;
+
+#[path = "v3_activation/owner.rs"]
+mod owner;
 
 fn selected_plan() -> org_proto::selected_bootstrap::PreparedV1 {
     let id = |n| format!("01900000-0000-7000-8000-{n:012x}");

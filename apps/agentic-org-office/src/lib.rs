@@ -29,6 +29,8 @@ mod revocations;
 mod serve;
 mod signals;
 mod startup;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod transfer;
 mod zeroed;
 
@@ -187,50 +189,28 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             return fail(&mut control, FailCode::InvalidName, "a name is not trimmed");
         }
     }
-    // Explicit creation-v1 consumes/drops its code before the serve lifetime.
-    // Legacy v2/v3 keeps its existing behavior and never claims selected setup.
-    let (created, _legacy_recovery) = if let Some(context) = create.hq_creation {
-        let (Some(instance), Some(owner)) = (create.instance.as_deref(), create.owner_member_id)
-        else {
-            return fail(
-                &mut control,
-                FailCode::InvalidRequest,
-                "missing HQ creation binding",
-            );
-        };
-        let launch::CreationRecovery::V3 { _code } = create._recovery else {
-            return fail(
-                &mut control,
-                FailCode::InvalidRequest,
-                "missing HQ recovery code",
-            );
-        };
-        let binding = org_office::hq_creation::Binding {
-            operation_id: context.operation_id,
-            owner_member_id: owner,
-            public_root: context.public_root.into(),
-            bootstrap: context.bootstrap.map(|b| *b),
-        };
-        (
-            hq_creation::prepare(
-                &folder,
-                &create.office,
-                Some(create.key),
-                instance,
-                &binding,
-                _code,
-            ),
-            None,
-        )
-    } else {
-        let created = match create.instance.as_deref() {
-            Some(instance) => {
-                Office::create_for_instance(folder, &create.office, create.key, instance)
-            }
-            None => Office::create(folder, &create.office, create.key),
-        };
-        (created, Some(create._recovery))
+    // HQ creation-v1 is the only create: it consumes the recovery code before serving.
+    let Some(context) = create.hq_creation else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "missing HQ creation binding",
+        );
     };
+    let binding = org_office::hq_creation::Binding {
+        operation_id: context.operation_id,
+        owner_member_id: create.owner_member_id,
+        public_root: context.public_root.into(),
+        bootstrap: context.bootstrap.map(|b| *b),
+    };
+    let created = hq_creation::prepare(
+        &folder,
+        &create.office,
+        Some(create.key),
+        &create.instance,
+        &binding,
+        create.recovery,
+    );
     let office = match created {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
@@ -272,7 +252,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         runtime,
         office,
         create.auth,
-        create.instance,
+        Some(create.instance),
     )
 }
 

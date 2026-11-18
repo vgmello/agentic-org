@@ -140,7 +140,7 @@ fn c1_work_commit_replay_reopen_conflict_and_owner_delete_use_real_stores() {
         );
         let deleted = call(
             &office,
-            Caller::app(owner),
+            Caller::grant_bound(owner),
             "work.delete",
             json!({"change_id":crate::ulid::generate().unwrap(),"item_id":ITEM,"expected_version":2}),
         );

@@ -73,14 +73,13 @@ fn hint_delivery_owner_and_every_denied_binding_share_the_same_payload_without_r
     shared.enable_inbox_hints().unwrap();
     for binding in [
         Binding::Anonymous,
-        Binding::App,
         Binding::Member {
             id: PAT_ID.into(),
-            with_app_token: true,
+            via_grant: true,
         },
         Binding::Member {
             id: ADA_ID.into(),
-            with_app_token: false,
+            via_grant: false,
         },
     ] {
         assert!(deliver_hint(

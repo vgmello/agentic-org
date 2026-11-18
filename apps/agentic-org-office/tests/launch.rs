@@ -187,14 +187,13 @@ fn socket(world: &World) -> PathBuf {
     office_socket_path(&world.home, OFFICE).unwrap()
 }
 
-/// Creates the office and returns the running server.
-fn create(world: &World) -> Run {
-    let mut run = world.spawn(&["--create"]);
-    run.send(&create_message());
-    let ServerEvent::Created { office } = run.event() else {
-        panic!("expected created");
-    };
-    assert_eq!(office.office_id, OFFICE);
+/// Stores the office with the library, as an HQ creation leaves it, then starts its server the
+/// way the host does and returns it. The worker creates offices only through HQ creation-v1
+/// over the rendezvous (`v3_activation`); every other case starts an existing office.
+fn started(world: &World) -> Run {
+    seed(world);
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send(&start_message());
     let ServerEvent::Ready {
         socket: reported, ..
     } = run.event()
@@ -203,6 +202,27 @@ fn create(world: &World) -> Run {
     };
     assert_eq!(Path::new(&reported), socket(world));
     run
+}
+
+/// Stores the office with the library, as an HQ creation leaves it, unless it is stored.
+fn seed(world: &World) {
+    if !world.folder(OFFICE).join("office.json").exists() {
+        let new = org_office::NewOffice {
+            office_id: OFFICE.into(),
+            office_name: "HQ".into(),
+            role: org_office::OfficeRole::Hq,
+            org_id: ORG.into(),
+            org_name: "Acme".into(),
+        };
+        drop(
+            org_office::Office::create(
+                world.folder(OFFICE),
+                &new,
+                org_office::Key::from_db_key(db_key()),
+            )
+            .unwrap(),
+        );
+    }
 }
 
 fn hello(world: &World) -> org_proto::OfficeHello {
@@ -222,38 +242,12 @@ fn failed_code(event: ServerEvent) -> FailCode {
 }
 
 #[test]
-fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut run = create(&world);
-
-    let identity = hello(&world);
-    assert_eq!(identity.organization_name, "Acme");
-    assert_eq!(identity.office.id, OFFICE);
-    assert_eq!(identity.office.organization_id, ORG);
-    assert_eq!(identity.office.name, "HQ");
-    assert_eq!(identity.office.role, OfficeRole::Hq);
-
-    // What the host reads is there, valid, and names this office.
-    let json = std::fs::read(world.folder(OFFICE).join("office.json")).unwrap();
-    let stored = OfficeFile::from_slice(&json).unwrap();
-    assert_eq!(
-        (stored.office_id.as_str(), stored.org_name.as_str()),
-        (OFFICE, "Acme")
-    );
-
-    let status = run.host_goes_away();
-    assert!(status.success(), "{status:?}");
-    assert!(!socket(&world).exists(), "the socket file was left behind");
-}
-
-#[test]
 fn srv_32_unsupported_range_closes_before_a_pipelined_call() {
     let _process = process_isolation();
     // X-02 §3: "unsupported_version and close" before the next request; this
     // B1-07.1 phase is V1-only until instance-aware launch can enable V2.
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let mut peer = UnixStream::connect(socket(&world)).unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     peer.set_write_timeout(Some(WAIT)).unwrap();
@@ -279,7 +273,7 @@ fn srv_32_legacy_first_call_locks_the_socket_to_version_one() {
     let _process = process_isolation();
     // X-02 §3: "A first request that isn't hello ... fixes the connection at v1".
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let mut peer = UnixStream::connect(socket(&world)).unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     peer.set_write_timeout(Some(WAIT)).unwrap();
@@ -332,7 +326,7 @@ fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
     // X-02 §3: malformed api/non-string client is "invalid_request, never
     // answered as v1". The strict shared HelloParams decoder owns these shapes.
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let cases = [
         serde_json::json!([]),
         serde_json::json!(true),
@@ -388,7 +382,7 @@ fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
     // X-02 §3: "api: null is the same as an absent api"; unknown outer hints
     // remain additive, while the nested api range has exactly min/max.
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let peer = UnixStream::connect(socket(&world)).unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     peer.set_write_timeout(Some(WAIT)).unwrap();
@@ -424,67 +418,10 @@ fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
 }
 
 #[test]
-fn initial_replica_snapshot_is_unavailable_through_the_real_worker() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut first = create(&world);
-    assert!(first.host_goes_away().success());
-    let source = org_office::Office::create(
-        world.folder("SOURCE"),
-        &org_office::NewOffice {
-            office_id: "SOURCE".into(),
-            office_name: "Source".into(),
-            role: org_office::OfficeRole::Hq,
-            org_id: ORG.into(),
-            org_name: "Acme".into(),
-        },
-        org_office::Key::from_db_key(org_proto::DbKey::from_bytes([0xB3; 32])),
-    )
-    .unwrap();
-    source
-        .bind_replication_hq(Default::default(), 1024 * 1024)
-        .unwrap();
-    let pin = source.replication_checkpoint().unwrap();
-    drop(source);
-    let office = org_office::Office::open(
-        world.folder(OFFICE),
-        org_office::Key::from_db_key(org_proto::DbKey::from_bytes([0xB3; 32])),
-    )
-    .unwrap();
-    office
-        .bind_replication_satellite(pin.hq_office, pin.ca, pin.highest_epoch, Default::default())
-        .unwrap();
-    drop(office);
-
-    let mut run = world.spawn(&["--office", OFFICE]);
-    run.send(&start_message());
-    assert!(matches!(run.event(), ServerEvent::Ready { .. }));
-    let client = Client::connect(socket(&world)).unwrap();
-    assert_eq!(
-        api_code(
-            client
-                .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-                .unwrap_err()
-        ),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    bind(&client, token()).unwrap();
-    assert_eq!(
-        api_code(
-            client
-                .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-                .unwrap_err()
-        ),
-        org_proto::ErrorCode::Unavailable
-    );
-    assert!(run.host_goes_away().success());
-}
-
-#[test]
 fn a_restart_with_the_same_key_serves_the_same_office() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
 
     let mut again = world.spawn(&["--office", OFFICE]);
@@ -492,40 +429,6 @@ fn a_restart_with_the_same_key_serves_the_same_office() {
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));
     assert_eq!(hello(&world).office.id, OFFICE);
     assert!(again.host_goes_away().success());
-}
-
-#[test]
-fn creating_an_office_that_exists_is_already_exists_and_changes_nothing() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut first = create(&world);
-    assert!(first.host_goes_away().success());
-    let org_before = std::fs::read(world.folder(OFFICE).join("org.db")).unwrap();
-
-    let mut second = world.spawn(&["--create"]);
-    second.send(&create_message());
-    assert_eq!(failed_code(second.event()), FailCode::AlreadyExists);
-    assert!(!second.wait().success());
-    assert_eq!(
-        std::fs::read(world.folder(OFFICE).join("org.db")).unwrap(),
-        org_before
-    );
-    assert!(world.folder(OFFICE).join("office.json").exists());
-}
-
-#[test]
-fn a_bad_name_is_invalid_name_and_leaves_nothing() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut run = world.spawn(&["--create"]);
-    let HostMessage::Create(mut create) = create_message() else {
-        unreachable!()
-    };
-    create.org_name = "zero\u{200B}width".into();
-    run.send(&HostMessage::Create(create));
-    assert_eq!(failed_code(run.event()), FailCode::InvalidName);
-    assert!(!run.wait().success());
-    assert!(!world.folder(OFFICE).join("office.json").exists());
 }
 
 #[test]
@@ -598,7 +501,7 @@ fn discard_removes_an_unfinished_create_and_only_that() {
     }
 
     // A finished office is refused and untouched, with a key or without.
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
     for key in [None, Some(db_key())] {
         let mut run = world.spawn(&["--discard", OFFICE]);
@@ -613,7 +516,7 @@ fn discard_removes_an_unfinished_create_and_only_that() {
 fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_deletes_nothing() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
     // Lose office.json, as a crash or a person might: the databases are all that is left.
     std::fs::remove_file(world.folder(OFFICE).join("office.json")).unwrap();
@@ -640,7 +543,7 @@ fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_del
 fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
 
     // ADR-0016 decision 3: the key only wraps private keys; a wrong one does not stop the
@@ -688,7 +591,7 @@ fn a_stop_signal_closes_the_office_and_exits_clean() {
     let _process = process_isolation();
     for stop in [libc::SIGTERM, libc::SIGINT] {
         let world = World::new();
-        let mut run = create(&world);
+        let mut run = started(&world);
         signal(&run, stop);
         let status = run.wait();
         assert_eq!(status.code(), Some(0), "signal {stop}: {status:?}");
@@ -736,7 +639,7 @@ fn the_socket_is_owner_only_and_other_methods_are_unknown() {
     let _process = process_isolation();
     use std::os::unix::fs::PermissionsExt;
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let mode = std::fs::metadata(socket(&world))
         .unwrap()
         .permissions()
@@ -758,7 +661,7 @@ fn the_socket_is_owner_only_and_other_methods_are_unknown() {
 fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
 
     // A crashed server leaves its socket file behind.
@@ -783,7 +686,7 @@ fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
 fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     // Lines of any shape, and a lot of them: read and thrown away, unparsed.
     let stdin = run.stdin.as_mut().unwrap();
     std::io::Write::write_all(stdin, b"garbage\n{\"op\":\"nonsense\"}\n").unwrap();
@@ -798,37 +701,10 @@ fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does
 }
 
 #[test]
-fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
-    let _process = process_isolation();
-    let dir = tempfile::Builder::new().prefix("oo").tempdir().unwrap();
-    let long = dir.path().join("x".repeat(90));
-    std::fs::create_dir_all(long.join("offices")).unwrap();
-    std::fs::create_dir_all(long.join("run")).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_agentic-org-office"))
-        .arg("--create")
-        .env("ORG_OFFICE_HOME", &long)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    write_host_message(&mut stdin, &create_message()).unwrap();
-    let mut reader = BufReader::new(child.stdout.take().unwrap());
-    let first = read_server_event(&mut reader).unwrap().unwrap();
-    assert_eq!(failed_code(first), FailCode::InvalidRequest);
-    assert_eq!(child.wait().unwrap().code(), Some(1));
-    assert!(
-        !office_dir(&long, OFFICE).unwrap().exists(),
-        "an office was stored"
-    );
-}
-
-#[test]
 fn the_token_and_the_key_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let pid = run.child.id();
     // fds 0 and 1 of the server are /dev/null (the control pipe was moved), checked with lsof.
     if let Ok(out) = Command::new("lsof")
@@ -870,143 +746,10 @@ fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_reques
 }
 
 #[test]
-fn a_name_that_is_not_trimmed_is_refused_not_quietly_trimmed() {
-    let _process = process_isolation();
-    let world = World::new();
-    for (org_name, office_name) in [(" Acme", "HQ"), ("Acme", "HQ ")] {
-        let mut run = world.spawn(&["--create"]);
-        let HostMessage::Create(mut create) = create_message() else {
-            unreachable!()
-        };
-        create.org_name = org_name.into();
-        create.office_name = office_name.into();
-        run.send(&HostMessage::Create(create));
-        assert_eq!(failed_code(run.event()), FailCode::InvalidName);
-        assert!(!run.wait().success());
-    }
-}
-
-#[test]
-fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut first = create(&world);
-    let client = Client::connect(socket(&world)).unwrap();
-    // The organization is read by a bound connection only.
-    assert_eq!(
-        api_code(
-            client
-                .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-                .unwrap_err()
-        ),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    bind(&client, token()).unwrap();
-    let snapshot = client
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
-    assert_eq!(
-        snapshot.position,
-        org_proto::org::Position { epoch: 1, seq: 1 }
-    );
-    let [owner] = &snapshot.members[..] else {
-        panic!("{:?}", snapshot.members)
-    };
-    assert!(owner.owner && org_proto::is_valid_member_id(&owner.id));
-    assert!(snapshot.teams.is_empty() && snapshot.memberships.is_empty());
-    drop(client);
-    assert!(first.host_goes_away().success());
-
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let client = Client::connect(socket(&world)).unwrap();
-    bind(&client, token()).unwrap();
-    let after = client
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
-    assert_eq!(after, snapshot, "the organization changed across a restart");
-    drop(client);
-    assert!(again.host_goes_away().success());
-}
-
-#[test]
-fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_restart() {
-    let _processes = process_isolation();
-    use org_proto::inbox::{InboxCounts, InboxList, InboxListParams, InboxState};
-    let world = World::new();
-    let mut first = create(&world);
-    let client = Client::connect(socket(&world)).unwrap();
-    assert!(client.hello().unwrap().supports("inbox.list"));
-    assert!(client.hello().unwrap().supports("inbox.changed"));
-    let params = InboxListParams {
-        state: InboxState::Open,
-        kinds: None,
-        project: None,
-        team: None,
-        cursor: None,
-        limit: None,
-    };
-    assert_eq!(
-        api_code(client.call::<InboxList>(&params).unwrap_err()),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    bind(&client, token()).unwrap();
-    assert_eq!(
-        api_code(client.call::<InboxList>(&params).unwrap_err()),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    let before = client
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
-    let owner = before.members.iter().find(|member| member.owner).unwrap();
-    client
-        .call::<org_proto::msg::MsgBind>(&org_proto::msg::MsgBindParams {
-            member: Some(owner.id.clone()),
-            app_token: Some(token()),
-        })
-        .unwrap();
-    let page = client.call::<InboxList>(&params).unwrap();
-    assert_eq!(page.counts, InboxCounts::default());
-    assert!(page.items.is_empty() && page.next_cursor.is_none() && page.degraded.is_empty());
-    assert_eq!(page.as_of.seq, 0);
-    assert_eq!(page.as_of.epoch.len(), 32);
-    assert_eq!(
-        client
-            .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-            .unwrap(),
-        before
-    );
-    drop(client);
-    assert!(first.host_goes_away().success());
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let client = Client::connect(socket(&world)).unwrap();
-    client
-        .call::<org_proto::msg::MsgBind>(&org_proto::msg::MsgBindParams {
-            member: Some(owner.id.clone()),
-            app_token: Some(token()),
-        })
-        .unwrap();
-    let later = client.call::<InboxList>(&params).unwrap();
-    assert_ne!(later.as_of.epoch, page.as_of.epoch);
-    assert_eq!(later.as_of.seq, 0);
-    assert_eq!(
-        client
-            .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-            .unwrap(),
-        before
-    );
-    drop(client);
-    assert!(again.host_goes_away().success());
-}
-
-#[test]
 fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     // A client that stays connected and silent: shutdown must close it, not wait for it.
     let idle = std::os::unix::net::UnixStream::connect(socket(&world)).unwrap();
     std::thread::sleep(Duration::from_millis(100));
@@ -1033,13 +776,6 @@ fn command_id(n: u8) -> String {
     String::from_utf8(out.to_vec()).unwrap()
 }
 
-fn bind(client: &Client, app_token: AppToken) -> Result<(), org_client::ClientError> {
-    let bound = client.bind_app(app_token)?;
-    assert_eq!(bound.office_id, OFFICE);
-    assert_eq!(bound.member_id, None);
-    Ok(())
-}
-
 fn team_create(
     client: &Client,
     command: &str,
@@ -1061,788 +797,27 @@ fn api_code(error: org_client::ClientError) -> org_proto::ErrorCode {
 }
 
 #[test]
-fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_restart() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut first = create(&world);
-    let command = command_id(1);
-    let client = Client::connect(socket(&world)).unwrap();
-
-    // Anonymous, and bound with the wrong token: refused, nothing changes. A garbled command is
-    // refused the same way (not told apart from a good one).
-    let refused = team_create(&client, &command, "Platform").unwrap_err();
-    assert_eq!(api_code(refused), org_proto::ErrorCode::NotAuthorized);
-    let garbled = client
-        .call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
-            command_id: "not a ulid".into(),
-            team_id: String::new(),
-            name: String::new(),
-            owner_team_id: None,
-        })
-        .unwrap_err();
-    assert_eq!(api_code(garbled), org_proto::ErrorCode::NotAuthorized);
-    let wrong = AppToken::from_bytes([0xA8; 32]);
-    assert_eq!(
-        api_code(bind(&client, wrong).unwrap_err()),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    assert_eq!(
-        api_code(team_create(&client, &command, "Platform").unwrap_err()),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    let snapshot = |client: &Client| {
-        client
-            .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-            .unwrap()
-    };
-    // The organization is read by a bound connection only.
-    bind(&client, token()).unwrap();
-    assert_eq!(
-        snapshot(&client).position,
-        org_proto::org::Position { epoch: 1, seq: 1 }
-    );
-
-    // Bound as the app: the command commits, and a retry is the same answer.
-    let accepted = team_create(&client, &command, "Platform").unwrap();
-    assert_eq!(
-        accepted.position,
-        Some(org_proto::org::Position { epoch: 1, seq: 2 })
-    );
-    assert_eq!(
-        team_create(&client, &command, "Platform").unwrap(),
-        accepted
-    );
-    assert_eq!(
-        api_code(team_create(&client, &command, "Other").unwrap_err()),
-        org_proto::ErrorCode::OperationReused,
-        "the same id with other params"
-    );
-    let lookup = |client: &Client, id: &str| {
-        client.call::<org_proto::OperationGet>(&org_proto::OperationGetParams {
-            kind: org_proto::OperationKind::Org,
-            id: id.into(),
-        })
-    };
-    let expected = org_proto::OperationOutcome::Committed {
-        result: serde_json::to_value(accepted).unwrap(),
-    };
-    assert_eq!(lookup(&client, &command).unwrap(), expected);
-    // Owner/NULL rows are private even to a legacy-first unbound connection.
-    let reader = Client::connect(socket(&world)).unwrap();
-    assert_eq!(
-        api_code(lookup(&reader, &command).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
-    assert_eq!(
-        api_code(lookup(&reader, "bad").unwrap_err()),
-        org_proto::ErrorCode::InvalidRequest
-    );
-    assert_eq!(
-        api_code(lookup(&reader, &command_id(9)).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
-    let refusal_id = command_id(2);
-    let refused = team_create(&client, &refusal_id, " ").unwrap_err();
-    let org_client::ClientError::Api(refusal) = refused else {
-        panic!("expected a domain refusal")
-    };
-    let rejected = org_proto::OperationOutcome::Rejected { refusal };
-    assert_eq!(
-        api_code(lookup(&reader, &refusal_id).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
-    reader.hello().unwrap();
-    assert_eq!(
-        api_code(lookup(&reader, &command).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
-    bind(&reader, token()).unwrap();
-    assert_eq!(lookup(&reader, &refusal_id).unwrap(), rejected);
-    assert_eq!(lookup(&reader, &command).unwrap(), expected);
-    drop(reader);
-    let after = snapshot(&client);
-    assert_eq!(after.teams.len(), 1);
-    assert_eq!(after.teams[0].name, "Platform");
-    drop(client);
-    assert!(first.host_goes_away().success());
-
-    // After a restart the team is there, and the old command id still gets its answer.
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let client = Client::connect(socket(&world)).unwrap();
-    assert_eq!(
-        api_code(lookup(&client, &command).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
-    bind(&client, token()).unwrap();
-    assert_eq!(lookup(&client, &command).unwrap(), expected);
-    assert_eq!(lookup(&client, &refusal_id).unwrap(), rejected);
-    assert_eq!(snapshot(&client), after);
-    assert_eq!(
-        team_create(&client, &command, "Platform").unwrap(),
-        accepted
-    );
-    assert_eq!(snapshot(&client), after);
-    drop(client);
-    assert!(again.host_goes_away().success());
-}
-
-fn changed(event: &org_proto::Event) -> org_proto::org::OrgChangedData {
-    assert_eq!(event.event, "org.changed");
-    serde_json::from_value(event.data.clone()).unwrap()
-}
-
-fn next_event(sub: &org_client::Subscription) -> org_proto::Event {
-    sub.recv_timeout(WAIT).expect("no event")
-}
-
-#[test]
+#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
+/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
+/// binds or subscribes as the owner on the office socket, and host channels refuse `subscribe`
+/// until A3. Scenario to keep: an unbound connection's subscribe is `not_authorized`; a
+/// subscriber from a snapshot position gets another caller's committed `team.create` as
+/// `org.changed` (seq 1, same position and command id); a refused command and a retry of a
+/// committed one are not events; a position beyond the log is `snapshot_required`; after a host
+/// restart a subscriber resuming from the old position gets the backlog, then live changes.
 fn a_subscriber_follows_the_organization_and_resumes_from_where_it_was_after_a_restart() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut first = create(&world);
-    let app = Client::connect(socket(&world)).unwrap();
-    let watcher = Client::connect(socket(&world)).unwrap();
-
-    // Only a bound connection subscribes.
-    assert_eq!(
-        api_code(watcher.subscribe().err().unwrap()),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    bind(&app, token()).unwrap();
-    bind(&watcher, token()).unwrap();
-    let snapshot = app
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
-
-    // Live: another connection's command arrives as `org.changed`, with its command id.
-    let sub = watcher.subscribe_from(Some(snapshot.position)).unwrap();
-    let command = command_id(1);
-    let accepted = team_create(&app, &command, "Platform").unwrap();
-    let event = next_event(&sub);
-    assert_eq!(event.seq, 1);
-    let data = changed(&event);
-    assert_eq!(Some(data.position), accepted.position);
-    assert_eq!(data.command_id, command);
-    assert!(matches!(
-        &data.changes[..],
-        [org_proto::org::OrgChange::TeamUpserted { team }] if team.name == "Platform"
-    ));
-    // A refused command is not an event, and a retry of a committed one is not either.
-    let _ = team_create(&app, &command_id(2), " ").unwrap_err();
-    team_create(&app, &command, "Platform").unwrap();
-    assert!(sub.recv_timeout(Duration::from_millis(500)).is_err());
-
-    // A position the log does not have: take a snapshot.
-    let beyond = org_proto::org::Position { epoch: 1, seq: 99 };
-    let probe = Client::connect(socket(&world)).unwrap();
-    bind(&probe, token()).unwrap();
-    assert_eq!(
-        api_code(probe.subscribe_from(Some(beyond)).err().unwrap()),
-        org_proto::ErrorCode::SnapshotRequired
-    );
-    drop((sub, app, watcher, probe));
-    assert!(first.host_goes_away().success());
-
-    // After a restart a client resumes from the position it held and misses nothing.
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    let sub = app.subscribe_from(Some(snapshot.position)).unwrap();
-    let backlog = changed(&next_event(&sub));
-    assert_eq!(Some(backlog.position), accepted.position);
-    assert_eq!(backlog.command_id, command);
-    // ...and then follows live from there.
-    let other = Client::connect(socket(&world)).unwrap();
-    bind(&other, token()).unwrap();
-    let rename = org_proto::org::TeamRenameParams {
-        command_id: command_id(3),
-        team_id: "T1".into(),
-        expected_version: 1,
-        name: "Platform team".into(),
-    };
-    let renamed = other.call::<org_proto::org::TeamRename>(&rename).unwrap();
-    let live = changed(&next_event(&sub));
-    assert_eq!(Some(live.position), renamed.position);
-    assert_eq!(live.command_id, rename.command_id);
-    drop((sub, app, other));
-    assert!(again.host_goes_away().success());
+    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
 }
 
 #[test]
-fn the_app_hires_an_agent_into_the_office_and_it_survives_a_restart() {
-    let _process = process_isolation();
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-        MemberOffboard, MemberOffboardParams,
-    };
-    let world = World::new();
-    let mut first = create(&world);
-    let client = Client::connect(socket(&world)).unwrap();
-    bind(&client, token()).unwrap();
-    let member_id = "AGENT00000000000000000000A".to_owned();
-    let hire = |office: &str, command: &str, handle: &str| MemberAddAgentParams {
-        command_id: command.into(),
-        member_id: member_id.clone(),
-        name: "Pixel".into(),
-        office_id: office.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: handle.into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    };
-
-    // An office this organization does not have: not_found, nothing added.
-    let nowhere = client
-        .call::<MemberAddAgent>(&hire("NOSUCHOFFICE", &command_id(1), "pixel"))
-        .unwrap_err();
-    assert_eq!(api_code(nowhere), org_proto::ErrorCode::NotFound);
-    // Its own office: hired.
-    let hired = client
-        .call::<MemberAddAgent>(&hire(OFFICE, &command_id(2), "pixel"))
-        .unwrap();
-    assert_eq!(
-        hired.position,
-        Some(org_proto::org::Position { epoch: 1, seq: 2 })
-    );
-    // Its handle is taken, in any case.
-    let again = client
-        .call::<MemberAddAgent>(&hire(OFFICE, &command_id(3), "PIXEL"))
-        .unwrap_err();
-    assert_eq!(api_code(again), org_proto::ErrorCode::AlreadyExists);
-    let snapshot = client
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
-    let agent = snapshot.members.iter().find(|m| m.id == member_id).unwrap();
-    assert_eq!(agent.office_id.as_deref(), Some(OFFICE));
-    drop(client);
-    assert!(first.host_goes_away().success());
-
-    // After a restart: still there; offboarded, and its handle stays taken.
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let client = Client::connect(socket(&world)).unwrap();
-    bind(&client, token()).unwrap();
-    let offboarded = client
-        .call::<MemberOffboard>(&MemberOffboardParams {
-            command_id: command_id(4),
-            member_id: member_id.clone(),
-            expected_version: 1,
-        })
-        .unwrap();
-    assert_eq!(
-        offboarded.position,
-        Some(org_proto::org::Position { epoch: 1, seq: 3 })
-    );
-    let clash = client
-        .call::<MemberAddAgent>(&MemberAddAgentParams {
-            member_id: "AGENT00000000000000000000B".into(),
-            ..hire(OFFICE, &command_id(5), "pixel")
-        })
-        .unwrap_err();
-    assert_eq!(api_code(clash), org_proto::ErrorCode::AlreadyExists);
-    let after = client
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
-    let agent = after.members.iter().find(|m| m.id == member_id).unwrap();
-    let profile = agent.agent.as_ref().unwrap();
-    assert_eq!(profile.status, AgentStatus::Offboarded);
-    assert!(profile.offboarded_at.is_some());
-    drop(client);
-    assert!(again.host_goes_away().success());
-}
-
-#[test]
-fn who_lists_the_directory_with_cards_for_the_app_and_not_for_an_unbound_connection() {
-    let _process = process_isolation();
-    use org_proto::directory::{Who, WhoParams};
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams, MemberKind,
-        MemberOffboard, MemberOffboardParams, TeamAddMember, TeamAddMemberParams,
-    };
-    let world = World::new();
-    let mut run = create(&world);
-    let client = Client::connect(socket(&world)).unwrap();
-
-    // Unbound: not_bound, whatever the params.
-    let unbound = client.call::<Who>(&WhoParams::default()).unwrap_err();
-    assert_eq!(api_code(unbound), org_proto::ErrorCode::NotBound);
-    bind(&client, token()).unwrap();
-
-    // The owner alone to begin with: their handle is `owner`, not their name.
-    let first = client.call::<Who>(&WhoParams::default()).unwrap();
-    let [owner] = &first.members[..] else {
-        panic!("{:?}", first.members)
-    };
-    assert!(owner.owner);
-    assert_eq!(owner.handle.as_deref(), Some("owner"));
-
-    // A team, an agent in it (placed in this office), and what the card then says.
-    team_create(&client, &command_id(1), "Platform").unwrap();
-    let agent_id = "AGENT00000000000000000000A".to_owned();
-    client
-        .call::<MemberAddAgent>(&MemberAddAgentParams {
-            command_id: command_id(2),
-            member_id: agent_id.clone(),
-            name: "Pixel the engineer".into(),
-            office_id: OFFICE.into(),
-            profile: AgentProfile {
-                role: "engineer".into(),
-                title: "Senior Engineer".into(),
-                focus: None,
-                runtime: AgentRuntime::ClaudeCode,
-                model: None,
-                run_mode: None,
-                schedule: None,
-                home: None,
-                messaging_name: "pixel".into(),
-                status: AgentStatus::Active,
-                offboarded_at: None,
-            },
-        })
-        .unwrap();
-    client
-        .call::<TeamAddMember>(&TeamAddMemberParams {
-            command_id: command_id(3),
-            membership_id: "m1".into(),
-            team_id: "T1".into(),
-            member_id: agent_id.clone(),
-            title_in_team: Some("Lead".into()),
-        })
-        .unwrap();
-
-    let by_handle = client
-        .call::<Who>(&WhoParams {
-            member: Some("PIXEL".into()),
-            ..WhoParams::default()
-        })
-        .unwrap();
-    let [pixel] = &by_handle.members[..] else {
-        panic!("{:?}", by_handle.members)
-    };
-    assert_eq!(pixel.id, agent_id);
-    assert_eq!(pixel.kind, MemberKind::Agent);
-    assert_eq!(pixel.role_title.as_deref(), Some("Senior Engineer"));
-    assert_eq!(pixel.office.as_ref().map(|o| o.name.as_str()), Some("HQ"));
-    assert_eq!(pixel.teams[0].name, "Platform");
-    assert_eq!(pixel.teams[0].title_in_team.as_deref(), Some("Lead"));
-    // Filters: by team name, and by kind.
-    let in_team = client
-        .call::<Who>(&WhoParams {
-            team: Some("platform".into()),
-            ..WhoParams::default()
-        })
-        .unwrap();
-    assert_eq!(in_team.members.len(), 1);
-    let people = client
-        .call::<Who>(&WhoParams {
-            kind: Some(MemberKind::Person),
-            ..WhoParams::default()
-        })
-        .unwrap();
-    assert!(people.members.iter().all(|c| c.kind == MemberKind::Person));
-    let nobody = client
-        .call::<Who>(&WhoParams {
-            member: Some("nobody".into()),
-            ..WhoParams::default()
-        })
-        .unwrap_err();
-    assert_eq!(api_code(nobody), org_proto::ErrorCode::NotFound);
-
-    // Offboarded: gone from the directory, and naming it is not_found.
-    client
-        .call::<MemberOffboard>(&MemberOffboardParams {
-            command_id: command_id(4),
-            member_id: agent_id.clone(),
-            expected_version: 1,
-        })
-        .unwrap();
-    let after = client.call::<Who>(&WhoParams::default()).unwrap();
-    assert!(after.members.iter().all(|c| c.id != agent_id));
-    let gone = client
-        .call::<Who>(&WhoParams {
-            member: Some("pixel".into()),
-            ..WhoParams::default()
-        })
-        .unwrap_err();
-    assert_eq!(api_code(gone), org_proto::ErrorCode::NotFound);
-    drop(client);
-    assert!(run.host_goes_away().success());
-}
-
-#[test]
-fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_survives_a_restart() {
-    let _process = process_isolation();
-    use org_proto::msg::{
-        MsgBind, MsgBindParams, MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend,
-        MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG,
-    };
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-    };
-    let world = World::new();
-    let mut first = create(&world);
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    let agent_id = "AGENT00000000000000000000A".to_owned();
-    app.call::<MemberAddAgent>(&MemberAddAgentParams {
-        command_id: command_id(1),
-        member_id: agent_id.clone(),
-        name: "Pixel".into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: "pixel".into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    })
-    .unwrap();
-
-    // The agent binds with no token, the owner with the app's.
-    let bind_as = |client: &Client, member: &str, app_token: Option<AppToken>| {
-        client
-            .call::<MsgBind>(&MsgBindParams {
-                member: Some(member.into()),
-                app_token,
-            })
-            .unwrap()
-    };
-    let agent = Client::connect(socket(&world)).unwrap();
-    assert_eq!(
-        bind_as(&agent, "pixel", None).member_id,
-        Some(agent_id.clone())
-    );
-    let owner = Client::connect(socket(&world)).unwrap();
-    let owner_id = bind_as(&owner, "owner", Some(token())).member_id.unwrap();
-
-    let send = |client: &Client, n: u8, to: &str, body: &str| {
-        client
-            .call::<MsgSend>(&MsgSendParams {
-                id: command_id(n),
-                to: to.into(),
-                kind: KIND_MSG.into(),
-                priority: None,
-                subject: Some("hello".into()),
-                body: body.into(),
-                meta: Default::default(),
-                reply_to: None,
-            })
-            .unwrap()
-    };
-    let inbox = MsgInboxParams {
-        include_all: true,
-        from: None,
-        thread_id: None,
-        cursor: None,
-        limit: None,
-    };
-    send(&agent, 10, "owner", "from the agent");
-    let seen = owner.call::<MsgInbox>(&inbox).unwrap();
-    assert_eq!(seen.headers.len(), 1);
-    assert_eq!(seen.headers[0].from_member_id, agent_id);
-    assert_eq!(seen.headers[0].to_member_id, owner_id);
-    let read = owner.call::<MsgRead>(&MsgReadParams { id: None }).unwrap();
-    assert_eq!(read.message.unwrap().body, "from the agent");
-
-    // The owner's message wakes the agent's held wait.
-    let waiting = {
-        let agent = Client::connect(socket(&world)).unwrap();
-        bind_as(&agent, "pixel", None);
-        std::thread::spawn(move || {
-            agent
-                .call::<MsgWait>(&MsgWaitParams {
-                    timeout_ms: 30_000,
-                    from: None,
-                    urgent_only: false,
-                })
-                .unwrap()
-        })
-    };
-    std::thread::sleep(Duration::from_millis(300));
-    send(&owner, 11, "pixel", "from the owner");
-    let woken = waiting.join().unwrap();
-    assert_eq!(woken.message.unwrap().body, "from the owner");
-
-    // A restart keeps both messages, and the agent binds again.
-    drop((app, agent, owner));
-    assert!(first.host_goes_away().success());
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let agent = Client::connect(socket(&world)).unwrap();
-    bind_as(&agent, "pixel", None);
-    let all = agent.call::<MsgInbox>(&inbox).unwrap();
-    assert_eq!(all.headers.len(), 1);
-    assert_eq!(all.headers[0].from_member_id, owner_id);
-    assert!(again.host_goes_away().success());
-}
-
-#[test]
-fn an_agent_sets_a_status_the_directory_shows_and_it_survives_a_restart() {
-    let _process = process_isolation();
-    use org_proto::directory::{StatusSet, StatusSetParams, Who, WhoParams};
-    use org_proto::msg::{MsgBind, MsgBindParams};
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-    };
-    let world = World::new();
-    let mut first = create(&world);
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    app.call::<MemberAddAgent>(&MemberAddAgentParams {
-        command_id: command_id(1),
-        member_id: "AGENT00000000000000000000A".into(),
-        name: "Pixel".into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: "pixel".into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    })
-    .unwrap();
-
-    let agent = Client::connect(socket(&world)).unwrap();
-    agent
-        .call::<MsgBind>(&MsgBindParams {
-            member: Some("pixel".into()),
-            app_token: None,
-        })
-        .unwrap();
-    let set = agent
-        .call::<StatusSet>(&StatusSetParams {
-            text: Some("Wiring the broker".into()),
-            ttl_ms: None,
-        })
-        .unwrap();
-    assert_eq!(set.status.as_deref(), Some("Wiring the broker"));
-
-    let pixel_status = |client: &Client| {
-        let who = client
-            .call::<Who>(&WhoParams {
-                member: Some("pixel".into()),
-                ..WhoParams::default()
-            })
-            .unwrap();
-        who.members[0].status.clone()
-    };
-    assert_eq!(pixel_status(&app).as_deref(), Some("Wiring the broker"));
-    // The app, bound with the token, may not set one.
-    assert_eq!(
-        api_code(
-            app.call::<StatusSet>(&StatusSetParams::default())
-                .unwrap_err()
-        ),
-        org_proto::ErrorCode::NotBound
-    );
-
-    drop((app, agent));
-    assert!(first.host_goes_away().success());
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    assert_eq!(pixel_status(&app).as_deref(), Some("Wiring the broker"));
-    assert!(again.host_goes_away().success());
-}
-
-#[test]
+#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
+/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
+/// binds or subscribes as the owner on the office socket, and host channels refuse `subscribe`
+/// until A3. Scenario to keep: the owner's subscriber gets an agent's `msg.send` to the owner as
+/// `message.received` (header id, never the body), then the agent's `status.set` as
+/// `member.presence_changed` (member id, status text) with the next seq on the same connection.
 fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_office() {
-    let _process = process_isolation();
-    use org_proto::directory::{StatusSet, StatusSetParams};
-    use org_proto::msg::{MsgBind, MsgBindParams, MsgSend, MsgSendParams, KIND_MSG};
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-    };
-    let world = World::new();
-    let _server = create(&world);
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    app.call::<MemberAddAgent>(&MemberAddAgentParams {
-        command_id: command_id(1),
-        member_id: "AGENT00000000000000000000A".into(),
-        name: "Pixel".into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: "pixel".into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    })
-    .unwrap();
-    let agent = Client::connect(socket(&world)).unwrap();
-    agent
-        .call::<MsgBind>(&MsgBindParams {
-            member: Some("pixel".into()),
-            app_token: None,
-        })
-        .unwrap();
-
-    // The app follows; the org command above is behind it, and only what happens now arrives.
-    let watcher = Client::connect(socket(&world)).unwrap();
-    bind(&watcher, token()).unwrap();
-    let sub = watcher.subscribe().unwrap();
-
-    let sent_id = command_id(10);
-    agent
-        .call::<MsgSend>(&MsgSendParams {
-            id: sent_id.clone(),
-            to: "owner".into(),
-            kind: KIND_MSG.into(),
-            priority: None,
-            subject: Some("hello".into()),
-            body: "SECRET-BODY".into(),
-            meta: Default::default(),
-            reply_to: None,
-        })
-        .unwrap();
-    let received = next_event(&sub);
-    assert_eq!(received.event, "message.received");
-    assert_eq!(received.data["header"]["id"], sent_id);
-    assert!(!received.data.to_string().contains("SECRET-BODY"));
-
-    agent
-        .call::<StatusSet>(&StatusSetParams {
-            text: Some("Wiring events".into()),
-            ttl_ms: None,
-        })
-        .unwrap();
-    let presence = next_event(&sub);
-    assert_eq!(presence.event, "member.presence_changed");
-    assert_eq!(presence.data["member_id"], "AGENT00000000000000000000A");
-    assert_eq!(presence.data["status"], "Wiring events");
-    // The events share the connection's numbering.
-    assert_eq!(presence.seq, received.seq + 1);
-}
-
-#[test]
-fn c1_work_writes_use_the_real_office_and_replay_refusals_after_restart() {
-    let _process = process_isolation();
-    use org_proto::msg::{MsgBind, MsgBindParams};
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-    };
-    use org_proto::work::{
-        TaskCreate, TaskCreateParams, WorkAccepted, WorkDelete, WorkDeleteParams,
-    };
-    use org_proto::{ApiError, ErrorCode};
-    fn refusal(result: Result<WorkAccepted, org_client::ClientError>) -> ApiError {
-        match result.unwrap_err() {
-            org_client::ClientError::Api(error) => error,
-            other => panic!("work call did not receive an API refusal: {other:?}"),
-        }
-    }
-    let world = World::new();
-    let mut first = create(&world);
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    let agent_id = command_id(100);
-    app.call::<MemberAddAgent>(&MemberAddAgentParams {
-        command_id: command_id(101),
-        member_id: agent_id,
-        name: "Work agent".into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: "work-agent".into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    })
-    .unwrap();
-    let params: TaskCreateParams = serde_json::from_value(serde_json::json!({
-        "change_id":command_id(102), "item_id":command_id(103),
-        "project_id":command_id(104), "title":"Missing project"
-    }))
-    .unwrap();
-    let agent = Client::connect(socket(&world)).unwrap();
-    agent.bind_member("work-agent").unwrap();
-    let missing = refusal(agent.call::<TaskCreate>(&params));
-    assert_eq!(missing.code, ErrorCode::NotFound);
-    assert_eq!(refusal(agent.call::<TaskCreate>(&params)), missing);
-    let mut different = params.clone();
-    different.title = "Different parameters".into();
-    assert_eq!(
-        refusal(agent.call::<TaskCreate>(&different)).code,
-        ErrorCode::InvalidRequest
-    );
-    let delete = WorkDeleteParams {
-        change_id: command_id(105),
-        item_id: params.item_id.clone(),
-        expected_version: 1,
-    };
-    assert_eq!(
-        refusal(agent.call::<WorkDelete>(&delete)).code,
-        ErrorCode::NotAuthorized
-    );
-    app.call::<MsgBind>(&MsgBindParams {
-        member: Some("owner".into()),
-        app_token: Some(token()),
-    })
-    .unwrap();
-    assert_eq!(
-        refusal(app.call::<WorkDelete>(&delete)).code,
-        ErrorCode::NotFound
-    );
-    drop((agent, app));
-    assert!(first.host_goes_away().success());
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let agent = Client::connect(socket(&world)).unwrap();
-    agent.bind_member("work-agent").unwrap();
-    assert_eq!(refusal(agent.call::<TaskCreate>(&params)), missing);
-    assert_eq!(
-        refusal(agent.call::<TaskCreate>(&different)).code,
-        ErrorCode::InvalidRequest
-    );
-    drop(agent);
-    assert!(again.host_goes_away().success());
+    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
 }
 
 #[path = "launch/v3_activation.rs"]

@@ -211,9 +211,7 @@ fn probe(failure: bool) {
         lifetime,
         &runtime,
         office,
-        serve::LaunchAuth::Grants {
-            _key: GrantKey::from_bytes([7; 32]),
-        },
+        crate::serve::LaunchAuth::from(GrantKey::from_bytes([7; 32])),
         Some(ID.into()),
     );
     if let Some(joining) = joining {

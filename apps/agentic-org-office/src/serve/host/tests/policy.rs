@@ -1,9 +1,8 @@
 use super::*;
-use hmac::{Hmac, Mac};
+use crate::test_support::sign_grant as sign;
 use org_mailbox::testkit::fixture::{OWNER_ID, POSITION};
-use org_proto::{grant_mac_input, Grant, GrantKey, Member, MemberKind};
+use org_proto::{Grant, Member, MemberKind};
 use serde_json::{json, Value};
-use sha2::Sha256;
 
 fn shared() -> Shared {
     let mut ports = super::super::super::tests::ports(Box::new(|| {
@@ -20,7 +19,7 @@ fn shared() -> Shared {
         .unwrap()))
     });
     ports.work = Box::new(|caller, _| {
-        assert_eq!(caller, org_work::Caller::app(OWNER_ID));
+        assert_eq!(caller, org_work::Caller::grant_bound(OWNER_ID));
         Ok(Ok(
             serde_json::from_value(json!({"status":"queued"})).unwrap()
         ))
@@ -35,9 +34,7 @@ fn shared() -> Shared {
         &super::super::super::tests::test_info(),
         Path::new("unused-host.sock"),
         ports,
-        LaunchAuth::Grants {
-            _key: GrantKey::from_bytes([7; 32]),
-        },
+        LaunchAuth::from(crate::test_support::grant_key()),
     );
     shared.register_inbox(
         crate::inbox::Hq {
@@ -60,18 +57,6 @@ fn signed(shared: &Shared, method: &str, params: Value) -> Request {
         params,
         principal: Some(json!({"grant":grant})),
     }
-}
-fn sign(grant: &mut Value) {
-    let parsed: Grant = serde_json::from_value(grant.clone()).unwrap();
-    let mut mac = Hmac::<Sha256>::new_from_slice(&[7; 32]).unwrap();
-    mac.update(&grant_mac_input(&parsed.claims).unwrap());
-    let mut bytes = mac.finalize().into_bytes();
-    grant["mac"] = bytes
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>()
-        .into();
-    bytes.fill(0);
 }
 fn answer(shared: &Shared, ctx: &HostChannel, request: &Request) -> Value {
     serde_json::to_value(dispatch(
@@ -337,7 +322,7 @@ fn live_owner_and_revocations_are_rechecked_per_request_and_poison_or_legacy_ref
     });
     refused(answer(&shared, &ctx, &request), "not_authorized");
     assert_eq!(directory.calls.load(Ordering::SeqCst), before);
-    shared.auth = LaunchAuth::Legacy(AppToken::from_bytes([7; 32]));
+    shared.auth = LaunchAuth::without_grants();
     refused(answer(&shared, &context(), &request), "not_authorized");
     assert_eq!(directory.calls.load(Ordering::SeqCst), before);
 }
@@ -512,6 +497,47 @@ fn host_keeps_operation_result_refusals_distinct_from_channel_authority_refusals
         assert_eq!(response["error"]["code"], "not_authorized");
         assert_eq!(response["error"]["message"], message);
     }
+}
+
+/// The organization commands the app used to send over an app-token bind on the office socket
+/// now come from the owner's grant on a host channel: what the office answers is what the caller
+/// gets, a storage failure is a fixed text, and a garbled command and an unknown method stay apart.
+#[test]
+fn what_the_office_answers_is_what_the_grant_bound_owner_gets() {
+    let mut shared = shared();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let answers = std::sync::Arc::clone(&calls);
+    shared.ports.submit =
+        Box::new(
+            move |_| match answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+                0 => Ok(Err(ApiError::new(ErrorCode::AlreadyExists, "taken"))),
+                _ => Err("disk on fire at /secret/path".to_owned()),
+            },
+        );
+    let ctx = context();
+    let create =
+        json!({"command_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","team_id":"T1","name":"Platform"});
+    let refusal = answer(
+        &shared,
+        &ctx,
+        &signed(&shared, "team.create", create.clone()),
+    );
+    assert_eq!(refusal["error"]["code"], "already_exists", "{refusal}");
+    let failed = answer(&shared, &ctx, &signed(&shared, "team.create", create));
+    assert_eq!(failed["error"]["code"], "storage_error", "{failed}");
+    assert!(!failed.to_string().contains("secret"), "{failed}");
+
+    let garbled = answer(
+        &shared,
+        &ctx,
+        &signed(&shared, "team.create", json!({"nope": 1})),
+    );
+    assert_eq!(garbled["error"]["code"], "invalid_request", "{garbled}");
+    let unknown = answer(&shared, &ctx, &signed(&shared, "team.fly", json!({})));
+    // The host channel's operation policy refuses a method it does not list before dispatch.
+    assert_eq!(unknown["error"]["code"], "not_authorized", "{unknown}");
+    // Neither of the last two reached the office.
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
 #[path = "inventory.rs"]

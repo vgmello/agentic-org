@@ -15,7 +15,12 @@ fn harness(reply: Reply) -> (Shared, Seen) {
         reply.clone()
     });
     (
-        Shared::new(&test_info(), Path::new("/unused-c1-socket"), ports, token()),
+        Shared::new(
+            &test_info(),
+            Path::new("/unused-c1-socket"),
+            ports,
+            launch_key(),
+        ),
         seen,
     )
 }
@@ -36,7 +41,7 @@ fn request(method: &str, valid: bool) -> Request {
 fn member(app: bool) -> Binding {
     Binding::Member {
         id: "member-id".into(),
-        with_app_token: app,
+        via_grant: app,
     }
 }
 
@@ -63,22 +68,16 @@ fn assert_error(response: Response, expected: ErrorCode, message: Option<&str>) 
 #[test]
 fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for binding in [
-        Binding::Anonymous,
-        Binding::App,
-        member(false),
-        member(true),
-    ] {
+    for binding in [Binding::Anonymous, member(false), member(true)] {
         for method in ["task.create", "work.delete"] {
             for valid in [false, true] {
                 let (shared, seen) = harness(Ok(Ok(accepted())));
                 let req = request(method, valid);
                 let response = answer(&req, &shared, &mut binding.clone());
                 let expected = match &binding {
-                    Binding::Anonymous | Binding::App => Some(ErrorCode::NotBound),
+                    Binding::Anonymous => Some(ErrorCode::NotBound),
                     Binding::Member {
-                        with_app_token: false,
-                        ..
+                        via_grant: false, ..
                     } if method == "work.delete" => Some(ErrorCode::NotAuthorized),
                     _ if !valid => Some(ErrorCode::InvalidRequest),
                     _ => None,
@@ -100,14 +99,14 @@ fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
                         Outcome::Result(serde_json::to_value(accepted()).unwrap())
                     );
                     let calls = seen.lock().unwrap();
-                    let Binding::Member { with_app_token, .. } = binding else {
+                    let Binding::Member { via_grant, .. } = binding else {
                         unreachable!()
                     };
                     assert_eq!(
                         calls.as_slice(),
                         &[(
-                            if with_app_token {
-                                Caller::app("member-id")
+                            if via_grant {
+                                Caller::grant_bound("member-id")
                             } else {
                                 Caller::agent("member-id")
                             },
@@ -154,11 +153,6 @@ fn c1_all_25_work_methods_check_binding_then_their_typed_params() {
         let req = request(method, false);
         assert_error(
             answer(&req, &shared, &mut Binding::Anonymous),
-            ErrorCode::NotBound,
-            None,
-        );
-        assert_error(
-            answer(&req, &shared, &mut Binding::App),
             ErrorCode::NotBound,
             None,
         );

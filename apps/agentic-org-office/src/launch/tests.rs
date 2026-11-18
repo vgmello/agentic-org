@@ -80,43 +80,34 @@ fn request(version: u8, op: u8, key: bool) -> Request {
 }
 fn assert_auth(auth: &LaunchAuth, version: u8) {
     match (auth, version) {
-        (LaunchAuth::Legacy(actual), 2) => assert_eq!(actual, &token()),
-        (LaunchAuth::Grants { _key }, 3) => assert_eq!(_key, &grant()),
+        // The retired v2 start carries no grant key: its app token is not an authority.
+        (auth, 2) => assert!(auth.grant_key().is_none()),
+        (auth, 3) => assert_eq!(auth.grant_key(), Some(&grant())),
         _ => panic!("wrong authority kind"),
     }
 }
 #[test]
-fn versions_preserve_create_identity_keys_and_typed_recovery() {
+fn v3_create_preserves_identity_keys_and_typed_recovery() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for version in [2, 3] {
-        let Launch::Create(c) = Launch::from_request(request(version, 0, true)).unwrap() else {
-            panic!("not create")
-        };
-        assert_eq!(
-            c.office.office_id,
-            if version == 2 { "office-1" } else { "OFFICE1" }
-        );
-        assert_eq!(c.office.office_name, "HQ");
-        assert_eq!(c.office.org_id, if version == 2 { "org-2" } else { "ORG2" });
-        assert_eq!(c.office.org_name, "Acme");
-        assert_eq!(c.office.role, org_office::OfficeRole::Hq);
-        assert_eq!(c.role, OfficeRole::Hq);
-        assert!(c.key == Key::from_db_key(db_key()));
-        assert_auth(&c.auth, version);
-        assert_eq!(
-            c.instance.as_deref(),
-            if version == 3 { Some(INSTANCE) } else { None }
-        );
-        assert_eq!(
-            c.owner_member_id.as_deref(),
-            (version == 3).then_some(OWNER)
-        );
-        match (c._recovery, version) {
-            (CreationRecovery::Legacy, 2) => {}
-            (CreationRecovery::V3 { _code }, 3) => assert_eq!(_code.expose(), "RECOVERY-TEST"),
-            _ => panic!("lost typed recovery"),
-        }
-    }
+    let Launch::Create(c) = Launch::from_request(request(3, 0, true)).unwrap() else {
+        panic!("not create")
+    };
+    assert_eq!(c.office.office_id, "OFFICE1");
+    assert_eq!(c.office.office_name, "HQ");
+    assert_eq!(c.office.org_id, "ORG2");
+    assert_eq!(c.office.org_name, "Acme");
+    assert_eq!(c.office.role, org_office::OfficeRole::Hq);
+    assert_eq!(c.role, OfficeRole::Hq);
+    assert!(c.key == Key::from_db_key(db_key()));
+    assert_auth(&c.auth, 3);
+    assert_eq!(c.instance, INSTANCE);
+    assert_eq!(c.owner_member_id, OWNER);
+    assert_eq!(c.recovery.expose(), "RECOVERY-TEST");
+}
+#[test]
+fn a_v2_create_is_refused_hq_creation_v1_is_the_only_create() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    assert!(Launch::from_request(request(2, 0, true)).is_err());
 }
 #[test]
 fn versions_preserve_start_keys_authority_and_instance() {
@@ -203,11 +194,10 @@ fn every_mismatched_v3_pair_and_unknown_legacy_request_is_refused() {
 #[test]
 fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for version in [2, 3] {
+    {
         for role in [OfficeRole::Satellite, OfficeRole::Unknown] {
-            let mut request = request(version, 0, true);
+            let mut request = request(3, 0, true);
             match &mut request {
-                Request::V2(HostMessage::Create(c)) => c.role = role,
                 Request::V3 {
                     line: HostFirstLine::Create(c),
                     ..
@@ -244,8 +234,8 @@ fn distinct_v3_identities_are_preserved_on_every_operation() {
         match Launch::from_request(Request::V3 { line, handoff }).unwrap() {
             Launch::Create(c) => {
                 assert_eq!(c.office.office_id, "OFFICE2");
-                assert_eq!(c.instance.as_deref(), Some(OTHER_INSTANCE));
-                assert_eq!(c.owner_member_id.as_deref(), Some(OTHER_OWNER));
+                assert_eq!(c.instance, OTHER_INSTANCE);
+                assert_eq!(c.owner_member_id, OTHER_OWNER);
             }
             Launch::Start { office, .. } | Launch::Discard { office, .. } => {
                 assert_eq!(

@@ -559,8 +559,8 @@ fn a_connection_that_isnt_the_apps_acts_only_as_an_agent() {
         Caller::agent("pat"),
         Caller::agent("nobody"),
         Caller::agent("off"),
-        Caller::app("ada"),
-        Caller::app("nobody"),
+        Caller::grant_bound("ada"),
+        Caller::grant_bound("nobody"),
     ] {
         let p = w.create_params(PROJECT);
         assert_eq!(
@@ -576,7 +576,7 @@ fn a_connection_that_isnt_the_apps_acts_only_as_an_agent() {
     );
     // The app may act as the owner or a person.
     w.ok(
-        &Caller::app("pat"),
+        &Caller::grant_bound("pat"),
         WorkCall::TaskCreate(w.create_params(PROJECT)),
     );
 }

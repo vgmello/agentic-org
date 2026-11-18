@@ -272,7 +272,7 @@ impl Broker {
         phase("handoff header send", reader.get_mut().write_all(&header))?;
         // The report may take as long as the supervisor's discard timeout allows; it kills the
         // worker at that deadline, which ends this stream.
-        reader.get_ref().set_read_timeout(None)?;
+        set_timeout_unless_peer_closed(reader.get_ref(), None)?;
         std::thread::Builder::new()
             .name(format!("office-{pid}-v3-discard"))
             .spawn(move || {
@@ -328,11 +328,14 @@ impl Broker {
             )
             .map_err(launch),
         )?;
-        reader.get_ref().set_read_timeout(Some(
-            deadline
-                .checked_duration_since(Instant::now())
-                .ok_or_else(invalid)?,
-        ))?;
+        set_timeout_unless_peer_closed(
+            reader.get_ref(),
+            Some(
+                deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or_else(invalid)?,
+            ),
+        )?;
         match phase(
             "handoff receipt decode",
             v3::read_server_event(&mut reader).map_err(launch),
@@ -341,7 +344,7 @@ impl Broker {
             _ => return Err(invalid()),
         }
         drop(worker); // Receiver ownership proved before sender drops its copy.
-        reader.get_ref().set_read_timeout(None)?;
+        set_timeout_unless_peer_closed(reader.get_ref(), None)?;
         let endpoint = Arc::new(Endpoint {
             office: office.into(),
             key,
@@ -622,6 +625,24 @@ impl Endpoint {
 impl Drop for Endpoint {
     fn drop(&mut self) {
         self.fail();
+    }
+}
+
+/// Sets `stream`'s read timeout, except where the worker has already closed its end.
+///
+/// Darwin's `setsockopt` answers `EINVAL` on a socket whose both directions are shut down,
+/// which is what a unix stream becomes once its peer has closed. A worker may report a fatal
+/// `failed` right after `fds_received` (or after a discard header) and exit before the host
+/// changes the timeout. Its buffered events stay readable and the read then ends at EOF without
+/// blocking, so the timeout no longer matters: treating that as an error would lose the
+/// worker's failure report and turn it into a crash. Any other error is still an error.
+pub(crate) fn set_timeout_unless_peer_closed(
+    stream: &UnixStream,
+    timeout: Option<Duration>,
+) -> io::Result<()> {
+    match stream.set_read_timeout(timeout) {
+        Err(error) if error.raw_os_error() == Some(libc::EINVAL) => Ok(()),
+        other => other,
     }
 }
 

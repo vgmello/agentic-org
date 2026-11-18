@@ -80,7 +80,7 @@ pub fn lookup_existing(
     call: &WorkCall,
     lookup: impl FnOnce(&str) -> Result<Option<StoredResult>, StoreError>,
 ) -> Result<Option<TxnOutput>, StoreError> {
-    if call.app_only() && !caller.via_app {
+    if call.app_only() && !caller.via_grant {
         return Ok(Some(TxnOutput::Refused(ApiError::new(
             ErrorCode::NotAuthorized,
             format!("`{}` can only be made from the app", call.method()),
@@ -91,7 +91,7 @@ pub fn lookup_existing(
     // inside the library too.
     let member = org.member(&caller.member_id)?;
     let may_act = match &member {
-        Some(m) if caller.via_app => m.owner || m.kind == MemberKind::Person,
+        Some(m) if caller.via_grant => m.owner || m.kind == MemberKind::Person,
         Some(m) => {
             !m.owner
                 && m.kind == MemberKind::Agent
