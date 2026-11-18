@@ -9,8 +9,10 @@
 //!   directory the system names (`_CS_DARWIN_USER_TEMP_DIR`), socket paths of at most
 //!   103 bytes.
 //! - GNU/Linux: `${XDG_DATA_HOME:-~/.local/share}/agentic-org`,
-//!   `${XDG_CACHE_HOME:-~/.cache}/agentic-org/tmp`, socket paths of at most 107 bytes.
-//!   The two XDG variables are read from the process environment here, because they are
+//!   `${XDG_CACHE_HOME:-~/.cache}/agentic-org/tmp`,
+//!   `${XDG_STATE_HOME:-~/.local/state}/agentic-org/credentials` for a release host's
+//!   secrets, socket paths of at most 107 bytes.
+//!   The XDG variables are read from the process environment here, because they are
 //!   the system's own convention; a value that is not an absolute path is ignored.
 //! - Every other Unix target: each function returns the `instance locations` refusal.
 #[cfg(target_os = "macos")]
@@ -57,6 +59,20 @@ pub fn account_application_base(home: &Path) -> Result<PathBuf, Refused> {
 /// GNU/Linux: `XDG_DATA_HOME`.
 pub fn application_base_variables() -> Result<&'static [&'static str], Refused> {
     native::application_base_variables()
+}
+
+/// The default folder for the credential directories of the account whose home is
+/// `home`, on a system whose release host keeps its secrets in a directory. The
+/// consumer appends one name per instance, creates the result, and records the
+/// absolute path once, at setup: a host never asks this function at its start, so its
+/// environment cannot move its secrets later.
+///
+/// GNU/Linux: `<XDG_STATE_HOME>/agentic-org/credentials`, or
+/// `<home>/.local/state/agentic-org/credentials`; nothing is created here. macOS has
+/// no credential directory (a release host's secrets are in the Keychain) and refuses,
+/// as every other system does.
+pub fn credential_directory_base(home: &Path) -> Result<PathBuf, Refused> {
+    native::credential_directory_base(home)
 }
 
 /// Why [`user_temp_base`] named no directory.

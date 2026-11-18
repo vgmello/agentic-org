@@ -35,6 +35,11 @@ pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     path.canonicalize().map_err(UserTempError::Invalid)
 }
 
+/// macOS has no credential directory: a release host's secrets are in the Keychain.
+pub(super) fn credential_directory_base(_home: &Path) -> Result<PathBuf, Refused> {
+    Err(Refused::unsupported("a credential directory"))
+}
+
 pub(super) fn environment_spelling(base: &Path) -> Result<PathBuf, Refused> {
     if let Ok(suffix) = base.strip_prefix("/private/var") {
         // The session environment uses DARWIN_USER_TEMP_DIR's /var spelling.
@@ -69,6 +74,14 @@ mod tests {
         assert_eq!(
             application_base(Path::new("/Users/a")).unwrap(),
             Path::new("/Users/a/Library/Application Support/agentic.org")
+        );
+    }
+
+    #[test]
+    fn macos_names_no_credential_directory() {
+        assert_eq!(
+            credential_directory_base(Path::new("/Users/a")),
+            Err(Refused::unsupported("a credential directory"))
         );
     }
 
