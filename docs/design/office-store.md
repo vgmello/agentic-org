@@ -514,7 +514,7 @@ sets (hourly for pending work, promptly for important knowledge). Because only f
 entries are materialized, the tree under the barrier is a consistent cut at one ordinal.
 The store never runs Git and never opens a network connection.
 
-**Protected local records** use the same writer and the same publication rule, in other
+**Protected local records** use the same writer and the same file rules, in other
 trees: chat in `messaging/` (document 15's layout, one writing office per file), receipts
 in `recovery/commands/`, usage in `accounting/`, budgets in `budgets/`, HQ authority in
 `authority/`, office-local state in `local/offices/<office-id>/`. Nothing outside
@@ -537,7 +537,8 @@ pub fn rebuild<E: Engine>(
 1. Materialize the journal's retained entries, so the files hold everything accepted.
 2. Through `Engine::replace`, into a fresh projection beside the live one: walk every
    projected tree (`state/`, `messaging/`, `recovery/commands/`, `accounting/`,
-   `budgets/`, `authority/`, `local/offices/<office-id>/`) in byte order of path. Each
+   `budgets/`, `authority/`, `local/offices/<office-id>/`, and any tree a later family
+   declares) in byte order of path. Each
    file goes to the one projector that owns its path, then `set_source` records its
    hash. A file no family owns is a failure.
 3. Run every family's `validate`. Set the cursor to the journal head. Swap the new
@@ -566,7 +567,9 @@ for a generated sequence of the family's commands (valid, invalid, retried, inte
     B = rebuild() from the durable directory A left behind, into a fresh engine
     assert dump(A) == dump(B)
 and with a crash injected at a random point (section 4): reopen, then
-    assert dump(reopened) == dump(rebuild()) and every acknowledged operation is present
+    assert dump(reopened) == dump(rebuild())
+    assert every operation acknowledged before a process kill is present,
+       and every durable one after a simulated power cut (unflushed bytes dropped)
 ```
 
 `dump` is a testkit-only canonical listing of every row, sorted. Because the write path
