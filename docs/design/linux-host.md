@@ -22,7 +22,9 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   becomes a new module under the
   [adapter rule](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one),
   with its macOS, Linux and refusing adapters, and is added to section 2. Each module
-  has `macos.rs`, `linux.rs` and `refused.rs`, and exports one non-conditional
+  is `<capability>/mod.rs` with `macos.rs`, `linux.rs` and `refused.rs` beside it
+  (`adapters!()` declares the three and binds the build target's; code only the two
+  real adapters share sits in `supported! { … }`), and exports one non-conditional
   constructor that returns the build target's implementation or the refusing one. The
   refusing adapter returns `Refused::Unsupported { capability, os }` and never falls
   back to another system's behaviour. It is compiled and unit-tested on every target,
@@ -472,78 +474,57 @@ the 6.2 floor, and denying `connect` outright is simpler.
 
 ```rust
 pub enum ServiceMode { Registered, Foreground }
-pub struct InstanceId(/* 1 to 64 ASCII letters, digits, '-' or '_' */);
-pub struct Unit(/* instance, program, args, env; built only by Unit::new, which checks it */);
-impl Unit { pub fn new(instance: InstanceId, program: PathBuf, args: Vec<String>, env: Vec<(String, String)>) -> Result<Unit, ServiceError>; }
-pub fn service(mode: ServiceMode) -> Result<Box<dyn ServiceManager>, Refused>;
-pub trait ServiceManager: Send + Sync {
-    fn register(&self, unit: &Unit) -> Result<(), ServiceError>;
-    fn start(&self, instance: &InstanceId) -> Result<(), ServiceError>;
-    fn stop(&self, instance: &InstanceId) -> Result<(), ServiceError>;
-    fn status(&self, instance: &InstanceId) -> Result<ServiceStatus, ServiceError>;
-    fn unregister(&self, instance: &InstanceId) -> Result<(), ServiceError>;
+pub struct Unit { pub instance_id: String, pub program: PathBuf, pub args: Vec<OsString>, pub env: Vec<(OsString, OsString)> }
+pub struct Placement { pub prefix: String, pub directory: PathBuf } // Placement::user(home); tests use a temp one
+pub fn service(mode: ServiceMode, home: &Path) -> Result<Box<dyn ServiceManager>, Refused>;
+pub fn service_in(mode: ServiceMode, placement: Placement) -> Result<Box<dyn ServiceManager>, Refused>;
+pub trait ServiceManager {
+    fn register(&self, unit: &Unit) -> Result<Registration, ServiceError>; // Unchanged | Loaded; idempotent, never takes over another unit
+    fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
+    fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
+    fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>; // includes login and linger requirements
+    fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
 }
-pub enum ServiceStatus { Unmanaged, NotRegistered, Registered { running: bool, availability: Availability } }
-pub enum Availability { Always, WhileLoggedIn { remedy: Option<String> } }
-pub enum ServiceError { InvalidUnit { reason }, NotRegistered, Conflict, Foreign, Unmanaged, Manager { action, detail } }
+pub enum Registration { Unchanged, Loaded }
+pub enum ServiceStatus { NotRegistered, Unloaded, Stopped, Running { pid: u32 } }
+pub enum ServiceError { Refused(Refused), Invalid(&'static str), Conflict(String), System(String) }
 ```
 
-The rules every adapter keeps. The module documentation of
-`crates/org-platform/src/service.rs` is the full text, and
-`org_platform::service::testing` (feature `test-support`) holds them as executable
-checks, `check_registered` and `check_foreground`, with an in-memory manager for
-consumers' tests:
-
-- A *registration* is the record, under a name derived from the instance id, that
-  makes the user's service manager start the unit at each login of that user and
-  restart it when it fails. An adapter marks the registrations it writes. Anything
-  else under the name is *foreign*: every method returns `Foreign` and changes
-  nothing, so an adapter never takes over or removes what it did not write.
-- `register` writes the registration and does not start the instance. The same unit
-  again succeeds, changes nothing and leaves a running instance alone. This product's
-  registration for the instance with a different unit is `Conflict`; a unit is
-  replaced by `unregister`, then `register`.
-- `start` makes the manager run the instance now; `stop` stops it, returns when the
-  manager reports it stopped, and the manager then leaves it stopped until `start` or
-  the user's next login. Each succeeds when the instance is already in that state and
-  is `NotRegistered` without a registration.
-- `status` reports `NotRegistered`, or `Registered` with `running` (started and not
-  seen to exit; a failed instance, or one waiting to be restarted, is not running) and
-  the login requirement: `Always`, or `WhileLoggedIn` with the command that lifts the
-  limit when the system has one. Setup prints that command and never runs it unasked.
-- `unregister` stops the instance, removes the registration, and succeeds when there
-  is none.
-- In `Foreground` mode there is nothing to register: `register` and `unregister`
-  succeed without effect, `status` is `Unmanaged`, and `start` and `stop` are
-  `Unmanaged`, because only whoever started `serve` can start or stop it. Setup does
-  not branch on the system; it is told the mode.
-- An adapter only ever receives a checked `InstanceId` and a checked `Unit`.
-  `Unit::new` requires what a launchd property list and a systemd unit file can both
-  hold exactly: an absolute UTF-8 program path, no control character in any value,
-  environment names that are identifiers and appear once, and no loader variable
-  (`LD_*`, `DYLD_*`, `GLIBC_TUNABLES`), the rule `ChildEnv` applies to children
-  (section 3.1).
-
-X1a landed the contract, the foreground manager (the same code on macOS and Linux)
-and the refusing adapter. Registered mode refuses on every target until its adapters
-are written: A2 writes the launchd agent in `service/macos.rs` and X5 the systemd
-user unit in `service/linux.rs`. The Track A lead has not yet reviewed the contract;
-a change A2 needs is made in this section and in the contract together.
+A2 writes the launchd registration behind this contract. A2 B0 built it as shown
+(`crates/org-platform/src/service/`), before X1a: `ServiceStatus` is `NotRegistered`,
+`Unloaded`, `Stopped` or `Running { pid }`; every adapter refuses a relative program,
+path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
+`GLIBC_TUNABLES`) in the unit's environment. `Foreground` refuses everywhere until X5.
 
 `agentic-org serve` is the same foreground process in every mode; it stops on
 `SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
 process and the workers (`SIGTERM`, then `SIGKILL` after 5 s), flushes its logs and
 exits 0 within 8 s, inside a container runtime's default 10-second grace.
 
-**macOS adapter.** A per-user launchd agent (written by A2 behind this contract).
+**macOS adapter.** A per-user launchd agent (written by A2 behind this contract):
+`~/Library/LaunchAgents/com.ellosoft.agentic-org.instance.<instance-id>.plist` with
+`RunAtLoad`, `KeepAlive { SuccessfulExit = false }`, `Umask` 0077 and an explicit
+environment, loaded with `launchctl bootstrap gui/<uid>`. An identical loaded job is
+left alone; a different file or a job loaded from elsewhere under the label is a
+conflict. "Elsewhere" is decided by the top-level `path` of `launchctl print`, which
+must name our definition file; `register`, `start`, `stop`, `status` and `unregister`
+all refuse such a job. The definition is published by hard-linking a complete temporary
+file, so a file that appears meanwhile is never replaced (a conflict). `start` never
+loads a definition: on `Unloaded` it refuses, and the caller runs `register` again,
+which loads the file only when its bytes equal the rendered unit. `unregister` waits
+up to 15 s for launchd to drop the job after `bootout`. The plist has no
+`ProcessType`, so the host is not throttled as a background job. Program, arguments
+and environment must be valid XML text (no NUL or other C0 control except tab, line
+feed and carriage return). `stop` sends `SIGTERM`, so the clean exit is not restarted.
+Disk encryption reads `diskutil info -plist` for the mount point (`statfs`) of the
+nearest existing ancestor of the root.
 
 **Linux adapter, `Registered`.** A systemd user unit,
 `~/.config/systemd/user/agentic-org-<instance-id>.service`, with
 `ExecStart=<pinned agentic-org> serve --instance <id>`, `Type=exec`,
 `KillMode=mixed`, `TimeoutStopSec=15`, `Restart=on-failure`, `UMask=0077` and
-`NoNewPrivileges=yes`. `register` writes the unit and runs `systemctl --user
-daemon-reload` and `enable`; `start` and `stop` are `systemctl --user start` and
-`stop`. Without a user manager (no `XDG_RUNTIME_DIR` or user bus) it refuses
+`NoNewPrivileges=yes`, registered with `systemctl --user daemon-reload` and
+`enable --now`, as the launchd agent starts when it is loaded. Without a user manager (no `XDG_RUNTIME_DIR` or user bus) it refuses
 and names `Foreground`. When lingering is off, `status` and setup report that the
 instance runs only while the user is logged in and print
 `loginctl enable-linger <user>`, which polkit normally lets a local, active user run
@@ -774,8 +755,8 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 How the tracks avoid each other:
 
 - **Land the crate and the check on the first day.** X1a creates `org-platform`, the
-  CI check with today's files as a shrinking allowlist, and the `service` contract,
-  which the A2 lead reviews when A2 starts, so that A2 writes launchd code behind it.
+  CI check with today's files as a shrinking allowlist; the A2 lead wrote the crate's
+  first modules and the `service` contract with its launchd adapter.
   From then on the check refuses any new platform predicate outside `org-platform`.
 - **Then carve the seams in three merges.** X1b moves the capabilities no Track A
   increment is redesigning; X1c moves admission, confinement and presence, ordered

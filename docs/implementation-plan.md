@@ -652,20 +652,28 @@ half of LNX-6 run).
 - **Outcome:** none a person can see. No change can add a platform branch outside one
   crate, and A2 has a contract to write service registration behind.
 - **Built (2026-11-18):**
-  - The crate `crates/org-platform` with the `Refused` type, the adapter layout every
-    capability follows, and the `service`
-    contract ([design, section 3.4](design/linux-host.md#34-service-lifecycle)) with
-    its foreground manager, its refusing adapter and its rules as executable checks.
-    Registered mode refuses on every target until A2 writes the launchd adapter and
-    X5 the systemd one.
-  - The check `crates/org-platform/tests/platform_conditionals.rs`: it reads every
-    `.rs` file outside `crates/org-platform/`, requires that `syn` parses it, and
-    fails on a `cfg`, `cfg_attr`, `cfg!`, `cfg_select!` or `cfg_match!` predicate
+  - A2 B0 created `crates/org-platform` with the `Refused` type and the `service`,
+    `disk` (disk-encryption state for ENC-3, a new capability) and `dirs` (the
+    application base only) modules, each with its macOS and refusing adapters and one
+    non-conditional constructor, so that A2 never added a platform predicate outside
+    the crate. The A2 lead wrote the `service` contract with its launchd adapter
+    ([design, section 3.4](design/linux-host.md#34-service-lifecycle)).
+  - X1a added the check `crates/org-platform/tests/platform_conditionals.rs`: it reads
+    every `.rs` file outside `crates/org-platform/`, requires that `syn` parses it,
+    and fails on a `cfg`, `cfg_attr`, `cfg!`, `cfg_select!` or `cfg_match!` predicate
     naming `target_os`, `target_vendor`, `target_env` or `target_family`, or any
     other use of those names, beyond `.github/platform-conditionals.allow`. The list
     has the 79 files and 495 predicates of that day, each file with its count, and
     must equal the sources. CI runs the check on macOS and Linux, and a second job
     fails a change that adds a file to the list or raises a count.
+  - X1a added the layout for a capability that has both adapters (`adapters!()` and
+    `supported! { … }` in the crate root, the refusing adapter compiled and tested on
+    every target, `From<Refused> for io::Error`), a CI step that builds and tests the
+    crate for a target that gets only the refusing adapters, and the module stubs
+    X1b fills.
+  - X1a reviewed the `service` contract as built. What X5 must settle with the A2
+    lead before it writes the systemd adapter is in the
+    [Track X record](../.agent-kit/tasks/v1-track-x.md).
 - **Read:** [Linux host design](design/linux-host.md) sections 1, 3.4 and 7,
   [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
 - **Code today:** the 79 listed files are 45 source files, one example and 33 test
@@ -685,9 +693,8 @@ half of LNX-6 run).
   CI lints `org-host` and `agentic-org` on Linux with `dead_code` and
   `unused_imports` allowed and runs none of their tests there.
 - **Done when:** the crate builds on macOS and Linux; the check runs in CI on both and
-  fails on a new predicate; the A2 lead has accepted the `service` contract. The
-  first two are met; the third is not yet: the A2 lead reviews the contract when A2
-  starts.
+  fails on a new predicate; the A2 lead has accepted the `service` contract. All
+  three are met: the A2 lead wrote the contract.
 - **Needs:** nothing.
 
 ### X1b · Files, locations, processes and sockets behind the crate
@@ -828,8 +835,11 @@ half of LNX-6 run).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.4 and 3.5,
   [standalone server design](design/standalone-server.md) (service, non-interactive
   setup). LNX-2.
-- **Code today:** nothing registers a service on any system; `org-host/src/signals.rs`
-  stops on `SIGTERM` and `SIGINT`; a supplied TLS pair is refused until the host
+- **Code today:** `org_platform::service` holds the contract and the macOS launchd
+  adapter (A2 B0); Linux and every other system get the refusing adapter, so setup
+  there refuses before it changes anything (A2 decision D7). SRV-34's "a missing
+  service manager reports foreground instructions" waits for this increment.
+  `org-host/src/signals.rs` stops on `SIGTERM` and `SIGINT`; a supplied TLS pair is refused until the host
   certificate verifier exists.
 - **Done when:** LNX-2 passes, including after the container is replaced with the same
   volumes; in the container on a Mac, the administrator registers from the link

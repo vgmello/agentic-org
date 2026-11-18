@@ -649,6 +649,7 @@ dependencies = [
  "libc",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-release",
  "org-socket",

@@ -948,11 +948,29 @@ fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
         }
         out
     }
+    // The unwrapped CA DER is the secret itself; the wrapped record must not
+    // leak either (ENC-5).
+    let ca_der = org_pki::wrap::unwrap(
+        db_key().expose_bytes(),
+        &org_pki::wrap::WrapBinding {
+            organization_id: &record.organization_id,
+            office_id: &p.office_id,
+            purpose: org_pki::wrap::WrapPurpose::OrganizationCa,
+        },
+        record.wrapped_ca_key(),
+    )
+    .unwrap();
+    assert_eq!(
+        org_pki::SigningKey::from_local_der(&ca_der)
+            .unwrap()
+            .public_key(),
+        record.public_key
+    );
     for root in [world.home.join("state"), world.home.join("protected")] {
         let published = bytes(&root);
-        assert!(!published
-            .windows(record.local_der().len())
-            .any(|s| s == record.local_der()));
+        for secret in [record.wrapped_ca_key(), &ca_der[..]] {
+            assert!(!published.windows(secret.len()).any(|s| s == secret));
+        }
     }
 }
 #[test]
@@ -1030,7 +1048,7 @@ fn assert_selected_retained_material(world: &World, retained: &SelectedRetainedM
     assert_eq!(record.operation_id, retained.record.operation_id);
     assert_eq!(record.public_key, retained.record.public_key);
     assert_eq!(record.package, retained.record.package);
-    assert!(record.local_der() == retained.record.local_der());
+    assert!(record.wrapped_ca_key() == retained.record.wrapped_ca_key());
 }
 
 fn selected_expect_start_refusal(

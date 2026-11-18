@@ -49,6 +49,12 @@ and WAL stand, and its durability rule stands as amended by
    - The worker stores each private key in its own store as a record encrypted and
      authenticated with that key. The record is bound to the organization, the office
      and the key's purpose, and its format is versioned.
+   - The record format is `org_pki::wrap` (`crates/org-pki/src/wrap.rs`): AES-256-GCM,
+     record version 1, laid out as version, 12-byte random nonce, ciphertext and tag.
+     The authenticated data is the domain string `agentic-org/office-private-key/v1`,
+     the version, then the purpose, organization ID and office ID, each prefixed with
+     its one-byte length. `org-pki` takes raw bytes; the office store keeps the record
+     as opaque bytes, and the worker application composes the two.
    - The host never receives the wrapped keys, so the rules of ADR-0007 and ADR-0011
      stand. The HQ-creation commit stays one record in one transaction; only how the
      private key bytes are protected inside that record changes.
@@ -86,8 +92,9 @@ and WAL stand, and its durability rule stands as amended by
 ## Options considered for decision 3 (owner chose option 2)
 
 What exists today. Only the organization CA private key exists in code. It is the
-`private_pkcs8` column of the immutable `local_hq_creation` record in `office.db`,
-beside the public key and the escrow package. Nothing uses it to sign yet: its first
+`wrapped_ca_key` column of the immutable `local_hq_creation` record in `office.db`,
+beside the public key and the escrow package. The column holds an `org_pki::wrap`
+record sealed under the office secrets key, never the PKCS#8 DER. Nothing uses it to sign yet: its first
 use is issuing office certificates when satellite enrollment is built. The office TLS
 identity key and the invitation key are part of that unbuilt enrollment design. A
 satellite's TLS identity key must be usable unattended, every time the office starts.

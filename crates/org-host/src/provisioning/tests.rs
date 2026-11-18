@@ -260,14 +260,14 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
             )
             .unwrap();
         let credentials = custody_snapshot(&*custody);
-        assert_eq!(credentials.len(), 3);
+        assert_eq!(credentials.len(), 2);
         assert!(credentials.iter().all(|(name, _)| {
             name.as_str() != "writer-device" && !name.as_str().starts_with("writer.")
         }));
         (reservation, frozen, credentials)
-    }; // Close SQLCipher and all custody/controller/writer handles before loss.
+    }; // Close the registry and all custody/controller/writer handles before loss.
     let original_registry = std::fs::read(root.join("host-registry.db")).unwrap();
-    assert!(!original_registry.starts_with(b"SQLite format 3"));
+    assert!(original_registry.starts_with(b"SQLite format 3\0"));
     std::fs::rename(
         root.join("host-registry.db"),
         root.join("retained-registry.db"),

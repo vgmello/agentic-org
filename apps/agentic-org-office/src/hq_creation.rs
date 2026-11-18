@@ -1,14 +1,40 @@
 //! REC-ESC-1 composition: crypto remains in the worker; the host receives no
 //! usable CA key. Creation context is authenticated by the launch admission.
+//! The CA private key is stored only as an `org_pki::wrap` record under the
+//! office secrets key (ADR-0016 decision 3, ENC-5).
 use org_office::{
     hq_creation::{Binding, LocalRecord},
     Key, NewOffice, Office, OfficeError,
 };
 use org_proto::RecoveryCode;
 use std::path::Path;
-use zeroize::Zeroizing;
 fn invalid() -> OfficeError {
     OfficeError::Invalid("HQ provisioning requires recovery")
+}
+fn ca_binding<'a>(organization_id: &'a str, office_id: &'a str) -> org_pki::wrap::WrapBinding<'a> {
+    org_pki::wrap::WrapBinding {
+        organization_id,
+        office_id,
+        purpose: org_pki::wrap::WrapPurpose::OrganizationCa,
+    }
+}
+/// Unwraps the retained CA key and checks it against the recorded public key.
+fn unwrap_ca(
+    key: &Key,
+    record: &LocalRecord,
+    office_id: &str,
+) -> Result<org_pki::SigningKey, OfficeError> {
+    let der = org_pki::wrap::unwrap(
+        key.expose_bytes(),
+        &ca_binding(&record.organization_id, office_id),
+        record.wrapped_ca_key(),
+    )
+    .map_err(|_| invalid())?;
+    let ca = org_pki::SigningKey::from_local_der(&der).map_err(|_| invalid())?;
+    if ca.public_key() != record.public_key {
+        return Err(invalid());
+    }
+    Ok(ca)
 }
 
 pub(crate) fn prepare(
@@ -22,6 +48,7 @@ pub(crate) fn prepare(
     let code = org_pki::Code::parse(recovery.expose()).map_err(|_| invalid())?;
     // The original wrapper and parsed KDF bytes both drop before serving.
     drop(recovery);
+    let secrets = key.clone();
     Office::provision_hq_for_instance(folder, new, key, instance, binding, move |prior| {
         if let Some(prior) = prior {
             if prior.organization_id != new.org_id || prior.operation_id != binding.operation_id {
@@ -29,36 +56,41 @@ pub(crate) fn prepare(
             }
             let recovered =
                 org_pki::recover(&prior.package, &new.org_id, &code).map_err(|_| invalid())?;
-            let local =
-                org_pki::SigningKey::from_local_der(prior.local_der()).map_err(|_| invalid())?;
-            if recovered.public_key() != prior.public_key || local.public_key() != prior.public_key
-            {
+            unwrap_ca(&secrets, &prior, &new.office_id)?;
+            if recovered.public_key() != prior.public_key {
                 return Err(invalid());
             }
             return Ok(prior);
         }
         let ca = org_pki::SigningKey::generate().map_err(|_| invalid())?;
         let package = ca.seal(&new.org_id, &code).map_err(|_| invalid())?;
+        let wrapped = org_pki::wrap::wrap(
+            secrets.expose_bytes(),
+            &ca_binding(&new.org_id, &new.office_id),
+            ca.local_der(),
+        )
+        .map_err(|_| invalid())?;
         LocalRecord::new(
             new.org_id.clone(),
             binding.operation_id.clone(),
             ca.public_key(),
             package,
-            Zeroizing::new(ca.local_der().to_vec()),
+            wrapped,
         )
     })
 }
 
 /// Acknowledged healthy HQ starts without a pending delivery code. A retained
 /// creation binding with absent/inconsistent material is recovery-required.
-pub(crate) fn verify_existing(office: &Office) -> Result<(), OfficeError> {
+pub(crate) fn verify_existing(office: &Office, key: &Key) -> Result<(), OfficeError> {
     let Some(record) = office.hq_creation_record()? else {
         return Ok(());
     };
-    let key = org_pki::SigningKey::from_local_der(record.local_der()).map_err(|_| invalid())?;
+    let info = office.info();
+    unwrap_ca(key, &record, &info.office_id)?;
     let envelope =
-        org_pki::Envelope::parse(&record.package, &office.info().org_id).map_err(|_| invalid())?;
-    if key.public_key() != record.public_key || envelope.public_key() != &record.public_key {
+        org_pki::Envelope::parse(&record.package, &info.org_id).map_err(|_| invalid())?;
+    if envelope.public_key() != &record.public_key {
         return Err(invalid());
     }
     Ok(())
