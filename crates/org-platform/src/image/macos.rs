@@ -1,78 +1,62 @@
-//! Read-only kernel loaded-image metadata. This does not authenticate a peer or
-//! authorize any publisher, credential, descriptor transfer or release.
+//! The macOS image adapter: the kernel's CodeDirectory hash of a running image, read
+//! with `csops` and `csops_audittoken` (the C library only, no framework).
+
+use super::ReleasePlatform;
+use crate::Refused;
 use std::io;
 
 /// Darwin's kernel CodeDirectory hash of this running image. A replaced on-disk
-/// executable cannot change this result. Unsupported platforms fail closed.
-pub fn own_loaded_cdhash() -> io::Result<[u8; 20]> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut hash = [0; 20];
-        // SAFETY: getpid has no preconditions; CS_OPS_CDHASH is read-only and
-        // receives a writable buffer of precisely the kernel ABI's20 bytes.
-        let result = unsafe {
-            csops(
-                libc::getpid(),
-                CS_OPS_CDHASH,
-                hash.as_mut_ptr().cast(),
-                hash.len(),
-            )
-        };
-        finish(result, hash)
-    }
-    #[cfg(not(target_os = "macos"))]
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "kernel CDHash unavailable",
-    ))
+/// executable cannot change this result.
+pub(super) fn own_loaded_cdhash() -> io::Result<[u8; 20]> {
+    let mut hash = [0; 20];
+    // SAFETY: getpid has no preconditions; CS_OPS_CDHASH is read-only and
+    // receives a writable buffer of precisely the kernel ABI's20 bytes.
+    let result = unsafe {
+        csops(
+            libc::getpid(),
+            CS_OPS_CDHASH,
+            hash.as_mut_ptr().cast(),
+            hash.len(),
+        )
+    };
+    finish(result, hash)
 }
 
 /// Query the exact process incarnation identified by an authenticated kernel
 /// audit token. Callers must obtain it from their admitted protected peer, never
 /// browser/command bytes. This uses csops_audittoken, with no unchecked PID,
 /// static-signature, filesystem or environment fallback; exec/exit refuses.
-pub fn loaded_cdhash_for_audit_token(token: &[u8; 32]) -> io::Result<[u8; 20]> {
-    #[cfg(target_os = "macos")]
-    {
-        // Native audit_token_t is eight aligned native-endian u32 words. Do not
-        // cast a potentially unaligned byte slice into a kernel ABI pointer.
-        let mut words = [0_u32; 8];
-        for (word, bytes) in words.iter_mut().zip(token.as_chunks::<4>().0) {
-            *word = u32::from_ne_bytes(*bytes);
-        }
-        let pid = libc::pid_t::try_from(words[5])
-            .ok()
-            .filter(|pid| *pid > 0)
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "invalid audit token PID")
-            })?;
-        let mut hash = [0; 20];
-        // SAFETY: live aligned audit_token_t and exact writable output buffer.
-        // The kernel binds PID and pidversion atomically; no separate PID lookup.
-        let result = unsafe {
-            csops_audittoken(
-                pid,
-                CS_OPS_CDHASH,
-                hash.as_mut_ptr().cast(),
-                hash.len(),
-                &mut words,
-            )
-        };
-        finish(result, hash)
+pub(super) fn loaded_cdhash_for_audit_token(token: &[u8; 32]) -> io::Result<[u8; 20]> {
+    // Native audit_token_t is eight aligned native-endian u32 words. Do not
+    // cast a potentially unaligned byte slice into a kernel ABI pointer.
+    let mut words = [0_u32; 8];
+    for (word, bytes) in words.iter_mut().zip(token.as_chunks::<4>().0) {
+        *word = u32::from_ne_bytes(*bytes);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = token;
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "kernel CDHash unavailable",
-        ))
-    }
+    let pid = libc::pid_t::try_from(words[5])
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid audit token PID"))?;
+    let mut hash = [0; 20];
+    // SAFETY: live aligned audit_token_t and exact writable output buffer.
+    // The kernel binds PID and pidversion atomically; no separate PID lookup.
+    let result = unsafe {
+        csops_audittoken(
+            pid,
+            CS_OPS_CDHASH,
+            hash.as_mut_ptr().cast(),
+            hash.len(),
+            &mut words,
+        )
+    };
+    finish(result, hash)
 }
 
-#[cfg(target_os = "macos")]
+pub(super) fn release_platform() -> Result<ReleasePlatform, Refused> {
+    Ok(ReleasePlatform::Macos)
+}
+
 const CS_OPS_CDHASH: libc::c_uint = 5;
-#[cfg(target_os = "macos")]
 extern "C" {
     fn csops(
         pid: libc::pid_t,
@@ -88,7 +72,6 @@ extern "C" {
         token: *mut [u32; 8],
     ) -> libc::c_int;
 }
-#[cfg(target_os = "macos")]
 fn finish(result: libc::c_int, hash: [u8; 20]) -> io::Result<[u8; 20]> {
     if result == 0 {
         Ok(hash)
@@ -97,7 +80,7 @@ fn finish(result: libc::c_int, hash: [u8; 20]) -> io::Result<[u8; 20]> {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     extern "C" {
@@ -147,5 +130,10 @@ mod tests {
                 .kind(),
             io::ErrorKind::InvalidInput
         );
+    }
+
+    #[test]
+    fn macos_names_its_release_platform() {
+        assert_eq!(release_platform(), Ok(ReleasePlatform::Macos));
     }
 }

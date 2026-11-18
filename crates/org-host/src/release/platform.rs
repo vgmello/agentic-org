@@ -147,7 +147,7 @@ mod tests {
         let held = static_code(&file).unwrap();
         let (_, actual) = crate::code_signing::static_signing(&held).unwrap();
         assert_eq!(actual, expected);
-        assert_eq!(actual, org_socket::image::own_loaded_cdhash().unwrap());
+        assert_eq!(actual, org_platform::image::own_loaded_cdhash().unwrap());
         let replacement = File::open(&path).unwrap();
         // Creating a static-code object alone does not establish a signature.
         assert!(crate::code_signing::static_signing(&static_code(&replacement).unwrap()).is_none());

@@ -45,6 +45,7 @@ compile_error!("org-platform builds only for Unix targets");
 pub mod dirs;
 pub mod disk;
 pub mod fs;
+pub mod image;
 pub mod process;
 pub mod service;
 pub mod socket;

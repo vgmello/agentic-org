@@ -183,7 +183,7 @@ impl ServerCheck {
             let token = check
                 .admit(pid)?
                 .ok_or_else(|| "selected release requires platform-audited image".to_owned())?;
-            if org_socket::image::loaded_cdhash_for_audit_token(&token)
+            if org_platform::image::loaded_cdhash_for_audit_token(&token)
                 .map_err(|_| "selected release kernel image unavailable")?
                 != *expected
             {
@@ -205,7 +205,7 @@ impl ServerCheck {
             check.still(pid, admitted)?;
             let token = admitted
                 .ok_or_else(|| "selected release requires platform-audited image".to_owned())?;
-            if org_socket::image::loaded_cdhash_for_audit_token(&token)
+            if org_platform::image::loaded_cdhash_for_audit_token(&token)
                 .map_err(|_| "selected release kernel image unavailable")?
                 != *expected
             {

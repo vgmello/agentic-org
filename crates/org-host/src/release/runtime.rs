@@ -48,13 +48,11 @@ impl RuntimeRelease {
     }
     pub(crate) fn check_self(&self) -> Result<(), Error> {
         self.0.store.verify_root()?;
-        #[cfg(target_os = "macos")]
-        if org_socket::image::own_loaded_cdhash()? != self.cdhash("agentic-org")? {
+        if org_platform::image::own_loaded_cdhash().map_err(own_image_error)?
+            != self.cdhash("agentic-org")?
+        {
             return Err(Error::PlatformAdmission);
         }
-        #[cfg(not(target_os = "macos"))]
-        return Err(Error::UnsupportedTarget);
-        #[cfg(target_os = "macos")]
         Ok(())
     }
     pub fn office_program(&self) -> PathBuf {
@@ -90,5 +88,18 @@ impl RuntimeRelease {
             manifest_sha256: pin.manifest_sha256.clone(),
             sequence: pin.sequence,
         }
+    }
+}
+
+/// Why the host's own loaded image could not be read: a build target without a
+/// loaded-image query is outside the release profile; any other failure is the OS error.
+fn own_image_error(error: std::io::Error) -> Error {
+    let refused = error
+        .get_ref()
+        .is_some_and(|source| source.is::<org_platform::Refused>());
+    if refused {
+        Error::UnsupportedTarget
+    } else {
+        Error::from(error)
     }
 }

@@ -4,7 +4,7 @@ fn selected_pin_checks_actual_child_kernel_hash_and_never_accepts_debug_skip() {
     let child = crate::spawn::spawn_suspended(&std::env::current_exe().unwrap(), &[], &[]).unwrap();
     let pid = child.process.id();
     let token = crate::spawn::audit_token_of_child(pid).unwrap();
-    let expected = org_socket::image::loaded_cdhash_for_audit_token(&token).unwrap();
+    let expected = org_platform::image::loaded_cdhash_for_audit_token(&token).unwrap();
     let platform =
         ServerCheck::Scripted(Scripted(std::sync::Arc::new(move |_, _| Ok(Some(token)))));
     let pinned = platform.clone().pinned(expected);
