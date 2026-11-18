@@ -37,7 +37,9 @@
 #   7. a new container with the data volume and a new, empty secrets volume does not serve;
 #   8. a plain `docker run` with no volume named (anonymous volumes) works too;
 #   9. what the credential store refuses: a path that is not a mount, a volume root that
-#      is not the service user's, and a secrets directory inside the data directory.
+#      is not the service user's, a development key folder outside the secrets volume, and
+#      a secrets directory inside the data directory; and root's reset for an instance
+#      whose data folder is gone is refused with its words escaped.
 # Every container and volume it makes is removed at the end, pass or fail.
 #
 # Known limits of this test: two rules have no case here because they need a client
@@ -457,6 +459,34 @@ docker run --rm -u 0 -v "$scratch/binds:/b" --entrypoint /bin/sh "$image" -c \
     'mkdir -m 750 /b/open && chown 61000:61000 /b/open' >/dev/null
 refused "$tag-f2" 'mode' -v "$scratch/binds/open:/secrets" ||
     fail "the refusal does not name the mode"
+echo "a development key folder outside the secrets volume (ORG_OFFICE_DEV_KEY_DIR=/data/keys):"
+volumes+=("$tag-dk")
+docker volume create "$tag-dk" >/dev/null
+refused "$tag-k" 'is not a folder directly in the credential directory /secrets' \
+    -e ORG_OFFICE_DEV_KEY_DIR=/data/keys -v "$tag-dk:/data" ||
+    fail "the refusal does not name the development key folder's rule"
+docker run --rm -v "$tag-dk:/data" --entrypoint /bin/sh "$image" -c '! test -e /data/keys' ||
+    fail "the refused start made /data/keys"
+echo "  and /data/keys was not made"
+echo "root's reset for an instance whose data folder is gone: refused, its words escaped:"
+volumes+=("$tag-rd" "$tag-rs")
+docker volume create "$tag-rd" >/dev/null
+docker volume create "$tag-rs" >/dev/null
+run "$tag-r" -v "$tag-rd:/data" -v "$tag-rs:/secrets"
+wait_until "the instance to serve" serving "$tag-r"
+docker stop "$tag-r" >/dev/null
+docker rm -v "$tag-r" >/dev/null
+# The lookup fails: the record names a data folder that is no longer there.
+if out=$(docker run --rm -t -u 0 -v "$tag-rd:/data" -v "$tag-rs:/secrets" --entrypoint /bin/sh "$image" \
+    -c 'rm -rf /data/instance && exec agentic-org admin reset --user agentic' 2>&1); then
+    fail "a reset for an instance without its data folder succeeded: $out"
+fi
+[ -n "$out" ] || fail "the refused reset said nothing"
+# The terminal's line ends (CR LF) and tabs aside, no control character reaches it raw.
+if LC_ALL=C grep -q '[[:cntrl:]]' <<<"$(tr -d '\r\n\t' <<<"$out")"; then
+    fail "the refused reset printed a raw control character: $(LC_ALL=C cat -v <<<"$out")"
+fi
+echo "  $(tr -d '\r' <<<"$out" | tail -n 1)"
 echo "a lost+found in the volume's root is tolerated:"
 volumes+=("$tag-lf")
 docker volume create "$tag-lf" >/dev/null
