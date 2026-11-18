@@ -19,8 +19,9 @@ primitives in `apps/agentic-org-ui/src/lib/components/ui` before drawing a new o
   with 14 px text, 20 px with 16 px, in general; this product uses solid 20 px icons in
   controls and solid 16 px in status and metadata). The gap is 6 to 8 px. Trim the padding on the icon's
   side by a couple of pixels, because an icon carries its own empty space.
-- **Label.** Medium or semibold weight, one line, one to three words. It never wraps and
-  never truncates: shorten the words instead.
+- **Label.** Medium or semibold weight, one to three words, written to fit on one line and
+  never truncated: shorten the words instead. In this product a fixed label wraps between
+  words at narrow widths and large text; it does not shrink or clip.
 - **Radius** is the same family as inputs and cards. A small radius reads neutral, a full
   pill reads friendly and consumer, square reads formal. Pick one and hold it.
 - **Minimum width.** A two-letter label should not make a tiny target. *Breaks for*
