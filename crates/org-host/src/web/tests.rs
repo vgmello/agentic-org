@@ -1271,7 +1271,9 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
                 .spawn(&[], &ChildEnv::new(), &SPAWN_LOCK)
                 .unwrap()
         } else {
-            held_child(program, &[])
+            // An argument that keeps it alive where a held child already runs (a system that
+            // checks the image before the child exists has no suspended child).
+            held_child(program, &["30"])
         };
         let running = Running {
             control,

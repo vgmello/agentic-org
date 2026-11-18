@@ -173,8 +173,9 @@ pub(crate) struct Spawner {
 pub(crate) enum SpawnError {
     /// It couldn't be spawned (or its pipes' threads couldn't start).
     Io(io::Error),
-    /// It was spawned, but isn't the signed office server (or no server may be started): it
-    /// was killed and reaped, and got nothing (`server_check`).
+    /// A refusal, in the check's words (`server_check`): no server may be started, the
+    /// platform will not start this image or this environment, or it was spawned and isn't
+    /// the server it must be (then it was killed and reaped). Nothing got a line.
     Untrusted(String),
 }
 

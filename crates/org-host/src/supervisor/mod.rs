@@ -1062,41 +1062,38 @@ mod tests {
         }
     }
 
-    /// LNX-1 refusal: a worker image that is not the image the selected release names (here
-    /// one byte longer than the program whose digest is pinned) receives no first line and
-    /// no secret, and the host log names the refusal. Where the verified bytes are executed
-    /// the digest differs when the host builds its admission, so no child ever exists; where
-    /// the loaded image is checked, a development image under a pin cannot be identified and
-    /// is killed before it runs. Both are a refusal in the check's words. The pinned program
-    /// itself is started and gets its first line.
+    /// LNX-1 refusal: a worker image that is not the image the selected release names (the
+    /// release's digest is of a file that differs from this program in one byte) receives no
+    /// first line and no secret, and the host log names the refusal. Where the verified bytes
+    /// are executed the digest differs when the host builds its admission, so no child ever
+    /// exists; where the loaded image is checked, a development image under a pin cannot be
+    /// identified and is killed before it runs. Both are a refusal in the check's words. A
+    /// program that is the pinned image is started and gets its first line.
     #[test]
     fn a_worker_image_that_differs_from_the_pinned_one_gets_nothing() {
         use sha2::{Digest, Sha256};
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
         keys.create(OFFICE, &DbKey::from_bytes([5; 32])).unwrap();
-        let genuine = fs::read(recording_worker()).unwrap();
-        let pinned: [u8; 32] = Sha256::digest(&genuine).into();
-        // The same program with one byte more: it would run exactly as the genuine one.
-        let program = dir.path().join("worker");
-        let mut altered = genuine.clone();
-        altered.push(0);
-        fs::write(&program, &altered).unwrap();
-        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        let program = recording_worker();
+        let image = fs::read(&program).unwrap();
+        // What the release names: this program with its last byte changed.
+        let mut released = image.clone();
+        *released.last_mut().unwrap() ^= 1;
         let check = ServerCheck::Skip.pinned(Pin {
-            sha256: pinned,
+            sha256: Sha256::digest(&released).into(),
             macos_cdhash: Some([7; 20]),
         });
         let refusals = [
             check.why(&org_platform_host::admission::ImageRefusal::DigestMismatch),
             check.why(&org_platform_host::admission::ImageRefusal::Unidentified),
         ];
-        let supervisor = checked_supervisor(dir.path(), program.clone(), &keys, check.clone());
+        let supervisor = checked_supervisor(dir.path(), program.clone(), &keys, check);
         let (outcome, logged) = spawn_discard(&supervisor);
         let why = match outcome {
             Err(child::SpawnError::Untrusted(why)) => why,
             Err(other) => panic!("not a refusal: {other}"),
-            Ok(()) => panic!("the altered image was started"),
+            Ok(()) => panic!("an image that is not the pinned one was started"),
         };
         assert!(refusals.contains(&why), "{why}");
         assert!(
@@ -1112,18 +1109,13 @@ mod tests {
         });
         supervisor.shutdown();
         thread::sleep(Duration::from_millis(200));
-        assert_eq!(
-            recorded_stdin(dir.path()),
-            b"",
-            "the altered image got a line"
-        );
+        assert_eq!(recorded_stdin(dir.path()), b"", "the image got a line");
         assert!(keys.has(OFFICE));
 
-        // The control: the pinned bytes themselves, under the digest pin alone, are started
-        // and receive the first line.
-        fs::write(&program, &genuine).unwrap();
+        // The control: the same program under the digest of its own bytes is started and
+        // receives the first line.
         let exact = ServerCheck::Skip.pinned(Pin {
-            sha256: pinned,
+            sha256: Sha256::digest(&image).into(),
             macos_cdhash: None,
         });
         let supervisor = checked_supervisor(dir.path(), program, &keys, exact);
