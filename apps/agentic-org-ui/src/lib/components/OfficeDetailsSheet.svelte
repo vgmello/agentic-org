@@ -9,6 +9,10 @@
 	import OfficeRepairLocation from '$lib/offices/OfficeRepairLocation.svelte';
 	import { agentsIn, copyDetails, repairReasonCopy, restartAction, restartOutcome, roleInfo, secondaryText, statusInfo, type DisplayStatus } from '$lib/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
+	import { agoText } from '$lib/modules/offices/time';
+	import { syncText } from '$lib/modules/offices/layer';
+	import RenameOffice from '$lib/modules/offices/features/rename-office/RenameOffice.svelte';
+	import type { SatelliteDetails } from '$lib/modules/offices/types';
 
 	let {
 		open = $bindable(false),
@@ -21,7 +25,10 @@
 		why,
 		capabilities,
 		onrestarted,
-		onCloseAutoFocus
+		onCloseAutoFocus,
+		details,
+		onrename,
+		onremove
 	}: {
 		open: boolean;
 		office: OfficeInfo | undefined;
@@ -42,6 +49,12 @@
 		onrestarted?: () => Promise<void> | void;
 		/** The list owns the row that opened this sheet. */
 		onCloseAutoFocus?: (event: Event) => void;
+		/** What HQ knows about an office that joined (sync, version, what it follows). */
+		details?: SatelliteDetails;
+		/** Rename this office (offices-and-teams-ux §6.1). Rejects with the reason. */
+		onrename?: (name: string) => Promise<void>;
+		/** Remove this office… (not offered for HQ): the list opens its own confirmation. */
+		onremove?: () => void;
 	} = $props();
 
 	const agents = $derived(office && snapshot ? agentsIn(snapshot, office.id) : []);
@@ -168,6 +181,8 @@
 				<SheetDescription>{roleInfo(office).description}</SheetDescription>
 			</SheetHeader>
 			<dl class="grid grid-cols-1 gap-x-6 gap-y-2 px-4 text-sm/6 min-[480px]:grid-cols-[auto_1fr] min-[480px]:gap-y-3" data-testid="office-details">
+				<dt class="text-gray-400">Name</dt>
+				<dd class="min-w-0 text-white">{#if onrename}<RenameOffice name={office.name} onsave={onrename} />{:else}<span class="[overflow-wrap:anywhere]">{office.name}</span>{/if}</dd>
 				<dt class="text-gray-400">Role</dt>
 				<dd class="text-white">{roleInfo(office).label}</dd>
 				<dt class="text-gray-400">Where</dt>
@@ -193,6 +208,18 @@
 						{/if}
 					</dd>
 				{/if}
+				{#if details}
+					<dt class="text-gray-400">Last seen</dt>
+					<dd class="text-white" data-testid="office-last-seen">{details.lastSeenAt ? agoText(details.lastSeenAt, Date.now()) : 'Not known'}</dd>
+					<dt class="text-gray-400">Sync</dt>
+					<dd class="text-white" data-testid="office-sync">{syncText(details)}</dd>
+					{#if details.version}
+						<dt class="text-gray-400">Version</dt>
+						<dd class="text-white">Agentic Org {details.version}</dd>
+					{/if}
+					<dt class="text-gray-400">Follows</dt>
+					<dd class="min-w-0 text-white [overflow-wrap:anywhere]">{details.follows.length === 0 ? 'No projects yet' : details.follows.join(', ')}</dd>
+				{/if}
 				<dt class="text-gray-400">Agents here</dt>
 				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
 					{#if !snapshot}{counting ? 'Counting…' : "Couldn't be counted"}{:else}{agents.length === 0 ? 'None' : agents.map((a) => a.name).join(', ')}{/if}
@@ -204,6 +231,9 @@
 				<p class="px-4 text-sm/6 text-gray-300" data-testid="restart-note">{action.note ?? 'Update Agentic Org to restart offices from here'}</p>
 			{/if}
 			{#if restartNote}<p class="px-4 text-sm/6 text-red-300" role="alert" data-testid="restart-error">{restartNote}</p>{/if}
+			{#if onremove}
+				<div class="px-4"><Button variant="outline" class="text-red-300 max-[639px]:min-h-11" onclick={onremove} data-testid="remove-office">Remove office…</Button></div>
+			{/if}
 			{#if why}
 				<SheetFooter class="mt-auto">
 					{#if action.label && !unsupported}
