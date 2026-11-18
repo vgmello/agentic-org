@@ -132,7 +132,8 @@ fn values_are_bounded_redacted_and_wiped() {
 #[cfg(debug_assertions)]
 mod development {
     use super::*;
-    use crate::host_secrets::dev::DevSecrets;
+    use crate::host_secrets::Custody;
+    use org_platform_host::testing::credentials as hooks;
     use std::fs;
     use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
@@ -157,8 +158,8 @@ mod development {
                 home,
             }
         }
-        fn open(&self, id: &str) -> Result<DevSecrets, Error> {
-            DevSecrets::open(&self.base, &self.home, id)
+        fn open(&self, id: &str) -> Result<Custody, Error> {
+            Custody::open(&self.base, &self.home, id)
         }
         fn dir(&self, id: &str) -> PathBuf {
             self.base.join("host-secrets").join(id)
@@ -251,35 +252,35 @@ mod development {
         ] {
             assert!(f.open(id).is_err());
         }
-        assert!(DevSecrets::open(Path::new("relative"), &f.home, A).is_err());
+        assert!(Custody::open(Path::new("relative"), &f.home, A).is_err());
         let parent_components = f.base.join("..").join("keys");
         assert!(matches!(
-            DevSecrets::open(&parent_components, &f.home, A),
+            Custody::open(&parent_components, &f.home, A),
             Err(Error::Unsafe)
         ));
         fs::set_permissions(&f.home, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&f.home, &f.home, A),
+            Custody::open(&f.home, &f.home, A),
             Err(Error::Unsafe)
         ));
         let nested = f.home.join("nested");
         fs::create_dir(&nested).unwrap();
         fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&nested, &f.home, A),
+            Custody::open(&nested, &f.home, A),
             Err(Error::Unsafe)
         ));
         assert!(!nested.join("host-secrets").exists());
         assert!(!f.home.join("host-secrets").exists());
         let alias = f.base.with_file_name("alias");
         symlink(&f.base, &alias).unwrap();
-        assert!(DevSecrets::open(&alias, &f.home, A).is_err());
+        assert!(Custody::open(&alias, &f.home, A).is_err());
         for spelling in [
             PathBuf::from(format!("{}/", alias.display())),
             alias.join("."),
         ] {
             assert!(
-                DevSecrets::open(&spelling, &f.home, A).is_err(),
+                Custody::open(&spelling, &f.home, A).is_err(),
                 "{spelling:?}"
             );
         }
@@ -410,11 +411,11 @@ mod development {
         if let Some(root) = std::env::var_os(MARKER) {
             let root = PathBuf::from(root);
             assert!(matches!(
-                DevSecrets::open(Path::new("keys"), &root.join("office"), B),
+                Custody::open(Path::new("keys"), &root.join("office"), B),
                 Err(Error::Unsafe)
             ));
             assert!(matches!(
-                DevSecrets::open(&root.join("keys"), &root.join("office"), A),
+                Custody::open(&root.join("keys"), &root.join("office"), A),
                 Err(Error::InUse)
             ));
             return;
@@ -437,7 +438,7 @@ mod development {
             "relative root must be refused before namespace creation"
         );
         assert_eq!(
-            fs::metadata(f.dir(A).join("lock")).unwrap().mode() & 0o7777,
+            fs::metadata(f.dir(A).join(".lock")).unwrap().mode() & 0o7777,
             0o600
         );
         drop(store);
@@ -460,7 +461,7 @@ mod development {
         for kind in ["symlink", "directory", "permissions"] {
             let f = Fixture::new();
             drop(f.open(A).unwrap());
-            let lock = f.dir(A).join("lock");
+            let lock = f.dir(A).join(".lock");
             fs::remove_file(&lock).unwrap();
             match kind {
                 "symlink" => symlink(&f.base, &lock).unwrap(),
@@ -477,7 +478,7 @@ mod development {
         fs::remove_dir_all(f.dir(A)).unwrap();
         symlink(&f.home, f.dir(A)).unwrap();
         assert!(f.open(A).is_err());
-        assert!(!f.home.join("lock").exists());
+        assert!(!f.home.join(".lock").exists());
         // Root's extra topology probe can exercise uid independently of mode permissions.
         if crate::home::euid() == 0 {
             for level in ["base", "namespace", "instance", "lock", "item"] {
@@ -490,7 +491,7 @@ mod development {
                     "base" => f.base.clone(),
                     "namespace" => f.base.join("host-secrets"),
                     "instance" => f.dir(A),
-                    "lock" => f.dir(A).join("lock"),
+                    "lock" => f.dir(A).join(".lock"),
                     _ => f.dir(A).join("registry"),
                 };
                 std::os::unix::fs::chown(&path, Some(1), None).unwrap();
@@ -649,24 +650,24 @@ mod development {
         let f = Fixture::new();
         fs::set_permissions(&f.home, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&f.home, &f.home, A),
+            Custody::open(&f.home, &f.home, A),
             Err(Error::Unsafe)
         ));
         let nested = f.home.join("keys");
         fs::create_dir(&nested).unwrap();
         fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&nested, &f.home, A),
+            Custody::open(&nested, &f.home, A),
             Err(Error::Unsafe)
         ));
         let alias = f.home.with_file_name("OFFICE");
         if alias.exists() {
             assert!(matches!(
-                DevSecrets::open(&alias, &f.home, A),
+                Custody::open(&alias, &f.home, A),
                 Err(Error::Unsafe)
             ));
             assert!(matches!(
-                DevSecrets::open(&alias.join("keys"), &f.home, A),
+                Custody::open(&alias.join("keys"), &f.home, A),
                 Err(Error::Unsafe)
             ));
         }
@@ -712,12 +713,8 @@ mod development {
         let raw = format!("tls.{}", "a".repeat(64));
         let name = Name::parse(&raw).unwrap();
         let first = raw.clone();
-        super::PUBLISH_HOOK.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move |dir| write(&dir.join(first), b"first")));
-        });
-        super::COLLISION_HOOK.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move |dir| fs::remove_file(dir.join(raw)).unwrap()));
-        });
+        hooks::before_publish(move |dir| write(&dir.join(first), b"first"));
+        hooks::after_collision(move |dir| fs::remove_file(dir.join(raw)).unwrap());
         assert_eq!(
             store.put(&name, &Value::new(b"second".to_vec()).unwrap()),
             Err(Error::Unsafe)
@@ -740,15 +737,13 @@ mod development {
             .unwrap();
         let calls = std::rc::Rc::new(std::cell::Cell::new(0));
         let observed = std::rc::Rc::clone(&calls);
-        super::PUBLISH_HOOK.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move |_| observed.set(observed.get() + 1)));
-        });
+        hooks::before_publish(move |_| observed.set(observed.get() + 1));
         let result = store.put(&name, &Value::new(b"second".to_vec()).unwrap());
-        let unused = super::PUBLISH_HOOK.with(|hook| hook.borrow_mut().take());
+        let unused = hooks::take_before_publish();
         result.unwrap();
         assert_eq!(calls.get(), 0);
         assert!(
-            unused.is_some(),
+            unused,
             "fast path leaves the one-shot publication hook unused"
         );
         assert_eq!(store.load(&name).unwrap().unwrap().expose(), b"first");
@@ -764,22 +759,20 @@ mod development {
             let other = f.base.join("untouched");
             write(&other, b"outside");
             let target = other.clone();
-            super::PUBLISH_HOOK.with(|hook| {
-                *hook.borrow_mut() = Some(Box::new(move |dir| {
-                    let leaf = dir.join(&raw);
-                    match mode {
-                        "existing" => write(&leaf, b"raced first"),
-                        "symlink" => symlink(&target, &leaf).unwrap(),
-                        _ => {
-                            for entry in fs::read_dir(dir).unwrap() {
-                                let entry = entry.unwrap();
-                                if entry.file_name().to_str().unwrap().starts_with(".put.") {
-                                    fs::remove_file(entry.path()).unwrap();
-                                }
+            hooks::before_publish(move |dir| {
+                let leaf = dir.join(&raw);
+                match mode {
+                    "existing" => write(&leaf, b"raced first"),
+                    "symlink" => symlink(&target, &leaf).unwrap(),
+                    _ => {
+                        for entry in fs::read_dir(dir).unwrap() {
+                            let entry = entry.unwrap();
+                            if entry.file_name().to_str().unwrap().starts_with(".put.") {
+                                fs::remove_file(entry.path()).unwrap();
                             }
                         }
                     }
-                }))
+                }
             });
             let result = store.put(&n, &Value::new(b"new".to_vec()).unwrap());
             match mode {
@@ -887,58 +880,46 @@ mod development {
         let observed = temporary.clone();
         let fault = mode.clone();
         let real_permission = crate::home::euid() != 0;
-        let add_only = name.is_add_only();
         let target_name = name.as_str().to_owned();
-        super::PUBLISH_HOOK.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move |dir| {
-                let temps: Vec<_> = fs::read_dir(dir)
-                    .unwrap()
-                    .map(|e| e.unwrap().path())
-                    .filter(|p| {
-                        p.file_name()
-                            .unwrap()
-                            .to_str()
-                            .unwrap()
-                            .starts_with(".put.")
-                    })
-                    .collect();
-                assert_eq!(temps.len(), 1);
-                let path = temps.into_iter().next().unwrap();
-                *observed.borrow_mut() = Some(path.clone());
-                match fault.as_str() {
-                    "permission" => {
-                        if real_permission {
-                            fs::set_permissions(dir, fs::Permissions::from_mode(0o500)).unwrap();
-                        } else {
-                            // Root bypasses mode bits: exercise cleanup via the sync seam instead.
-                            fs::remove_file(&path).unwrap();
-                        }
+        hooks::before_publish(move |dir| {
+            let temps: Vec<_> = fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| {
+                    p.file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .starts_with(".put.")
+                })
+                .collect();
+            assert_eq!(temps.len(), 1);
+            let path = temps.into_iter().next().unwrap();
+            *observed.borrow_mut() = Some(path.clone());
+            match fault.as_str() {
+                "permission" => {
+                    if real_permission {
+                        fs::set_permissions(dir, fs::Permissions::from_mode(0o500)).unwrap();
+                    } else {
+                        // Root bypasses mode bits: exercise cleanup via the sync seam instead.
+                        fs::remove_file(&path).unwrap();
                     }
-                    "directory" => fs::create_dir(dir.join(&target_name)).unwrap(),
-                    "missing" | "missing-sync" => fs::remove_file(&path).unwrap(),
-                    "success" | "post-sync" | "post-double" => {}
-                    _ => panic!("unknown cleanup fault"),
                 }
-                super::DIRECTORY_SYNC_FAULTS.with(|faults| {
-                    *faults.borrow_mut() = match fault.as_str() {
-                        "permission" if !real_permission => [Some(ErrorKind::Interrupted)].into(),
-                        "missing-sync" => [Some(ErrorKind::Interrupted)].into(),
-                        "post-sync" => [Some(ErrorKind::WriteZero)].into(),
-                        "post-double" => {
-                            [Some(ErrorKind::WriteZero), Some(ErrorKind::Interrupted)].into()
-                        }
-                        "success" => {
-                            let mut calls = std::collections::VecDeque::from([None]);
-                            if add_only {
-                                calls.push_back(None);
-                            }
-                            calls.push_back(Some(ErrorKind::Interrupted));
-                            calls
-                        }
-                        _ => Default::default(),
-                    };
-                });
-            }));
+                "directory" => fs::create_dir(dir.join(&target_name)).unwrap(),
+                "missing" | "missing-sync" => fs::remove_file(&path).unwrap(),
+                "success" | "post-sync" | "post-double" => {}
+                _ => panic!("unknown cleanup fault"),
+            }
+            hooks::fail_directory_syncs(match fault.as_str() {
+                "permission" if !real_permission => vec![Some(ErrorKind::Interrupted)],
+                "missing-sync" => vec![Some(ErrorKind::Interrupted)],
+                "post-sync" => vec![Some(ErrorKind::WriteZero)],
+                "post-double" => vec![Some(ErrorKind::WriteZero), Some(ErrorKind::Interrupted)],
+                // An add and a replace each flush the directory once: the exclusive rename
+                // of an add leaves no temporary file to remove.
+                "success" => vec![None, Some(ErrorKind::Interrupted)],
+                _ => Vec::new(),
+            });
         });
         let result = store.put(&name, &Value::new(new.to_vec()).unwrap());
         // Restore access before inspecting state or unwinding a failed assertion.
@@ -965,19 +946,16 @@ mod development {
                 expected_error.map_or(Ok(()), |kind| Err(Error::Io(kind)))
             );
         }
-        super::DIRECTORY_SYNC_FAULTS.with(|faults| {
-            let mut faults = faults.borrow_mut();
-            if mode == "success" {
-                assert_eq!(
-                    *faults,
-                    [Some(ErrorKind::Interrupted)],
-                    "success must not attempt error cleanup"
-                );
-                faults.clear();
-            } else {
-                assert!(faults.is_empty(), "all injected faults must run");
-            }
-        });
+        let unused = hooks::take_directory_sync_faults();
+        if mode == "success" {
+            assert_eq!(
+                unused,
+                [Some(ErrorKind::Interrupted)],
+                "success must not attempt error cleanup"
+            );
+        } else {
+            assert!(unused.is_empty(), "all injected faults must run");
+        }
         println!(
             "CUSTODY_FAULT={mode}:{}",
             if real_permission {
@@ -1165,11 +1143,63 @@ fn release_selection_constructs_only_an_eligible_platform_backend_without_io() {
             Some(signature)
         });
         assert_eq!(calls.get(), 1);
-        #[cfg(target_os = "macos")]
-        assert!(result.is_ok()); // Construction does not call SecItem* or create any item.
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(selection_error(result), SelectionError::Unsupported);
+        match org_platform_host::credentials::protected_store() {
+            // Construction does not call SecItem* or create any item.
+            Ok(()) => assert!(result.is_ok()),
+            Err(_) => assert_eq!(selection_error(result), SelectionError::Unsupported),
+        }
     }
+}
+#[test]
+fn keychain_custody_names_the_instances_service_and_refuses_an_invalid_instance_without_io() {
+    assert_eq!(
+        keychain_service(HOST_INSTANCE),
+        format!("org.agentic.host-secret.instance.{HOST_INSTANCE}")
+    );
+    assert_ne!(
+        keychain_service(HOST_INSTANCE),
+        keychain_service("01BBBBBBBBBBBBBBBBBBBBBBBB")
+    );
+    for invalid in [
+        "",
+        "../x",
+        "01aaaaaaaaaaaaaaaaaaaaaaaa",
+        "8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    ] {
+        assert!(matches!(
+            Custody::keychain(HOST_GROUP, invalid),
+            Err(SelectionError::InvalidInstance)
+        ));
+    }
+    match org_platform_host::credentials::protected_store() {
+        Ok(()) => assert!(Custody::keychain(HOST_GROUP, HOST_INSTANCE).is_ok()),
+        Err(_) => assert!(matches!(
+            Custody::keychain(HOST_GROUP, HOST_INSTANCE),
+            Err(SelectionError::Unsupported)
+        )),
+    }
+}
+#[test]
+fn the_platforms_kinds_keep_this_views_names() {
+    use org_platform_host::credentials::CredentialError as Kind;
+    for (kind, error) in [
+        (Kind::InvalidName, Error::InvalidName),
+        (Kind::TooLarge, Error::TooLarge),
+        (Kind::Corrupt, Error::Corrupt),
+        (Kind::Malformed, Error::Corrupt),
+        (Kind::Unsafe, Error::Unsafe),
+        (Kind::Exists, Error::Unsafe),
+        (Kind::InUse, Error::InUse),
+        (Kind::CaseAlias, Error::CaseAlias),
+        (Kind::Os(-25308), Error::Os(-25308)),
+        (
+            Kind::Io(std::io::ErrorKind::NotFound),
+            Error::Io(std::io::ErrorKind::NotFound),
+        ),
+    ] {
+        assert_eq!(Error::from(kind), error);
+    }
+    assert_eq!(format!("{:?}", Error::Os(-50)), "Os(-50)");
 }
 #[cfg(target_os = "macos")]
 #[test]
@@ -1255,39 +1285,4 @@ fn release_factory_ignores_dev_base_and_uses_only_compiled_group() {
             SelectionError::NoGroup
         }
     );
-}
-
-#[cfg(debug_assertions)]
-type PublishHook = Box<dyn FnOnce(&std::path::Path)>;
-#[cfg(debug_assertions)]
-thread_local! { static PUBLISH_HOOK: std::cell::RefCell<Option<PublishHook>> = const { std::cell::RefCell::new(None) }; }
-#[cfg(debug_assertions)]
-thread_local! { static COLLISION_HOOK: std::cell::RefCell<Option<PublishHook>> = const { std::cell::RefCell::new(None) }; }
-#[cfg(debug_assertions)]
-pub(super) fn after_collision(path: &std::path::Path) {
-    if let Some(hook) = COLLISION_HOOK.with(|hook| hook.borrow_mut().take()) {
-        hook(path);
-    }
-}
-#[cfg(debug_assertions)]
-pub(super) fn before_publish(path: &std::path::Path) {
-    let hook = PUBLISH_HOOK.with(|hook| hook.borrow_mut().take());
-    if let Some(hook) = hook {
-        hook(path);
-    }
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static DIRECTORY_SYNC_FAULTS: std::cell::RefCell<std::collections::VecDeque<Option<std::io::ErrorKind>>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
-}
-#[cfg(debug_assertions)]
-pub(super) fn before_directory_sync() -> Result<(), Error> {
-    DIRECTORY_SYNC_FAULTS.with(|faults| {
-        faults
-            .borrow_mut()
-            .pop_front()
-            .flatten()
-            .map_or(Ok(()), |kind| Err(Error::Io(kind)))
-    })
 }

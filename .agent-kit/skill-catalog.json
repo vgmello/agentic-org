@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "492f085356d983f9cbdccf1312a88beda5c4e73687bc66347a892b05622a6116"
+      "sha256": "7c94ae9d5868afaa28838dd6b5e68ea498648079bc2c6c160578fd69791dcbbf"
     },
     {
       "path": "Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "fd44dae3ce5f8d9dee99bb6a6d92d214ef8fe273819585d794ec1da6fc81c45a"
+      "sha256": "5b99404e5a5ae77402575fed9a6a8b0ccba7a39c6cb1d22783ab23d78a7a15af"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",

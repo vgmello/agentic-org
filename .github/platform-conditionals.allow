@@ -28,15 +28,11 @@ apps/agentic-org/tests/service.rs 4
 apps/agentic-org/tests/supervision.rs 17
 crates/org-host/src/app_auth.rs 5
 crates/org-host/src/bootstrap/tests.rs 6
-crates/org-host/src/host_secrets.rs 6
-crates/org-host/src/host_secrets/dev.rs 4
-crates/org-host/src/host_secrets/tests.rs 7
+crates/org-host/src/host_secrets/tests.rs 5
 crates/org-host/src/hostdb/tests.rs 2
-crates/org-host/src/human.rs 1
 crates/org-host/src/instance/directory.rs 1
 crates/org-host/src/instance/temp.rs 1
 crates/org-host/src/instance/tests.rs 1
-crates/org-host/src/keys/mod.rs 15
 crates/org-host/src/offices.rs 2
 crates/org-host/src/provisioning/tests.rs 1
 crates/org-host/src/release/store/tests.rs 1

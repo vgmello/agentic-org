@@ -646,7 +646,6 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "caseless",
- "core-foundation",
  "flate2",
  "hmac",
  "libc",
@@ -659,8 +658,6 @@ dependencies = [
  "org-socket",
  "ring",
  "rusqlite",
- "security-framework",
- "security-framework-sys",
  "serde",
  "serde_json",
  "sha2",
@@ -749,6 +746,7 @@ dependencies = [
  "libc",
  "org-platform",
  "security-framework",
+ "security-framework-sys",
  "tempfile",
 ]
 

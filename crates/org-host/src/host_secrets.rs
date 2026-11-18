@@ -1,24 +1,39 @@
 //! Host registry/TLS/recovery custody, separate from office database keys and their sweep.
+//!
+//! [`HostSecrets`] is a typed view ([`Custody`]) over one credential store of the platform
+//! (`org_platform_host::credentials`). The view keeps what is the host's own: which names exist
+//! ([`Name::parse`]), which of them are add-only, the value limit, the error kinds and every
+//! line it logs. The platform keeps the bytes. Which store a build uses is decided here
+//! ([`store_for`]): a release build the Data Protection Keychain, in the access group compiled
+//! in and under this instance's service, after the host checked its own signature; a debug
+//! build the platform's directory store under the development key folder.
+//!
+//! The development store is plain files: `<base>/host-secrets/<instance id>/<name>`, held by
+//! one host at a time. A put error can follow publication: the value may be visible but not
+//! durable. Reload the item before deciding how to recover; an error does not imply rollback.
 
-#[cfg(debug_assertions)]
-pub(crate) mod dev;
-#[cfg(target_os = "macos")]
-mod keychain;
 #[cfg(test)]
 mod tests;
 
 use std::{fmt, io};
 
+use org_platform_host::credentials::{
+    credentials, CredentialError, CredentialLocation, Credentials, ItemName, KeychainItems,
+};
+
 pub(crate) const MAX_BYTES: usize = 16 * 1024;
+const _: () = assert!(MAX_BYTES == org_platform_host::credentials::MAX_ITEM_BYTES);
+
+/// The Keychain service the host secrets of instance `instance` are filed under; the account is
+/// the secret's name. It is persisted state: another string is another, empty, store.
+fn keychain_service(instance: &str) -> String {
+    format!("org.agentic.host-secret.instance.{instance}")
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Name(String);
 
 impl Name {
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn parse(name: &str) -> Result<Self, Error> {
         let valid = name == "registry"
             || name == "writer-device"
@@ -41,17 +56,9 @@ impl Name {
             .then(|| Self(name.to_owned()))
             .ok_or(Error::InvalidName)
     }
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
-    #[cfg_attr(
-        not(any(test, debug_assertions, target_os = "macos")),
-        expect(dead_code, reason = "host custody adapters")
-    )]
     fn is_add_only(&self) -> bool {
         self.0.starts_with("tls.") || self.0 == "writer-device"
     }
@@ -67,10 +74,6 @@ impl Value {
         }
         Ok(Self(bytes))
     }
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn expose(&self) -> &[u8] {
         &self.0
     }
@@ -108,10 +111,6 @@ pub(crate) trait HostSecrets: Send + Sync {
 
 /// Fixed kinds only: filesystem errors cannot carry a secret or a path into logs.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(debug_assertions),
-    expect(dead_code, reason = "activated by 2b.2b hostdb")
-)]
 pub(crate) enum Error {
     InvalidName,
     TooLarge,
@@ -119,13 +118,145 @@ pub(crate) enum Error {
     Unsafe,
     InUse,
     CaseAlias,
-    #[cfg(target_os = "macos")]
     Os(i32),
     Io(io::ErrorKind),
 }
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Self::Io(e.kind())
+    }
+}
+impl From<CredentialError> for Error {
+    /// The platform's kinds, as this view has always named them.
+    fn from(e: CredentialError) -> Self {
+        match e {
+            CredentialError::InvalidName => Self::InvalidName,
+            CredentialError::TooLarge => Self::TooLarge,
+            // The Keychain answered with something that is not a value or a list of items.
+            CredentialError::Corrupt | CredentialError::Malformed => Self::Corrupt,
+            // `Exists` reaches this only if an add-only rule was not applied: fail closed.
+            CredentialError::Unsafe | CredentialError::Exists => Self::Unsafe,
+            CredentialError::InUse => Self::InUse,
+            CredentialError::CaseAlias => Self::CaseAlias,
+            CredentialError::Os(status) => Self::Os(status),
+            CredentialError::Io(kind) => Self::Io(kind),
+            CredentialError::Refused(_) => Self::Io(io::ErrorKind::Unsupported),
+        }
+    }
+}
+
+/// Host secrets as the items of one credential store (see the module docs).
+pub(crate) struct Custody {
+    store: Credentials,
+}
+
+/// The development custody under the name the tests of other modules open it by
+/// (`hostdb`, `provisioning`, `writer`).
+#[cfg(all(test, debug_assertions))]
+pub(crate) mod dev {
+    pub(crate) use super::Custody as DevSecrets;
+}
+
+impl Custody {
+    /// The development custody of `instance`: the directory `host-secrets/<instance>` under
+    /// `base`, made if it is missing, and held by this handle alone until it is dropped.
+    /// `base` already exists, is owner-only, and is the shared development-key base; it must be
+    /// outside the office `home`.
+    #[cfg(debug_assertions)]
+    pub(crate) fn open(
+        base: &std::path::Path,
+        home: &std::path::Path,
+        instance: &str,
+    ) -> Result<Self, Error> {
+        use org_platform_host::credentials::{DirectoryStore, Sharing};
+        use std::path::Component;
+        if !base.is_absolute()
+            || base.components().any(|c| matches!(c, Component::ParentDir))
+            || org_proto::ulid_time_ms(instance).is_none()
+        {
+            return Err(Error::Unsafe);
+        }
+        // Before anything is made: plain-text secrets never go into the office home.
+        if base.canonicalize()?.starts_with(home.canonicalize()?) {
+            return Err(Error::Unsafe);
+        }
+        let store = credentials(CredentialLocation::Directory(DirectoryStore {
+            anchor: base,
+            below: &["host-secrets", instance],
+            create: true,
+            sharing: Sharing::Exclusive,
+            suffix: "",
+        }))?;
+        Ok(Self { store })
+    }
+
+    /// The Keychain custody of `instance` in the access group `group`. Nothing is read or
+    /// written until the first operation.
+    #[cfg_attr(
+        all(debug_assertions, not(test)),
+        expect(dead_code, reason = "release selection")
+    )]
+    fn keychain(group: &str, instance: &str) -> Result<Self, SelectionError> {
+        if org_proto::ulid_time_ms(instance).is_none() {
+            return Err(SelectionError::InvalidInstance);
+        }
+        match credentials(CredentialLocation::Keychain(KeychainItems {
+            access_group: group,
+            service: &keychain_service(instance),
+        })) {
+            Ok(store) => Ok(Self { store }),
+            Err(CredentialError::Refused(_)) => Err(SelectionError::Unsupported),
+            Err(_) => Err(SelectionError::InvalidInstance),
+        }
+    }
+}
+
+fn item(name: &Name) -> Result<ItemName, Error> {
+    ItemName::new(name.as_str()).map_err(|_| Error::InvalidName)
+}
+
+impl HostSecrets for Custody {
+    fn put(&self, name: &Name, value: &Value) -> Result<(), Error> {
+        if value.expose().len() > MAX_BYTES {
+            return Err(Error::TooLarge);
+        }
+        let item = item(name)?;
+        let written = if name.is_add_only() {
+            match self.store.add(&item, value.expose()) {
+                // A duplicate preserves the first stored value.
+                Err(failure) if failure.kind == CredentialError::Exists => Ok(()),
+                written => written,
+            }
+        } else {
+            self.store.replace(&item, value.expose())
+        };
+        written.map_err(|failure| {
+            if failure.temporary_left {
+                crate::host_log::log("could not clean up a temporary host secret");
+            }
+            failure.kind.into()
+        })
+    }
+    fn load(&self, name: &Name) -> Result<Option<Value>, Error> {
+        // The platform's buffer becomes the value's: no copy, and it is wiped on drop.
+        Ok(self
+            .store
+            .load(&item(name)?)?
+            .map(|secret| Value(secret.into_bytes())))
+    }
+    fn delete(&self, name: &Name) -> Result<(), Error> {
+        Ok(self.store.delete(&item(name)?)?)
+    }
+    fn list(&self) -> Result<Vec<Name>, Error> {
+        let listing = self.store.list(|name| Name::parse(name).is_ok())?;
+        for _ in 0..listing.ignored {
+            crate::host_log::log("ignored an invalid host-secret item name");
+        }
+        Ok(listing
+            .names
+            .iter()
+            .filter_map(|name| Name::parse(name.as_str()).ok())
+            .collect())
     }
 }
 
@@ -137,7 +268,7 @@ pub(crate) enum SelectionError {
     NoGroup,
     NotEntitled,
     NotHardened,
-    #[cfg(not(target_os = "macos"))]
+    /// This system has no protected store for a release build's secrets.
     Unsupported,
     #[cfg(debug_assertions)]
     Storage(Error),
@@ -155,7 +286,7 @@ pub(crate) fn store_for(
     {
         let _ = own_signing;
         let base = dev_base.ok_or(SelectionError::NoDevBase)?;
-        dev::DevSecrets::open(base, home, instance)
+        Custody::open(base, home, instance)
             .map(|s| std::sync::Arc::new(s) as _)
             .map_err(SelectionError::Storage)
     }
@@ -195,14 +326,5 @@ fn release_store(
     if !crate::code_signing::hardened_and_clean(&signing) {
         return Err(SelectionError::NotHardened);
     }
-    #[cfg(target_os = "macos")]
-    {
-        keychain::Keychain::new(group, instance)
-            .map(|s| std::sync::Arc::new(s) as _)
-            .map_err(|_| SelectionError::InvalidInstance)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err(SelectionError::Unsupported)
-    }
+    Custody::keychain(group, instance).map(|s| std::sync::Arc::new(s) as _)
 }

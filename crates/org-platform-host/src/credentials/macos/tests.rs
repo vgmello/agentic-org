@@ -1,6 +1,35 @@
+//! The Keychain adapter's tests. None touches the Keychain: they read the attributes the
+//! adapter builds, and drive its operations through [`Calls`] with a recording fake. The
+//! service and account strings are the host's two views' (office keys and host secrets), so
+//! that what each of them sent before it moved here is what is checked here.
 use super::*;
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 const GROUP: &str = "TEAMID1234.org.agentic.host";
+/// The office keys' service (the host's `keys::SERVICE`).
+const OFFICE_KEYS: &str = "org.agentic.office-key";
+/// The service of an instance's host secrets, as the host composes it.
+fn host_secrets(instance: &str) -> String {
+    format!("org.agentic.host-secret.instance.{instance}")
+}
+fn keychain(group: &str, service: &str) -> Keychain {
+    Keychain::new(&KeychainItems {
+        access_group: group,
+        service,
+    })
+}
+fn name(raw: &str) -> ItemName {
+    ItemName::new(raw).unwrap()
+}
+/// Every listed name, with no rule of the consumer's.
+fn names(store: &Keychain) -> Vec<String> {
+    store
+        .list(&|_| true)
+        .unwrap()
+        .names
+        .iter()
+        .map(|name| name.as_str().to_owned())
+        .collect()
+}
 fn value(attrs: &Attributes, key: CFStringRef) -> CFType {
     // SAFETY: tests supply immutable framework constants.
     let key = unsafe { CFString::wrap_under_get_rule(key) };
@@ -13,10 +42,10 @@ fn string(value: CFType) -> String {
 }
 #[test]
 fn exact_instance_service_accounts_group_and_data_protection() {
-    let a = Keychain::new(GROUP, A).unwrap();
-    let b = Keychain::new(GROUP, "01BBBBBBBBBBBBBBBBBBBBBBBB").unwrap();
+    let a = keychain(GROUP, &host_secrets(A));
+    let b = keychain(GROUP, &host_secrets("01BBBBBBBBBBBBBBBBBBBBBBBB"));
     for raw in ["registry", "recovery.A", "recovery.a"] {
-        let n = Name::parse(raw).unwrap();
+        let n = name(raw);
         let q = a.query(Some(&n));
         assert_eq!(q.len(), 5);
         // SAFETY: each constant is immutable and exported by Security.framework.
@@ -60,15 +89,112 @@ fn write_policy_matches_office_key_access_class() {
     }
 }
 #[test]
-fn invalid_instance_is_rejected_without_keychain_io() {
-    for invalid in [
-        "",
-        "../x",
-        "01aaaaaaaaaaaaaaaaaaaaaaaa",
-        "8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
-    ] {
-        assert!(matches!(Keychain::new(GROUP, invalid), Err(Error::Unsafe)));
+fn instance_queries_preserve_the_office_account_and_scope_every_service() {
+    let a = keychain(GROUP, &format!("{OFFICE_KEYS}.instance.INSTANCEA"));
+    let b = keychain(GROUP, &format!("{OFFICE_KEYS}.instance.INSTANCEB"));
+    let query_a = a.query(Some(&name(A)));
+    let query_b = b.query(Some(&name(A)));
+    // SAFETY: immutable Security.framework CFString constants.
+    unsafe {
+        assert_eq!(string(value(&query_a, kSecAttrAccount)), A);
+        assert_eq!(string(value(&query_b, kSecAttrAccount)), A);
+        assert_eq!(
+            string(value(&query_a, kSecAttrService)),
+            format!("{OFFICE_KEYS}.instance.INSTANCEA")
+        );
+        assert_eq!(
+            string(value(&query_b, kSecAttrService)),
+            format!("{OFFICE_KEYS}.instance.INSTANCEB")
+        );
     }
+}
+/// What an add sends without its data: the query and the write policy.
+fn item_attributes(store: &Keychain, account: &str) -> Attributes {
+    let mut attributes = store.query(Some(&name(account)));
+    attributes.extend(Keychain::add_policy());
+    attributes
+}
+// SAFETY (each `unsafe` below): reads an immutable framework constant.
+#[test]
+fn an_item_is_a_generic_password_for_this_office_in_the_data_protection_keychain() {
+    let attributes = item_attributes(&keychain(GROUP, OFFICE_KEYS), A);
+    assert_eq!(attributes.len(), 7);
+    let class = value(&attributes, unsafe { kSecClass });
+    assert_eq!(string(class), unsafe {
+        CFString::wrap_under_get_rule(kSecClassGenericPassword).to_string()
+    });
+    assert_eq!(
+        string(value(&attributes, unsafe { kSecAttrService })),
+        OFFICE_KEYS
+    );
+    assert_eq!(string(value(&attributes, unsafe { kSecAttrAccount })), A);
+    assert_eq!(
+        string(value(&attributes, unsafe { kSecAttrAccessGroup })),
+        GROUP
+    );
+    assert_eq!(
+        value(&attributes, unsafe { kSecUseDataProtectionKeychain }),
+        CFBoolean::true_value().into_CFType()
+    );
+}
+#[test]
+fn an_item_stays_on_this_mac_and_is_readable_after_the_first_unlock() {
+    let attributes = item_attributes(&keychain(GROUP, OFFICE_KEYS), A);
+    let accessible = value(&attributes, unsafe { kSecAttrAccessible });
+    assert_eq!(string(accessible), unsafe {
+        CFString::wrap_under_get_rule(kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly).to_string()
+    });
+    assert_eq!(
+        value(&attributes, unsafe { kSecAttrSynchronizable }),
+        CFBoolean::false_value().into_CFType()
+    );
+}
+/// L3d: `load` and `delete` look the item up by its class, service and account, in the Data
+/// Protection keychain and the access group, and nothing else (no data, no accessibility).
+/// The fake below refuses a load or a delete whose query is anything else.
+#[test]
+fn the_load_and_delete_query_is_this_offices_item_in_the_group() {
+    let query = keychain(GROUP, OFFICE_KEYS).query(Some(&name(A)));
+    assert_eq!(query.len(), 5);
+    let class = value(&query, unsafe { kSecClass });
+    assert_eq!(string(class), unsafe {
+        CFString::wrap_under_get_rule(kSecClassGenericPassword).to_string()
+    });
+    assert_eq!(
+        string(value(&query, unsafe { kSecAttrService })),
+        OFFICE_KEYS
+    );
+    assert_eq!(string(value(&query, unsafe { kSecAttrAccount })), A);
+    assert_eq!(string(value(&query, unsafe { kSecAttrAccessGroup })), GROUP);
+    assert_eq!(
+        value(&query, unsafe { kSecUseDataProtectionKeychain }),
+        CFBoolean::true_value().into_CFType()
+    );
+    // SAFETY: immutable framework constants.
+    let (accessible, synchronizable) = unsafe {
+        (
+            CFString::wrap_under_get_rule(kSecAttrAccessible),
+            CFString::wrap_under_get_rule(kSecAttrSynchronizable),
+        )
+    };
+    assert!(query
+        .iter()
+        .all(|(key, _)| *key != accessible && *key != synchronizable));
+}
+#[test]
+fn the_attributes_never_carry_a_key() {
+    let store = keychain(GROUP, OFFICE_KEYS);
+    // SAFETY: an immutable framework constant.
+    let data = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
+    assert!(item_attributes(&store, A)
+        .iter()
+        .all(|(key, _)| *key != data));
+    // A write's three dictionaries: only the change and the add carry the value.
+    let (query, changes, add) = store.write(&name(A), &[7; 32]);
+    assert_eq!((query.len(), changes.len(), add.len()), (5, 1, 8));
+    assert!(query.find(&data).is_none());
+    assert!(changes.find(&data).is_some());
+    assert!(add.find(&data).is_some());
 }
 
 use std::collections::{BTreeMap, VecDeque};
@@ -288,35 +414,28 @@ impl Calls for Fake {
 fn store(fake: &Arc<Fake>, group: &str, id: &str) -> Keychain {
     Keychain {
         calls: fake.clone(),
-        ..Keychain::new(group, id).unwrap()
+        ..keychain(group, &host_secrets(id))
     }
 }
-fn fixture() -> (Keychain, Arc<Fake>, Name) {
+fn fixture() -> (Keychain, Arc<Fake>, ItemName) {
     let fake = Arc::new(Fake::default());
-    (
-        store(&fake, GROUP, A),
-        fake,
-        Name::parse("registry").unwrap(),
-    )
+    (store(&fake, GROUP, A), fake, name("registry"))
 }
-fn bytes(raw: &[u8]) -> Value {
-    Value::new(raw.to_vec()).unwrap()
-}
-fn loaded(store: &Keychain, n: &Name) -> Vec<u8> {
+fn loaded(store: &Keychain, n: &ItemName) -> Vec<u8> {
     store.load(n).unwrap().unwrap().expose().to_vec()
 }
 #[test]
 fn four_call_adapter_insert_replace_delete_reopen_and_scope_conformance() {
     let (s, fake, n) = fixture();
     assert!(s.load(&n).unwrap().is_none());
-    assert!(s.list().unwrap().is_empty());
+    assert!(names(&s).is_empty());
     s.delete(&n).unwrap();
-    s.put(&n, &bytes(b"first")).unwrap();
+    s.replace(&n, b"first").unwrap();
     assert_eq!(
         fake.0.lock().unwrap().calls,
         [Op::Copy, Op::Copy, Op::Delete, Op::Update, Op::Add]
     );
-    s.put(&n, &bytes(b"replacement")).unwrap();
+    s.replace(&n, b"replacement").unwrap();
     assert_eq!(loaded(&s, &n), b"replacement");
     assert_eq!(loaded(&store(&fake, GROUP, A), &n), b"replacement");
     for isolated in [
@@ -324,9 +443,9 @@ fn four_call_adapter_insert_replace_delete_reopen_and_scope_conformance() {
         store(&fake, GROUP, "01BBBBBBBBBBBBBBBBBBBBBBBB"),
     ] {
         assert!(isolated.load(&n).unwrap().is_none());
-        assert!(isolated.list().unwrap().is_empty());
+        assert!(names(&isolated).is_empty());
         isolated.delete(&n).unwrap();
-        isolated.put(&n, &bytes(b"isolated")).unwrap();
+        isolated.replace(&n, b"isolated").unwrap();
     }
     assert_eq!(loaded(&s, &n), b"replacement");
     s.delete(&n).unwrap();
@@ -336,14 +455,14 @@ fn four_call_adapter_insert_replace_delete_reopen_and_scope_conformance() {
 #[test]
 fn update_add_race_retries_once_and_preserves_state_on_errors() {
     let (s, fake, n) = fixture();
-    s.put(&n, &bytes(b"old")).unwrap();
+    s.replace(&n, b"old").unwrap();
     {
         let mut state = fake.0.lock().unwrap();
         state.calls.clear();
         state.faults.push_back((Op::Update, MISSING));
     }
     // Simulate another writer's item already existing when the missing-update/add race is observed.
-    s.put(&n, &bytes(b"new")).unwrap();
+    s.replace(&n, b"new").unwrap();
     assert_eq!(
         fake.0.lock().unwrap().calls,
         [Op::Update, Op::Add, Op::Update]
@@ -384,8 +503,8 @@ fn update_add_race_retries_once_and_preserves_state_on_errors() {
                 -50
             };
         assert_eq!(
-            s.put(&n, &bytes(b"not committed")),
-            Err(Error::Os(expected_error))
+            s.replace(&n, b"not committed"),
+            Err(CredentialError::Os(expected_error))
         );
         let state = fake.0.lock().unwrap();
         assert_eq!(state.calls, expected);
@@ -393,61 +512,93 @@ fn update_add_race_retries_once_and_preserves_state_on_errors() {
         assert!(state.faults.is_empty());
     }
 }
+/// The host's add-only names (`tls.*`, `writer-device`) and every office key go through
+/// `add`: one `SecItemAdd` and nothing else. A duplicate is `Exists` and keeps the first value
+/// (the host-secrets view then reports success; the office-keys view reports `Exists`).
 #[test]
-fn tls_is_add_only_and_only_duplicate_is_success() {
+fn an_add_is_one_add_and_only_a_duplicate_is_exists() {
     let (s, fake, _) = fixture();
-    let n = Name::parse(&format!("tls.{}", "a".repeat(64))).unwrap();
-    s.put(&n, &bytes(b"first")).unwrap();
-    s.put(&n, &bytes(b"second")).unwrap();
+    let n = name(&format!("tls.{}", "a".repeat(64)));
+    s.add(&n, b"first").unwrap();
+    assert_eq!(s.add(&n, b"second"), Err(CredentialError::Exists));
     assert_eq!(fake.0.lock().unwrap().calls, [Op::Add, Op::Add]);
     assert_eq!(loaded(&s, &n), b"first");
     for code in [MISSING, -50] {
         let before = fake.0.lock().unwrap().items.clone();
         fake.0.lock().unwrap().faults.push_back((Op::Add, code));
-        assert_eq!(s.put(&n, &bytes(b"third")), Err(Error::Os(code)));
+        assert_eq!(s.add(&n, b"third"), Err(CredentialError::Os(code)));
         assert_eq!(fake.0.lock().unwrap().items, before);
     }
     s.delete(&n).unwrap();
-    s.put(&n, &bytes(b"after explicit delete")).unwrap();
+    s.add(&n, b"after explicit delete").unwrap();
     assert_eq!(loaded(&s, &n), b"after explicit delete");
+}
+/// An office key: created with a direct `SecItemAdd`, never updated.
+#[test]
+fn an_office_key_is_added_under_its_office_id_and_never_updated() {
+    let fake = Arc::new(Fake::default());
+    let s = Keychain {
+        calls: fake.clone(),
+        ..keychain(GROUP, OFFICE_KEYS)
+    };
+    let office = name(A);
+    s.add(&office, &[1; 32]).unwrap();
+    assert_eq!(s.add(&office, &[2; 32]), Err(CredentialError::Exists));
+    assert_eq!(loaded(&s, &office), [1; 32]);
+    assert_eq!(names(&s), [A]);
+    s.delete(&office).unwrap();
+    s.delete(&office).unwrap();
+    assert!(s.load(&office).unwrap().is_none());
+    let state = fake.0.lock().unwrap();
+    assert!(!state.calls.contains(&Op::Update));
+    assert_eq!(
+        state.calls,
+        [
+            Op::Add,
+            Op::Add,
+            Op::Copy,
+            Op::Copy,
+            Op::Delete,
+            Op::Delete,
+            Op::Copy
+        ]
+    );
+    assert!(state.items.is_empty());
 }
 #[test]
 fn values_bound_before_syscalls_and_on_returned_cfdata() {
     let (s, fake, n) = fixture();
-    for len in [0, MAX_BYTES - 1, MAX_BYTES] {
-        s.put(&n, &Value::new(vec![7; len]).unwrap()).unwrap();
+    for len in [0, MAX_ITEM_BYTES - 1, MAX_ITEM_BYTES] {
+        s.replace(&n, &vec![7; len]).unwrap();
         assert_eq!(loaded(&s, &n), vec![7; len]);
     }
     let before = fake.0.lock().unwrap().items.clone();
     fake.0.lock().unwrap().calls.clear();
     assert_eq!(
-        s.put(&n, &Value(vec![7; MAX_BYTES + 1])),
-        Err(Error::TooLarge)
+        s.replace(&n, &vec![7; MAX_ITEM_BYTES + 1]),
+        Err(CredentialError::TooLarge)
+    );
+    assert_eq!(
+        s.add(&name("another"), &vec![7; MAX_ITEM_BYTES + 1]),
+        Err(CredentialError::TooLarge)
     );
     assert!(fake.0.lock().unwrap().calls.is_empty());
     assert_eq!(fake.0.lock().unwrap().items, before);
-    fake.0.lock().unwrap().reply = Some(Reply::Bytes(vec![7; MAX_BYTES + 1]));
-    assert!(matches!(s.load(&n), Err(Error::Corrupt)));
+    fake.0.lock().unwrap().reply = Some(Reply::Bytes(vec![7; MAX_ITEM_BYTES + 1]));
+    assert!(matches!(s.load(&n), Err(CredentialError::Corrupt)));
+    // A reply that is not data is not an item's value, and not a missing item either.
     for reply in [Reply::Null, Reply::Wrong] {
         fake.0.lock().unwrap().reply = Some(reply);
-        assert!(matches!(s.load(&n), Err(Error::Corrupt)));
+        assert!(matches!(s.load(&n), Err(CredentialError::Malformed)));
     }
 }
 #[test]
 fn lists_only_attributes_skips_invalid_names_and_keeps_exact_case() {
     let (s, fake, _) = fixture();
     for raw in ["recovery.A", "recovery.a"] {
-        s.put(&Name::parse(raw).unwrap(), &bytes(raw.as_bytes()))
-            .unwrap();
+        s.replace(&name(raw), raw.as_bytes()).unwrap();
     }
-    assert_eq!(
-        s.list()
-            .unwrap()
-            .iter()
-            .map(Name::as_str)
-            .collect::<Vec<_>>(),
-        ["recovery.A", "recovery.a"]
-    );
+    assert_eq!(names(&s), ["recovery.A", "recovery.a"]);
     fake.0.lock().unwrap().reply = Some(Reply::Accounts(vec![
         Some("registry".into()),
         None,
@@ -455,40 +606,63 @@ fn lists_only_attributes_skips_invalid_names_and_keeps_exact_case() {
         Some("registry".into()),
         Some("recovery.a".into()),
     ]));
+    // An item without an account, and an account that is no item name, are counted and left
+    // out; a name listed twice is listed once.
+    let listing = s.list(&|_| true).unwrap();
     assert_eq!(
-        s.list()
-            .unwrap()
+        listing
+            .names
             .iter()
-            .map(Name::as_str)
+            .map(ItemName::as_str)
             .collect::<Vec<_>>(),
         ["recovery.a", "registry"]
     );
+    assert_eq!(listing.ignored, 2);
     assert_eq!(fake.0.lock().unwrap().items.len(), 2);
+    // The consumer's own name rule leaves out, and counts, what it refuses.
+    fake.0.lock().unwrap().reply = Some(Reply::Accounts(vec![
+        Some("registry".into()),
+        Some("recovery.a".into()),
+        Some("Registry".into()),
+    ]));
+    let listing = s.list(&|name| name.starts_with("re")).unwrap();
+    assert_eq!(
+        listing
+            .names
+            .iter()
+            .map(ItemName::as_str)
+            .collect::<Vec<_>>(),
+        ["recovery.a", "registry"]
+    );
+    assert_eq!(listing.ignored, 1);
     for reply in [Reply::Null, Reply::Wrong, Reply::BadArray] {
         fake.0.lock().unwrap().reply = Some(reply);
-        assert!(matches!(s.list(), Err(Error::Corrupt)));
+        assert!(matches!(s.list(&|_| true), Err(CredentialError::Malformed)));
     }
     for raw in ["recovery.A", "recovery.a"] {
-        let n = Name::parse(raw).unwrap();
+        let n = name(raw);
         assert_eq!(loaded(&s, &n), raw.as_bytes());
         s.delete(&n).unwrap();
     }
-    assert!(s.list().unwrap().is_empty());
+    assert!(names(&s).is_empty());
 }
 #[test]
 fn copy_and_delete_os_failures_are_never_missing_or_success() {
     let (s, fake, n) = fixture();
-    s.put(&n, &bytes(b"private value")).unwrap();
+    s.replace(&n, b"private value").unwrap();
     let before = fake.0.lock().unwrap().items.clone();
     for code in [-50, DUPLICATE] {
         fake.0.lock().unwrap().faults.push_back((Op::Copy, code));
-        assert!(matches!(s.load(&n), Err(Error::Os(e)) if e == code));
+        assert!(matches!(s.load(&n), Err(CredentialError::Os(e)) if e == code));
         fake.0.lock().unwrap().faults.push_back((Op::Copy, code));
-        assert_eq!(s.list(), Err(Error::Os(code)));
+        assert_eq!(s.list(&|_| true), Err(CredentialError::Os(code)));
         fake.0.lock().unwrap().faults.push_back((Op::Delete, code));
-        assert_eq!(s.delete(&n), Err(Error::Os(code)));
+        assert_eq!(s.delete(&n), Err(CredentialError::Os(code)));
         assert_eq!(fake.0.lock().unwrap().items, before);
-        assert_eq!(format!("{:?}", Error::Os(code)), format!("Os({code})"));
+        assert_eq!(
+            format!("{:?}", CredentialError::Os(code)),
+            format!("Os({code})")
+        );
     }
 }
 
@@ -498,4 +672,15 @@ fn os_status_bridge_preserves_every_non_success_status() {
     for code in [MISSING, DUPLICATE, -50, 1] {
         assert_eq!(status(code), Err(code));
     }
+}
+
+#[test]
+fn the_keychain_is_this_systems_protected_store_and_opening_it_calls_nothing() {
+    assert_eq!(protected_store(), Ok(()));
+    let opened = open(CredentialLocation::Keychain(KeychainItems {
+        access_group: GROUP,
+        service: OFFICE_KEYS,
+    }));
+    // Construction does not call SecItem* or create any item.
+    assert!(matches!(opened, Ok(Store::Keychain(_))));
 }

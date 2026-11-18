@@ -1,7 +1,25 @@
+//! macOS: the Data Protection Keychain, and the directory store.
+//!
 //! Host-only Data Protection Keychain custody; every query binds service and access group.
-//! Immutable CFData copies are released by Core Foundation; owned Value buffers zero on drop.
+//! Immutable CFData copies are released by Core Foundation; owned [`Secret`] buffers zero on drop.
+//!
+//! Every item is a generic password of the store's service in its access group, and its
+//! account is the item's name. It is `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`
+//! and not synchronizable: it stays on this Mac (it never follows a backup restore or a
+//! migration to another Mac). Code outside the access group gets `errSecItemNotFound`,
+//! never a prompt.
+//!
+//! An add is a direct `SecItemAdd`, so it only ever adds (`errSecDuplicateItem` is
+//! [`CredentialError::Exists`]). A replace updates the item's data, adds the item if
+//! there is none, and updates once more if another writer added it in between. The
+//! unit tests never touch the Keychain: they check the attributes, and drive the
+//! operations through [`Calls`] with a recording fake. Only a signed host with the
+//! entitlement can use the real store, so it is checked on a signed build.
 
-use super::{Error, HostSecrets, Name, Value, MAX_BYTES};
+use super::{
+    directory, CredentialError, CredentialLocation, ItemName, KeychainItems, Listing, Secret,
+    WriteError, MAX_ITEM_BYTES,
+};
 use core_foundation::{
     array::CFArray,
     base::{CFType, TCFType},
@@ -10,6 +28,7 @@ use core_foundation::{
     dictionary::CFDictionary,
     string::{CFString, CFStringRef},
 };
+use org_platform::Refused;
 use security_framework_sys::{
     access_control::kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
     base::{
@@ -22,6 +41,9 @@ use security_framework_sys::{
     },
     keychain_item::{SecItemAdd, SecItemCopyMatching, SecItemDelete, SecItemUpdate},
 };
+use std::fs::File;
+use std::io;
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
 type Attributes = Vec<(CFString, CFType)>;
@@ -37,7 +59,74 @@ fn dictionary(attributes: Attributes) -> Dictionary {
 }
 #[link(name = "Security", kind = "framework")]
 extern "C" {
+    /// The item attribute for when an item can be read. `security-framework-sys` exports its
+    /// values but not the key itself.
     static kSecAttrAccessible: CFStringRef;
+}
+
+/// The store this system opens for a location.
+pub(super) enum Store {
+    Keychain(Keychain),
+    Directory(directory::Store),
+}
+
+pub(super) fn open(location: CredentialLocation<'_>) -> Result<Store, CredentialError> {
+    match location {
+        CredentialLocation::Keychain(items) => Ok(Store::Keychain(Keychain::new(&items))),
+        CredentialLocation::Directory(location) => {
+            directory::Store::open(&location).map(Store::Directory)
+        }
+    }
+}
+
+pub(super) fn protected_store() -> Result<(), Refused> {
+    Ok(())
+}
+
+/// Flush a published file to the device once more, after its directory was flushed.
+pub(super) fn flush_published(file: &File) -> io::Result<()> {
+    // SAFETY: retained live file; F_FULLFSYNC has no pointer argument.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+impl Store {
+    pub(super) fn add(&self, name: &ItemName, value: &[u8]) -> Result<(), WriteError> {
+        match self {
+            Self::Keychain(store) => store.add(name, value).map_err(WriteError::from),
+            Self::Directory(store) => store.add(name, value),
+        }
+    }
+
+    pub(super) fn replace(&self, name: &ItemName, value: &[u8]) -> Result<(), WriteError> {
+        match self {
+            Self::Keychain(store) => store.replace(name, value).map_err(WriteError::from),
+            Self::Directory(store) => store.replace(name, value),
+        }
+    }
+
+    pub(super) fn load(&self, name: &ItemName) -> Result<Option<Secret>, CredentialError> {
+        match self {
+            Self::Keychain(store) => store.load(name),
+            Self::Directory(store) => store.load(name),
+        }
+    }
+
+    pub(super) fn delete(&self, name: &ItemName) -> Result<(), CredentialError> {
+        match self {
+            Self::Keychain(store) => store.delete(name),
+            Self::Directory(store) => store.delete(name),
+        }
+    }
+
+    pub(super) fn list(&self, is_item: &dyn Fn(&str) -> bool) -> Result<Listing, CredentialError> {
+        match self {
+            Self::Keychain(store) => store.list(is_item),
+            Self::Directory(store) => store.list(is_item),
+        }
+    }
 }
 
 pub(super) struct Keychain {
@@ -46,17 +135,14 @@ pub(super) struct Keychain {
     calls: Arc<dyn Calls>,
 }
 impl Keychain {
-    pub(super) fn new(group: &str, instance: &str) -> Result<Self, Error> {
-        if org_proto::ulid_time_ms(instance).is_none() {
-            return Err(Error::Unsafe);
-        }
-        Ok(Self {
-            group: group.to_owned(),
-            service: format!("org.agentic.host-secret.instance.{instance}"),
+    fn new(items: &KeychainItems<'_>) -> Self {
+        Self {
+            group: items.access_group.to_owned(),
+            service: items.service.to_owned(),
             calls: Arc::new(System),
-        })
+        }
     }
-    fn query(&self, name: Option<&Name>) -> Attributes {
+    fn query(&self, name: Option<&ItemName>) -> Attributes {
         // SAFETY: these are immutable Security.framework CFString constants.
         unsafe {
             let c = |p| CFString::wrap_under_get_rule(p);
@@ -100,38 +186,51 @@ impl Keychain {
             ]
         }
     }
-}
-
-impl HostSecrets for Keychain {
-    fn put(&self, name: &Name, value: &Value) -> Result<(), Error> {
-        if value.expose().len() > MAX_BYTES {
-            return Err(Error::TooLarge);
-        }
+    /// What a write sends: the item's query, the change of its data alone, and the whole
+    /// item (the query, the write policy and the data) for an add.
+    fn write(&self, name: &ItemName, value: &[u8]) -> (Dictionary, Dictionary, Dictionary) {
         // SAFETY: immutable Security.framework CFString constant.
         let key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
-        let data = CFData::from_buffer(value.expose()).into_CFType();
+        let data = CFData::from_buffer(value).into_CFType();
         let changes = dictionary(vec![(key.clone(), data.clone())]);
         let query = dictionary(self.query(Some(name)));
         let mut add = self.query(Some(name));
         add.extend(Self::add_policy());
         add.push((key, data));
         let add = dictionary(add);
-        if name.is_add_only() {
-            return match self.calls.add(&add) {
-                Ok(()) | Err(DUPLICATE) => Ok(()),
-                Err(e) => Err(Error::Os(e)),
-            };
+        (query, changes, add)
+    }
+
+    fn add(&self, name: &ItemName, value: &[u8]) -> Result<(), CredentialError> {
+        if value.len() > MAX_ITEM_BYTES {
+            return Err(CredentialError::TooLarge);
         }
+        let (_, _, add) = self.write(name, value);
+        // `SecItemAdd`, never an update: an existing item is refused, so a value is never replaced.
+        match self.calls.add(&add) {
+            Ok(()) => Ok(()),
+            Err(DUPLICATE) => Err(CredentialError::Exists),
+            Err(e) => Err(CredentialError::Os(e)),
+        }
+    }
+    fn replace(&self, name: &ItemName, value: &[u8]) -> Result<(), CredentialError> {
+        if value.len() > MAX_ITEM_BYTES {
+            return Err(CredentialError::TooLarge);
+        }
+        let (query, changes, add) = self.write(name, value);
         match self.calls.update(&query, &changes) {
             Ok(()) => Ok(()),
             Err(MISSING) => match self.calls.add(&add) {
-                Err(DUPLICATE) => self.calls.update(&query, &changes).map_err(Error::Os),
-                result => result.map_err(Error::Os),
+                Err(DUPLICATE) => self
+                    .calls
+                    .update(&query, &changes)
+                    .map_err(CredentialError::Os),
+                result => result.map_err(CredentialError::Os),
             },
-            Err(e) => Err(Error::Os(e)),
+            Err(e) => Err(CredentialError::Os(e)),
         }
     }
-    fn load(&self, name: &Name) -> Result<Option<Value>, Error> {
+    fn load(&self, name: &ItemName) -> Result<Option<Secret>, CredentialError> {
         let mut query = self.query(Some(name));
         // SAFETY: immutable Security.framework CFString constant.
         query.push((
@@ -141,22 +240,24 @@ impl HostSecrets for Keychain {
         let item = match self.calls.copy_matching(&dictionary(query)) {
             Ok(Some(item)) => item,
             Err(MISSING) => return Ok(None),
-            Err(status) => return Err(Error::Os(status)),
-            Ok(None) => return Err(Error::Corrupt),
+            Err(status) => return Err(CredentialError::Os(status)),
+            Ok(None) => return Err(CredentialError::Malformed),
         };
-        let data = item.downcast::<CFData>().ok_or(Error::Corrupt)?;
-        if data.len() > MAX_BYTES as isize {
-            return Err(Error::Corrupt);
+        let data = item
+            .downcast::<CFData>()
+            .ok_or(CredentialError::Malformed)?;
+        if data.len() > MAX_ITEM_BYTES as isize {
+            return Err(CredentialError::Corrupt);
         }
-        Value::new(data.bytes().to_vec()).map(Some)
+        Ok(Some(Secret::from(data.bytes().to_vec())))
     }
-    fn delete(&self, name: &Name) -> Result<(), Error> {
+    fn delete(&self, name: &ItemName) -> Result<(), CredentialError> {
         match self.calls.delete(&dictionary(self.query(Some(name)))) {
             Ok(_) | Err(MISSING) => Ok(()),
-            Err(status) => Err(Error::Os(status)),
+            Err(status) => Err(CredentialError::Os(status)),
         }
     }
-    fn list(&self) -> Result<Vec<Name>, Error> {
+    fn list(&self, is_item: &dyn Fn(&str) -> bool) -> Result<Listing, CredentialError> {
         let mut query = self.query(None);
         // SAFETY: immutable Security.framework CFString constants.
         unsafe {
@@ -171,18 +272,22 @@ impl HostSecrets for Keychain {
         }
         let items = match self.calls.copy_matching(&dictionary(query)) {
             Ok(Some(items)) => items,
-            Err(MISSING) => return Ok(vec![]),
-            Err(status) => return Err(Error::Os(status)),
-            Ok(None) => return Err(Error::Corrupt),
+            Err(MISSING) => return Ok(Listing::default()),
+            Err(status) => return Err(CredentialError::Os(status)),
+            Ok(None) => return Err(CredentialError::Malformed),
         };
-        let items = items.downcast::<CFArray>().ok_or(Error::Corrupt)?;
+        let items = items
+            .downcast::<CFArray>()
+            .ok_or(CredentialError::Malformed)?;
         // SAFETY: immutable Security.framework CFString constant.
         let account = unsafe { CFString::wrap_under_get_rule(kSecAttrAccount) };
-        let mut names = Vec::new();
+        let mut listing = Listing::default();
         for raw in items.iter() {
             // SAFETY: Security returns an array of retained CF objects.
             let item = unsafe { CFType::wrap_under_get_rule(*raw) };
-            let attributes = item.downcast::<CFDictionary>().ok_or(Error::Corrupt)?;
+            let attributes = item
+                .downcast::<CFDictionary>()
+                .ok_or(CredentialError::Malformed)?;
             let name = attributes
                 .find(account.as_CFTypeRef())
                 .and_then(|raw| {
@@ -190,15 +295,16 @@ impl HostSecrets for Keychain {
                     let value = unsafe { CFType::wrap_under_get_rule(*raw) };
                     value.downcast::<CFString>()
                 })
-                .and_then(|v| Name::parse(&v.to_string()).ok());
+                .map(|v| v.to_string())
+                .filter(|name| super::valid_name(name) && is_item(name));
             match name {
-                Some(name) => names.push(name),
-                None => crate::host_log::log("ignored an invalid host-secret item name"),
+                Some(name) => listing.names.push(ItemName(name)),
+                None => listing.ignored += 1,
             }
         }
-        names.sort();
-        names.dedup();
-        Ok(names)
+        listing.names.sort();
+        listing.names.dedup();
+        Ok(listing)
     }
 }
 
@@ -235,5 +341,4 @@ impl Calls for System {
 }
 
 #[cfg(test)]
-#[path = "keychain_tests.rs"]
 mod tests;
