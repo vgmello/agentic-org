@@ -141,7 +141,7 @@ fn launch_receives_keys_and_acknowledges_handoff_before_ready() {
     let (transfer, host_end) = UnixDatagram::pair().unwrap();
     transfer.shutdown(std::net::Shutdown::Write).unwrap();
     let handoff = Handoff::Create {
-        office_secrets_key: db_key(),
+        office_secrets_key: office_secrets_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
         recovery_code: Some(recovery_code()),
         fds: vec![HandoffFd::Transfer],
@@ -336,7 +336,12 @@ fn handshake_with(
     }
 }
 fn ready_create(world: &World) -> Session {
-    let mut session = handshake(world, FirstLine::Create, INSTANCE, Some(db_key()));
+    let mut session = handshake(
+        world,
+        FirstLine::Create,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     assert_eq!(session.event()["event"], "created");
     assert_eq!(session.event()["event"], "ready");
     session
@@ -345,14 +350,14 @@ fn assert_reopens(world: &World) {
     assert!(matches!(
         org_office::Office::open_for_instance(
             world.folder(OFFICE),
-            org_office::Key::from_office_secrets_key(db_key()),
+            org_office::Key::from_office_secrets_key(office_secrets_key()),
             "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184"
         ),
         Err(org_office::OfficeError::Invalid(_))
     ));
     let office = org_office::Office::open_for_instance(
         world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
         INSTANCE,
     )
     .unwrap();
@@ -362,7 +367,13 @@ fn assert_reopens(world: &World) {
 
 /// A create the worker refuses: the reason, a failed exit and no stdout.
 fn refused_create(world: &World, edit: impl FnOnce(&mut CreateLine)) -> Value {
-    let mut session = handshake_with(world, FirstLine::Create, INSTANCE, Some(db_key()), edit);
+    let mut session = handshake_with(
+        world,
+        FirstLine::Create,
+        INSTANCE,
+        Some(office_secrets_key()),
+        edit,
+    );
     let failed = session.event();
     assert_eq!(failed["event"], "failed", "{failed}");
     assert!(!session.run.wait().success());
@@ -463,7 +474,7 @@ fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_bind
     let owner_id = {
         let office = org_office::Office::open(
             world.folder(OFFICE),
-            org_office::Key::from_office_secrets_key(db_key()),
+            org_office::Key::from_office_secrets_key(office_secrets_key()),
         )
         .unwrap();
         let owner = office
@@ -556,7 +567,12 @@ fn start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() 
     let mut legacy = started(&world);
     assert!(legacy.host_goes_away().success());
     for _ in 0..2 {
-        let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+        let mut session = handshake(
+            &world,
+            FirstLine::Start,
+            INSTANCE,
+            Some(office_secrets_key()),
+        );
         assert_eq!(session.event()["event"], "ready");
         assert_eq!(hello(&world).office.id, OFFICE);
         session.stop();
@@ -568,7 +584,7 @@ fn start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() 
         &world,
         FirstLine::Start,
         "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184",
-        Some(db_key()),
+        Some(office_secrets_key()),
     );
     let failed = wrong.event();
     assert_eq!(failed["event"], "failed");
@@ -736,7 +752,7 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
         let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
         assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
         let header = org_office_launch::encode_handoff(&Handoff::Create {
-            office_secrets_key: db_key(),
+            office_secrets_key: office_secrets_key(),
             grant_key: GrantKey::from_bytes([7; 32]),
             recovery_code: Some(recovery_code()),
             fds: vec![HandoffFd::Transfer],
@@ -864,13 +880,13 @@ fn selected_handshake(world: &World, start: bool) -> Session {
     assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
     let handoff = if start {
         Handoff::Start {
-            office_secrets_key: Some(db_key()),
+            office_secrets_key: Some(office_secrets_key()),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         }
     } else {
         Handoff::Create {
-            office_secrets_key: db_key(),
+            office_secrets_key: office_secrets_key(),
             grant_key: GrantKey::from_bytes([7; 32]),
             recovery_code: Some(
                 RecoveryCode::new("0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213".into())
@@ -1070,7 +1086,7 @@ fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
     thread.join().unwrap();
     let office = org_office::Office::open_for_instance(
         world.folder(&p.office_id),
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
         INSTANCE,
     )
     .unwrap();
@@ -1091,7 +1107,7 @@ fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
     // The unwrapped CA DER is the secret itself; the wrapped record must not
     // leak either (ENC-5).
     let ca_der = org_pki::wrap::unwrap(
-        db_key().expose_bytes(),
+        office_secrets_key().expose_bytes(),
         &org_pki::wrap::WrapBinding {
             organization_id: &record.organization_id,
             office_id: &p.office_id,
@@ -1153,7 +1169,7 @@ fn selected_interrupted_material(world: &World) -> SelectedRetainedMaterial {
     let folder = world.folder(&p.office_id);
     let office = org_office::Office::open_for_instance(
         &folder,
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
         INSTANCE,
     )
     .unwrap();
@@ -1179,7 +1195,7 @@ fn assert_selected_retained_material(world: &World, retained: &SelectedRetainedM
     std::fs::write(folder.join("hq-creation.v1.json"), &retained.intent).unwrap();
     let office = org_office::Office::open_for_instance(
         &folder,
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
         INSTANCE,
     )
     .unwrap();

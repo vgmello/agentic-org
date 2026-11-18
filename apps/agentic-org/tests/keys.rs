@@ -77,7 +77,11 @@ fn a_missing_or_unreadable_key_still_starts_the_office_with_a_null_key() {
     for office in [A, B] {
         wait_for_state(&host, office, OfficeStatus::Active, None);
         assert_eq!(home.runs(office), 1, "{office}");
-        assert_eq!(home.db_key_fingerprints(office), ["null"], "{office}");
+        assert_eq!(
+            home.office_secrets_key_fingerprints(office),
+            ["null"],
+            "{office}"
+        );
     }
     host.shutdown();
 
@@ -87,7 +91,7 @@ fn a_missing_or_unreadable_key_still_starts_the_office_with_a_null_key() {
     wait_for_state(&host, A, OfficeStatus::Active, None);
     assert_eq!(home.runs(A), 2);
     assert_eq!(
-        home.db_key_fingerprints(A),
+        home.office_secrets_key_fingerprints(A),
         ["null".to_owned(), home.stored_key_fingerprint(A).unwrap()]
     );
     // The host never replaces or deletes an item, even one that isn't a key.

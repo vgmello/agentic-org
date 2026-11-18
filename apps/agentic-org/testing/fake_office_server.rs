@@ -403,7 +403,7 @@ fn first_line(
                 ..
             },
         ) => {
-            note_db_key(home, key, Some(&office_secrets_key), "");
+            note_office_secrets_key(home, key, Some(&office_secrets_key), "");
             note_grant(home, key, &grant_key);
             record(home, &format!("recovery {key} {pid} present"));
             Launch::Create(CreateFields {
@@ -422,7 +422,7 @@ fn first_line(
                 ..
             },
         ) => {
-            note_db_key(home, key, office_secrets_key.as_ref(), "");
+            note_office_secrets_key(home, key, office_secrets_key.as_ref(), "");
             note_grant(home, key, &grant_key);
             Launch::Start
         }
@@ -563,8 +563,13 @@ fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
 
 /// Records the office secrets key's fingerprint (never the key), or `null` (a start without
 /// one, and every discard), in `fake.log`. `more` is appended (the office id, for a discard).
-fn note_db_key(home: &Path, key: &str, db_key: Option<&OfficeSecretsKey>, more: &str) {
-    let fingerprint = db_key.map_or_else(|| "null".to_owned(), fingerprint);
+fn note_office_secrets_key(
+    home: &Path,
+    key: &str,
+    office_secrets_key: Option<&OfficeSecretsKey>,
+    more: &str,
+) {
+    let fingerprint = office_secrets_key.map_or_else(|| "null".to_owned(), fingerprint);
     record(
         home,
         format!("dbkey {key} {} {fingerprint} {more}", std::process::id()).trim_end(),
@@ -605,7 +610,7 @@ fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut imp
     ) {
         refuse_first_line(home, key, FailCode::InvalidRequest)
     }
-    note_db_key(home, key, None, id);
+    note_office_secrets_key(home, key, None, id);
     let dir = office_dir(home, id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
     act_before(step, home, key, stdin);
     if dir.exists() {

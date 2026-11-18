@@ -18,7 +18,12 @@ pub(super) struct Live {
 
 /// Starts the stored office through the launch contract and waits for `ready`.
 pub(super) fn live(world: &World) -> Live {
-    let mut session = handshake(world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let mut session = handshake(
+        world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     let ready = session.event();
     assert_eq!(ready["event"], "ready", "{ready}");
     Live {
@@ -90,7 +95,7 @@ fn seeded(world: &World) -> String {
     seed(world);
     let office = org_office::Office::open(
         world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
     )
     .unwrap();
     let owner = office
@@ -170,7 +175,7 @@ fn initial_replica_refuses_the_snapshot_to_an_unbound_connection_and_to_an_owner
             org_id: ORG.into(),
             org_name: "Acme".into(),
         },
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
     )
     .unwrap();
     source
@@ -180,7 +185,7 @@ fn initial_replica_refuses_the_snapshot_to_an_unbound_connection_and_to_an_owner
     drop(source);
     let office = org_office::Office::open(
         world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
     )
     .unwrap();
     office

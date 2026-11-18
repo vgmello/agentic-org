@@ -4,7 +4,7 @@ use org_proto::{GrantKey, OfficeSecretsKey};
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
-fn db_key() -> OfficeSecretsKey {
+fn office_secrets_key() -> OfficeSecretsKey {
     OfficeSecretsKey::from_bytes([0xb3; 32])
 }
 fn grant() -> GrantKey {
@@ -35,7 +35,7 @@ fn request(op: u8, key: bool) -> Request {
         0 => Request::Launch {
             line: HostFirstLine::Create(create()),
             handoff: Handoff::Create {
-                office_secrets_key: db_key(),
+                office_secrets_key: office_secrets_key(),
                 grant_key: grant(),
                 recovery_code: key.then(|| RecoveryCode::new("RECOVERY-TEST".into()).unwrap()),
                 fds: vec![HandoffFd::Transfer],
@@ -44,7 +44,7 @@ fn request(op: u8, key: bool) -> Request {
         1 => Request::Launch {
             line: HostFirstLine::Start(office()),
             handoff: Handoff::Start {
-                office_secrets_key: key.then(db_key),
+                office_secrets_key: key.then(office_secrets_key),
                 grant_key: grant(),
                 fds: vec![HandoffFd::Transfer],
             },
@@ -67,7 +67,7 @@ fn launch_create_preserves_identity_keys_and_typed_recovery() {
     assert_eq!(c.office.org_name, "Acme");
     assert_eq!(c.office.role, org_office::OfficeRole::Hq);
     assert_eq!(c.role, OfficeRole::Hq);
-    assert!(c.key == Key::from_office_secrets_key(db_key()));
+    assert!(c.key == Key::from_office_secrets_key(office_secrets_key()));
     assert_eq!(c.auth.grant_key(), &grant());
     assert_eq!(c.instance, INSTANCE);
     assert_eq!(c.owner_member_id, OWNER);
@@ -85,7 +85,7 @@ fn start_preserves_keys_authority_and_instance() {
     else {
         panic!("not start")
     };
-    assert!(key == Some(Key::from_office_secrets_key(db_key())));
+    assert!(key == Some(Key::from_office_secrets_key(office_secrets_key())));
     assert_eq!(auth.grant_key(), &grant());
     assert_eq!(
         office,

@@ -142,7 +142,7 @@ fn token() -> AppToken {
 }
 
 /// The office secrets key the host would hold for the office.
-fn db_key() -> OfficeSecretsKey {
+fn office_secrets_key() -> OfficeSecretsKey {
     OfficeSecretsKey::from_bytes([0xB3; 32])
 }
 
@@ -159,7 +159,12 @@ fn socket(world: &World) -> PathBuf {
 /// an existing office.
 fn started(world: &World) -> Session {
     seed(world);
-    let mut session = handshake(world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let mut session = handshake(
+        world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     let ready = session.event();
     assert_eq!(ready["event"], "ready", "{ready}");
     assert_eq!(
@@ -184,7 +189,7 @@ fn seed(world: &World) {
             org_office::Office::create(
                 world.folder(OFFICE),
                 &new,
-                org_office::Key::from_office_secrets_key(db_key()),
+                org_office::Key::from_office_secrets_key(office_secrets_key()),
             )
             .unwrap(),
         );
@@ -641,7 +646,12 @@ fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
 
     // A regular file is not ours to remove.
     std::fs::write(socket(&world), b"mine").unwrap();
-    let refused = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let refused = handshake(
+        &world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     assert_eq!(failed_code(refused), "storage_error");
     assert_eq!(std::fs::read(socket(&world)).unwrap(), b"mine");
 }

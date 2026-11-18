@@ -163,7 +163,12 @@ fn sender_retries_injected_eintr_but_refuses_other_errors_without_sending() {
 fn unread_created_and_ready_host_close_has_normal_cleanup_including_linux_reset() {
     let _process = process_isolation();
     let world = World::new();
-    let session = handshake(&world, FirstLine::Create, INSTANCE, Some(db_key()));
+    let session = handshake(
+        &world,
+        FirstLine::Create,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     assert!(
         session.reader.buffer().is_empty(),
         "reset probe must not prefetch events"
@@ -421,7 +426,7 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
     let handoff = Handoff::Create {
-        office_secrets_key: db_key(),
+        office_secrets_key: office_secrets_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
         recovery_code: Some(recovery_code()),
         fds: vec![HandoffFd::Transfer],
@@ -822,7 +827,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     ready_create(&world).stop();
     let office = org_office::Office::open_for_instance(
         world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
         INSTANCE,
     )
     .unwrap();
@@ -835,7 +840,12 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
         .unwrap()
         .id;
     drop(office);
-    let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let mut session = handshake(
+        &world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     assert_eq!(session.event()["event"], "ready");
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();

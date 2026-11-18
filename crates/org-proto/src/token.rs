@@ -763,7 +763,7 @@ mod tests {
         assert_eq!(*t.0, [0u8; APP_TOKEN_BYTES]);
     }
 
-    fn db_key() -> OfficeSecretsKey {
+    fn office_secrets_key() -> OfficeSecretsKey {
         let mut bytes = [0u8; OFFICE_SECRETS_KEY_BYTES];
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(53).wrapping_add(0x3c);
@@ -779,8 +779,8 @@ mod tests {
     }
 
     #[test]
-    fn a_db_key_is_64_lowercase_hex_and_round_trips() {
-        let k = db_key();
+    fn an_office_secrets_key_is_64_lowercase_hex_and_round_trips() {
+        let k = office_secrets_key();
         let json = serde_json::to_string(&k).unwrap();
         assert_eq!(json, format!("\"{}\"", key_hex(&k)));
         assert_eq!(json.len(), 66);
@@ -797,8 +797,8 @@ mod tests {
     }
 
     #[test]
-    fn a_db_key_of_the_wrong_length_or_not_hex_is_refused_without_echoing() {
-        let secret = key_hex(&db_key());
+    fn an_office_secrets_key_of_the_wrong_length_or_not_hex_is_refused_without_echoing() {
+        let secret = key_hex(&office_secrets_key());
         let cases = [
             secret.to_uppercase(),         // uppercase isn't accepted
             format!("{}g", &secret[..63]), // a non-hex digit
@@ -829,8 +829,8 @@ mod tests {
     }
 
     #[test]
-    fn a_db_key_is_redacted_in_debug() {
-        let k = db_key();
+    fn an_office_secrets_key_is_redacted_in_debug() {
+        let k = office_secrets_key();
         let secret = key_hex(&k);
         for shown in [
             format!("{k:?}"),
@@ -843,9 +843,9 @@ mod tests {
     }
 
     #[test]
-    fn db_key_equality_compares_every_byte() {
-        let a = db_key();
-        assert_eq!(a, db_key());
+    fn office_secrets_key_equality_compares_every_byte() {
+        let a = office_secrets_key();
+        assert_eq!(a, office_secrets_key());
         for i in [0, 15, 31] {
             let mut bytes = *a.expose_bytes();
             bytes[i] ^= 1;
@@ -855,7 +855,7 @@ mod tests {
 
     /// As for the app token: `Drop` calls `wipe`.
     #[test]
-    fn drop_zeroes_the_db_key() {
+    fn drop_zeroes_the_office_secrets_key() {
         let mut k = OfficeSecretsKey::from_bytes([0x5a; OFFICE_SECRETS_KEY_BYTES]);
         k.wipe();
         assert_eq!(*k.0, [0u8; OFFICE_SECRETS_KEY_BYTES]);

@@ -32,7 +32,7 @@ fn local_office(world: &World, id: &str) -> org_office::Office {
             org_id: ORG.into(),
             org_name: "Acme".into(),
         },
-        org_office::Key::from_office_secrets_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
     )
     .unwrap()
 }

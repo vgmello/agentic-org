@@ -110,7 +110,7 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
         assert_ne!(status(&host, A), OfficeStatus::Unavailable, "{name}");
         assert_ne!(status(&host, A), OfficeStatus::Active, "{name}");
         assert!(home.grant_fingerprints(A).is_empty(), "{name}");
-        assert!(home.db_key_fingerprints(A).is_empty(), "{name}");
+        assert!(home.office_secrets_key_fingerprints(A).is_empty(), "{name}");
         host.shutdown();
     }
 }
@@ -141,7 +141,7 @@ fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
     assert_eq!(home.runs(A), 3);
     assert_eq!(status(&host, A), OfficeStatus::Unavailable);
     assert!(home.grant_fingerprints(A).is_empty());
-    assert!(home.db_key_fingerprints(A).is_empty());
+    assert!(home.office_secrets_key_fingerprints(A).is_empty());
     host.shutdown();
 }
 
