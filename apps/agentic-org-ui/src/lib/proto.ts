@@ -16,7 +16,6 @@ export type OfficeStatus =
 
 /** Why an office is not running (`org_proto::OfficeStatusReason`); a reason this build doesn't know reads as `unknown`. */
 export type OfficeStatusReason =
-	| 'key_missing'
 	| 'in_use'
 	| 'storage_error'
 	| 'invalid_request'
@@ -63,7 +62,7 @@ export interface HelloResult {
 	host: string;
 	/** Absent when this machine's host answers. */
 	office?: OfficeHello;
-	/** Optional calls and events the server implements (`office.app_token`, `office.restart`, `office.status_changed`, ...). Absent means none; ignore names you don't know. */
+	/** Optional calls and events the server implements (`office.restart`, `office.status_changed`, ...). Absent means none; ignore names you don't know. */
 	capabilities?: string[];
 }
 

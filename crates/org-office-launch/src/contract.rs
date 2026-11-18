@@ -4,8 +4,7 @@
 //! Its parts:
 //! - **The first line is non-secret** ([`HostFirstLine`]): the instance, the office and the path
 //!   of a per-spawn **rendezvous** socket the host made after checking the server's image, plus,
-//!   for a create, the organization, the names, the role and the owner's member id. No app token
-//!   (retired) and no keys.
+//!   for a create, the organization, the names, the role and the owner's member id. No keys.
 //! - **The keys travel over the rendezvous connection**, after the host's post-accept checks: the
 //!   server connects, sends [`ReadyForSecrets`], and the host answers with one JSON line, a
 //!   [`Handoff`] header carrying the keys and naming the descriptors that follow, then one

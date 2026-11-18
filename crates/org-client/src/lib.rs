@@ -53,7 +53,7 @@ use org_proto::frame;
 use org_proto::location::{self, check_socket_path};
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
-    salvage_id, ApiRange, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
+    salvage_id, ApiRange, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
     ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, Organization,
     OrganizationCreate, OrganizationCreateParams, OrganizationList, Position, Request, Response,
     ServerMessage, Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
@@ -685,21 +685,11 @@ impl Client {
         outcome
     }
 
-    /// `msg.bind` as the app (an office): binds THIS connection with the office's `app_token`
-    /// and no member. The office answers organization commands and `org.snapshot` only to a
-    /// bound connection, so call this right after `connect` (a binding belongs to the connection,
-    /// and a failed bind leaves it unbound). A wrong token is `not_authorized`.
-    pub fn bind_app(&self, app_token: AppToken) -> Result<MsgBindResult, ClientError> {
-        self.call::<MsgBind>(&MsgBindParams {
-            member: None,
-            app_token: Some(app_token),
-        })
-    }
-
     /// `msg.bind` as a member, with no token: how an agent run by hand binds (ADR-0003 M-A).
     /// `member` is a handle or member id; the result names the member it resolved to. The
     /// office refuses (`not_authorized`) a member that isn't an active or paused agent placed
-    /// in it, and a person, the owner or an office-run agent, which need a credential. A
+    /// in it, and a person or the owner (they act through a grant on a host channel) or an
+    /// office-run agent. A
     /// binding belongs to the connection, and a failed bind leaves it unbound.
     pub fn bind_member(&self, member: &str) -> Result<MsgBindResult, ClientError> {
         self.bind_member_with_timeout(member, DEFAULT_TIMEOUT)
@@ -711,13 +701,7 @@ impl Client {
         member: &str,
         timeout: Duration,
     ) -> Result<MsgBindResult, ClientError> {
-        self.call_with_timeout::<MsgBind>(
-            &MsgBindParams {
-                member: Some(member.to_owned()),
-                app_token: None,
-            },
-            timeout,
-        )
+        self.call_with_timeout::<MsgBind>(&MsgBindParams::member(member), timeout)
     }
 
     /// [`Client::call_with_timeout`] that gives up early once `stop()` returns true, for a call

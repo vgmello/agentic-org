@@ -33,8 +33,7 @@ use org_proto::directory::{
 };
 use org_proto::frame;
 use org_proto::msg::{
-    json_string_len, MsgBind, MsgBindParams, MsgBindResult, MsgWait, MAX_HANDLE_BYTES,
-    OFFICE_SENDER,
+    json_string_len, MsgBind, MsgBindResult, MsgWait, MAX_HANDLE_BYTES, OFFICE_SENDER,
 };
 use org_proto::org::{CommandAccepted, TeamCreate};
 use org_proto::work::{TaskCreate, WorkAccepted};
@@ -1209,7 +1208,7 @@ fn status_set(request: &Request, shared: &Shared, binding: &Binding) -> Response
 }
 
 /// `msg.bind`, in the contract's order (`org_proto::msg::MsgBind`): the input alone, then the
-/// member, then the credentials; it fails closed. Each call replaces the previous binding, and a
+/// member; it fails closed. Each call replaces the previous binding, and a
 /// failed one leaves the connection unbound.
 fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     *binding = Binding::Anonymous;
@@ -1217,12 +1216,12 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         Ok(params) => params,
         Err(_) => return bind_error(request.id, ErrorCode::InvalidRequest, "bad msg.bind params"),
     };
-    let MsgBindParams { member, app_token } = params;
-    // An app-wide bind is gone: persons and the owner act through grants on host channels.
-    let Some(member) = member else {
+    // The retired `app_token` is refused while the params decode. An app-wide bind is gone:
+    // persons and the owner act through grants on host channels.
+    let Some(member) = params.member else {
         return bind_error(request.id, ErrorCode::InvalidRequest, "bind as a member");
     };
-    let bound = bind_member(request.id, shared, &member, app_token.is_some());
+    let bound = bind_member(request.id, shared, &member);
     match bound {
         Ok((now, member_id)) => {
             *binding = now;
@@ -1243,7 +1242,6 @@ fn bind_member(
     id: u64,
     shared: &Shared,
     member: &str,
-    with_credential: bool,
 ) -> Result<(Binding, Option<String>), Response> {
     // Step 1, which needs no lookup.
     if json_string_len(member) > MAX_HANDLE_BYTES {
@@ -1273,17 +1271,10 @@ fn bind_member(
     let Some(found) = bindable(shared, handle) else {
         return Err(refused());
     };
-    // Step 3: the credentials. A person binds only through a grant, never on this socket, and
-    // is refused as an unknown member would be.
+    // A person binds only through a grant, never on this socket, and is refused as an unknown
+    // member would be.
     if found.kind == MemberKind::Person {
         return Err(refused());
-    }
-    if with_credential {
-        return Err(bind_error(
-            id,
-            ErrorCode::InvalidRequest,
-            "an agent binds without an app_token",
-        ));
     }
     let member_id = found.id;
     Ok((
@@ -1413,6 +1404,11 @@ mod tests {
                 serde_json::json!({"app_token":"not hex"}),
                 ErrorCode::InvalidRequest,
             ),
+            // With a member too: the retired field is refused before the member is looked up.
+            (
+                serde_json::json!({"member":"ada","app_token":"07".repeat(32)}),
+                ErrorCode::InvalidRequest,
+            ),
             (serde_json::json!({"member":7}), ErrorCode::InvalidRequest),
             (
                 serde_json::json!({"member":"office"}),
@@ -1445,14 +1441,7 @@ mod tests {
     fn grants_mode_keeps_v1_hello_and_allows_the_tokenless_agent_path() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         let legacy = shared(Path::new("/unused"));
-        let request = Request::new::<MsgBind>(
-            1,
-            &MsgBindParams {
-                member: Some("ada".into()),
-                app_token: None,
-            },
-        )
-        .unwrap();
+        let request = Request::new::<MsgBind>(1, &MsgBindParams::member("ada")).unwrap();
         assert!(matches!(
             answer(&request, &legacy, &mut Binding::Anonymous).outcome,
             org_proto::Outcome::Result(_)
@@ -1520,7 +1509,11 @@ mod tests {
                 ),
                 (
                     serde_json::json!({"member":"pat","app_token":"07".repeat(32)}),
-                    ErrorCode::NotAuthorized,
+                    ErrorCode::InvalidRequest,
+                ),
+                (
+                    serde_json::json!({"member":"ada","app_token":null}),
+                    ErrorCode::InvalidRequest,
                 ),
                 (
                     serde_json::json!({"member":"pat"}),
@@ -1666,10 +1659,7 @@ mod tests {
         let shared = shared(Path::new("/unused-test-socket"));
         let request = Request::new::<MsgBind>(
             1,
-            &MsgBindParams {
-                member: Some(org_mailbox::testkit::fixture::ADA_HANDLE.to_owned()),
-                app_token: None,
-            },
+            &MsgBindParams::member(org_mailbox::testkit::fixture::ADA_HANDLE),
         )
         .unwrap();
         frame::write_message(&mut peer, &request).unwrap();
@@ -1705,10 +1695,7 @@ mod tests {
         let shared = shared(Path::new("/unused-test-socket"));
         let bind = Request::new::<MsgBind>(
             1,
-            &MsgBindParams {
-                member: Some(org_mailbox::testkit::fixture::ADA_HANDLE.to_owned()),
-                app_token: None,
-            },
+            &MsgBindParams::member(org_mailbox::testkit::fixture::ADA_HANDLE),
         )
         .unwrap();
         frame::write_message(&mut peer, &bind).unwrap();
@@ -1791,16 +1778,8 @@ mod tests {
         );
         let (stream, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-        let bind = |id, member: &str| {
-            Request::new::<MsgBind>(
-                id,
-                &MsgBindParams {
-                    member: Some(member.to_owned()),
-                    app_token: None,
-                },
-            )
-            .unwrap()
-        };
+        let bind =
+            |id, member: &str| Request::new::<MsgBind>(id, &MsgBindParams::member(member)).unwrap();
         frame::write_message(
             &mut peer,
             &bind(1, org_mailbox::testkit::fixture::ADA_HANDLE),
@@ -1866,14 +1845,7 @@ mod tests {
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
         frame::write_message(
             &mut peer,
-            &Request::new::<MsgBind>(
-                1,
-                &MsgBindParams {
-                    member: Some("ada".into()),
-                    app_token: None,
-                },
-            )
-            .unwrap(),
+            &Request::new::<MsgBind>(1, &MsgBindParams::member("ada")).unwrap(),
         )
         .unwrap();
         let stopping = AtomicBool::new(false);
@@ -2184,9 +2156,9 @@ mod tests {
         });
     }
 
-    /// An app token, which the office socket no longer accepts from anyone.
-    fn any_app_token() -> org_proto::AppToken {
-        org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])
+    /// The retired `app_token`'s old wire form, which the office socket refuses from anyone.
+    fn retired_token() -> String {
+        "07".repeat(32)
     }
 
     /// The binding a host channel gives `member` for one call through a grant signed with the
@@ -2515,10 +2487,7 @@ mod tests {
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
-        let params = org_proto::msg::MsgBindParams {
-            member: Some("ada".into()),
-            app_token: None,
-        };
+        let params = org_proto::msg::MsgBindParams::member("ada");
         let bind = Request::new::<org_proto::msg::MsgBind>(100, &params).unwrap();
         frame::write_message(&mut stream, &bind).unwrap();
         let answer = frame::read_message::<Response>(&mut BufReader::new(&stream))
@@ -2790,16 +2759,26 @@ mod tests {
             response.outcome
         }
 
+        /// `msg.bind`. `retired_token` adds the retired `app_token` field, which the typed
+        /// params cannot write.
         fn bind(
             &mut self,
             member: Option<&str>,
-            app_token: Option<org_proto::AppToken>,
+            retired_token: Option<String>,
         ) -> org_proto::Outcome {
-            let params = MsgBindParams {
-                member: member.map(str::to_owned),
-                app_token,
-            };
-            self.ask(|id| Request::new::<MsgBind>(id, &params).unwrap())
+            let mut params = serde_json::Map::new();
+            if let Some(member) = member {
+                params.insert("member".into(), member.into());
+            }
+            if let Some(token) = retired_token {
+                params.insert("app_token".into(), token.into());
+            }
+            self.ask(|id| Request {
+                id,
+                method: <MsgBind as org_proto::Call>::METHOD.to_owned(),
+                params: params.clone().into(),
+                principal: None,
+            })
         }
 
         /// The next message of either kind (an answer has an `id`, an event an `event`).
@@ -2984,7 +2963,7 @@ mod tests {
         for office in ["office", "OFFICE", "Office", " office ", "\toffice\n"] {
             client.bind(Some("ada"), None);
             assert_eq!(
-                code_of(client.bind(Some(office), Some(any_app_token()))),
+                code_of(client.bind(Some(office), Some(retired_token()))),
                 ErrorCode::InvalidRequest,
                 "{office}"
             );
@@ -3582,14 +3561,7 @@ mod tests {
             last = (n, position);
         }
         client.stream.set_nonblocking(false).unwrap();
-        let rebind = Request::new::<MsgBind>(
-            900,
-            &MsgBindParams {
-                member: Some("ada".into()),
-                app_token: None,
-            },
-        )
-        .unwrap();
+        let rebind = Request::new::<MsgBind>(900, &MsgBindParams::member("ada")).unwrap();
         frame::write_message(&mut client.stream, &rebind).unwrap();
         // Events already on the wire come first; the bind's answer ends them.
         loop {
@@ -3885,9 +3857,9 @@ mod tests {
             code_of(client.call::<MsgInbox>(&inbox_params())) == ErrorCode::NotBound
         };
 
-        // An agent with a token is a mistake in the call, not a refusal of the member.
+        // The retired token is a mistake in the call, not a refusal of the member.
         assert_eq!(
-            code_of(client.bind(Some("ada"), Some(any_app_token()))),
+            code_of(client.bind(Some("ada"), Some(retired_token()))),
             ErrorCode::InvalidRequest
         );
         assert!(unbound(&mut client));
@@ -3902,23 +3874,17 @@ mod tests {
             text_of(client.bind(Some("nobody"), None))
         );
         // A person or the owner never binds on the office socket: they act only through a
-        // host channel's grant. No token, a wrong one, or the one that formerly matched: all
-        // refused the same way.
+        // host channel's grant. The retired token changes nothing but the code: it is refused
+        // as a malformed call before the member is looked at.
         for who in ["pat", "owner"] {
             assert_eq!(
                 code_of(client.bind(Some(who), None)),
                 ErrorCode::NotAuthorized,
                 "{who}"
             );
-            let wrong = org_proto::AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
             assert_eq!(
-                code_of(client.bind(Some(who), Some(wrong))),
-                ErrorCode::NotAuthorized,
-                "{who}"
-            );
-            assert_eq!(
-                code_of(client.bind(Some(who), Some(any_app_token()))),
-                ErrorCode::NotAuthorized,
+                code_of(client.bind(Some(who), Some(retired_token()))),
+                ErrorCode::InvalidRequest,
                 "{who}"
             );
             assert!(unbound(&mut client));
@@ -4231,10 +4197,7 @@ mod tests {
         let held = remy.call_later::<org_proto::msg::MsgWait>(&wait);
         until("a wait is held", || mailbox.held_waits() > 0);
         // A failed bind counts too.
-        let rebind = remy.call_later::<MsgBind>(&MsgBindParams {
-            member: Some("nobody".into()),
-            app_token: None,
-        });
+        let rebind = remy.call_later::<MsgBind>(&MsgBindParams::member("nobody"));
         let mut answers = [remy.answer(), remy.answer()];
         answers.sort_by_key(|answer| answer.id);
         assert_eq!(answers[0].id, held);
@@ -4292,10 +4255,7 @@ mod tests {
         }
         until("all are held", || mailbox.held_waits() >= MAX_HELD);
         // Bind again and wait at once: the places of the cancelled calls are free already.
-        let rebind = remy.call_later::<MsgBind>(&MsgBindParams {
-            member: Some("remy".into()),
-            app_token: None,
-        });
+        let rebind = remy.call_later::<MsgBind>(&MsgBindParams::member("remy"));
         let fresh = remy.call_later::<org_proto::msg::MsgWait>(&wait);
         let mut ended = 0;
         let mut rebound = false;

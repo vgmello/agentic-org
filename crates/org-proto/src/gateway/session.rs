@@ -8,7 +8,7 @@ use super::Milliseconds;
 /// Owned UTF-8 secret, redacted in diagnostics and wiped on drop. It is not Clone.
 ///
 /// Decode directly from a zeroed-after-use input buffer into plain struct fields. As with
-/// AppToken, this cannot wipe serde/HTTP buffers or copies made by the caller. Do not route
+/// the fixed-size secrets ([`crate::OfficeSecretsKey`]), this cannot wipe serde/HTTP buffers or copies made by the caller. Do not route
 /// credentials through Value, flatten, untagged enums, URL parameters or logs.
 ///
 /// ```compile_fail,E0599

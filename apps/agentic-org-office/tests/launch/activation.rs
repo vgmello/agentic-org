@@ -509,32 +509,35 @@ fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_bind
     writer.join().unwrap();
     let client = Client::connect(socket(&world)).unwrap();
     assert_eq!(client.hello().unwrap().api_version, 1);
-    // No member is not a bind at all (the app-wide bind is gone); a person, with or without
-    // a token, is refused the same way as an unknown member.
-    for (member, app_token, expected) in [
-        (None, None, ErrorCode::InvalidRequest),
-        (None, Some(token()), ErrorCode::InvalidRequest),
+    // No member is not a bind at all (the app-wide bind is gone). The retired `app_token` is
+    // refused on presence, before the member is looked at. A person is refused the same way
+    // as an unknown member.
+    for (params, expected) in [
+        (serde_json::json!({}), ErrorCode::InvalidRequest),
         (
-            None,
-            Some(AppToken::from_bytes([7; 32])),
+            serde_json::json!({"app_token": "a7".repeat(32)}),
             ErrorCode::InvalidRequest,
         ),
         (
-            Some("owner".into()),
-            Some(token()),
+            serde_json::json!({"member": "owner", "app_token": "a7".repeat(32)}),
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"member": "ada", "app_token": null}),
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            serde_json::json!({"member": "owner"}),
             ErrorCode::NotAuthorized,
         ),
-        (Some("owner".into()), None, ErrorCode::NotAuthorized),
     ] {
         assert!(
-            matches!(client.call::<MsgBind>(&MsgBindParams{member,app_token}),Err(org_client::ClientError::Api(error)) if error.code==expected)
+            matches!(client.call::<RawBind>(&params), Err(org_client::ClientError::Api(error)) if error.code == expected),
+            "{params}"
         );
     }
     let bound = client
-        .call::<MsgBind>(&MsgBindParams {
-            member: Some("ada".into()),
-            app_token: None,
-        })
+        .call::<MsgBind>(&MsgBindParams::member("ada"))
         .unwrap();
     assert_eq!(bound.member_id.as_deref(), Some(member_id));
     client
@@ -1322,4 +1325,14 @@ fn selected_provider_actual_different_creation_owner_never_ready() {
     assert_ne!(admission.owner_member, OWNER);
     assert!(org_proto::is_valid_member_id(&admission.owner_member));
     selected_expect_start_refusal(&world, &retained, admission);
+}
+
+/// `msg.bind` with params written by hand, to send what the typed params cannot (the retired
+/// `app_token`).
+struct RawBind;
+
+impl org_proto::Call for RawBind {
+    const METHOD: &'static str = "msg.bind";
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
 }

@@ -67,20 +67,19 @@ pub enum ErrorCode {
     /// can't read.
     UnknownRecipient,
     /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
-    /// signature failed for `office.app_token` or `office.restart`, an app-only command
+    /// signature failed for `office.restart`, an app-only command
     /// (`member.set_run_mode`, `project.create`, `work.delete`) arrived on a connection that is
-    /// not the app's, `msg.bind` refused a member or a credential (it fails closed), or
+    /// not the app's, `msg.bind` refused a member (it fails closed), or
     /// `org.snapshot` or `subscribe` came on an office server connection that isn't bound (ADR-0003 §2.1.4;
     /// unlike `who`, which answers that with `not_bound`).
     NotAuthorized,
-    /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
-    /// no app token to hand out. Trying again later may work. For `office.restart`, though, it
+    /// What was asked for exists but can't serve now, e.g. the office isn't running. Trying again later may work. For `office.restart`, though, it
     /// means the office's reason is one a restart can't fix (`unsupported_version` or
     /// `invalid_request`); the message says why. Clients show an office's `status_reason`, not
     /// this code: the code says only why the call failed.
     Unavailable,
     /// The host (or office) is still starting; retry shortly. Temporary, unlike
-    /// `unavailable`: e.g. `organization.create`, `office.restart` or `office.app_token` while
+    /// `unavailable`: e.g. `organization.create` or `office.restart` while
     /// the host's startup discards run.
     NotReady,
     /// An `ask`'s deadline (`expires_at`) passed without a reply, including when the
@@ -91,9 +90,9 @@ pub enum ErrorCode {
     /// whose encoded params exceed [`crate::work::WORK_PARAMS_MAX_BYTES`]. A number out of range
     /// is `invalid_request` instead. Never stored as a write's answer.
     TooLarge,
-    /// The connection hasn't bound with `msg.bind` (ADR-0003: an agent bound as itself, or the
-    /// app bound as the owner or a person), the bound member was moved out of this office or
-    /// removed, or the connection is bound app-wide and the call acts as a member. Also ends
+    /// The connection hasn't bound with `msg.bind` (ADR-0003: an agent bound as itself; a
+    /// person or the owner acts through a grant instead), or the bound member was moved out of
+    /// this office or removed. Also ends
     /// held `msg.wait` and `msg.ask` calls when the connection re-binds. Every work call
     /// ([`crate::work`]) needs a bound connection. (`org.snapshot` and `subscribe` on an office server's
     /// unbound connection are `not_authorized` instead.) Never stored as a write's answer: a retry may succeed.

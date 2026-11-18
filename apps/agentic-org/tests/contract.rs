@@ -23,8 +23,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use org_host::{Config, Host};
 use org_proto::{
-    ApiError, ErrorCode, OfficeAppToken, OfficeAppTokenParams, OfficeRestart, OfficeRestartParams,
-    OfficeStatus, OfficeStatusChanged, OfficeStatusReason,
+    ApiError, ErrorCode, OfficeRestart, OfficeRestartParams, OfficeStatus, OfficeStatusChanged,
+    OfficeStatusReason,
 };
 use serde_json::{json, Value};
 use support::{eventually, hq, office_info, rfc3339, Client, TestHome};
@@ -51,12 +51,10 @@ fn app_client(socket: &Path) -> Client {
     client
 }
 
-fn wire_app_token(socket: &Path, office_id: &str) -> Result<org_proto::AppToken, ApiError> {
+/// Sends the retired `office.app_token` call; an answer of any kind would be a result.
+fn wire_app_token(socket: &Path, office_id: &str) -> Result<serde_json::Value, ApiError> {
     app_client(socket)
-        .call::<OfficeAppToken>(&OfficeAppTokenParams {
-            office_id: office_id.into(),
-        })
-        .map(|result| result.app_token)
+        .call::<support::RetiredOfficeToken>(&serde_json::json!({"office_id": office_id}))
 }
 
 fn wire_restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
@@ -102,8 +100,8 @@ fn the_launch_worker_gets_no_app_token() {
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
-    // The launch handoff carries the database and grant keys only: it has no app-token field, so the
-    // worker is handed none. What it does get is one grant key.
+    // The launch handoff carries the office secrets key and the grant key only: it has no
+    // app-token field, so the worker is handed none. What it does get is one grant key.
     assert_eq!(home.grant_fingerprints(A).len(), 1);
     home.assert_no_secret_in_home();
     host.shutdown();

@@ -1,7 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::token::AppToken;
 use crate::types::{OfficeInfo, Organization};
 
 /// The identity an office server reports in `hello`.
@@ -200,8 +199,6 @@ where
 /// name of the call or event it stands for. The three below are host calls and events: only
 /// this machine's host lists them, never an office server.
 pub mod capability {
-    /// The host serves `office.app_token`.
-    pub const OFFICE_APP_TOKEN: &str = "office.app_token";
     /// The host serves `office.restart`.
     pub const OFFICE_RESTART: &str = "office.restart";
     /// The host publishes `office.status_changed` to subscribers **and** sets `status_reason`
@@ -369,51 +366,6 @@ impl Call for OfficeList {
     type Result = ListOfficesResult;
 }
 
-/// `office.app_token` (host, on `host.sock` only): the office's [`AppToken`], which lets the
-/// desktop app bind to that office as a human.
-///
-/// Before answering, the host verifies the caller's code signature against the app's
-/// designated requirement (ADR-0003 §2.1); only the desktop app gets a token.
-/// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
-/// `unavailable` (the office isn't running, so it has no token), `not_ready` (the host is
-/// still starting: its startup discards are running; retry shortly).
-///
-/// The result is a secret: never log it, or the response line that carries it.
-///
-/// The client rule: a client reads `hello`'s answer before sending an app-only call, and sends
-/// nothing else on that connection until its answer arrives. First thing in the app's main,
-/// before any output or threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket;
-/// the app never reads or writes an fd it didn't open.
-/// The host check: the host accepts an app-only call only if it arrived after the connection's
-/// accept was sampled and nothing follows its request line (otherwise `not_authorized`).
-pub struct OfficeAppToken;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OfficeAppTokenParams {
-    pub office_id: String,
-}
-
-/// `office.app_token`'s result. Its `Debug` shows no token, and it isn't `Clone`, like the
-/// token.
-///
-/// ```compile_fail,E0599
-/// use org_proto::{AppToken, OfficeAppTokenResult, APP_TOKEN_BYTES};
-/// let result = OfficeAppTokenResult {
-///     app_token: AppToken::from_bytes([0; APP_TOKEN_BYTES]),
-/// };
-/// let _copy = result.clone();
-/// ```
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OfficeAppTokenResult {
-    pub app_token: AppToken,
-}
-
-impl Call for OfficeAppToken {
-    const METHOD: &'static str = "office.app_token";
-    type Params = OfficeAppTokenParams;
-    type Result = OfficeAppTokenResult;
-}
-
 /// `office.restart` (host, on `host.sock` only): the desktop app asks the host to start an
 /// office that is `offline` or `unavailable` now, without waiting for the next backoff step.
 /// It clears an `unavailable` status and resets the restart backoff and the give-up window
@@ -426,7 +378,15 @@ impl Call for OfficeAppToken {
 /// `stopped_by_owner`, or an `offline` office waiting for its next backoff step). The new
 /// status arrives as `office.status_changed` events, not as an error from this call.
 ///
-/// App-only: the host verifies the caller's code signature as for [`OfficeAppToken`].
+/// App-only: the host verifies the caller's code signature against the app's designated
+/// requirement (ADR-0003 §2.1).
+///
+/// The client rule: a client reads `hello`'s answer before sending an app-only call, and sends
+/// nothing else on that connection until its answer arrives. First thing in the app's main,
+/// before any output or threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket;
+/// the app never reads or writes an fd it didn't open.
+/// The host check: the host accepts an app-only call only if it arrived after the connection's
+/// accept was sampled and nothing follows its request line (otherwise `not_authorized`).
 /// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
 /// `conflict` (the office isn't `offline` or `unavailable`, e.g. it's already `starting` or
 /// `active`), `unavailable` (only for the two reasons a restart can't fix,

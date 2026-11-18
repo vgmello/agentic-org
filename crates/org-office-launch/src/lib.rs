@@ -54,7 +54,8 @@
 //!   inherited it would keep the lock after the server died). A child's stdin and stdout are
 //!   `/dev/null` unless it's given its own pipes; stderr (the logs) is inherited. The host opens
 //!   its own descriptors close-on-exec, so no child holds `host.lock`.
-//! - **No app token** travels at launch: a worker's persons act only through owner grants.
+//! - **No credential for a person** travels at launch: a worker's persons act only through
+//!   owner grants.
 //! - **The office secrets key** ([`OfficeSecretsKey`], 32 bytes) and the grant key travel only
 //!   in the rendezvous handoff ([`Handoff`]), never on stdin. The host creates each office's key
 //!   and stores it in its own key store before the office's first `--create`, and sends it on
@@ -687,8 +688,8 @@ impl Write for ByteCounter {
     }
 }
 
-/// Overwrite with zeros in a way the optimizer can't remove (best effort, as for
-/// [`org_proto::AppToken`]).
+/// Overwrite with zeros in a way the optimizer can't remove (best effort, as
+/// [`org_proto::zero_bytes`] does).
 #[allow(unsafe_code)]
 fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
