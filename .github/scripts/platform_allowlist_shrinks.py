@@ -11,6 +11,7 @@ Usage: platform_allowlist_shrinks.py <base commit>
 A base commit without the list passes: the change that creates the list has no earlier
 one to compare with.
 """
+import re
 import subprocess
 import sys
 
@@ -32,6 +33,8 @@ def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     base = sys.argv[1]
+    if not re.fullmatch(r"[0-9a-f]{7,64}", base):
+        sys.exit(f"the base must be a commit id in hexadecimal, not {base!r}")
     shown = subprocess.run(
         ["git", "show", f"{base}:{LIST}"], capture_output=True, text=True, check=False
     )

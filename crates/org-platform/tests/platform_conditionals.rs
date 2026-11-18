@@ -20,15 +20,21 @@
 //! - a listed file has fewer than its entry, or is gone (the entry is lowered or
 //!   deleted in the same change, so the list always states what is left);
 //! - a file includes source this test cannot follow: `include!` of anything but a
-//!   literal `.rs` path, or a `#[path]` that does not end in `.rs`.
+//!   literal `.rs` path, `include` imported under another name, or a `path`
+//!   attribute that does not end in `.rs`;
+//! - git tracks a `.rs` file outside `crates/org-platform` that the walk did not read
+//!   (a hidden directory, `node_modules`, a directory holding `CACHEDIR.TAG`, a linked
+//!   directory).
 //!
 //! The list is empty when Track X is complete. CI also checks that a change never
 //! adds a line to it or raises a count (`.github/scripts/platform_allowlist_shrinks.py`).
 //!
 //! Not predicates: string literals and comments. Outside the check: `cfg(unix)`,
-//! because a non-Unix target cannot build `org-platform` at all; and what no source
-//! scan can see, which review covers (a build script that emits its own `cfg`, a
-//! `--cfg` flag, `std::env::consts::OS` compared at run time). If a later `syn`
+//! because a non-Unix target cannot build `org-platform` at all; and what this scan
+//! does not see, which review covers: a build script that emits its own `cfg`, a
+//! `--cfg` flag, `std::env::consts::OS` compared at run time, code in a
+//! documentation test (it is a string literal here), and a Cargo target whose `path`
+//! is not a `.rs` file. If a later `syn`
 //! cannot parse valid new syntax, the check fails and the `syn` pin is raised.
 //!
 //! To see what the check finds, in the allowlist's format:
@@ -62,9 +68,10 @@ fn scan(source: &str) -> Result<Findings, String> {
     syn::parse_file(source).map_err(|error| error.to_string())?;
     let tokens: TokenStream = source.parse().map_err(|error| format!("{error}"))?;
     let mut findings = Findings::default();
-    walk(tokens, &mut findings);
+    walk(tokens, false, &mut findings);
     findings.predicates.sort_unstable();
     findings.unfollowed.sort_unstable();
+    findings.unfollowed.dedup();
     Ok(findings)
 }
 
@@ -78,7 +85,11 @@ fn punct(token: Option<&TokenTree>, character: char) -> bool {
     matches!(token, Some(TokenTree::Punct(p)) if p.as_char() == character)
 }
 
-fn walk(tokens: TokenStream, findings: &mut Findings) {
+/// `inside` is true within the arguments of a conditional that names a target and is
+/// already counted: a bare key there belongs to it, but a conditional nested in it
+/// (an item of a `cfg_select!` arm, a `cfg` inside a `cfg_attr`) is counted again, and
+/// what it includes is still checked.
+fn walk(tokens: TokenStream, inside: bool, findings: &mut Findings) {
     let tokens: Vec<TokenTree> = tokens.into_iter().collect();
     let mut index = 0;
     while index < tokens.len() {
@@ -87,33 +98,42 @@ fn walk(tokens: TokenStream, findings: &mut Findings) {
                 // `cfg(..)` in an attribute, or `cfg!(..)` with any delimiter.
                 let after_bang = usize::from(punct(tokens.get(index + 1), '!'));
                 if let Some(TokenTree::Group(arguments)) = tokens.get(index + 1 + after_bang) {
-                    if names_a_target(arguments.stream()) {
+                    let counted = names_a_target_directly(arguments.stream());
+                    if counted {
                         findings.predicates.push(ident.span().start().line);
                     }
+                    walk(arguments.stream(), counted, findings);
                     index += 2 + after_bang;
                     continue;
                 }
             }
             TokenTree::Ident(ident) if named(ident, &TARGET_KEYS) => {
-                findings.predicates.push(ident.span().start().line);
+                if !inside {
+                    findings.predicates.push(ident.span().start().line);
+                }
             }
             TokenTree::Ident(ident) if named(ident, &["include"]) => {
+                let line = ident.span().start().line;
                 if let (true, Some(TokenTree::Group(arguments))) =
                     (punct(tokens.get(index + 1), '!'), tokens.get(index + 2))
                 {
                     if !rust_path_literal(arguments.stream()) {
-                        let line = ident.span().start().line;
                         findings
                             .unfollowed
                             .push((line, "include! of something other than a literal .rs path"));
                     }
+                } else if matches!(tokens.get(index + 1), Some(TokenTree::Ident(next)) if next == "as")
+                {
+                    findings
+                        .unfollowed
+                        .push((line, "include imported under another name"));
                 }
             }
             TokenTree::Group(group) => {
                 if group.delimiter() == Delimiter::Bracket && punct_before(&tokens, index) {
                     path_attribute(group.stream(), findings);
                 }
-                walk(group.stream(), findings);
+                walk(group.stream(), inside, findings);
             }
             _ => {}
         }
@@ -127,18 +147,30 @@ fn punct_before(tokens: &[TokenTree], index: usize) -> bool {
     punct(before(1), '#') || (punct(before(1), '!') && punct(before(2), '#'))
 }
 
-/// `#[path = "…"]` names a module file; the check follows it only as a `.rs` file.
+/// `path = "…"` in an attribute names a module file, directly (`#[path = "…"]`) or
+/// through `cfg_attr`, at any depth. The check follows it only as a `.rs` file.
 fn path_attribute(attribute: TokenStream, findings: &mut Findings) {
     let tokens: Vec<TokenTree> = attribute.into_iter().collect();
-    if let [TokenTree::Ident(name), equals, value @ ..] = tokens.as_slice() {
-        if named(name, &["path"]) && punct(Some(equals), '=') {
-            let followed = rust_path_literal(value.iter().cloned().collect());
-            if !followed {
-                findings.unfollowed.push((
-                    name.span().start().line,
-                    "#[path] that is not a literal .rs path",
-                ));
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            TokenTree::Ident(name)
+                if named(name, &["path"]) && punct(tokens.get(index + 1), '=') =>
+            {
+                // The value runs to the next comma or the end of the list.
+                let value: TokenStream = tokens[index + 2..]
+                    .iter()
+                    .take_while(|token| !punct(Some(token), ','))
+                    .cloned()
+                    .collect();
+                if !rust_path_literal(value) {
+                    findings.unfollowed.push((
+                        name.span().start().line,
+                        "path attribute that is not a literal .rs path",
+                    ));
+                }
             }
+            TokenTree::Group(group) => path_attribute(group.stream(), findings),
+            _ => {}
         }
     }
 }
@@ -148,12 +180,30 @@ fn rust_path_literal(tokens: TokenStream) -> bool {
     syn::parse2::<syn::LitStr>(tokens).is_ok_and(|literal| literal.value().ends_with(".rs"))
 }
 
-fn names_a_target(tokens: TokenStream) -> bool {
-    tokens.into_iter().any(|token| match token {
-        TokenTree::Ident(ident) => named(&ident, &TARGET_KEYS),
-        TokenTree::Group(group) => names_a_target(group.stream()),
-        _ => false,
-    })
+/// Whether a conditional's own arguments name a target key. A conditional nested in
+/// them is not this one's: the walk counts it by itself.
+fn names_a_target_directly(tokens: TokenStream) -> bool {
+    let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut index = 0;
+    while index < tokens.len() {
+        match &tokens[index] {
+            TokenTree::Ident(ident) if named(ident, &CONDITIONALS) => {
+                let after_bang = usize::from(punct(tokens.get(index + 1), '!'));
+                if matches!(
+                    tokens.get(index + 1 + after_bang),
+                    Some(TokenTree::Group(_))
+                ) {
+                    index += 2 + after_bang;
+                    continue;
+                }
+            }
+            TokenTree::Ident(ident) if named(ident, &TARGET_KEYS) => return true,
+            TokenTree::Group(group) if names_a_target_directly(group.stream()) => return true,
+            _ => {}
+        }
+        index += 1;
+    }
+    false
 }
 
 fn repository() -> PathBuf {
@@ -200,6 +250,40 @@ fn sources(root: &Path) -> Vec<String> {
     }
     found.sort();
     found
+}
+
+/// The `.rs` files git tracks under `root`, outside `crates/org-platform`; `None` where
+/// there is no git checkout to ask (a source archive).
+fn tracked(root: &Path) -> Option<Vec<String>> {
+    let listed = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z", "--", "*.rs"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let exempt = format!("{EXEMPT}/");
+    Some(
+        String::from_utf8_lossy(&listed.stdout)
+            .split('\0')
+            .filter(|path| !path.is_empty() && !path.starts_with(&exempt))
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// Tracked sources the walk did not read, so the check did not see them.
+fn unread(tracked: &[String], read: &[String]) -> Vec<String> {
+    tracked
+        .iter()
+        .filter(|path| read.binary_search(path).is_err())
+        .map(|path| {
+            format!(
+                "{path}: tracked, but in a directory the check does not read (hidden, \
+                 node_modules, build output or a link). Move it."
+            )
+        })
+        .collect()
 }
 
 /// `path count` lines; blank lines and `#` comments are ignored.
@@ -253,8 +337,10 @@ fn compare(found: &BTreeMap<String, Findings>, listed: &BTreeMap<String, usize>)
             .join(", ");
         match listed.get(path) {
             None => problems.push(format!(
-                "{path} (line {lines_text}): a platform predicate outside {EXEMPT}. Put the \
-                 difference behind an org-platform contract (docs/design/linux-host.md, section 1)."
+                "{path} (line {lines_text}): a platform predicate outside {EXEMPT}, or one of \
+                 the names target_os, target_vendor, target_env and target_family, which are \
+                 reserved for it. Put the difference behind an org-platform contract \
+                 (docs/design/linux-host.md, section 1)."
             )),
             Some(&allowed) if lines.len() > allowed => problems.push(format!(
                 "{path} (line {lines_text}): {} platform predicates, and its entry allows \
@@ -285,8 +371,9 @@ fn compare(found: &BTreeMap<String, Findings>, listed: &BTreeMap<String, usize>)
 #[test]
 fn platform_predicates_stay_inside_org_platform() {
     let root = repository();
+    let read = sources(&root);
     let mut found = BTreeMap::new();
-    for path in sources(&root) {
+    for path in read.clone() {
         let source =
             fs::read_to_string(root.join(&path)).unwrap_or_else(|error| panic!("{path}: {error}"));
         let findings = scan(&source)
@@ -307,7 +394,10 @@ fn platform_predicates_stay_inside_org_platform() {
     let text = fs::read_to_string(root.join(ALLOWLIST))
         .unwrap_or_else(|error| panic!("{ALLOWLIST}: {error}"));
     let listed = allowlist(&text).unwrap_or_else(|error| panic!("{error}"));
-    let problems = compare(&found, &listed);
+    let mut problems = compare(&found, &listed);
+    if let Some(tracked) = tracked(&root) {
+        problems.extend(unread(&tracked, &read));
+    }
     assert!(
         problems.is_empty(),
         "platform conditionals (ADR-0017 LNX-5):\n{}",
@@ -479,13 +569,69 @@ macro_rules! m { () => { include!("inner.inc"); }; }
         assert_eq!(
             findings.unfollowed,
             [
-                (2, "#[path] that is not a literal .rs path"),
+                (2, "path attribute that is not a literal .rs path"),
                 (4, "include! of something other than a literal .rs path"),
                 (5, "include! of something other than a literal .rs path"),
                 (6, "include! of something other than a literal .rs path"),
             ]
         );
         assert_eq!(findings.predicates, [] as [usize; 0]);
+    }
+
+    #[test]
+    fn conditionals_nested_in_a_conditional_are_each_counted() {
+        let source = r#"
+cfg_select! {
+    target_os = "linux" => {
+        #[cfg(target_env = "gnu")]
+        fn a() -> u8 { 1 }
+        #[cfg(target_env = "musl")]
+        fn a() -> u8 { 2 }
+        fn b() -> bool { cfg!(target_vendor = "unknown") }
+    }
+    _ => { fn a() -> u8 { 0 } }
+}
+#[cfg_attr(test, cfg(target_os = "macos"))]
+fn c() {}
+#[cfg_attr(target_os = "macos", cfg(target_env = "gnu"))]
+fn d() {}
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+fn e() {}
+"#;
+        assert_eq!(lines(source), [2, 4, 6, 8, 12, 14, 14, 16]);
+    }
+
+    #[test]
+    fn inclusion_inside_a_conditional_or_under_another_name_is_checked() {
+        let source = r#"
+cfg_select! { unix => { include!("os.inc"); } _ => {} }
+#[cfg_attr(all(), path = "os.inc")]
+mod os;
+#[cfg_attr(unix, cfg_attr(test, path = "nested.inc"))]
+mod nested;
+#[cfg_attr(unix, path = "fine.rs", allow(dead_code))]
+mod fine;
+use std::include as pull;
+pull!("os.inc");
+"#;
+        let findings = scan(source).unwrap();
+        assert_eq!(
+            findings.unfollowed,
+            [
+                (2, "include! of something other than a literal .rs path"),
+                (3, "path attribute that is not a literal .rs path"),
+                (5, "path attribute that is not a literal .rs path"),
+                (9, "include imported under another name"),
+            ]
+        );
+        assert_eq!(findings.predicates, [] as [usize; 0]);
+
+        // A field or a local named `include` or `path` is not an inclusion.
+        let honest = r#"
+struct Options { include: bool, path: String }
+fn f(o: &Options) -> bool { let path = &o.path; o.include && !path.is_empty() }
+"#;
+        assert_eq!(scan(honest).unwrap(), super::Findings::default());
     }
 
     #[test]
@@ -534,6 +680,34 @@ mod walk {
                 "crates/org-platform-extra/src/lib.rs",
             ]
         );
+    }
+}
+
+mod coverage {
+    use super::{repository, sources, tracked, unread};
+
+    #[test]
+    fn a_tracked_source_the_walk_skips_is_reported() {
+        let read = vec!["crates/a/src/lib.rs".to_owned()];
+        let tracked = vec![
+            "crates/a/.os/imp.rs".to_owned(),
+            "crates/a/src/lib.rs".to_owned(),
+        ];
+        let problems = unread(&tracked, &read);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].starts_with("crates/a/.os/imp.rs: tracked, but in a directory"));
+    }
+
+    #[test]
+    fn every_tracked_source_of_this_checkout_is_read() {
+        let root = repository();
+        if let Some(tracked) = tracked(&root) {
+            assert!(!tracked.is_empty(), "git lists the workspace's sources");
+            assert!(tracked
+                .iter()
+                .all(|path| !path.starts_with("crates/org-platform/")));
+            assert_eq!(unread(&tracked, &sources(&root)), [] as [String; 0]);
+        }
     }
 }
 

@@ -1,11 +1,15 @@
 # Platform conditionals outside crates/org-platform (ADR-0017 LNX-5).
 #
-# Each line is a source file and the number of `cfg`, `cfg_attr` and `cfg!` predicates
-# in it that name target_os, target_vendor, target_env or target_family, as the check
-# in crates/org-platform/tests/platform_conditionals.rs counts them. These are the
+# Each line is a source file and the number of platform predicates in it, as the check
+# in crates/org-platform/tests/platform_conditionals.rs counts them: each `cfg` or
+# `cfg_attr` attribute and each `cfg!`, `cfg_select!` or `cfg_match!` call that names
+# target_os, target_vendor, target_env or target_family, and each other use of one of
+# those four names. These are the
 # files that had such predicates when org-platform was created (increment X1a).
 #
-# This list only shrinks. No file is added and no count is raised: a new
+# This list only shrinks. No file is added and no count is raised (CI compares the
+# list with the commit where the branch left v1-integration; renaming or splitting a
+# listed file therefore means moving its platform code into org-platform first): a new
 # operating-system difference goes into crates/org-platform, behind a contract
 # (docs/design/linux-host.md, section 1). When a file loses predicates, lower its
 # count, or delete its line at zero, in the same change; the check fails until you do.

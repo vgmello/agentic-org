@@ -110,7 +110,8 @@ jobs:
           if [ "$GITHUB_REF" = "refs/heads/v1-integration" ]; then
             base="$BEFORE"
           else
-            base="$(git merge-base HEAD origin/v1-integration)"
+            base="$(git merge-base HEAD origin/v1-integration)" || {
+              echo "This branch shares no history with v1-integration."; exit 1; }
           fi
           case "$base" in
             ""|0000000000000000000000000000000000000000)
