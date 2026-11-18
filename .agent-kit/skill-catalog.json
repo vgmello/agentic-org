@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "4f78594e2b745bca03a5569f192d3aedc98a14ba8fee9f208d92ab4feb8c4646"
+      "sha256": "4d44ecceac4f08f6bb6ded8cefb90e5ffbb432a4fa2a6cd11e6439951def92e9"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "10393c33b5b5b1f5fd5a9b261da414313ffef6a4ce31d75e5d1cfc194867e6f1"
+      "sha256": "54f9fc4df394adfd7d3cea7fc49060ebd49e388522d951c4f941f9fddb333380"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",

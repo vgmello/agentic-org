@@ -798,6 +798,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-store"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-store",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "org-supervise"
 version = "0.0.0"
 dependencies = [
