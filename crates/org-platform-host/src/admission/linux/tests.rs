@@ -1146,19 +1146,24 @@ fn a_path_admission_starts_a_script_and_checks_its_reader_by_pid() {
         &by_path.verify_reader(&started.child, &stream).unwrap_err()
     ));
 
-    // The script starts the fixture as a process of its own: the connection is not
+    // The script starts the fixture as a process of its own (which ends at once, on
+    // the empty standard input of a background job) and stays: the connection is not
     // the child's, and is refused.
     let delegating = work.executable(
         "delegating",
-        format!("#!/bin/sh\n{connect} &\nread line\n").as_bytes(),
+        format!("#!/bin/sh\n{connect} &\nwait\nread line\n").as_bytes(),
     );
     let by_path = path_admission(development(&delegating)).unwrap();
     let started = start(&by_path, &[]);
     let stream = accept(&listener);
-    assert_ne!(peer(&stream).unwrap().pid, Some(started.child.id()));
+    let job = peer(&stream).unwrap().pid.unwrap();
+    assert_ne!(job, started.child.id());
     assert!(NotTheChild::is(
         &by_path.verify_reader(&started.child, &stream).unwrap_err()
     ));
+    // The script reaps its own job before it is ended, so no orphan is left.
+    wait_for("the script's job to be reaped", || !exists(job));
+    assert!(started.child.0.alive().unwrap());
     drop(started);
 
     // It gives the child nothing but its pipes either.
