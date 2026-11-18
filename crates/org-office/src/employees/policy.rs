@@ -1,8 +1,8 @@
 //! Employee profile/runtime/schedule validation, using organization-owned member checks.
-use crate::organization::{check_text, fail, found, refuse_offboarded, OrgView};
+use crate::organization::{check_text, fail, found, records, refuse_offboarded, OrgView};
 use org_proto::org::{
     AgentProfile, AgentRuntime, Member, MemberKind, RunMode, Schedule, AGENT_HOME_MAX_BYTES,
-    AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TIME_ZONE_MAX_CHARS,
+    AGENT_TIME_ZONE_MAX_CHARS,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -130,18 +130,12 @@ pub(super) fn check_schedule(schedule: &Schedule) -> Result<Schedule, ApiError> 
     })
 }
 
-/// An agent's `messaging_name`, its handle: 1 to [`AGENT_MESSAGING_NAME_MAX_CHARS`] ASCII
+/// An agent's `messaging_name`, its handle: 1 to [`records::MAX_HANDLE_BYTES`] ASCII
 /// letters, digits, `-`, `_` and `.`, starting with a letter or digit, and not shaped like an
 /// address (a member id, `run:`). Not trimmed: a name that breaks the format is `invalid_name`.
 pub(super) fn parse_messaging_name(raw: &str) -> Result<String, ApiError> {
-    let bytes = raw.as_bytes();
-    let format_ok = !bytes.is_empty()
-        && bytes.len() <= AGENT_MESSAGING_NAME_MAX_CHARS
-        && bytes[0].is_ascii_alphanumeric()
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
-    if !format_ok {
+    // The characters and the length are the organization's rule for every handle.
+    if !records::has_handle_characters(raw) {
         return Err(ApiError::new(
             ErrorCode::InvalidName,
             "a handle is 1 to 64 letters, digits, `-`, `_` and `.`, starting with a letter or digit",

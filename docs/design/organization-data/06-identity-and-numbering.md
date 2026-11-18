@@ -97,7 +97,7 @@ Primary keys and UNIQUE constraints already create indexes; do not duplicate the
 | --- | --- |
 | `reference_counters` | Counter YAML: all same-named fields except inherited `organization_id`. Durable authority state, projected into office SQLite caches. |
 | `reference_allocations` | Allocation YAML: all same-named fields except inherited `organization_id`. Retained after entity deletion; unpublished entries are in HQ's `durable/state/identity/` files or, until written, its acceptance journal. |
-| `office_codes` | `identity/office-codes.yaml`, written by HQ: code, office, issue and retirement time. Retired codes are kept so that old task references resolve and no code is issued twice. |
+| `office_codes` | `identity/office-codes.yaml`, written by HQ: a top-level `schema_version: 1` and `codes`, a list whose order is kept, of `{code, office_id, issued_at, retired_at}` (`retired_at` is null while the code is current). Retired codes are kept so that old task references resolve and no code is issued twice. |
 | `office_task_counters` | The office's own `task-counter.yaml` under `durable/local/offices/<office-id>/`. Durable office-local state, not Git content and not a cache; other offices do not hold it. |
 
 ## Relationships
