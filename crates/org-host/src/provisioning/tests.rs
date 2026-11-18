@@ -73,7 +73,7 @@ fn offices(
 }
 #[test]
 fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_missing_key() {
-    let instance = crate::ids::generate().unwrap();
+    let instance = crate::ids::uuid_v7().unwrap();
     let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
     let root = dir.path().canonicalize().unwrap();
     let (db, custody) = auth.provisioning_storage();
@@ -216,7 +216,7 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
     let root = directory.path().canonicalize().unwrap();
-    let instance = crate::ids::generate().unwrap();
+    let instance = crate::ids::uuid_v7().unwrap();
     let (reservation, frozen, credentials) = {
         let custody = Arc::new(DevSecrets::open(base.path(), &root, &instance).unwrap());
         let db =
@@ -311,7 +311,7 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
 fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_device() {
     use sha2::{Digest, Sha256};
     for keep_marker in [false, true] {
-        let instance = crate::ids::generate().unwrap();
+        let instance = crate::ids::uuid_v7().unwrap();
         let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
         let root = dir.path().canonicalize().unwrap();
         let (db, custody) = auth.provisioning_storage();
@@ -409,7 +409,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
 
 #[test]
 fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
-    let instance = crate::ids::generate().unwrap();
+    let instance = crate::ids::uuid_v7().unwrap();
     let (_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
     let (db, _) = auth.provisioning_storage();
     let actor = account(&db);
@@ -478,7 +478,7 @@ fn actual_selected_hq_provisioning_native_route_and_exact_retry() {
         time::{Duration, Instant},
     };
     let binary = std::env::var_os("ORG_TEST_OFFICE_BIN").expect("explicit built office binary");
-    let instance = crate::ids::generate().unwrap();
+    let instance = crate::ids::uuid_v7().unwrap();
     let (_account_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
     let (db, custody) = auth.provisioning_storage();
     let auth = Arc::new(auth);

@@ -7,7 +7,7 @@ use std::io::BufRead;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 
-pub(super) const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+pub(super) const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
 fn create_line(path: &Path) -> HostFirstLine {
@@ -345,7 +345,7 @@ fn assert_reopens(world: &World) {
         org_office::Office::open_for_instance(
             world.folder(OFFICE),
             org_office::Key::from_db_key(db_key()),
-            "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+            "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184"
         ),
         Err(org_office::OfficeError::Invalid(_))
     ));
@@ -564,7 +564,7 @@ fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes
     let mut wrong = handshake(
         &world,
         FirstLine::Start,
-        "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184",
         Some(db_key()),
     );
     let failed = wrong.event();

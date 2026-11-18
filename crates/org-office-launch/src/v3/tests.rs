@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::*;
 
-const INSTANCE: &str = "01M72N8MG00000000000000I01";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1";
 const OFFICE: &str = "01M72N8MG00000000000000F01";
 const ORG: &str = "01M72N8MG00000000000000G01";
 const OWNER: &str = "01M72N8MG00000000000000M01";
@@ -73,7 +73,7 @@ fn selected_create() -> CreateLine {
         office: OfficeLine {
             id_profile: Some(IdProfile::SelectedV1),
             selected_writer_required: true,
-            instance_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182".into(),
             office_id: prepared.office_id.clone(),
             rendezvous: RENDEZVOUS.into(),
         },
@@ -1014,6 +1014,33 @@ fn lifecycle_events_keep_exact_strict_fields_and_refusal_reason() {
         assert!(
             read_server_event(&mut Cursor::new(format!("{wire}\n"))).is_err(),
             "{wire}"
+        );
+    }
+}
+
+/// The instance id is canonical lowercase UUIDv7 text: a ULID (the earlier form) and uppercase
+/// UUIDv7 are refused on the way out and on the way in.
+#[test]
+fn first_lines_refuse_a_ulid_or_uppercase_instance() {
+    for instance in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071A1",
+    ] {
+        let mut line = office();
+        line.instance_id = instance.into();
+        assert!(
+            matches!(
+                write_first_line(&mut Vec::new(), &HostFirstLine::Start(line)),
+                Err(LaunchError::Invalid(_))
+            ),
+            "{instance}"
+        );
+        let wire = json!({"v": 3, "op": "start", "instance_id": instance,
+            "office_id": OFFICE, "rendezvous": RENDEZVOUS});
+        let bytes = format!("{wire}\n");
+        assert!(
+            read_first_line(&mut bytes.as_bytes(), FirstLine::Start).is_err(),
+            "{instance}"
         );
     }
 }

@@ -241,7 +241,7 @@ fn a_marker_naming_another_instance_is_refused() {
     f.record(listen, Some(id));
     f.start().unwrap().shutdown();
     fs::remove_file(f.marker()).unwrap();
-    fs::write(f.marker(), crate::ids::generate().unwrap()).unwrap();
+    fs::write(f.marker(), crate::ids::uuid_v7().unwrap()).unwrap();
     fs::set_permissions(f.marker(), fs::Permissions::from_mode(0o600)).unwrap();
     let err = f.start().err().expect("refused");
     assert!(err.to_string().contains("another instance"), "{err}");
@@ -261,7 +261,7 @@ fn a_start_without_a_complete_setup_reservation_refuses_before_the_registry() {
 
     // A record naming an instance the locator never reserved: nothing is reserved here.
     let f = fixture();
-    f.record(listen(7420), Some(crate::ids::generate().unwrap()));
+    f.record(listen(7420), Some(crate::ids::uuid_v7().unwrap()));
     assert!(f.start().is_err());
     assert!(!f.base.join("instance").exists(), "no reservation made");
 
@@ -269,7 +269,7 @@ fn a_start_without_a_complete_setup_reservation_refuses_before_the_registry() {
     let f = fixture();
     let listen_config = listen(7420);
     f.reserve(Some(&listen_config));
-    f.record(listen_config, Some(crate::ids::generate().unwrap()));
+    f.record(listen_config, Some(crate::ids::uuid_v7().unwrap()));
     assert!(f.start().is_err());
     assert!(!f.registry_db().exists());
 }

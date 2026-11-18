@@ -7,8 +7,8 @@ use super::memory::MemoryLinks;
 use super::*;
 use crate::hostdb::{HostDb, HostDbInit};
 
-const INSTANCE: &str = "01J00000000000000000000000";
-const OTHER_INSTANCE: &str = "01J0000000000000000000000Z";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
+const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b1";
 const NOW: i64 = 1_800_000_000_000;
 
 struct NoSecrets;

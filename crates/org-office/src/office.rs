@@ -1102,9 +1102,13 @@ fn failpoint(_folder: &Path, _step: &'static str) -> Result<(), OfficeError> {
     Ok(())
 }
 
+/// An instance id is canonical lowercase UUIDv7 text (the host's instance identity). A ULID,
+/// the earlier form, is refused, as is any other text: an office never binds to it.
 fn validate_instance(instance: Option<&str>) -> Result<(), OfficeError> {
-    if instance.is_some_and(|id| org_proto::ulid_time_ms(id).is_none()) {
-        return Err(OfficeError::Invalid("instance id must be a canonical ULID"));
+    if instance.is_some_and(|id| !org_proto::is_uuid_v7(id)) {
+        return Err(OfficeError::Invalid(
+            "instance id must be a canonical lowercase UUIDv7",
+        ));
     }
     Ok(())
 }

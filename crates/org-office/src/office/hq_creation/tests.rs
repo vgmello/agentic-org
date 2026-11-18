@@ -1,5 +1,5 @@
 use super::*;
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 fn binding(root: &Path) -> Binding {
     let public_root = root.join("state");
     std::fs::create_dir_all(&public_root).unwrap();
@@ -915,7 +915,7 @@ fn frozen_schema7_upgrades_to8_preserving_instance_origin_status_and_directory()
     old.write(|db| {
         assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),7);
         assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE name='local_hq_creation'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        db.execute_batch("INSERT INTO meta VALUES('office_id','HQ'),('instance_id','01ARZ3NDEKTSV4RRFFQ69G5FAV'),('incarnation','original');
+        db.execute_batch("INSERT INTO meta VALUES('office_id','HQ'),('instance_id','0190a5d2-7c3e-7a01-8b2c-3d4e5f607182'),('incarnation','original');
           INSERT INTO work_origin_counter VALUES('original',11);
           INSERT INTO member_status VALUES('task-only',NULL,'TASK','now',NULL),('status-only','working',NULL,'now','later'),('both','busy','TASK','now','later');
           INSERT INTO selected_directory VALUES('ORG',1,'{}','retained');

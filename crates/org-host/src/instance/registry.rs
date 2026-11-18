@@ -27,18 +27,19 @@ struct Binding {
     temp_folder: PathBuf,
 }
 
-/// The one format check for an instance ID. Instance IDs are still ULIDs: the switch to
-/// UUIDv7 (non-negotiable 4, A2 decision D8) lands with the host-database rewrite (A2 B2),
-/// whose fixtures and secrets namespace carry the ID; this is the line it changes.
+/// The one format check for an instance ID: canonical lowercase UUIDv7 text (non-negotiable 4).
+/// A ULID, the earlier form, and uppercase hex are refused.
 pub(crate) fn valid_instance_id(id: &str) -> bool {
-    org_proto::ulid_time_ms(id).is_some()
+    org_proto::is_uuid_v7(id)
 }
 
 impl Binding {
     fn validate(&self) -> Result<(), Error> {
         Name::parse(Some(self.name.as_str()))?;
         if !valid_instance_id(&self.id) {
-            return Err(Error::Unsafe("instance ID is not a canonical ULID"));
+            return Err(Error::Unsafe(
+                "instance ID is not a canonical lowercase UUIDv7",
+            ));
         }
         if absolute(&self.root)? != self.root {
             return Err(Error::Unsafe("registered root is not normalized"));
@@ -535,7 +536,7 @@ impl Registry {
                 if !root.is_empty()? {
                     return Err(Error::Conflict("unregistered root contains existing state"));
                 }
-                let id = crate::ids::generate()?;
+                let id = crate::ids::uuid_v7()?;
                 if locator.entries.iter().any(|e| e.binding.id == id) {
                     return Err(Error::Conflict(
                         "generated instance ID is already reserved; retry",

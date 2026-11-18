@@ -228,9 +228,10 @@ fn hello_result_carries_instance_id_only_when_set() {
         .unwrap()
         .get("instance_id")
         .is_none());
-    let v2 = HelloResult::host("0.0.0", "This Mac").with_instance_id("01M72N8MG00000000000000I01");
+    let v2 = HelloResult::host("0.0.0", "This Mac")
+        .with_instance_id("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1");
     let wire = serde_json::to_value(&v2).unwrap();
-    assert_eq!(wire["instance_id"], "01M72N8MG00000000000000I01");
+    assert_eq!(wire["instance_id"], "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1");
     assert_eq!(serde_json::from_value::<HelloResult>(wire).unwrap(), v2);
 }
 

@@ -35,7 +35,7 @@ impl HostSecrets for TestCustody {
     }
 }
 pub(crate) fn fixture() -> (tempfile::TempDir, Authentication, Arc<Connection>) {
-    fixture_for(&crate::ids::generate().unwrap())
+    fixture_for(&crate::ids::uuid_v7().unwrap())
 }
 pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication, Arc<Connection>) {
     let root = tempfile::tempdir().unwrap();
@@ -381,7 +381,7 @@ fn real_host_listener_negotiates_signin_renewal_and_logout() {
         .unwrap();
     let socket = sockets.path().join("h.sock");
     let mut service = super::super::tests::service(_root.path());
-    service.instance_id = Some(crate::ids::generate().unwrap());
+    service.instance_id = Some(crate::ids::uuid_v7().unwrap());
     service.authentication = Some(Arc::new(auth));
     let offices = service.offices.clone();
     let mut listener = Listener::start(
@@ -447,7 +447,7 @@ fn actual_host_connection_pair_signs_in_and_eof_invalidates_registry_session() {
     let (root, auth, _) = fixture();
     let auth = Arc::new(auth);
     let mut service = super::super::tests::service(root.path());
-    service.instance_id = Some(crate::ids::generate().unwrap());
+    service.instance_id = Some(crate::ids::uuid_v7().unwrap());
     service.authentication = Some(auth.clone());
     let offices = service.offices.clone();
     let (host, peer) = UnixStream::pair().unwrap();

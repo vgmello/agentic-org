@@ -13,6 +13,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::time::Duration;
 const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const PROBE: &str = "KAI_ROOT_TRANSFER_TEST_CHILD";
 
 fn isolated(case: &str, test: &str) {
@@ -72,7 +73,7 @@ fn probe(failure: bool) {
         org_name: "Acme".into(),
     };
     let key = || Key::from_db_key(DbKey::from_bytes([4; 32]));
-    let office = Office::create_for_instance(&folder, &info, key(), ID).unwrap();
+    let office = Office::create_for_instance(&folder, &info, key(), INSTANCE).unwrap();
     let path = dir.path().join("rv.sock");
     let listener = UnixListener::bind(&path).unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -82,7 +83,7 @@ fn probe(failure: bool) {
         &HostFirstLine::Start(OfficeLine {
             id_profile: None,
             selected_writer_required: false,
-            instance_id: ID.into(),
+            instance_id: INSTANCE.into(),
             office_id: ID.into(),
             rendezvous: path.to_str().unwrap().into(),
         }),
@@ -212,7 +213,7 @@ fn probe(failure: bool) {
         &runtime,
         office,
         crate::serve::LaunchAuth::from(GrantKey::from_bytes([7; 32])),
-        Some(ID.into()),
+        Some(INSTANCE.into()),
     );
     if let Some(joining) = joining {
         joining.join().unwrap();
@@ -229,7 +230,7 @@ fn probe(failure: bool) {
         );
     }
     drop(
-        Office::open_for_instance(&folder, key(), ID)
+        Office::open_for_instance(&folder, key(), INSTANCE)
             .expect("root returned before closing Office databases/lock"),
     );
 }

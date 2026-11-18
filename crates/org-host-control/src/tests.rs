@@ -14,11 +14,11 @@ fn the_contract_has_its_own_version_space() {
     assert_eq!(SUPPORTED_API, ApiRange { min: 1, max: 1 });
     assert_eq!(Hello::METHOD, "hello");
     // `hello` answers with the instance.
-    let hello =
-        HelloResult::host("0.0.0", "This Mac").with_instance_id("01M72N8MG00000000000000I01");
+    let hello = HelloResult::host("0.0.0", "This Mac")
+        .with_instance_id("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1");
     assert_eq!(
         serde_json::to_value(&hello).unwrap()["instance_id"],
-        "01M72N8MG00000000000000I01"
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1"
     );
 }
 
@@ -580,12 +580,12 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
     clone_only::<GatewayFirstLine>();
     let first = GatewayFirstLine {
         rendezvous: "/run/user/501/agentic-org/r/0123456789abcdef".into(),
-        instance_id: "01M72N8MG00000000000000I01".into(),
+        instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into(),
         release: None,
     };
     let wire = json!({
         "v": 1, "rendezvous": "/run/user/501/agentic-org/r/0123456789abcdef",
-        "instance_id": "01M72N8MG00000000000000I01"
+        "instance_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1"
     });
     assert_eq!(serde_json::to_value(&first).unwrap(), wire);
     assert_eq!(
@@ -598,6 +598,7 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
         json!({"v": 1, "rendezvous": "/r"}),
         json!({"v": 1, "rendezvous": "/r", "instance_id": "../x"}),
         json!({"v": 1, "rendezvous": "/r", "instance_id": ""}),
+        json!({"v": 1, "rendezvous": "/r", "instance_id": "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071A1"}),
     ] {
         assert!(serde_json::from_value::<GatewayFirstLine>(bad).is_err());
     }
@@ -708,7 +709,7 @@ mod listen_vectors;
 fn gateway_lines_refuse_unknown_fields() {
     let mut first = serde_json::to_value(GatewayFirstLine {
         rendezvous: "/tmp/agentic-org/rendezvous.sock".into(),
-        instance_id: "01JINS0000000000000000000A".into(),
+        instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a2".into(),
         release: None,
     })
     .unwrap();

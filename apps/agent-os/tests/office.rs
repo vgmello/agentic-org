@@ -40,7 +40,7 @@ const PIXEL: &str = "AGENT00000000000000000PIXL";
 const NOVA: &str = "AGENT00000000000000000NOVA";
 const WAIT: Duration = Duration::from_secs(30);
 /// The instance the host starts the office as (v3 adopts the library-stored office into it).
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 
 fn main() {
     if std::env::var_os(SERVER_ENV).is_some() {

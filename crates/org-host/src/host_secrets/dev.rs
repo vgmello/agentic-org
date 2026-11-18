@@ -37,7 +37,7 @@ impl DevSecrets {
     pub(crate) fn open(base: &Path, home: &Path, instance: &str) -> Result<Self, Error> {
         if !base.is_absolute()
             || base.components().any(|c| matches!(c, Component::ParentDir))
-            || org_proto::ulid_time_ms(instance).is_none()
+            || !org_proto::is_uuid_v7(instance)
         {
             return Err(Error::Unsafe);
         }

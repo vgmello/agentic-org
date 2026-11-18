@@ -678,7 +678,7 @@ fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_inde
     assert_eq!(lock(&fixture.endpoint.channels).len(), 8);
     let request = org_office_launch::recovery::Request {
         version: 1,
-        instance_id: "instance".into(),
+        instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182".into(),
         office_id: "office".into(),
         organization_id: "org".into(),
         operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
