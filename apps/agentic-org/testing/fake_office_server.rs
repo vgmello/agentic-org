@@ -1,8 +1,21 @@
 //! A fake `agentic-org-office` for `org-host`'s tests. **Never shipped:** it is built
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
-//! It follows the launch protocol (`org-office-launch`, version 2) without SQLCipher or a key
-//! store, and does what the test scripted. The script is `<ORG_OFFICE_HOME>/fake-script.json`:
+//! It follows the launch protocol (`org-office-launch`) without SQLCipher or a key store, and
+//! does what the test scripted. It accepts either launch version for the rollout, as the real
+//! server does (`v3::read_first_line_any`):
+//! - **v2:** the first stdin line carries the secrets; events go to stdout; the host's lifetime
+//!   is stdin.
+//! - **v3:** the first stdin line names the rendezvous socket. The fake connects to it, sends
+//!   `ready_for_secrets`, receives the handoff header byte by byte (no descriptor on any header
+//!   byte), then, when the header names descriptors (create and start), receives the transfer
+//!   socket on its marker byte and answers `fds_received`. A discard names none: no marker is
+//!   read and no `fds_received` is sent. Events then go on the rendezvous stream (stdout is not
+//!   used), and the host's lifetime is stdin or the rendezvous stream, whichever ends first.
+//!   The transfer socket is held but never read: a host that transfers a channel or writer
+//!   control descriptor gets no receipt, so offices needing those can't run on the fake.
+//!
+//! The script is `<ORG_OFFICE_HOME>/fake-script.json`:
 //! ```json
 //! {"create": [{"do": "fail", "code": "invalid_name"}, {"do": "ready"}],
 //!  "01ABC…": {"do": "crash"}}
@@ -46,7 +59,10 @@
 //! `crash` and `hang` work there too).
 //!
 //! It records what it does in `<home>/fake.log`, one line each:
-//! `start <key> <pid> <run> <unix ms>`, `token <key> <pid> <fingerprint>`,
+//! `start <key> <pid> <run> <unix ms>`, `launch <key> <pid> v2|v3`, `instance <key> <pid> <id>`
+//! (v3), `token <key> <pid> <fingerprint>` (v2), `grant <key> <pid> <fingerprint>` (v3),
+//! `recovery <key> <pid> present` (v3 create), `transfer <key> <pid> received` (v3 create and
+//! start),
 //! `dbkey <key> <pid> <fingerprint or null>` (`dbkey discard <pid> <fingerprint or null> <id>`
 //! for `--discard`), `env <key> <pid> <its environment variables' names>`,
 //! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`,
@@ -55,27 +71,33 @@
 //! reached it where none may: its `argv` or an `env:<NAME>` variable.
 
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::io::{self, BufRead, BufReader, Write};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use org_office_launch::v3::{self, AnyFirstLine, Handoff, HostFirstLine, RendezvousEvent};
 use org_office_launch::{
-    office_dir, read_host_message, write_server_event, FailCode, HostMessage, OfficeFile,
-    ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME,
+    office_dir, write_server_event, FailCode, FirstLine, HostMessage, OfficeFile, ServerEvent,
+    CREATE_FLAG, DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME,
     OFFICE_LOCK_WAIT,
 };
 use org_proto::frame;
 use org_proto::location::{
     office_socket_in, office_socket_path, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
 };
+use org_proto::OfficeRole;
 use org_proto::{
     ApiError, AppToken, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo,
     OfficeStatus, Request, Response,
 };
+use org_socket::rights::{ReceiveError, StreamReceiver};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -83,6 +105,27 @@ use serde_json::Value;
 const DB_FILE_NAME: &str = "db";
 
 const CRASH: i32 = 3;
+
+/// The v3 rendezvous stream, once its handoff is done: events go here instead of stdout.
+static RENDEZVOUS: OnceLock<Mutex<UnixStream>> = OnceLock::new();
+/// The v3 transfer socket, held (never read) for the process's life.
+static TRANSFER: OnceLock<OwnedFd> = OnceLock::new();
+
+/// A first line of either launch version, its secrets noted as fingerprints only.
+enum Launch {
+    Create(CreateFields),
+    Start,
+    Discard { db_key: Option<DbKey> },
+}
+
+/// What a create names, from a v2 create message or a v3 create line.
+struct CreateFields {
+    office_id: String,
+    org_id: String,
+    org_name: String,
+    office_name: String,
+    role: OfficeRole,
+}
 
 struct Step {
     action: String,
@@ -165,12 +208,10 @@ fn main() {
     // another id: a refused create must not replace another office's live socket.
     let (office, lock, socket_id) = match office_id {
         None => {
-            let create = match first_line(&home, &key, &mut stdin) {
-                HostMessage::Create(create) => create,
+            let create = match first_line(&home, &key, &step, &mut stdin, FirstLine::Create) {
+                Launch::Create(create) => create,
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             };
-            note_token(&home, &key, &step, &create.app_token);
-            note_db_key(&home, &key, Some(&create.db_key), "");
             let create_id = create.office_id.clone();
             let dir = office_dir(&home, &create.office_id).unwrap_or_else(|| {
                 fail(FailCode::InvalidRequest);
@@ -230,11 +271,8 @@ fn main() {
             (office, lock, socket_id)
         }
         Some(id) => {
-            match first_line(&home, &key, &mut stdin) {
-                HostMessage::Start(start) => {
-                    note_token(&home, &key, &step, &start.app_token);
-                    note_db_key(&home, &key, Some(&start.db_key), "");
-                }
+            match first_line(&home, &key, &step, &mut stdin, FirstLine::Start) {
+                Launch::Start => {}
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             }
             let dir = office_dir(&home, &id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
@@ -325,20 +363,192 @@ fn inherited_fds() -> String {
     }
 }
 
-/// The first stdin line. An unreadable one is refused here; the caller checks that its op
-/// matches the flag. EOF before it means the host is gone: exit 0 without a line.
-fn first_line(home: &Path, key: &str, stdin: &mut impl BufRead) -> HostMessage {
-    match read_host_message(stdin) {
-        Ok(Some(message)) => message,
+/// The first stdin line, of either version, checked against the flag (`expected`); a v3 line
+/// also runs the rendezvous handshake. An unreadable or mismatched line is refused here. EOF
+/// before it means the host is gone: exit 0 without a line.
+fn first_line(
+    home: &Path,
+    key: &str,
+    step: &Step,
+    stdin: &mut impl BufRead,
+    expected: FirstLine,
+) -> Launch {
+    let pid = std::process::id();
+    let line = match v3::read_first_line_any(stdin, expected) {
+        Ok(Some(line)) => line,
         Ok(None) => {
-            record(
-                home,
-                &format!("eof-before-first-line {key} {}", std::process::id()),
-            );
+            record(home, &format!("eof-before-first-line {key} {pid}"));
             exit(0);
         }
         Err(e) => refuse_first_line(home, key, e.fail_code()),
+    };
+    match line {
+        AnyFirstLine::V2(message) => {
+            record(home, &format!("launch {key} {pid} v2"));
+            match message {
+                HostMessage::Create(create) => {
+                    note_token(home, key, step, &create.app_token);
+                    note_db_key(home, key, Some(&create.db_key), "");
+                    Launch::Create(CreateFields {
+                        office_id: create.office_id.clone(),
+                        org_id: create.org_id.clone(),
+                        org_name: create.org_name.clone(),
+                        office_name: create.office_name.clone(),
+                        role: create.role,
+                    })
+                }
+                HostMessage::Start(start) => {
+                    note_token(home, key, step, &start.app_token);
+                    note_db_key(home, key, Some(&start.db_key), "");
+                    Launch::Start
+                }
+                HostMessage::Discard(discard) => Launch::Discard {
+                    db_key: discard.db_key,
+                },
+                _ => refuse_first_line(home, key, FailCode::InvalidRequest),
+            }
+        }
+        AnyFirstLine::V3(line) => {
+            record(home, &format!("launch {key} {pid} v3"));
+            let Some(office) = line.office() else {
+                refuse_first_line(home, key, FailCode::InvalidRequest)
+            };
+            record(
+                home,
+                &format!("instance {key} {pid} {}", office.instance_id),
+            );
+            let handoff = rendezvous(home, key, &office.rendezvous);
+            match (line, handoff) {
+                (
+                    HostFirstLine::Create(create),
+                    Handoff::Create {
+                        db_key, grant_key, ..
+                    },
+                ) => {
+                    note_db_key(home, key, Some(&db_key), "");
+                    note_grant(home, key, &grant_key);
+                    record(home, &format!("recovery {key} {pid} present"));
+                    Launch::Create(CreateFields {
+                        office_id: create.office.office_id,
+                        org_id: create.org_id,
+                        org_name: create.org_name,
+                        office_name: create.office_name,
+                        role: create.role,
+                    })
+                }
+                (
+                    HostFirstLine::Start(_),
+                    Handoff::Start {
+                        db_key, grant_key, ..
+                    },
+                ) => {
+                    note_db_key(home, key, Some(&db_key), "");
+                    note_grant(home, key, &grant_key);
+                    Launch::Start
+                }
+                (HostFirstLine::Discard(_), Handoff::Discard { db_key, .. }) => {
+                    Launch::Discard { db_key }
+                }
+                _ => refuse_first_line(home, key, FailCode::InvalidRequest),
+            }
+        }
+        _ => refuse_first_line(home, key, FailCode::UnsupportedVersion),
     }
+}
+
+/// The v3 handshake on the rendezvous socket at `path`, as the real server does it. Any fault
+/// fails the run (`storage_error`; `invalid_request` for a bad header). From then on events go
+/// on the stream.
+fn rendezvous(home: &Path, key: &str, path: &str) -> Handoff {
+    let mut stream = UnixStream::connect(path).unwrap_or_else(|_| fail(FailCode::StorageError));
+    if frame::write_message(&mut stream, &v3::ReadyForSecrets).is_err() {
+        fail(FailCode::StorageError);
+    }
+    let fence = Mutex::new(());
+    let mut receiver = StreamReceiver::new(
+        stream
+            .try_clone()
+            .unwrap_or_else(|_| fail(FailCode::StorageError)),
+    );
+    // Reserved once, so a header holding keys never reallocates; zeroed after the decode.
+    let mut header = Vec::with_capacity(v3::TRANSFER_HEADER_MAX_BYTES + 1);
+    loop {
+        let (byte, fds) = receive(&stream, || receiver.receive_byte(0, &fence));
+        if !fds.is_empty() {
+            fail(FailCode::InvalidRequest);
+        }
+        if byte == b'\n' {
+            break;
+        }
+        if header.len() == v3::TRANSFER_HEADER_MAX_BYTES {
+            zero(&mut header);
+            fail(FailCode::InvalidRequest);
+        }
+        header.push(byte);
+    }
+    let decoded = v3::decode_handoff(&header);
+    zero(&mut header);
+    let handoff = decoded.unwrap_or_else(|_| fail(FailCode::InvalidRequest));
+    if !handoff.fds().is_empty() {
+        let mut fds = receive(&stream, || {
+            receiver.receive_marker(handoff.fds().len(), v3::FD_MARKER, &fence)
+        });
+        let Some(transfer) = fds.pop() else {
+            fail(FailCode::StorageError)
+        };
+        let _ = TRANSFER.set(transfer);
+        record(
+            home,
+            &format!("transfer {key} {} received", std::process::id()),
+        );
+        let receipt = RendezvousEvent::FdsReceived {
+            of: "handoff".into(),
+        };
+        if v3::write_rendezvous_event(&mut stream, &receipt).is_err() {
+            fail(FailCode::StorageError);
+        }
+    }
+    // The receiver set the shared descriptor non-blocking. With it gone, the stream blocks
+    // again, so events are written whole and the lifetime read waits for the host's end.
+    drop(receiver);
+    if stream.set_nonblocking(false).is_err() {
+        fail(FailCode::StorageError);
+    }
+    let _ = RENDEZVOUS.set(Mutex::new(stream));
+    handoff
+}
+
+/// One receive on the (non-blocking) rendezvous, waiting for readiness while it would block,
+/// as the real server does. A fatal receive fails the run: the process must exit then.
+fn receive<T>(stream: &UnixStream, mut call: impl FnMut() -> Result<T, ReceiveError>) -> T {
+    loop {
+        match call() {
+            Ok(value) => return value,
+            Err(ReceiveError::WouldBlock) => {
+                match org_socket::poll_readable(stream.as_raw_fd(), org_socket::READ_TICK) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => fail(FailCode::StorageError),
+                }
+            }
+            Err(ReceiveError::Fatal(_)) => fail(FailCode::StorageError),
+        }
+    }
+}
+
+fn zero(bytes: &mut [u8]) {
+    for b in bytes.iter_mut() {
+        // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
+        unsafe { std::ptr::write_volatile(b, 0) };
+    }
+}
+
+/// Records the grant key's fingerprint (never the key) in `fake.log`.
+fn note_grant(home: &Path, key: &str, grant: &org_proto::GrantKey) {
+    record(
+        home,
+        &format!("grant {key} {} {}", std::process::id(), fingerprint(grant)),
+    );
 }
 
 fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
@@ -404,8 +614,8 @@ fn nibble(hex: u8) -> u8 {
 /// `--discard <id>`: removes an unfinished office's folder, then exits. Without a key it
 /// refuses a folder holding databases (`db`).
 fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut impl BufRead) -> ! {
-    let db_key = match first_line(home, key, stdin) {
-        HostMessage::Discard(discard) => discard.db_key,
+    let db_key = match first_line(home, key, step, stdin, FirstLine::Discard) {
+        Launch::Discard { db_key } => db_key,
         _ => refuse_first_line(home, key, FailCode::InvalidRequest),
     };
     note_db_key(home, key, db_key.as_ref(), id);
@@ -455,8 +665,29 @@ fn act_before(step: &Step, home: &Path, key: &str, stdin: &mut impl BufRead) {
 
 /// Blocks until stdin closes, then returns, unless the step ignores EOF.
 fn wait_for_eof(step: &Step, home: &Path, key: &str, stdin: &mut impl BufRead) {
-    let mut sink = Vec::new();
-    let _ = stdin.read_to_end(&mut sink);
+    let stream = RENDEZVOUS
+        .get()
+        .and_then(|stream| stream.lock().ok()?.try_clone().ok());
+    match stream {
+        None => {
+            let mut sink = Vec::new();
+            let _ = stdin.read_to_end(&mut sink);
+        }
+        // v3: the host is gone when either its stdin or the rendezvous stream ends.
+        Some(mut stream) => {
+            let (ended, eof) = mpsc::channel();
+            let stdin_ended = ended.clone();
+            thread::spawn(move || {
+                let _ = io::stdin().lock().read_to_end(&mut Vec::new());
+                let _ = stdin_ended.send(());
+            });
+            thread::spawn(move || {
+                let _ = stream.read_to_end(&mut Vec::new());
+                let _ = ended.send(());
+            });
+            let _ = eof.recv();
+        }
+    }
     if step.ignore_eof {
         record(home, &format!("eof-ignored {key} {}", std::process::id()));
         loop {
@@ -474,9 +705,17 @@ fn fail(code: FailCode) -> ! {
     exit(1);
 }
 
+/// Writes an event to the host: on the rendezvous stream after a v3 handshake, else stdout.
 fn emit(event: &ServerEvent) {
-    let mut out = io::stdout().lock();
-    if write_server_event(&mut out, event).is_err() {
+    let written = match RENDEZVOUS.get() {
+        Some(stream) => {
+            let mut stream = stream.lock().unwrap_or_else(|p| p.into_inner());
+            v3::write_rendezvous_event(&mut *stream, &RendezvousEvent::Server(event.clone()))
+                .is_ok()
+        }
+        None => write_server_event(&mut io::stdout().lock(), event).is_ok(),
+    };
+    if !written {
         exit(4);
     }
 }
