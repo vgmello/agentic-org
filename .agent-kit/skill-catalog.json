@@ -150,7 +150,7 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "6773e7878f6a9cc48d8ddc64e240324f873efd6baec26d7ae183fdd9ad2c822e"
+      "sha256": "c3b77817068f687a88209029299990d5319ccb2262c67f1446027c40cd41fcf6"
     },
     {
       "path": "docs/design/organization-data/README.md",
@@ -158,7 +158,7 @@
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "6b65bf97b04ce3ada47f9b820bde19b3ac5efc2138d5e63a6231b029fe1c527a"
+      "sha256": "a36c2cf6aa1d659c45b703d0b010a42c51812da75b8d318f0c3e43be84089ea1"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
