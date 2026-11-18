@@ -404,7 +404,7 @@ The office directory today is `<home>/offices/<office-id>/` under the host home
 resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`
 besides `office.lock` and `office.json`. Those databases are the source of truth until
 the store writes the [storage tree](organization-data/README.md#shared-storage-contract)
-(implementation plan B1). The rendezvous's first line still has an optional
+(implementation plan B1b). The rendezvous's first line still has an optional
 `id_profile: "selected_v1"`; without it the code accepts the older alphanumeric IDs, and
 `office.json` version 2 holds UUIDv7 IDs. Every ID becomes UUIDv7 and the profile
 switch goes (FC-142). The `joined` event, the `child` and `child_gone` events, the

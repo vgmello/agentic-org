@@ -28,7 +28,7 @@ single office on macOS. Its steps, in order:
 | Step | A person can | Increments |
 | --- | --- | --- |
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
-| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1, B2, B3, O1, A6, R1, U1 |
+| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1a to B1c, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
 | 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
@@ -47,7 +47,7 @@ them (S1).
 Most of step 2 and the hire flow are create, read, update and delete on records the
 data contract already defines. The parts that are not: the web process and sessions
 working end to end for the first time (step 1), the store rebuilt so that files are
-the source (B1), and starting and supervising an agent process (C3).
+the source (B1a to B1c), and starting and supervising an agent process (C3).
 
 Track A is the way in: host, setup, web, sign-in. Track B is the organization's data:
 the office's storage and the domain on it. Track C is agents. Track X is Linux and containers, built alongside the other three. A and B start on the same
@@ -62,9 +62,9 @@ Three things to know about the order:
 - **Getting in comes first and waits for nothing.** The Track A engineer starts at A2
   and goes straight through A3 and A4: the link, registration, and creating the
   organization.
-- **A1 is a clean-up that the Track B engineer takes first,** because B1 rebuilds the
-  office store that A1 removes the encryption from. B1's written plan is prepared
-  meanwhile. A1 also removes the encryption of the host database, which A2 and A3
+- **A1 is a clean-up that the Track B engineer takes first,** because B1b rebuilds the
+  office store that A1 removes the encryption from. B1a, which builds the new store
+  beside the old one, can proceed meanwhile. A1 also removes the encryption of the host database, which A2 and A3
   write to: the two leads agree the order of those commits.
 - **macOS and Linux in parallel.** The Track A and B engineers work on macOS. Track X
   brings Linux, including a container, at the same time (X1a to X6). X1a lands on the first day and
@@ -227,7 +227,7 @@ Three things to know about the order:
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once; ENC-2 passes.
-- **Needs:** A3. A4 lands on the office store as it is. B1 then rebuilds that store
+- **Needs:** A3. A4 lands on the office store as it is. B1b then rebuilds that store
   underneath it and makes organization creation the first accepted transaction.
 
 ### A5 · A person on the command line
@@ -267,43 +267,121 @@ Three things to know about the order:
 
 ## Step 2 · The organization: office, projects, teams and people
 
-### B1 · The store foundation
+### B1a · The store core on the organization family
 
-- **Outcome:** none a person can see. Every later Track B increment writes through it.
+The store is built from the [office store design](design/office-store.md) and
+[ADR-0021](adr/0021-office-store-architecture.md), in three increments. B1a proves the
+whole path on one record family so that B2 starts on it; B1b moves the running office
+onto it and deletes the old store; B1c measures and guards it.
+
+- **Outcome:** none a person can see; an internal foundation. Organization records go
+  through the whole path: command, journal, files, projection, rebuild, and one
+  conformance suite against SQLite and against memory. B2 starts on it.
 - **Build:**
-  - Files are the source. Organization files live under `durable/state/`; the database
-    under `runtime/<office-id>/` is a projection that can be deleted and rebuilt.
-  - One write path: a command is validated, committed to the acceptance journal with its
-    event and its idempotency result, and then materialized to files and the projection.
-  - Creating an organization is the first accepted transaction of that organization's
-    journal, and its first directory generation.
-  - Storage is reached only through contracts the domain crates define. SQL appears only
-    in the store adapter. Each contract has a test suite that does not depend on the
-    database engine.
-  - Each operation declares whether it is acknowledged at the commit or after the drive
-    flush.
-- **Read:** the [data contract index](design/organization-data/README.md) (shared storage
-  contract), [record contracts](design/organization-data/08-record-contracts.md),
+  - The crate `org-store`: the change contract and the acknowledgement classes, the
+    single writer with batching, the journal (segments, hash chain, anchor, torn-tail
+    recovery), the flusher (group flush, durable replies, file materialization), the
+    receipts, origin and feed positions, the change stream, `rebuild`, the `Engine`,
+    `CorePort` and `Projector` traits, and a `testkit` with the memory engine, the
+    rebuild-equivalence harness and the crash points.
+  - The SQLite engine in `crates/org-office/src/store/sqlite/`: the projection at
+    `runtime/<office-id>/office.db` from the contract's `schema.sql` and the store's
+    tables, WAL without per-commit flushes, the reader pool, the schema digest.
+  - The organization family in `crates/org-office/src/organization/`: records, paths and
+    codec for the organization, offices, office codes, teams, people and agents, HQ
+    counters and allocations; its two ports, its projector and its testkit; two
+    operations: create the organization (the first entry: organization, HQ office,
+    top-level team, the creator as its lead, the HR lead; directory generation 1) and
+    create a team.
+  - `open_store`, the one seam, used by the office's tests with either engine.
+- **Read:** [office store design](design/office-store.md) sections 1 to 7 and 9,
+  [ADR-0021](adr/0021-office-store-architecture.md), the
+  [data contract index](design/organization-data/README.md) (shared storage contract),
   [recovery contract](design/organization-data/16-recovery-and-office-continuity.md)
-  including its resolution for the first directory generation,
-  [ADR-0018](adr/0018-storage-engine-independence.md),
+  (receipts, how the directory begins), [organization structure](design/organization-data/01-organization-structure.md),
+  [agent structure](design/organization-data/04-agent-structure.md),
+  [identity and numbering](design/organization-data/06-identity-and-numbering.md),
+  [ADR-0006](adr/0006-selected-task-acceptance.md),
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decisions 2, 3, 6
-  and 8, [ADR-0006](adr/0006-selected-task-acceptance.md). Rows FC-141, FC-146, FC-165.
-- **Code today:** `crates/org-office/src/store` is about 14,700 lines against tables the
-  data contract replaces, and is the source of truth; `store/acceptance` is the journal
-  the selected design keeps; `crates/org-docs` parses and edits the files. Outside the
-  store, two files use the database driver (`organization/bootstrap.rs`,
-  `organization/admission.rs`) and two more hold SQL (`office.rs`, `office/hq_creation.rs`).
-- **Done when:** deleting `runtime/<office-id>/` and restarting rebuilds the projection
-  with no loss; in `org-office`, SQL and driver types are found only in the store
-  adapter (ENG-1 for the office); the office starts with its store chosen through one
-  seam and the organization suite passes against SQLite and against an in-memory
-  implementation (ENG-2, and ENG-3 for organization records); ENG-4 and ENG-5 pass.
-  The suites for work and messaging arrive with B4 and B6, for the host with A3, and for
-  replication with S1.
-- **This is the largest increment in the plan.** It starts with a written plan, recorded
-  in the repository: which record families move first, and what is deleted.
-- **Needs:** A1's change to the office store.
+  and 8, [ADR-0018](adr/0018-storage-engine-independence.md). Rows FC-141, FC-146, FC-165.
+- **Code today:** `crates/org-office/src/store/acceptance.rs` holds the journal rules
+  the design keeps (frozen decisions, anchor and chain, final-state materialization) and
+  its crash tests; `store/acceptance/durable.rs` the publication primitives; `store.rs`
+  the batching rules and their tests; `crates/org-docs` the front-matter parser and
+  source-preserving editor; `organization/bootstrap.rs` and `organization/admission.rs`
+  today's creation path; `org_mailbox::mailbox_conformance_tests!` the suite pattern.
+  The workspace `rusqlite` is built with SQLCipher until A1; the new engine never sets a
+  key.
+- **Done when:** the organization suite passes against SQLite and memory (ENG-3 for
+  organization records); the rebuild-equivalence harness passes for the organization
+  family on both engines; a crash injected at each point of the design's crash table
+  reopens to the entry wholly absent or wholly present, with no decision run twice;
+  deleting the projection and reopening rebuilds an equal one; a committed write is
+  answered while a flush is held back (STORE-1 to STORE-5).
+- **Needs:** X1b (`org-platform`'s `fs`: `full_sync` and `rename_noreplace_at`). Not A1.
+
+### B1b · The office runs on the new store
+
+- **Outcome:** the running office keeps organization data as files under `durable/`,
+  with its projection under `runtime/<office-id>/`; deleting `runtime/<office-id>/` and
+  restarting loses nothing. Creating an organization is the first entry of HQ's journal.
+- **Build:**
+  - The office opens its store through `open_store` at start-up: host writer custody
+    checked at open and confirmed once per flush; the projection replayed, or rebuilt
+    when missing or stale; the clean-stop marker.
+  - Organization creation through the host's protected path writes entry 1; the CA key
+    is a protected record wrapped by the office secrets key; recovery-code delivery is
+    unchanged.
+  - The directory read and team creation answer through the office's native calls, so
+    the commands A5 exercises keep working.
+  - The old store is deleted whole, with the SQL outside it (design section 11). Calls
+    only the old tables served answer `unsupported` until their family is rebuilt: work
+    in B4, messaging and status in B6, process ownership in C3.
+  - The ENG-1 check is narrowed to `src/store/sqlite/`.
+- **Read:** [office store design](design/office-store.md) sections 4, 5 and 11;
+  [recovery contract](design/organization-data/16-recovery-and-office-continuity.md)
+  (opening, loss boundaries); [ADR-0007](adr/0007-hq-creation-escrow.md),
+  [ADR-0016](adr/0016-no-application-level-data-encryption.md),
+  [host boundary design](design/office-host-boundary.md).
+- **Code today:** `crates/org-office/src/office.rs` opens `org.db` and `office.db` and
+  writes `meta` rows; `office/hq_creation.rs` and `store/hq_creation.rs` hold the
+  creation record; `apps/agentic-org-office/src/transfer/writer.rs` is the host custody
+  channel, called twice per write and once per read today; `apps/agentic-org-office/src/lib.rs`
+  wires the mailbox to the old tables.
+- **Done when:** with an organization created through the host, deleting
+  `runtime/<office-id>/` and restarting rebuilds the projection with no loss; a
+  committed organization write survives killing the office right after its answer; the
+  organization's files are at the contract's paths under `durable/state/`; `rusqlite` and
+  SQL appear in `org-office` only under `src/store/sqlite/` (ENG-1 for the office); the
+  office's tests pass on the memory engine through `open_store` (ENG-2).
+- **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
+  it moves).
+
+### B1c · The store measured and guarded
+
+- **Outcome:** none a person can see. The store's speed is known on Linux and on the
+  reference Mac and is guarded in CI; the engine-independence criteria are closed.
+- **Build:** the benchmark target of design section 8; the flush interval fixed from
+  its results; a load test of the flush bound; a CI regression check; the wording of
+  documents 06 and 11 and the ADRs checked for engine mechanisms; the trigger and
+  generated-column constraints listed in words in schema coverage.
+- **Read:** [office store design](design/office-store.md) sections 8 and 9;
+  [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 7 and
+  ACK-2, ACK-3, ACK-5 to ACK-7; [ADR-0018](adr/0018-storage-engine-independence.md)
+  ENG-4 and ENG-5.
+- **Code today:** no store benchmark exists; ADR-0014 holds Linux estimates only.
+- **Done when:** section 8's numbers are recorded in ADR-0014 for Linux CI and the
+  reference Mac; ACK-2, ACK-3, ACK-5, ACK-6 and ACK-7 pass against the store for
+  organization operations; ENG-4 and ENG-5 pass; CI runs the regression check.
+- **Needs:** B1b, and a reference Mac for its numbers.
+
+**What depends on B1.** B2 starts on B1a, whose organization family it extends, and
+finishes on B1b, where its commands reach the running office. B3 copies the family
+pattern for projects after B2. B4 builds the work family on B1b (through B3). B6 builds
+the messaging family and measures ACK-1 with B1c's harness. R1 opens an organization
+from its files with B1b's rebuild. A1 comes before B1b and is independent of B1a. A4
+lands on the old store; B1b moves its creation onto the journal. S1 builds replication
+on the offers of design section 10.
 
 ### B2 · Organization, teams and people
 
@@ -324,7 +402,7 @@ Three things to know about the order:
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
-- **Needs:** B1, A5.
+- **Needs:** B1a to start, B1b to finish; A5.
 
 ### B3 · Projects, the minimum
 
@@ -411,11 +489,11 @@ Three things to know about the order:
   and its loss boundaries, [identity contract](design/organization-data/06-identity-and-numbering.md),
   [ADR-0007](adr/0007-hq-creation-escrow.md). Row FC-167.
 - **Code today:** nothing opens an organization from files; the office's store is the
-  source of truth until B1.
+  source of truth until B1b.
 - **Done when:** with `runtime/` and the host's database deleted, the organization is
   opened again from its repository and every record published before the loss is
   there; an invalid organization record refuses the open and names the file.
-- **Needs:** B1, A4, A6.
+- **Needs:** B1b, A4, A6.
 
 ### U1 · Offices, teams, people and projects in the browser
 
@@ -540,7 +618,7 @@ Three things to know about the order:
   when one is named.
 - **Done when:** the CHAT criteria for sending, reading and channels pass; the
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
-- **Needs:** B2, A5. The browser part needs A3.
+- **Needs:** B2, A5, B1c. The browser part needs A3.
 
 ### B7 · Asks and questions
 

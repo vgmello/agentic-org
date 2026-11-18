@@ -635,7 +635,7 @@ Linux, including a container, and confirms no production mock fallback.
 - Office data lives in `org.db` and `office.db` under the host home's
   `offices/<office-id>/`, encrypted with SQLCipher; the host registry also uses
   SQLCipher (`crates/org-host/src/hostdb/sqlcipher.rs`). Both are removed under
-  ADR-0016, and the files move to the storage tree above (implementation plan A1, B1).
+  ADR-0016, and the files move to the storage tree above (implementation plan A1, B1b).
 - Host secrets use the macOS Keychain (`crates/org-host/src/host_secrets`), and the
   host starts workers only on macOS (`crates/org-host/src/spawn.rs`).
 - The launch code has two forms, the older first line and the rendezvous in
