@@ -74,15 +74,26 @@ struct Args {
 }
 
 pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
-    // First, before any thread exists, so every thread inherits the mask.
-    let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
+    run_as(arguments, Config::refuse_root)
+}
+
+/// [`run`], with the check of who may run the service given by the caller (the composition
+/// passes [`Config::refuse_root`]; a test passes its own, so the order below is tested
+/// without being root).
+fn run_as(
+    arguments: Vec<String>,
+    may_run_the_service: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     let args = parse_args(arguments, Build::CURRENT)?;
     if args.version {
         println!("agentic-org {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    // The service is an ordinary user's on every system. Before anything is opened or made.
-    Config::refuse_root()?;
+    // The service is an ordinary user's on every system. Before anything is opened or made:
+    // nothing above reads more than the arguments.
+    may_run_the_service()?;
+    // Before any thread exists, so every thread inherits the mask.
+    let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
     let name = args.name.clone();
     #[cfg_attr(not(debug_assertions), allow(unused_mut))]
     let mut config = config(args)?;
@@ -222,6 +233,49 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// A user who may not run the service is refused before anything is opened or made:
+    /// no home, no key folder, no socket, whatever the arguments ask for. Asking for the
+    /// version starts no service and is answered to anyone; an argument error is reported
+    /// as that.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_user_who_may_not_run_the_service_is_refused_before_anything_is_made() {
+        let dir = std::env::temp_dir().join(format!("org-serve-refusal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let home = dir.join("home");
+        let refusal = || Err("the service does not run as this user".to_owned());
+        for list in [
+            vec![
+                "--home",
+                home.to_str().unwrap(),
+                "--server-bin",
+                "/nonexistent/worker",
+            ],
+            vec!["--name", "default"],
+            vec![],
+        ] {
+            assert_eq!(
+                run_as(args(&list), refusal),
+                Err("the service does not run as this user".into()),
+                "{list:?}"
+            );
+        }
+        assert!(!dir.exists(), "something was made for a refused user");
+        // Not a service start: answered whoever asks, and the check is not even made.
+        let unasked = || -> Result<(), String> { panic!("asked who runs a version query") };
+        assert_eq!(run_as(args(&["--version"]), unasked), Ok(()));
+        let unasked = || -> Result<(), String> { panic!("asked before the arguments were read") };
+        assert!(run_as(args(&["--frobnicate"]), unasked)
+            .unwrap_err()
+            .contains("unexpected argument"));
+        // The composition's own check is the host's rule for this process's user.
+        // SAFETY: no arguments and no side effects; it cannot fail.
+        assert_eq!(
+            Config::refuse_root().is_err(),
+            unsafe { libc::geteuid() } == 0
+        );
     }
 
     #[test]

@@ -379,6 +379,69 @@ fn serve_started_as_root_refuses_before_it_makes_anything() {
     assert!(version.status.success());
 }
 
+/// `setup` reserves an instance and registers a service that runs as the user who ran it,
+/// and that service refuses root: started as root, `setup` refuses before it reads or makes
+/// anything (no instance, no custody, no service definition). Only root can show this with
+/// the real program, so the test does its work where the tests run as root and says so
+/// elsewhere; the order (refused before any option is parsed) is unit-tested without
+/// privilege in `src/setup.rs`, and the rule for every user in `org-host`.
+#[cfg(debug_assertions)]
+#[test]
+fn setup_started_as_root_refuses_before_it_makes_anything() {
+    // SAFETY: no arguments and no side effects; it cannot fail.
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!(
+            "setup_started_as_root_refuses_before_it_makes_anything: SKIPPED: only root can \
+             start setup as root"
+        );
+        return;
+    }
+    let dir = support::short_tempdir("os");
+    let base = dir.path().canonicalize().unwrap();
+    let listing = |path: &Path| -> Vec<PathBuf> {
+        fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect()
+    };
+    for arguments in [
+        vec!["setup"],
+        vec!["setup", "--name", "lab"],
+        vec!["setup", "--port", "7420"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+            .args(&arguments)
+            .env_clear()
+            .env("HOME", &base)
+            .env("PATH", "/usr/bin:/bin")
+            .env("ORG_DEV_ACCOUNT_BASE", base.join("app"))
+            .env("ORG_OFFICE_DEV_KEY_DIR", base.join("keys"))
+            .env("ORG_DEV_SERVICE_DIR", base.join("svc"))
+            .env("ORG_DEV_DISK_ENCRYPTION", "on")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{arguments:?}: {stderr}");
+        assert!(
+            stderr.contains("does not run as root") && stderr.contains("service user"),
+            "{arguments:?}: {stderr}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "",
+            "{arguments:?}: it printed something"
+        );
+        assert_eq!(listing(&base), Vec::<PathBuf>::new(), "{arguments:?}");
+    }
+    // Help is not setup: answered to anyone.
+    let help = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+        .args(["setup", "--help"])
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+}
+
 #[test]
 fn bad_arguments_are_refused() {
     let status = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
