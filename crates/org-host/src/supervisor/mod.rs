@@ -1224,6 +1224,95 @@ mod tests {
         assert_eq!(seen, "key\nkey\nnull\n");
     }
 
+    /// Names the file where this test binary, run again as a v3 `--discard` server by
+    /// [`a_v3_discard_hands_off_no_key_and_deletes_it_only_after_discarded`], records its
+    /// handoff's `db_key` (`null` or `key`).
+    const V3_DISCARD_SEEN: &str = "ORG_HOST_TEST_V3_DISCARD_SEEN";
+    const INSTANCE: &str = "01JD5Z00000000000000000NST";
+
+    /// Not a test: the v3 `--discard` server the supervisor test runs, as the real worker
+    /// speaks it (first line on stdin, the rendezvous connect, `ready_for_secrets`, the handoff
+    /// header with no descriptor, then `discarded` on the stream). Without its variable it does
+    /// nothing.
+    #[test]
+    #[ignore = "run only as the v3 discard server of a supervisor test"]
+    fn v3_discard_server() {
+        use org_office_launch::v3::{self, AnyFirstLine, HostFirstLine};
+        use std::os::unix::net::UnixStream;
+        let Some(seen) = std::env::var_os(V3_DISCARD_SEEN) else {
+            return;
+        };
+        let mut stdin = std::io::BufReader::new(std::io::stdin());
+        let Ok(Some(AnyFirstLine::V3(HostFirstLine::Discard(office)))) =
+            v3::read_first_line_any(&mut stdin, org_office_launch::FirstLine::Discard)
+        else {
+            std::process::exit(2);
+        };
+        if office.office_id != OFFICE || office.instance_id != INSTANCE {
+            std::process::exit(3);
+        }
+        let mut stream = UnixStream::connect(&office.rendezvous).unwrap();
+        let v3::Handoff::Discard { db_key, fds } =
+            channels::tests::discard_worker_reads_handoff(&mut stream)
+        else {
+            std::process::exit(4);
+        };
+        assert!(fds.is_empty());
+        let note = if db_key.is_some() { "key\n" } else { "null\n" };
+        fs::write(seen, note).unwrap();
+        v3::write_rendezvous_event(
+            &mut stream,
+            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+        )
+        .unwrap();
+        std::process::exit(0);
+    }
+
+    /// The whole v3 discard path: the spawner binds a rendezvous, writes the discard line, the
+    /// broker hands off a header whose `db_key` is `null` although the key store holds the
+    /// office's key, the worker's `discarded` arrives on the stream, and only then is the key
+    /// deleted.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_v3_discard_hands_off_no_key_and_deletes_it_only_after_discarded() {
+        // Under /tmp: the rendezvous path must fit a socket address.
+        let dir = tempfile::Builder::new()
+            .prefix("sv")
+            .tempdir_in("/tmp")
+            .unwrap();
+        fs::create_dir(dir.path().join("run")).unwrap();
+        let keys = Arc::new(MemoryKeys::default());
+        let key = DbKey::from_bytes([8; 32]);
+        keys.create(OFFICE, &key).unwrap();
+        let seen = dir.path().join("seen");
+        // The host closes the server's stdout over v3, so libtest's output goes nowhere.
+        let program = script(
+            dir.path(),
+            "server",
+            &format!(
+                "{V3_DISCARD_SEEN}='{}' exec '{}' --exact supervisor::tests::v3_discard_server \
+                 --ignored --test-threads=1 >/dev/null",
+                seen.display(),
+                std::env::current_exe().unwrap().display()
+            ),
+        );
+        let supervisor = supervisor(dir.path(), program, &keys).with_v3(INSTANCE);
+        assert_eq!(
+            supervisor.discard(OFFICE).unwrap(),
+            DiscardOutcome::Discarded
+        );
+        assert!(!keys.has(OFFICE), "the key outlived `discarded`");
+        assert_eq!(
+            fs::read_to_string(&seen).unwrap(),
+            "null\n",
+            "the discard handoff carried the key"
+        );
+        assert!(keys
+            .calls()
+            .iter()
+            .any(|call| *call == (Op::Delete, OFFICE.to_owned())));
+    }
+
     #[test]
     fn a_discard_whose_key_cant_be_read_starts_nothing_and_keeps_everything() {
         let dir = tempfile::tempdir().unwrap();

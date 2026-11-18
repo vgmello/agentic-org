@@ -115,7 +115,12 @@ static TRANSFER: OnceLock<OwnedFd> = OnceLock::new();
 enum Launch {
     Create(CreateFields),
     Start,
-    Discard { db_key: Option<DbKey> },
+    /// A v2 discard carries the key (or `null`); a v3 discard carries none (`keyless`), as the
+    /// databases are plain SQLite, so its folder is removed whatever it holds.
+    Discard {
+        db_key: Option<DbKey>,
+        keyless: bool,
+    },
 }
 
 /// What a create names, from a v2 create message or a v3 create line.
@@ -208,7 +213,7 @@ fn main() {
     // another id: a refused create must not replace another office's live socket.
     let (office, lock, socket_id) = match office_id {
         None => {
-            let create = match first_line(&home, &key, &step, &mut stdin, FirstLine::Create) {
+            let create = match first_line(&home, &key, &step, &mut stdin, FirstLine::Create, None) {
                 Launch::Create(create) => create,
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             };
@@ -271,7 +276,7 @@ fn main() {
             (office, lock, socket_id)
         }
         Some(id) => {
-            match first_line(&home, &key, &step, &mut stdin, FirstLine::Start) {
+            match first_line(&home, &key, &step, &mut stdin, FirstLine::Start, Some(&id)) {
                 Launch::Start => {}
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             }
@@ -363,15 +368,17 @@ fn inherited_fds() -> String {
     }
 }
 
-/// The first stdin line, of either version, checked against the flag (`expected`); a v3 line
-/// also runs the rendezvous handshake. An unreadable or mismatched line is refused here. EOF
-/// before it means the host is gone: exit 0 without a line.
+/// The first stdin line, of either version, checked against the flag (`expected`, and for a
+/// v3 line the flag's office id, `flag_id`); a v3 line also runs the rendezvous handshake. An
+/// unreadable or mismatched line is refused here. EOF before it means the host is gone: exit 0
+/// without a line.
 fn first_line(
     home: &Path,
     key: &str,
     step: &Step,
     stdin: &mut impl BufRead,
     expected: FirstLine,
+    flag_id: Option<&str>,
 ) -> Launch {
     let pid = std::process::id();
     let line = match v3::read_first_line_any(stdin, expected) {
@@ -404,6 +411,7 @@ fn first_line(
                 }
                 HostMessage::Discard(discard) => Launch::Discard {
                     db_key: discard.db_key,
+                    keyless: false,
                 },
                 _ => refuse_first_line(home, key, FailCode::InvalidRequest),
             }
@@ -417,7 +425,11 @@ fn first_line(
                 home,
                 &format!("instance {key} {pid} {}", office.instance_id),
             );
-            let handoff = rendezvous(home, key, &office.rendezvous);
+            // As the real server: the line's office must be the flag's, before connecting.
+            if flag_id.is_some_and(|id| office.office_id != id) {
+                refuse_first_line(home, key, FailCode::InvalidRequest)
+            }
+            let handoff = rendezvous(home, key, &line, &office.rendezvous);
             match (line, handoff) {
                 (
                     HostFirstLine::Create(create),
@@ -446,9 +458,10 @@ fn first_line(
                     note_grant(home, key, &grant_key);
                     Launch::Start
                 }
-                (HostFirstLine::Discard(_), Handoff::Discard { db_key, .. }) => {
-                    Launch::Discard { db_key }
-                }
+                (HostFirstLine::Discard(_), Handoff::Discard { db_key, .. }) => Launch::Discard {
+                    db_key,
+                    keyless: true,
+                },
                 _ => refuse_first_line(home, key, FailCode::InvalidRequest),
             }
         }
@@ -457,44 +470,63 @@ fn first_line(
 }
 
 /// The v3 handshake on the rendezvous socket at `path`, as the real server does it. Any fault
-/// fails the run (`storage_error`; `invalid_request` for a bad header). From then on events go
-/// on the stream.
-fn rendezvous(home: &Path, key: &str, path: &str) -> Handoff {
+/// fails the run (`storage_error`; `invalid_request` for a bad header, or one whose op isn't
+/// `line`'s). As in the real server, events go on the stream as soon as it is connected, so a
+/// failure during the handshake reaches the host there, never on stdout.
+fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Handoff {
     let mut stream = UnixStream::connect(path).unwrap_or_else(|_| fail(FailCode::StorageError));
+    let events = stream
+        .try_clone()
+        .unwrap_or_else(|_| fail(FailCode::StorageError));
+    let _ = RENDEZVOUS.set(Mutex::new(events));
     if frame::write_message(&mut stream, &v3::ReadyForSecrets).is_err() {
-        fail(FailCode::StorageError);
+        bail(&stream, FailCode::StorageError);
     }
     let fence = Mutex::new(());
     let mut receiver = StreamReceiver::new(
         stream
             .try_clone()
-            .unwrap_or_else(|_| fail(FailCode::StorageError)),
+            .unwrap_or_else(|_| bail(&stream, FailCode::StorageError)),
     );
     // Reserved once, so a header holding keys never reallocates; zeroed after the decode.
     let mut header = Vec::with_capacity(v3::TRANSFER_HEADER_MAX_BYTES + 1);
     loop {
         let (byte, fds) = receive(&stream, || receiver.receive_byte(0, &fence));
         if !fds.is_empty() {
-            fail(FailCode::InvalidRequest);
+            bail(&stream, FailCode::InvalidRequest);
         }
         if byte == b'\n' {
             break;
         }
         if header.len() == v3::TRANSFER_HEADER_MAX_BYTES {
             zero(&mut header);
-            fail(FailCode::InvalidRequest);
+            bail(&stream, FailCode::InvalidRequest);
         }
         header.push(byte);
     }
     let decoded = v3::decode_handoff(&header);
     zero(&mut header);
-    let handoff = decoded.unwrap_or_else(|_| fail(FailCode::InvalidRequest));
+    let handoff = decoded.unwrap_or_else(|_| bail(&stream, FailCode::InvalidRequest));
+    // The op check comes right after the decode, before any marker or receipt, as in the real
+    // server: a mismatched handoff never gets its descriptors acknowledged.
+    if !matches!(
+        (line, &handoff),
+        (HostFirstLine::Create(_), Handoff::Create { .. })
+            | (HostFirstLine::Start(_), Handoff::Start { .. })
+            | (HostFirstLine::Discard(_), Handoff::Discard { .. })
+    ) {
+        record(
+            home,
+            &format!("handoff-op-refused {key} {}", std::process::id()),
+        );
+        bail(&stream, FailCode::InvalidRequest);
+    }
     if !handoff.fds().is_empty() {
         let mut fds = receive(&stream, || {
             receiver.receive_marker(handoff.fds().len(), v3::FD_MARKER, &fence)
         });
         let Some(transfer) = fds.pop() else {
-            fail(FailCode::StorageError)
+            bail(&stream, FailCode::StorageError)
         };
         let _ = TRANSFER.set(transfer);
         record(
@@ -505,7 +537,7 @@ fn rendezvous(home: &Path, key: &str, path: &str) -> Handoff {
             of: "handoff".into(),
         };
         if v3::write_rendezvous_event(&mut stream, &receipt).is_err() {
-            fail(FailCode::StorageError);
+            bail(&stream, FailCode::StorageError);
         }
     }
     // The receiver set the shared descriptor non-blocking. With it gone, the stream blocks
@@ -514,8 +546,14 @@ fn rendezvous(home: &Path, key: &str, path: &str) -> Handoff {
     if stream.set_nonblocking(false).is_err() {
         fail(FailCode::StorageError);
     }
-    let _ = RENDEZVOUS.set(Mutex::new(stream));
     handoff
+}
+
+/// Fails the run during the handshake: the receiver may have left the shared descriptor
+/// non-blocking, so it blocks again first and the `failed` event is written whole.
+fn bail(stream: &UnixStream, code: FailCode) -> ! {
+    let _ = stream.set_nonblocking(false);
+    fail(code)
 }
 
 /// One receive on the (non-blocking) rendezvous, waiting for readiness while it would block,
@@ -528,10 +566,10 @@ fn receive<T>(stream: &UnixStream, mut call: impl FnMut() -> Result<T, ReceiveEr
                 match org_socket::poll_readable(stream.as_raw_fd(), org_socket::READ_TICK) {
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Err(_) => fail(FailCode::StorageError),
+                    Err(_) => bail(stream, FailCode::StorageError),
                 }
             }
-            Err(ReceiveError::Fatal(_)) => fail(FailCode::StorageError),
+            Err(ReceiveError::Fatal(_)) => bail(stream, FailCode::StorageError),
         }
     }
 }
@@ -611,11 +649,11 @@ fn nibble(hex: u8) -> u8 {
     }
 }
 
-/// `--discard <id>`: removes an unfinished office's folder, then exits. Without a key it
-/// refuses a folder holding databases (`db`).
+/// `--discard <id>`: removes an unfinished office's folder, then exits. A v2 discard without a
+/// key refuses a folder holding databases (`db`); a v3 discard needs no key.
 fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut impl BufRead) -> ! {
-    let db_key = match first_line(home, key, step, stdin, FirstLine::Discard) {
-        Launch::Discard { db_key } => db_key,
+    let (db_key, keyless) = match first_line(home, key, step, stdin, FirstLine::Discard, Some(id)) {
+        Launch::Discard { db_key, keyless } => (db_key, keyless),
         _ => refuse_first_line(home, key, FailCode::InvalidRequest),
     };
     note_db_key(home, key, db_key.as_ref(), id);
@@ -626,7 +664,7 @@ fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut imp
         if dir.join(OFFICE_FILE_NAME).exists() {
             fail(FailCode::AlreadyExists);
         }
-        if db_key.is_none() && dir.join(DB_FILE_NAME).exists() {
+        if !keyless && db_key.is_none() && dir.join(DB_FILE_NAME).exists() {
             fail(FailCode::StorageError);
         }
         if fs::remove_dir_all(&dir).is_err() {

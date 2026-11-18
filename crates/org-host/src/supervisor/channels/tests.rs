@@ -164,7 +164,7 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
 
 /// The worker's side of a discard: `ready_for_secrets`, then the header bytes, one at a time,
 /// with no descriptor on any of them.
-fn discard_worker_reads_handoff(worker: &mut UnixStream) -> v3::Handoff {
+pub(crate) fn discard_worker_reads_handoff(worker: &mut UnixStream) -> v3::Handoff {
     frame::write_message(worker, &v3::ReadyForSecrets).unwrap();
     let mut receiver = org_socket::rights::StreamReceiver::new(worker.try_clone().unwrap());
     let mut header = Vec::new();
