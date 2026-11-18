@@ -240,6 +240,15 @@ pub(crate) trait OneTimeLinks {
         digest: LinkDigest,
         now_ms: i64,
     ) -> Result<Result<String, Refused>, Error>;
+    /// Whether `redeem` would accept the link with this digest at `now_ms`,
+    /// without changing it. A caller uses it to refuse a dead link before
+    /// costly work; the later `redeem` still decides.
+    fn would_redeem(
+        &self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<Result<(), Refused>, Error>;
     /// Insert `link` only if no link of the same kind and subject was ever
     /// stored, in any state, checked and inserted in one transaction. Returns
     /// whether it was inserted.
@@ -278,6 +287,19 @@ pub(crate) trait OneTimeLinks {
         self.redeem(
             kind,
             LinkDigest::of(self.instance_id(), kind, &token),
+            now_ms,
+        )
+    }
+    /// Whether `token` would redeem now, without redeeming it.
+    fn redeemable(
+        &self,
+        kind: LinkKind,
+        token: &Token,
+        now_ms: i64,
+    ) -> Result<Result<(), Refused>, Error> {
+        self.would_redeem(
+            kind,
+            LinkDigest::of(self.instance_id(), kind, token),
             now_ms,
         )
     }

@@ -1191,13 +1191,17 @@ pub(crate) mod tests {
         offices.shutdown();
     }
 
-    /// A local (host.sock) connection cannot create or validate browser sessions.
+    /// A local (host.sock) connection cannot create or validate browser sessions:
+    /// every browser op is `not_authorized` there and writes no session or throttle state.
     #[test]
     fn browser_session_ops_off_the_web_connection_are_refused() {
-        use org_host_control::browser::{LinkRegister, SessionSignIn};
+        use org_host_control::browser::{
+            LinkRegister, SessionSignIn, SessionValidate, SessionValidateParams,
+        };
         let home = tempfile::tempdir().unwrap();
         let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
-        let mut service = service(home.path()).with_authentication(Some(Arc::new(authentication)));
+        let authentication = Arc::new(authentication);
+        let mut service = service(home.path()).with_authentication(Some(authentication.clone()));
         service.instance_id = Some(crate::ids::uuid_v7().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1209,19 +1213,62 @@ pub(crate) mod tests {
             .unwrap()
             .into_result::<Hello>()
             .unwrap();
-        let response = exchange::<SessionSignIn>(&mut peer, 2, &browser_sign_in(2)).unwrap();
-        assert!(matches!(response.outcome, org_proto::Outcome::Error(_)));
-        let register = serde_json::json!({});
+        // The right password: had it been served, a session would exist.
+        let signed_in = browser_sign_in(2);
+        assert!(refused(
+            exchange::<SessionSignIn>(&mut peer, 2, &signed_in),
+            ErrorCode::NotAuthorized
+        ));
+        // Six wrong passwords: had they counted, the login would now be locked.
+        let mut wrong = browser_sign_in(3);
+        wrong.password = org_host_control::Password::new("not the password".into()).unwrap();
+        for id in 3..9 {
+            assert!(refused(
+                exchange::<SessionSignIn>(&mut peer, id, &wrong),
+                ErrorCode::NotAuthorized
+            ));
+        }
+        let validate = SessionValidateParams {
+            cookie_digest: signed_in.cookie_digest,
+            proof_digest: signed_in.proof_digest,
+            origin: signed_in.origin.clone(),
+        };
+        assert!(refused(
+            exchange::<SessionValidate>(&mut peer, 9, &validate),
+            ErrorCode::NotAuthorized
+        ));
+        let digest = "ab".repeat(32);
         org_proto::frame::write_message(
             peer.get_mut(),
-            &serde_json::json!({"id": 3, "method": LinkRegister::METHOD, "params": register}),
+            &serde_json::json!({"id": 10, "method": LinkRegister::METHOD, "params": {
+                "link": "A".repeat(43), "login": "ada", "password": "long enough password",
+                "client_address": "192.0.2.1", "cookie_digest": digest, "proof_digest": digest,
+                "origin": {"scheme": "https", "host": "org.example", "port": 443}}}),
         )
         .unwrap();
         let response: org_proto::Response =
             org_proto::frame::read_message(&mut peer).unwrap().unwrap();
-        assert!(matches!(response.outcome, org_proto::Outcome::Error(_)));
+        assert!(matches!(
+            response.outcome,
+            org_proto::Outcome::Error(ref e) if e.code == ErrorCode::NotAuthorized
+        ));
         drop(local);
         offices.shutdown();
+        // Nothing was stored: no session for the served digests, and the login
+        // and address still have their whole budget.
+        let now = i64::try_from(authentication::wall_ms().unwrap()).unwrap();
+        let mut ended = Vec::new();
+        assert_eq!(
+            authentication
+                .validate_browser(&validate, now, &mut ended)
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+        authentication
+            .sign_in_browser(&browser_sign_in(4), now, &mut ended)
+            .unwrap();
+        assert!(ended.is_empty());
     }
 
     /// Before the registered start installs the administrator service, both admin calls

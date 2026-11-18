@@ -806,7 +806,7 @@ fn browser_ops_carry_only_digests_and_hide_passwords() {
     }
     let register: crate::browser::LinkRegisterParams = serde_json::from_value(json!({
         "link": "secret-token", "login": "ada", "password": "correct horse battery",
-        "cookie_digest": digest, "proof_digest": digest,
+        "client_address": "192.0.2.1", "cookie_digest": digest, "proof_digest": digest,
         "origin": {"scheme": "http", "host": "localhost", "port": 8080},
     }))
     .unwrap();

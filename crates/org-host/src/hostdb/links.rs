@@ -181,6 +181,25 @@ impl OneTimeLinks for HostDb {
         tx.commit().map_err(store)?;
         Ok(Ok(link_id))
     }
+    fn would_redeem(
+        &self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<Result<(), Refused>, Error> {
+        let db = self.connection.lock().map_err(poisoned)?;
+        let row: Option<(String, i64)> = db
+            .query_row(
+                "SELECT state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
+                (kind.as_str(), &digest.0[..]),
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(store)?;
+        Ok(row.map_or(Err(Refused::Unknown), |(state, expires_at_ms)| {
+            redeem_rule(&state, expires_at_ms, now_ms)
+        }))
+    }
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error> {
         let db = self.connection.lock().map_err(poisoned)?;
         db.query_row(

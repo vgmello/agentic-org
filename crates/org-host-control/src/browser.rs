@@ -79,6 +79,9 @@ pub struct LinkRegisterParams {
     pub link: LinkToken,
     pub login: String,
     pub password: Password,
+    /// The browser's peer address as the web process saw it; a refused link
+    /// counts against it on the same per-address throttle as sign-in.
+    pub client_address: IpAddr,
     pub cookie_digest: Digest32,
     pub proof_digest: Digest32,
     pub origin: BrowserOrigin,

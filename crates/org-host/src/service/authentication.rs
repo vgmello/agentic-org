@@ -24,7 +24,12 @@ use crate::hostdb::{
     HostDb,
 };
 
+/// Argon2 runs at most this many at once, native and browser paths together.
 const MAX_HASHES: usize = 2;
+// The limits below apply only to native sessions (this connection-bound map).
+// Browser sessions live in the `BrowserSessions` store: no absolute lifetime,
+// no per-connection cap, the 30-day idle rule and the store's host-wide
+// `SESSION_LIMIT` (A3 plan B4 step 5).
 const MAX_SESSIONS: usize = 1024;
 const MAX_CONNECTION_SESSIONS: usize = 32;
 const ABSOLUTE: Duration = Duration::from_secs(12 * 3600);

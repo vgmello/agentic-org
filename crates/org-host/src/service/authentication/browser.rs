@@ -22,6 +22,7 @@ use crate::accounts::rules::{check_new_password, PasswordRule, Username};
 use crate::accounts::store::{
     AccountStore, Attempt, ClientAddress, NewAccount, Registration, ThrottleKey,
 };
+use crate::links::{LinkKind, OneTimeLinks};
 use crate::sessions::{
     Admission, BrowserSessions, Ended, NewSession, Origin, Scheme, SessionDigest, IDLE_MS,
 };
@@ -44,6 +45,37 @@ fn digest(value: &Digest32) -> SessionDigest {
 fn store_error<E>(_: E) -> ApiError {
     unavailable()
 }
+/// `rate_limited` with the longest wait if any of `keys` is locked.
+fn unless_locked(
+    accounts: &dyn AccountStore,
+    keys: &[ThrottleKey<'_>],
+    now_ms: i64,
+) -> Result<(), ApiError> {
+    let mut retry = 0;
+    for key in keys {
+        let state = accounts.throttle(key, now_ms).map_err(store_error)?;
+        if state.locked {
+            retry = retry.max(state.retry_after_ms);
+        }
+    }
+    if retry > 0 {
+        return Err(ApiError::rate_limited(u64::try_from(retry).unwrap_or(1)));
+    }
+    Ok(())
+}
+/// Records one failure on each of `keys`.
+fn failed(
+    accounts: &dyn AccountStore,
+    keys: &[ThrottleKey<'_>],
+    now_ms: i64,
+) -> Result<(), ApiError> {
+    for key in keys {
+        accounts
+            .record(key, Attempt::Failure, now_ms)
+            .map_err(store_error)?;
+    }
+    Ok(())
+}
 
 impl Authentication {
     fn permit(&self) -> Result<HashPermit<'_>, ApiError> {
@@ -56,6 +88,8 @@ impl Authentication {
     }
 
     /// `link.register`: redeems the setup link and signs the new administrator in.
+    /// The per-address throttle is read first, and a link that would not redeem
+    /// is refused before any Argon2 work; every link refusal counts on the address.
     pub(crate) fn register(
         &self,
         params: &LinkRegisterParams,
@@ -65,7 +99,14 @@ impl Authentication {
         if params.login.len() > FIELD_MAX_BYTES {
             return Err(ApiError::rule("login", "format"));
         }
-        let token = crate::links::Token::parse(params.link.expose()).ok_or_else(not_found)?;
+        let accounts: &dyn AccountStore = &*self.db;
+        let address = ClientAddress::of(params.client_address);
+        let keys = [ThrottleKey::Address(&address)];
+        unless_locked(accounts, &keys, now_ms)?;
+        let refuse = || failed(accounts, &keys, now_ms).and(Err(not_found()));
+        let Some(token) = crate::links::Token::parse(params.link.expose()) else {
+            return refuse();
+        };
         let username =
             Username::new(&params.login).map_err(|_| ApiError::rule("login", "format"))?;
         check_new_password(params.password.expose()).map_err(|rule| match rule {
@@ -73,12 +114,19 @@ impl Authentication {
             PasswordRule::TooLong => ApiError::rule("password", "too_long"),
         })?;
         let origin = origin(&params.origin)?;
+        let links: &dyn OneTimeLinks = &*self.db;
+        if links
+            .redeemable(LinkKind::Registration, &token, now_ms)
+            .map_err(store_error)?
+            .is_err()
+        {
+            return refuse();
+        }
         let verifier = {
             let _permit = self.permit()?;
             hash_password(&params.password)?
         };
         let new = NewAccount::new(username, verifier).map_err(store_error)?;
-        let accounts: &dyn AccountStore = &*self.db;
         match accounts
             .register_administrator(&token, &new, now_ms)
             .map_err(store_error)?
@@ -91,13 +139,14 @@ impl Authentication {
                 now_ms,
                 ended,
             ),
-            Registration::Link(_) | Registration::AdministratorExists => Err(not_found()),
+            Registration::Link(_) | Registration::AdministratorExists => refuse(),
             Registration::LoginTaken => Err(ApiError::rule("login", "taken")),
         }
     }
 
     /// `session.sign_in`: one identical refusal for an unknown login, a wrong
-    /// password and a revoked account; `rate_limited` before any Argon2 work.
+    /// password and a revoked account; `rate_limited` before taking a hash
+    /// permit or doing any Argon2 work.
     pub(crate) fn sign_in_browser(
         &self,
         params: &SessionSignInParams,
@@ -117,17 +166,8 @@ impl Authentication {
             keys.push(ThrottleKey::Login(key));
         }
         let accounts: &dyn AccountStore = &*self.db;
+        unless_locked(accounts, &keys, now_ms)?;
         let _permit = self.permit()?;
-        let mut retry = 0;
-        for k in &keys {
-            let state = accounts.throttle(k, now_ms).map_err(store_error)?;
-            if state.locked {
-                retry = retry.max(state.retry_after_ms);
-            }
-        }
-        if retry > 0 {
-            return Err(ApiError::rate_limited(u64::try_from(retry).unwrap_or(1)));
-        }
         let credentials = match &key {
             Some(key) => accounts.credentials(key).map_err(store_error)?,
             None => None,
@@ -142,11 +182,7 @@ impl Authentication {
             .map(|c| c.account_id);
         let Some(account) = account else {
             // Every failure counts on the address and, when well formed, the login.
-            for k in &keys {
-                accounts
-                    .record(k, Attempt::Failure, now_ms)
-                    .map_err(store_error)?;
-            }
+            failed(accounts, &keys, now_ms)?;
             return Err(denied());
         };
         if let Some(key) = &key {
@@ -227,7 +263,15 @@ impl Authentication {
         match sessions.create(&new, now_ms).map_err(store_error)? {
             Admission::Created { reaped } => {
                 ended.extend(reaped);
-                self.view(&new.id, account, now_ms)?.ok_or_else(denied)
+                match self.view(&new.id, account, now_ms) {
+                    Ok(Some(view)) => Ok(view),
+                    // The account went away or failed to load after the insert:
+                    // the new session must not outlive the refusal.
+                    other => {
+                        ended.extend(sessions.end(&new.id).map_err(store_error)?);
+                        Err(other.err().unwrap_or_else(denied))
+                    }
+                }
             }
             // The same body for every account (SES-6).
             Admission::Full { reaped } => {
