@@ -145,6 +145,13 @@ impl ReleaseRoot {
     }
 }
 
+// Dropping the handle gives up its hold on the directory's lock. It is a drop on every
+// target, including those where no value of the adapter's type exists, so that a
+// consumer that drops one on purpose reads the same to every target's lints.
+impl Drop for ReleaseRoot {
+    fn drop(&mut self) {}
+}
+
 impl fmt::Debug for ReleaseRoot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ReleaseRoot")

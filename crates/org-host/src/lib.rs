@@ -721,8 +721,8 @@ impl Host {
             dev_key_dir,
             release_directory.as_ref(),
         )?;
-        // The views hold the credential directory from here on.
-        drop(release_directory);
+        // From here on the views hold the credential directory: this handle is not needed
+        // again and goes when the composition returns.
         let authentication_lifecycle = authentication
             .as_ref()
             .map(service::authentication::Lifecycle::start)
