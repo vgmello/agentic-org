@@ -31,6 +31,9 @@ struct Scripted {
     calls: AtomicUsize,
     ready: Mutex<Option<mpsc::Sender<()>>>,
     finish: AtomicBool,
+    /// Set when a mode-3 prompt observed `cancelled()`, so a test can tell a
+    /// real cancellation from the 5 s deadline (both refuse the release).
+    cancelled_seen: AtomicBool,
 }
 impl TestPresence for Scripted {
     fn local(&self, _: &Connection) -> bool {
@@ -49,6 +52,7 @@ impl TestPresence for Scripted {
             let deadline = Instant::now() + Duration::from_secs(5);
             while !self.finish.load(Ordering::SeqCst) && Instant::now() < deadline {
                 if cancelled() {
+                    self.cancelled_seen.store(true, Ordering::SeqCst);
                     return Err(());
                 }
                 std::thread::sleep(Duration::from_millis(5));
@@ -79,12 +83,13 @@ fn copy(s: &SessionHandle) -> SessionHandle {
 #[test]
 #[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual worker listeners require permitted local bind"]
 fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence() {
+    // `_temp` is bound first so it drops last, after the host and its children.
     let Started {
+        temp: _temp,
         host,
         socket,
         mut wire,
         session,
-        temp: _temp,
         ..
     } = start_signed_in();
     let wire = &mut wire;
@@ -105,6 +110,7 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
         calls: AtomicUsize::new(0),
         ready: Mutex::new(None),
         finish: AtomicBool::new(false),
+        cancelled_seen: AtomicBool::new(false),
     });
     let show = |redeliver| ops::RecoveryReleaseParams {
         session: copy(&p.session),
@@ -197,6 +203,8 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
         });
         // The waiting connection's EOF cancels its prompt.
         adapter.finish.store(false, Ordering::SeqCst);
+        adapter.cancelled_seen.store(false, Ordering::SeqCst);
+        let eof_started = Instant::now();
         let (ready, started) = mpsc::channel();
         *adapter.ready.lock().unwrap() = Some(ready);
         let eof = other.get_ref().try_clone().unwrap();
@@ -215,6 +223,11 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
                 ErrorCode::NotAuthorized
             );
         });
+        assert!(
+            adapter.cancelled_seen.load(Ordering::SeqCst),
+            "the prompt ended by its deadline, not by the connection's EOF"
+        );
+        assert!(eof_started.elapsed() < Duration::from_secs(4));
         drop(other);
         drop(eof);
         assert_eq!(

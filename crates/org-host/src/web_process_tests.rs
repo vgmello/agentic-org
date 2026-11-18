@@ -209,7 +209,9 @@ fn start_registered_host(
 
 /// A started registered host running copies of the real worker and web images,
 /// with `wire` signed in as the seeded administrator `session` over `host.sock`.
-/// `temp` is last so the disposable root outlives the host when dropped in order.
+/// `temp` is declared last so a whole `Started` drops it after the host; a
+/// destructuring caller binds `temp` first for the same reason (bindings drop
+/// in reverse order).
 pub(super) struct Started {
     pub(super) address: SocketAddr,
     pub(super) program: PathBuf,
@@ -322,14 +324,15 @@ pub(super) fn provision_hq(
 #[test]
 #[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
 fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
+    // `_temp` is bound first so it drops last, after the host and its children.
     let Started {
+        temp: _temp,
         address,
         program,
         host,
         socket: _,
         mut wire,
         session,
-        temp: _temp,
     } = start_signed_in();
     // Authenticated but no HQ yet: the web process is not serving.
     assert!(!web_ready(&host));
