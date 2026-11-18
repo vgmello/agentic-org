@@ -33,6 +33,10 @@
 		failure?.kind === 'rate_limited' && retryUntil !== undefined ? rateLimitCopy(retryUntil - now) : failure?.message
 	);
 	const ready = $derived(appSession.state.kind !== 'loading');
+	// SIGN-31: this tab's account was replaced by a sign-in in another tab.
+	const replacedBy = $derived(
+		appSession.state.kind === 'signed-out' && appSession.state.reason === 'changed-account' ? appSession.state.login : undefined
+	);
 
 	function destination() {
 		return safeReturnTarget(page.url.searchParams.get('next'), page.url.origin) ?? '/welcome';
@@ -40,7 +44,7 @@
 
 	onMount(async () => {
 		await appSession.boot();
-		if (appSession.state.kind === 'signed-in') {
+		if (appSession.state.kind === 'signed-in' && appSession.state.reauth === undefined) {
 			await goto(destination(), { replaceState: true });
 			return;
 		}
@@ -98,7 +102,12 @@
 	<p class="text-sm/6 text-gray-400" aria-live="polite">Loading…</p>
 {:else}
 	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">Sign in to HQ at {address}</h1>
-	{#if note}<p class="mt-2 text-sm/6 text-gray-300" role="status">{note}</p>{/if}
+	{#if replacedBy !== undefined}
+		<div role="status" class="mt-2 text-sm/6 text-gray-300">
+			<p>You're now signed in as {replacedBy} in another tab. Reload to continue as {replacedBy}.</p>
+			<button type="button" class="mt-1 font-semibold underline" onclick={() => location.reload()}>Reload</button>
+		</div>
+	{:else if note}<p class="mt-2 text-sm/6 text-gray-300" role="status">{note}</p>{/if}
 
 	<div aria-live="assertive">
 		{#if failure && failureText}

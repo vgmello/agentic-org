@@ -4,6 +4,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import AccountMenu from '$lib/platform/auth/AccountMenu.svelte';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import { signOutFlow } from '$lib/platform/auth/sign-out-flow.svelte';
 	import { signInHref } from '$lib/platform/auth/return-target';
 	import { readOrganizationList, readResponse } from '$lib/platform/http/wire';
 
@@ -35,12 +36,12 @@
 	$effect(() => {
 		const state = appSession.state;
 		if (state.kind === 'signed-out' && state.reason === 'signed-out') void goto('/sign-in?note=signed-out', { replaceState: true });
+		// SIGN-31: another account signed in from another tab; this tab keeps none of the previous account's data.
+		else if (state.kind === 'signed-out' && state.reason === 'changed-account') void goto('/sign-in', { replaceState: true });
 		else if (state.kind === 'signed-out' && state.reason === 'ended') void goto(signInHref('/welcome', location.origin, 'ended'), { replaceState: true });
 	});
 
-	async function signOut() {
-		await appSession.controller().signOut();
-	}
+	const signOut = () => signOutFlow.request();
 </script>
 
 <svelte:head><title>Organizations · Agentic Org</title></svelte:head>
@@ -48,7 +49,7 @@
 {#if !session || listing.kind === 'loading'}
 	<p class="text-sm/6 text-gray-400" aria-live="polite">Loading…</p>
 {:else}
-	<div class="mb-8 flex justify-end"><AccountMenu {session} onSignOut={signOut} /></div>
+	<div class="mb-8 flex justify-end"><AccountMenu {session} /></div>
 	{#if listing.kind === 'failed'}
 		<div role="alert" class="rounded-md bg-red-500/10 p-3 text-sm/6 text-red-300">
 			Can't reach HQ. Check that the instance is running on the HQ machine, then try again.
@@ -66,11 +67,11 @@
 			<a href="/create" class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">
 				<Plus class="size-4" aria-hidden="true" />Create organization
 			</a>
-			<button type="button" onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button>
+			<button type="button" disabled={signOutFlow.signingOut} onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button>
 		</div>
 	{:else}
 		<!-- SIGN-9, any other account. -->
 		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">This account can't open any organization on this HQ. Ask the owner of your organization to invite you again.</h1>
-		<div class="mt-6"><button type="button" onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button></div>
+		<div class="mt-6"><button type="button" disabled={signOutFlow.signingOut} onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button></div>
 	{/if}
 {/if}

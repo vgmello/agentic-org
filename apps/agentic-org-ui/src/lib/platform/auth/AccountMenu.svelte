@@ -1,27 +1,9 @@
 <script lang="ts">
 	import type { SessionView } from './session-gateway';
+	import { signOutFlow } from './sign-out-flow.svelte';
 
-	let {
-		session,
-		onSignOut
-	}: { session: SessionView; onSignOut: () => Promise<void> } = $props();
+	let { session }: { session: SessionView } = $props();
 	let open = $state(false);
-	let signingOut = $state(false);
-	let failed = $state(false);
-
-	async function signOut() {
-		if (signingOut) return;
-		signingOut = true;
-		failed = false;
-		try {
-			await onSignOut();
-		} catch {
-			// SIGN-29: nothing changed; the session stays valid until HQ ends it.
-			failed = true;
-		} finally {
-			signingOut = false;
-		}
-	}
 </script>
 
 <div class="relative">
@@ -44,17 +26,11 @@
 			<div class="border-t border-white/10"></div>
 			<button
 				type="button"
-				disabled={signingOut}
-				onclick={signOut}
+				disabled={signOutFlow.signingOut}
+				onclick={() => signOutFlow.request()}
 				class="block w-full px-3 py-2 text-left text-sm/6 text-white hover:bg-white/5 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-indigo-500"
-				>{signingOut ? 'Signing out…' : 'Sign out'}</button
+				>{signOutFlow.signingOut ? 'Signing out…' : 'Sign out'}</button
 			>
 		</div>
 	{/if}
 </div>
-{#if failed}
-	<div role="alert" class="mt-3 rounded-md bg-red-500/10 p-3 text-sm/6 text-red-300">
-		Couldn't sign out: HQ can't be reached. Try again when it's back.
-		<button type="button" class="ml-2 font-semibold underline" onclick={signOut}>Try again</button>
-	</div>
-{/if}
