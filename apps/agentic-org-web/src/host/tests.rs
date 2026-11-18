@@ -53,6 +53,7 @@ fn connect(instance: &'static str) -> (io::Result<Arc<HostControl>>, UnixStream,
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
+        Arc::new(|_: &str, _: &serde_json::Value| {}),
     );
     (control, stop, thread)
 }
@@ -148,6 +149,7 @@ fn a_call_that_outlives_the_full_deadline_closes_the_connection() {
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
+        Arc::new(|_: &str, _: &serde_json::Value| {}),
     )
     .unwrap();
     let started = Instant::now();
@@ -237,6 +239,7 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
+        Arc::new(|_: &str, _: &serde_json::Value| {}),
     )
     .unwrap();
     let earlier = {
@@ -265,6 +268,8 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
             .unwrap(),
             until: Instant::now(),
             answer,
+            id: 99,
+            hook: None,
             claimed: Arc::clone(&claimed),
         })
         .unwrap();
@@ -329,6 +334,7 @@ fn scripted(
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
+        Arc::new(|_: &str, _: &serde_json::Value| {}),
     )
     .unwrap();
     (control, host)
@@ -404,4 +410,103 @@ fn a_reply_with_another_id_desynchronizes_and_closes_the_connection() {
     assert_eq!(probe(&control), Err(Failure::Unavailable));
     drop(control);
     assert_eq!(host.join().unwrap(), ["hello", "test.probe"]);
+}
+
+/// One ordered reader: an event written before a reply is applied before the
+/// call's hook, the hook runs before an event written after the reply, and an
+/// event that arrives while idle is applied without closing the connection.
+#[test]
+fn events_and_reply_hooks_apply_in_arrival_order_also_while_idle() {
+    let (web, peer) = UnixStream::pair().unwrap();
+    let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
+    let (idle_go, idle_wait) = mpsc::sync_channel::<()>(1);
+    let host = thread::spawn(move || {
+        let mut reader = BufReader::new(peer);
+        let hello: serde_json::Value = org_proto::frame::read_message(&mut reader)
+            .unwrap()
+            .unwrap();
+        let result = serde_json::to_value(
+            org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
+        )
+        .unwrap();
+        let out = reader.get_mut();
+        org_proto::frame::write_message(
+            out,
+            &serde_json::json!({"id":hello["id"],"result":result}),
+        )
+        .unwrap();
+        let request: serde_json::Value = org_proto::frame::read_message(&mut reader)
+            .unwrap()
+            .unwrap();
+        let out = reader.get_mut();
+        let event = |n: u64| serde_json::json!({"event":"session.ended","seq":n,"data":{"session_id":n.to_string()}});
+        org_proto::frame::write_message(out, &event(1)).unwrap();
+        org_proto::frame::write_message(out, &serde_json::json!({"id":request["id"],"result":{}}))
+            .unwrap();
+        org_proto::frame::write_message(out, &event(2)).unwrap();
+        idle_wait.recv().unwrap();
+        org_proto::frame::write_message(reader.get_mut(), &event(3)).unwrap();
+        // Then answer one more probe to show the connection survived.
+        let request: serde_json::Value = org_proto::frame::read_message(&mut reader)
+            .unwrap()
+            .unwrap();
+        org_proto::frame::write_message(
+            reader.get_mut(),
+            &serde_json::json!({"id":request["id"],"result":{"again":true}}),
+        )
+        .unwrap();
+    });
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = Arc::clone(&log);
+    let control = HostControl::from_handoff(
+        web.into(),
+        transfer.into(),
+        INSTANCE.into(),
+        Arc::new(|| panic!("unexpected ancillary failure")),
+        Arc::new(move |name: &str, data: &serde_json::Value| {
+            sink.lock()
+                .unwrap()
+                .push(format!("{name}:{}", data["session_id"].as_str().unwrap()));
+        }),
+    )
+    .unwrap();
+    let hooked = Arc::clone(&log);
+    let reply = control.request_then::<Probe>(&serde_json::json!({}), move |reply| {
+        assert_eq!(reply, &Ok(serde_json::json!({})));
+        hooked.lock().unwrap().push("hook".into());
+    });
+    assert_eq!(reply, Ok(serde_json::json!({})));
+    idle_go.send(()).unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    while log.lock().unwrap().len() < 4 && Instant::now() < until {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "session.ended:1",
+            "hook",
+            "session.ended:2",
+            "session.ended:3"
+        ]
+    );
+    assert!(control.live(), "an idle event keeps the connection");
+    assert_eq!(probe(&control), Ok(serde_json::json!({"again":true})));
+    drop(control);
+    host.join().unwrap();
+}
+
+#[test]
+fn rule_and_rate_refusals_reach_the_caller_with_their_fields() {
+    let (control, host) = scripted(|request| {
+        Some(serde_json::json!({"id":request["id"],"error":{
+            "code":"rate_limited","message":"Wait.","retry_after_ms":1500}}))
+    });
+    match probe(&control) {
+        Err(Failure::Refused(error)) => assert_eq!(error.retry_after_ms, Some(1500)),
+        other => panic!("{other:?}"),
+    }
+    assert!(control.live());
+    drop(control);
+    host.join().unwrap();
 }

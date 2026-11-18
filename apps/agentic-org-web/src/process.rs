@@ -171,8 +171,13 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     let stream = UnixStream::connect(&line.rendezvous)?;
     let (control, transfer, listener) = handoff(stream)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
-    let host =
-        HostControl::from_handoff(control, transfer, line.instance_id, Arc::new(|| fatal()))?;
+    let host = HostControl::from_handoff(
+        control,
+        transfer,
+        line.instance_id,
+        Arc::new(|| fatal()),
+        Arc::new(|_: &str, _: &serde_json::Value| {}),
+    )?;
     let (mode, origin, hsts) = match host.fetch_listener().map_err(|_| failure())? {
         TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
         TlsFetchResult::Https {
@@ -276,6 +281,7 @@ mod tests {
             transfer(),
             INSTANCE.into(),
             Arc::new(|| panic!("unexpected ancillary failure")),
+            Arc::new(|_: &str, _: &serde_json::Value| {}),
         )
         .unwrap();
         (control, stop)
