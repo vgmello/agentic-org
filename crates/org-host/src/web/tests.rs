@@ -20,10 +20,20 @@ fn loopback() -> ListenConfig {
     .unwrap()
 }
 
+/// The rendezvous-through-ACK bound for tests that start a real child. Production
+/// uses `WAIT` (5 s); a parallel workspace test run can delay a child's start past
+/// that, so tests allow far longer. Tests of the deadline itself pass their own.
+const START_WAIT: Duration = Duration::from_secs(60);
+
 /// Starts the web process of `config` through an admission of its own, as the first start
 /// of a host does.
 fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Running> {
-    Running::start(config, &Image::new(&config.check, &config.program), handler)
+    Running::start(
+        config,
+        &Image::new(&config.check, &config.program),
+        handler,
+        START_WAIT,
+    )
 }
 
 /// This user's own copy of the fake web process (`examples/fake_web.rs`) in `dir`, named as
@@ -39,8 +49,9 @@ fn fake_program(dir: &Path, steps: &str) -> PathBuf {
 /// A supervisor log sink for tests that do not read the log.
 fn quiet(_: &str) {}
 
+/// Waits for `done`; the bound is generous so a loaded test run cannot fail it.
 fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
-    let until = Instant::now() + Duration::from_secs(5);
+    let until = Instant::now() + Duration::from_secs(30);
     while !done() {
         assert!(Instant::now() < until, "timed out waiting for {what}");
         thread::sleep(Duration::from_millis(5));
@@ -318,7 +329,7 @@ fn readiness_turns_false_when_the_web_exits_or_its_control_reaches_eof() {
 
 /// HQ leaving Active or authentication going away while the web process runs stops it
 /// with a logged reason. It starts again once eligible: no failure is counted and no
-/// backoff is waited (the 30-second backoff would exceed `wait_for`'s deadline).
+/// backoff is waited (the 300-second backoff would exceed `wait_for`'s deadline).
 #[test]
 fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
     let stopping = Arc::new(AtomicBool::new(false));
@@ -344,7 +355,7 @@ fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
                 &state,
                 &|| eligible.load(Ordering::SeqCst),
                 Timing {
-                    backoff: Duration::from_secs(30),
+                    backoff: Duration::from_secs(300),
                     ..Timing::PRODUCTION
                 },
                 &|line| lock(&logged).push(line.to_owned()),
@@ -1703,7 +1714,7 @@ fn one_web_admission_serves_every_start_and_is_never_built_again() {
     let config = unchecked(dir.path(), fake_program(dir.path(), "first-line\nexit 3\n"));
     let image = Image::new(&config.check, &config.program);
     let built = image.admission().unwrap();
-    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps)) {
+    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("the fake web process exits before it connects"),
     };
@@ -1761,7 +1772,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
         (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
     };
     // No web process starts, whichever step notices.
-    let message = match Running::start(&config, &image, Arc::new(NoOps)) {
+    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("a missing program was started"),
     };
@@ -1771,7 +1782,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
     );
     // The program appears: the next start builds the admission, or finds the one it has.
     fake_program(dir.path(), "first-line\nexit 3\n");
-    let message = match Running::start(&config, &image, Arc::new(NoOps)) {
+    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("the fake web process exits before it connects"),
     };
@@ -2407,7 +2418,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
                 &|| true,
                 Timing::PRODUCTION,
                 &log,
-                || Running::start(&web.config, &image, web.handler.clone()),
+                || Running::start(&web.config, &image, web.handler.clone(), START_WAIT),
             )
         });
         wait_for("the supervised web process serves", || {
@@ -2522,7 +2533,7 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
             &|| true,
             timing,
             &log,
-            || Running::start(&web.config, &image, web.handler.clone()),
+            || Running::start(&web.config, &image, web.handler.clone(), START_WAIT),
         );
         assert_eq!(*lock(&state), GatewayState::Failed);
         for line in lock(&lines).iter() {

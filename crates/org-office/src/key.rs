@@ -8,30 +8,30 @@
 use std::fmt;
 use std::sync::Arc;
 
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 
 /// The 256-bit office secrets key. `Debug` never prints it, and there is no `Display`.
 ///
-/// It is the host's [`DbKey`] (zeroed when dropped), shared by reference count: the store keeps
+/// It is the host's [`OfficeSecretsKey`] (zeroed when dropped), shared by reference count: the store keeps
 /// one copy for its pool of read connections for as long as the office runs, and the memory is
 /// wiped when the last holder drops. Cloning shares that one copy; nothing else copies the bytes
 /// but the connection's key statement, which is wiped as soon as it has run.
 #[derive(Clone)]
-pub struct Key(Arc<DbKey>);
+pub struct Key(Arc<OfficeSecretsKey>);
 
 impl Key {
-    /// Takes the key the host sent. Best effort: the caller's `DbKey` is consumed, but a Rust move
+    /// Takes the key the host sent. Best effort: the caller's `OfficeSecretsKey` is consumed, but a Rust move
     /// is a bitwise copy, so a stack frame the key passed through may keep the bytes until it is
     /// reused; the heap copy shared by the stores is the one that is wiped when the last holder
     /// drops.
-    pub fn from_db_key(key: DbKey) -> Self {
+    pub fn from_office_secrets_key(key: OfficeSecretsKey) -> Self {
         Self(Arc::new(key))
     }
 
     /// A key from raw bytes, for tests (the host makes the real ones).
     #[cfg(test)]
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self::from_db_key(DbKey::from_bytes(bytes))
+        Self::from_office_secrets_key(OfficeSecretsKey::from_bytes(bytes))
     }
 
     /// The raw key, for the worker to wrap and unwrap the office's private keys
@@ -42,7 +42,7 @@ impl Key {
 }
 
 impl PartialEq for Key {
-    /// Constant-time (the `DbKey`'s own).
+    /// Constant-time (the `OfficeSecretsKey`'s own).
     fn eq(&self, other: &Self) -> bool {
         *self.0 == *other.0
     }

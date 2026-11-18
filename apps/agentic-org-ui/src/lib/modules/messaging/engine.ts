@@ -35,8 +35,8 @@ export interface ChatContext {
 	/** The bound member making the call. */
 	actor: string;
 	/**
-	 * `app`: bound with the app token. `agent`: an agent's own connection. `bridge`: a bridge binding (`bridge:<id>`, with a
-	 * bridge token), acting as a mapped person in the channels chosen for it; it never holds the app token (decision 11).
+	 * `app`: the app's own connection, a person acting through a grant. `agent`: an agent's own connection. `bridge`: a bridge binding (`bridge:<id>`, with a
+	 * bridge token), acting as a mapped person in the channels chosen for it; it never holds a person's grant (decision 11).
 	 */
 	surface: 'app' | 'agent' | 'bridge';
 	owner: string;
@@ -204,7 +204,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 	if (done) return { state, accepted: done };
 	const actor = memberOf(ctx, ctx.actor);
 	if (!actor || actor.former) return refuse('not_authorized', 'Only a current member can use chat.');
-	// A bridge has its own binding, not the app token: it can post as a mapped person, never as the owner (decision 11), and it
+	// A bridge has its own binding, not a person's grant: it can post as a mapped person, never as the owner (decision 11), and it
 	// does three things only: post, react and answer, in the channels chosen for it.
 	if (ctx.surface === 'bridge') {
 		if (ctx.actor === ctx.owner) return refuse('not_authorized', 'A bridge never acts as the owner.');

@@ -30,8 +30,9 @@ They explain; they do not decide. The documents below decide.
 | What to build next, and in what order | [Implementation plan](implementation-plan.md) | Milestones and increments, each with its outcome, its requirements and its finish line |
 | Every capability and how far it has got | [Feature checklist](FEATURES.md) | One row per capability: status, evidence, and a link to its requirement |
 | What a person sees and does | UX specs in [`docs/specs/`](specs/) | Screens, flows and numbered acceptance criteria such as `TSK-4` or `CHAT-12` |
-| What is stored: records, fields, files, tables | Data contract in [`docs/design/organization-data/`](design/organization-data/README.md) | Seventeen documents, one combined draft schema and a test suite that checks them against each other |
+| What is stored: records, fields, files, tables | Data contract in [`docs/design/organization-data/`](design/organization-data/README.md) | Eighteen documents, one combined draft schema and a test suite that checks them against each other |
 | How a part is built | Designs in [`docs/design/`](design/) | Processes, protocols, storage, sessions, Git, the web API |
+| What the owner asked for, in the owner's words | `req-` files in [`docs/specs/`](specs/) | The owner's requirement kept as written, then how it fits the selected architecture and what is still open |
 | What must never vary, and what you may decide yourself | [Architecture non-negotiables](architecture-non-negotiables.md) | The aims, seventeen fixed rules, and how a decision is made and recorded |
 | Why a decision was made and how to test it | Decision records in [`docs/adr/`](adr/) | One decision each, with numbered acceptance criteria such as `ASK-3` or `ENC-2` |
 | How code must be organized | [Architecture rules](architecture-rules.md), [project structure](design/project-structure.md), [Rust style guide](rust-style-guide.md) | Dependency direction, where logic lives, naming |

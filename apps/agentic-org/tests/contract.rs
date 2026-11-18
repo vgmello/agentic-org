@@ -3,7 +3,7 @@
 //! `office.app_token` and `office.restart` calls, against the fake office server.
 //!
 //! Retired wire calls are refused under every peer configuration. The host keeps no app token
-//! (a v3 handoff carries none). Native restart lifecycle checks use the temporary in-process
+//! (a launch handoff carries none). Native restart lifecycle checks use the temporary in-process
 //! fixture; these gate tests do not establish signed-peer authorization. Real app_auth wire
 //! coverage returns with verified sessions in 2b.3.
 
@@ -20,8 +20,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use org_host::{Config, Host};
 use org_proto::{
-    ApiError, ErrorCode, OfficeAppToken, OfficeAppTokenParams, OfficeRestart, OfficeRestartParams,
-    OfficeStatus, OfficeStatusChanged, OfficeStatusReason,
+    ApiError, ErrorCode, OfficeRestart, OfficeRestartParams, OfficeStatus, OfficeStatusChanged,
+    OfficeStatusReason,
 };
 use serde_json::{json, Value};
 use support::{eventually, hq, office_info, rfc3339, Client, TestHome};
@@ -48,12 +48,10 @@ fn app_client(socket: &Path) -> Client {
     client
 }
 
-fn wire_app_token(socket: &Path, office_id: &str) -> Result<org_proto::AppToken, ApiError> {
+/// Sends the retired `office.app_token` call; an answer of any kind would be a result.
+fn wire_app_token(socket: &Path, office_id: &str) -> Result<serde_json::Value, ApiError> {
     app_client(socket)
-        .call::<OfficeAppToken>(&OfficeAppTokenParams {
-            office_id: office_id.into(),
-        })
-        .map(|result| result.app_token)
+        .call::<support::RetiredOfficeToken>(&serde_json::json!({"office_id": office_id}))
 }
 
 fn wire_restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
@@ -93,13 +91,13 @@ fn wait_for_state(
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
 #[test]
-fn the_v3_worker_gets_no_app_token() {
+fn the_launch_worker_gets_no_app_token() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
-    // The v3 handoff carries the database and grant keys only: it has no app-token field, so the
-    // worker is handed none. What it does get is one grant key.
+    // The launch handoff carries the office secrets key and the grant key only: it has no
+    // app-token field, so the worker is handed none. What it does get is one grant key.
     assert_eq!(home.grant_fingerprints(A).len(), 1);
     home.assert_no_secret_in_home();
     host.shutdown();
@@ -141,17 +139,19 @@ fn native_restart_follows_the_runtime_contract() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     home.write_office(&hq(B, "01ORGB", "Beta", T));
-    // A's key is missing at first, then found; B's server speaks another version.
+    // A gives up after one crash, then gets ready; B's server speaks another version.
     home.script(json!({
-        A: [{"do": "fail", "code": "key_missing"}, {"do": "ready"}],
+        A: [{"do": "crash"}, {"do": "ready"}],
         B: {"do": "fail", "code": "unsupported_version"}
     }));
-    let host = home.start(app_config(&home)).unwrap();
+    let mut config = app_config(&home);
+    config.timings.give_up_after = 1;
+    let host = home.start(config).unwrap();
     wait_for_state(
         &host,
         A,
         OfficeStatus::Unavailable,
-        Some(OfficeStatusReason::KeyMissing),
+        Some(OfficeStatusReason::RestartsExhausted),
     );
     wait_for_state(
         &host,
@@ -163,7 +163,7 @@ fn native_restart_follows_the_runtime_contract() {
     thread::sleep(Duration::from_millis(500));
     assert_eq!(home.runs(A), 1);
 
-    // `key_missing` is retried by a restart; this time the key is there.
+    // `restarts_exhausted` is retried by a restart; this time it gets ready.
     restart(&host, A).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
     assert_eq!(home.runs(A), 2);
@@ -220,10 +220,11 @@ fn every_way_a_start_ends_has_its_reason() {
             Offline,
             R::StorageError,
         ),
+        // The retired `key_missing` is a code this build doesn't know: a retried storage error.
         (
             json!({"do": "fail", "code": "key_missing"}),
-            Unavailable,
-            R::KeyMissing,
+            Offline,
+            R::StorageError,
         ),
         (
             json!({"do": "fail", "code": "unsupported_version"}),

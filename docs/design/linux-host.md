@@ -1000,7 +1000,7 @@ How the tracks avoid each other:
   dialog checks on a Mac and records the result in the merge; X1b needs only macOS CI.
 - **Agree the shared hot spots.** `supervisor/child.rs`, `supervisor/channels.rs`
   and `supervisor/mod.rs` (A1 removes the older launch form there), `keys/` (A1
-  renames the database key), `org-host/src/lib.rs` and `instance/` (A2, A3),
+  replaced the database key with the office secrets key), `org-host/src/lib.rs` and `instance/` (A2, A3),
   `hostdb` (A2, A3) and `offices.rs` (A4) are edited by both tracks. The Track X lead
   asks the other lead which lands first; the second rebases. X1c's change in those files
   is limited to call sites: `spawn_suspended`, `ServerCheck::admit`, `still` and

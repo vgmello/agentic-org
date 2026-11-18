@@ -8,8 +8,8 @@ import { NotDispatchedError } from './errors';
 const root = new URL('../../../../../../crates/org-proto/test-vectors/v2/', import.meta.url);
 const counts = {
 	'gateway-envelopes': 17, 'gateway-idempotency': 4, 'gateway-lookup-query': 18, 'gateway-lookups': 26,
-	'gateway-mutation-results': 44, 'gateway-outcomes': 35, 'gateway-paths': 17, 'gateway-resource-errors': 3,
-	'gateway-session': 10, 'gateway-stream': 15, 'gateway-views': 17
+	'gateway-mutation-results': 44, 'gateway-outcomes': 38, 'gateway-paths': 17, 'gateway-resource-errors': 3,
+	'gateway-session': 10, 'gateway-stream': 15, 'gateway-views': 18
 } as const;
 type Name = keyof typeof counts;
 type Case = Record<string, unknown> & { name: string; expect: Record<string, unknown> };
@@ -45,8 +45,8 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 		throw new Error('Unsupported gateway fixture contract_revision');
 	}
 	const pinned = revision === 2
-		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 207 }
-		: { counts, total: 206 };
+		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 211 }
+		: { counts, total: 210 };
 	for (const name of Object.keys(counts) as Name[]) {
 		expect(data[name].schema_version, `${name} schema_version`).toBe(1);
 		expect(data[name].cases, `${name} main cases`).toHaveLength(pinned.counts[name]);

@@ -420,9 +420,7 @@ fn check_database_header(path: &Path) -> Result<(), Error> {
     }
 }
 fn connect(path: &Path) -> Result<Connection, Error> {
-    sqlite_ready()?;
     check_database_header(path)?;
-    #[allow(clippy::disallowed_methods)] // The sole durable opener crosses the fence.
     let db = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -434,17 +432,6 @@ fn connect(path: &Path) -> Result<Connection, Error> {
     })?;
     db.execute_batch("PRAGMA synchronous=FULL; PRAGMA fullfsync=ON; PRAGMA checkpoint_fullfsync=ON; PRAGMA foreign_keys=ON;")?;
     Ok(db)
-}
-/// Completes SQLite library initialization once before any opener (BUG-100 fence,
-/// kept while the workspace's SQLite build still needs it; removed in A1.7).
-fn sqlite_ready() -> Result<(), Error> {
-    static READY: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
-    // SAFETY: sqlite3_initialize is thread-safe and idempotent.
-    let code = *READY.get_or_init(|| unsafe { rusqlite::ffi::sqlite3_initialize() });
-    if code != rusqlite::ffi::SQLITE_OK {
-        return Err(Error::Sql(rusqlite::ffi::Error::new(code).code));
-    }
-    Ok(())
 }
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

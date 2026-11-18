@@ -210,8 +210,8 @@ impl Call for Who {
 /// and mixed-direction text need them.
 ///
 /// Errors: `too_large` (`text` over a limit), `invalid_request` (control characters, line
-/// breaks or hidden-text characters, or `ttl_ms` over [`MAX_STATUS_TTL_MS`]), `not_bound` (unbound, or bound
-/// app-wide), `not_authorized` (bound as a person or the owner), `storage_error`.
+/// breaks or hidden-text characters, or `ttl_ms` over [`MAX_STATUS_TTL_MS`]), `not_bound` (unbound),
+/// `not_authorized` (acting as a person or the owner), `storage_error`.
 pub struct StatusSet;
 
 /// `status.set`'s params. `{}` clears the status line.
@@ -241,8 +241,7 @@ impl Call for StatusSet {
 }
 
 /// `member.presence_changed`: a member's presence, status line or current task changed. Debounced to at
-/// most one per member per second. Sent to bound connections only (member-bound or app-wide),
-/// never to unbound ones.
+/// most one per member per second. Sent to bound connections only, never to unbound ones.
 pub struct MemberPresenceChanged;
 
 /// The data of a `member.presence_changed` event.

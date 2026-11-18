@@ -222,14 +222,12 @@ fn hint_cursor_failure_still_emits_ready_without_capability_or_owner_delivery() 
         std::path::Path::new("/ready-probe"),
         &mut shared,
     );
-    let event = org_office_launch::v3::read_server_event(&mut std::io::BufReader::new(host))
+    let event = org_office_launch::read_server_event(&mut std::io::BufReader::new(host))
         .unwrap()
         .unwrap();
     assert!(matches!(
         event,
-        org_office_launch::v3::RendezvousEvent::Server(
-            org_office_launch::ServerEvent::Ready { .. }
-        )
+        org_office_launch::RendezvousEvent::Server(org_office_launch::ServerEvent::Ready { .. })
     ));
     assert!(!shared.hello.supports("inbox.changed"));
     let (stream, peer) = UnixStream::pair().unwrap();

@@ -44,7 +44,7 @@ use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use rusqlite::config::DbConfig;
@@ -729,27 +729,8 @@ fn panicked(panic: Box<dyn Any + Send>) -> OfficeError {
     failure(format!("the storage writer panicked: {reason}"))
 }
 
-static READY: OnceLock<i32> = OnceLock::new();
-
-/// Completes process-wide SQLite initialization once before any connection opens (BUG-100).
-/// While the workspace still links SQLCipher, its EXTRA_INIT hook runs inside
-/// `sqlite3_initialize`; the `OnceLock` makes every other opener wait for that call to return.
-/// The databases themselves are plain SQLite (ADR-0016): no key is applied.
-fn sqlite_ready() -> Result<(), OfficeError> {
-    // SAFETY: sqlite3_initialize is thread-safe and idempotent; every opener crosses here first.
-    let code = *READY.get_or_init(|| unsafe { rusqlite::ffi::sqlite3_initialize() });
-    if code != rusqlite::ffi::SQLITE_OK {
-        return Err(failure(format!(
-            "could not initialize SQLite (SQLite code {code})"
-        )));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 fn connection_for_test(path: impl AsRef<Path>) -> Result<Connection, OfficeError> {
-    sqlite_ready()?;
-    #[allow(clippy::disallowed_methods)] // Raw fixtures still cross the fence.
     let db = Connection::open(path).map_err(OfficeError::storage)?;
     Ok(db)
 }
@@ -795,13 +776,11 @@ fn connect(
     create: bool,
     checkpoint_on_close: bool,
 ) -> Result<Connection, OfficeError> {
-    sqlite_ready()?;
     let mut flags = OpenFlags::default();
     if !create {
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
     }
     // `db_path` is absolute, so SQLite can't read it as a `file:` URI.
-    #[allow(clippy::disallowed_methods)] // The one durable opener; fenced above.
     let db = Connection::open_with_flags(db_path, flags).map_err(OfficeError::storage)?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
         .map_err(OfficeError::storage)?;

@@ -156,7 +156,7 @@ fn one_shot_unix_roundtrip_requires_write_half_close_and_rejects_an_unfinished_s
 }
 #[test]
 fn transfer_recovery_version_is_checked_in_both_directions() {
-    use crate::v3::{decode_transfer_record, encode_transfer_record, TransferRecord};
+    use crate::{decode_transfer_record, encode_transfer_record, TransferRecord};
     let valid = TransferRecord::RecoveryPublicRead {
         version: 1,
         office_id: request().office_id,

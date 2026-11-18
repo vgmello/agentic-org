@@ -1,9 +1,13 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { signInAsAdmin } from './web-session';
 import type { Connection, Organization } from '../src/lib/proto';
 
+// The administrator is signed in (SIGN-9) and GET /api/v1/organizations lists the organization the
+// footer names, so "Switch organization" lands on the signed-in organizations page.
 async function openOffice(page: Page, createPath = '/create') {
+	await signInAsAdmin(page, [{ id: 'org-footer-reference', name: 'Footer reference', created_at: '2026-11-18T00:00:00Z', recovery: 'acknowledged' }]);
 	await visit(page, createPath);
 	await page.getByLabel('Organization name').fill('Footer reference');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -34,7 +38,8 @@ for (const width of [320, 960]) {
 		await openOffice(page);
 		await (await switchLink(page, width)).press('Enter');
 		await expect(page).toHaveURL(/\/welcome$/);
-		await expect(page.getByRole('heading', { name: 'Welcome to Agentic Org', exact: true })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Organizations', exact: true })).toBeVisible();
+		await expect(page.getByRole('listitem').filter({ hasText: 'Footer reference' })).toBeVisible();
 		await shot(page, `bug70-footer-switch-control-${width}`);
 	});
 }

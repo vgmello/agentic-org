@@ -1,0 +1,18 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-11-18T12:00:00Z" },
+  "title": "DSS process in the app",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": { "x": 0, "y": 0, "w": 1280, "h": 980, "title": "1 · Project: process and seed team", "expand": "fill" },
+    "Chat.dc.html": { "x": 1360, "y": 0, "w": 1280, "h": 980, "title": "2 · Chat: specifying with the product lead", "expand": "fill" },
+    "Docs.dc.html": { "x": 2720, "y": 0, "w": 1280, "h": 980, "title": "3 · Docs: the project's documentation", "expand": "fill" },
+    "Document.dc.html": { "x": 4080, "y": 0, "w": 1280, "h": 980, "title": "4 · A Product DSS document", "expand": "fill" }
+  },
+  "order": ["Main.dc.html", "Chat.dc.html", "Docs.dc.html", "Document.dc.html"],
+  "notes": {
+    "heading": { "x": 0, "y": -300, "text": "A project that follows the DSS process", "kind": "title1", "maxW": 5360 }
+  },
+  "designSystems": []
+}

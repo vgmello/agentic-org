@@ -158,8 +158,6 @@ mod tests {
             SystemTime::now() + Duration::from_secs(1),
         ));
         assert_eq!(state.request_restart(send), RestartRequest::Sent);
-        state.set(OfficeState::unavailable(OfficeStatusReason::KeyMissing));
-        assert_eq!(state.request_restart(send), RestartRequest::Sent);
         state.set(OfficeState::unavailable(
             OfficeStatusReason::RestartsExhausted,
         ));
@@ -171,6 +169,6 @@ mod tests {
             state.set(OfficeState::unavailable(reason));
             assert_eq!(state.request_restart(send), RestartRequest::CantFix(reason));
         }
-        assert_eq!(sent.get(), 3);
+        assert_eq!(sent.get(), 2);
     }
 }

@@ -709,7 +709,7 @@ fn account_and_recovery_ops_have_their_wire_shapes() {
 mod listen_vectors;
 
 /// The gateway's rendezvous lines carry exactly their fields: a key or token a buggy host adds is
-/// refused, never silently dropped (as for launch v3's lines).
+/// refused, never silently dropped (as for launch lines).
 #[test]
 fn gateway_lines_refuse_unknown_fields() {
     let mut first = serde_json::to_value(GatewayFirstLine {

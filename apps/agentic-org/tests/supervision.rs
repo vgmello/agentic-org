@@ -80,7 +80,7 @@ fn a_fatal_failure_makes_the_office_unavailable_without_restarts() {
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
     home.script(json!({
-        A: {"do": "fail", "code": "key_missing"},
+        A: {"do": "fail", "code": "invalid_request"},
         B: {"do": "fail", "code": "unsupported_version"}
     }));
     let host = home.start(home.config()).unwrap();
@@ -449,7 +449,7 @@ fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() 
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     // It reports a fatal failure, then neither exits nor gets ready.
-    home.script(json!({ A: {"do": "fail", "code": "key_missing", "linger": true} }));
+    home.script(json!({ A: {"do": "fail", "code": "invalid_request", "linger": true} }));
     let mut config = home.config();
     config.timings.ready_timeout = Duration::from_millis(700);
     let host = home.start(config).unwrap();

@@ -54,8 +54,11 @@ These hold across every increment. Each names the document that owns its detail.
    ([ADR-0003](adr/0003-agent-messaging-office-first.md))
 9. **The office authorizes every call.** A person's request carries their principal and
    a grant from the host. An agent's request carries the binding of its run. Being
-   admitted to a socket is never authorization, and no field on a record grants
-   authority.
+   admitted to a socket is never authorization. Authority comes from the caller's
+   place in the organization. Two records carry it, a team's lead appointment and a
+   lead's permission to hire, and each is given only by someone already above
+   the holder. No other field on a record grants authority, and nobody grants any to
+   themselves. ([ADR-0027](adr/0027-a-lead-approves-a-hire.md))
 10. **Agents run headless, apart from the data.** The office starts each agent as a
     supervised child process with a private home. An agent never holds the
     organization's secrets, a credential that can push, or another agent's sign-in.

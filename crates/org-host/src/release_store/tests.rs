@@ -20,13 +20,13 @@ use std::sync::Arc;
 
 use org_platform_host::credentials::{protected_store, ProtectedStore, ReleaseRoot};
 use org_platform_host::testing::credentials::release_directory_below_with_stores;
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 
 use super::*;
 use crate::host_secrets::{HostSecrets, Name, SelectionError, Value};
 use crate::hostdb::{HostDb, HostDbInit};
 use crate::instance::registry::{Instance, Registry};
-use crate::keys::{KeyStore, StoreError};
+use crate::keys::{OfficeSecretsKeys, StoreError};
 
 const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -127,7 +127,7 @@ impl World {
         self.open(records_say_keys_exist(&self.office_home).unwrap())
     }
 
-    fn keys(&self, root: &ReleaseRoot) -> Arc<dyn KeyStore> {
+    fn keys(&self, root: &ReleaseRoot) -> Arc<dyn OfficeSecretsKeys> {
         crate::keys::selected_release_store(
             Ok(ProtectedStore::ReleaseDirectory),
             None,
@@ -203,8 +203,9 @@ fn a_development_build_and_a_keychain_system_open_no_release_directory() {
         (false, Ok(ProtectedStore::ReleaseDirectory)),
         (false, Ok(ProtectedStore::Keychain)),
         (false, Err(refused.clone())),
-        // The Keychain is the store; and a system without one is refused where the
-        // Keychain store is chosen, as before.
+        // The Keychain is the store; and a system without one is answered where each
+        // view's store is chosen (the office keys get the refusing view, the host's
+        // secrets are refused).
         (true, Ok(ProtectedStore::Keychain)),
         (true, Err(refused)),
     ] {
@@ -253,7 +254,7 @@ fn a_release_host_without_a_recorded_directory_does_not_start() {
     ));
 }
 
-/// The early production path at the host: a key added through the host's `KeyStore` view is
+/// The early production path at the host: a key added through the host's `OfficeSecretsKeys` view is
 /// loaded through a second handle after every handle of the first was dropped.
 #[test]
 fn a_key_added_through_the_key_store_view_is_loaded_through_a_second_handle() {
@@ -261,13 +262,13 @@ fn a_key_added_through_the_key_store_view_is_loaded_through_a_second_handle() {
         return;
     }
     let world = World::new();
-    let key = DbKey::from_bytes(key_bytes());
+    let key = OfficeSecretsKey::from_bytes(key_bytes());
     {
         let root = world.open_as_the_host_decides().unwrap();
         let keys = world.keys(&root);
         keys.create(OFFICE, &key).unwrap();
         assert!(matches!(
-            keys.create(OFFICE, &DbKey::from_bytes([1; 32])),
+            keys.create(OFFICE, &OfficeSecretsKey::from_bytes([1; 32])),
             Err(crate::keys::KeyStoreError::Exists)
         ));
         assert_eq!(keys.list().unwrap(), [OFFICE]);
@@ -327,7 +328,7 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
         .unwrap_or_else(|e| panic!("{e:?}"));
         world
             .keys(&root)
-            .create(OFFICE, &DbKey::from_bytes(key))
+            .create(OFFICE, &OfficeSecretsKey::from_bytes(key))
             .unwrap();
         directory(&world.office_folder());
         for (name, value) in &secrets {
@@ -421,7 +422,7 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
     }
     assert_eq!(
         world.keys(&root).load(OFFICE).unwrap().unwrap(),
-        DbKey::from_bytes(key)
+        OfficeSecretsKey::from_bytes(key)
     );
 }
 
@@ -629,7 +630,7 @@ fn the_hosts_own_entry_walks_from_the_filesystem_root() {
     match opened {
         Ok(Some(root)) => {
             let keys = world.keys(&root);
-            keys.create(OFFICE, &DbKey::from_bytes(key_bytes()))
+            keys.create(OFFICE, &OfficeSecretsKey::from_bytes(key_bytes()))
                 .unwrap();
             drop((keys, root));
             let again = open(
@@ -644,7 +645,7 @@ fn the_hosts_own_entry_walks_from_the_filesystem_root() {
             .unwrap();
             assert_eq!(
                 world.keys(&again).load(OFFICE).unwrap().unwrap(),
-                DbKey::from_bytes(key_bytes())
+                OfficeSecretsKey::from_bytes(key_bytes())
             );
             println!("opened from / as the host does: {}", store.display());
         }
@@ -669,7 +670,7 @@ fn an_item_store_with_a_wrong_mode_stops_the_start_by_its_own_rule_and_strays_ar
         let root = world.open(false).unwrap();
         world
             .keys(&root)
-            .create(OFFICE, &DbKey::from_bytes(key_bytes()))
+            .create(OFFICE, &OfficeSecretsKey::from_bytes(key_bytes()))
             .unwrap();
         drop(world.secrets(&root));
     }

@@ -33,9 +33,12 @@ satellite completed an operation.
    model profile (an ordered pool) and one model. Connections use private
    office-local bindings and HQ-issued permits. A verified idle process is reused only
    with the same launch digest. An unknown cleanup keeps the slot.
-4. **Explicit work only.** A turn starts from an explicit instruction, the answer to a
-   required ask ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a
-   recovery the office performs. The office does not choose work, queue messages into
+4. **Work starts for a stated reason.** A turn starts from an explicit instruction,
+   from something addressed to the agent (a direct message, a mention, an ask or a
+   task assigned to it, [ADR-0028](../adr/0028-an-agent-is-always-available.md)),
+   the answer to a required ask
+   ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a recovery the
+   office performs. The office does not choose work, queue messages into
    a busy turn, remind goals, extract memory or spawn specialists.
 5. **Mechanism grants no authority.** Generated instructions are projections of the
    admitted identity, role and policy. An execution file, a note or a process document
@@ -145,10 +148,11 @@ process text. No process edit invents commands or changes tool permissions.
 ## 5. Not in v1
 
 Goals and goal reminders, automatic scheduling, generated native agent definitions
-and private specialists, delegation to child agents, and memory checkpoints are not
-part of v1. An agent that delegates inside its vendor tool does so within that tool's
-own sandbox and the office's rules; the office grants a child nothing and tracks no
-child job. EMP criteria about these features describe later work.
+and private specialists, delegation chosen by a process, and memory checkpoints are not
+part of v1. Starting a sub-agent inside the vendor tool is
+([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs within the turn, in the
+parent's sandbox and under the office's rules; the office grants it nothing of its own
+and tracks no separate job for it. EMP criteria about these features describe later work.
 
 ## 6. Validation
 

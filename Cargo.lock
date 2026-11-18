@@ -83,6 +83,7 @@ dependencies = [
  "org-proto",
  "org-release",
  "org-socket",
+ "ring",
  "rustix",
  "scraper",
  "serde",
@@ -540,7 +541,6 @@ checksum = "b06e69070b7e12262b0cd90832f0a7396f142a2b330181255562decf9f0c6215"
 dependencies = [
  "cc",
  "pkg-config",
- "sqlcipher-src",
  "vcpkg",
 ]
 
@@ -629,6 +629,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-command"
+version = "0.0.0"
+dependencies = [
+ "org-command",
+ "org-docs",
+ "org-proto",
+ "serde_json",
+]
+
+[[package]]
 name = "org-copilot"
 version = "0.0.0"
 dependencies = [
@@ -703,13 +713,10 @@ dependencies = [
  "org-sync",
  "org-sync-proto",
  "org-work",
- "proc-macro2",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
- "sqlcipher-src",
- "syn 2.0.119",
  "tempfile",
  "zeroize",
 ]
@@ -1262,12 +1269,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlcipher-src"
-version = "420.0.0+sqlcipher-4.20.0-sqlite-3.54.1-libtomcrypt-1.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd6b5280ed2593d07b2816ec531821c15c306903bcca224716f1fbcc2bbfedfe"
-
-[[package]]
 name = "sqlite-wasm-rs"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1275,7 +1276,6 @@ checksum = "a6cd504cecbfe7eef649988840f9a6cb768d11085efec138f8e99f160632d867"
 dependencies = [
  "cc",
  "rsqlite-vfs",
- "sqlcipher-src",
 ]
 
 [[package]]

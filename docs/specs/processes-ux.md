@@ -4,13 +4,15 @@ title: "Processes: how agents work, written down and inherited (UX)"
 status: current
 owner: lead
 created: "2026-11-08"
-updated: "2026-11-17"
+updated: "2026-11-18"
 builds_on: [decisions-and-tech-debt-ux, work-items-ux, our-org-in-the-app, offices-and-teams-ux, agent-run-modes-ux, app-shell-ux]
 ---
 
 # Spec · Processes: how agents work, written down and inherited (UX)
 
 The data contract owns the records: [organization structure](../design/organization-data/01-organization-structure.md), [project structure](../design/organization-data/02-project-structure.md), [identity](../design/organization-data/06-identity-and-numbering.md) and [record contracts](../design/organization-data/08-record-contracts.md). The [processes design](../design/processes.md) owns resolution and delivery (decision 4). This spec owns what people see.
+
+These are the organization's own: an **organization process** says how the organization handles something whatever is being built (the PCI process, the PII process, the checks to run before a commit), and a **standard** says what it uses and how it builds and runs things (which technologies and tools, the deployment pattern). A project's **development process** (owner's [REQ-07](req-07-composable-process-packages-and-team-blueprints.md), [development process design](../design/development-processes.md)) is a different primitive with its own catalogue and editor, and is not shown or resolved here.
 
 ## The request (the user, 2026-11-08)
 
@@ -26,6 +28,8 @@ v1 delivers process and standard content, inheritance across organization, team 
 4. **Delivery at launch.** The office gives the agent the effective set for its work. Every non-overridable document is included in full in a clearly marked must-follow section of the agent's system instructions. Overridable documents are guidance: summaries first, full text retrievable, within the size cap of the processes design. If the non-overridable set alone exceeds the instruction budget, the launch is refused with a problem naming the documents.
 5. **Guidance on using the product's own commands** ships with the product as built-in skills, not as organization documents.
 6. **The product tells the agent what binds it.** It does not mechanically block an action for breaking a process.
+7. **Three things, shown apart (owner, 2026-11-18).** The Processes page is headed "Organization processes and standards" and has two tabs, **Processes** and **Standards**, each opening with its one-line definition: "How the organization handles something, whatever is being built" and "What the organization uses, and how it builds and runs things". A project's development process is chosen on the project and edited in its own catalogue, headed "Development processes: how a project builds software". Its skills are not rows of this page and cannot be overridden here. Organization processes say how agents interact and work in general; a development process may adjust that guidance for its project, and never a document marked not overridable. An agent's instructions carry the three under three headings with the same words.
+8. **Agents of a project's team add to its documents.** An agent whose home team is the project's owning team, or beneath it, may create process and standard documents at that project's scope and change the project's own. It cannot replace a document inherited from the organization or a team, mark one not overridable, or write at team or organization scope.
 
 ## 1. The process file
 
@@ -99,7 +103,7 @@ Each task targets zero or more repositories, and each project/repository associa
 - PROC-5 · Not in v1: private processes.
 - PROC-6 · Withdrawn: contributing teams add no documents, so there is no cross-team conflict policy.
 - PROC-7 · At launch the agent gets every applicable non-overridable document in full in a must-follow section, and overridable documents as summaries with retrievable full text within the size cap. A new session or a context reset gets them again.
-- PROC-8 · `agent-os process list [--task <reference>]` (the effective set with sources), `process inspect --key <key>` (the effective text) and `process inspect --key <key> --why` (the chain organization → team → project, which level wins and why) use the same words as the app. Commands that write or approve processes are not in v1.
+- PROC-8 · `agent-os process list [--task <reference>]` (the effective set with sources), `process inspect --key <key>` (the effective text) and `process inspect --key <key> --why` (the chain organization → team → project, which level wins and why) use the same words as the app. `process create` and `process update` write process and standard documents for a project of the agent's own team (PROC-36). Commands that approve processes are not in v1.
 - PROC-9 · Content views show source, scope, lifecycle, owner, key and revision, and the computed winner for each key.
 - PROC-10 · An agent's profile shows the processes it follows for its current work, or, with no current work, "No current work" and the organization's processes.
 - PROC-11 · Not in v1: approval of process changes.
@@ -126,6 +130,9 @@ Each task targets zero or more repositories, and each project/repository associa
 - PROC-32 · The Processes page's heading is "Processes · <label>" and its title is "<label> · Processes · Agentic Org" (`app-shell-ux.md` §4), where <label> is the chosen Show option.
 - PROC-33 · Below 640 px, the heading block stacks above the Show select, so no text column is under 200 px.
 - PROC-34 · The Show select lists Organization, then each team, project and agent, with option labels like "Organization", "Web (team)", "Atlas (project)" and "Noor Haddad (agent)".
+- PROC-35 · A project's view and an agent's profile show organization processes and standards only. When the project follows a development process, a line above the list names it and links to it ("This project follows Desired State Specification. Its skills are shown there."); no skill is listed, replaced or replaceable here.
+- PROC-36 · An agent's write of a process or standard document is accepted only at the scope of a project whose owning team is its home team or above it, only for a new key or a document of that project, and never with `overridable: false`; an agent that only holds a task in the project is refused, and a refused write says which rule refused it. People write at every scope.
+- PROC-37 · The Processes page shows organization processes and standards as two tabs, each with its definition line; a development process is never listed there. Wherever one of the three is named (a page heading, a badge, an agent's instructions, `agent-os` output) it is named as an organization process, a standard or a development process, never as a bare "process" when the kind is not clear from the place.
 
 ## 6. Not in v1
 
