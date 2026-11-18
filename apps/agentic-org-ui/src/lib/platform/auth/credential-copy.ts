@@ -45,6 +45,14 @@ export type CredentialFailure =
 	| { kind: 'hq_error'; message: string }
 	| { kind: 'out_of_date'; message: string };
 
+/**
+ * SIGN-6: a rate-limit refusal with a retry time ends when that time passes, so the page clears the
+ * message together with re-enabling the button instead of showing a countdown that contradicts it.
+ */
+export function rateLimitExpired(failure: CredentialFailure | undefined, nowMs: number): boolean {
+	return failure?.kind === 'rate_limited' && failure.retryUntilMs !== undefined && nowMs >= failure.retryUntilMs;
+}
+
 /** Maps any sign-in/registration failure to its page state. Server message text is never shown. */
 export function describeCredentialFailure(error: unknown, nowMs: number, context: CopyContext = 'sign-in'): CredentialFailure {
 	if (error instanceof UpdateRequiredError) return { kind: 'out_of_date', message: OUT_OF_DATE_COPY };

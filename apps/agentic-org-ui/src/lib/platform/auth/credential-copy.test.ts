@@ -4,6 +4,7 @@ import { WireDecodeError } from '../http/wire';
 import {
 	credentialCopy,
 	describeCredentialFailure,
+	rateLimitExpired,
 	HQ_ERROR_COPY,
 	LINK_USED_COPY,
 	MISMATCH_COPY,
@@ -66,5 +67,19 @@ describe('B6 failure mapping', () => {
 	});
 	it('SIGN-7 unreachable copy names the status command', () => {
 		expect(UNREACHABLE_COPY).toContain('agentic-org service status --name <instance>');
+	});
+});
+
+describe('B6 rate-limit expiry', () => {
+	it('ends a rate-limit failure exactly when its retry time passes', () => {
+		const failure = describeCredentialFailure(refusal(429, { code: 'rate_limited', retry_after_ms: 60_000 }), 1_000);
+		expect(failure).toMatchObject({ kind: 'rate_limited', retryUntilMs: 61_000 });
+		expect(rateLimitExpired(failure, 60_999)).toBe(false);
+		expect(rateLimitExpired(failure, 61_000)).toBe(true);
+	});
+	it('never ends a failure without a retry time or of another kind', () => {
+		expect(rateLimitExpired({ kind: 'rate_limited', message: 'x' }, Number.MAX_SAFE_INTEGER)).toBe(false);
+		expect(rateLimitExpired({ kind: 'mismatch', message: 'x' }, Number.MAX_SAFE_INTEGER)).toBe(false);
+		expect(rateLimitExpired(undefined, 0)).toBe(false);
 	});
 });

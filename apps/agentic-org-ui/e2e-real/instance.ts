@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
+import { stopInstance } from './teardown';
 
 const repo = resolve(import.meta.dirname, '../../..');
 
@@ -47,9 +48,16 @@ export default async function setup() {
 		encoding: 'utf8',
 		timeout: 120_000
 	});
-	writeFileSync(join(root, 'setup.out'), `${run.stdout}\n--- stderr\n${run.stderr}`);
+	const output = `${run.stdout}\n--- stderr\n${run.stderr}`;
 	const link = run.stdout.match(/http:\/\/127\.0\.0\.1:\d+\/register#[A-Za-z0-9_-]+/)?.[0];
-	if (run.status !== 0 || !link) throw new Error(`setup failed (${run.status}); see ${root}/setup.out`);
+	if (run.status !== 0 || !link) {
+		// Do not rely on global teardown after a failed setup: stop what setup started and remove the root here.
+		stopInstance(root);
+		rmSync(root, { recursive: true, force: true });
+		delete process.env.B6_ROOT;
+		throw new Error(`setup failed (status ${run.status}, signal ${run.signal ?? 'none'}${run.error ? `, ${run.error.message}` : ''}):\n${output.replace(/\/register#[A-Za-z0-9_-]+/g, '/register#<redacted>').slice(-4000)}`);
+	}
+	writeFileSync(join(root, 'setup.out'), output);
 	process.env.B6_BASE = `http://127.0.0.1:${port}`;
 	process.env.B6_LINK = link;
 }

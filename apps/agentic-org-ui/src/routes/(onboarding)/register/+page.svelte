@@ -8,7 +8,10 @@
 	import { takeLinkSecret } from '$lib/platform/auth/link-fragment';
 	import PasswordField from '$lib/platform/auth/PasswordField.svelte';
 
-	// Held only in this closure: never in state, storage, a URL or a log.
+	// Held in this closure only after mount: never in reactive state, storage, a request or a log.
+	// The address bar and history entry lose the fragment before any request (takeLinkSecret).
+	// SvelteKit's `page.url` keeps the URL this page view loaded with, fragment included, until the
+	// next navigation: shallow routing never rewrites it. This page reads only `page.url.host`.
 	let secret: string | undefined;
 	let linkPresent = $state(true);
 	let login = $state('');

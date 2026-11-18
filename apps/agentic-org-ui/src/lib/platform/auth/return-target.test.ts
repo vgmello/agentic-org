@@ -16,6 +16,16 @@ describe('B6 SIGN-8 return targets', () => {
 		['/sign-in', undefined],
 		['/register', undefined],
 		['/a b', undefined],
+		['/..//evil.example/x', undefined],
+		['/.//evil.example', undefined],
+		['/%2e%2e//evil', undefined],
+		['/%2E.//evil', undefined],
+		['/a/../..//evil', undefined],
+		['/a/./b', undefined],
+		['/a/..', undefined],
+		['/a//b', '/a//b'],
+		['/files/..hidden', '/files/..hidden'],
+		['/search?q=/../x', '/search?q=/../x'],
 		['', undefined],
 		[null, undefined]
 	])('%j -> %j', (raw, expected) => {

@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
-	import { credentialCopy, describeCredentialFailure, rateLimitCopy, type CredentialFailure } from '$lib/platform/auth/credential-copy';
+	import { credentialCopy, describeCredentialFailure, rateLimitCopy, rateLimitExpired, type CredentialFailure } from '$lib/platform/auth/credential-copy';
 	import { checkSignIn } from '$lib/platform/auth/credential-rules';
 	import PasswordField from '$lib/platform/auth/PasswordField.svelte';
 	import { safeReturnTarget } from '$lib/platform/auth/return-target';
@@ -42,10 +42,23 @@
 		return safeReturnTarget(page.url.searchParams.get('next'), page.url.origin) ?? '/welcome';
 	}
 
+	/**
+	 * Enters HQ after a sign-in. A navigation failure is not a sign-in failure: the person is
+	 * signed in, so a target that cannot be opened falls back to /welcome (SIGN-8), never to the
+	 * sign-in error copy.
+	 */
+	async function enter() {
+		try {
+			await goto(destination(), { replaceState: true });
+		} catch {
+			await goto('/welcome', { replaceState: true }).catch(() => location.assign('/welcome'));
+		}
+	}
+
 	onMount(async () => {
 		await appSession.boot();
 		if (appSession.state.kind === 'signed-in' && appSession.state.reauth === undefined) {
-			await goto(destination(), { replaceState: true });
+			await enter();
 			return;
 		}
 		await tick();
@@ -70,25 +83,36 @@
 		}
 		busy = true;
 		try {
-			await appSession.controller().signIn({ login, password });
-			password = '';
-			await goto(destination(), { replaceState: true });
-		} catch (error) {
-			failure = describeCredentialFailure(error, Date.now());
-			if (failure.kind === 'mismatch') {
-				// SIGN-4: Password cleared, Username kept, focus to Password.
-				password = '';
-				await tick();
-				passwordInput?.focus();
-			}
-			if (failure.kind === 'rate_limited' && failure.retryUntilMs !== undefined) {
-				retryUntil = failure.retryUntilMs;
-				now = Date.now();
-				clearInterval(timer);
-				timer = setInterval(() => {
+			let signedIn = false;
+			try {
+				await appSession.controller().signIn({ login, password });
+				signedIn = true;
+			} catch (error) {
+				failure = describeCredentialFailure(error, Date.now());
+				if (failure.kind === 'mismatch') {
+					// SIGN-4: Password cleared, Username kept, focus to Password.
+					password = '';
+					await tick();
+					passwordInput?.focus();
+				}
+				if (failure.kind === 'rate_limited' && failure.retryUntilMs !== undefined) {
+					retryUntil = failure.retryUntilMs;
 					now = Date.now();
-					if (retryUntil !== undefined && now >= retryUntil) clearInterval(timer);
-				}, 1_000);
+					clearInterval(timer);
+					timer = setInterval(() => {
+						now = Date.now();
+						// SIGN-6: when the retry time passes, the message ends with the countdown.
+						if (retryUntil === undefined || now >= retryUntil) {
+							if (rateLimitExpired(failure, now)) failure = undefined;
+							retryUntil = undefined;
+							clearInterval(timer);
+						}
+					}, 1_000);
+				}
+			}
+			if (signedIn) {
+				password = '';
+				await enter();
 			}
 		} finally {
 			busy = false;
