@@ -52,7 +52,6 @@ pub const APP_BUNDLE_ID: &str = "com.vgmello.agentic-org";
 
 pub(crate) use crate::peer::AuditToken;
 
-#[cfg(target_os = "macos")]
 use crate::code_signing;
 use crate::code_signing::developer_id_requirement;
 
@@ -244,7 +243,8 @@ pub(crate) fn designated_requirement(bundle_id: &str, team_id: &str) -> Result<S
 }
 
 /// The caller on a `host.sock` connection, as the kernel and the Security framework see it.
-#[cfg(target_os = "macos")]
+/// On a system that cannot identify a peer's image it has no token, then or now, so it is
+/// refused every app-only call.
 pub(crate) struct SocketPeer<'a> {
     pub(crate) stream: &'a std::os::unix::net::UnixStream,
     /// What the host noted when it accepted the connection.
@@ -253,7 +253,6 @@ pub(crate) struct SocketPeer<'a> {
     pub(crate) received: crate::peer::Received,
 }
 
-#[cfg(target_os = "macos")]
 impl Peer for SocketPeer<'_> {
     fn sent_after_accept(&self) -> bool {
         self.received.sent_at >= self.accepted.buffered
@@ -289,9 +288,7 @@ impl Peer for SocketPeer<'_> {
 
     #[cfg(debug_assertions)]
     fn executable(&self) -> Option<PathBuf> {
-        crate::peer::pid(self.stream)
-            .and_then(crate::peer::executable)
-            .ok()
+        crate::peer::executable(self.stream).ok()
     }
 }
 
@@ -632,29 +629,16 @@ mod tests {
         assert!(!dev.describe().iter().any(|line| line.contains("FALLBACK")));
     }
 
-    /// The real Security-framework path, both ways, on this test process's own audit token: a
-    /// requirement it meets (its own signing identifier) passes, others don't. So broken
-    /// plumbing, which would fail closed, is caught.
+    /// This test process's own audit token, through the policy, as the host takes it: refused
+    /// (not the app). The Security-framework path itself, both ways, is tested with the adapter
+    /// (`org_platform_host::admission`).
     #[cfg(target_os = "macos")]
     #[test]
-    fn the_signature_check_accepts_what_this_process_satisfies_and_nothing_else() {
+    fn the_policy_refuses_this_process_by_its_real_token() {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
         let token = crate::peer::audit_token(&a).unwrap();
-        let Some(identifier) = code_signing::own_codesign_field("Identifier=") else {
-            // An unsigned test binary (no linker signature, e.g. on Intel): nothing to accept.
-            eprintln!("skipped: this test binary has no code signature");
-            return;
-        };
-        assert!(
-            code_signing::code_satisfies(&token, &format!("identifier \"{identifier}\"")),
-            "{identifier}"
-        );
-        assert!(!code_signing::code_satisfies(
-            &token,
-            &format!("identifier \"{identifier}.not\"")
-        ));
         let requirement = designated_requirement(APP_BUNDLE_ID, "AB12CD34EF").unwrap();
-        assert!(!code_signing::code_satisfies(&token, &requirement));
+        assert!(!code_signing::satisfies_hardened(&token, &requirement));
         // Through the policy, as the host takes it: refused (not the app).
         let peer = SocketPeer {
             stream: &a,

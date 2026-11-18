@@ -987,7 +987,7 @@ mod tests {
         let pending = checked.begin_create(create_message(DbKey::from_bytes([4; 32])));
         assert!(pending.is_err());
         // They got no line: nothing reached `got` (it isn't even there: they were stopped while
-        // still suspended; that suspension holds is `spawn`'s own test).
+        // still suspended; that suspension holds is the admission adapter's own test).
         assert!(!got.exists(), "a server that isn't the signed one ran");
         assert!(keys.has(OFFICE) && keys.has(B));
 

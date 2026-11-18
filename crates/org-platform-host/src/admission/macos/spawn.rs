@@ -1,8 +1,8 @@
-//! Starting an office server **suspended**, and the FFI the host's server check needs: the one
-//! module with this unsafe code.
+//! Starting a child **suspended**, and the FFI the image check needs: the one module of the
+//! admission adapter with this unsafe code.
 //!
 //! Why suspended: the host must check a server before the server can run any code of its own
-//! (`server_check`). An image the host didn't vet could otherwise, in its first instructions,
+//! (the consumer's `server_check`). An image the host didn't vet could otherwise, in its first instructions,
 //! start a helper that inherits stdin, then `exec` the genuine signed server: the check would see
 //! the genuine one, and the helper would read the key. So the host spawns every server with
 //! `POSIX_SPAWN_START_SUSPENDED`: the exec is done (the audit token names the image), but not one
@@ -27,42 +27,58 @@
 //!
 //! It also gives the child nothing but its three pipes (`POSIX_SPAWN_CLOEXEC_DEFAULT`), an empty
 //! signal mask and default `SIGPIPE` (as `std::process::Command` does), the environment it's
-//! given, and `/` as its working directory. [`Process`] is the child's handle: it reaps it, and
+//! given, and `/` as its working directory. [`Child`] is the child's handle: it reaps it, and
 //! kills it if dropped first.
 
-#[cfg(target_os = "macos")]
 use std::ffi::CString;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
 use std::path::Path;
 
-#[cfg(target_os = "macos")]
-use crate::peer::AuditToken;
+use super::AuditToken;
 
 /// A child started by [`spawn_suspended`], with the host's ends of its stdin, stdout and stderr.
-pub(crate) struct Spawned {
-    pub(crate) process: Process,
-    pub(crate) stdin: File,
-    pub(crate) stdout: File,
-    pub(crate) stderr: File,
+pub(super) struct Spawned {
+    pub(super) process: Child,
+    pub(super) stdin: File,
+    pub(super) stdout: File,
+    pub(super) stderr: File,
 }
 
 /// A child process the host started: killed and reaped when dropped, if it hasn't been reaped.
-pub(crate) struct Process {
+pub(in crate::admission) struct Child {
     pid: libc::pid_t,
     reaped: bool,
     /// Its `waitpid` status, once reaped here.
     status: Option<libc::c_int>,
+    /// The audit token it was admitted with (`None`: not checked, a development image, or not
+    /// admitted yet).
+    pub(super) admitted: Option<AuditToken>,
 }
 
-impl Process {
-    pub(crate) fn id(&self) -> u32 {
+impl Child {
+    /// A handle for a process this code does not own: it counts as reaped, so it is never
+    /// signalled and never waited for.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(in crate::admission) fn unowned(
+        pid: u32,
+        admitted: Option<crate::admission::Peer>,
+    ) -> Result<Self, org_platform::Refused> {
+        Ok(Self {
+            pid: pid as libc::pid_t,
+            reaped: true,
+            status: None,
+            admitted: admitted.map(|peer| peer.macos_audit_token),
+        })
+    }
+
+    pub(in crate::admission) fn id(&self) -> u32 {
         self.pid as u32
     }
 
     /// Lets a suspended child run.
-    pub(crate) fn resume(&self) -> io::Result<()> {
+    pub(in crate::admission) fn release(&self) -> io::Result<()> {
         // SAFETY: signals our own child, which isn't reaped, so the pid is still its.
         if unsafe { libc::kill(self.pid, libc::SIGCONT) } == 0 {
             Ok(())
@@ -72,7 +88,7 @@ impl Process {
     }
 
     /// Whether it has exited (it is reaped if so). Doesn't wait.
-    pub(crate) fn try_wait(&mut self) -> io::Result<bool> {
+    pub(in crate::admission) fn try_wait(&mut self) -> io::Result<bool> {
         if !self.reaped {
             self.reaped = match self.wait_pid(libc::WNOHANG) {
                 Ok(reaped) => reaped,
@@ -86,7 +102,7 @@ impl Process {
 
     /// How it ended once reaped here, as fixed text: its exit code or signal.
     /// `None` while it runs, or when it was reaped elsewhere.
-    pub(crate) fn ended(&self) -> Option<String> {
+    pub(in crate::admission) fn ended(&self) -> Option<String> {
         let status = self.status?;
         Some(if libc::WIFEXITED(status) {
             format!("exit code {}", libc::WEXITSTATUS(status))
@@ -98,11 +114,11 @@ impl Process {
     }
 
     /// SIGKILLs it (suspended or not) and reaps it.
-    pub(crate) fn kill(&mut self) {
+    pub(in crate::admission) fn kill(&mut self) {
         if self.reaped {
             return;
         }
-        // SAFETY: as in `resume`.
+        // SAFETY: as in `release`.
         unsafe { libc::kill(self.pid, libc::SIGKILL) };
         while !self.reaped {
             match self.wait_pid(0) {
@@ -135,7 +151,7 @@ impl Process {
     }
 }
 
-impl Drop for Process {
+impl Drop for Child {
     fn drop(&mut self) {
         self.kill();
     }
@@ -143,9 +159,8 @@ impl Drop for Process {
 
 /// Starts `program` with `args`, exactly the environment `env` and `/` as its working directory,
 /// **suspended** (see the module docs), with its stdin, stdout and stderr on new pipes and no other
-/// descriptor of ours. Resume it with [`Process::resume`].
-#[cfg(target_os = "macos")]
-pub(crate) fn spawn_suspended(
+/// descriptor of ours. Resume it with [`Child::release`].
+pub(super) fn spawn_suspended(
     program: &Path,
     args: &[&OsStr],
     env: &[(OsString, OsString)],
@@ -250,10 +265,11 @@ pub(crate) fn spawn_suspended(
         unsafe { File::from_raw_fd(std::os::fd::IntoRawFd::into_raw_fd(fd)) }
     };
     Ok(Spawned {
-        process: Process {
+        process: Child {
             pid,
             reaped: false,
             status: None,
+            admitted: None,
         },
         stdin: file(stdin_ours),
         stdout: file(stdout_ours),
@@ -261,20 +277,7 @@ pub(crate) fn spawn_suspended(
     })
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn spawn_suspended(
-    _program: &Path,
-    _args: &[&OsStr],
-    _env: &[(OsString, OsString)],
-) -> io::Result<Spawned> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "office servers run only on macOS",
-    ))
-}
-
 /// A pipe, both ends close-on-exec: (read end, write end).
-#[cfg(target_os = "macos")]
 fn pipe() -> io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
     use std::os::fd::{FromRawFd, OwnedFd};
     let mut fds = [0 as libc::c_int; 2];
@@ -293,13 +296,11 @@ fn pipe() -> io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
     Ok(ends)
 }
 
-#[cfg(target_os = "macos")]
 fn raw(fd: &std::os::fd::OwnedFd) -> libc::c_int {
     std::os::fd::AsRawFd::as_raw_fd(fd)
 }
 
 /// A `posix_spawn*` result: 0, or an errno.
-#[cfg(target_os = "macos")]
 fn check(rc: libc::c_int) -> io::Result<()> {
     if rc == 0 {
         Ok(())
@@ -309,15 +310,11 @@ fn check(rc: libc::c_int) -> io::Result<()> {
 }
 
 /// `TASK_AUDIT_TOKEN` (`<mach/task_info.h>`).
-#[cfg(target_os = "macos")]
 const TASK_AUDIT_TOKEN: libc::task_flavor_t = 15;
 /// `audit_token_t` is 8 `natural_t`s.
-#[cfg(target_os = "macos")]
 const AUDIT_TOKEN_WORDS: usize = 8;
-#[cfg(target_os = "macos")]
 const KERN_SUCCESS: libc::kern_return_t = 0;
 
-#[cfg(target_os = "macos")]
 extern "C" {
     /// This task's own port (what `mach_task_self()` reads).
     static mach_task_self_: libc::mach_port_t;
@@ -340,9 +337,8 @@ extern "C" {
 
 /// The audit token of our child `pid` (unreaped, so the pid can't have been reused), as the raw
 /// `audit_token_t` bytes the Security framework takes (the layout `LOCAL_PEERTOKEN` gives,
-/// `peer::audit_token`). It names one process image: an `exec` changes it (its pid version).
-#[cfg(target_os = "macos")]
-pub(crate) fn audit_token_of_child(pid: u32) -> io::Result<AuditToken> {
+/// `super::audit_token`). It names one process image: an `exec` changes it (its pid version).
+pub(super) fn audit_token_of_child(pid: u32) -> io::Result<AuditToken> {
     let pid = libc::c_int::try_from(pid).map_err(|_| io::Error::other("pid out of range"))?;
     // SAFETY: `mach_task_self_` is set up by the system before `main` and never changes.
     let me = unsafe { mach_task_self_ };
@@ -376,7 +372,7 @@ pub(crate) fn audit_token_of_child(pid: u32) -> io::Result<AuditToken> {
     Ok(token)
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Read;
@@ -403,8 +399,9 @@ mod tests {
         // Its token can be taken while it's suspended: it names the child.
         let token = audit_token_of_child(a.process.id()).unwrap();
         assert_eq!(word(&token, 5), a.process.id());
-        assert_eq!(word(&token, 1), crate::home::euid());
-        a.process.resume().unwrap();
+        // SAFETY: geteuid has no arguments or side effects.
+        assert_eq!(word(&token, 1), unsafe { libc::geteuid() });
+        a.process.release().unwrap();
         b.process.kill();
         while !a.process.try_wait().unwrap() {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -422,7 +419,7 @@ mod tests {
                       echo err 1>&2";
         let args = [OsStr::new("-c"), OsStr::new(script)];
         let mut child = spawn_suspended(Path::new("/bin/sh"), &args, &env).unwrap();
-        child.process.resume().unwrap();
+        child.process.release().unwrap();
         std::io::Write::write_all(&mut child.stdin, b"hi\n").unwrap();
         drop(child.stdin);
         let (mut out, mut err) = (String::new(), String::new());
@@ -442,7 +439,7 @@ mod tests {
         assert_eq!(unsafe { libc::fcntl(leaky, libc::F_SETFD, 0) }, 0);
         let args = [OsStr::new("-l"), OsStr::new("/dev/fd")];
         let mut ls = spawn_suspended(Path::new("/bin/ls"), &args, &[]).unwrap();
-        ls.process.resume().unwrap();
+        ls.process.release().unwrap();
         drop(ls.stdin);
         let mut listed = String::new();
         ls.stdout.read_to_string(&mut listed).unwrap();

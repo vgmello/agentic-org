@@ -1,7 +1,7 @@
 //! One `agentic-org-office` process: spawning it with its pipes, reading its control lines,
 //! copying its stderr to the office's log, and stopping it.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::PathBuf;
@@ -14,6 +14,7 @@ use org_office_launch::{
     read_server_event, write_host_line, CreateOffice, HostLine, ServerEvent, CREATE_FLAG,
     DISCARD_FLAG, OFFICE_FLAG,
 };
+use org_platform_host::admission::{Admission, Child, ChildEnv, SpawnRefused, Started};
 use org_proto::location::{self, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
 
@@ -21,7 +22,6 @@ use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
 use crate::logs::RotatingLog;
 use crate::server_check::ServerCheck;
-use crate::spawn::{spawn_suspended, Process, Spawned};
 use crate::sync::lock;
 
 /// How often a stop polls whether the child has exited.
@@ -171,7 +171,7 @@ impl CreateLine {
 /// A running server process. Dropping it kills and reaps the process if it's still running,
 /// so a server is never left behind unsupervised.
 pub(crate) struct RunningChild {
-    process: Process,
+    process: Child,
     stdin: Option<File>,
     channel: Option<Arc<super::channels::Endpoint>>,
     pub(crate) generation: u64,
@@ -196,9 +196,10 @@ impl Spawner {
     /// Starts a server. Its control lines go to `signals` tagged with `generation`; its stderr
     /// goes to `log`. Its first line (per [`Mode`]) is written at once, once it passed the check.
     ///
-    /// It is started suspended (`spawn::spawn_suspended`), so not one instruction of its image
+    /// The platform's admission starts it (`ServerCheck::admission`): on macOS suspended, so
+    /// not one instruction of its image
     /// runs before the check (`server_check`) unless another process resumes it (the residual
-    /// risk in `spawn`'s docs): a child that fails is killed still suspended, having got
+    /// risk in the admission adapter's docs): a child that fails is killed still suspended, having got
     /// nothing. One that passes is resumed, and its token checked again right before the line.
     pub(crate) fn spawn(
         &self,
@@ -224,41 +225,42 @@ impl Spawner {
             Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
             Mode::Discard(id, _) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
         };
-        let mut env: Vec<(OsString, OsString)> = PASSED_ENV
-            .iter()
-            .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
-            .collect();
-        env.push((OFFICE_HOME_ENV.into(), self.home.clone().into_os_string()));
-        if let Some(runtime) = &self.runtime_dir {
-            env.push((
-                OFFICE_RUNTIME_DIR_ENV.into(),
-                runtime.clone().into_os_string(),
-            ));
+        let mut env = ChildEnv::new();
+        for name in PASSED_ENV {
+            if let Some(value) = std::env::var_os(name) {
+                env.set(name, value)?;
+            }
         }
-        let spawned = {
-            // See `cloexec`: no fd of ours may be half-made while a child is spawned.
-            let _one_at_a_time = lock(&SPAWN_LOCK);
-            spawn_suspended(&self.program, &args, &env)?
-        };
-        let Spawned {
-            mut process,
+        env.set(OFFICE_HOME_ENV, self.home.clone().into_os_string())?;
+        if let Some(runtime) = &self.runtime_dir {
+            env.set(OFFICE_RUNTIME_DIR_ENV, runtime.clone().into_os_string())?;
+        }
+        let admission = self.check.admission(&self.program)?;
+        // See `cloexec`: no fd of ours may be half-made while a child is spawned. The
+        // admission holds `SPAWN_LOCK` while it makes the pipes and the process, and no
+        // longer. It checks the image before any of it has run, kills a child that fails
+        // (still suspended) and lets one that passes run.
+        let started = admission.spawn(&args, &env, &SPAWN_LOCK).map_err(|error| {
+            match SpawnRefused::of(&error) {
+                Some(refused) => {
+                    let why = self.check.why(&refused.refusal);
+                    host_log::log(&format!(
+                        "refused office server {}: {why}; it was stopped before it ran and got \
+                         nothing",
+                        refused.pid
+                    ));
+                    SpawnError::Untrusted(why)
+                }
+                None => SpawnError::Io(error),
+            }
+        })?;
+        let Started {
+            child: process,
             stdin,
             stdout,
             stderr,
-        } = spawned;
+        } = started;
         let pid = process.id();
-        // Suspended: check the image, before any of it has run.
-        let admitted = match self.check.admit(pid) {
-            Ok(admitted) => admitted,
-            Err(why) => {
-                process.kill();
-                host_log::log(&format!(
-                    "refused office server {pid}: {why}; it was stopped before it ran and got \
-                     nothing"
-                ));
-                return Err(SpawnError::Untrusted(why));
-            }
-        };
         let mut running = RunningChild {
             process,
             stdin: Some(stdin),
@@ -266,7 +268,6 @@ impl Spawner {
             generation,
             started: Instant::now(),
         };
-        running.process.resume()?;
         let v3_signals = signals.clone();
         if rendezvous.is_none() {
             thread::Builder::new()
@@ -280,14 +281,15 @@ impl Spawner {
             .spawn(move || copy_stderr(stderr, &log))?;
 
         // Still the image that was checked (no exec since), right before the line.
-        if let Err(why) = self.check.still(pid, admitted) {
+        if let Err(refusal) = admission.recheck(&running.process) {
+            let why = self.check.why(&refusal);
             host_log::log(&format!(
                 "refused office server {pid}: {why}; it was stopped and got nothing"
             ));
             running.kill();
             return Err(SpawnError::Untrusted(why));
         }
-        self.attach_control(&mut running, mode, rendezvous, admitted, v3_signals)?;
+        self.attach_control(&mut running, mode, rendezvous, &admission, v3_signals)?;
         Ok(running)
     }
     fn attach_control(
@@ -295,7 +297,7 @@ impl Spawner {
         running: &mut RunningChild,
         mode: Mode<'_>,
         rendezvous: Option<super::channels::Rendezvous>,
-        admitted: Option<crate::peer::AuditToken>,
+        admission: &Admission,
         v3_signals: Sender<Signal>,
     ) -> Result<(), SpawnError> {
         match (&self.broker, rendezvous, mode) {
@@ -325,9 +327,8 @@ impl Spawner {
                 running.channel = Some(broker.accept(
                     rendezvous,
                     id,
-                    running.process.id(),
-                    admitted,
-                    &self.check,
+                    admission,
+                    &running.process,
                     db_key,
                     None,
                     running.generation,
@@ -365,9 +366,8 @@ impl Spawner {
                 running.channel = Some(broker.accept(
                     context,
                     line.office_id(),
-                    running.process.id(),
-                    admitted,
-                    &self.check,
+                    admission,
+                    &running.process,
                     line.db_key(),
                     Some(&hq.recovery),
                     running.generation,
@@ -386,7 +386,7 @@ impl RunningChild {
     /// key), `--discard` the discard message (the database key or `null`). `write_host_line`
     /// zeroes its encoded copy of the line.
     fn write_first_line(&mut self, mode: Mode<'_>) {
-        let pid = self.process.id();
+        let pid = self.pid();
         let Some(stdin) = self.stdin.as_mut() else {
             return;
         };
@@ -422,8 +422,7 @@ impl RunningChild {
         }
     }
 
-    #[cfg(test)]
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    /// The server's pid, for the host log.
     pub(crate) fn pid(&self) -> u32 {
         self.process.id()
     }

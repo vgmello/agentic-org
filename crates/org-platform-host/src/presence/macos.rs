@@ -45,50 +45,17 @@ pub(super) fn confirm(cancelled: impl Fn() -> bool) -> Result<(), ()> {
     }
 }
 
-// The peer's audit token, read as `org-host`'s `peer.rs` reads it for the code-signing
-// check: the same constant, type and function, copied until the admission contract
-// holds the one copy.
-use std::io;
-use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 
-/// An `audit_token_t`: eight 32-bit words.
-const AUDIT_TOKEN_BYTES: usize = 32;
-
-/// A process's audit token (`audit_token_t`).
-type AuditToken = [u8; AUDIT_TOKEN_BYTES];
-
-/// The peer's audit token, which the code-signing check identifies the caller by. Unlike a pid,
-/// it names one process for its whole life and is never reused.
-fn audit_token(stream: &UnixStream) -> io::Result<[u8; AUDIT_TOKEN_BYTES]> {
-    let mut token = [0u8; AUDIT_TOKEN_BYTES];
-    let mut len = AUDIT_TOKEN_BYTES as libc::socklen_t;
-    // SAFETY: a valid socket fd, and an out-buffer of `len` bytes that outlives the call.
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERTOKEN,
-            token.as_mut_ptr().cast(),
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if len as usize != AUDIT_TOKEN_BYTES {
-        return Err(io::Error::other(
-            "the peer's audit token has an unexpected size",
-        ));
-    }
-    Ok(token)
-}
+/// A process's audit token (`audit_token_t`): eight 32-bit words.
+type AuditToken = [u8; 32];
 
 use super::{Confirmation, Unconfirmed};
 use org_platform::Refused;
 
 pub(super) fn local_peer(peer: &UnixStream) -> Result<bool, Refused> {
-    Ok(audit_token(peer).is_ok_and(|token| local(&token)))
+    // The one read of the peer's audit token is the admission adapter's.
+    Ok(crate::admission::macos::audit_token(peer).is_ok_and(|token| local(&token)))
 }
 
 pub(super) fn current_context() -> Result<bool, Refused> {

@@ -1,5 +1,15 @@
 use super::*;
 
+/// This test process stands in for a worker whose pid is `pid`: an admission that checks no
+/// image (a debug build's) and a child handle that is never signalled or waited for. A system
+/// without an admission adapter has neither, so nothing can be handed off there.
+fn stand_in(pid: u32) -> io::Result<(Admission, Child)> {
+    let admission =
+        crate::server_check::ServerCheck::Skip.admission(Path::new("/nonexistent/worker"))?;
+    let child = org_platform_host::testing::admission::unowned_child(pid, None)?;
+    Ok((admission, child))
+}
+
 fn byte(receiver: &mut org_socket::rights::StreamReceiver, count: usize) -> (u8, Vec<OwnedFd>) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -102,13 +112,13 @@ fn actual_v3_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unk
     let broker = Broker::new("instance".into(), PathBuf::new());
     let (signals, events) = mpsc::channel();
     let key = DbKey::from_bytes([71; 32]);
+    let (admission, child) = stand_in(std::process::id()).unwrap();
     let endpoint = broker
         .handoff(
             host,
             "office",
-            std::process::id(),
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &child,
             &key,
             None,
             7,
@@ -142,20 +152,22 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
         .unwrap();
     let broker = Broker::new("instance".into(), PathBuf::new());
     let (signals, _) = mpsc::channel();
-    assert!(broker
-        .handoff(
+    // Another pid than the reader's. Where no admission exists at all, nothing is handed off
+    // either: the host's end closes without a byte written.
+    let handed = stand_in(std::process::id() + 1).and_then(move |(admission, child)| {
+        broker.handoff(
             host,
             "office",
-            std::process::id() + 1,
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &child,
             &DbKey::from_bytes([72; 32]),
             None,
             1,
             signals,
-            Instant::now() + Duration::from_secs(1)
+            Instant::now() + Duration::from_secs(1),
         )
-        .is_err());
+    });
+    assert!(handed.is_err());
     assert!(frame::read_line(&mut BufReader::new(worker))
         .unwrap()
         .is_none());
@@ -208,13 +220,13 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             .is_none());
     });
     let (signals, _) = mpsc::channel();
+    let (admission, child) = stand_in(std::process::id()).unwrap();
     let endpoint = broker
         .accept(
             rendezvous,
             "office",
-            std::process::id(),
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &child,
             &DbKey::from_bytes([73; 32]),
             None,
             1,
@@ -260,13 +272,13 @@ pub(crate) fn worker_fixture(office: &str) -> WorkerFixture {
     });
     let broker = Broker::new("instance".into(), PathBuf::new());
     let (signals, _) = mpsc::channel();
+    let (admission, child) = stand_in(std::process::id()).unwrap();
     let endpoint = broker
         .handoff(
             host,
             office,
-            std::process::id(),
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &child,
             &DbKey::from_bytes([71; 32]),
             None,
             7,
@@ -531,13 +543,13 @@ fn incompatible_profile_gets_no_secret_or_descriptor() {
         }
         frame::write_message(&mut worker, &ready).unwrap();
         let (signals, _) = mpsc::channel();
+        let (admission, child) = stand_in(std::process::id()).unwrap();
         assert!(Broker::new("instance".into(), PathBuf::new())
             .handoff(
                 host,
                 "office",
-                std::process::id(),
-                None,
-                &ServerCheck::Skip,
+                &admission,
+                &child,
                 &DbKey::from_bytes([71; 32]),
                 None,
                 1,

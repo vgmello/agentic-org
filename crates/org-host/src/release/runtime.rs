@@ -1,6 +1,7 @@
 //! A privately constructed complete pin held for one host lifetime. This is a
 //! publisher/image check; account and organization authorization remain separate.
 use super::{files::Directory, store::ReleaseStore, Error, ReleasePin};
+use org_platform_host::admission::{own_image, ExpectedImage, OwnImageError};
 use org_release::VerifiedManifest;
 use std::{path::PathBuf, sync::Arc};
 
@@ -48,14 +49,21 @@ impl RuntimeRelease {
     }
     pub(crate) fn check_self(&self) -> Result<(), Error> {
         self.0.store.verify_root()?;
-        #[cfg(target_os = "macos")]
-        if org_socket::image::own_loaded_cdhash()? != self.cdhash("agentic-org")? {
-            return Err(Error::PlatformAdmission);
-        }
-        #[cfg(not(target_os = "macos"))]
-        return Err(Error::UnsupportedTarget);
-        #[cfg(target_os = "macos")]
-        Ok(())
+        // The loaded image is read before the manifest's hash is required, so a build
+        // target without a loaded-image query is refused as that, whatever the manifest.
+        let expected = ExpectedImage {
+            program: self.cli_program(),
+            sha256: None,
+            macos_cdhash: self.cdhash("agentic-org").ok(),
+            macos_requirement: None,
+            macos_signing: crate::code_signing::HARDENED,
+            development: false,
+        };
+        own_image(&expected).map_err(|error| match error {
+            OwnImageError::Unsupported(_) => Error::UnsupportedTarget,
+            OwnImageError::Unavailable(error) => Error::from(error),
+            OwnImageError::Mismatch => Error::PlatformAdmission,
+        })
     }
     pub fn office_program(&self) -> PathBuf {
         self.path("agentic-org-office")

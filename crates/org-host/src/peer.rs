@@ -1,16 +1,14 @@
 //! Who is at the other end of a connection on `host.sock`, as the kernel reports it: its uid,
 //! and on macOS its audit token, its pid and its executable's path; what the host noted when it
 //! accepted the connection, and where each request was in the stream. `app_auth` decides what
-//! these allow; the listener records them.
+//! these allow; the listener records them. The kernel is asked through
+//! `org_platform_host::admission`, which refuses on a system that cannot identify a peer's
+//! image: no token is noted there, so nothing that needs one is allowed.
 
-#[cfg(all(target_os = "macos", debug_assertions))]
-use std::ffi::OsStr;
 use std::io;
-#[cfg(all(target_os = "macos", debug_assertions))]
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
-#[cfg(all(target_os = "macos", debug_assertions))]
+#[cfg(debug_assertions)]
 use std::path::PathBuf;
 
 /// An `audit_token_t`: eight 32-bit words.
@@ -36,22 +34,16 @@ pub(crate) struct Received {
 /// after `buffered`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Accepted {
-    #[cfg(target_os = "macos")]
     pub(crate) token: Option<AuditToken>,
     pub(crate) buffered: u64,
 }
 
 impl Accepted {
     pub(crate) fn sample(stream: &UnixStream) -> Self {
-        #[cfg(target_os = "macos")]
         let token = audit_token(stream).ok();
         // After the token: anything sent before it was taken is counted as buffered.
         let buffered = bytes_waiting(stream).unwrap_or(u64::MAX);
-        Self {
-            #[cfg(target_os = "macos")]
-            token,
-            buffered,
-        }
+        Self { token, buffered }
     }
 }
 
@@ -68,83 +60,55 @@ pub(crate) fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
 }
 
 /// The peer's audit token, which the code-signing check identifies the caller by. Unlike a pid,
-/// it names one process for its whole life and is never reused.
-#[cfg(target_os = "macos")]
-pub(crate) fn audit_token(stream: &UnixStream) -> io::Result<[u8; AUDIT_TOKEN_BYTES]> {
-    let mut token = [0u8; AUDIT_TOKEN_BYTES];
-    let mut len = AUDIT_TOKEN_BYTES as libc::socklen_t;
-    // SAFETY: a valid socket fd, and an out-buffer of `len` bytes that outlives the call.
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERTOKEN,
-            token.as_mut_ptr().cast(),
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if len as usize != AUDIT_TOKEN_BYTES {
-        return Err(io::Error::other(
-            "the peer's audit token has an unexpected size",
-        ));
-    }
-    Ok(token)
+/// it names one process for its whole life and is never reused. A system that cannot identify a
+/// peer's image refuses ([`unidentifiable`]).
+pub(crate) fn audit_token(stream: &UnixStream) -> io::Result<AuditToken> {
+    org_platform_host::admission::peer(stream).map(|peer| peer.macos_audit_token)
 }
 
-/// The peer's pid (for the debug-only fallback; a pid can be reused, an audit token can't).
-#[cfg(all(target_os = "macos", debug_assertions))]
-pub(crate) fn pid(stream: &UnixStream) -> io::Result<libc::pid_t> {
-    let mut pid: libc::pid_t = 0;
-    let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-    // SAFETY: a valid socket fd, and an out-value of `len` bytes that outlives the call.
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERPID,
-            (&mut pid as *mut libc::pid_t).cast(),
-            &mut len,
-        )
-    };
-    if rc == 0 {
-        Ok(pid)
-    } else {
-        Err(io::Error::last_os_error())
-    }
+/// Whether `error`, from [`audit_token`], says that this system cannot identify a peer's image
+/// at all, rather than that asking about this peer failed.
+pub(crate) fn unidentifiable(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|source| source.is::<org_platform::Refused>())
 }
 
-/// The path of the executable process `pid` runs (for the debug-only fallback).
-#[cfg(all(target_os = "macos", debug_assertions))]
-pub(crate) fn executable(pid: libc::pid_t) -> io::Result<PathBuf> {
-    let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    // SAFETY: a buffer of exactly the size passed, which outlives the call.
-    let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
-    if n <= 0 {
-        return Err(io::Error::last_os_error());
-    }
-    buf.truncate(n as usize);
-    Ok(PathBuf::from(OsStr::from_bytes(&buf)))
+/// The path of the executable the peer's process runs, found through its pid (for the
+/// debug-only fallback; a pid can be reused, an audit token can't).
+#[cfg(debug_assertions)]
+pub(crate) fn executable(stream: &UnixStream) -> io::Result<PathBuf> {
+    org_platform_host::admission::peer_executable(stream)
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
+    /// What is noted at the accept: the bytes the client had already sent, and its token
+    /// exactly when the system identifies peers at all.
     #[test]
-    fn a_socket_pair_reports_this_process() {
-        let (a, _b) = UnixStream::pair().unwrap();
-        assert!(audit_token(&a).unwrap().iter().any(|&b| b != 0));
-        #[cfg(debug_assertions)]
-        {
-            assert_eq!(pid(&a).unwrap(), std::process::id() as libc::pid_t);
-            let me = executable(std::process::id() as libc::pid_t).unwrap();
-            assert_eq!(
-                me.canonicalize().unwrap(),
-                std::env::current_exe().unwrap().canonicalize().unwrap()
-            );
+    fn a_sample_counts_what_was_already_sent_and_keeps_the_token_the_system_gives() {
+        let (a, b) = UnixStream::pair().unwrap();
+        assert_eq!(Accepted::sample(&a).buffered, 0);
+        (&b).write_all(b"early").unwrap();
+        let sampled = Accepted::sample(&a);
+        assert_eq!(sampled.buffered, 5);
+        match audit_token(&a) {
+            Ok(token) => {
+                assert_eq!(sampled.token, Some(token));
+                org_platform_host::admission::native_peers().unwrap();
+            }
+            Err(error) => {
+                assert!(unidentifiable(&error), "{error}");
+                assert_eq!(sampled.token, None);
+                assert!(org_platform_host::admission::native_peers().is_err());
+            }
         }
+        // An error that is no refusal of the system is not taken for one.
+        assert!(!unidentifiable(&io::Error::from_raw_os_error(
+            libc::ENOTSOCK
+        )));
     }
 }

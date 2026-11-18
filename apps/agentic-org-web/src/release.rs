@@ -3,6 +3,7 @@
 mod files;
 use crate::assets::{BuildError, BuildFiles};
 use org_host_control::gateway::WebRelease;
+use org_platform::image::{ReleaseArchitecture, ReleasePlatform};
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, VerifiedManifest};
 use std::path::Path;
 // Public policy data only: the reviewed build script validates the registry
@@ -67,19 +68,15 @@ fn policy() -> Result<(TrustedPolicy, TrustedKeys), BuildError> {
     if RELEASE_REGISTRY.is_empty() || RELEASE_MIN_SEQUENCE == 0 {
         return Err(BuildError::UnauthenticatedRelease);
     }
-    let platform = if cfg!(target_os = "macos") {
-        Platform::Macos
-    } else if cfg!(target_os = "linux") {
-        Platform::Linux
-    } else {
-        return Err(BuildError::UnauthenticatedRelease);
+    // The platform names the release this build belongs to; a target without one refuses.
+    let target = org_platform::image::release_target().map_err(denied)?;
+    let platform = match target.platform {
+        ReleasePlatform::Macos => Platform::Macos,
+        ReleasePlatform::Linux => Platform::Linux,
     };
-    let architecture = if cfg!(target_arch = "aarch64") {
-        Architecture::Aarch64
-    } else if cfg!(target_arch = "x86_64") {
-        Architecture::X86_64
-    } else {
-        return Err(BuildError::UnauthenticatedRelease);
+    let architecture = match target.architecture {
+        ReleaseArchitecture::Aarch64 => Architecture::Aarch64,
+        ReleaseArchitecture::X86_64 => Architecture::X86_64,
     };
     Ok((
         TrustedPolicy::new(platform, architecture, 1, RELEASE_MIN_SEQUENCE).map_err(denied)?,
@@ -108,14 +105,14 @@ pub(crate) fn load(assets: &Path, pin: Option<&WebRelease>) -> Result<BuildFiles
 }
 
 /// The running image must be the manifest's `agentic-org-web`. The image adapter
-/// (`org_socket::image`) refuses on a platform without a loaded-image query, so a
+/// (`org_platform::image`) refuses on a platform without a loaded-image query, so a
 /// valid manifest alone never admits this process or permits asset preload.
 fn verify_running_image(manifest: &VerifiedManifest) -> Result<(), BuildError> {
     let expected = manifest
         .file("agentic-org-web")
         .and_then(|f| f.macos_cdhash())
         .ok_or(BuildError::ReleaseImageMismatch)?;
-    if &org_socket::image::own_loaded_cdhash().map_err(|_| BuildError::ReleaseImageMismatch)?
+    if &org_platform::image::own_loaded_cdhash().map_err(|_| BuildError::ReleaseImageMismatch)?
         != expected
     {
         return Err(BuildError::ReleaseImageMismatch);

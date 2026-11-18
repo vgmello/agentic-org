@@ -1,8 +1,9 @@
 //! Host-owned launch-v3 connections. Keys go only to the authenticated reader;
 //! channel descriptors are retained until that worker acknowledges ownership.
 use super::child::Signal;
-use crate::{cloexec::SPAWN_LOCK, peer::AuditToken, server_check::ServerCheck, sync::lock};
+use crate::{cloexec::SPAWN_LOCK, sync::lock};
 use org_office_launch::v3;
+use org_platform_host::admission::{Admission, Child, NotTheChild};
 use org_proto::{frame, DbKey, GrantKey};
 use std::{
     collections::BTreeMap,
@@ -141,9 +142,8 @@ impl Broker {
         &self,
         rendezvous: Rendezvous,
         office: &str,
-        pid: u32,
-        admitted: Option<AuditToken>,
-        check: &ServerCheck,
+        admission: &Admission,
+        child: &Child,
         db_key: &DbKey,
         recovery: Option<&org_proto::RecoveryCode>,
         generation: u64,
@@ -169,7 +169,7 @@ impl Broker {
         stream.set_read_timeout(Some(left))?;
         stream.set_write_timeout(Some(left))?;
         self.handoff(
-            stream, office, pid, admitted, check, db_key, recovery, generation, signals, deadline,
+            stream, office, admission, child, db_key, recovery, generation, signals, deadline,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -177,9 +177,8 @@ impl Broker {
         &self,
         stream: UnixStream,
         office: &str,
-        pid: u32,
-        admitted: Option<AuditToken>,
-        check: &ServerCheck,
+        admission: &Admission,
+        child: &Child,
         db_key: &DbKey,
         recovery: Option<&org_proto::RecoveryCode>,
         generation: u64,
@@ -190,7 +189,7 @@ impl Broker {
         // admitted before it ran. Release macOS requires the exact audit token.
         phase(
             "initial reader identity",
-            reader_is_child(&stream, pid, admitted),
+            reader_is_child(admission, child, &stream),
         )?;
         let mut reader = BufReader::new(stream);
         let _: v3::ReadyForSecrets = phase(
@@ -203,11 +202,11 @@ impl Broker {
         }
         phase(
             "handoff reader identity",
-            reader_is_child(reader.get_ref(), pid, admitted),
+            reader_is_child(admission, child, reader.get_ref()),
         )?;
         phase(
             "handoff image identity",
-            check.still(pid, admitted).map_err(launch),
+            admission.recheck(child).map_err(launch),
         )?;
         let (transfer, worker) = {
             let _fence = lock(&SPAWN_LOCK);
@@ -263,7 +262,7 @@ impl Broker {
         lock(&self.endpoints).insert(office.into(), Arc::downgrade(&endpoint));
         let receiving = Arc::clone(&endpoint);
         std::thread::Builder::new()
-            .name(format!("office-{pid}-v3"))
+            .name(format!("office-{}-v3", child.id()))
             .spawn(move || {
                 while let Ok(Some(event)) = v3::read_server_event(&mut reader) {
                     match event {
@@ -532,33 +531,21 @@ impl Drop for Endpoint {
     }
 }
 
-#[cfg(target_os = "macos")]
+/// Whether the process at the other end of `stream` is `child`, as the image `admission`
+/// admitted (on macOS the same audit token and pid). A system without an admission adapter
+/// has no child to ask about: no weaker check stands in for it (ADR-0017).
 pub(crate) fn reader_is_child(
+    admission: &Admission,
+    child: &Child,
     stream: &UnixStream,
-    pid: u32,
-    admitted: Option<AuditToken>,
 ) -> io::Result<()> {
-    let token = crate::peer::audit_token(stream)?;
-    let peer_pid = u32::from_ne_bytes(token[20..24].try_into().map_err(launch)?);
-    if admitted.is_some_and(|expected| expected != token) || peer_pid != pid {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
-/// No other operating system has a check that the reader is the started worker yet. Refuse
-/// rather than fall back to a weaker one (ADR-0017); the Linux check arrives with increment X1
-/// of the implementation plan.
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn reader_is_child(
-    _stream: &UnixStream,
-    _pid: u32,
-    _admitted: Option<AuditToken>,
-) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "checking a worker's identity is not implemented on this operating system",
-    ))
+    admission.verify_reader(child, stream).map_err(|error| {
+        if NotTheChild::is(&error) {
+            invalid()
+        } else {
+            error
+        }
+    })
 }
 
 #[cfg(test)]

@@ -21,5 +21,8 @@
 #[cfg(not(unix))]
 compile_error!("org-platform-host builds only for Unix targets");
 
+pub mod admission;
 pub mod names;
 pub mod presence;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;

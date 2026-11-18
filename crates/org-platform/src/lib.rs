@@ -51,6 +51,7 @@ pub mod confinement;
 pub mod dirs;
 pub mod disk;
 pub mod fs;
+pub mod image;
 pub mod process;
 pub mod service;
 pub mod socket;
