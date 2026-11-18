@@ -2,7 +2,8 @@
 # ADR-0017 LNX-2: the whole instance in a container built from this repository's container
 # file, with a plain `docker run`, and again after the container is replaced.
 #
-# Usage, from anywhere, with Docker running, cargo on the PATH and the UI built:
+# Usage, from anywhere, with Docker running (Engine 26 or later, for volume subpaths), cargo
+# on the PATH and the UI built:
 #
 #   (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 #   deploy/container/lnx2.sh
@@ -458,7 +459,14 @@ wait_until "the instance beside lost+found to serve" serving "$tag-g"
 echo "  serving"
 docker rm -f -v "$tag-g" >/dev/null
 echo "the secrets directory inside the directory that is the data volume:"
-docker run --rm -u 0 -v "$scratch/binds:/b" --entrypoint /bin/sh "$image" -c \
-    'mkdir -p /b/agentic/secrets && chown -R 61000:61000 /b/agentic && chmod 700 /b/agentic /b/agentic/secrets' >/dev/null
-refused "$tag-h" 'is inside the data volume' -v "$scratch/binds/agentic:/data" -v "$scratch/binds/agentic/secrets:/secrets" ||
+# Two subpaths of one named volume (Docker Engine 26 or later), not bind mounts of the
+# Docker host's folders: on Docker Desktop those arrive over virtiofs, which the store
+# refuses as a filesystem before it gets to this rule.
+volumes+=("$tag-in")
+docker volume create "$tag-in" >/dev/null
+docker run --rm -u 0 -v "$tag-in:/v" --entrypoint /bin/sh "$image" -c \
+    'mkdir -p /v/agentic/secrets && chown -R 61000:61000 /v/agentic && chmod 700 /v/agentic /v/agentic/secrets' >/dev/null
+refused "$tag-h" 'is inside the data volume' \
+    --mount "type=volume,src=$tag-in,dst=/data,volume-subpath=agentic" \
+    --mount "type=volume,src=$tag-in,dst=/secrets,volume-subpath=agentic/secrets" ||
     fail "the refusal does not name the data volume"
