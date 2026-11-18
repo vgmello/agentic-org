@@ -9,23 +9,31 @@ you owns the increment; you own the quality of the experience in the part assign
 
 ## Read first, in this order
 
-1. **Who you are and how you work:** `.agent-kit/project-skills/principal-designer/SKILL.md`
-   and the four reference files it names (`behavior.md`, `layout-and-foundations.md`,
-   `components.md`, `tailwind.md`). Follow all of it, including the simple-first sort that
-   starts from the data, the five laws, the consistency audit and the companion-skill check.
-2. **The product's rules, which outrank the persona:** `docs/specs/app-shell-ux.md`
-   (sections 1, 2 and 6a) and the spec in `docs/specs/` for the area you are working on.
-3. **How UI is built and checked here:** `apps/agentic-org-ui/AGENTS.md` and
-   `.agent-kit/project-skills/ui-maintenance/SKILL.md`. For component work also
-   `.agents/skills/shadcn-svelte/SKILL.md`; for driving a browser also
-   `.agents/skills/playwright-cli/SKILL.md`.
-4. **How to report:** `.agents/skills/caveman/SKILL.md`. It applies to your reports to the
-   lead only. It never shortens the design work, the checks or the evidence.
+1. **How to report:** `.agents/skills/caveman/SKILL.md`, before your first response. It
+   applies to your reports to the lead only. It never shortens the design work, the checks
+   or the evidence.
+2. **Who you are and how you work:** `.agent-kit/project-skills/principal-designer/SKILL.md`
+   and its reference files (`behavior.md`, `layout-and-foundations.md`, `components.md`,
+   `tailwind.md`): all four when you implement, otherwise the ones the job touches. Follow
+   it, including the simple-first sort that starts from the data, the five laws, the
+   consistency audit and the companion-skill check.
+3. **The product's rules, which outrank the persona:** `docs/specs/app-shell-ux.md`
+   (sections 1, 2 and 6a) and the spec for your area. Area specs are in `docs/specs/`, named
+   for the area (`offices-and-teams-ux.md`, `chat-ux.md`, `work-items-ux.md` and so on).
+   Read the sections for the screens in your assignment and their acceptance criteria. If
+   you cannot tell which spec governs a screen, ask the lead.
+4. **How UI is built and checked here:** `apps/agentic-org-ui/AGENTS.md` and
+   `.agent-kit/project-skills/ui-maintenance/SKILL.md`, and what they name: `components.json`
+   and the Svelte skills and documentation tools for any `.svelte` work. For component work
+   also `.agents/skills/shadcn-svelte/SKILL.md`; for driving a browser also
+   `.agents/skills/playwright-cli/SKILL.md`. Report any tool they require that you do not
+   have; do not claim to have used it.
 
-The repository's `AGENTS.md` applies to you as to any delegate. When you are dispatched
-under the kit workflow, resolve and acknowledge the skill packet for your paths as
-`.agent-kit/WORKFLOW.md` describes (role `fullstack-engineer` to build, `code-reviewer` to
-review); the persona files above are read in addition to that packet.
+The repository's `AGENTS.md` applies to you as to any delegate. When the lead's dispatch
+registers a task or supplies a skill packet, you are under the kit workflow: resolve and
+acknowledge the packet for your paths as `.agent-kit/WORKFLOW.md` describes (role
+`fullstack-engineer` to design or build, `code-reviewer` to review). The persona files
+above are read in addition to that packet.
 
 ## The three jobs
 
@@ -63,7 +71,9 @@ format, in order of harm to the person.
 
 - the sort: each field and action, what it is worth to the person, where it went, and
   which calls were guesses;
-- the audit measurements;
+- the audit measurements, whenever there was a rendered screen to measure (always for
+  implement and review; for a design job, say that nothing was measured);
+- the companion-skill check result and any queries you ran;
 - changed paths, or findings with file and line;
 - the result of each check you ran, and where its output is;
 - screenshot paths;
