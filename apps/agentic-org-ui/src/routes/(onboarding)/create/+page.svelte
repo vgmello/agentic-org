@@ -64,6 +64,8 @@
 	const failure = $derived(phase.kind === 'failed' ? phase : undefined);
 	// Until a lost attempt's outcome is known, nothing new may be sent (OFC-21).
 	const locked = $derived(working || failure?.action === 'check_again');
+	// A refusal that trying again cannot change (OFC-22): nothing more is sent from this page.
+	const barred = $derived(failure?.action === 'none');
 	const created = $derived(phase.kind === 'created' ? phase.organization : undefined);
 	const command = $derived(created ? recoveryReleaseCommand(created.name) : '');
 	const progress = $derived(
@@ -126,7 +128,7 @@
 
 	function submit(event: SubmitEvent) {
 		event.preventDefault();
-		if (locked) return;
+		if (locked || barred) return;
 		void flow.submit({ name, slug, repository, stateBranch });
 	}
 	function nameTyped() {
@@ -339,7 +341,7 @@
 		{/if}
 
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-			<Button type="submit" disabled={locked}>
+			<Button type="submit" disabled={locked || barred}>
 				{working ? 'Creating…' : 'Create organization'}
 			</Button>
 			<a href="/welcome" class={secondary}>{working ? 'Close' : 'Cancel'}</a>

@@ -370,6 +370,11 @@ test("HQ's refusal for an account that isn't the administrator shows its copy wi
 	await expect(alert).toBeFocused();
 	await expect(alert.getByRole('button', { name: 'Try again' })).toHaveCount(0);
 	await expect(alert.getByRole('button', { name: 'Copy details' })).toBeVisible();
+	// Trying again cannot change it: Create is disabled and Enter sends nothing.
+	await expect(create(page)).toBeDisabled();
+	await page.getByLabel('State branch').press('Enter');
+	await expect(alert).toBeVisible();
+	expect((await server.stats()).creates).toHaveLength(1);
 });
 
 test('an account that is not the administrator gets no form at /create (OFC-22)', async ({
