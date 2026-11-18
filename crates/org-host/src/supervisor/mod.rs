@@ -1089,6 +1089,151 @@ mod tests {
             .any(|call| *call == (Op::Delete, OFFICE.to_owned())));
     }
 
+    /// Names the file where this test binary, run again as a v3 HQ `--create` server by
+    /// [`an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted`], records its pid.
+    const V3_CREATE_PID: &str = "ORG_HOST_TEST_V3_CREATE_PID";
+
+    /// Not a test: a v3 HQ `--create` server, as the real worker speaks it (first line on
+    /// stdin, the rendezvous connect, `ready_for_secrets`, the handoff header, the transfer
+    /// socket after its marker, the receipt), that reports `created` at once and keeps running.
+    /// Without its variable it does nothing.
+    #[test]
+    #[ignore = "run only as the v3 HQ create server of a supervisor test"]
+    fn v3_hq_create_server() {
+        use org_office_launch::v3::{self, AnyFirstLine, HostFirstLine};
+        use std::os::unix::net::UnixStream;
+        let Some(pid_file) = std::env::var_os(V3_CREATE_PID) else {
+            return;
+        };
+        fs::write(pid_file, std::process::id().to_string()).unwrap();
+        let mut stdin = std::io::BufReader::new(std::io::stdin());
+        let Ok(Some(AnyFirstLine::V3(HostFirstLine::Create(create)))) =
+            v3::read_first_line_any(&mut stdin, org_office_launch::FirstLine::Create)
+        else {
+            std::process::exit(2);
+        };
+        let mut stream = UnixStream::connect(&create.office.rendezvous).unwrap();
+        org_proto::frame::write_message(&mut stream, &v3::ReadyForSecrets).unwrap();
+        let fence = std::sync::Mutex::new(());
+        let mut receiver = org_socket::rights::StreamReceiver::new(stream.try_clone().unwrap());
+        let mut receive = |count: usize, marker: bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let got = if marker {
+                    receiver
+                        .receive_marker(count, v3::FD_MARKER, &fence)
+                        .map(|fds| (v3::FD_MARKER, fds))
+                } else {
+                    receiver.receive_byte(count, &fence)
+                };
+                match got {
+                    Ok(value) => return value,
+                    Err(org_socket::rights::ReceiveError::WouldBlock)
+                        if Instant::now() < deadline =>
+                    {
+                        std::thread::yield_now()
+                    }
+                    Err(_) => std::process::exit(4),
+                }
+            }
+        };
+        let mut header = Vec::new();
+        loop {
+            let (b, _) = receive(0, false);
+            if b == b'\n' {
+                break;
+            }
+            header.push(b);
+        }
+        let Ok(v3::Handoff::Create { fds, .. }) = v3::decode_handoff(&header) else {
+            std::process::exit(5);
+        };
+        crate::secrets::zero(&mut header);
+        let (_, _transfer) = receive(fds.len(), true);
+        drop(receiver);
+        stream.set_nonblocking(false).unwrap();
+        v3::write_rendezvous_event(
+            &mut stream,
+            &v3::RendezvousEvent::FdsReceived {
+                of: "handoff".into(),
+            },
+        )
+        .unwrap();
+        let office = OfficeFile::new(
+            &create.office.office_id,
+            &create.office_name,
+            create.role,
+            &create.org_id,
+            &create.org_name,
+            "2026-11-08T00:00:00.000Z",
+        );
+        v3::write_rendezvous_event(
+            &mut stream,
+            &v3::RendezvousEvent::Server(ServerEvent::Created { office }),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_secs(30));
+        std::process::exit(0);
+    }
+
+    /// An HQ create whose server reports `created` after shutdown began is stopped, not
+    /// adopted: the supervisor never starts supervising it, its server is gone, and its key
+    /// (the HQ's original key, installed before the create) stays.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        let key = DbKey::from_bytes([2; 32]);
+        keys.create(OFFICE, &key).unwrap();
+        let pid_file = dir.path().join("pid");
+        // The host closes the server's stdout over v3, so libtest's output goes nowhere.
+        let program = script(
+            dir.path(),
+            "server",
+            &format!(
+                "{V3_CREATE_PID}='{}' exec '{}' --exact supervisor::tests::v3_hq_create_server \
+                 --ignored --test-threads=1 >/dev/null",
+                pid_file.display(),
+                std::env::current_exe().unwrap().display()
+            ),
+        );
+        let supervisor = supervisor(dir.path(), program, &keys);
+        let first = org_office_launch::v3::CreateLine {
+            office: org_office_launch::v3::OfficeLine {
+                id_profile: None,
+                selected_writer_required: false,
+                instance_id: INSTANCE.into(),
+                office_id: OFFICE.into(),
+                rendezvous: String::new(),
+            },
+            org_id: "01ORG".into(),
+            org_name: "Acme".into(),
+            office_name: "HQ".into(),
+            role: org_proto::OfficeRole::Hq,
+            owner_member_id: "01M72N8MG00000000000000M01".into(),
+            hq_creation: None,
+        };
+        let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+        let pending = supervisor.begin_hq_create(first, recovery).unwrap();
+        let CreateOutcome::Created(adoptable) = pending.wait(Duration::from_secs(10)) else {
+            panic!("the server didn't report created");
+        };
+        let pid: libc::pid_t = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        // The shutdown begins between `created` and the adoption.
+        supervisor.shutdown();
+        assert_eq!(supervisor.adopt(*adoptable).status, OfficeStatus::Offline);
+        assert_eq!(supervisor.state(OFFICE), None, "adopted after shutdown");
+        // The stop reaps the server: signal 0 then finds no such process.
+        // SAFETY: signal 0 only checks the pid.
+        assert!(
+            unsafe { libc::kill(pid, 0) } != 0,
+            "the server outlived the shutdown"
+        );
+        // The HQ's original key stays: it was installed before the create, not by it.
+        assert!(keys.holds(OFFICE, &key));
+    }
+
     #[test]
     fn a_discard_whose_key_cant_be_read_starts_nothing_and_keeps_everything() {
         let dir = short_tempdir();
