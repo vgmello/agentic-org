@@ -132,7 +132,7 @@ fn values_are_bounded_redacted_and_wiped() {
 #[cfg(debug_assertions)]
 mod development {
     use super::*;
-    use crate::host_secrets::Custody as DevSecrets;
+    use crate::host_secrets::Custody;
     use org_platform_host::testing::credentials as hooks;
     use std::fs;
     use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
@@ -158,8 +158,8 @@ mod development {
                 home,
             }
         }
-        fn open(&self, id: &str) -> Result<DevSecrets, Error> {
-            DevSecrets::open(&self.base, &self.home, id)
+        fn open(&self, id: &str) -> Result<Custody, Error> {
+            Custody::open(&self.base, &self.home, id)
         }
         fn dir(&self, id: &str) -> PathBuf {
             self.base.join("host-secrets").join(id)
@@ -252,35 +252,35 @@ mod development {
         ] {
             assert!(f.open(id).is_err());
         }
-        assert!(DevSecrets::open(Path::new("relative"), &f.home, A).is_err());
+        assert!(Custody::open(Path::new("relative"), &f.home, A).is_err());
         let parent_components = f.base.join("..").join("keys");
         assert!(matches!(
-            DevSecrets::open(&parent_components, &f.home, A),
+            Custody::open(&parent_components, &f.home, A),
             Err(Error::Unsafe)
         ));
         fs::set_permissions(&f.home, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&f.home, &f.home, A),
+            Custody::open(&f.home, &f.home, A),
             Err(Error::Unsafe)
         ));
         let nested = f.home.join("nested");
         fs::create_dir(&nested).unwrap();
         fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&nested, &f.home, A),
+            Custody::open(&nested, &f.home, A),
             Err(Error::Unsafe)
         ));
         assert!(!nested.join("host-secrets").exists());
         assert!(!f.home.join("host-secrets").exists());
         let alias = f.base.with_file_name("alias");
         symlink(&f.base, &alias).unwrap();
-        assert!(DevSecrets::open(&alias, &f.home, A).is_err());
+        assert!(Custody::open(&alias, &f.home, A).is_err());
         for spelling in [
             PathBuf::from(format!("{}/", alias.display())),
             alias.join("."),
         ] {
             assert!(
-                DevSecrets::open(&spelling, &f.home, A).is_err(),
+                Custody::open(&spelling, &f.home, A).is_err(),
                 "{spelling:?}"
             );
         }
@@ -411,11 +411,11 @@ mod development {
         if let Some(root) = std::env::var_os(MARKER) {
             let root = PathBuf::from(root);
             assert!(matches!(
-                DevSecrets::open(Path::new("keys"), &root.join("office"), B),
+                Custody::open(Path::new("keys"), &root.join("office"), B),
                 Err(Error::Unsafe)
             ));
             assert!(matches!(
-                DevSecrets::open(&root.join("keys"), &root.join("office"), A),
+                Custody::open(&root.join("keys"), &root.join("office"), A),
                 Err(Error::InUse)
             ));
             return;
@@ -650,24 +650,24 @@ mod development {
         let f = Fixture::new();
         fs::set_permissions(&f.home, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&f.home, &f.home, A),
+            Custody::open(&f.home, &f.home, A),
             Err(Error::Unsafe)
         ));
         let nested = f.home.join("keys");
         fs::create_dir(&nested).unwrap();
         fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
-            DevSecrets::open(&nested, &f.home, A),
+            Custody::open(&nested, &f.home, A),
             Err(Error::Unsafe)
         ));
         let alias = f.home.with_file_name("OFFICE");
         if alias.exists() {
             assert!(matches!(
-                DevSecrets::open(&alias, &f.home, A),
+                Custody::open(&alias, &f.home, A),
                 Err(Error::Unsafe)
             ));
             assert!(matches!(
-                DevSecrets::open(&alias.join("keys"), &f.home, A),
+                Custody::open(&alias.join("keys"), &f.home, A),
                 Err(Error::Unsafe)
             ));
         }
