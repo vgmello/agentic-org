@@ -22,6 +22,27 @@ approval_mode = "approve"
 [mcp_servers.starter_kit_context.tools.recall]
 approval_mode = "approve"
 
+# Svelte MCP (documentation, autofixer, playground) at the version pinned in
+# apps/agentic-org-ui/package.json; needs `bun install` there first.
+[mcp_servers.svelte]
+command = "sh"
+args = ["-c", "cd \"$(git rev-parse --show-toplevel)/apps/agentic-org-ui\" && exec node node_modules/@sveltejs/mcp/dist/index.mjs"]
+
+# Language servers through mcp-language-server (definition, references, hover,
+# diagnostics, rename): the Codex counterpart of Claude Code's LSP plugins.
+# Install it and the servers as DEVELOPMENT.md "AI tools" describes.
+[mcp_servers.rust_analyzer]
+command = "sh"
+args = ["-c", "exec mcp-language-server --workspace \"$(git rev-parse --show-toplevel)\" --lsp rust-analyzer"]
+
+[mcp_servers.typescript_lsp]
+command = "sh"
+args = ["-c", "exec mcp-language-server --workspace \"$(git rev-parse --show-toplevel)/apps/agentic-org-ui\" --lsp typescript-language-server -- --stdio"]
+
+[mcp_servers.svelte_lsp]
+command = "sh"
+args = ["-c", "exec mcp-language-server --workspace \"$(git rev-parse --show-toplevel)/apps/agentic-org-ui\" --lsp svelteserver -- --stdio"]
+
 # BEGIN STARTER KIT CONTEXT
 [mcp_servers.starter_kit_context]
 command = "python3"

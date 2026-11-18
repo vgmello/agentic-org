@@ -3,7 +3,7 @@
 # Agentic Org cloud setup: Rust + Svelte 5 toolchains, language servers, CI tools.
 # Each step warns instead of aborting, so one failed download never blocks a session.
 set -uo pipefail
-export PATH="/root/.local/bin:/root/.cargo/bin:/root/.bun/bin:$PATH"
+export PATH="/root/.local/bin:/root/.cargo/bin:/root/.bun/bin:/usr/local/go/bin:$PATH"
 BIN=/root/.local/bin; mkdir -p "$BIN"
 warn() { echo "SETUP WARNING: $*" >&2; }
 
@@ -24,6 +24,10 @@ bun --version 2>/dev/null | grep -q '^1.4.4$' ||
 bun add --global --exact typescript@6.0.3 typescript-language-server \
   svelte-language-server @playwright/cli@0.1.24 || warn "global JS tools"
 
+# mcp-language-server: Codex's bridge to the same language servers (.codex/config.toml).
+command -v mcp-language-server >/dev/null ||
+  GOBIN="$BIN" go install github.com/isaacphi/mcp-language-server@v0.1.1 || warn "mcp-language-server"
+
 # cargo-deny 0.20.2 and gitleaks 8.30.1 (the CI versions).
 if ! cargo-deny --version 2>/dev/null | grep -q 0.20.2; then
   d=cargo-deny-0.20.2-x86_64-unknown-linux-musl
@@ -40,7 +44,14 @@ if [ -d agentic-org ]; then
   cd agentic-org
   # Expose the committed skills to Claude Code (.claude/skills is generated and ignored).
   mkdir -p .claude/skills
-  for d in .agents/skills/*/; do n=$(basename "$d"); ln -sfn "../../.agents/skills/$n" ".claude/skills/$n"; done
+  # The svelte plugin already supplies the svelte-* skills to Claude.
+  for d in .agents/skills/*/; do
+    n=$(basename "$d"); case "$n" in svelte-*) continue ;; esac
+    ln -sfn "../../.agents/skills/$n" ".claude/skills/$n"
+  done
+  # Repowise lookup behind the starter_kit_context MCP (ignored .agent-kit/tools).
+  python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 \
+    --expect-path crates/org-proto/src/identity.rs >/dev/null || warn "repowise lookup"
   # Rust toolchain from rust-toolchain.toml, rust-analyzer, and the musl target CI uses.
   rustup toolchain install --no-self-update || warn "rust toolchain"
   rustup component add rust-analyzer rust-src || warn "rust-analyzer"

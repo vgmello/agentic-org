@@ -81,18 +81,41 @@ regenerate `scripts/format-baseline.json` to make a failing check pass.
 
 ## AI tools
 
-Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte
-and Microsoft's Playwright CLI. `skills-lock.json` records their sources. The existing
-Svelte plugin supplies Svelte skills and MCP tools; the Rust LSP MCP supplies
-rust-analyzer navigation, types, references and rename edits. Follow the UI's
+Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte,
+Microsoft's Playwright CLI and the Svelte skills `svelte-code-writer` and
+`svelte-core-bestpractices`. `skills-lock.json` records their sources. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.
 
-The project pins `@sveltejs/mcp`; `bun run mcp:svelte` starts that installed version.
-For a manually configured Codex server, match the project's version:
+Both harnesses get the same tools from committed configuration:
+
+| Tool | Claude Code | Codex |
+| --- | --- | --- |
+| Instructions | `CLAUDE.md` imports `AGENTS.md` | `AGENTS.md` |
+| Repowise lookup (`starter_kit_context`) | `.mcp.json` | `.codex/config.toml` |
+| Svelte MCP, pinned `@sveltejs/mcp` | `svelte` plugin | `.codex/config.toml` |
+| Rust, TypeScript and Svelte language servers | LSP plugins in `.claude/settings.json` | `mcp-language-server` entries in `.codex/config.toml` |
+| Kit hooks (secret-file guard, format, verify, checkpoint) | `.claude/settings.json` | `.codex/hooks.json` |
+| Roles | `.claude/agents` | `.codex/agents` |
+
+Trust the project when Claude Code asks, so it installs the plugins and starts the
+servers. Install the binaries both harnesses run:
 
 ```sh
-codex mcp add svelte -- npx -y @sveltejs/mcp@0.1.30
+rustup component add rust-analyzer rust-src
+bun add --global --exact typescript@6.0.3 typescript-language-server svelte-language-server
+go install github.com/isaacphi/mcp-language-server@v0.1.1
+python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs
 ```
+
+Codex needs `mcp-language-server`; Claude Code does not. Run `bun install` in
+`apps/agentic-org-ui` before the Svelte MCP starts. `bun run mcp:svelte` starts the
+same pinned server by hand.
+
+`.claude/cloud-setup.sh` is the setup script for a Claude Code cloud environment. It
+installs the pinned Node, Bun, Rust components, language servers, cargo-deny,
+gitleaks, Repowise, UI dependencies and Playwright browsers, and links
+`.agents/skills` into the ignored `.claude/skills`. Paste it into the environment's
+Setup script setting.
 
 The browser skill uses a separate global CLI so its Playwright dependency cannot
 change the application's test runner. Install its pinned version:
