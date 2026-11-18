@@ -4,11 +4,11 @@ Status: **selected** data contract, revision 2.10. These are data contracts shar
 
 ## Accountable owners
 
-Features, supporting documents, feature flag definitions, and process/standard content records have optional `owner_employee_id`, referencing one person or agent in the same organization. This is accountability for that record, separate from task assignment, project team ownership and management authority. An owner need not belong to the project's owning team. Planned/unassigned features and draft documents may have no owner; features in `in_progress` or `live` and documents (including process/standard content) marked `current` require an explicit owner. Active flag definitions also require an owner. Validation also requires an active owner for those active records. Transfer accountability before making such an owner inactive; historical attribution can still reference inactive employees.
+Features, supporting documents, feature flag definitions, process/standard content records and organization development processes have optional `owner_employee_id`, referencing one person or agent in the same organization. This is accountability for that record, separate from task assignment, project team ownership and management authority. An owner need not belong to the project's owning team. Planned/unassigned features and draft documents may have no owner; features in `in_progress` or `live` and documents (including process/standard content and organization development processes) marked `current` require an explicit owner. Active flag definitions also require an owner. Validation also requires an active owner for those active records. Transfer accountability before making such an owner inactive; historical attribution can still reference inactive employees.
 
 ## Common attribution
 
-The authored tables organizations, repositories, roles, teams, offices, structure_documents, projects, releases, milestones, features, tasks, documents, employees, feature_flags and deployments share these fields:
+The authored tables organizations, repositories, roles, teams, offices, structure_documents, projects, releases, milestones, features, tasks, documents, employees, feature_flags, deployments, development_processes and documentation_media share these fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -31,7 +31,7 @@ For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/origi
 | --- | --- |
 | Team | `status: active | archived` (default active) |
 | Employee | `status: active | paused | inactive` (default active); `paused` for agents only |
-| Supporting document or process/standard content | `status: draft | current | deprecated` (default draft) |
+| Supporting document, process/standard content or development process | `status: draft | current | deprecated` (default draft). A versioned tree document becomes `current` when its first version is issued ([document 18](18-development-processes-and-project-documentation.md#issued-versions)) |
 | Project | Existing `archived: false | true` |
 | Task | `status: todo | in_progress | blocked | cancelled | done`, set by an authorized actor; `done` or `cancelled` is finished; no transition engine. `priority: urgent | high | normal | low`; optional `effort`, a whole number of points |
 | Feature | `status: planned | in_progress | live | retired`, authored; no transition engine |
@@ -54,6 +54,8 @@ Null means not classified, not Build or Run. Store each record's classification 
 | `implements` | Task implements its single `feature_id`. Derived from the task foreign key, preserving the zero-or-one feature rule. |
 | `documents` | Supporting document describes its optional feature, release or deployment, otherwise its project. Derived from document scope foreign keys. |
 | `relates_to` | Authored reference from a project, feature, task or document to another registered entity in the same organization. It does not change ownership or imply a dependency. |
+| `realizes` | Task brings the code in line with an issued version of a document. Authored in the task's `realizes[]` and stored in `task_document_versions`, not in `links`, because it names a version ([document 18](18-development-processes-and-project-documentation.md#tasks-that-realize-a-version)). |
+| `derived_from` | An issued document version follows issued versions of other documents. Written once with the version (document 18). |
 
 The `entity_relationships` view presents both authored and derived relationships. `links` stores `depends_on`, `relates_to` and `fixes`. A `fixes` edge links a task to a bug-typed task; validation checks the target type. `fixed_by` is its reverse query, not an authored duplicate. Task deletion retains link identity in tombstone metadata; no automatic bug transition/cascade is introduced. For cross-feature knowledge, keep one canonical project document and use `relates_to` links; a document still has at most one feature/release/deployment owner in addition to its required project. Cross-project task dependencies are allowed within one organization. Source and target resolve through `record_refs`, including historical tombstones. A dependency on a deleted task needs explicit disposition before accepting new active work; it is never silently treated as satisfied.
 

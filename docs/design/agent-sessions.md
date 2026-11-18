@@ -252,9 +252,11 @@ The decisions this design applies:
    [agent instructions](agent-instructions.md), which come first and are the same for
    every agent, the employee's identity and role
    (`profile.md`), its prompt and tools (`execution.md`), the turn's explicit
-   objective, the effective processes and standards
-   ([process design](processes.md#32-delivery-to-sessions-proc-7)), built-in `agent-os`
-   help, and the project's instruction files read with the office's hardened Git from
+   objective, the effective organization processes and standards
+   ([process design](processes.md#32-delivery-to-sessions-proc-7)), the project's development process
+   with the skills for the agent's role, as a section of its own
+   ([development process design](development-processes.md#6-how-skills-reach-an-agent)),
+   built-in `agent-os` help, and the project's instruction files read with the office's hardened Git from
    each association's `integration_branch` in a verified cache. Nothing an agent
    writes in its worktree changes what the office tells the next session. Instruction
    files a runtime reads from its working directory on its own (`AGENTS.md`,
@@ -350,8 +352,10 @@ such if shown.
 
 A turn starts only from an explicit instruction, the answer to a required ask, being
 addressed by another agent or receiving an answer to its own question while idle
-([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), or a recovery. Other
-messages, assignments and schedules never create model work by themselves.
+([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), a direct message or a
+mention from a person or a task assigned to the agent
+([ADR-0028](../adr/0028-an-agent-is-always-available.md)), or a recovery. Other
+messages and schedules never create model work by themselves.
 A second open turn returns `BUSY`. An agent ends a turn with one line saying what it
 did; the office keeps it as the turn's outcome summary, shown in the turn's history and
 sent to no one ([agent instructions](agent-instructions.md)).
@@ -469,8 +473,9 @@ again on hand-back, and the command warns about this when it starts.
   never interrupts a busy turn, and never wakes a paused agent. A reply that satisfies
   a wait creates no second turn. An ask, a hand-off or a mention by name from another
   agent, and an answer to the recipient's own question, start one turn for an idle
-  recipient, under an hourly limit (ADR-0023). What is delivered to an agent at all is
-  only what is addressed to it
+  recipient, under an hourly limit (ADR-0023); so do a direct message or a mention
+  from a person and a task assigned to the agent (ADR-0028). What is delivered to an
+  agent at all is only what is addressed to it
   ([ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md)).
 - **Presence:** `busy`, `idle`, `needs_you`, `with_you`, `waiting` (on a required
   answer, naming whom), `asleep` and `offline`. An agent holding an `agent-os` wait

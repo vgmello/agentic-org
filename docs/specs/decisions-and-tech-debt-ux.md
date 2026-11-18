@@ -4,14 +4,14 @@ title: "Decisions, evaluations, designs and tech debt (UX)"
 status: current
 owner: lead
 created: "2026-11-08"
-updated: "2026-11-17"
+updated: "2026-11-18"
 requested_by: owner
 builds_on: [work-items-ux, our-org-in-the-app]
 ---
 
 # Spec · Decisions, evaluations, designs and tech debt (UX)
 
-The data contract owns the records: [project documents](../design/organization-data/02-project-structure.md), [tasks, features and shortcut provenance](../design/organization-data/03-features-and-work.md), [identity](../design/organization-data/06-identity-and-numbering.md), [record contracts](../design/organization-data/08-record-contracts.md) and [release content](../design/organization-data/09-release-content-and-flags.md). This spec owns what people see.
+The data contract owns the records: [project documents](../design/organization-data/02-project-structure.md), [tasks, features and shortcut provenance](../design/organization-data/03-features-and-work.md), [identity](../design/organization-data/06-identity-and-numbering.md), [record contracts](../design/organization-data/08-record-contracts.md) and [release content](../design/organization-data/09-release-content-and-flags.md). This spec owns what people see. Where project-wide documents live, the index of a project's documentation, issued versions and code links are the owner's [REQ-07](req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](req-06-desired-state-spec-authoring-and-reconciliation.md): the records are in [document 18](../design/organization-data/18-development-processes-and-project-documentation.md) and the behaviour in the [development process design](../design/development-processes.md#8-the-project-documentation-tree).
 
 ## The request (the user, 2026-11-08)
 
@@ -33,9 +33,12 @@ v1 delivers project knowledge documents, the Docs tab, the editor, Why links, `a
 projects/<project-id>/
   project.yaml
   brief.md
-  decisions/<document-id>.md
-  designs/<document-id>.md
-  reports/<document-id>.md
+  docs/                          project-wide documents, diagrams and images
+    index.yaml                   table of contents, written by the office
+    decisions/<name>.md          the sections a project starts with when it
+    designs/<name>.md            follows no development process; a development process declares
+    reports/<name>.md            its own, and the project adds more
+  docs-history/<document-id>/<version>.md   issued versions
   features/<feature-id>/
     feature.md
     designs/<document-id>.md
@@ -55,9 +58,9 @@ projects/<project-id>/
   work/tasks/<task-id>.md
 ```
 
-Supporting documents use `kind: brief | decision | design | report | changelog`. Every one requires a project; at most one feature, release or deployment ID is present and it belongs to the same project. `brief` is project-wide; feature support is design, decision or report; changelogs belong only to a release or deployment. `feature.md` projects into `features`, not into a duplicate document. Shared architecture stays at project scope and is linked from several features rather than copied. Processes and standards use their own contract at organization, recursive team or project scope (`processes-ux.md`).
+Supporting documents use `kind: brief | decision | design | report | changelog`; a document in the project's `docs/` tree may instead use a kind its development process declares. Every one requires a project; at most one feature, release or deployment ID is present and it belongs to the same project. `brief` is project-wide; feature support is design, decision or report; changelogs belong only to a release or deployment. `feature.md` projects into `features`, not into a duplicate document. Shared architecture stays at project scope and is linked from several features rather than copied. Processes and standards use their own contract at organization, recursive team or project scope (`processes-ux.md`).
 
-A document has a stable `id`, an optional display `key`, schema and revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and the common creation and update attribution. Current requires an active accountable owner. IDs are UUIDv7. There is no document number counter: a label such as `ADR-0004` is a key, not a primary key. Renaming a title or key never renames the stable-ID file or breaks links.
+A document has a stable `id`, an optional display `key`, schema and revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and the common creation and update attribution. Current requires an active accountable owner. IDs are UUIDv7. There is no document number counter: a label such as `ADR-0004` is a key, not a primary key. Renaming a title or key never renames the stable-ID file or breaks links. A project-wide document in the `docs/` tree has a readable path instead of a stable-ID filename; it can be moved or renamed, and its identity, history and links follow the `id` in its front matter.
 
 Open tasks of every type are canonical organization-Git files; immutable task activity has its own durable JSON history. Closure keeps IDs, provenance and linked tombstones. Chat, private notes, usage, budget history, receipts and authority have protected durable sources outside shared Git.
 
@@ -69,7 +72,7 @@ Open tasks of every type are canonical organization-Git files; immutable task ac
 - **Source:** canonical content is read from the organization's configured `state_branch`. Code instructions follow each project/repository association's required `integration_branch`; there is no project-wide branch and no fallback.
 - **Feature facts:** lifecycle, delivery and retirement data in the feature file is canonical; task membership and progress derive from task files. The office never overwrites a valid feature file from office state.
 
-1. **One Docs tab.** It shows Brief, Decisions, Designs, Reports and scoped product and technical Changelogs. Features and processes have their own views. Evaluation content is a report, specs and plans are designs, and reviews are reports.
+1. **One Docs tab.** It shows Brief, Decisions, Designs, Reports and scoped product and technical Changelogs, and the project's documentation tree by section, as its index lists it, with any kinds the project's development process adds. Features and processes have their own views. Evaluation content is a report, specs and plans are designs, and reviews are reports.
 2. **Markdown with front matter, shaped by an editor.** Fields render in a metadata card, sections come from `##` headings, and relationships are stable-ID links. A form and a Source mode stay synchronized.
 3. **Decision meaning lives in the body.** Whether a decision was accepted, superseded or rejected, and by whom, is written in its body; document status stays Draft, Current or Deprecated. Superseding links both records and keeps the old rationale.
 4. **Specialized stages** (design review, evaluation verdicts) are body content, never a substitute for document lifecycle.
@@ -114,10 +117,11 @@ Open tasks of every type are canonical organization-Git files; immutable task ac
  Context · Options considered · Decision · Consequences · Evidence
 ```
 
-ADR labels here are optional display keys; the record and its filename use a separate stable ID.
+ADR labels here are optional display keys; the record uses a separate stable ID, which is also the filename of a document beside a feature, a release or a deployment.
 
+- **By section:** a switch shows the project's documentation tree as its index lists it: sections with their titles and summaries, then the documents, diagrams and images in each, with status, latest issued version and unissued changes where the kind is versioned. A person adds, renames and reorders sections and moves documents between them here.
 - **Groups** by kind and scope, each with a count. Inside: optional display key, title and lifecycle badge (**Draft · Current · Deprecated**, icon plus word). Deprecated documents collapse under Older.
-- **New ▾:** Brief (project scope) · **Decision** · **Design** · **Report**; Changelog is available only in release or deployment scope. An Evaluation entry uses the Report envelope with the evaluation body template. Each opens the metadata and body template (§3), allocates a stable UUIDv7 ID, shows the derived canonical path and offers an optional display key. The filename is not editable. Save is explicit.
+- **New ▾:** Brief (project scope) · **Decision** · **Design** · **Report**; Changelog is available only in release or deployment scope. An Evaluation entry uses the Report envelope with the evaluation body template. Each opens the metadata and body template (§3), allocates a stable UUIDv7 ID, shows the derived canonical path and offers an optional display key. For a document beside a feature, a release or a deployment the filename is not editable; for a project-wide document the person chooses the section and a readable name, and may change both later. The menu also lists the kinds the project's development process declares. Save is explicit.
 - **Header** (reader): metadata from front matter (§3.0): kind, optional key, title, lifecycle, owner, creation and update attribution and time, and scope. Authored links show as links and the canonical path as read-only. A quoted "accepted by" statement in a decision's body is shown as body text, never as authenticated approval.
 - **Footer:** **Led to** (items and documents linked from this one, or that link it as their Why) and **Mentioned in**.
 - **Filters:** Status · Owner · search. Search matches permitted titles, stable IDs and display keys, and body text; feature definitions appear as feature results linked to their canonical record. Results are grouped by record type, include scope and status, and label body matches as excerpts. The view states its actual indexed scope and freshness, and any title-only, truncated-body or unavailable coverage; no matches never proves absence outside that coverage. Private notes, protected chat and inaccessible records never appear.
@@ -131,7 +135,7 @@ Each kind has an editor form for its fields and body sections with hints. An eva
 
 **Capability requirements** stay in the feature definition's Purpose, How it works, Rules, Known limitations and Non-goals sections, including intended users and acceptance criteria. Supporting designs explain implementation. "Overview" and "PRD" are content labels, not document kinds.
 
-**Decision**, at `projects/<project-id>/decisions/<document-id>.md`:
+**Decision**, for a project-wide one at `projects/<project-id>/docs/decisions/<name>.md`:
 ```markdown
 ---
 schema_version: 1
@@ -207,7 +211,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 **Docs and decisions (DEC)**
 - DEC-1 · The Docs tab groups kinds and scopes with counts and status, and one living project brief covers what, who, current behavior and version evidence. Capability requirements stay in feature.md; no duplicate Overview or PRD kind or per-release copy is created.
 - DEC-2 · Each document shows its front matter as a header card: kind, optional key, title, Draft/Current/Deprecated lifecycle, owner, scope, attribution and dates, and authored links. Stable ID and path are read-only, there is no document number field, and the section rail follows body headings.
-- DEC-3 · New Decision, Design or Evaluation opens the envelope and the right body template, derives the stable-ID file path and shows its scope; there is no numeric document counter and Save is explicit.
+- DEC-3 · New Decision, Design or Evaluation opens the envelope and the right body template, shows its scope and its place (the stable-ID file path beside a feature, a release or a deployment; the chosen section and name for a project-wide document); there is no numeric document counter and Save is explicit.
 - DEC-4 · Not in v1: Accept, Reject and Request changes on a proposed decision.
 - DEC-5 · Not in v1: proposed decisions in the owner's Needs you.
 - DEC-6 · Supersede drafts a new decision linked to the old stable record, with links both ways, and changes neither record's status; the old rationale is kept.
@@ -242,7 +246,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - AUTH-2 · A status edit uses only Draft, Current and Deprecated with revision and attribution. Decision acceptance or rejection is written in the body.
 - AUTH-3 · Canonical files changed directly in organization Git are validated and indexed from its state branch without losing content, stable identity or provenance. Files in a code repository are not canonical organization records.
 - AUTH-4 · Each accepted document revision records the admitted actor and time (the document's attribution fields and its Git history), and Activity shows it by stable document ID with the optional key and title.
-- AUTH-5 · `agent-os doc list`, `show`, `new`, `edit` and `link` use the same kinds, optional keys, stable identities, lifecycle and scopes as the app; `new` and `edit` write the canonical organization-Git record with the agent's admitted attribution and report the publication result, and never write into a code worktree.
+- AUTH-5 · `agent-os doc index`, `ls`, `list`, `show`, `new`, `edit`, `move` and `link` use the same kinds, sections, optional keys, stable identities, lifecycle and scopes as the app, within the agent's own projects (PKG-11, PKG-12); `new` and `edit` write the canonical organization-Git record with the agent's admitted attribution and report the publication result, and never write into a code worktree.
 - AUTH-6 · A task's `details.shortcut` keeps its tagged IDs; canonical knowledge is never placed on a code task branch.
 - AUTH-7 · Commit co-authors and Git-derived fields are displayed as evidence without granting authority. Feature lifecycle facts stay in feature.md; progress derives from task membership and valid file edits are never overwritten from office state.
 
@@ -272,7 +276,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - TPL-5 · Not in v1: adding document kinds.
 - TPL-6 · Not in v1: template changes and their effect on existing documents.
 - TPL-7 · Withdrawn: documents are not imported, so there is no front-matter conversion.
-- TPL-8 · Every document has an immutable stable ID separate from its optional display key. IDs are UUIDv7. Title and key changes keep stable-ID filenames and relationships.
+- TPL-8 · Every document has an immutable stable ID separate from its optional display key. IDs are UUIDv7. Title and key changes keep stable-ID filenames and relationships; moving or renaming a project-wide document in the `docs/` tree keeps its ID and relationships.
 
 ## 7. Not in v1
 
@@ -280,6 +284,6 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - **Exception records** with approval and review dates, and recording a known limitation from a Won't fix bug.
 - **Agent guidance moments:** configurable prompts at set moments (starting a task, taking a shortcut, finishing, asking the owner, posting to chat), with organization defaults and project overrides.
 - **Decision approval:** Accept, Reject and Request changes with authenticated actors, and proposed decisions in Needs you.
-- **Custom templates and kinds.**
+- **Custom templates and kinds outside a development process.** A development process declares document kinds and their templates; adding a kind to one project by hand is not in v1.
 - **Document comments** and frozen release-note workflows.
 - Project navigation follows the [integrated IA](work-items-ux.md#3-flow-1--project-page); a Docs tab is not required before this experience is served.

@@ -122,7 +122,7 @@
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "46bca00bed148f5c823632a85e357ae5f723fe1decbff237f3403bc465f3f9a3"
+      "sha256": "64361db9e0ea9bfb759ccef729c4fddf4345f499872caa403933bba8a140e6ad"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "a4fe8cfd102f0ebb0fff7fce2efc4272673e23eb31ddda10ca4b8a4588e370a3"
+      "sha256": "a6fee2bebca81bfde123b2808c28829078e54ead6d7e9dfba4edc11ba4046496"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "bd5ea9771cd3d20488d1ebb68edf3e74a55cc907f7cf23d0a75d51cc4c27be53"
+      "sha256": "e0a1415777a012f123ae5ff33719955ef3a847af1a0303fc88a8cc3332c5abdf"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "d069f7e9c7fe071965f1f73c13debf89e6727b33fd2429fce8d81a11b8c18201"
+      "sha256": "70ecbe4d678207b2f5764000270fabcdbe06d1ceef5c773d2dd5978989f282c6"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,7 +182,7 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "9dcee0e718699436965bb4f4617883118d66cb4cd2ee573e59bf62a2bacff4c1"
+      "sha256": "e8ff2b2a058a832b211e924bb15e9cd4f7d4d2cb2565f447cd7e9328dc21328f"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",

@@ -97,7 +97,7 @@ The lead's design for the rule:
 - One held call on an agent's connection is capped at 60 seconds. The wait spans as
   many held calls as it needs; `agent-os` renews the hold and the office keeps one
   timer for the whole wait.
-- The answer to a required ask is one of the things that may start a turn (session
+- An ask addressed to an agent starts it, as anything addressed to it does ([ADR-0028](0028-an-agent-is-always-available.md)), and the answer to a required ask is one of the things that may start a turn (session
   design).
 
 ## Acceptance criteria

@@ -880,8 +880,8 @@ pub(crate) mod tests {
     use std::path::Path;
 
     use org_proto::{
-        Empty, HelloParams, OfficeAppToken, OfficeAppTokenParams, OfficeList, OfficeRestart,
-        OfficeRestartParams, OrganizationCreate, OrganizationCreateParams,
+        Empty, HelloParams, OfficeList, OfficeRestart, OfficeRestartParams, OrganizationCreate,
+        OrganizationCreateParams,
     };
 
     use crate::catalog::Catalog;
@@ -1502,13 +1502,13 @@ pub(crate) mod tests {
         let id = "01AAAAAAAAAAAAAAAAAAAAAAAA".to_owned();
         let inline = [
             Request::new::<Hello>(1, &HelloParams::default()).unwrap(),
-            Request::new::<OfficeAppToken>(
-                1,
-                &OfficeAppTokenParams {
-                    office_id: id.clone(),
-                },
-            )
-            .unwrap(),
+            // The retired `office.app_token`: refused inline, like any call the host doesn't serve.
+            Request {
+                id: 1,
+                method: "office.app_token".to_owned(),
+                params: serde_json::json!({"office_id": id.clone()}),
+                principal: None,
+            },
             Request::new::<OfficeRestart>(1, &OfficeRestartParams { office_id: id }).unwrap(),
         ];
         let threaded = [

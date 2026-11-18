@@ -6,6 +6,8 @@ Decisions 2 to 9 are its design. The
 [session design](../design/agent-sessions.md) and the
 [agent command line](../design/agent-os-command-line.md) follow it. The increment is C8
 in the [implementation plan](../implementation-plan.md).
+[ADR-0028](0028-an-agent-is-always-available.md) extends it: a person's direct message or
+mention and a task assignment also start an idle agent, under the same rules.
 
 ## Context
 

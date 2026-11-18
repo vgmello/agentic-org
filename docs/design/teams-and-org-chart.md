@@ -17,6 +17,10 @@ acceptance criteria are in the [offices and teams UX](../specs/offices-and-teams
   management authority.
 - Explicit person-to-person reporting is separate from the team tree and acyclic. A
   reporting line does not remove an ancestor lead's responsibility.
+- Teams and projects live side by side (owner, 2026-11-18). A team is created on its
+  own, at any depth, before any project exists: an executive team, the teams under
+  it, the teams under those. A team needs no project and may be accountable for none,
+  one or several. A project always needs a team; a team never needs a project.
 - Every project has one accountable owner team and may name contributing teams.
   Working on a task never requires joining another team.
 - Offices place agents; they own neither teams nor projects. People have no placement.

@@ -42,7 +42,9 @@ interface files.
 | Work | Typed tasks, office-minted references, independent assignment, immutable reporter and history, conflicts; private notes in a separate author-only store | `org-work`, with office-owned implementations of its ports |
 | Messaging | Conversations, channels, membership, delivery, asks and authorization | `org-mailbox`, with office storage and session implementations |
 | Employees | Execution configuration, model profiles and connections, permits, turns and attempts, fenced placement, process cleanup, suspension on a required ask | Employee policy and state in `org-office`; runtime adapters behind `org-runtime` |
-| Processes | Process and standard documents, scope, override lock and one-chain resolution | `org-process`, called by the office ([processes design](processes.md#7-where-the-code-lives)) |
+| Organization processes | Process and standard documents, scope, override lock and one-chain resolution | `org-process`, called by the office ([processes design](processes.md#7-where-the-code-lives)) |
+| Development processes | A separate primitive: manifest, roles, skills, tabs, a project's choice of one | A module of its own in `org-process`; projection and calls in the office ([development processes](development-processes.md#10-where-the-code-lives)) |
+| Project documentation | The documentation tree, its index, issued versions, code links | Pure rules in `org-docs`; the writes and the project boundary in `org-office` ([development processes](development-processes.md#8-the-project-documentation-tree)) |
 | Instance lifecycle | Setup, catalog, service registration, release pins, key custody, accounts and sessions | `org-host`, composed by `agentic-org` |
 | Federation | Enrollment, replication, reconnect, ownership generations | `org-sync`, `org-sync-proto`, `org-pki` |
 

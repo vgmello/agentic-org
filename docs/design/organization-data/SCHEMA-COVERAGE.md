@@ -1,6 +1,6 @@
 # Schema coverage and integrity review
 
-The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 77 tables and 10 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 91 tables and 12 views; the private side has 4 tables. These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -9,7 +9,7 @@ The primary design documents define two SQL artifacts. Load `schema.sql` once in
 | [01](01-organization-structure.md) | [schema.sql](schema.sql) | `organizations`, `repositories`, `roles`, `teams`, `offices`, `structure_documents`, `local_repository_locations`, `repository_caches` |
 | [02](02-project-structure.md) | [schema.sql](schema.sql) | `projects`, `project_contributing_teams`, `project_repositories`, `releases`, `release_repository_commits`, `milestones`, `documents`, `milestone_progress`, `release_progress` |
 | [03](03-features-and-work.md) | [schema.sql](schema.sql) | `features`, `tasks`, `task_repositories`, `record_refs`, `tombstones`, `feature_slugs` |
-| [04](04-agent-structure.md) | [schema.sql](schema.sql) | `employees`, `agent_placements`, `task_workspaces` |
+| [04](04-agent-structure.md) | [schema.sql](schema.sql) | `employees`, `agent_placements`, `task_workspaces`, `hire_requests` |
 | [05](05-operational-data.md) | [schema.sql](schema.sql) | `comments`, `checklist_steps`, `watchers`, `owner_questions`, `waiting_spans`, `task_events` |
 | [06](06-identity-and-numbering.md) | [schema.sql](schema.sql) | `reference_counters`, `reference_allocations`, `office_codes`, `office_task_counters` |
 | [07](07-release-deployments.md) | [schema.sql](schema.sql) | `deployments`, `deployment_repository_commits` |
@@ -23,6 +23,7 @@ The primary design documents define two SQL artifacts. Load `schema.sql` once in
 | [03: task details](03-features-and-work.md#detailed-task-payload-and-feature-lifecycle) | [schema.sql](schema.sql) | `task_details` |
 | [16](16-recovery-and-office-continuity.md) | [schema.sql](schema.sql) | `mutation_receipts`, `office_origin_streams`, `office_recovery_checkpoints`, `recovery_snapshot_transfers`, `process_cleanup_records` |
 | [17](17-budgets-and-controls.md) | [schema.sql](schema.sql) | `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
+| [18](18-development-processes-and-project-documentation.md) | [schema.sql](schema.sql) | `development_processes`, `development_process_roles`, `development_process_skills`, `development_process_skill_roles`, `development_process_kinds`, `development_process_folders`, `development_process_tabs`, `documentation_sections`, `documentation_media`, `document_versions`, `document_version_sources`, `document_code_links`, `task_document_versions`, `document_version_progress`, `task_releases`; adds `projects.development_process_id` and `documents.summary`, `path`, `version`, `issued_revision` to document 02's tables |
 
 [Document 14](14-model-providers-and-connection-pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `schema.sql`; it adds no tables.
 
@@ -32,7 +33,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code has this table with these columns), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (no code).
 
-As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 71 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
+As of 2026-11-18 none of the 91 tables or 12 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 87 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -58,9 +59,15 @@ As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16
 | `deployment_flag_settings` | table | Absent |  |
 | `deployment_repository_commits` | table | Absent |  |
 | `deployments` | table | Absent |  |
+| `document_code_links` | table | Absent |  |
+| `document_version_sources` | table | Absent |  |
+| `document_versions` | table | Absent |  |
+| `documentation_media` | table | Absent |  |
+| `documentation_sections` | table | Absent |  |
 | `documents` | table | Absent |  |
 | `employees` | table | Different shape in code | Closest current table: `members`, `memberships` |
 | `feature_flags` | table | Absent |  |
+| `hire_requests` | table | Absent |  |
 | `features` | table | Absent |  |
 | `links` | table | Absent |  |
 | `local_repository_locations` | table | Absent |  |
@@ -73,17 +80,24 @@ As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16
 | `model_profile_connections` | table | Absent |  |
 | `model_profiles` | table | Absent |  |
 | `mutation_receipts` | table | Different shape in code | Closest current table: `commands`, `work_change_results`, `selected_receipts` |
+| `office_codes` | table | Absent |  |
 | `office_connection_bindings` | table | Absent |  |
 | `office_connection_models` | table | Absent |  |
 | `office_connection_state` | table | Absent |  |
 | `office_origin_streams` | table | Different shape in code | Closest current table: `work_origin_counter`, `work_origin_log` |
 | `office_recovery_checkpoints` | table | Different shape in code | Closest current table: `org_replica`, `org_replica_base` |
-| `offices` | table | Absent |  |
-| `office_codes` | table | Absent |  |
 | `office_task_counters` | table | Absent |  |
+| `offices` | table | Absent |  |
 | `organizations` | table | Different shape in code | Same name in `org.db`, different columns |
 | `owner_questions` | table | Absent |  |
 | `process_cleanup_records` | table | Different shape in code | Closest current table: `owned_processes` |
+| `development_process_folders` | table | Absent |  |
+| `development_process_kinds` | table | Absent |  |
+| `development_process_roles` | table | Absent |  |
+| `development_process_skill_roles` | table | Absent |  |
+| `development_process_skills` | table | Absent |  |
+| `development_process_tabs` | table | Absent |  |
+| `development_processes` | table | Absent |  |
 | `project_contributing_teams` | table | Different shape in code | Closest current table: `project_teams` |
 | `project_repositories` | table | Absent |  |
 | `projects` | table | Different shape in code | Same name in `org.db`, different columns |
@@ -103,6 +117,7 @@ As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16
 | `structure_documents` | table | Absent |  |
 | `supervisor_command_receipts` | table | Absent |  |
 | `task_details` | table | Absent |  |
+| `task_document_versions` | table | Absent |  |
 | `task_events` | table | Different shape in code | Closest current table: `work_events`, `selected_events` |
 | `task_repositories` | table | Absent |  |
 | `task_workspaces` | table | Absent |  |
@@ -113,12 +128,14 @@ As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16
 | `usage_stream_checkpoints` | table | Absent |  |
 | `waiting_spans` | table | Absent |  |
 | `watchers` | table | Absent |  |
+| `document_version_progress` | view | Absent |  |
 | `effective_usage_records` | view | Absent |  |
 | `entity_relationships` | view | Absent |  |
 | `feature_slugs` | view | Absent |  |
 | `milestone_progress` | view | Absent |  |
 | `model_profile_model_union` | view | Absent |  |
 | `release_progress` | view | Absent |  |
+| `task_releases` | view | Absent |  |
 | `usage_agent_totals` | view | Absent |  |
 | `usage_project_totals` | view | Absent |  |
 | `usage_stream_coverage` | view | Absent |  |

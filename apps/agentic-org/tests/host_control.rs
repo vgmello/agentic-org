@@ -372,9 +372,7 @@ fn even_a_development_app_peer_cannot_use_retired_wire_calls() {
         .unwrap();
     assert_eq!(
         client
-            .call::<org_proto::OfficeAppToken>(&org_proto::OfficeAppTokenParams {
-                office_id: A.into()
-            })
+            .call::<support::RetiredOfficeToken>(&serde_json::json!({"office_id": A}))
             .unwrap_err()
             .code,
         ErrorCode::NotAuthorized

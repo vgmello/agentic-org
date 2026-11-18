@@ -1,5 +1,5 @@
 //! Making the host's secrets, `std` only: office secrets keys, plus non-secret unique names drawn from
-//! the same source. The host makes no app tokens: a launch handoff carries none.
+//! the same source.
 //!
 //! The host makes an office's secrets key once, when it creates the office, and stores it in its
 //! key store (`keys`) before the office's server starts. It is in the host's memory only from its
@@ -32,7 +32,7 @@ fn random<T>(wrap: impl FnOnce([u8; 32]) -> T) -> io::Result<T> {
     secret
 }
 
-/// Overwrites with zeros in a way the optimizer can't remove (best effort, as `AppToken` does).
+/// Overwrites with zeros in a way the optimizer can't remove (best effort, as `org_proto::zero_bytes` does).
 pub(crate) fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
         // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.

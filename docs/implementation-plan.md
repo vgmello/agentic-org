@@ -30,7 +30,7 @@ single office on macOS. Its steps, in order:
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 and K1 alongside |
 | 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1a to B1c, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
-| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asks another agent and gets it running; an agent asks a channel and gets its answer without reading the channel | B6, B7, C6, C8, C9 |
+| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asks another agent and gets it running; an agent asks a channel and gets its answer without reading the channel; an agent that a person messages, or that is assigned a task, starts by itself | B6, B7, C6, C8, C9, C10 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
 
 **Milestone two: Linux, in parallel (Track X).** The same server runs on Linux, including inside a
@@ -42,7 +42,8 @@ change may add a platform branch.
 enrolment of the office, replication between offices, and messages relayed between
 them (S1).
 
-**Later:** costs and budgets, features and releases, updates. All of it is v1 scope.
+**Later:** costs and budgets, features and releases, project documentation, process
+development processes and the desired state development process, updates. All of it is v1 scope.
 
 Most of step 2 and the hire flow are create, read, update and delete on records the
 data contract already defines. The parts that are not: the web process and sessions
@@ -290,8 +291,9 @@ Three things to know about the order:
   "Person-started commands", [ADR-0013](adr/0013-stored-browser-sessions.md) (SES-8),
   [host boundary design](design/office-host-boundary.md),
   [`apps/agent-os/README.md`](../apps/agent-os/README.md). Row FC-014.
-- **Code today:** a person or the owner binds to the office with `app_token`
-  (`apps/agentic-org-office/src/serve.rs`), which A1 removes; `agent-os` talks to an
+- **Code today:** a person or the owner acts only through a host-issued grant; the
+  application token is deleted (A1.8) and `msg.bind` binds agents only
+  (`apps/agentic-org-office/src/serve.rs`); `agent-os` talks to an
   office only when one is named and otherwise writes to a file queue, which B6 deletes.
 - **Done when:** SES-8 passes; a signed-in person runs a read command and a write
   command against the office from a terminal; the same commands are refused without a
@@ -672,6 +674,8 @@ on the offers of design section 10.
 - **Code today:** `crates/org-process` resolves several chains, which the design
   replaces with one, and has no caller.
 - **Needs:** C3.
+- **Not part of it:** a project's development process. Its skills are delivered as a
+  separate section and never enter `resolve` (L12).
 
 ---
 
@@ -787,6 +791,22 @@ on the offers of design section 10.
 - **Needs:** B7, C8, and C3 for the runtime adapter that a tool-less run goes through.
   With several offices it also needs S1, so that each office receives every message of
   its agents' channels.
+
+### C10 · An agent is always available
+
+- **Outcome:** a person messages or mentions an agent, or anyone assigns it a task, and
+  it starts and answers with nobody pressing Run. An idle agent shows as Available, and
+  whoever sends sees whether the recipient is there.
+- **Build:** the starts that
+  [ADR-0028](adr/0028-an-agent-is-always-available.md) adds to C8: a direct message or a
+  mention from a person, and a task assigned to the agent, under the same admission and
+  the same hourly limit. An agent that is not working shows as Available whatever its
+  process is doing. The recipient's presence in the answer to a send and an ask.
+- **Read:** ADR-0028 (AVAIL-1 to AVAIL-6), [how agents run](specs/agent-run-modes-ux.md)
+  (RUN-3), [agent sessions](design/agent-sessions.md). Row FC-186.
+- **Code today:** nothing starts an agent.
+- **Done when:** AVAIL-1 to AVAIL-6 pass.
+- **Needs:** C8 and, for assignments, B4.
 
 ---
 
@@ -1119,6 +1139,10 @@ product without it.
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
 | L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
+| L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
+| L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
+| L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
+| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8 and L7's feature records |
 | L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |

@@ -1097,5 +1097,326 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.rollback()
 
 
+class ProcessPackageAndDocumentationTests(unittest.TestCase):
+    """Document 18: process packages, the documentation tree, issued versions and convergence."""
+
+    SHA = "a" * 64
+
+    def setUp(self):
+        self.db = database()
+        self.addCleanup(self.db.close)
+        seed_organization(self.db)
+
+    def package(self, package="dss", **fields):
+        values = dict(organization_id="org", id=package, key=package, schema_version=1, revision=1,
+                      origin="built_in", name=package, status="current")
+        values.update(fields)
+        insert(self.db, "development_processes", **values)
+
+    def document(self, document="spec", **fields):
+        values = dict(organization_id="org", id=document, schema_version=1, revision=1,
+                      project_id="project", kind="product-dss", title="User authentication",
+                      path=f"product/{document}.md")
+        values.update(fields)
+        insert(self.db, "documents", **values)
+
+    def issue(self, document="spec", version=1, revision=1):
+        insert(self.db, "document_versions", organization_id="org", document_id=document,
+               version=version, revision=revision, title="User authentication", body_sha256=self.SHA,
+               body_markdown="## Purpose", issued_at="2026-11-18T09:00:00Z",
+               issued_by_kind="employee", issued_by_id="reporter")
+
+    def refused(self, statement):
+        with self.assertRaises(sqlite3.IntegrityError):
+            statement()
+            self.db.commit()
+        self.db.rollback()
+
+    def test_any_employee_can_be_given_the_permission_to_hire(self):
+        self.assertEqual(self.db.execute("SELECT may_hire FROM employees WHERE id='ana'").fetchone()[0], 0)
+        self.db.execute("UPDATE employees SET may_hire=1 WHERE id IN ('ana', 'reporter')")  # agent, person
+        self.db.commit()
+        self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=2 WHERE id='ana'"))
+
+    def hire(self, request="hire", **fields):
+        values = dict(organization_id="org", id=request, schema_version=1, revision=1, state="waiting",
+                      requested_by_employee_id="ana", home_team_id="payments",
+                      created_at="2026-11-18T09:00:00Z", updated_at="2026-11-18T09:00:00Z")
+        values.update(fields)
+        insert(self.db, "hire_requests", **values)
+
+    def test_a_hire_request_records_who_asked_who_it_waits_for_and_who_decided(self):
+        self.hire(approver_employee_id="reporter",
+                  escalations_json='[{"employee_id": "ana", "reason": "no hiring power"}]')
+        self.hire("approved", state="approved", decided_by_employee_id="reporter",
+                  decided_at="2026-11-18T10:00:00Z", failed_step="register with messaging")
+        insert(self.db, "employees", organization_id="org", id="marlowe", handle="marlowe",
+               schema_version=1, revision=1, kind="agent", name="Marlowe", home_team_id="payments")
+        self.hire("hired", state="hired", decided_by_employee_id="reporter",
+                  decided_at="2026-11-18T10:00:00Z", employee_id="marlowe")
+        self.db.commit()
+        decided = dict(decided_by_employee_id="reporter", decided_at="2026-11-18T10:00:00Z")
+        for fields in (dict(state="approved"),                        # approved by nobody
+                       dict(state="waiting", **decided),              # decided while still waiting
+                       dict(state="rejected", **decided),             # rejected without a reason
+                       dict(state="hired", **decided),                # hired without an employee
+                       dict(state="waiting", employee_id="marlowe"),  # an employee before the hire
+                       dict(state="waiting", failed_step="home"),     # a failed step before approval
+                       dict(state="waiting", home_team_id="missing"),
+                       dict(state="waiting", requested_by_employee_id="missing"),
+                       dict(state="promoted")):
+            self.refused(lambda: self.hire("bad", **fields))
+        self.refused(lambda: self.hire("twice", state="hired", employee_id="marlowe", **decided))
+
+    def test_a_task_is_in_the_releases_of_its_milestone_and_of_release_contents(self):
+        for release in ("r1", "r2"):
+            insert(self.db, "releases", organization_id="org", id=release, schema_version=1, revision=1,
+                   project_id="project", title=release)
+        insert(self.db, "milestones", organization_id="org", id="m1", schema_version=1, revision=1,
+               project_id="project", release_id="r1", title="M1")
+        for task in ("planned", "listed", "ktlo"):
+            seed_task(self.db, task=task)
+        self.db.execute("UPDATE tasks SET milestone_id='m1' WHERE id='planned'")
+        insert(self.db, "release_tasks", organization_id="org", release_id="r2", project_id="project",
+               task_id="listed")
+        insert(self.db, "release_tasks", organization_id="org", release_id="r1", project_id="project",
+               task_id="planned")  # also listed in its own release: counted once
+        rows = sorted(tuple(r) for r in self.db.execute("SELECT task_id, release_id FROM task_releases"))
+        self.assertEqual(rows, [("listed", "r2"), ("planned", "r1")])  # "ktlo" has no release lane
+
+    def test_a_turn_records_what_started_it(self):
+        columns = {row[1]: row for row in self.db.execute("PRAGMA table_info(agent_execution_turns)")}
+        self.assertEqual(columns["started_by_kind"][4], "'run'")
+        self.assertIn("started_by_employee_id", columns)
+        self.assertIn("started_by_ref", columns)
+        sql = self.db.execute("SELECT sql FROM sqlite_schema WHERE name='agent_execution_turns'").fetchone()[0]
+        for kind in ("run", "message", "mention", "ask", "handoff", "assignment", "answer", "recovery"):
+            self.assertIn(f"'{kind}'", sql)
+
+    def test_a_process_declares_its_tabs_from_the_generic_views(self):
+        self.package()
+        tab = dict(organization_id="org", process_id="dss", title="Product")
+        insert(self.db, "development_process_tabs", **tab, key="product", position=0, view="documents",
+               config_json='{"section": "product", "kinds": ["product-dss"]}')
+        insert(self.db, "development_process_tabs", **tab, key="board", position=1, view="work",
+               config_json='{"types": ["story"], "layout": "board"}')
+        self.db.commit()
+        # A view is one of the product's; a fixed tab's key is not available; order is unique.
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="calendar",
+                                    position=3, view="calendar"))
+        insert(self.db, "development_process_tabs", **tab, key="releases", position=2, view="releases")
+        self.db.commit()
+        for key in ("overview", "work", "docs", "team", "activity", "conversations"):
+            self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key=key,
+                                        position=3, view="features"))
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="again",
+                                    position=1, view="features"))
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="ninth",
+                                    position=8, view="features"))
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="bad-config",
+                                    position=3, view="work", config_json='["story"]'))
+
+    def test_a_project_follows_an_existing_package_or_none(self):
+        self.assertIsNone(self.db.execute("SELECT development_process_id FROM projects").fetchone()[0])
+        self.package()
+        self.db.execute("UPDATE projects SET development_process_id='dss'")
+        self.db.commit()
+        self.refused(lambda: self.db.execute("UPDATE projects SET development_process_id='missing'"))
+
+    def test_an_organization_package_needs_an_owner_to_be_current_and_a_built_in_one_does_not(self):
+        self.package()
+        self.db.commit()
+        self.refused(lambda: self.package("custom", origin="organization"))
+        self.package("custom", origin="organization", owner_employee_id="reporter")
+        self.package("draft", origin="organization", status="draft")
+        self.db.commit()
+        self.refused(lambda: self.package("other", key="dss"))
+
+    def test_a_skill_is_bound_only_to_roles_of_its_own_package(self):
+        self.package()
+        self.package("tdd")
+        insert(self.db, "development_process_roles", organization_id="org", process_id="dss",
+               key="product-lead", position=0, name="Product lead", seed=1)
+        insert(self.db, "development_process_roles", organization_id="org", process_id="tdd",
+               key="engineer", position=0, name="Engineer")
+        insert(self.db, "development_process_skills", organization_id="org", process_id="dss",
+               key="write-product-dss", position=0, title="Write the Product DSS",
+               description="Use when the person describes behaviour.")
+        insert(self.db, "development_process_skill_roles", organization_id="org", process_id="dss",
+               skill_key="write-product-dss", role_key="product-lead")
+        self.db.commit()
+        self.refused(lambda: insert(self.db, "development_process_skill_roles", organization_id="org",
+                                    process_id="dss", skill_key="write-product-dss", role_key="engineer"))
+
+    def test_package_keys_folders_and_descriptions_are_well_formed(self):
+        self.package()
+        self.db.commit()
+        role = dict(organization_id="org", process_id="dss", position=0, name="Lead")
+        skill = dict(organization_id="org", process_id="dss", position=0, title="Skill")
+        folder = dict(organization_id="org", process_id="dss", position=0, title="Folder")
+        insert(self.db, "development_process_folders", **folder, path="technical/diagrams")
+        self.db.commit()
+        for key in ("-lead", "Lead", "product lead", ""):
+            self.refused(lambda: insert(self.db, "development_process_roles", **role, key=key))
+            self.refused(lambda: insert(self.db, "development_process_skills", **skill, key=key,
+                                        description="Use when needed."))
+        self.refused(lambda: insert(self.db, "development_process_skills", **skill, key="empty",
+                                    description=""))
+        for path in ("technical/diagrams", "/technical", "technical/", "technical//diagrams",
+                     "technical/v1.2", "../technical", "Technical"):
+            self.refused(lambda: insert(self.db, "development_process_folders", **folder, path=path))
+
+    def test_sections_are_folders_of_one_project(self):
+        section = dict(organization_id="org", project_id="project", position=0, title="Product")
+        insert(self.db, "documentation_sections", **section, path="product")
+        insert(self.db, "documentation_sections", **section, path="product/identity-and-access")
+        self.db.commit()
+        for path in ("product", "product/", "/product", "product//billing", "product/v1.2",
+                     "product/spec.md", ".hidden"):
+            self.refused(lambda: insert(self.db, "documentation_sections", **section, path=path))
+        self.refused(lambda: insert(self.db, "documentation_sections", **dict(section, project_id="missing"),
+                                    path="technical"))
+
+    def test_a_package_cannot_redefine_a_built_in_document_kind(self):
+        self.package()
+        insert(self.db, "development_process_kinds", organization_id="org", process_id="dss",
+               key="product-dss", title="Product DSS", versioned=1)
+        for kind in ("brief", "decision", "design", "report", "changelog"):
+            self.refused(lambda: insert(self.db, "development_process_kinds", organization_id="org",
+                                        process_id="dss", key=kind, title=kind))
+
+    def test_project_wide_documents_live_in_the_tree_and_scoped_ones_do_not(self):
+        self.document()
+        self.document("decision", kind="decision", path="decisions/use-sqlite.md")
+        insert(self.db, "documents", organization_id="org", id="brief", schema_version=1, revision=1,
+               project_id="project", kind="brief", title="Brief")
+        self.db.commit()
+        # A project-wide document needs a path; the brief has none.
+        self.refused(lambda: self.document("pathless", path=None))
+        self.refused(lambda: insert(self.db, "documents", organization_id="org", id="brief-2",
+                                    schema_version=1, revision=1, project_id="project", kind="brief",
+                                    title="Brief", path="brief.md"))
+        # Two documents never share a path, and a path stays inside the tree.
+        self.refused(lambda: self.document("twin", path="product/spec.md"))
+        for path in ("../spec.md", "/product/spec.md", "product//spec.md", "product/.hidden.md",
+                     "product/spec.txt", "Product/Spec.md"):
+            self.refused(lambda: self.document("bad", path=path))
+
+    def test_a_package_kind_is_only_for_tree_documents(self):
+        insert(self.db, "features", organization_id="org", id="feature", schema_version=1, revision=1,
+               project_id="project", local_slug="sign-in", title="Sign in", status="planned")
+        insert(self.db, "releases", organization_id="org", id="release", schema_version=1, revision=1,
+               project_id="project", title="Release")
+        scoped = dict(organization_id="org", schema_version=1, revision=1, project_id="project",
+                      release_id="release", title="Scoped")
+        insert(self.db, "documents", **scoped, id="release-report", kind="report")
+        self.db.commit()
+        # Beside a release only the built-in kinds are allowed, and a kind is a key.
+        self.refused(lambda: insert(self.db, "documents", **scoped, id="bad", kind="product-dss"))
+        self.refused(lambda: self.document("bad", kind="Product DSS!"))
+        self.refused(lambda: insert(self.db, "documents", organization_id="org", id="scoped",
+                                    schema_version=1, revision=1, project_id="project",
+                                    feature_id="feature", kind="product-dss", title="Scoped"))
+        self.refused(lambda: insert(self.db, "documents", organization_id="org", id="scoped",
+                                    schema_version=1, revision=1, project_id="project",
+                                    feature_id="feature", kind="design", title="Scoped",
+                                    path="designs/scoped.md"))
+
+    def test_only_an_issued_tree_document_carries_a_version(self):
+        issued = dict(status="current", owner_employee_id="reporter", revision=3, version=1,
+                      issued_revision=2)
+        self.document(**issued)
+        self.issue(revision=2)
+        self.db.commit()
+        # The version a document carries must be one that was issued for it.
+        self.refused(lambda: self.document("unissued", **issued))
+        self.refused(lambda: self.db.execute("UPDATE documents SET version=2 WHERE id='spec'"))
+        for name, fields in (("half", dict(version=1)),
+                             ("ahead", dict(issued, revision=2, issued_revision=5)),
+                             ("draft", dict(version=1, issued_revision=1))):
+            self.issue(name)
+            self.refused(lambda: self.document(name, **fields))
+        # A document outside the tree is never versioned and has no summary.
+        self.issue("brief")
+        base = dict(organization_id="org", id="brief", schema_version=1, revision=1,
+                    project_id="project", kind="brief", title="Brief")
+        self.refused(lambda: insert(self.db, "documents", **base, status="current",
+                                    owner_employee_id="reporter", version=1, issued_revision=1))
+        self.refused(lambda: insert(self.db, "documents", **base, summary="What the project is."))
+
+    def test_an_issued_version_is_written_once(self):
+        self.document()
+        self.issue()
+        self.db.commit()
+        for statement in ("UPDATE document_versions SET body_markdown='changed'",
+                          "DELETE FROM document_versions",
+                          "INSERT OR REPLACE INTO document_versions SELECT * FROM document_versions"):
+            self.refused(lambda: self.db.execute(statement))
+        self.assertEqual(self.db.execute("SELECT body_markdown FROM document_versions").fetchone()[0],
+                         "## Purpose")
+
+    def test_a_version_is_derived_from_issued_versions_of_other_documents(self):
+        self.document()
+        self.document("technical", kind="technical-dss", path="technical/authentication.md")
+        self.issue()
+        self.issue("technical")
+        self.db.commit()
+        insert(self.db, "document_version_sources", organization_id="org", document_id="technical",
+               version=1, source_document_id="spec", source_version=1)
+        self.db.commit()
+        self.refused(lambda: insert(self.db, "document_version_sources", organization_id="org",
+                                    document_id="technical", version=1, source_document_id="spec",
+                                    source_version=2))
+        self.refused(lambda: insert(self.db, "document_version_sources", organization_id="org",
+                                    document_id="technical", version=1,
+                                    source_document_id="technical", source_version=1))
+
+    def test_a_version_converges_when_its_tasks_are_finished(self):
+        self.document()
+        self.issue()
+        seed_task(self.db)
+        seed_task(self.db, task="second")
+        progress = lambda: tuple(self.db.execute(
+            "SELECT task_count, done_task_count, is_converged FROM document_version_progress"
+        ).fetchone())
+        self.assertEqual(progress(), (0, 0, 0))  # no task: not converged
+        for task in ("task", "second"):
+            insert(self.db, "task_document_versions", organization_id="org", task_id=task,
+                   document_id="spec", version=1)
+        self.db.execute("UPDATE tasks SET status='done' WHERE id='task'")
+        self.assertEqual(progress(), (2, 1, 0))
+        self.db.execute("UPDATE tasks SET status='cancelled' WHERE id='second'")
+        self.assertEqual(progress(), (2, 2, 1))
+        self.db.execute("UPDATE tasks SET status='in_progress' WHERE id='second'")
+        self.assertEqual(progress(), (2, 1, 0))  # reopening needs no other write
+        self.db.commit()
+        self.refused(lambda: insert(self.db, "task_document_versions", organization_id="org",
+                                    task_id="task", document_id="spec", version=2))
+
+    def test_code_links_and_media_stay_inside_their_roots(self):
+        self.document()
+        insert(self.db, "document_code_links", organization_id="org", id="link", document_id="spec",
+               repository_id="org-repository", path="services/auth/src/login.rs",
+               symbol="verify_password")
+        insert(self.db, "documentation_media", organization_id="org", id="diagram", schema_version=1,
+               revision=1, project_id="project", path="technical/diagrams/login-sequence.mmd",
+               type="diagram", media_type="text/vnd.mermaid", bytes=1840, sha256=self.SHA,
+               title="Login sequence")
+        self.db.commit()
+        for path in ("/etc/passwd", "../other/file.rs", "src/../../file.rs", "src/.."):
+            self.refused(lambda: insert(self.db, "document_code_links", organization_id="org",
+                                        id="bad", document_id="spec", repository_id="org-repository",
+                                        path=path))
+        self.refused(lambda: insert(self.db, "document_code_links", organization_id="org", id="bad",
+                                    document_id="spec", repository_id="missing", path="src/a.rs"))
+        for fields in (dict(path="technical/notes.md"), dict(path="../diagram.png"),
+                       dict(bytes=5 * 1024 * 1024 + 1), dict(type="video")):
+            values = dict(organization_id="org", id="bad", schema_version=1, revision=1,
+                          project_id="project", path="technical/diagram.png", type="image",
+                          media_type="image/png", bytes=10, sha256=self.SHA, title="Diagram")
+            values.update(fields)
+            self.refused(lambda: insert(self.db, "documentation_media", **values))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
