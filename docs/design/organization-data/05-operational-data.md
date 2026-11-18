@@ -398,13 +398,13 @@ CREATE TABLE task_events (
 
 ## Private notes attached to tasks
 
-**Required capability: a person or agent can create, read, edit and delete their own private notes attached to a task.** This is part of the selected requirements. Its absence from v1 is an implementation gap. The data structure and private storage contract follow below.
+**Required capability: a person or agent can create, read, edit and delete their own private notes attached to a task.** A private note is its author's working record on the task: reasoning, an implementation plan, test notes. It is read by its author and by people, and never by another agent, so that one agent's plan does not steer another's work; what everyone on the task should know goes in a shared comment (owner, 2026-11-18; [ADR-0031](../../adr/0031-any-employee-changes-tasks.md)). This is part of the selected requirements. Its absence from v1 is an implementation gap. The data structure and private storage contract follow below.
 
 Code today: private task notes do not exist. `CommentKind::Note` in `crates/org-proto/src/work.rs` is an ordinary shared comment, so it must never be presented as private, and hiding it in the UI would not provide privacy.
 
-Each private note must have stable identity, organization/task references, an immutable author derived from the authenticated actor, body, creation/update timestamps and a revision for conflicting edits. A task can have multiple notes from multiple authors. The author is the default exclusive reader/editor; task ownership, assignment, team leadership and organization-owner/admin roles do not implicitly grant access. Any exceptional administrative access requires an explicit policy decision before implementation, rather than inheriting ordinary task permissions.
+Each private note must have stable identity, organization/task references, an immutable author derived from the authenticated actor, body, creation/update timestamps and a revision for conflicting edits. A task can have multiple notes from multiple authors. Only the author edits or deletes a note. The author reads it, and so does any person who can read the task. An agent other than the author never reads it, whatever its assignment, team leadership or place in the organization, and a person's note is hidden from every agent the same way.
 
-Enforce privacy on reads, writes, search, feeds, notifications and exports. Store and back up notes outside the shared task-history/Git path. Private note bodies and identifying metadata must not leak into shared activity, indexes or provenance. Reassignment must not expose another author's notes or transfer their ownership. Explicitly publishing a note creates a shared comment after the author confirms the intended audience; it does not silently change the private original's visibility.
+Enforce this on reads, writes, search, feeds, notifications, summaries, exports, and on the instructions and context the office gives an agent. Store and back up notes outside the shared task-history/Git path. Private note bodies and identifying metadata must not leak into shared activity, indexes or provenance. Reassignment must not expose another author's notes to an agent or transfer their ownership. Explicitly publishing a note creates a shared comment after the author confirms the intended audience; it does not silently change the private original's visibility.
 
 Private notes must survive restart and task closure/archive with their access restrictions intact. Define authorized recovery, retention, note deletion and task deletion behavior in the private storage contract before implementation. Deletion must include a documented policy for backups and retained versions; immutable shared task history must not prevent private-note deletion. Neither the shared history projection nor an agent-memory folder satisfies this requirement.
 
@@ -413,8 +413,8 @@ Acceptance criteria for the required capability:
 | ID | Required evidence |
 | --- | --- |
 | PN-01 | A bound person or agent can create multiple private notes on a task and read/edit/delete their own notes; forged author IDs and stale edit revisions are rejected. |
-| PN-02 | Another task reader, assignee, team lead or administrator cannot obtain or mutate a private note through direct IDs, task responses, search, feeds, notifications or exports under the default author-only policy. |
-| PN-03 | Task reassignment and ownership changes preserve the note's author and privacy; no note is copied to the new team or assignee. |
+| PN-02 | An agent other than the author cannot obtain or mutate a private note through direct IDs, task responses, search, feeds, notifications, summaries, exports or its turn input, including as the task's assignee or as a team lead. A person who can read the task reads the note and cannot edit or delete it. |
+| PN-03 | Task reassignment and ownership changes preserve the note's author and its reading rule; no note is copied to the new team or assignee, and a new agent assignee sees none of it. |
 | PN-04 | Restart, authorized recovery and task closure/archive retain the note and enforce the same access restrictions. Shared organization Git and task history contain no private-note body or identifying metadata. |
 | PN-05 | Only an explicit author action publishes a shared comment; ordinary note saves never publish, and the private original retains its visibility. |
 | PN-06 | Note deletion and task deletion follow the documented private retention/backup policy without exposing note content through shared history. |
