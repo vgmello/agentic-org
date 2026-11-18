@@ -1,6 +1,6 @@
 //! The production `/api/v1` backend (web-api-v1 §2 and §4, ADR-0013): the public
 //! version constant, sign-in, registration-link redemption, the session view,
-//! sign-out and the organization list. Every other `/api/v1` path is a JSON 404.
+//! sign-out, the instance view and the organization list. Every other `/api/v1` path is a JSON 404.
 //!
 //! The web process mints each browser cookie and proof, sends only their digests
 //! to the host over its admitted control connection, and caches a validated
@@ -18,16 +18,17 @@ use crate::{
 use hyper::{header::SET_COOKIE, http::request::Parts, Method, StatusCode};
 use org_host_control::{
     browser::{
-        BrowserOrigin, BrowserSession, BrowserSessionEnd, BrowserSessionEndParams, LinkRegister,
-        LinkRegisterParams, SessionSignIn, SessionSignInParams, SessionValidate,
-        SessionValidateParams,
+        BrowserOrigin, BrowserSession, BrowserSessionEnd, BrowserSessionEndParams, InstanceView,
+        InstanceViewResult, LinkRegister, LinkRegisterParams, SessionSignIn, SessionSignInParams,
+        SessionValidate, SessionValidateParams,
     },
-    listen::ListenOrigin,
-    LinkToken, Password,
+    listen::{ListenOrigin, OriginScheme},
+    GatewayState, LinkToken, Password,
 };
 use org_proto::gateway::{
-    AccountView, GatewayError, GatewayErrorCode, Milliseconds, OrganizationLink, ReadResponse,
-    SessionEstablished, SessionProof, SessionView, Version,
+    self as gateway, AccountView, GatewayError, GatewayErrorCode, GatewayStatus, ListenScheme,
+    Milliseconds, OrganizationLink, ReadResponse, SessionEstablished, SessionProof, SessionView,
+    Version,
 };
 use serde::Deserialize;
 use std::{
@@ -42,6 +43,7 @@ pub struct SessionApi {
     cache: Arc<SessionCache>,
     cookie: CookieName,
     origin: BrowserOrigin,
+    listen_scheme: ListenScheme,
 }
 
 impl SessionApi {
@@ -49,6 +51,10 @@ impl SessionApi {
     pub fn new(host: Arc<HostControl>, cache: Arc<SessionCache>, origin: &ListenOrigin) -> Self {
         let scheme = origin.scheme().as_str();
         Self {
+            listen_scheme: match origin.scheme() {
+                OriginScheme::Https => ListenScheme::Https,
+                _ => ListenScheme::HttpLoopback,
+            },
             cookie: CookieName::new(host.instance(), scheme == "https"),
             origin: BrowserOrigin {
                 scheme: scheme.to_owned(),
@@ -67,6 +73,7 @@ pub enum Route {
     Register(IpAddr),
     Session(PresentedPair),
     SignOut(PresentedPair),
+    Instance(PresentedPair),
     Organizations(PresentedPair),
 }
 
@@ -76,6 +83,7 @@ pub enum Call {
     Register(IpAddr, LinkToken, Credentials),
     Session(PresentedPair),
     SignOut(PresentedPair),
+    Instance(PresentedPair),
     Organizations(PresentedPair),
 }
 
@@ -169,6 +177,28 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0)
+}
+
+/// The public instance view of the host's `instance.view` (web-api-v1 §3). `web_status`
+/// is `ok` only while the host reports the web process running. `tls` stays absent
+/// until TLS lands; no path, socket or certificate material is reported.
+fn instance_view(
+    instance_id: &str,
+    listen_scheme: ListenScheme,
+    host: InstanceViewResult,
+) -> Result<gateway::InstanceView, Failure> {
+    Ok(gateway::InstanceView {
+        instance_id: instance_id.to_owned(),
+        name: host.name,
+        server_version: env!("CARGO_PKG_VERSION").to_owned(),
+        web_status: match host.web_status {
+            GatewayState::Running => GatewayStatus::Ok,
+            _ => GatewayStatus::Degraded,
+        },
+        listen_scheme,
+        tls: None,
+        server_time_ms: Milliseconds::new(now_ms()).map_err(|_| Failure::Unavailable)?,
+    })
 }
 
 /// The public session view of a host session record. Never a digest or handle.
@@ -303,7 +333,9 @@ impl ApiBackend for SessionApi {
                 Route::SignOut(self.pair(request).map_err(|r| self.clear(r))?)
             }
             ["api", "v1", "organizations"] if get => Route::Organizations(self.pair(request)?),
+            ["api", "v1", "instance"] if get => Route::Instance(self.pair(request)?),
             ["api", "v1", "version"]
+            | ["api", "v1", "instance"]
             | ["api", "v1", "session", "sign-in"]
             | ["api", "v1", "links", "register"]
             | ["api", "v1", "session"]
@@ -319,6 +351,7 @@ impl ApiBackend for SessionApi {
             Route::Version => empty().map(|()| Call::Version)?,
             Route::Session(pair) => empty().map(|()| Call::Session(pair))?,
             Route::Organizations(pair) => empty().map(|()| Call::Organizations(pair))?,
+            Route::Instance(pair) => empty().map(|()| Call::Instance(pair))?,
             Route::SignOut(pair) => {
                 serde_json::from_slice::<EmptyBody>(bytes).map_err(|_| invalid())?;
                 Call::SignOut(pair)
@@ -345,6 +378,14 @@ impl ApiBackend for SessionApi {
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))
+            {
+                Ok(view) => result(view),
+                Err(e) => failure(e),
+            },
+            Call::Instance(pair) => match self
+                .validate(pair)
+                .and_then(|_| self.host.request::<InstanceView>(&Default::default()))
+                .and_then(|v| instance_view(self.host.instance(), self.listen_scheme, v))
             {
                 Ok(view) => result(view),
                 Err(e) => failure(e),

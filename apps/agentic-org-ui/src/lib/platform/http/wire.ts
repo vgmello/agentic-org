@@ -286,7 +286,7 @@ export const readCancelResult = checked((value) => {
 export const cancelStatus = (result: ReturnType<typeof readCancelResult>): number | undefined => ['abandoned', 'linked'].includes(result.state) ? 200 : undefined;
 export const readInstance = checked(object({
 	instance_id: text, name: text, server_version: text, web_status: word(['ok', 'degraded'] as const),
-	listen_scheme: word(['https', 'http_loopback'] as const), tls: word(['ok', 'missing', 'expiring'] as const), server_time_ms: readSafeInteger
+	listen_scheme: word(['https', 'http_loopback'] as const), tls: optional(word(['ok', 'missing', 'expiring'] as const)), server_time_ms: readSafeInteger
 }));
 export const readOffice = checked(object({
 	id: text, organization_id: text, name: text, role: word(['hq', 'satellite'] as const), host: text,

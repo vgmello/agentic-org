@@ -31,6 +31,13 @@ pub(crate) struct Service {
     /// Installed once by the registered start after composition; until then the admin calls
     /// answer `unavailable`.
     admin: std::sync::OnceLock<Arc<crate::admin::Admin>>,
+    /// The registered instance's name, installed once by the registered start; until then
+    /// `instance.view` answers `unavailable`.
+    instance_name: std::sync::OnceLock<String>,
+    /// Browser ops this service accepted on a web connection; real-process tests prove
+    /// that an ingress refusal reaches no host op.
+    #[cfg(test)]
+    browser_ops: std::sync::atomic::AtomicUsize,
 }
 
 impl Service {
@@ -47,6 +54,9 @@ impl Service {
             provisioning: None,
             recovery: None,
             admin: std::sync::OnceLock::new(),
+            instance_name: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            browser_ops: std::sync::atomic::AtomicUsize::new(0),
             gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
         }
     }
@@ -78,6 +88,27 @@ impl Service {
     }
     pub(crate) fn install_admin(&self, admin: Arc<crate::admin::Admin>) -> bool {
         self.admin.set(admin).is_ok()
+    }
+    #[cfg(test)]
+    pub(crate) fn browser_ops(&self) -> usize {
+        self.browser_ops.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// The registered name `instance.view` reports. Installed at most once.
+    pub(crate) fn install_instance_name(&self, name: &str) -> bool {
+        self.instance_name.set(name.to_owned()).is_ok()
+    }
+    /// `instance.view` on the web connection: the name, mode, web state and whether an
+    /// administrator exists. Nothing else about the host.
+    fn instance_view(&self) -> Result<org_host_control::browser::InstanceViewResult, ApiError> {
+        let name = self.instance_name.get().cloned().ok_or_else(|| {
+            ApiError::new(ErrorCode::Unavailable, "the instance view is unavailable")
+        })?;
+        Ok(org_host_control::browser::InstanceViewResult {
+            name,
+            status: InstanceMode::Service,
+            web_status: *crate::sync::lock(&self.gateway),
+            administrator: self.administrator()?,
+        })
     }
     fn administer(
         &self,
@@ -227,15 +258,30 @@ impl Service {
     /// connection's one ordered writer, after the record's delete.
     fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::browser::{
-            BrowserSessionEnd, LinkRegister, SessionEnded, SessionSignIn, SessionValidate,
-            SESSION_ENDED,
+            BrowserSessionEnd, InstanceView, LinkRegister, SessionEnded, SessionSignIn,
+            SessionValidate, SESSION_ENDED,
         };
         let browser = request.is::<LinkRegister>()
             || request.is::<SessionSignIn>()
             || request.is::<SessionValidate>()
-            || request.is::<BrowserSessionEnd>();
+            || request.is::<BrowserSessionEnd>()
+            || request.is::<InstanceView>();
         if !browser || connection.gateway_listen().is_none() {
             return false;
+        }
+        #[cfg(test)]
+        self.browser_ops
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if request.is::<InstanceView>() {
+            let reply = request
+                .params::<InstanceView>()
+                .map_err(|_| {
+                    ApiError::new(ErrorCode::InvalidRequest, "invalid instance view request")
+                })
+                .and_then(|_| self.instance_view())
+                .map(|r| ok::<InstanceView>(request.id, &r));
+            connection.send_response(reply.unwrap_or_else(|e| Response::error(request.id, e)));
+            return true;
         }
         let Some(authentication) = &self.authentication else {
             connection.send_response(not_authorized(request.id));
@@ -1189,6 +1235,92 @@ pub(crate) mod tests {
         ));
         drop(web);
         offices.shutdown();
+    }
+
+    /// `instance.view` on the web connection: `unavailable` until the registered start
+    /// installs the name, then the name, mode, web state and administrator presence.
+    /// On host.sock it is `not_authorized`. Every accepted op counts once.
+    #[test]
+    fn instance_view_is_served_only_on_the_web_connection_after_the_name_is_installed() {
+        use org_host_control::browser::{InstanceView, InstanceViewResult};
+        use org_host_control::{Administrator, GatewayState, InstanceMode};
+        let home = tempfile::tempdir().unwrap();
+        let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+        let authentication = Arc::new(authentication);
+        let mut service = service(home.path()).with_authentication(Some(authentication.clone()));
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
+        let service = Arc::new(service);
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let listen = serde_json::from_str(
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        )
+        .unwrap();
+        let web = listener::WebConnection::start(
+            host,
+            transfer,
+            listen,
+            service.clone() as Arc<dyn Handler>,
+        )
+        .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<InstanceView>(&mut peer, 2, &Default::default()),
+            ErrorCode::Unavailable
+        ));
+        assert!(service.install_instance_name("studio"));
+        assert!(!service.install_instance_name("other"), "installed once");
+        let view = exchange::<InstanceView>(&mut peer, 3, &Default::default())
+            .unwrap()
+            .into_result::<InstanceView>()
+            .unwrap();
+        assert_eq!(
+            view,
+            InstanceViewResult {
+                name: "studio".into(),
+                status: InstanceMode::Service,
+                web_status: GatewayState::NotConfigured,
+                administrator: Administrator::Present,
+            }
+        );
+        assert_eq!(service.browser_ops(), 2);
+        // Unknown params are refused, not ignored.
+        org_proto::frame::write_message(
+            peer.get_mut(),
+            &serde_json::json!({"id": 4, "method": InstanceView::METHOD, "params": {"path": "/"}}),
+        )
+        .unwrap();
+        let response: org_proto::Response =
+            org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+        assert!(matches!(
+            response.outcome,
+            org_proto::Outcome::Error(ref e) if e.code == ErrorCode::InvalidRequest
+        ));
+        drop(web);
+
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let local =
+            listener::LocalConnection::start(host, service.clone() as Arc<dyn Handler>).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<InstanceView>(&mut peer, 2, &Default::default()),
+            ErrorCode::NotAuthorized
+        ));
+        assert_eq!(service.browser_ops(), 3, "host.sock reaches no browser op");
+        drop(local);
+        service.offices.shutdown();
     }
 
     /// A local (host.sock) connection cannot create or validate browser sessions:

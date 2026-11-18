@@ -80,6 +80,10 @@ fn default_script() -> Arc<Script> {
                     json!({"result":{}}),
                 ]
             }
+            "instance.view" => vec![json!({"result": {
+                "name": "studio", "status": "service", "web_status": "running",
+                "administrator": "present"
+            }})],
             _ => vec![json!({"error":{"code":"unavailable","message":"no"}})],
         }
     })
@@ -260,6 +264,8 @@ fn known_routes_refuse_other_methods_queries_and_bodies_without_a_host_call() {
         ),
         (Method::POST, "/api/v1/links/register", r#"{"login":"a"}"#),
         (Method::POST, "/api/v1/session", "{}"),
+        (Method::POST, "/api/v1/instance", "{}"),
+        (Method::GET, "/api/v1/instance?x=1", ""),
     ] {
         let answer = send(&gateway, method, target, body, None, &[]);
         assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{target} {body}");
@@ -275,6 +281,7 @@ fn unsupported_api_routes_are_json_404() {
     for (method, target) in [
         (Method::POST, "/api/v1/session/refresh"),
         (Method::GET, "/api/v1/capabilities"),
+        (Method::GET, "/api/v1/instances"),
         (Method::GET, "/api/v1/tasks"),
         (Method::POST, "/api/v1/links/set-password"),
     ] {
@@ -337,6 +344,83 @@ fn sign_in_sets_the_pair_and_caches_the_session() {
     assert_eq!(orgs.status, StatusCode::OK);
     assert_eq!(orgs.body, json!({"result":{"organizations":[]}}));
     assert_eq!(calls.methods(), ["session.sign_in"]);
+}
+
+/// `GET /instance` validates the pair (here from the cache), then asks the host's
+/// `instance.view` and answers the public view: no host status internals, no TLS
+/// field until TLS lands, the listen scheme from the configured origin.
+#[test]
+fn instance_view_needs_a_session_and_reports_the_public_view() {
+    let (gateway, calls) = gateway(default_script());
+    let pair = sign_in(&gateway).pair();
+    let answer = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/instance",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let result = &answer.body["result"];
+    assert_eq!(result["instance_id"], INSTANCE);
+    assert_eq!(result["name"], "studio");
+    assert_eq!(result["web_status"], "ok");
+    assert_eq!(result["listen_scheme"], "http_loopback");
+    assert_eq!(result["server_version"], env!("CARGO_PKG_VERSION"));
+    assert!(result["server_time_ms"].as_u64().unwrap() > 0);
+    let mut keys: Vec<_> = result.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "instance_id",
+            "listen_scheme",
+            "name",
+            "server_time_ms",
+            "server_version",
+            "web_status"
+        ]
+    );
+    assert!(answer.headers.get(header::SET_COOKIE).is_none());
+    assert_eq!(calls.methods(), ["session.sign_in", "instance.view"]);
+    // Any host web state other than running is degraded; a host refusal is 503.
+    let degraded: Arc<Script> = Arc::new(|method, _| match method {
+        "session.validate" => vec![json!({"result": record(1)})],
+        "instance.view" => vec![json!({"result": {
+            "name": "studio", "status": "service", "web_status": "starting",
+            "administrator": "present"
+        }})],
+        _ => vec![json!({"error":{"code":"unavailable","message":"no"}})],
+    });
+    let (other, _) = self::gateway(degraded);
+    let answer = send(
+        &other,
+        Method::GET,
+        "/api/v1/instance",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(
+        answer.body["result"]["web_status"], "degraded",
+        "{}",
+        answer.body
+    );
+    let refusing: Arc<Script> = Arc::new(|method, _| match method {
+        "session.validate" => vec![json!({"result": record(1)})],
+        _ => vec![json!({"error":{"code":"unavailable","message":"no"}})],
+    });
+    let (other, _) = self::gateway(refusing);
+    let answer = send(
+        &other,
+        Method::GET,
+        "/api/v1/instance",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
 /// A pair this host doesn't know is 401 after one validate and is not cached.
@@ -432,6 +516,7 @@ fn protected_routes_without_the_full_pair_are_401_with_no_host_call() {
         for (method, target, body) in [
             (Method::GET, "/api/v1/session", ""),
             (Method::GET, "/api/v1/organizations", ""),
+            (Method::GET, "/api/v1/instance", ""),
             (Method::POST, "/api/v1/session/sign-out", "{}"),
         ] {
             let answer = send(&gateway, method, target, body, None, extra);

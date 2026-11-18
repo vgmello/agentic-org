@@ -245,7 +245,7 @@ fn shared_envelopes_have_one_native_id_unchanged_versions_and_explicit_scope() {
 
 #[test]
 fn shared_views_are_typed_additive_and_do_not_expose_private_endpoints() {
-    let vectors = fixture(include_str!("../../test-vectors/v2/gateway-views.json"), 17);
+    let vectors = fixture(include_str!("../../test-vectors/v2/gateway-views.json"), 18);
     for case in vectors["cases"].as_array().unwrap() {
         match case["category"].as_str().unwrap() {
             "version" => check_view::<Version>(case),
