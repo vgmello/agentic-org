@@ -1,4 +1,4 @@
-//! Real process death and SQLCipher/developer-custody reopen. Generated fixture
+//! Real process death and plain-SQLite/developer-custody reopen. Generated fixture
 //! secrets only; neither an OS confirmation nor a release Keychain claim.
 use super::*;
 use crate::host_secrets::dev::DevSecrets;

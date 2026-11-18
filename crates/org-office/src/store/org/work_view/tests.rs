@@ -1,7 +1,7 @@
 use super::*;
 use crate::store::org::{self, Genesis, SCHEMA};
 use crate::store::Opening;
-use crate::{Key, OfficeError};
+use crate::OfficeError;
 use org_proto::org::{AgentStatus, MemberKind};
 use org_work::testkit::MemOrg;
 use serde_json::{json, Value};
@@ -35,15 +35,7 @@ pub(crate) fn command(store: &Store, method: &str, mut params: Value) {
 /// Members, teams and leads use commands; projects and areas have no commands yet.
 /// Normalize MemOrg from the actual committed member bodies and position.
 pub(crate) fn load(root: &std::path::Path, memory: &mut MemOrg) -> Arc<Store> {
-    let store = Arc::new(
-        Store::open(
-            &root.join("org.db"),
-            &Key::from_bytes([19; 32]),
-            Opening::New,
-            &SCHEMA,
-        )
-        .unwrap(),
-    );
+    let store = Arc::new(Store::open(&root.join("org.db"), Opening::New, &SCHEMA).unwrap());
     let owner_id = memory.owner_id.clone();
     store
         .write(move |db| {
@@ -407,7 +399,6 @@ fn panic_in_production_work_attempt_releases_and_discards_org_snapshot() {
     let office = Arc::new(
         Store::open(
             &root.path().join("office.db"),
-            &Key::from_bytes([42; 32]),
             Opening::New,
             &crate::office::OFFICE_SCHEMA,
         )
@@ -481,15 +472,8 @@ fn snapshot_reads_insert_update_delete_replace_conflict_rollback_and_reopen() {
     drop(snapshot);
     drop(source);
     drop(store);
-    let store = Arc::new(
-        Store::open(
-            &root.path().join("org.db"),
-            &Key::from_bytes([19; 32]),
-            Opening::Existing,
-            &SCHEMA,
-        )
-        .unwrap(),
-    );
+    let store =
+        Arc::new(Store::open(&root.path().join("org.db"), Opening::Existing, &SCHEMA).unwrap());
     let source = OrgDbSource::new(store);
     let view = source.snapshot().unwrap();
     assert_eq!(view.applied_position().unwrap(), before);

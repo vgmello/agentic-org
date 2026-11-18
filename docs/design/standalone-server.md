@@ -642,7 +642,7 @@ Linux, including a container, and confirms no production mock fallback.
   `offices/<office-id>/`, still encrypted with SQLCipher. The host registry
   (`host-registry.db`) is plain SQLite with no database key. SQLCipher is removed
   under ADR-0016, and the files move to the storage tree above (implementation plan
-  A1, B1).
+  A1, B1b).
 - Host secrets use the macOS Keychain (`crates/org-host/src/host_secrets`), and the
   host starts workers only on macOS (`crates/org-host/src/spawn.rs`).
 - The launch code has two forms, the older first line and the rendezvous in

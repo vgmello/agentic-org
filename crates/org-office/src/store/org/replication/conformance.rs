@@ -1,4 +1,4 @@
-//! Real SQLCipher adapter contract, including durable writer COMMIT failures.
+//! Real SQLite adapter contract, including durable writer COMMIT failures.
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex,
@@ -183,14 +183,13 @@ impl OrganizationHarness for SqlCipherHarness {
     }
 
     fn stage_snapshot(&self, source: &Self) -> ValidatedSnapshot {
-        let transport_key = Key::from_bytes([9; 32]);
         let exported = source
             .office
             .lock()
             .unwrap()
             .as_ref()
             .unwrap()
-            .export_replication_snapshot(&transport_key, LIMIT)
+            .export_replication_snapshot(LIMIT)
             .unwrap();
         self.office
             .lock()
@@ -200,8 +199,7 @@ impl OrganizationHarness for SqlCipherHarness {
             .stage_replication_snapshot(
                 &HqAt(exported.manifest.position.epoch),
                 &exported.manifest,
-                &transport_key,
-                &*exported.ciphertext,
+                &*exported.artifact,
                 LIMIT,
                 SnapshotStageMode::Normal,
             )

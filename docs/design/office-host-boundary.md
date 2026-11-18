@@ -201,7 +201,7 @@ replacements for missing committed custody. One gate per operation serializes wo
 attempts. The handoff carries the exact prepared plan and IDs, which the worker's
 intent keeps. The host installs writer custody before admitting the office and keeps
 the outcome pending until the worker has written the initial files and is ready. The
-initial canonical files and the directory generation enter the work acceptance journal
+initial canonical files and the directory generation enter the office's acceptance journal
 together. Remote connectivity and publication, and HR execution, are reported as
 unverified.
 
@@ -395,7 +395,7 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
 | A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
-| A1 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
+| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the first line still carries the per-office key as `db_key`, which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The field rename is pending (implementation plan A1.6). |
 | X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
 
 `organization.provision.v1` today carries a `home_team_name`, creates no person record
@@ -405,7 +405,7 @@ The office directory today is `<home>/offices/<office-id>/` under the host home
 resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`
 besides `office.lock` and `office.json`. Those databases are the source of truth until
 the store writes the [storage tree](organization-data/README.md#shared-storage-contract)
-(implementation plan B1). The rendezvous's first line still has an optional
+(implementation plan B1b). The rendezvous's first line still has an optional
 `id_profile: "selected_v1"`; without it the code accepts the older alphanumeric IDs, and
 `office.json` version 2 holds UUIDv7 IDs. Every ID becomes UUIDv7 and the profile
 switch goes (FC-142). The `joined` event, the `child` and `child_gone` events, the

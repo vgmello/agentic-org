@@ -38,8 +38,9 @@ pub(super) enum Launch {
         auth: LaunchAuth,
         office: Option<OfficeIdentity>,
     },
+    /// Discard needs no key: the databases are plain SQLite (ADR-0016). A key the host still
+    /// sends on the old launch form is ignored.
     Discard {
-        key: Option<Key>,
         office: Option<OfficeIdentity>,
     },
 }
@@ -68,10 +69,7 @@ impl Launch {
                 auth: s.app_token.into(),
                 office: None,
             },
-            Request::V2(HostMessage::Discard(d)) => Self::Discard {
-                key: d.db_key.map(Key::from_db_key),
-                office: None,
-            },
+            Request::V2(HostMessage::Discard(_)) => Self::Discard { office: None },
             Request::V3 {
                 line: HostFirstLine::Create(c),
                 handoff:
@@ -115,9 +113,8 @@ impl Launch {
             },
             Request::V3 {
                 line: HostFirstLine::Discard(d),
-                handoff: Handoff::Discard { db_key, .. },
+                handoff: Handoff::Discard { .. },
             } => Self::Discard {
-                key: db_key.map(Key::from_db_key),
                 office: Some(OfficeIdentity {
                     office_id: d.office_id,
                     instance_id: d.instance_id,

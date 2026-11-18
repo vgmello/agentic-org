@@ -54,7 +54,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "1c64e147cf2b4bf81126d8826739b966c2ec8e9b86893e4b198c8d5c96140c63"
+      "sha256": "7e8b35285e3adc541c6c593366eacfc0ef1568be9deabf7a1bd5cb793e53f262"
     },
     {
       "path": "AGENTS.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "6773e7878f6a9cc48d8ddc64e240324f873efd6baec26d7ae183fdd9ad2c822e"
+      "sha256": "c3b77817068f687a88209029299990d5319ccb2262c67f1446027c40cd41fcf6"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "99db991b16e646b5d6b41b0d0c96bd2def50faf50eb81615bc9390640d4027f5"
+      "sha256": "7929833273791787115519f972541f29001a319b3a954aa5adcbc1258e9ce740"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "6b65bf97b04ce3ada47f9b820bde19b3ac5efc2138d5e63a6231b029fe1c527a"
+      "sha256": "d069f7e9c7fe071965f1f73c13debf89e6727b33fd2429fce8d81a11b8c18201"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -186,7 +186,7 @@
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "2a542befdd42af769c72800e64cfb4fc7f4a8a639d9b2d20892460df586bb12a"
+      "sha256": "43bc46726899fec3df2008bfb1f182af3416376fb6a8448ca8efb05605931474"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",

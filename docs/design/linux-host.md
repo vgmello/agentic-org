@@ -78,10 +78,12 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   on every system, and CI also runs it as its own step on macOS and Linux. String
   literals and fixtures (for example the TOML and `syn` fixtures in
   `org-office/src/store/tests/opener_policy.rs`) are not predicates and do not
-  match. It fails on a file that does not parse, and on `include!` or `#[path]` of
-  anything but a literal `.rs` path, because it could not read that source. It reads
-  every directory except hidden ones, `node_modules` and build output (a directory
-  holding `CACHEDIR.TAG`).
+  match. A conditional nested in another is counted by itself. It fails on a file
+  that does not parse; on `include!` or a `path` attribute of anything but a literal
+  `.rs` path, and on `include` imported under another name, because it could not read
+  that source; and on a `.rs` file that git tracks in a directory it does not read
+  (hidden directories, `node_modules`, and build output, which is a directory holding
+  `CACHEDIR.TAG`).
   Its allowlist, `.github/platform-conditionals.allow`, was written in X1a from the
   check's own findings: 79 files with 495 predicates, one `path count` line each (a
   text search finds 81 files, two of them only through fixtures). The check fails on
@@ -94,8 +96,9 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   module remove the test files, and the list is empty at X6.
   Outside the check: `cfg(unix)`, harmless because a non-Unix target cannot build
   `org-platform` at all, so such a branch never selects between supported systems;
-  and what no source scan sees, which review covers: a `--cfg` flag, a comparison
-  with `std::env::consts::OS` at run time, and a build script that emits its own
+  and what this scan does not see, which review covers: a `--cfg` flag, a comparison
+  with `std::env::consts::OS` at run time, code in a documentation test, a Cargo
+  target whose `path` is not a `.rs` file, and a build script that emits its own
   `cfg` after reading `CARGO_CFG_TARGET_OS`. Only `org-host/build.rs` reads that
   variable today, to compile the presence bridge, which moves with the bridge into
   `org-platform/build.rs` in X1c.
@@ -144,8 +147,9 @@ platform predicate. 45 are source files: 29 in `org-host`, 6 in `org-socket`, 6 
 `org-client/src/agent.rs`, `org-spool/src/safe_read.rs` and
 `apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
 (`org-socket/examples/gateway_confinement.rs`, which moves with confinement in X1c),
-and 33 are test files. Milestone-one work in these files adds no new predicate; a new
-need goes into `org-platform`.
+and 33 are test files. The list is at 78 files and 491 predicates since A1 removed
+SQLCipher from the office store. Milestone-one work in these files adds no new
+predicate; a new need goes into `org-platform`.
 
 ## 3. The five contracts
 
@@ -743,7 +747,7 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |
 | X1a crate and check | new `crates/org-platform/` (skeleton, `service` contract); the workspace `Cargo.toml`; `.github/workflows/ci.yml`, the check script and its allowlist | A2 writes the launchd adapter in `org-platform/src/service/macos.rs` |
-| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs`; `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
+| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (or `org-store/src/files.rs`, where B1a carries its flush); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
 | X1c `admission`, `confinement`, `presence` | `org-platform/src/{admission,confinement,presence}/`, `org-platform/build.rs`; `org-socket/src/{confinement.rs, confinement/, image.rs}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, bootstrap.rs, human.rs (verify_host), recovery.rs, recovery/presence.rs, release.rs, release/platform.rs, release/runtime.rs, supervisor/child.rs, supervisor/channels.rs, supervisor/mod.rs, offices.rs, lib.rs}`, `org-host/build.rs`, `org-host/Cargo.toml` | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `supervisor/mod.rs`. A2 and A3: `org-host/src/lib.rs`, `bootstrap.rs`. A3: the web process's start and its confinement call. A4: `offices.rs` |
 | X1d `credentials` | `org-platform/src/credentials/`; `org-host/src/{keys/, host_secrets.rs, host_secrets/}` | A1 (`keys/`, the office secrets key) |
 | X2 first worker | `org-platform/src/{admission,fs,dirs,process,socket}/linux.rs`, `org-platform/src/testing.rs`; the tests in `org-host/src/supervisor/` and `apps/agentic-org/tests/`; `ci.yml` | the tests in `apps/agentic-org/tests/` that A1 and A2 also edit |

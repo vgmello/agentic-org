@@ -305,7 +305,7 @@ mod tests {
             upgrade: |_, _| unreachable!("a newly created v2 fixture needs no migration"),
         };
         {
-            let store = Store::open(&folder.join("office.db"), &key, Opening::New, &old).unwrap();
+            let store = Store::open(&folder.join("office.db"), Opening::New, &old).unwrap();
             store
                 .write(|db| {
                     db.execute("INSERT INTO meta VALUES ('office_id', 'OFFICE1')", [])

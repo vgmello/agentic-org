@@ -610,7 +610,7 @@ fn discard_removes_an_unfinished_create_and_only_that() {
 }
 
 #[test]
-fn discard_that_cannot_check_the_databases_is_storage_error_and_deletes_nothing() {
+fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_deletes_nothing() {
     let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
@@ -618,17 +618,12 @@ fn discard_that_cannot_check_the_databases_is_storage_error_and_deletes_nothing(
     // Lose office.json, as a crash or a person might: the databases are all that is left.
     std::fs::remove_file(world.folder(OFFICE).join("office.json")).unwrap();
 
-    // No key: the databases cannot be looked into. A key that does not open them: the same,
-    // reported as `storage_error` for a discard (never `key_missing`, which the host would
-    // read as its own missing item). With the right key the organization is found: refused.
-    for (key, code) in [
-        (None, FailCode::StorageError),
-        (Some(DbKey::from_bytes([0xC4; 32])), FailCode::StorageError),
-        (Some(db_key()), FailCode::AlreadyExists),
-    ] {
+    // The databases are plain SQLite (ADR-0016): with no key, a wrong key or the right one the
+    // organization is found, so the discard is refused and nothing is deleted.
+    for key in [None, Some(DbKey::from_bytes([0xC4; 32])), Some(db_key())] {
         let mut run = world.spawn(&["--discard", OFFICE]);
         run.send(&discard_message(key));
-        assert_eq!(failed_code(run.event()), code);
+        assert_eq!(failed_code(run.event()), FailCode::AlreadyExists);
         assert!(!run.wait().success());
         assert!(
             world.folder(OFFICE).join("org.db").exists(),
@@ -642,31 +637,22 @@ fn discard_that_cannot_check_the_databases_is_storage_error_and_deletes_nothing(
 }
 
 #[test]
-fn a_key_that_does_not_open_the_databases_is_key_missing_and_nothing_changes() {
+fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
     let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
-    let org_before = std::fs::read(world.folder(OFFICE).join("org.db")).unwrap();
-    let office_before = std::fs::read(world.folder(OFFICE).join("office.db")).unwrap();
 
+    // ADR-0016 decision 3: the key only wraps private keys; a wrong one does not stop the
+    // office from serving its data.
     let mut run = world.spawn(&["--office", OFFICE]);
     run.send(&start_message_with(DbKey::from_bytes([0xC4; 32])));
-    assert_eq!(failed_code(run.event()), FailCode::KeyMissing);
-    assert!(!run.wait().success());
+    assert!(matches!(run.event(), ServerEvent::Ready { .. }));
+    assert!(run.host_goes_away().success());
     let log = run.stderr();
     assert!(!log.contains(DB_KEY_HEX), "the key reached the log");
     assert!(!log.contains("c4c4c4c4"), "the wrong key reached the log");
 
-    assert_eq!(
-        std::fs::read(world.folder(OFFICE).join("org.db")).unwrap(),
-        org_before
-    );
-    assert_eq!(
-        std::fs::read(world.folder(OFFICE).join("office.db")).unwrap(),
-        office_before
-    );
-    // The right key still opens it: the refusal changed nothing.
     let mut again = world.spawn(&["--office", OFFICE]);
     again.send(&start_message());
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));

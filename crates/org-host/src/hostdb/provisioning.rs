@@ -1,4 +1,4 @@
-//! Selected HQ reservations. No code/key bytes enter this SQLCipher table.
+//! Selected HQ reservations. No code/key bytes enter this table.
 use super::{accounts::Account, Error, HostDb};
 use org_proto::{selected_bootstrap::PreparedV1, OrganizationName};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};

@@ -27,6 +27,7 @@ in the "What the code does today" section of each design.
 | How fast an operation answers, and when it is acknowledged | [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) |
 | How an ask waits; required asks | [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) |
 | Durable sources versus rebuildable caches | [Storage contract](organization-data/README.md#shared-storage-contract), [recovery](organization-data/16-recovery-and-office-continuity.md) |
+| How the office stores, acknowledges and rebuilds data | [Office store design](office-store.md), [ADR-0021](../adr/0021-office-store-architecture.md) |
 | Replaceable storage engine | [ADR-0018](../adr/0018-storage-engine-independence.md) |
 | Encryption and secrets | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
 | Budgets | [Budgets](organization-data/17-budgets-and-controls.md); the [cost UX](../specs/costs-and-insights-ux.md) for presentation and access |

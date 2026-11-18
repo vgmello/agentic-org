@@ -119,4 +119,36 @@ adapter and the container mode need from it, to settle before X5 writes them:
   targets other than macOS to those three functions, the one change it makes to
   A2's files; the Linux adapter of X5 removes it.
 
-**Checks and review.** Recorded here when run.
+**Checks and review.** Every phase was run by the lead's own model (a Claude session
+and fresh-context Claude subagents), because the profile's `gpt-6.1-sol` wrapper is
+not installed where the lead runs.
+
+| Phase | Who | Result |
+| --- | --- | --- |
+| Plan and implementation | The lead | Commits `216913bc` to `963d6c71` |
+| Fresh read-only review | A fresh subagent, on `216913bc` | No blocker; 4 major (three ways the check missed a real predicate; gaps in the lead's `service` contract), 7 minor |
+| Repairs | The lead (the original author) | `c21c1f29`: the token-stream scanner, the list-only-shrinks CI job, the refusing-target CI step |
+| Fresh final review | A second fresh subagent, on `c21c1f29` | Changes required: `v1-integration` had gained A2's `org-platform` (blocker for integration), and the scanner skipped what is nested in a conditional (major); 4 minor |
+| Repairs | The lead | The merge with `v1-integration` that keeps A2's crate; nested conditionals, renamed `include`, tracked-file coverage |
+| Final review of the exact commit | A third fresh subagent | Recorded in the next table row when it returns |
+
+Checks on the merged tree, on Linux x86-64: `cargo fmt --check`; the CI lint commands
+(`cargo clippy --locked --workspace --all-targets --exclude org-host --exclude
+agentic-org -- -D warnings` and the `org-host`/`agentic-org` lint with the two allowed
+lints); `cargo clippy --locked --workspace --all-targets -- -D warnings` for
+`aarch64-apple-darwin` with C build steps stubbed (type-check and lint only); lint and
+tests of `org-platform` for `x86_64-unknown-linux-musl`, the refusing target; the
+`org-platform` tests; `kit_skills.py validate`. `kit_hooks.py check` cannot pass here
+(Hindsight is not installed).
+
+CI on GitHub for this branch: the LNX-5 step, the refusing-target step and the lints
+pass on macOS and Linux. Four jobs are red on this branch and equally on
+`v1-integration` at `032ea63`, for causes outside Track X: `cargo test` on macOS
+(`agentic-org-web`, `release::tests::held_release_directory_cannot_switch_to_replaced_path`,
+permission denied), `cargo test` on Linux (`agentic-org-web`,
+`the_web_links_no_host_office_work_or_client_crate`: an offline `cargo metadata`
+needs `core-foundation`), the frontend dependency audit (three advisories in
+`@sveltejs/kit` and `picomatch`), and secret scanning (one finding in history). Until
+this track's change, the first failing test binary stopped `cargo test`, so no crate
+after `agentic-org-web` was tested in CI on either system; `--no-fail-fast` now runs
+them all.

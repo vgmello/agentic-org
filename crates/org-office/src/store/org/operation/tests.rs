@@ -1,5 +1,4 @@
 use super::*;
-use crate::key::Key;
 use crate::store::{Opening, Store};
 use org_proto::org::TeamCreateParams;
 use tempfile::TempDir;
@@ -9,13 +8,7 @@ const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
 fn setup() -> (TempDir, Store, OrgCommand) {
     let dir = TempDir::new().unwrap();
-    let store = Store::open(
-        &dir.path().join("org.db"),
-        &Key::from_bytes([41; 32]),
-        Opening::New,
-        &SCHEMA,
-    )
-    .unwrap();
+    let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
     store
         .write(|db| {
             genesis(
@@ -103,13 +96,7 @@ fn org_lookup_retains_commit_refusal_and_bytes_after_reopen() {
     );
     assert_eq!(image(&store), before);
     drop(store);
-    let reopened = Store::open(
-        &dir.path().join("org.db"),
-        &Key::from_bytes([41; 32]),
-        Opening::Existing,
-        &SCHEMA,
-    )
-    .unwrap();
+    let reopened = Store::open(&dir.path().join("org.db"), Opening::Existing, &SCHEMA).unwrap();
     assert_eq!(get(&reopened, CLOCK, &id, None).unwrap(), committed);
     assert_eq!(get(&reopened, CLOCK, &refused_id, None).unwrap(), rejected);
     assert_eq!(image(&reopened), before);
@@ -255,13 +242,7 @@ fn each_principal_field_matches_and_null_legacy_rows_match_every_caller() {
     );
     let before = image(&store);
     drop(store);
-    let reopened = Store::open(
-        &dir.path().join("org.db"),
-        &Key::from_bytes([41; 32]),
-        Opening::Existing,
-        &SCHEMA,
-    )
-    .unwrap();
+    let reopened = Store::open(&dir.path().join("org.db"), Opening::Existing, &SCHEMA).unwrap();
     assert!(get(&reopened, CLOCK, &id, Some(agent)).is_ok());
     assert_eq!(
         get(&reopened, CLOCK, &id, Some(principal()))

@@ -495,6 +495,16 @@ offices/
     <li>What ties the code to SQLite today: those files outside the store and the database encryption, which is being removed.</li>
   </ul>
 
+  <h3>How a change is stored <span class="st target">Designed</span></h3>
+  <ol class="flow">
+    <li><span class="hop">Writer</span>One thread decides each operation against the database and frames a journal entry: the receipt, the positions it took, and the exact bytes of every file it creates, replaces or removes.</li>
+    <li><span class="hop">Journal</span>The entry is appended to the office's acceptance journal. This is the commit point. A fast-acknowledged operation is answered here, once the database also holds it.</li>
+    <li><span class="hop">Flusher</span>A group flush puts the journal on the drive. Operations that must survive a power cut are answered here. A failed flush stops the office; it is never retried.</li>
+    <li><span class="hop">Files</span>The files are then written, each atomically, under <code>durable/</code>. Only flushed entries are written, replicated or published to Git.</li>
+    <li><span class="hop">Rebuild</span>The database holds nothing that is not in the files or the journal. Deleting it, changing its schema or opening an existing organization runs one rebuild from the files, using the same code as the normal write path.</li>
+  </ol>
+  <p>Each record family (organization and people, projects, work, messaging) is one slice with the same small shape, and database code lives in one folder. The design is <code>docs/design/office-store.md</code>; the increments that build it are B1a to B1c in the plan.</p>
+
   <h3>Database rules that hold in both shapes</h3>
   <ul>
     <li>SQLite through <code>rusqlite</code>. WAL, <code>synchronous=FULL</code>, full fsync. No application-level encryption (ADR-0016); today the build still bundles SQLCipher with a raw key, which the plan removes.</li>
@@ -537,7 +547,7 @@ offices/
   <ul>
     <li>A task created offline has its final reference at once. A feature created offline is saved with its permanent ID and an empty number, shown as "Pending number".</li>
     <li>The feature is fully usable by ID. On reconnect HQ allocates once; the number is added and never changes.</li>
-    <li>Counters and allocations are files in organization Git (<code>identity/counters/</code>, <code>identity/allocations/</code>), published hourly. Allocations since the last publish live in <code>durable/authority/numbering-journal/</code>.</li>
+    <li>Counters and allocations are files in organization Git (<code>identity/counters/</code>, <code>identity/allocations/</code>), published hourly. Allocations since the last publish live in HQ's <code>durable/state/identity/</code> files and, until written, its acceptance journal.</li>
     <li>Each office keeps its own task counter with a durable mark above the last number used. An office that cannot prove its sequence gets a new letter from HQ before it creates another task (register entry C-12).</li>
   </ul>
 </section>

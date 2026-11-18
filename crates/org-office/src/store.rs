@@ -1,10 +1,10 @@
 //! The office's storage engine. **The only module that knows SQLite**: it owns the
-//! connections, the encryption, the schema and every SQL statement, and speaks to the rest
+//! connections, the schema and every SQL statement, and speaks to the rest
 //! of the crate in the plain values of `model` and `OfficeError`. Replacing the engine means
 //! replacing this file and its submodules (`store/`, e.g. `store/org.rs`, the organization's
 //! tables); `Office` and its rules don't change.
 //!
-//! The database is SQLCipher (encrypted at rest) with exactly one writer: a dedicated
+//! The database is plain SQLite (ADR-0016: no application-level encryption) with exactly one writer: a dedicated
 //! thread owns the only writing connection. It takes every request queued at that moment,
 //! runs them in ONE transaction (each in its own SAVEPOINT for ordinary failures), commits
 //! once, and only then answers successful requests. A batch-fatal failure rolls back the
@@ -51,7 +51,6 @@ use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use crate::error::OfficeError;
-use crate::key::Key;
 use crate::private_fs::{private_file, tighten_file_if_present};
 
 /// Idle reader connections kept for reuse.
@@ -130,7 +129,6 @@ pub(crate) struct Store {
     writer: Option<JoinHandle<()>>,
     readers: Mutex<Vec<Connection>>,
     db_path: PathBuf,
-    key: Key,
 }
 
 /// An org.db reader pinned for one work attempt. Failed or unwinding readers are discarded.
@@ -168,28 +166,26 @@ impl Drop for ReaderSnapshot<'_> {
 }
 
 impl Store {
-    /// Opens the encrypted database at `db_path`, which must be absolute, with `key`.
+    /// Opens the plain SQLite database at `db_path`, which must be absolute (ADR-0016).
     /// `Opening::New` creates the file and `schema`; `Opening::Existing` never does. What the
     /// database says about whose it is (its `meta` rows) is for the caller to check. The caller
     /// must hold the office lock: the store assumes it is the only process touching the
     /// database.
     pub(crate) fn open(
         db_path: &Path,
-        key: &Key,
         opening: Opening,
         schema: &Schema,
     ) -> Result<Self, OfficeError> {
-        Self::open_bound(db_path, key, opening, schema, None)
+        Self::open_bound(db_path, opening, schema, None)
     }
 
     pub(crate) fn check_instance(
         db_path: &Path,
-        key: &Key,
         instance: &str,
         office: &str,
     ) -> Result<(), OfficeError> {
         check_existing_file(db_path)?;
-        let db = connect(db_path, key, false, false)?;
+        let db = connect(db_path, false, false)?;
         let stored: Option<String> = db
             .query_row("SELECT value FROM meta WHERE key='office_id'", [], |r| {
                 r.get(0)
@@ -206,7 +202,6 @@ impl Store {
 
     pub(crate) fn open_bound(
         db_path: &Path,
-        key: &Key,
         opening: Opening,
         schema: &Schema,
         instance: Option<&str>,
@@ -216,7 +211,10 @@ impl Store {
         }
         match opening {
             // SQLite gives new -wal/-shm files the main file's mode, so make that one 0600 first.
-            Opening::New => drop(private_file(db_path).map_err(OfficeError::storage)?),
+            Opening::New => {
+                drop(private_file(db_path).map_err(OfficeError::storage)?);
+                check_database_header(db_path)?
+            }
             Opening::Existing => {
                 check_existing_file(db_path)?;
                 tighten_file_if_present(db_path).map_err(OfficeError::storage)?
@@ -229,7 +227,7 @@ impl Store {
             tighten_file_if_present(Path::new(&sidecar)).map_err(OfficeError::storage)?;
         }
 
-        let mut writer = connect(db_path, key, opening == Opening::New, true)?;
+        let mut writer = connect(db_path, opening == Opening::New, true)?;
         if opening == Opening::Existing {
             // Before anything writes (switching to WAL would write a header): a file without
             // our schema is not an office, and must not silently become a new, empty one.
@@ -261,7 +259,6 @@ impl Store {
             writer: Some(thread),
             readers: Mutex::new(Vec::new()),
             db_path: db_path.to_owned(),
-            key: key.clone(),
         };
         Ok(store)
     }
@@ -396,7 +393,7 @@ impl Store {
         let db = match idle {
             Some(db) => db,
             None => {
-                let db = connect(&self.db_path, &self.key, false, true)?;
+                let db = connect(&self.db_path, false, true)?;
                 db.pragma_update(None, "query_only", true)
                     .map_err(OfficeError::storage)?;
                 db
@@ -426,7 +423,7 @@ impl Store {
         let db = match idle {
             Some(db) => db,
             None => {
-                let db = connect(&self.db_path, &self.key, false, true)?;
+                let db = connect(&self.db_path, false, true)?;
                 db.pragma_update(None, "query_only", true)
                     .map_err(OfficeError::storage)?;
                 db
@@ -460,13 +457,15 @@ impl Store {
     /// (never creates it, never checkpoints on close) and runs `look`. Used by `--discard`.
     pub(crate) fn inspect<R>(
         db_path: &Path,
-        key: &Key,
         look: impl FnOnce(&Connection) -> Result<R, OfficeError>,
     ) -> Result<R, OfficeError> {
         if !db_path.is_absolute() {
             return Err(failure("the database path must be absolute"));
         }
-        let db = connect(db_path, key, false, false)?;
+        // As for an open: a main file that is not a database is refused before SQLite could
+        // take page 1 from a WAL beside it.
+        check_database_header(db_path)?;
+        let db = connect(db_path, false, false)?;
         db.pragma_update(None, "query_only", true)
             .map_err(OfficeError::storage)?;
         look(&db)
@@ -730,151 +729,26 @@ fn panicked(panic: Box<dyn Any + Send>) -> OfficeError {
     failure(format!("the storage writer panicked: {reason}"))
 }
 
-/// The statement that hands SQLCipher a raw key: `PRAGMA key = "x'<64 hex digits>'";`.
-/// It holds the key, so its bytes are overwritten when it is dropped. It is built in one
-/// allocation of exactly its size, so no partial copy is left behind by a reallocation.
-/// No `Debug`: it must never be printed. Best effort, and only this copy is wiped: SQLite
-/// keeps its own copy of the statement text while preparing it and frees it without zeroing
-/// (SQLCipher's `cipher_memory_security` is off), and if preparing fails, rusqlite's error
-/// carries a copy that is dropped unwiped.
-struct KeyPragma(String);
+static READY: OnceLock<i32> = OnceLock::new();
 
-impl KeyPragma {
-    const PREFIX: &'static str = "PRAGMA key = \"x'";
-    const SUFFIX: &'static str = "'\";";
-
-    fn new(key: &Key) -> Self {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let bytes = key.as_bytes();
-        let mut text =
-            String::with_capacity(Self::PREFIX.len() + bytes.len() * 2 + Self::SUFFIX.len());
-        text.push_str(Self::PREFIX);
-        for byte in bytes {
-            text.push(char::from(HEX[usize::from(byte >> 4)]));
-            text.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-        text.push_str(Self::SUFFIX);
-        Self(text)
-    }
-
-    fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Drop for KeyPragma {
-    fn drop(&mut self) {
-        wipe(&mut self.0);
-    }
-}
-
-/// Overwrites `text`'s bytes with zeros in place (same buffer, same length). Safe code: the
-/// buffer is taken out as bytes, zeroed, and put back (zeros are valid UTF-8). `black_box`
-/// keeps the compiler from dropping the writes as dead stores (best effort, as its docs say).
-fn wipe(text: &mut String) {
-    let mut bytes = std::mem::take(text).into_bytes();
-    bytes.fill(0);
-    *text = String::from_utf8(bytes).expect("zero bytes are valid UTF-8");
-    std::hint::black_box(&*text);
-}
-
-fn initialized(
-    state: &OnceLock<Result<(), String>>,
-    init: impl FnOnce() -> Result<(), String>,
-) -> Result<(), OfficeError> {
-    state
-        .get_or_init(init)
-        .as_ref()
-        .copied()
-        .map_err(|message| failure(message.clone()))
-}
-
-static READY: OnceLock<Result<(), String>> = OnceLock::new();
-
-/// Completes process-wide SQLCipher initialization before any keyed connection opens (BUG-100).
-///
-/// SQLite publishes its initialized flag before SQLCipher's EXTRA_INIT hook completes.
-/// All office openers must pass this fence.
-/// Initialization failure is cached for the process lifetime; restart after fixing its cause.
-/// Host-only twin: crates/org-host/src/hostdb/sqlcipher.rs. If both stores
-/// ever share a process, merge into one fence before linking them together.
-pub fn sqlcipher_ready() -> Result<(), OfficeError> {
-    initialized(&READY, || {
-        initialize_sqlcipher(
-            || {
-                // SAFETY: all process openers must cross this fence before their first
-                // SQLite use. Our first initializer waits for SQLCipher's EXTRA_INIT
-                // callback before admitting other openers; a late fence cannot repair
-                // initialization that an unfenced caller has already started.
-                unsafe { rusqlite::ffi::sqlite3_initialize() }
-            },
-            || {
-                #[allow(clippy::disallowed_methods)] // Only the keyed init probe.
-                let db = Connection::open_in_memory().map_err(key_failure_reason)?;
-                keyed_cipher_version(&db)
-            },
-        )
-    })
-}
-
-fn keyed_cipher_version(db: &Connection) -> Result<String, String> {
-    // This fixed public probe key protects no data; actual keys keep their path.
-    let key = Key::from_db_key(org_proto::DbKey::from_bytes([0; 32]));
-    let pragma = KeyPragma::new(&key);
-    let applied = db.execute_batch(pragma.as_str());
-    drop(pragma);
-    applied.map_err(key_failure_reason)?;
-    db.query_row("PRAGMA cipher_version", (), |row| row.get(0))
-        .map_err(cipher_failure_reason)
-}
-
-fn cipher_failure_reason(error: rusqlite::Error) -> String {
-    match error {
-        rusqlite::Error::QueryReturnedNoRows => {
-            "this SQLite build has no encryption (SQLCipher)".to_owned()
-        }
-        other => key_failure_reason(other),
-    }
-}
-
-// Keep the initialization ordering and its required postcondition independent of the FFI.
-fn initialize_sqlcipher(
-    initialize: impl FnOnce() -> i32,
-    keyed_probe: impl FnOnce() -> Result<String, String>,
-) -> Result<(), String> {
-    let code = initialize();
+/// Completes process-wide SQLite initialization once before any connection opens (BUG-100).
+/// While the workspace still links SQLCipher, its EXTRA_INIT hook runs inside
+/// `sqlite3_initialize`; the `OnceLock` makes every other opener wait for that call to return.
+/// The databases themselves are plain SQLite (ADR-0016): no key is applied.
+fn sqlite_ready() -> Result<(), OfficeError> {
+    // SAFETY: sqlite3_initialize is thread-safe and idempotent; every opener crosses here first.
+    let code = *READY.get_or_init(|| unsafe { rusqlite::ffi::sqlite3_initialize() });
     if code != rusqlite::ffi::SQLITE_OK {
-        return Err(format!(
-            "could not initialize SQLCipher (SQLite code {code})"
-        ));
-    }
-    if keyed_probe()?.is_empty() {
-        return Err("this SQLite build has no encryption (SQLCipher)".to_owned());
+        return Err(failure(format!(
+            "could not initialize SQLite (SQLite code {code})"
+        )));
     }
     Ok(())
 }
 
-fn key_failure(error: rusqlite::Error) -> OfficeError {
-    failure(key_failure_reason(error))
-}
-
-fn key_failure_reason(error: rusqlite::Error) -> String {
-    // Both variants can carry the raw-key SQL. Keep only their integer code, never text.
-    let code = match error {
-        rusqlite::Error::SqliteFailure(error, _) | rusqlite::Error::SqlInputError { error, .. } => {
-            Some(error.extended_code)
-        }
-        _ => None,
-    };
-    match code {
-        Some(code) => format!("could not apply the database key (SQLite code {code})"),
-        None => "could not apply the database key".to_owned(),
-    }
-}
-
 #[cfg(test)]
 fn connection_for_test(path: impl AsRef<Path>) -> Result<Connection, OfficeError> {
-    sqlcipher_ready()?;
+    sqlite_ready()?;
     #[allow(clippy::disallowed_methods)] // Raw fixtures still cross the fence.
     let db = Connection::open(path).map_err(OfficeError::storage)?;
     Ok(db)
@@ -887,20 +761,41 @@ fn check_existing_file(db_path: &Path) -> Result<(), OfficeError> {
     if !metadata.is_file() || metadata.len() == 0 {
         return Err(failure("the database file is missing or empty"));
     }
-    Ok(())
+    check_database_header(db_path)
 }
 
-/// Opens a connection to the encrypted database and proves the key works. Only with
-/// `create` may SQLite make the file if it is missing. Until the key is proved, closing the
-/// connection must not checkpoint (that would write the log into a file this key can't
-/// read); with `checkpoint_on_close` false it never does, for a connection that only looks.
+/// The 16 bytes every SQLite database file starts with.
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+
+/// Refuses a non-empty file that does not start with the SQLite header, before any connection
+/// opens it. With a WAL beside it, SQLite reads page 1 from the log and would accept a main
+/// file that is not a database; a later checkpoint would then write the log into that file.
+/// An empty file passes: only `Opening::New` accepts one, and `check_existing_file` refuses it.
+fn check_database_header(db_path: &Path) -> Result<(), OfficeError> {
+    use std::io::Read;
+    let mut header = Vec::with_capacity(SQLITE_HEADER.len());
+    std::fs::File::open(db_path)
+        .map_err(OfficeError::storage)?
+        .take(SQLITE_HEADER.len() as u64)
+        .read_to_end(&mut header)
+        .map_err(OfficeError::storage)?;
+    if header.is_empty() || header == SQLITE_HEADER {
+        Ok(())
+    } else {
+        Err(OfficeError::Invalid("the file is not a database"))
+    }
+}
+
+/// Opens a connection to the plain SQLite database and proves it is one. Only with `create`
+/// may SQLite make the file if it is missing. Until the file is proved a database, closing the
+/// connection must not checkpoint; with `checkpoint_on_close` false it never does, for a
+/// connection that only looks.
 fn connect(
     db_path: &Path,
-    key: &Key,
     create: bool,
     checkpoint_on_close: bool,
 ) -> Result<Connection, OfficeError> {
-    sqlcipher_ready()?;
+    sqlite_ready()?;
     let mut flags = OpenFlags::default();
     if !create {
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
@@ -910,26 +805,10 @@ fn connect(
     let db = Connection::open_with_flags(db_path, flags).map_err(OfficeError::storage)?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
         .map_err(OfficeError::storage)?;
-    // A raw key skips the passphrase KDF, so opening a connection is cheap. If this fails,
-    // say nothing about why: the statement holds the key and rusqlite's errors quote SQL.
-    let pragma = KeyPragma::new(key);
-    let applied = db.execute_batch(pragma.as_str());
-    drop(pragma);
-    applied.map_err(key_failure)?;
     // Before the first read, so a busy database makes it wait instead of failing.
     db.pragma_update(None, "busy_timeout", 5_000)
         .map_err(OfficeError::storage)?;
-    // Without SQLCipher, `PRAGMA key` is silently ignored and the data would be written in
-    // the clear. Refuse to run on such a build.
-    let cipher_version: Option<String> = db
-        .query_row("PRAGMA cipher_version", (), |row| row.get(0))
-        .ok()
-        .filter(|version: &String| !version.is_empty());
-    if cipher_version.is_none() {
-        return Err(failure("this SQLite build has no encryption (SQLCipher)"));
-    }
-    // The first real read fails here if the key is wrong or the file isn't ours: SQLite says
-    // "not a database", which is the key given not opening the databases.
+    // The first real read fails here if the file is not a database.
     db.query_row("SELECT count(*) FROM sqlite_master", (), |row| {
         row.get::<_, i64>(0)
     })
@@ -937,12 +816,12 @@ fn connect(
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == rusqlite::ErrorCode::NotADatabase =>
         {
-            OfficeError::KeyMissing
+            OfficeError::Invalid("the file is not a database")
         }
         other => OfficeError::storage(other),
     })?;
     if checkpoint_on_close {
-        // The key works: the last connection to close may checkpoint, as it should.
+        // It is a database: the last connection to close may checkpoint, as it should.
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)
             .map_err(OfficeError::storage)?;
     }
@@ -1024,10 +903,6 @@ fn bind_instance(db: &Connection, instance: &str, adopt: bool) -> Result<(), Off
 }
 
 #[cfg(test)]
-#[path = "store/tests/sqlcipher_init.rs"]
-mod sqlcipher_init_tests;
-
-#[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
@@ -1065,16 +940,12 @@ mod tests {
         },
     };
 
-    fn open_store(path: &Path, key: &Key, opening: Opening) -> Result<Store, OfficeError> {
-        Store::open(path, key, opening, &REGISTRY)
-    }
-
-    fn key() -> Key {
-        Key::from_bytes([7; 32])
+    fn open_store(path: &Path, opening: Opening) -> Result<Store, OfficeError> {
+        Store::open(path, opening, &REGISTRY)
     }
 
     fn open_in(dir: &TempDir) -> Store {
-        open_store(&dir.path().join("office.db"), &key(), Opening::New).unwrap()
+        open_store(&dir.path().join("office.db"), Opening::New).unwrap()
     }
 
     #[test]
@@ -1215,12 +1086,11 @@ mod tests {
         let path = dir.path().join("office.db");
         drop(open_in(&dir));
         let raw = connection_for_test(&path).unwrap();
-        raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
         raw.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
         drop(raw);
         assert!(matches!(
-            open_store(&path, &key(), Opening::New),
+            open_store(&path, Opening::New),
             Err(OfficeError::Storage(_))
         ));
     }
@@ -1231,7 +1101,7 @@ mod tests {
         let path = dir.path().join("office.db");
 
         // No file: refused, and none is made.
-        assert!(open_store(&path, &key(), Opening::Existing).is_err());
+        assert!(open_store(&path, Opening::Existing).is_err());
         assert!(!path.exists(), "a database file was created");
 
         // An empty file with a WAL beside it: refused, and neither file is touched.
@@ -1239,7 +1109,7 @@ mod tests {
         let wal = dir.path().join("office.db-wal");
         std::fs::write(&wal, b"whatever the log holds").unwrap();
         assert!(matches!(
-            open_store(&path, &key(), Opening::Existing),
+            open_store(&path, Opening::Existing),
             Err(OfficeError::Storage(_))
         ));
         assert_eq!(
@@ -1252,13 +1122,12 @@ mod tests {
 
     #[test]
     fn opening_an_existing_database_refuses_one_without_the_schema() {
-        // What a crash between switching to WAL and the first migration leaves: a keyed
+        // What a crash between switching to WAL and the first migration leaves: a
         // database file with no schema.
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("office.db");
         {
             let raw = connection_for_test(&path).unwrap();
-            raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
             let _: String = raw
                 .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
                 .unwrap();
@@ -1267,7 +1136,7 @@ mod tests {
         assert!(!before.is_empty());
 
         assert!(matches!(
-            open_store(&path, &key(), Opening::Existing),
+            open_store(&path, Opening::Existing),
             Err(OfficeError::Storage(_))
         ));
         assert_eq!(std::fs::read(&path).unwrap(), before, "it was changed");
@@ -1281,105 +1150,51 @@ mod tests {
         store.create_organization(&name, |_| Ok(no_undo())).unwrap();
         drop(store);
 
-        let store = open_store(&dir.path().join("office.db"), &key(), Opening::Existing).unwrap();
+        let store = open_store(&dir.path().join("office.db"), Opening::Existing).unwrap();
         assert_eq!(store.list_organizations().unwrap().len(), 1);
     }
 
     #[test]
     fn refuses_a_relative_database_path() {
         // A relative path starting with `file:` would be read by SQLite as a URI.
-        let error = open_store(
-            Path::new("file:office.db?cache=shared"),
-            &key(),
-            Opening::New,
-        );
+        let error = open_store(Path::new("file:office.db?cache=shared"), Opening::New);
         assert!(matches!(error, Err(OfficeError::Storage(_))));
     }
 
     #[test]
-    fn key_pragma_is_64_hex_digits_in_sqlcipher_form() {
-        let mut bytes = [0xAB; 32];
-        bytes[0] = 0x01;
-        bytes[31] = 0xF0;
-        assert_eq!(
-            KeyPragma::new(&Key::from_bytes(bytes)).as_str(),
-            format!("PRAGMA key = \"x'01{}f0'\";", "ab".repeat(30))
-        );
-    }
-
-    #[test]
-    fn key_pragma_fits_its_allocation_exactly() {
-        let pragma = KeyPragma::new(&key());
-        assert_eq!(pragma.0.len(), pragma.0.capacity(), "it was reallocated");
-    }
-
-    #[test]
-    fn wipe_zeroes_the_same_buffer_in_place() {
-        let mut text = KeyPragma::new(&key()).as_str().to_owned();
-        let (pointer, len) = (text.as_ptr(), text.len());
-
-        wipe(&mut text);
-
-        assert_eq!(
-            text.as_ptr(),
-            pointer,
-            "a copy was zeroed, not the original"
-        );
-        assert_eq!(text.len(), len);
-        assert!(text.bytes().all(|b| b == 0));
-    }
-
-    #[test]
-    fn opening_something_that_is_not_our_database_does_not_quote_the_key() {
-        // Opening a file that isn't ours fails (on the first read, not on `PRAGMA key`);
-        // whatever the error says, it must not carry the key or the statement.
+    fn opening_something_that_is_not_a_database_is_refused() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("notadb");
         std::fs::write(&path, vec![0x55u8; 8192]).unwrap();
-        let error = open_store(&path, &key(), Opening::New).err().unwrap();
-        let text = format!("{error:?} {error} {:?}", std::error::Error::source(&error));
-        assert!(
-            !text.contains(&"07".repeat(32)),
-            "the key is in the error: {text}"
-        );
-        assert!(
-            !text.contains("PRAGMA key"),
-            "the statement is in the error: {text}"
-        );
+        assert!(matches!(
+            open_store(&path, Opening::New),
+            Err(OfficeError::Invalid(_))
+        ));
     }
 
     #[test]
-    fn data_is_encrypted_at_rest() {
+    fn data_is_plain_sqlite_at_rest() {
+        // ADR-0016 ENC-1: the database is plain SQLite and opens with no key.
         let dir = TempDir::new().unwrap();
         let store = open_in(&dir);
         let name = OrganizationName::parse("Distinctive Corporation Name").unwrap();
         store.create_organization(&name, |_| Ok(no_undo())).unwrap();
-
-        // Read the files while the store is open: the data is still in the WAL.
-        let mut all = Vec::new();
-        for file in ["office.db", "office.db-wal"] {
-            if let Ok(bytes) = std::fs::read(dir.path().join(file)) {
-                all.extend(bytes);
-            }
-        }
-        assert!(!all.is_empty());
-        assert!(
-            !all.windows(b"Distinctive".len())
-                .any(|w| w == b"Distinctive"),
-            "the organization name is readable in the database files"
-        );
-        assert!(
-            !all.starts_with(b"SQLite format 3\0"),
-            "the file header is plain SQLite"
-        );
+        let header = std::fs::read(dir.path().join("office.db")).unwrap();
+        assert!(header.starts_with(b"SQLite format 3\0"));
+        let raw = connection_for_test(dir.path().join("office.db")).unwrap();
+        let names: i64 = raw
+            .query_row("SELECT count(*) FROM organizations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(names, 1);
+        drop(store);
     }
 
     #[test]
     fn a_failed_open_never_writes_the_log_into_a_file_it_cannot_read() {
         // A database whose log still holds committed pages, as a crash leaves it: copy the
-        // files while the store is open. Opening the copy with the wrong key must fail and
-        // leave both files byte for byte as they were (closing a connection must not
-        // checkpoint into a file this key cannot read).
+        // files while the store is open, then make the main file unreadable as a database.
+        // Opening it must fail and leave the log byte for byte as it was (closing a
+        // connection must not checkpoint into a file that is not a database).
         let dir = TempDir::new().unwrap();
         let store = open_in(&dir);
         let name = OrganizationName::parse("Acme").unwrap();
@@ -1393,49 +1208,19 @@ mod tests {
             std::fs::metadata(&wal).unwrap().len() > 0,
             "no log to protect"
         );
+        std::fs::write(copy.path().join("office.db"), vec![0x55u8; 8192]).unwrap();
         let (db_before, wal_before) = (
             std::fs::read(copy.path().join("office.db")).unwrap(),
             std::fs::read(&wal).unwrap(),
         );
 
-        let wrong = open_store(
-            &copy.path().join("office.db"),
-            &Key::from_bytes([8; 32]),
-            Opening::Existing,
-        );
-
-        assert!(wrong.is_err());
+        assert!(open_store(&copy.path().join("office.db"), Opening::Existing).is_err());
         assert_eq!(
             std::fs::read(copy.path().join("office.db")).unwrap(),
             db_before
         );
         assert_eq!(std::fs::read(&wal).unwrap(), wal_before);
         drop(store);
-    }
-
-    #[test]
-    fn refuses_the_wrong_key_and_a_plain_database() {
-        let dir = TempDir::new().unwrap();
-        drop(open_in(&dir));
-        let path = dir.path().join("office.db");
-        // A key that does not open the database is `KeyMissing`, which is what the host is told
-        // ("the databases exist but their key doesn't"), never a plain storage fault.
-        assert!(matches!(
-            open_store(&path, &Key::from_bytes([8; 32]), Opening::New),
-            Err(OfficeError::KeyMissing)
-        ));
-
-        // A plain (unencrypted) SQLite file is not ours either: SQLCipher cannot read it with
-        // any key.
-        let plain = dir.path().join("plain.db");
-        connection_for_test(&plain)
-            .unwrap()
-            .execute_batch("CREATE TABLE t (x)")
-            .unwrap();
-        assert!(matches!(
-            open_store(&plain, &key(), Opening::New),
-            Err(OfficeError::KeyMissing)
-        ));
     }
 
     #[test]

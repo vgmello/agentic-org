@@ -64,7 +64,7 @@ Paths are inside the organization repository, not this software repository.
 | Supporting knowledge | Project, feature, release or deployment folders (document 02) | Indexed documents with explicit scope and stable-ID file names |
 | Comments, checklists, watchers, questions, waits | Task front matter | Shared operational projection |
 | Task history | `work-history/tasks/<task-id>/<revision>.json` | Immutable `task_events` |
-| HQ-allocated numbers | `identity/counters/` and `identity/allocations/` | The authority journal is also required before acknowledgement |
+| HQ-allocated numbers | `identity/counters/` and `identity/allocations/` | HQ's acceptance journal holds them until their files are written |
 | Private task notes | Separate durable private database (document 05) | No shared index, count or existence event |
 | Usage, budgets, chat, receipts | Their protected sources (documents 10, 15, 16, 17) | Git alone cannot restore them |
 | Code cache and task worktrees | `runtime/<office-id>/...` | Never authored organization content |

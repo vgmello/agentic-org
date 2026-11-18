@@ -2,7 +2,6 @@ use super::{event_records, get, owner_of, put_item};
 use crate::office::OFFICE_SCHEMA;
 use crate::store::origin;
 use crate::store::{Opening, Schema, Store};
-use crate::Key;
 
 mod call;
 mod keys;
@@ -22,13 +21,7 @@ pub(super) fn fixture() -> (tempfile::TempDir, Store) {
 
 fn fixture_for_schema(schema: &Schema) -> (tempfile::TempDir, Store) {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
-        Opening::New,
-        schema,
-    )
-    .unwrap();
+    let store = Store::open(&root.path().join("office.db"), Opening::New, schema).unwrap();
     (root, store)
 }
 
@@ -104,7 +97,6 @@ pub(super) fn task_fixture(seed: u128, with_step: bool) -> (StoredItem, Vec<Work
 pub(super) fn reopen(root: &tempfile::TempDir) -> Store {
     Store::open(
         &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
         Opening::Existing,
         &OFFICE_SCHEMA,
     )
@@ -1196,19 +1188,12 @@ fn native_work_failed_upgrade_rolls_back_new_tables_and_version() {
     assert!(matches!(
         Store::open(
             &root.path().join("office.db"),
-            &Key::from_bytes([42; 32]),
             Opening::Existing,
             &OFFICE_SCHEMA
         ),
         Err(OfficeError::Storage(_))
     ));
-    let old = Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
-        Opening::Existing,
-        &V3,
-    )
-    .unwrap();
+    let old = Store::open(&root.path().join("office.db"), Opening::Existing, &V3).unwrap();
     old.read(|db|{
         assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),3);
         assert_eq!(db.query_row("SELECT sentinel FROM work_events",[],|r|r.get::<_,String>(0)).unwrap(),"keep");
