@@ -307,6 +307,15 @@ impl Files {
 `apps/agentic-org-office/src/transfer/writer.rs`); it moves to `org-store` unchanged in
 shape and is called once at open and once per flush (section 4).
 
+**The rule for a decision.** It runs on the writer thread, so it is short and bounded
+in time. It does no I/O except through the unit of work (`view`, `source`, `next`,
+`now`): no file, socket, process or clock of its own. Work that is slow or large
+happens on the caller's thread before `submit`: hashing an attachment, encoding a large
+body, writing a content-addressed blob, and any network call; the decision receives
+their results. A decision that panics fails its own operation alone: the writer catches
+the panic, undoes to that operation's mark, answers it with an error, and the batch
+continues.
+
 **How a family declares its classes:** one enum of its operations with one exhaustive
 `ack()` match, in `features/mod.rs`. That is the one place ACK-4 asks for.
 
