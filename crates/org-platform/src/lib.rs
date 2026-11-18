@@ -11,8 +11,8 @@
 //! host consumes and that needs an Apple framework lives in `org-platform-host`.
 //!
 //! macOS adapters exist for every capability. Linux adapters arrive with Track X, one
-//! capability at a time (`process` and `socket` have theirs); until then the others
-//! refuse on Linux as on every other Unix target. No other crate may gain a `cfg` on
+//! capability at a time (`process`, `socket`, `fs` and `dirs` have theirs); until then
+//! the others refuse on Linux as on every other Unix target. No other crate may gain a `cfg` on
 //! `target_os`, `target_vendor`, `target_env` or `target_family`:
 //! `tests/platform_conditionals.rs` fails on one beyond the shrinking list in
 //! `.github/platform-conditionals.allow` (LNX-5).

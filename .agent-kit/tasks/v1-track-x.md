@@ -38,8 +38,8 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | Increment | State | Evidence |
 | --- | --- | --- |
 | X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |
-| X1b `fs`, `dirs`, `process`, `socket` | `process` and `socket` integrated; `fs` and `dirs` in work | See below |
-| X1c `admission`, `confinement`, `presence` | Not started | |
+| X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
+| X1c `admission`, `confinement`, `presence` | In work: two slices, two workers | |
 | X1d `credentials` | Not started | |
 | X2 first worker on Linux (LNX-1) | Not started | |
 | X3 host secrets on Linux (LNX-4) | Not started | |
@@ -177,7 +177,7 @@ separate worktrees, the lead coordinating and integrating:
 | --- | --- | --- | --- |
 | `process` | Worker in `x/x1b-process` | `crates/org-platform/src/process/`, `crates/org-supervise/` | Integrated at `baf38f12` |
 | `socket` | Worker in `x/x1b-socket` | `crates/org-platform/src/socket/`; in `crates/org-socket/`: `peer.rs`, `rights.rs`, `rights/` (not `confinement*`, `image.rs`, `examples/`, which are X1c) | Integrated at `0d970d35` |
-| `fs` and `dirs` | Worker in `x/x1b-fsdirs` | `crates/org-platform/src/{fs,dirs}/`, `crates/org-proto/src/location.rs`, the files of design section 7's X1b row in `org-host`, `org-office`, `org-client`, `org-spool`, and the location call sites | In work |
+| `fs` and `dirs` | Worker in `x/x1b-fsdirs` | `crates/org-platform/src/{fs,dirs}/`, `crates/org-proto/src/location.rs`, the files of design section 7's X1b row in `org-host`, `org-office`, `org-client`, `org-spool`, and the location call sites | Integrated at `70760642` |
 
 Each worker ran on the lead's model with the resolved skill packet for its paths
 (project conventions, delegate communication, rust-workspace, host-and-storage) and
@@ -199,9 +199,27 @@ Each worker ran on the lead's model with the resolved skill packet for its paths
    caller's fence lock from before `recvmsg` until the descriptors are close-on-exec;
    on Linux it holds nothing. The refusing adapter cannot construct one, so it has no
    flags or lengths to invent.
-4. `dirs` (in work): the Linux adapter gives the design's XDG locations now and reads
-   the XDG variables itself, keeping A2's `application_base(home)` signature;
-   `org-proto` keeps only path composition that takes the base and the limit.
+4. `dirs`: the Linux adapter gives the design's XDG locations now and reads the XDG
+   variables itself, keeping A2's `application_base(home)` signature; `org-proto`
+   keeps only path composition that takes the base and the limit. The runtime base
+   for sockets (`$XDG_RUNTIME_DIR/agentic-org/`) is not built: Linux sockets stay
+   under the office home until X2 needs it.
+5. `fs`: one strict `full_sync` and one strict exclusive rename for every caller.
+   `org-client` used to fall back when the device flush failed, and on Linux to link
+   and unlink; both follow the strict rule now.
+6. A release host's office home is pinned to the account's default with the
+   environment left out (`dirs::account_application_base`). The first version of
+   this slice let an absolute `XDG_DATA_HOME` move both sides of the comparison, so
+   a Linux release host could be pointed at any directory its user owned (review
+   finding D1). `XDG_DATA_HOME` now makes a release host refuse, as `ORG_OFFICE_HOME`
+   does on both systems.
+7. `org-platform` is libc-only, and a second crate, `org-platform-host`, holds what
+   only the host links (ADR-0017 decision 6 as amended). The `fs` slice had put
+   `core-foundation` into `org-platform` for the macOS file name comparison, which
+   made the macOS web process, office worker and `agent-os` link CoreFoundation; the
+   X1c worker moving the presence bridge found the general problem. The comparison is
+   `org_platform_host::names` now, and `crates/org-platform/tests/libc_only.rs` keeps
+   the rule.
 
 **Review.**
 
@@ -209,15 +227,21 @@ Each worker ran on the lead's model with the resolved skill packet for its paths
 | --- | --- | --- |
 | `process` | Fresh read-only review, on `baf38f12` | Accept. Behaviour preserved on Linux (run) and, by type-check, lint and a hunk-by-hunk reading, on macOS. 5 minor |
 | `process` | Repairs by the lead | The mark rule named and tested; a deprecated type alias that the removed `compile_error!` had hidden on a refusing target; CI lints `org-supervise` for the refusing target |
-| `socket` | Fresh read-only review | Not yet run |
+| `socket` | Fresh read-only review, on `0d970d35` | Accept. The descriptor fence is held over exactly the same statements as before, read line by line. 2 minor, 5 nit |
+| `socket` | Repairs by the lead | No `libc` message type in the platform API; a receive is `!Send` on every system; SAFETY comments |
+| `fs` and `dirs` | Fresh read-only review, on `70760642` | Accept. Flush, rename and probe behaviour preserved; 6 minor, the pin finding among them |
+| `fs` and `dirs` | Repairs by the lead | The environment-free pin with tests; per-system flush-evidence tests; the libc-only split |
 
-**Checks.** After both integrations, on Linux x86-64 as an unprivileged user: the
-whole workspace's tests, 3,053 passed; the 22 that fail also fail before Track X (19
-`org-host` tests that need a worker to start, which X2 brings; 3 that need IPv6 or
-network access this container lacks). `cargo fmt --check`, the two CI lint commands,
-the macOS-target lint of the whole workspace, and the refusing-target lint and tests
-of `org-platform` pass. macOS tests have not been run: the macOS CI job is their
-proof, and it is recorded here when a run with `--no-fail-fast` finishes.
+**Checks.** After the three integrations and the repairs, on Linux x86-64 as an
+unprivileged user: the whole workspace's tests, 3,083 passed after the third
+integration; the 22 that fail also fail before Track X (19 `org-host` tests that need
+a worker to start, which X2 brings; 3 that need IPv6 or network access this container
+lacks); `org-host` and both platform crates were run again after the repairs with the
+same failing set. `cargo fmt --check`, the two CI lint commands, the macOS-target lint
+of the whole workspace, and the refusing-target lint and tests of both platform crates
+pass. The list is at 58 files and 353 predicates. macOS tests have not been run: the
+macOS CI job is their proof, and it is recorded here when a run with `--no-fail-fast`
+finishes.
 
 **Open, carried forward.**
 
@@ -228,3 +252,19 @@ proof, and it is recorded here when a run with `--no-fail-fast` finishes.
 - `crates/org-supervise/src/spawn.rs` keeps one predicate, on a test module that
   asserts `OwnedChild` behaviour only macOS has. It leaves the list in X2 with the
   `testing` module, like the other test files.
+- Three predicates stay in X1b's files on purpose: the `cfg!` gate in
+  `org-host/src/human.rs::paths` (custody policy; X1d), and two Linux-only tests,
+  `instance/directory.rs` (`native_instance_children_refuse_a_different_device`) and
+  `instance/temp.rs` (`a_private_memory_backed_temp_base_is_refused`), which leave
+  the list in X2 with the other test files.
+- The rule "override when absolute, else the base for an absolute `HOME`" is composed
+  in three crates (`org-client`, `org-host`, `agentic-org-office`), each with its
+  test. A relative or unset `HOME` gives no office home even when `XDG_DATA_HOME` is
+  absolute.
+- `org-socket` cannot be built for a refusing target until X1c moves its confinement
+  code (`getentropy` is not in `libc` for musl); CI adds it to the refusing-target
+  lint then. Its `unix_datagram` adoption calls no platform function and so does not
+  refuse there, which is intended: it performs every check it performs elsewhere.
+- For A2 part 2: X1b's `fs`/`dirs` slice removes about 250 lines from
+  `org-host/src/instance/directory.rs` and changes `home.rs`; the next Track A merge
+  in those files needs a rebase.

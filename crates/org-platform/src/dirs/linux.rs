@@ -13,6 +13,14 @@ pub(super) fn application_base(home: &Path) -> Result<PathBuf, Refused> {
     ))
 }
 
+pub(super) fn account_application_base(home: &Path) -> Result<PathBuf, Refused> {
+    Ok(application_base_from(None, home))
+}
+
+pub(super) fn application_base_variables() -> Result<&'static [&'static str], Refused> {
+    Ok(&["XDG_DATA_HOME"])
+}
+
 pub(super) fn user_temp_base(home: &Path) -> Result<PathBuf, UserTempError> {
     Ok(user_temp_base_from(
         std::env::var_os("XDG_CACHE_HOME"),
@@ -76,6 +84,16 @@ mod tests {
                 "{ignored:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_account_base_ignores_the_environment() {
+        // Whatever XDG_DATA_HOME is in this process, the account's base is the default.
+        assert_eq!(
+            account_application_base(Path::new(HOME)).unwrap(),
+            Path::new("/home/a/.local/share/agentic-org")
+        );
+        assert_eq!(application_base_variables().unwrap(), ["XDG_DATA_HOME"]);
     }
 
     #[test]

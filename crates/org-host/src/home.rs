@@ -119,16 +119,34 @@ pub(crate) fn socket_path_limit() -> io::Result<usize> {
     Ok(org_platform::dirs::socket_path_limit()?)
 }
 
-/// Where the office home is for the user whose home folder is `dir` (the shared rule's
-/// default): this system's application base (`org_platform::dirs::application_base`). `None`
-/// on a system this release has no locations for.
+/// Where the office home of the account whose home folder is `dir` is, from the system's
+/// defaults alone (`org_platform::dirs::account_application_base`): nothing in this process's
+/// environment moves it. It is what a release host pins to. `None` on a system this release
+/// has no locations for.
 pub(crate) fn office_home_in(dir: &Path) -> Option<PathBuf> {
+    org_platform::dirs::account_application_base(dir).ok()
+}
+
+/// Where the shared rule puts the office home for the home folder `dir` in this process's
+/// environment (`org_platform::dirs::application_base`). It is [`office_home_in`] unless a
+/// variable of the system moves it ([`moving_variables`]).
+fn shared_home_in(dir: &Path) -> Option<PathBuf> {
     org_platform::dirs::application_base(dir).ok()
+}
+
+/// The environment variables that can move the shared rule's office home away from the
+/// account's own: `ORG_OFFICE_HOME` and the system's (`XDG_DATA_HOME` on Linux), joined for
+/// a message.
+fn moving_variables() -> String {
+    let mut names = vec![location::OFFICE_HOME_ENV];
+    names.extend(org_platform::dirs::application_base_variables().unwrap_or(&[]));
+    names.join(" and ")
 }
 
 /// The office home the shared rule gives in this process's environment, the one the app and
 /// `agent-os` also use to find `host.sock`: `ORG_OFFICE_HOME` when it is an absolute path,
-/// else [`office_home_in`] the home folder `HOME` names. `None` if neither gives one.
+/// else the system's application base for the home folder `HOME` names. `None` if neither
+/// gives one.
 pub(crate) fn default_office_home() -> Option<PathBuf> {
     default_office_home_from(
         std::env::var_os(location::OFFICE_HOME_ENV),
@@ -144,7 +162,7 @@ fn default_office_home_from(
     let base = home
         .map(PathBuf::from)
         .filter(|home| home.is_absolute())
-        .and_then(|home| office_home_in(&home));
+        .and_then(|home| shared_home_in(&home));
     location::office_home_from(override_home, base)
 }
 
@@ -164,12 +182,13 @@ pub(crate) fn account_dir() -> Option<PathBuf> {
 /// ([`default_office_home`], which the app and `agent-os` also use to find `host.sock`) gives
 /// in this process's environment, `shared`, but only when it is the account's own office home,
 /// `office_home_in(account_dir)`. So: `ORG_OFFICE_HOME` is unset (or not absolute, which the
-/// rule ignores) or names that home, and `HOME` (`home_env`) is the account's home folder.
-/// Anything else is refused with why, so a release host's home can't be moved by
-/// `ORG_OFFICE_HOME` or `HOME`, and the app and the host can't silently look in different
-/// places.
+/// rule ignores) or names that home, `HOME` (`home_env`) is the account's home folder, and no
+/// variable of the system (`XDG_DATA_HOME` on Linux) points the shared rule elsewhere.
+/// Anything else is refused with why, so a release host's home can't be moved by its
+/// environment, and the app and the host can't silently look in different places.
 ///
-/// Pure: `office_home_in` is the system's rule for a home folder ([`office_home_in`]), and
+/// Pure: `office_home_in` is the system's rule for an account's home folder with the
+/// environment left out ([`office_home_in`]), and
 /// `same` compares two paths (the host compares them canonically where they exist, lexically
 /// otherwise: [`same_path`]).
 pub(crate) fn pinned_office_home(
@@ -213,10 +232,11 @@ pub(crate) fn pinned_office_home(
             Ok(account_home)
         }
         Some(shared) => Err(format!(
-            "the office home is {} (from ORG_OFFICE_HOME), but a release host serves only this \
-             account's office home {}: unset ORG_OFFICE_HOME",
+            "the office home is {} (from this environment), but a release host serves only \
+             this account's office home {}: unset {}",
             shared.display(),
-            account_home.display()
+            account_home.display(),
+            moving_variables()
         )),
         None => Err(format!(
             "no office home: a release host serves only this account's office home {}",
@@ -421,9 +441,64 @@ mod tests {
         let account = account_home(euid()).expect("an account with an office home has a folder");
         assert_eq!(
             Some(home),
-            org_platform::dirs::application_base(&account).ok()
+            org_platform::dirs::account_application_base(&account).ok()
         );
         assert_eq!(account_home(u32::MAX - 7), None);
+    }
+
+    #[test]
+    fn a_home_the_environment_moved_is_not_the_accounts_and_is_refused() {
+        // What the pin sees when a variable of the system (XDG_DATA_HOME on Linux) points
+        // the shared rule somewhere else: HOME is right, ORG_OFFICE_HOME is unset, and the
+        // shared home still is not the account's own.
+        let account = Path::new("/home/me");
+        let own = |dir: &Path| Some(dir.join(".local/share/agentic-org"));
+        let refused = pinned_office_home(
+            Some(Path::new("/srv/elsewhere/agentic-org")),
+            Some(account),
+            Some(account),
+            own,
+            |a, b| a == b,
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("/srv/elsewhere/agentic-org")
+                && refused.contains("/home/me/.local/share/agentic-org")
+                && refused.contains(location::OFFICE_HOME_ENV),
+            "{refused}"
+        );
+        for variable in org_platform::dirs::application_base_variables().unwrap() {
+            assert!(refused.contains(variable), "{refused}");
+        }
+        // The account's own home, reached through the same rule, is served.
+        let served = pinned_office_home(
+            Some(Path::new("/home/me/.local/share/agentic-org")),
+            Some(account),
+            Some(account),
+            own,
+            |a, b| a == b,
+        );
+        assert_eq!(
+            served.unwrap(),
+            Path::new("/home/me/.local/share/agentic-org")
+        );
+    }
+
+    #[test]
+    fn the_account_home_is_the_systems_default_whatever_the_environment_says() {
+        let account = Path::new("/home/me");
+        assert_eq!(
+            office_home_in(account),
+            org_platform::dirs::account_application_base(account).ok()
+        );
+        // Where the system has a variable that moves the shared rule, the two can differ;
+        // where it has none, they are the same path.
+        if org_platform::dirs::application_base_variables()
+            .unwrap()
+            .is_empty()
+        {
+            assert_eq!(office_home_in(account), shared_home_in(account));
+        }
     }
 
     #[test]
@@ -442,7 +517,7 @@ mod tests {
     #[test]
     fn the_shared_rule_is_the_override_or_the_systems_base_for_an_absolute_home() {
         let home = "/Users/me";
-        let base = office_home_in(Path::new(home));
+        let base = shared_home_in(Path::new(home));
         assert_eq!(
             base,
             org_platform::dirs::application_base(Path::new(home)).ok()

@@ -10,6 +10,14 @@ pub(super) fn application_base(_home: &Path) -> Result<PathBuf, Refused> {
     Err(refusal())
 }
 
+pub(super) fn account_application_base(_home: &Path) -> Result<PathBuf, Refused> {
+    Err(refusal())
+}
+
+pub(super) fn application_base_variables() -> Result<&'static [&'static str], Refused> {
+    Err(refusal())
+}
+
 pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     Err(UserTempError::Unsupported(refusal()))
 }

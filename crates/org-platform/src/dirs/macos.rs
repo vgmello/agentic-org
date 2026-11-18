@@ -7,6 +7,14 @@ pub(super) fn application_base(home: &Path) -> Result<PathBuf, Refused> {
     Ok(home.join("Library/Application Support/agentic.org"))
 }
 
+pub(super) fn account_application_base(home: &Path) -> Result<PathBuf, Refused> {
+    application_base(home)
+}
+
+pub(super) fn application_base_variables() -> Result<&'static [&'static str], Refused> {
+    Ok(&[])
+}
+
 pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     let mut bytes = vec![0_u8; 4096];
     // SAFETY: module-owned writable storage and supported Darwin query.

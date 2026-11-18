@@ -67,9 +67,11 @@ pub const ELOOP: i32 = libc::ELOOP;
 /// The error number of a call that would block.
 pub const EAGAIN: i32 = libc::EAGAIN;
 
-/// Flush `file`'s data and metadata to the storage device itself: `fsync`, and on
-/// macOS then `F_FULLFSYNC`, which also empties the drive's write cache. A failure of
-/// either step is returned; a failed full flush is never downgraded to the ordinary one.
+/// Flush `file`'s data and metadata to the storage device itself: `File::sync_all`,
+/// and on macOS then `F_FULLFSYNC`, which also empties the drive's write cache. A
+/// failure of either step is returned; a failed full flush is never downgraded. (On
+/// macOS `sync_all` is itself a device flush, so the device is flushed twice per call,
+/// as the host's and the office's own copies of this code did before they moved here.)
 pub fn full_sync(file: &File) -> io::Result<()> {
     native::full_sync(file)
 }

@@ -43,6 +43,22 @@ pub fn application_base(home: &Path) -> Result<PathBuf, Refused> {
     native::application_base(home)
 }
 
+/// The application base of the account whose home is `home` from the system's defaults
+/// alone: this process's environment is not consulted. macOS: the same as
+/// [`application_base`]. GNU/Linux: `<home>/.local/share/agentic-org`, whatever
+/// `XDG_DATA_HOME` says. A consumer that must not be moved by its environment compares
+/// the two.
+pub fn account_application_base(home: &Path) -> Result<PathBuf, Refused> {
+    native::account_application_base(home)
+}
+
+/// The environment variables that can make [`application_base`] differ from
+/// [`account_application_base`] on this system, for a consumer's message. macOS: none.
+/// GNU/Linux: `XDG_DATA_HOME`.
+pub fn application_base_variables() -> Result<&'static [&'static str], Refused> {
+    native::application_base_variables()
+}
+
 /// Why [`user_temp_base`] named no directory.
 #[derive(Debug)]
 pub enum UserTempError {

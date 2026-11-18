@@ -235,6 +235,17 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn a_full_sync_is_one_fsync_and_no_separate_device_flush() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = File::create(directory.path().join("file")).unwrap();
+        let before = crate::fs::testing::full_sync_counts();
+        full_sync(&file).unwrap();
+        let after = crate::fs::testing::full_sync_counts();
+        assert_eq!(after.fsync - before.fsync, 1);
+        assert_eq!(after.device_flush, before.device_flush);
+    }
+
     /// The walk is the consumer's (`org-host`'s instance directory): every directory
     /// from `/` to the root in order, and only the last one as the root.
     #[test]

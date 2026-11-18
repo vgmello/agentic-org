@@ -797,6 +797,13 @@ half of LNX-6 run).
 - **Outcome:** none a person can see. Durable flushes, exclusive renames, filesystem
   checks, the default locations, process supervision and socket peer checks of all
   four executables come from `org-platform`.
+- **Built (2026-11-18):** `org_platform::{process, socket, fs, dirs}` with macOS,
+  Linux and refusing adapters; `org-proto/src/location.rs` keeps only path
+  composition; `org-supervise`'s `compile_error!` is gone; the list is at 58 files and
+  353 predicates. Linux default locations are the design's XDG ones. `org-platform`
+  is libc-only and `crates/org-platform-host` holds what only the host links
+  (ADR-0017 decision 6 as amended). Details and what is carried forward:
+  [Track X record](../.agent-kit/tasks/v1-track-x.md).
 - **Build:** the `fs`, `dirs`, `process` and `socket` modules with today's macOS code
   and today's Linux code moved in unchanged and refusing adapters elsewhere (the flush
   of `store/acceptance/durable.rs`, or of `org-store/src/files.rs` once B1a has carried

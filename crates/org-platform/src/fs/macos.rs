@@ -94,6 +94,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_full_sync_ends_with_one_device_flush() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = File::create(directory.path().join("file")).unwrap();
+        let before = crate::fs::testing::full_sync_counts();
+        full_sync(&file).unwrap();
+        let after = crate::fs::testing::full_sync_counts();
+        assert_eq!(after.fsync - before.fsync, 1);
+        assert_eq!(after.device_flush - before.device_flush, 1);
+    }
+
+    #[test]
     fn an_instance_root_and_a_temp_base_have_no_filesystem_rule() {
         let directory = File::open("/").unwrap();
         for root in [false, true] {

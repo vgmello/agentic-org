@@ -621,7 +621,11 @@ ADR-0017's table names five contracts; these five capabilities are the rest of t
 operating-system differences in the workspace. They live in `org-platform`, have the
 same three adapters, and LNX-5's check covers them.
 
-- **`fs`.** `full_sync(&File)`: `fsync`, and on macOS also `F_FULLFSYNC`, with no
+- **`fs`.** Built in X1b as `full_sync`, `rename_noreplace_at`, `rename_noreplace`,
+  `set_errno`, `device_and_inode`, `check_instance_root`, `require_disk` and the
+  `open(2)` flag and error constants; the file name comparison is
+  `org_platform_host::names::paths_may_alias`, because its macOS adapter needs
+  CoreFoundation. What each does: `full_sync(&File)`: `fsync`, and on macOS also `F_FULLFSYNC`, with no
   downgrade when it fails. `rename_noreplace_at(dir, from, dir, to)`: `renameatx_np`
   with `RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux; a
   filesystem without it refuses. `set_errno`. `check_instance_root(dir)`: Linux
@@ -634,7 +638,11 @@ same three adapters, and LNX-5's check covers them.
   `instance/directory.rs`), `org-office/src/store/acceptance/durable.rs`,
   `org-client/src/agent.rs` and `org-spool/src/safe_read.rs`.
 - **`dirs`.** The application base, the default office home, the user temp base and
-  the runtime base for sockets, with the socket path limit. macOS:
+  the runtime base for sockets, with the socket path limit. Built in X1b:
+  `application_base` and, with the environment left out, `account_application_base`
+  (a release host is pinned to the second and refuses when the first differs, so
+  `XDG_DATA_HOME` cannot move it), `user_temp_base`, `environment_spelling`,
+  `socket_path_limit`. The runtime base for sockets is built when X2 needs it. macOS:
   `~/Library/Application Support/agentic.org`, `_CS_DARWIN_USER_TEMP_DIR`, 103 bytes.
   Linux: `${XDG_DATA_HOME:-~/.local/share}/agentic-org/`,
   `${XDG_CACHE_HOME:-~/.cache}/agentic-org/tmp/` (on disk; `require_disk` applies)
