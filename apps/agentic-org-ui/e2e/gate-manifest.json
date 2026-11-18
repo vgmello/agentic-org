@@ -708,6 +708,7 @@
 			"e2e/fakes/**",
 			"../../.github/workflows/**",
 			"e2e/ready.ts",
+			"e2e/web-session.ts",
 			"e2e/shot.ts",
 			"e2e/vite-composition.ts",
 			"e2e/session-browser-harness.ts",
