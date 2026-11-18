@@ -272,8 +272,10 @@ fn is_plain_cell(text: &str) -> bool {
         && !text.chars().any(breaks_a_line)
 }
 
-/// Whether a reader could take `text` for the start of the `meta:` line: `meta:` in any case,
-/// after any white space or character that does not show.
+/// Whether `text` begins with `meta:` in any case, after white space and the invisible or
+/// line-breaking characters `org_docs` names. This keeps the bytes `meta: ` from starting a cell;
+/// it does not cover every look-alike (a joiner or direction mark in front, an invisible inside
+/// the word, another script's letters), so a reader matches the exact bytes of the last line.
 fn reads_as_meta(text: &str) -> bool {
     let shown =
         text.trim_start_matches(|c: char| c.is_whitespace() || org_docs::is_invisible_or_break(c));

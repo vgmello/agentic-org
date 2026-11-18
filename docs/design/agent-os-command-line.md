@@ -190,7 +190,11 @@ plain text, and `--format compact` prints `data` on success, without the envelop
   So a page with another after it ends with its cursor, and a `suspended` or
   `gate_required` answer says so. A line that starts with a bare `meta:` is only ever
   this line: a field named `meta` prints as `"meta": `, and text that reads as
-  `meta:` prints as a JSON string, so no record or cell can pass for it.
+  `meta:` prints as a JSON string, so no record or cell begins with the bytes `meta: `. The
+  guarantee is on bytes, not on what shows: text that only looks like it (a zero-width joiner or
+  a direction mark in front, an invisible character inside the word, a letter from another
+  script) prints as it is. A reader finds the call's line by matching the exact bytes `meta: `
+  at the start of the last line, never by how a line looks.
 - **Exit code.** 0 when `ok` is true, 1 when it is false, 2 when the command line
   itself could not be read. The envelope is printed in all three cases. The command
   line is read first: a line that cannot be read exits 2 without contacting the office,
