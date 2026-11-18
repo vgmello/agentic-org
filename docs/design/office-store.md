@@ -476,6 +476,11 @@ second finds the first's receipt. Operations whose record ID is their idempotenc
 (a message, ADR-0003 decision 9) need no receipt: their decision finds the record.
 Receipts are never deleted by the store; expiry is a reviewed procedure (document 16).
 
+**Directory generations** (ADR-0006, document 16) need no mechanism of their own: the
+generation is the ordinal of the last entry that changed an organization-family file,
+and since every decision runs on the one writer against the projection at head, task
+state and directory facts are always read from the same generation.
+
 ## 5. Files
 
 **From record to file.** The family's codec turns a record into the exact bytes the data
