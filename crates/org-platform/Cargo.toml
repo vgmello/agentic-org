@@ -7,8 +7,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+libc.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 # The platform-conditional check (ADR-0017 LNX-5) parses the workspace's sources.
 syn = { version = "=2.0.119", default-features = false, features = ["full", "parsing", "visit"] }
 proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
