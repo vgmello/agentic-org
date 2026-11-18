@@ -10,6 +10,15 @@
 //! means a forbidden operation kills the process instead of returning an error. There
 //! each denial is proved by its own child, which must die of `SIGSYS`.
 //!
+//! Whoever starts a process that will confine itself must give it exactly its three
+//! standard descriptors: every adapter refuses a process that holds another. The product's
+//! host does that through its admission. This vector does it through the platform's
+//! `spawn_piped`, which starts a child with three pipes and nothing else of this process,
+//! on every system, so the vector passes whatever descriptors the process that runs it was
+//! left with. `--start <role> ...` is that start alone, for a test that must run one role
+//! under a profile of its own: it starts the role so, relays its standard output and exits
+//! with its status.
+//!
 //! The layers that were enforced are the contract's too (`confinement::layers`), and
 //! the `PASS` line names them. Where the adapter has a layer it applies only when
 //! the system offers it (Landlock on GNU/Linux), a child that went without it prints
@@ -18,19 +27,21 @@ mod vector {
     use org_platform::confinement::{self, Confined, Enforcement};
     use org_socket::rights::{self, StreamReceiver};
     use std::{
+        ffi::CString,
         fs,
         io::{BufRead, BufReader, Read, Write},
         net::{TcpListener, TcpStream},
         os::{
             fd::{AsFd, AsRawFd},
             unix::{
+                ffi::{OsStrExt, OsStringExt},
                 fs::DirBuilderExt,
                 net::{UnixListener, UnixStream},
                 process::ExitStatusExt,
             },
         },
         path::{Path, PathBuf},
-        process::{Child, Command, Stdio},
+        process::{Command, ExitStatus},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     const WAIT: Duration = Duration::from_secs(5);
@@ -58,11 +69,37 @@ mod vector {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-    struct Running(Child);
+    /// A child of this vector: started with exactly its three standard descriptors,
+    /// killed and reaped when dropped.
+    struct Running {
+        pid: libc::pid_t,
+        stdout: Option<fs::File>,
+        _stdin: fs::File,
+        reaped: bool,
+    }
+    impl Running {
+        fn id(&self) -> u32 {
+            self.pid as u32
+        }
+        fn stdout(&mut self) -> BufReader<fs::File> {
+            BufReader::new(self.stdout.take().expect("the child's output, taken once"))
+        }
+        /// Waits for the child and returns how it ended.
+        fn wait(&mut self) -> ExitStatus {
+            let mut status = 0;
+            // SAFETY: waits for this process's own child, which nothing else reaps.
+            assert_eq!(unsafe { libc::waitpid(self.pid, &mut status, 0) }, self.pid);
+            self.reaped = true;
+            ExitStatus::from_raw(status)
+        }
+    }
     impl Drop for Running {
         fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
+            if !self.reaped {
+                // SAFETY: this process's own unreaped child: its id names nothing else.
+                unsafe { libc::kill(self.pid, libc::SIGKILL) };
+                self.wait();
+            }
         }
     }
     fn denied<T>(result: std::io::Result<T>) {
@@ -150,6 +187,13 @@ mod vector {
         );
         assert_eq!(fs::read(root.join("fixture")).unwrap(), b"retained");
     }
+    /// The role that does nothing: what the `exec` attempts would start.
+    const NOOP: &str = "--noop";
+    /// This program, as the parent named it when it started this child: the first
+    /// argument, which needs no system call to read.
+    fn own_program() -> PathBuf {
+        PathBuf::from(std::env::args_os().next().expect("a first argument"))
+    }
     /// One forbidden operation, by its probe name.
     fn attempt(probe: &str, root: &Path, outbound: &str) -> std::io::Result<()> {
         let fixture = root.join("fixture");
@@ -163,7 +207,7 @@ mod vector {
             "unix-connect" => UnixStream::connect(root.join("unrelated")).map(drop),
             "tcp-connect" => TcpStream::connect(outbound).map(drop),
             "tcp-bind" => TcpListener::bind("127.0.0.1:0").map(drop),
-            "exec" => Command::new("/usr/bin/true").status().map(drop),
+            "exec" => Command::new(own_program()).arg(NOOP).status().map(drop),
             "thread-read" => std::thread::spawn(move || fs::read(fixture).map(drop))
                 .join()
                 .unwrap(),
@@ -195,6 +239,21 @@ mod vector {
         (approved, report)
     }
     fn child(args: &[String]) {
+        if args[0] == NOOP {
+            return;
+        }
+        if args[0] == "--start" {
+            // The start alone: the role named after it, with exactly its three standard
+            // descriptors, its output relayed and its status passed on.
+            let role: Vec<&str> = args[1..].iter().map(String::as_str).collect();
+            let mut started = start(&role);
+            let mut output = Vec::new();
+            started.stdout().read_to_end(&mut output).unwrap();
+            std::io::stdout().write_all(&output).unwrap();
+            std::io::stdout().flush().unwrap();
+            let status = started.wait();
+            std::process::exit(status.code().unwrap_or(128 + status.signal().unwrap_or(0)));
+        }
         let root = Path::new(&args[1]);
         let rendezvous = Path::new(&args[2]);
         if args[0] == "--thread" {
@@ -305,7 +364,7 @@ mod vector {
             denied(UnixStream::connect(root.join("unrelated")));
             denied(TcpStream::connect(&args[3]));
             denied(TcpListener::bind("127.0.0.1:0"));
-            denied(Command::new("/usr/bin/true").status());
+            denied(Command::new(own_program()).arg(NOOP).status());
             let fixture = root.join("fixture");
             std::thread::spawn(move || denied(fs::read(fixture)))
                 .join()
@@ -337,24 +396,50 @@ mod vector {
         approved.write_all(b"complete").unwrap();
     }
     fn spawn(role: &[&str], root: &Path, rendezvous: &Path, outbound: &str) -> Running {
-        Running(
-            Command::new(std::env::current_exe().unwrap())
-                .args([
-                    role[0],
-                    root.to_str().unwrap(),
-                    rendezvous.to_str().unwrap(),
-                    outbound,
-                ])
-                .args(&role[1..])
-                // As the host starts the web process: a backtrace opens files, which
-                // a confined process cannot do.
-                .env_remove("RUST_BACKTRACE")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap(),
-        )
+        let mut arguments = vec![
+            role[0],
+            root.to_str().unwrap(),
+            rendezvous.to_str().unwrap(),
+            outbound,
+        ];
+        arguments.extend(&role[1..]);
+        start(&arguments)
+    }
+    /// Starts this program again with `arguments`, as the host starts the web process:
+    /// three pipes for its standard descriptors and no other descriptor of this process,
+    /// whatever this process holds, and no `RUST_BACKTRACE` (a backtrace opens files,
+    /// which a confined process cannot do). Its standard error is copied to this one's.
+    fn start(arguments: &[&str]) -> Running {
+        let text = |bytes: &[u8]| CString::new(bytes).expect("no NUL in an argument");
+        let program = std::env::current_exe().unwrap();
+        let program = text(program.as_os_str().as_bytes());
+        let mut argv = vec![program.clone()];
+        argv.extend(arguments.iter().map(|argument| text(argument.as_bytes())));
+        let environment: Vec<CString> = std::env::vars_os()
+            .filter(|(name, _)| name != "RUST_BACKTRACE")
+            .map(|(name, value)| {
+                let mut pair = name.into_vec();
+                pair.push(b'=');
+                pair.extend(value.into_vec());
+                text(&pair)
+            })
+            .collect();
+        let (pid, stdin, stdout, mut stderr) =
+            org_platform::process::spawn_piped(&program, &argv, &environment, c"/").unwrap();
+        // A system that starts the child suspended lets it run here.
+        org_platform::process::release_spawned(pid, || {
+            Ok(org_platform::process::try_exit(pid)?.is_some())
+        })
+        .unwrap();
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut stderr, &mut std::io::stderr());
+        });
+        Running {
+            pid,
+            stdout: Some(stdout),
+            _stdin: stdin,
+            reaped: false,
+        }
     }
     pub(super) fn run() {
         let args: Vec<_> = std::env::args().skip(1).collect();
@@ -389,12 +474,12 @@ mod vector {
             let path = root.0.join(name);
             let listener = UnixListener::bind(&path).unwrap();
             let mut process = spawn(&["--child"], &root.0, &path, &outbound_address);
-            let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
+            let mut stdout = process.stdout();
             // The report is checked as the host checks the ready line's, then the
             // process itself.
             let (report, layers) = report(&mut stdout);
             confinement::verify_ready_report(&report).unwrap();
-            confinement::verify_web(process.0.id(), &report, &[&root.0.join("fixture")]).unwrap();
+            confinement::verify_web(process.id(), &report, &[&root.0.join("fixture")]).unwrap();
             kills = report.seccomp;
             // Every child is confined by the same layers.
             assert_eq!(*confined_by.get_or_insert_with(|| layers.clone()), layers);
@@ -415,7 +500,7 @@ mod vector {
             assert_eq!(&got, b"accepted");
             stream.read_exact(&mut got).unwrap();
             assert_eq!(&got, b"complete");
-            assert!(process.0.wait().unwrap().success());
+            assert!(process.wait().success());
         }
         if kills {
             // The filter kills on a forbidden call: no operation returns, so each is
@@ -425,7 +510,7 @@ mod vector {
             let listener = UnixListener::bind(&path).unwrap();
             for probe in PROBES {
                 let mut process = spawn(&["--probe", probe], &root.0, &path, &outbound_address);
-                let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
+                let mut stdout = process.stdout();
                 let (report, layers) = report(&mut stdout);
                 assert!(report.seccomp, "{probe}");
                 assert_eq!(Some(&layers), confined_by.as_ref(), "{probe}");
@@ -433,7 +518,7 @@ mod vector {
                 let mut rest = String::new();
                 stdout.read_to_string(&mut rest).unwrap();
                 assert_eq!(rest, "", "{probe}: the operation returned");
-                let status = process.0.wait().unwrap();
+                let status = process.wait();
                 assert_eq!(
                     status.signal(),
                     Some(libc::SIGSYS),
@@ -453,11 +538,8 @@ mod vector {
             ("--descriptor", "descriptor-refused\n"),
         ] {
             let mut negative = spawn(&[role], &root.0, &root.0.join("r"), &outbound_address);
-            assert_eq!(
-                line(&mut BufReader::new(negative.0.stdout.take().unwrap())),
-                expected
-            );
-            assert!(negative.0.wait().unwrap().success());
+            assert_eq!(line(&mut negative.stdout()), expected);
+            assert!(negative.wait().success());
         }
         // A process whose only other thread has ended. Without a filter in the
         // report (the adapter that asks whether the process ever had a thread) it
@@ -472,8 +554,8 @@ mod vector {
             &joined_rendezvous,
             &outbound_address,
         );
-        let outcome = line(&mut BufReader::new(joined.0.stdout.take().unwrap()));
-        assert!(joined.0.wait().unwrap().success());
+        let outcome = line(&mut joined.stdout());
+        assert!(joined.wait().success());
         let joined_thread = match outcome.as_str() {
             "joined-thread-refused\n" => "refusal of a process whose thread had ended",
             "joined-thread-confined\n" if kills => {
