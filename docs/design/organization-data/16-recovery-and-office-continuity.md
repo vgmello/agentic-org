@@ -1,6 +1,6 @@
 # Recovery and office continuity data
 
-Status: **selected** data contract, revision 3. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
+Status: **selected** data contract, revision 4. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
 
 ## What recovery means
 
@@ -23,81 +23,109 @@ Organization domain records live in organization Git; these operational records 
 ├── commands/<command-id>.json                    # receipt, immutable fingerprint/actor
 ├── results/<content-id>                          # protected command outcome
 ├── offices/<office-id>/
-│   ├── streams/<kind>/<incarnation>/journal.jsonl # immutable accepted source changes
-│   ├── streams/<kind>/<incarnation>/head.json     # watermark and digest
-│   ├── journals/work-acceptance/<journal-incarnation>/
+│   ├── journals/acceptance/<journal-incarnation>/
 │   │   ├── anchor.json                          # immutable retained continuity evidence
-│   │   └── transactions/<commit-ordinal>.json    # immutable frozen acceptance envelopes
+│   │   ├── checkpoint.json                      # head, high-waters, materialized mark at the last release
+│   │   └── segments/<first-ordinal>.log          # append-only accepted entries
 │   ├── checkpoint.json                          # current verified authority checkpoint
 │   ├── snapshots/<snapshot-id>.json              # transfer metadata and verified content ref
 │   └── cleanup/<cleanup-id>.json                 # process ownership evidence
 └── snapshots/<content-sha256>                    # immutable protected snapshot content
 ```
 
-Existing recovery JSON envelopes retain `schema_version: 1`, positive `revision`,
-same-named scalar fields and organization/office identity. The selected immutable
-work-acceptance journal below has its own explicit envelope schema/codec, separate
-from existing source-stream codecs and task snapshot/event schemas. Projection JSON
-columns map from objects (`inventory` → `inventory_json`); never store escaped JSON
-strings in place of source objects. Keep original payloads/codecs where no lossless
-mapping is defined. Use document 11/ADR-0002 full-envelope/platform flush guarantees.
-Do not acknowledge until domain change, source evidence and protected receipt/result
-have one recoverable commit boundary (this is the durable class; [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md)
-lets named messaging and non-critical task-activity operations be acknowledged at commit); independent SQL/file writes do not establish it.
+Recovery JSON records (receipts, checkpoints, snapshot and cleanup records) have
+`schema_version: 1`, a positive `revision`, same-named scalar fields and
+organization/office identity. The acceptance journal has its own entry format, below.
+Projection JSON columns map from objects (`inventory` → `inventory_json`); never store
+escaped JSON strings in place of source objects. Do not acknowledge until the domain
+change, its source evidence and its protected receipt are one recoverable commit
+boundary: one acceptance-journal entry, committed in the operation's class
+([ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md)).
+Independent SQL or file writes do not establish it. How the office writes, flushes and
+replays the journal is the [office store design](../office-store.md).
 
-### Selected immutable work acceptance
+### Selected immutable acceptance journal
 
-[ADR-0006 revision 4](../../adr/0006-selected-task-acceptance.md) distinguishes the
-existing **work-origin event** identity `(office_id, origin_incarnation, origin_seq)`
-from **journal transaction** identity `(organization_id, office_id,
-journal_kind: work-acceptance, journal_incarnation, commit_ordinal)`. A journal
-ordinal is a positive i64, canonical decimal filename starting at 1. One new frozen
-transaction consumes one ordinal, including receipt-only rejection/no-op outcomes.
-Read-only replay and refusals with no durable record consume neither counter.
-Journal ordinals never become replication, feed, client or task-revision positions.
+Each office has **one acceptance journal for every record family** (organization,
+projects, work, messaging, execution and the rest), journal kind `acceptance`. It is the
+office's commit point. [ADR-0006](../../adr/0006-selected-task-acceptance.md)
+distinguishes the **work-origin event** identity `(office_id, origin_incarnation,
+origin_seq)` from the **journal entry** identity `(organization_id, office_id,
+journal_kind: acceptance, journal_incarnation, ordinal)`. An ordinal is a positive i64
+starting at 1. One accepted operation is one entry and consumes one ordinal, including a
+receipt-only rejection. Read-only replay and refusals with no durable record consume
+neither an ordinal nor a position. Ordinals never become replication, feed, client or
+task-revision positions.
 
-`anchor.json` is immutable, not transaction zero. It binds trusted identity, writer
-fence/authority, retained origin incarnation/high-water, history evidence and
-any verified predecessor journal head. Transaction 1 references its digest; each
-later transaction references the preceding ordinal and complete envelope digest.
-Envelope hashes use codec-2 normalization (document 05), omitting only their own
-top-level `payload_sha256`. Filename and envelope identity must agree. Missing
-predecessors, forks, incompatible profiles/codecs or conflicting duplicates stop
-recovery. Heads/SQL cursors and any `journal.jsonl` export are derived projections.
+**Entries.** Entries are appended to segment files `segments/<first-ordinal>.log`. Each
+entry is framed as its length, a canonical JSON header, the bytes of the files it writes,
+and a SHA-256 over those stored bytes (codec `raw-bytes/1`,
+[document 08](08-record-contracts.md#hash-codec-registry)). The header holds the ordinal,
+the preceding entry's hash, the office and journal identity, the acknowledgement class,
+the receipt (operation ID, kind, bound actor, fingerprint, outcome), the positions the
+entry took in each origin stream, its feed position, and its **file changes**: path,
+`create`, `put` or `remove`, length, hash, and the hash of the version it replaces. An
+entry never holds table mutations, column names or a projection-schema digest: the
+projection is rebuilt from the files, and changing its schema changes no entry. Keep the
+order, IDs and semantics of what is put.
 
-The frozen envelope contains origin high-water before/after and the exact ordered
-allocated entries: original sequence, target identity/generation/version, feed/client
-position, organization position and timestamp, plus complete snapshot/event,
-allocation, protected receipt/result and projection mutations. For n entries at h,
-allocate exactly h+1 through h+n and record after=h+n. At n=0, after=before; never
-append empty origin references or invent a receipt event. Keep the order, IDs and semantics of what is put. The same office writer allocates both positions together;
-there is no second writer or competing work-origin allocator. Message allocation is separate.
+`anchor.json` is immutable and is not entry zero. It binds trusted identity, writer
+fence/authority, the retained origin incarnations and high-waters, history evidence and
+any verified predecessor journal head. Entry 1 references the anchor's digest; each later
+entry references the preceding entry's hash. Missing predecessors, forks, unknown entry
+formats or conflicting duplicates stop recovery. Before segments are released,
+`checkpoint.json` records the head hash, the high-waters and the materialized mark; the
+anchor, the checkpoint and the remaining segments are the retained continuity evidence.
+Heads, SQL cursors and any export are derived.
 
-Preparation is effect-free and freezes all decisions outside retryable callbacks.
-Durably flush immutable blobs and anchor first; flush a temporary manifest, install
-atomically without replacement, then durably flush its parent (including required
-macOS full flush). Reconcile uncertain publication before retry. After publication,
-retry only frozen projection, never domain decisions or event allocation. Verify
-chain and prior origin positions, project the full frozen mutations and both cursors
-atomically in SQL, and verify coherent canonical task/event/receipt reads before ACK.
-Matching already-applied identity/digest skips effects; mismatch fails closed.
+**Positions.** For n origin entries after high-water h, allocate exactly h+1 through h+n
+and record after=h+n. At n=0, after=before; never append empty origin references or
+invent a receipt event. The same office writer allocates every position; there is no
+second writer or competing allocator. Message allocation is separate from work.
 
-Opening a journal fences writers and anchors the counters, logs, snapshots,
-receipts and source hashes the office holds. Ordinals start at 1 with the
-office's event high-water kept; never fabricate transactions. Restart/cache rebuild continues
-the same incarnation. A new journal incarnation requires verified predecessor head,
-retained watermarks and writer fencing. It does not automatically rotate work/message
-incarnations; restored offices never promote themselves. Missing continuity stops
-acceptance. Check both i64 allocations before publication: event exhaustion may
-produce a zero-event rejection if journal capacity remains; journal exhaustion stops
-new durable transactions while existing receipt lookup stays available. No wrap/reset
-or automatic incarnation change may evade exhaustion.
+**Freezing.** A decision is effect-free until its entry is appended; after that only the
+entry is replayed, never the decision, and no replacement position is allocated.
+Matching already-applied identity and hash skips effects; a mismatch fails closed.
 
-Manifest profile `selected-task-resources/1` is <=16 MiB, depth <=64, <=200,000
-value/key nodes, <=8 MiB decoded string/key/raw number token. Immutable blobs/chunks
-are <=64 MiB; <=1,024 references and <=64 MiB aggregate bytes per manifest, repeated
-references counted. Validate actual lengths/digests. Recovery retains recorded
-profiles, not silently smaller replacements. Protected journal blobs and account-bound receipts never enter public Git.
+**Durability.** A committed-class entry is acknowledged once appended and projected; a
+durable-class entry once a full flush of its segment covers it (the macOS full flush).
+One flush covers every earlier entry. Files are written after the flush that covers
+their entry, to their final state, through a flushed temporary file and an atomic
+rename; a file may advance only from a version the journal names as its predecessor, a
+missing file may be recreated, and unfamiliar bytes or a conflicting immutable file stop
+the office. Content above the entry limit is written as a content-addressed blob,
+flushed, before the entry that names it. A failed flush is fatal: the office answers no
+waiting durable request as success, stops, and restarts from what is on the drive.
+
+**A torn tail.** An entry above the head the host custody last confirmed whose length or
+hash is bad is a torn write (a process kill or a power cut during the append) and is
+truncated; it was never acknowledged durable. A bad entry at or below that head is
+corruption: the office refuses to open and names the ordinal.
+
+**Positions taken back by a power cut.** Nothing leaves the office before its entry is
+flushed: replication and Git publication read flushed entries only. A committed-class
+entry lost in a power cut therefore never left the office, and its positions may be
+allocated again. Positions that left the office are never reused, and a new incarnation
+after a restore never reuses any. Task numbers, which people see in the office, keep the
+durable mark of [document 06](06-identity-and-numbering.md).
+
+**Opening and incarnations.** Opening a journal fences writers and anchors the counters,
+logs, snapshots, receipts and source hashes the office holds. Ordinals start at 1 with
+the office's high-waters kept; never fabricate entries. Restart and cache rebuild
+continue the same incarnation. A new journal incarnation requires a verified predecessor
+head, retained watermarks and writer fencing. It does not automatically rotate work or
+message incarnations; restored offices never promote themselves. Missing continuity
+stops acceptance. Check both i64 allocations before appending: position exhaustion may
+produce a zero-position rejection if ordinals remain; ordinal exhaustion stops new
+entries while existing receipt lookup stays available. No wrap, reset or automatic
+incarnation change may evade exhaustion.
+
+**Limits.** Profile `selected-task-resources/1`: an entry is <=16 MiB; a header has depth
+<=64, <=200,000 value/key nodes and <=8 MiB decoded string/key/raw number token.
+Immutable blobs/chunks are <=64 MiB; <=1,024 references and <=64 MiB aggregate bytes per
+entry, repeated references counted. Validate actual lengths/digests. Recovery retains
+recorded profiles, not silently smaller replacements. Protected journal blobs and
+account-bound receipts never enter public Git.
 
 Receipts cover shared domain commands only. Credentials, passwords, login/reset outcomes, private notes and their existence never enter these shared records: retain those in the host/private stores. `result_ref` resolves through the original command's actor/scope checks, never an unrestricted file path or public URL. `actor_id` is an employee ID, a person or an agent; a person who signs in, the organization owner included, is their own person record. A `system` actor has no employee ID. Accounts are bound by the host's authentication, never guessed from a display name. One command ID with another fingerprint or actor conflicts. Completed/rejected outcomes remain stable. An `outcome_unknown` command is reconciled before any side effect is repeated.
 
@@ -118,8 +146,8 @@ A checkpoint cannot establish authority by itself. Verify organization identity,
 
 The selected local writer admission binds the registered instance/root filesystem
 identity, protected organization/HQ/office binding, writer epoch, device-local
-custody identity and journal incarnation. Its last acknowledged journal digest,
-ordinal and original work-origin high-water live in host custody outside the
+custody identity and journal incarnation. The last journal head it confirmed (ordinal
+and hash) and the original work-origin high-water live in host custody outside the
 instance/organization root. Release macOS custody is non-synchronizing,
 `ThisDeviceOnly`; the explicit development custody directory is outside that root.
 Startup never creates missing writer custody for an existing selected office.
@@ -134,42 +162,27 @@ retaining its original incarnation, epoch, device and acknowledged checkpoint.
 Changed inputs or a different operation cannot replace that binding. This is
 resumption of its own protected operation, never promotion of an unknown root.
 
-The authenticated host-worker control channel verifies that retained source
-contains the protected checkpoint before recovery modifies projections. It admits
-at most one contiguous unacknowledged successor after that checkpoint. This covers
-process death between immutable publication and host confirmation without rerunning
-the decision. After coherent projection/read verification, the host durably records
-the exact next checkpoint before Office returns completion. Live reads/writes also
-check the current admission; host EOF or an epoch/root mismatch fences acceptance.
-The host checkpoint is continuity/fencing evidence, not another event allocator,
-journal or domain decision. Restoring host custody itself, machine migration and
-handover remain explicit unsupported recovery cases until verified fencing and
-retained-head evidence are supplied; copying files does not authorize them. These
-are office relocation, distinct from re-placing one agent; see
+The authenticated host-worker control channel verifies at opening that the retained
+journal contains the confirmed head. The office confirms the flushed head to the host
+once per group flush, never per operation and never on the acknowledgement path.
+Recovery admits any verified contiguous suffix above the confirmed head. The host
+checkpoint is continuity and fencing evidence, not another allocator, journal or domain
+decision. Host EOF or an epoch/root mismatch fences acceptance. Restoring host custody
+itself, machine migration and handover remain explicit unsupported recovery cases until
+verified fencing and retained-head evidence are supplied; copying files does not
+authorize them. These are office relocation, distinct from re-placing one agent; see
 [Moving agents and moving offices](#moving-agents-and-moving-offices).
 
 Process cleanup is machine-local. Never send a signal based solely on a restored PID: verify the ownership mark, generation, boot and process-start identity through the existing process-control library. A copied record on another machine is unverified. Cleanup and existing fencing must establish the previous process has stopped before the new one runs. These records complement document 11; they do not allocate a second placement generation or authorize launch.
 
-### Office acceptance projection format
+### Projection from the journal
 
-The office adapter's protected journal
-envelope has `schema_version: 1`, `json_codec: 2` and the recorded resource profile;
-these versions are independent of task snapshot/event versions. The immutable
-anchor and each transaction retain ordered table mutations with full column names,
-typed before/after cells (`null`, signed `integer`, exact `text`, hexadecimal
-`blob`), a projection-schema digest and the exact original origin mapping. JSON
-inside SQL text or blob cells is never parsed or regenerated by this projection
-format. A frozen cell larger than 64 KiB uses a verified protected
-`blobs/sha256/<digest>` reference, with byte length and `utf-8` or `hex` encoding;
-the aggregate recorded profile still applies. Public task/event bytes and protected
-account-bound receipts are retained as separate artifact mutations.
-
-Recovery verifies the complete retained prefix before applying SQL projections.
-After rebuilding SQL, it materializes final canonical files directly, rather than
-rewinding a current file through intermediate historical revisions. A mutable file
-may advance from bytes whose hash is a verified predecessor for that same path;
-missing files may be recreated. Unfamiliar bytes or conflicting immutable files
-stop recovery. Verified final SQL/file reads precede readiness or completion.
+The journal carries file changes only. Recovery verifies the complete retained chain,
+writes the final state of every file the retained entries touch (never rewinding a file
+through intermediate revisions), and then brings the projection up to the journal head
+from the files: by replay when its cursor is consistent, otherwise by a rebuild from all
+source files. Public task/event bytes and protected account-bound receipts are separate
+files. Verified final reads precede readiness or completion.
 
 The host's account registration, and the link from an account to its person record,
 are separate from the organization's directory. Directory generations and their exact source JSON pass through the same office
