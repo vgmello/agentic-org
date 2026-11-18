@@ -126,7 +126,18 @@ fn credentials_are_found_by_the_nfc_case_folded_username_and_hold_only_the_hash(
 #[test]
 fn every_refusal_leaves_the_link_and_the_accounts_unchanged() {
     each(|c| {
-        // Unknown token: nothing changes.
+        // A token that was never issued: refused, the issued link stays pending.
+        let unrelated = issue(c.links, NOW);
+        let never_issued = crate::links::Token::parse(&"A".repeat(43)).unwrap();
+        assert_eq!(
+            c.store
+                .register_administrator(&never_issued, &account("alice"), NOW),
+            Ok(Registration::Link(Refused::Unknown))
+        );
+        assert_eq!(c.store.administrator_exists(), Ok(false));
+        assert!(pending(c.links, NOW));
+        drop(unrelated);
+        // A cancelled link: nothing changes.
         let link = issue(c.links, NOW);
         let other = issue(c.links, NOW); // cancels `link`
         assert_eq!(
