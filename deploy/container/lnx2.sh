@@ -395,7 +395,7 @@ wait_until "the corrected container to serve" serving "$tag-v1b"
 echo "  no record and no data folder were left; the image's own file then serves on the same data volume"
 
 say "8c. the secrets volume is judged at every start (X5 review V3)"
-docker rm -f "$tag-v1b" >/dev/null
+docker rm -f -v "$tag-v1b" >/dev/null
 run "$tag-v3" -v "$tag-v1:/data" --tmpfs /secrets:uid=61000,gid=61000,mode=0700
 wait_until "the container on a memory filesystem to end" exited "$tag-v3"
 log=$(last_error "$tag-v3")
