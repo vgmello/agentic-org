@@ -28,8 +28,8 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 62 |
-| Planned | 57 |
+| In progress | 63 |
+| Planned | 56 |
 | Blocked | 1 |
 | Deferred | 42 |
 | Needs verification | 0 |
