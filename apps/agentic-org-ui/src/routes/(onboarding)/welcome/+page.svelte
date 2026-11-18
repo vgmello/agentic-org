@@ -9,6 +9,7 @@
 	import { createOrganizationsApi } from '$lib/platform/organizations/api';
 	import type { CreatingView, OrganizationList } from '$lib/platform/organizations/readers';
 	import { selection } from '$lib/platform/organizations/selection';
+	import { sleep } from '$lib/platform/organizations/sleep';
 	import { openOrganization, organizationRows } from '$lib/platform/organizations/welcome-list';
 
 	// The signed-in organizations page: SIGN-9 when there is none, otherwise the list (FC-018).
@@ -45,15 +46,11 @@
 		}
 	});
 	const stop = new AbortController();
-	const sleep = (ms: number, signal?: AbortSignal) =>
-		new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(resolve, ms);
-			signal?.addEventListener('abort', () => (clearTimeout(timer), reject(new Error('Stopped'))), {
-				once: true
-			});
-		});
-	// Creates already followed by this page; one that HQ stops answering for is not followed again until Try again.
+	// Creates this page is following now. One that HQ stops answering for leaves the set, so
+	// Check again on its row, or the next reading of the list, follows it again.
 	const followed = new Set<string>();
+	/** Creates whose lookup stopped because HQ could not be reached. */
+	let stalled = $state<string[]>([]);
 
 	function show(list: OrganizationList) {
 		listing = { kind: 'ready', list };
@@ -63,10 +60,18 @@
 	/** A create still in progress resumes its lookup; when it ends either way the list is read again. */
 	async function follow(entry: CreatingView) {
 		if (followed.has(entry.operation_id)) return;
-		followed.add(entry.operation_id);
-		const outcome = await api.follow(entry.operation_id, { sleep, signal: stop.signal });
-		if (outcome.kind === 'stopped' || outcome.kind === 'unreachable' || outcome.kind === 'session')
+		const id = entry.operation_id;
+		followed.add(id);
+		stalled = stalled.filter((other) => other !== id);
+		const outcome = await api.follow(id, { sleep, signal: stop.signal });
+		if (outcome.kind === 'stopped') return;
+		followed.delete(id);
+		if (outcome.kind === 'session') return;
+		if (outcome.kind === 'unreachable') {
+			// The row stays and says why nothing is known; nothing is sent until it is asked for.
+			stalled = [...stalled, id];
 			return;
+		}
 		const reply = await api.list(stop.signal);
 		if (reply.kind === 'listed' && !stop.signal.aborted) show(reply.list);
 	}
@@ -74,11 +79,17 @@
 		listing = { kind: 'loading' };
 		notice = undefined;
 		followed.clear();
+		stalled = [];
 		const reply = await api.list(stop.signal);
 		if (stop.signal.aborted) return;
 		if (reply.kind === 'listed') show(reply.list);
 		else if (reply.kind === 'unreachable') listing = { kind: 'failed' };
 		// An ended session is shown by the session itself (the effect below).
+	}
+	function checkAgain(entry: CreatingView, event: MouseEvent) {
+		// The button leaves with the message: focus stays on the row it was in.
+		(event.currentTarget as HTMLElement).closest('li')?.focus();
+		void follow(entry);
 	}
 	async function say(next: { title: string; hint: string }) {
 		notice = next;
@@ -211,9 +222,26 @@
 				</li>
 			{/each}
 			{#each creating as entry (entry.operation_id)}
-				<li data-testid="organization-creating" class="px-4 py-3">
-					<p class="text-sm/6 font-semibold text-white">{entry.name}</p>
-					<p class="text-sm/6 text-gray-300" role="status">Being created…</p>
+				<li
+					data-testid="organization-creating"
+					tabindex="-1"
+					class="flex items-center gap-x-4 px-4 py-3 focus:outline-none"
+				>
+					<div class="min-w-0 flex-1">
+						<p class="text-sm/6 font-semibold text-white">{entry.name}</p>
+						<p class="text-sm/6 text-gray-300" role="status">
+							{stalled.includes(entry.operation_id) ? "Can't reach HQ" : 'Being created…'}
+						</p>
+					</div>
+					{#if stalled.includes(entry.operation_id)}
+						<button
+							type="button"
+							aria-label="Check again on {entry.name}"
+							onclick={(event) => checkAgain(entry, event)}
+							class="shrink-0 rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+							>Check again</button
+						>
+					{/if}
 				</li>
 			{/each}
 		</ul>

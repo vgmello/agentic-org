@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NotDispatchedError } from '../http/errors';
-import { nextPollDelay, UNREACHABLE_LIMIT } from './api';
+import { createOrganizationsApi, nextPollDelay, UNREACHABLE_LIMIT } from './api';
 import {
 	accepted,
 	completed,
@@ -114,6 +114,18 @@ describe('create', () => {
 			.mockRejectedValueOnce(new NotDispatchedError());
 		expect(await s.api.create(OP, params)).toEqual({ kind: 'unknown' });
 		expect(await s.api.create(OP, params)).toEqual({ kind: 'not_sent' });
+	});
+	it('a request that cannot be built because the session is gone is not sent', async () => {
+		const submit = vi.fn();
+		const api = createOrganizationsApi({
+			http: { read: vi.fn(), submit },
+			instanceId: () => {
+				throw new Error('Sign in required');
+			},
+			newId: () => OP
+		});
+		expect(await api.create(OP, params)).toEqual({ kind: 'not_sent' });
+		expect(submit).not.toHaveBeenCalled();
 	});
 });
 

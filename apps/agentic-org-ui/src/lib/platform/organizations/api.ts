@@ -124,16 +124,22 @@ export function createOrganizationsApi({
 			signal?: AbortSignal
 		): Promise<CreateReply> {
 			const id = readOperationId(operationId);
-			const body = {
-				operation_id: id,
-				scope: { kind: 'instance', instance_id: instanceId() },
-				params: {
-					name: params.name,
-					slug: params.slug,
-					organization_repository: { kind: 'remote', remote_url: params.repository },
-					state_branch: params.stateBranch
-				}
-			};
+			let body: unknown;
+			try {
+				body = {
+					operation_id: id,
+					scope: { kind: 'instance', instance_id: instanceId() },
+					params: {
+						name: params.name,
+						slug: params.slug,
+						organization_repository: { kind: 'remote', remote_url: params.repository },
+						state_branch: params.stateBranch
+					}
+				};
+			} catch {
+				// The request could not be built (the session went away), so nothing left this browser.
+				return { kind: 'not_sent' };
+			}
 			let reply: Reply;
 			try {
 				reply = await http.submit('/api/v1/organizations', body, signal);

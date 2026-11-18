@@ -22,6 +22,7 @@
 	} from '$lib/platform/organizations/create-flow';
 	import type { CreateField, InstanceName } from '$lib/platform/organizations/readers';
 	import { selection } from '$lib/platform/organizations/selection';
+	import { sleep } from '$lib/platform/organizations/sleep';
 	import { createSlugField } from '$lib/platform/organizations/slug';
 	import { ORGANIZATION_NAME_MAX_CHARS } from '$lib/proto';
 
@@ -41,18 +42,6 @@
 	);
 	const slugField = createSlugField();
 	const clock = createOperationClock();
-	const sleep = (ms: number, signal?: AbortSignal) =>
-		new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(resolve, ms);
-			signal?.addEventListener(
-				'abort',
-				() => {
-					clearTimeout(timer);
-					reject(new Error('Stopped'));
-				},
-				{ once: true }
-			);
-		});
 	const api = createOrganizationsApi({
 		http: {
 			read: (path, signal) => appSession.controller().read(path, signal),
@@ -64,7 +53,11 @@
 		},
 		newId: () => clock.newId()
 	});
-	const flow = createOrganizationFlow({ api, sleep, report: (next, cause) => void show(next, cause) });
+	const flow = createOrganizationFlow({
+		api,
+		sleep,
+		report: (next, cause) => void show(next, cause)
+	});
 
 	const working = $derived(isWorking(phase));
 	const errors = $derived(phase.kind === 'editing' ? phase.errors : {});

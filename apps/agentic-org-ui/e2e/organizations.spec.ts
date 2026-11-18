@@ -485,6 +485,33 @@ test('a create still in progress is shown as being created and resumes its looku
 	expect(stats.creates.filter((c) => c.operation_id !== operation_id)).toEqual([]);
 });
 
+test("a create whose lookups get no answer keeps its row, says Can't reach HQ, and Check again follows it to the end", async ({
+	page
+}) => {
+	await signInAsAdmin(page, [LUMEN]);
+	const server = await backend(page);
+	const operation_id = '01M72N8MG00000000000000006';
+	await server.set('creating', [{ operation_id, name: 'Side Project', slug: 'side-project' }]);
+	await server.script('lookupScript', ['unavailable', 'unavailable', 'unavailable', 'completed']);
+	await visit(page, '/welcome');
+	const pending = page.getByTestId('organization-creating');
+	await expect(pending).toContainText('Being created…');
+	await expect(pending).toContainText("Can't reach HQ", { timeout: 20_000 });
+	await expect(pending).toContainText('Side Project');
+	await expect(pending).not.toContainText('Being created…');
+	expect((await server.stats()).lookups).toHaveLength(3);
+	expect(await axe(page)).toEqual([]);
+	// Nothing is asked until the person asks.
+	await page.waitForTimeout(1500);
+	expect((await server.stats()).lookups).toHaveLength(3);
+	await pending.getByRole('button', { name: 'Check again on Side Project' }).click();
+	await expect(row(page, 'Side Project')).toBeVisible();
+	await expect(pending).toHaveCount(0);
+	const stats = await server.stats();
+	expect(stats.lookups).toEqual(Array(4).fill(operation_id));
+	expect(stats.creates.filter((c) => c.operation_id !== operation_id)).toEqual([]);
+});
+
 test("when HQ can't be reached the page explains why and still offers Create; Try again reads the list (FC-018 (9))", async ({
 	page
 }) => {
