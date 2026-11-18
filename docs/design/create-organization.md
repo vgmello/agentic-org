@@ -119,11 +119,45 @@ organization. Prove acknowledged records survive the loss of the projection.
 
 ## What the code does today
 
-`agentic-org setup` refuses before provisioning. The host's `organization.create`
-accepts a name only (FC-018). `organization.provision.v1`
-(`crates/org-proto/src/selected_bootstrap.rs`) carries name, slug, repository
-address, state branch and a home team name, which becomes the top-level team named
-after the organization. `crates/org-host/src/provisioning.rs` and the office's
-`hq_creation` implement protected HQ creation with escrow and are covered by tests,
-but no command reaches them. The UI's create flow runs against fakes
-(`apps/agentic-org-ui/src/lib/create-flow.ts`).
+`agentic-org setup` creates the instance and no organization. One command creates an
+organization: the host's `organization.create`, served only on the admitted web
+connection and reached from `POST /api/v1/organizations`
+([web API](web-api-v1.md#selected-create-organization-payload)). The name-only
+command and `organization.provision.v1` are deleted.
+
+- **Creation is asynchronous at the host.** Admission checks the administrator,
+  reserves the name, the slug, the UUIDv7 IDs and the plan, and answers `accepted`.
+  A host thread then drives the create to its end, with no client attached. At
+  startup the host resumes every reserved create, with up to three tries (0.5 s and
+  1 s apart) for a failure that may pass (`unavailable`, `storage_error`, a
+  timeout); any other refusal is not retried, and a lookup of the operation tries
+  once more. Stopping the host halts the creation threads: no attempt starts, no
+  retry continues and no link is recorded after the stop began
+  (`crates/org-host/src/provisioning.rs`, `crates/org-host/src/service/organizations.rs`).
+- **Completion** means the office worker reported `created` and the host adopted
+  the office. Only then is the operation `linked`, the organization listed, and
+  `account.changed` pushed to the web process.
+- **The creator is a person.** The office writes a person record whose UUIDv7 ID is
+  the owner member the account is linked to, named after the account's login, in the
+  top-level team named after the organization, and makes that person its lead. The
+  host records the account-to-person link and the owner.
+- **The HR lead** is written as an agent employee profile in the same team. The
+  profile carries `status` only (no `agent_status`), and nothing can run it: it has
+  no execution configuration.
+- **The recovery code** is generated at admission into the host's credential
+  custody and never reaches the browser or the web process. It is collected once on
+  the HQ machine with `agentic-org recovery release --org '<organization>'`
+  (`crates/org-host/src/human/recovery.rs`), which today signs the person in with a
+  password typed at the terminal; that sign-in is interim
+  ([FC-016](../FEATURES.md)).
+- **Files.** The organization's files are written under
+  `<instance-root>/durable/state/<org-id>/`, on the office store as it is. The
+  journal and the data-root layout are the office store's (implementation plan B1b),
+  so creation is not yet the first accepted transaction of a journal.
+- **Not built.** No call cancels a create, so a reserved name and slug stay reserved
+  until the create completes (FC-188). Organizations created before the HR profile
+  change keep `agent_status: paused`; nothing migrates them. The UI's create flow
+  still runs against fakes (`apps/agentic-org-ui/src/lib/create-flow.ts`) until
+  A4.5.
+
+Real-process evidence: `crates/org-host/src/web_process_tests/organizations.rs`.

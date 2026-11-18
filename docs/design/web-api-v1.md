@@ -53,15 +53,15 @@ no body; on any other route it is `invalid_request`.
 | POST `/api/v1/session/sign-out` | `{}` → `{}` | Pair; ends the host session, clears the browser pair and closes streams |
 | GET `/api/v1/capabilities` | Capability view (§7) | Pair; authorized scopes only |
 | GET `/api/v1/instance` | Instance view (§3) | Pair; host `instance.view` (web connection only); host-derived status, no paths, sockets or credentials |
-| GET `/api/v1/organizations` | `{organizations:[...]}` | Pair; host `organization.list`, linked organizations only |
-| POST `/api/v1/organizations` | Command envelope with the [create payload](#selected-create-organization-payload) | Pair; host `organization.create`, the administrator only |
+| GET `/api/v1/organizations` | `{organizations:[...], creating:[{operation_id,name,slug}]}` | Pair; host `organization.list`, asked on every request and never answered from a cache. `organizations` holds the organization views (§3) of the linked organizations only; `creating` holds the account's own creates that have not completed, each followed through the host lookup |
+| POST `/api/v1/organizations` | Instance-scoped envelope with the [create payload](#selected-create-organization-payload) → 202 `accepted`, or 200 `completed` with the organization view | Pair; host `organization.create`, the administrator only. The same `operation_id` with the same payload replays the stored answer and never creates a second organization |
 | POST `/api/v1/organizations/operations/{id}/cancel` | `{}` → cancellation result (§5) | Pair; host `organization.cancel`; the same account or the administrator; the original create ID |
 | POST `/api/v1/organizations/{org}/people/{person}/access` | Envelope with `{action:"invite"\|"new_link"\|"remove"}` → `{link}` for the first two, `{}` for remove | Pair; the organization's owner or the administrator; a link is returned once and never again |
 | POST `/api/v1/organizations/{org}/owner` | Envelope with `{person_id,password}` → `{}` | Pair; the owner only; the person must have an account |
 | GET `/api/v1/organizations/{org}/offices` | `{offices:[...]}` | Pair; host `office.list` narrowed to an authorized organization |
 | GET `/api/v1/organizations/{org}/snapshot` | `{snapshot,resume_cursor}` | Pair; organization snapshot at HQ with a cursor at the same position |
 | POST `/api/v1/organizations/{org}/offices/{office}/restart` | Office-scoped envelope with `{}` | Pair; host `office.restart`; the organization's owner or the server's administrator |
-| GET `/api/v1/operations/{kind}/{id}` | Scoped lookup (§5) | Pair; `kind=host\|org\|work\|msg`; query fields below, checked before lookup |
+| GET `/api/v1/operations/{kind}/{id}` | Scoped lookup (§5) | Pair; `kind=host\|org\|work\|msg`; query fields below, checked before lookup. `GET /api/v1/operations/host/{id}?instance_id=` is the progress lookup of a create (host `operation.lookup`); an account sees only its own operations |
 | POST `/api/v1/events` | Subscriptions and cursors (§6) → SSE | Pair; streaming fetch, no proof in the URL |
 | POST `/api/v1/events/poll` | Same body → bounded frame batch | Pair; short-poll alternative with no held connection |
 
@@ -119,7 +119,7 @@ browser resume token.
 | --- | --- | --- |
 | `name` | yes | Display name |
 | `slug` | yes | Lowercase kebab-case, unique in the instance's organization catalog; never recalculated after a rename |
-| `organization_repository` | yes | Registration of the remote Git repository that holds the organization's files: `kind: remote`, a `remote_url`, and a reference to an office-held credential. Never a secret value. Validation checks syntax only and makes no network request. |
+| `organization_repository` | yes | Registration of the remote Git repository that holds the organization's files: exactly `{kind:"remote", remote_url}`. Never a secret value. Validation checks syntax only and makes no network request. |
 | `state_branch` | yes | The branch organization files are published to. There is no default. |
 
 There is no team field. Creation makes one top-level team named after the
@@ -128,6 +128,46 @@ its other member ([create-organization design](create-organization.md)). The
 result is the organization view (§3) with `slug`. Connectivity and publication of
 the remote repository are reported as unverified until online operation is
 authorized.
+
+**Envelope.** `{operation_id, scope:{kind:"instance", instance_id}, params}`, with
+`params` the four fields above and nothing else.
+
+**Only a remote repository.** A `kind` other than `remote`, a `file://` address and
+a `path` key (present with any value, `null` included, under any kind) are each
+HTTP 400 `invalid_request` with `{field: organization_repository, rule:
+remote_required}`. A `credential_ref` key is refused the same way with rule
+`unsupported`: the reference to an office-held credential is not built yet.
+
+**Who refuses, and how.** The create has two refusal shapes, and they are never
+mixed:
+
+| Decided by | Response |
+| --- | --- |
+| The web process, before any host call (a malformed envelope or operation ID, a payload rule) | HTTP 400 `{error:{code:"invalid_request", message, field, rule}}`. Nothing is stored and no host call is made |
+| The host | `{outcome:"rejected", operation_id, error}` with the HTTP class of the error's code: 400 (`invalid_request`, `clock_skew`), 403 (`not_authorized`: the account is not the administrator) or 409 (`already_exists`, `operation_reused`) |
+
+A name or a slug that is already taken, by an organization or by a create still in
+flight, is 409 `already_exists` whose `field` is `name` or `slug`. The remaining
+answers are 202 `{outcome:"accepted", operation_id}` (the host stored the create and
+is carrying it out), 200 `{outcome:"completed", operation_id, result}` with the
+organization view, and 504 `{outcome:"unknown", operation_id}` when the host is
+unavailable, reports a storage failure or its answer is lost: the web link reports
+all three as one failure, so no 503 is promised for this route. After a 504 the
+browser keeps the ID and either posts the same body again or polls the lookup; it
+never mints a new ID for the same intent.
+
+**Progress lookup.** `GET /api/v1/operations/host/{id}?instance_id=` answers
+`{result:{operation_id, kind:"host", outcome, state, result?|error?}}`: `accepted`
+with `state: reserved`, `completed` with `state: linked` and the organization view,
+or `rejected` with the stored error. An operation of another account and an unknown
+ID are the same 404. A lookup the host refuses is the lookup's own error and never
+a stored refusal of the create: `expired` is HTTP 410, anything else is 503
+`unavailable`.
+
+**Operation ID format.** In A4 a host operation ID is a canonical ULID minted by
+the browser. Any other format, on the create and on the host lookup, is HTTP 400
+`invalid_request` with `{field: operation_id}` (rule `format`) before any host
+call. The format becomes UUIDv7 with the other IDs (FC-142).
 
 ### Tasks
 
@@ -214,8 +254,10 @@ absent until the instance serves TLS (the loopback listener has none). Unknown
 enum values decode to `unknown`. The view has no paths, endpoints, sockets,
 handles or certificate material.
 
-**Organization view:** identity, `slug`, name, `created_at` and
-`recovery: pending|delivered|acknowledged`. **Office view:** identity, organization,
+**Organization view:** `{id, slug, name, created_at, employee_id, recovery, offices}`.
+`employee_id` is the account's person in that organization, `recovery` is
+`pending|delivered|acknowledged`, and `offices` lists the organization's offices on
+this instance as office views, HQ first. **Office view:** identity, organization,
 name, role, host, status, `status_reason` and `next_restart_at`, without the local
 endpoint. The recovery code never crosses HTTP. Status reason
 `unsupported_version` is distinct from the request error code.
@@ -561,8 +603,26 @@ returning 404 confirms that.
 - `org_proto::gateway` implements the DTOs, outcome classifier, session and stream
   types and the organization mutation codec, with vectors in
   `crates/org-proto/test-vectors/v2/`.
-- The create request accepts `{name}` only; it changes to the selected payload under
-  FC-018.
+- Organizations (A4): `POST /api/v1/organizations`, `GET /api/v1/organizations` and
+  `GET /api/v1/operations/host/{id}?instance_id=` are served by
+  `apps/agentic-org-web/src/api.rs` over the host's `organization.create`,
+  `organization.list` and `operation.lookup`, which the host answers on the admitted
+  web connection only. The browser DTOs are `org_proto::gateway::organizations`
+  (`SelectedCreateParams`, `SelectedOrganizationView`, `SelectedOrganizationList`,
+  `host_operation_id`), pinned by `test-vectors/v2/gateway-organizations.json`
+  (17 cases). The list always asks the host. The older gateway `OrganizationView`
+  and its vectors remain because the UI reader still reads them; they are deleted
+  when the create page and the welcome list move to the real API (A4.5). The UI's
+  lookup reader still refuses `-` in a lookup ID and is widened in the same step.
+- `POST /api/v1/organizations/operations/{id}/cancel` is not served (JSON 404): no
+  host call cancels a create, so a reserved name and slug stay reserved until the
+  create completes (FC-188, deferred). The lookup state `abandoned` of §5 is
+  therefore never produced.
+- The host pushes `account.changed` on the web connection when what an account can
+  open changes (an organization it created was linked). The web process then drops
+  that account's cached sessions, so the next request validates at the host and
+  sees the new organization and person. A session validated before the event is
+  not cached after it.
 - The mutation codec carries the older membership operations
   (`team.add_member`, `team.remove_member`, `team.set_title`, `member.move`,
   `project.add_team`, `project.remove_team`) and the name `member`. They are replaced
@@ -582,14 +642,12 @@ returning 404 confirms that.
   and `GET organizations` over them. It mints the cookie and proof, sends only their
   digests and the accepted socket's peer address (never a forwarding header), and keeps
   validated sessions in an in-memory cache bound to its control connection; the host's
-  `session.ended` push drops an entry. `GET organizations` answers
-  `{organizations: []}` after validating the session, with no host call, until A4
-  creates organizations. `GET instance` validates the pair, then asks the host's
+  `session.ended` push drops an entry. `GET instance` validates the pair, then asks the host's
   `instance.view` (web connection only) for the name and web state; it omits `tls`
   while the listener is loopback HTTP. `HEAD` serves the GET routes without a body.
   The pair is minted from the system generator (`getentropy`): the sandboxed web
   process cannot open `/dev/urandom`. `session/refresh`, the other link and password
-  routes, events and the domain routes are still JSON 404. Every POST needs JSON
+  routes, events and the other domain routes are still JSON 404. Every POST needs JSON
   (415 otherwise); `OPTIONS` is 405; `Sec-Fetch-Site: cross-site` is 403; host
   refusals carry `field`/`rule` and `retry_after_ms` through to the error body. Real-
   process tests over loopback TCP prove registration from a link, sign-in, restart

@@ -187,10 +187,16 @@ conflicting bytes require recovery.
 
 ### Provisioning an organization
 
-The native `organization.provision.v1` call carries the session, a UUIDv7
+`organization.create` is served only on the admitted web connection. It carries the
+SHA-256 digests of the browser's cookie and proof with the configured origin, an
 `operation_id` and a plan with explicit `name`, `slug`, `repository_remote_url`,
-and `state_branch`. It asks for no team. The host rechecks the live administrator and
-binds the operation and its fingerprint to that account. Creation makes one top-level
+and `state_branch`. It asks for no team. The host resolves the browser session from
+the digests and the origin, requires the live administrator and binds the operation
+and its fingerprint to that account. `host.sock` refuses the call, unauthenticated
+and with a native administrator session alike; there is no native create and no
+`organization.provision.v1`. Admission answers `accepted`; a host thread carries
+the create out, and `operation.lookup` on the same connection reports its progress
+to the account that started it. Creation makes one top-level
 team named after the organization, the creator's person record in it as its lead, and
 the built-in HR employee (not runnable without its own execution configuration). The
 creator's account owns the organization; ownership is a permission of the account at
@@ -419,8 +425,10 @@ it restarts the worker; it never races a live worker over its agents.
 | A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5); an operating system without an adapter refuses. |
 | X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
 
-`organization.provision.v1` today carries a `home_team_name`, creates no person record
-for the creator, and is reached only from tests (implementation plan A4).
+`organization.create` is the only create: served on the admitted web connection,
+authorized by the browser pair digests and the origin, administrator required, and
+refused on `host.sock`. It writes the creator's person record and takes no team name;
+`organization.provision.v1` is deleted (implementation plan A4).
 
 The office directory today is `<home>/offices/<office-id>/` under the host home
 resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`
