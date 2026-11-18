@@ -1,6 +1,8 @@
 # ADR-0002 · Storage: SQLite with one batching writer per database
 
-Status: accepted. Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md).
+Status: accepted; decision 1's SQLCipher requirement is superseded by
+[ADR-0016](0016-no-application-level-data-encryption.md) (the workspace no longer builds
+SQLCipher). Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md).
 Where data lives on disk is owned by the
 [organization-data storage contract](../design/organization-data/README.md#shared-storage-contract):
 one root, with sources under `durable/` and the database projection under

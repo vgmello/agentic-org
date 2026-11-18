@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "258d322d6ed3188b904f1cdd4aaea1adc2b72f3c08f68ea85fa9138f85c6e99d"
+      "sha256": "0d42d32783b63202ed7d76c058a6b8df95705d479fbb190338df57c20adc62bf"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",

@@ -395,6 +395,9 @@ it restarts the worker; it never races a live worker over its agents.
   refusing adapter before any of them is checked, so its operator sees "this operating
   system has no office secrets key store", never a macOS-only reason. The supervisor and
   provisioning never branch on the platform.
+- Storage: every database (host registry, `org.db`, `office.db`) is plain SQLite from
+  `rusqlite`'s `bundled` feature, protected by owner-only file permissions; there is no
+  SQLCipher dependency, database key or initialization fence (ADR-0016).
 - The organization name rule is `org_proto::OrganizationName`: trimmed, Unicode
   lowercase as its key, refusing empty, too long and control characters
   (`invalid_name`).
@@ -405,8 +408,8 @@ it restarts the worker; it never races a live worker over its agents.
 
 | Increment | Requirement | Code today |
 | --- | --- | --- |
-| A1 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/contract.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
-| A1, A3 | People are authorized by grants; no application token | The older first line still carries `app_token`, and the host still has `app_auth.rs`; the worker stores the grant key unused. |
+| A1 | One launch contract, the verified rendezvous | Done: the rendezvous at the `org-office-launch` crate root (`LAUNCH_VERSION = 1`, `crates/org-office-launch/src/contract.rs`) is the only form; a `"v":2` or `"v":3` first line is refused as `unsupported_version`, and a discard gets no secret. |
+| A1, A3 | People are authorized by grants; no application token | The launch line carries no `app_token`. Remaining: `org-proto` still defines `office.app_token` and `msg.bind`'s `app_token`, `org-client` has `bind_app` and the worker still accepts a token binding; the host serves no `office.app_token`, and its `app_auth.rs` (`AppPolicy`) still checks the desktop app's signature for `admin` and `recovery` calls. |
 | A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
 | A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
