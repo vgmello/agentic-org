@@ -620,22 +620,16 @@ pub(crate) fn await_closed(slot: &ChannelSlot) {
     }
 }
 #[test]
-fn actual_host_reserves_gateway_and_total_before_fd_send_and_keeps_held_fd_occupied() {
+fn actual_host_reserves_web_and_total_before_fd_send_and_keeps_held_fd_occupied() {
     use std::io::Read;
     let fixture = worker_fixture("office");
     let endpoint = &fixture.endpoint;
     let mut held = Vec::new();
     for _ in 0..7 {
-        held.push(
-            endpoint
-                .open(org_office_launch::ChannelKind::Gateway)
-                .unwrap(),
-        );
+        held.push(endpoint.open(org_office_launch::ChannelKind::Web).unwrap());
     }
     assert_eq!(fixture.transferred.load(Ordering::SeqCst), 7);
-    assert!(endpoint
-        .open(org_office_launch::ChannelKind::Gateway)
-        .is_err());
+    assert!(endpoint.open(org_office_launch::ChannelKind::Web).is_err());
     assert_eq!(
         fixture.transferred.load(Ordering::SeqCst),
         7,
@@ -652,14 +646,10 @@ fn actual_host_reserves_gateway_and_total_before_fd_send_and_keeps_held_fd_occup
     let closed = slot.clone();
     drop((id, slot));
     assert_eq!(lock(&endpoint.channels).len(), 8);
-    assert!(endpoint
-        .open(org_office_launch::ChannelKind::Gateway)
-        .is_err());
+    assert!(endpoint.open(org_office_launch::ChannelKind::Web).is_err());
     drop(stream);
     await_closed(&closed);
-    let (_, replacement, witness) = endpoint
-        .open(org_office_launch::ChannelKind::Gateway)
-        .unwrap();
+    let (_, replacement, witness) = endpoint.open(org_office_launch::ChannelKind::Web).unwrap();
     local.write_all(b"existing RPC").unwrap();
     local
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -765,7 +755,7 @@ fn incompatible_profile_gets_no_secret_or_descriptor() {
 }
 
 #[test]
-fn actual_concurrent_gateway_opens_reserve_before_send_without_overadmission_or_deadlock() {
+fn actual_concurrent_web_opens_reserve_before_send_without_overadmission_or_deadlock() {
     let fixture = worker_fixture("office");
     let barrier = Arc::new(std::sync::Barrier::new(17));
     let threads: Vec<_> = (0..16)
@@ -774,7 +764,7 @@ fn actual_concurrent_gateway_opens_reserve_before_send_without_overadmission_or_
             let barrier = Arc::clone(&barrier);
             std::thread::spawn(move || {
                 barrier.wait();
-                endpoint.open(org_office_launch::ChannelKind::Gateway)
+                endpoint.open(org_office_launch::ChannelKind::Web)
             })
         })
         .collect();

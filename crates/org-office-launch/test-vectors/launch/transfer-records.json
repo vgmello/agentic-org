@@ -4,8 +4,8 @@
   "header_max_bytes": 1024,
   "records": [
     {
-      "name": "gateway channel",
-      "wire": "{\"type\":\"channel\",\"kind\":\"gateway\",\"office_id\":\"01M72N8MG00000000000000F01\",\"channel_id\":\"01M72N8MG00000000000000C01\"}",
+      "name": "web channel",
+      "wire": "{\"type\":\"channel\",\"kind\":\"web\",\"office_id\":\"01M72N8MG00000000000000F01\",\"channel_id\":\"01M72N8MG00000000000000C01\"}",
       "fd_count": 1
     },
     {

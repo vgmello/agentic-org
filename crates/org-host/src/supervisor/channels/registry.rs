@@ -1,5 +1,5 @@
 //! Physical occupancy belongs to authenticated lifecycle receipts, never witness drops.
-use org_office_launch::{ChannelKind, MAX_CHANNELS, MAX_GATEWAY_CHANNELS};
+use org_office_launch::{ChannelKind, MAX_CHANNELS, MAX_WEB_CHANNELS};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -47,8 +47,8 @@ impl Registry {
             || id == "handoff"
             || self.entries.contains_key(id)
             || self.entries.len() >= MAX_CHANNELS
-            || (kind == ChannelKind::Gateway
-                && self.entries.values().filter(|e| e.kind == kind).count() >= MAX_GATEWAY_CHANNELS)
+            || (kind == ChannelKind::Web
+                && self.entries.values().filter(|e| e.kind == kind).count() >= MAX_WEB_CHANNELS)
         {
             return Err(super::invalid());
         }

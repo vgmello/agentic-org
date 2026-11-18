@@ -659,7 +659,7 @@ impl Connection {
     }
     pub(crate) fn channel_kind(&self) -> org_office_launch::ChannelKind {
         if self.gateway.is_some() {
-            org_office_launch::ChannelKind::Gateway
+            org_office_launch::ChannelKind::Web
         } else {
             org_office_launch::ChannelKind::Local
         }
@@ -897,7 +897,7 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>, closed: &AtomicBoo
                 } else if let Some(gateway) = gateway {
                     org_office_launch::encode_transfer_record(
                         &org_office_launch::TransferRecord::Channel {
-                            kind: org_office_launch::ChannelKind::Gateway,
+                            kind: org_office_launch::ChannelKind::Web,
                             office_id: office,
                             channel_id: channel,
                         },
@@ -1020,7 +1020,7 @@ mod tests {
         });
         assert_eq!(
             connection.channel_kind(),
-            org_office_launch::ChannelKind::Gateway
+            org_office_launch::ChannelKind::Web
         );
         assert!(connection.gateway_listen().is_some());
         let closed = Arc::clone(&connection.closed);
@@ -1082,7 +1082,7 @@ mod tests {
         };
         assert!(
             matches!(org_office_launch::decode_transfer_record(&header[..record.bytes]).unwrap(),
-            org_office_launch::TransferRecord::Channel { kind:org_office_launch::ChannelKind::Gateway, office_id, channel_id } if office_id=="office" && channel_id=="channel")
+            org_office_launch::TransferRecord::Channel { kind:org_office_launch::ChannelKind::Web, office_id, channel_id } if office_id=="office" && channel_id=="channel")
         );
         let mut channel =
             org_socket::rights::connected_unix_stream(record.descriptors.pop().unwrap()).unwrap();
@@ -1307,7 +1307,7 @@ mod tests {
         let web = WebConnection::start(host, transfer, loopback_listen(), Arc::new(Echo)).unwrap();
         assert_eq!(
             web.connection.channel_kind(),
-            org_office_launch::ChannelKind::Gateway
+            org_office_launch::ChannelKind::Web
         );
         assert!(web.connection.gateway_listen().is_some());
         assert!(web.live());
@@ -1958,7 +1958,7 @@ mod channel_lifecycle_tests {
                 };
                 assert!(
                     matches!(org_office_launch::decode_transfer_record(&buffer[..received.bytes]).unwrap(),
-                    org_office_launch::TransferRecord::Channel { kind: org_office_launch::ChannelKind::Gateway, office_id, channel_id } if office_id == "office" && channel_id == id)
+                    org_office_launch::TransferRecord::Channel { kind: org_office_launch::ChannelKind::Web, office_id, channel_id } if office_id == "office" && channel_id == id)
                 );
                 received.descriptors
             } else {

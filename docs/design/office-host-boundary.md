@@ -151,7 +151,7 @@ worker keeps one copy in memory, zeroed on drop.
 
 The transfer socket (a datagram socket pair, host to worker) carries channel records:
 a JSON header of at most 1024 bytes and zero or one descriptor. Web channels arrive as
-`ChannelKind::Gateway` records and native ones as `ChannelKind::Local`. An office
+`ChannelKind::Web` records and native ones as `ChannelKind::Local`. An office
 accepts at most eight channels, at most seven of them from the web process, so one
 stays free for a local caller. Session revocation arrives as a `Revoked` record. Package
 export for recovery uses a separate `recovery_public_read` record with one connected

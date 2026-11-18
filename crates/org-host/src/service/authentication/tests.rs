@@ -659,7 +659,7 @@ fn actual_close_denies_grants_and_logout_revokes_without_freeing_a_held_descript
         "logout ends permission, not physical peer ownership"
     );
     let _held: Vec<_> = (0..7)
-        .map(|_| worker.endpoint.open(ChannelKind::Gateway).unwrap())
+        .map(|_| worker.endpoint.open(ChannelKind::Web).unwrap())
         .collect();
     assert!(worker.endpoint.open(ChannelKind::Local).is_err());
     drop(stream);

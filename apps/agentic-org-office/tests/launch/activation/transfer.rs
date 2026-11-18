@@ -675,12 +675,7 @@ fn close_live_channel(session: &mut Session, id: &str, peer: BufReader<UnixStrea
 #[test]
 fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
     let _process = process_isolation();
-    for case in [
-        "eighth-gateway",
-        "ninth-local",
-        "ninth-gateway",
-        "ninth-all-local",
-    ] {
+    for case in ["eighth-web", "ninth-local", "ninth-web", "ninth-all-local"] {
         let world = World::new();
         let mut session = ready_create(&world);
         let mut peers = Vec::new();
@@ -691,7 +686,7 @@ fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
                 if case == "ninth-all-local" {
                     ChannelKind::Local
                 } else {
-                    ChannelKind::Gateway
+                    ChannelKind::Web
                 },
                 &id,
             );
@@ -703,8 +698,8 @@ fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
                 open_live_channel(&mut session, ChannelKind::Local, "eighth-local"),
             ));
         }
-        let refused_kind = if case.ends_with("gateway") {
-            ChannelKind::Gateway
+        let refused_kind = if case.ends_with("web") {
+            ChannelKind::Web
         } else {
             ChannelKind::Local
         };
@@ -746,7 +741,7 @@ fn duplicate_live_channel_remains_fatal_without_ack_and_reaps_every_peer() {
     let _process = process_isolation();
     let world = World::new();
     let mut session = ready_create(&world);
-    let mut existing = open_live_channel(&mut session, ChannelKind::Gateway, "live-0");
+    let mut existing = open_live_channel(&mut session, ChannelKind::Web, "live-0");
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {

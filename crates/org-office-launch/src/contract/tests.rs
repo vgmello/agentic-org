@@ -397,8 +397,7 @@ fn transfer_records_refuse_unknown_fields() {
     let mut extra = revoked;
     extra["fd"] = json!(1);
     assert!(serde_json::from_value::<TransferRecord>(extra).is_err());
-    let channel =
-        json!({"type": "channel", "kind": "gateway", "office_id": "o", "channel_id": "c"});
+    let channel = json!({"type": "channel", "kind": "web", "office_id": "o", "channel_id": "c"});
     serde_json::from_value::<TransferRecord>(channel.clone()).unwrap();
     let mut extra = channel;
     extra["grant_key"] = json!("secret");

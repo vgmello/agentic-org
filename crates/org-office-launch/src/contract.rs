@@ -19,9 +19,9 @@
 //!   The host treats stdout as untrusted.
 //! - **The transfer socket** (an `AF_UNIX SOCK_DGRAM` socket pair, host → server only) carries
 //!   [`TransferRecord`]s: a JSON header of at most [`TRANSFER_HEADER_MAX_BYTES`] plus zero or one
-//!   descriptor. This is the one definition, for the worker's transfer socket and the gateway's.
+//!   descriptor. This is the one definition, for the worker's transfer socket and the web process's.
 //!   `org-host-control` doesn't re-export it, which keeps that crate's dependencies to
-//!   `org-proto`, serde, `serde_json` and `sha2` (X-02 §5.2, §11): the gateway imports it from
+//!   `org-proto`, serde, `serde_json` and `sha2` (X-02 §5.2, §11): the web process imports it from
 //!   here.
 //! - Selected REC-DEL-1 adds a mandatory-known `recovery_public_read` record with
 //!   exactly one connected descriptor. Its one-shot, EOF-terminated 16 KiB
@@ -57,8 +57,8 @@ pub const LAUNCH_VERSION: u32 = 1;
 pub const CHANNEL_PROFILE: &str = "office-channels/1";
 /// Maximum ordinary physical channels, including pending transfers and public recovery.
 pub const MAX_CHANNELS: usize = 8;
-/// Gateway allowance leaves one ordinary slot available for a local caller.
-pub const MAX_GATEWAY_CHANNELS: usize = 7;
+/// The web process's allowance leaves one ordinary slot available for a local caller.
+pub const MAX_WEB_CHANNELS: usize = 7;
 
 /// The largest transfer-record header, in bytes (a contract choice, X-02 §5.2).
 pub const TRANSFER_HEADER_MAX_BYTES: usize = 1024;
@@ -825,8 +825,8 @@ pub fn decode_handoff(line: &[u8]) -> Result<Handoff, LaunchError> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelKind {
-    /// For the gateway, opened with `office.open_channel` on its control connection.
-    Gateway,
+    /// For the web process, opened with `office.open_channel` on its control connection.
+    Web,
     /// For `agentic-org` on `host.sock`.
     Local,
 }

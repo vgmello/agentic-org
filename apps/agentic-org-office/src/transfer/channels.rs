@@ -2,7 +2,7 @@
 use super::{invalid, Channel};
 use crate::{revocations::Revocations, serve, startup};
 use org_office_launch::{
-    ChannelKind, RefusalReason, RendezvousEvent, MAX_CHANNELS, MAX_GATEWAY_CHANNELS,
+    ChannelKind, RefusalReason, RendezvousEvent, MAX_CHANNELS, MAX_WEB_CHANNELS,
 };
 
 mod lifecycle;
@@ -163,12 +163,12 @@ fn register(
         return Err(AdmissionError::Invalid(invalid()));
     }
     if entries.len() >= MAX_CHANNELS
-        || (kind == ChannelKind::Gateway
+        || (kind == ChannelKind::Web
             && entries
                 .values()
-                .filter(|(kind, _)| *kind == ChannelKind::Gateway)
+                .filter(|(kind, _)| *kind == ChannelKind::Web)
                 .count()
-                >= MAX_GATEWAY_CHANNELS)
+                >= MAX_WEB_CHANNELS)
     {
         return Err(AdmissionError::Capacity);
     }
