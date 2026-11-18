@@ -674,6 +674,30 @@ not the database, is the commit point.
 
 ## 10. Replication's place
 
+Replication between offices ships files, stamped with where they came from. The store
+offers four things; B1 builds the first three, S1 the fourth.
+
+- **Origin positions.** Every entry records the positions it took in this office's
+  origin streams (work, message, and at HQ organization) under the office's origin
+  incarnation. They are recovered from the journal, never from the projection, and a
+  new incarnation never reuses them (document 16).
+- **An outbox.** `Journal::after` reads flushed entries in order. A consumer registers a
+  cursor, and a segment is released only when every cursor has passed it. The
+  materializer is the first consumer; S1's replication sender is the second.
+- **Snapshots.** A snapshot is the set of files under a scope at one flushed ordinal,
+  taken under the state barrier and identified by its content digest. Installing one is
+  writing those files and rebuilding. The store has no other snapshot format.
+- **Ordered apply (S1).** A peer's change arrives as its file changes with their origin
+  `(office, incarnation, sequence)` and organization position. `Store::apply_remote`
+  commits it as an ordinary entry whose receipt is that origin identity, so a repeated
+  frame is a no-op, and projects it through the same projectors. Each file keeps one
+  writing office: an office mirrors a peer's files and never puts a file another office
+  owns.
+
+`org-sync` keeps what it already does well (ordering, epochs, version levels, the session
+state machine); in S1 its storage traits are restated over these four offers. Milestone
+three adds an operation kind and a consumer, not another store.
+
 ## 11. What is deleted and what is kept
 
 ## 12. What it does not do
