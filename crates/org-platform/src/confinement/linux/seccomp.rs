@@ -8,7 +8,9 @@
 use std::io;
 use std::mem;
 
-use super::syscalls::{Arch, IOCTL_REQUESTS, PRCTL_OPTIONS, PROT_EXEC, THREAD_CLONE_FLAGS};
+use super::syscalls::{
+    Arch, FCNTL_COMMANDS, IOCTL_REQUESTS, PRCTL_OPTIONS, PROT_EXEC, THREAD_CLONE_FLAGS,
+};
 
 /// One instruction (`struct sock_filter`, `include/uapi/linux/filter.h`).
 pub(super) type Instruction = libc::sock_filter;
@@ -201,6 +203,10 @@ pub(super) fn program(arch: &Arch, pid: u32) -> Vec<Instruction> {
     let mut ioctl = vec![Step::Load(low(1))];
     ioctl.extend(one_of(IOCTL_REQUESTS));
     decided_by_arguments(&mut program, arch.ioctl, &ioctl);
+    // fcntl(fd, command, ...): the kernel reads the command as a 32-bit integer.
+    let mut fcntl = vec![Step::Load(low(1))];
+    fcntl.extend(one_of(FCNTL_COMMANDS));
+    decided_by_arguments(&mut program, arch.fcntl, &fcntl);
     // mmap(addr, length, prot, ...) and mprotect(addr, length, prot): never
     // executable. `PROT_EXEC` is in the low word.
     for number in [arch.mmap, arch.mprotect] {

@@ -11,7 +11,9 @@
 //! The list is the design's, read narrowly: of `epoll_*` only the calls the runtime
 //! makes, of `rt_sig*` only the three that act on the process itself, and of the
 //! clocks only reading one. Three calls are here that the design's list does not
-//! name; each says why at its entry.
+//! name; each says why at its entry. Four of the design's calls are decided by an
+//! argument although the design does not ask for it: `clone` by its exact flags,
+//! `mmap` and `mprotect` by their protection, and `fcntl` by its command.
 //!
 //! The aarch64 table is the x86-64 table under one rule: the same C library function
 //! reaches the same kernel operation. aarch64 has no `poll`, `epoll_wait`, `open` or
@@ -42,6 +44,8 @@ pub(super) struct Arch {
     pub(super) prctl: u32,
     /// Allowed only for the requests in [`IOCTL_REQUESTS`].
     pub(super) ioctl: u32,
+    /// Allowed only for the commands in [`FCNTL_COMMANDS`].
+    pub(super) fcntl: u32,
     /// Allowed only without `PROT_EXEC`.
     pub(super) mmap: u32,
     /// Allowed only without `PROT_EXEC`.
@@ -58,6 +62,14 @@ pub(super) const PRCTL_OPTIONS: &[u32] = &[15];
 /// `FIONBIO` and `FIONREAD` (`include/uapi/asm-generic/ioctls.h`; the same values on
 /// x86-64 and aarch64): make a descriptor non-blocking, and count its unread bytes.
 pub(super) const IOCTL_REQUESTS: &[u32] = &[0x5421, 0x541B];
+
+/// `F_GETFD`, `F_GETFL` and `F_DUPFD_CLOEXEC` (`include/uapi/asm-generic/fcntl.h`,
+/// `include/uapi/linux/fcntl.h`; the same values on x86-64 and aarch64): the three
+/// commands the web process makes. Every other command kills. With `F_SETOWN`,
+/// `F_SETSIG` and `O_ASYNC` set by `F_SETFL`, a process makes the kernel send a
+/// signal of its choice to any process of its user when input arrives on a socket it
+/// holds; Landlock stops that only from ABI 6.
+pub(super) const FCNTL_COMMANDS: &[u32] = &[1, 3, 1030];
 
 /// The flags of glibc's `pthread_create` (`nptl/pthread_create.c`): `CLONE_VM |
 /// CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM |
@@ -87,7 +99,6 @@ pub(super) const X86_64: Arch = Arch {
         ("close", 3),
         ("poll", 7),
         ("writev", 20),
-        ("fcntl", 72),
         // Sockets it already holds: no `socket`, `connect`, `bind` or `listen`.
         ("sendto", 44),
         ("recvfrom", 45),
@@ -140,6 +151,7 @@ pub(super) const X86_64: Arch = Arch {
     clone3: 435,
     prctl: 157,
     ioctl: 16,
+    fcntl: 72,
     mmap: 9,
     mprotect: 10,
     tgkill: 234,
@@ -155,7 +167,6 @@ pub(super) const AARCH64: Arch = Arch {
         // glibc's `poll` is `ppoll` here.
         ("ppoll", 73),
         ("writev", 66),
-        ("fcntl", 25),
         ("sendto", 206),
         ("recvfrom", 207),
         ("sendmsg", 211),
@@ -194,6 +205,7 @@ pub(super) const AARCH64: Arch = Arch {
     clone3: 435,
     prctl: 167,
     ioctl: 29,
+    fcntl: 25,
     mmap: 222,
     mprotect: 226,
     tgkill: 131,
@@ -245,7 +257,6 @@ const _: () = {
         ("close", libc::SYS_close),
         ("poll", libc::SYS_poll),
         ("writev", libc::SYS_writev),
-        ("fcntl", libc::SYS_fcntl),
         ("sendto", libc::SYS_sendto),
         ("recvfrom", libc::SYS_recvfrom),
         ("sendmsg", libc::SYS_sendmsg),
@@ -289,6 +300,7 @@ const _: () = {
     assert!(TABLE.clone3 as libc::c_long == libc::SYS_clone3);
     assert!(TABLE.prctl as libc::c_long == libc::SYS_prctl);
     assert!(TABLE.ioctl as libc::c_long == libc::SYS_ioctl);
+    assert!(TABLE.fcntl as libc::c_long == libc::SYS_fcntl);
     assert!(TABLE.mmap as libc::c_long == libc::SYS_mmap);
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);
@@ -302,7 +314,6 @@ const _: () = {
         ("close", libc::SYS_close),
         ("ppoll", libc::SYS_ppoll),
         ("writev", libc::SYS_writev),
-        ("fcntl", libc::SYS_fcntl),
         ("sendto", libc::SYS_sendto),
         ("recvfrom", libc::SYS_recvfrom),
         ("sendmsg", libc::SYS_sendmsg),
@@ -346,6 +357,7 @@ const _: () = {
     assert!(TABLE.clone3 as libc::c_long == libc::SYS_clone3);
     assert!(TABLE.prctl as libc::c_long == libc::SYS_prctl);
     assert!(TABLE.ioctl as libc::c_long == libc::SYS_ioctl);
+    assert!(TABLE.fcntl as libc::c_long == libc::SYS_fcntl);
     assert!(TABLE.mmap as libc::c_long == libc::SYS_mmap);
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);

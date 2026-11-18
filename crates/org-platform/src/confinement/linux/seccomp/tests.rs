@@ -153,6 +153,7 @@ fn every_listed_number_is_allowed_and_no_other() {
             arch.clone3,
             arch.prctl,
             arch.ioctl,
+            arch.fcntl,
             arch.mmap,
             arch.mprotect,
             arch.tgkill,
@@ -179,7 +180,7 @@ fn every_listed_number_is_allowed_and_no_other() {
                 RET_ALLOW
             } else {
                 // Every other call, and with these arguments `clone`, `prctl`,
-                // `ioctl` and `tgkill` too.
+                // `ioctl`, `fcntl` and `tgkill` too.
                 RET_KILL_PROCESS
             };
             assert_eq!(action, expected, "{name} {number}");
@@ -190,7 +191,9 @@ fn every_listed_number_is_allowed_and_no_other() {
 #[test]
 fn the_allowed_names_are_the_designs_list_and_three_more() {
     // Linux host design, section 3.3, step 5, in its order, with `epoll_*`,
-    // `rt_sig*` and "clocks" read as the calls the runtime makes.
+    // `rt_sig*` and "clocks" read as the calls the runtime makes. The design's
+    // `mmap`, `mprotect`, `fcntl`, `clone`, `prctl`, `ioctl` and signals to itself
+    // are not here: their arguments decide.
     let design = [
         "munmap",
         "madvise",
@@ -213,7 +216,6 @@ fn the_allowed_names_are_the_designs_list_and_three_more() {
         "setsockopt",
         "shutdown",
         "close",
-        "fcntl",
         "poll",
         "clock_gettime",
         "getrandom",
@@ -534,6 +536,43 @@ fn ioctl_is_allowed_only_for_the_two_socket_requests() {
         // The request is the second argument, not the first.
         assert_eq!(
             decide(arch, arch.ioctl, [libc::FIONBIO, 0, 0, 0, 0, 0]),
+            RET_KILL_PROCESS
+        );
+    }
+}
+
+#[test]
+fn fcntl_is_allowed_only_for_the_three_commands_the_runtime_makes() {
+    assert_eq!(
+        (libc::F_GETFD, libc::F_GETFL, libc::F_DUPFD_CLOEXEC),
+        (1, 3, 1030)
+    );
+    for (name, arch) in tables() {
+        let command = |command: i32| decide(arch, arch.fcntl, [5, command as u64, 0x800, 0, 0, 0]);
+        for allowed in [libc::F_GETFD, libc::F_GETFL, libc::F_DUPFD_CLOEXEC] {
+            assert_eq!(command(allowed), RET_ALLOW, "{name} {allowed}");
+        }
+        for other in [
+            libc::F_DUPFD,
+            libc::F_SETFD,
+            libc::F_SETFL,
+            libc::F_SETOWN,
+            libc::F_GETOWN,
+            // F_SETSIG and F_SETOWN_EX (`include/uapi/asm-generic/fcntl.h`).
+            10,
+            15,
+            libc::F_SETLK,
+            libc::F_SETLEASE,
+            libc::F_NOTIFY,
+            libc::F_SETPIPE_SZ,
+            libc::F_ADD_SEALS,
+            -1,
+        ] {
+            assert_eq!(command(other), RET_KILL_PROCESS, "{name} {other}");
+        }
+        // The command is the second argument, not the first.
+        assert_eq!(
+            decide(arch, arch.fcntl, [libc::F_GETFD as u64, 8, 0, 0, 0, 0]),
             RET_KILL_PROCESS
         );
     }

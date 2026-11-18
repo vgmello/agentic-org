@@ -742,6 +742,8 @@ const FORBIDDEN: &[&str] = &[
     "become dumpable again",
     "ask for its seccomp mode",
     "an ioctl other than the two socket requests",
+    "make a descriptor signal its parent",
+    "set a descriptor's flags with fcntl",
     "map executable memory",
     "make memory executable",
     "call seccomp again",
@@ -809,6 +811,12 @@ fn attempt(name: &str, paths: &Paths, socket: RawFd) -> libc::c_long {
             "an ioctl other than the two socket requests" => {
                 let mut size: libc::winsize = std::mem::zeroed();
                 libc::ioctl(0, libc::TIOCGWINSZ, &mut size).into()
+            }
+            "make a descriptor signal its parent" => {
+                libc::fcntl(socket, libc::F_SETOWN, libc::getppid()).into()
+            }
+            "set a descriptor's flags with fcntl" => {
+                libc::fcntl(socket, libc::F_SETFL, libc::O_ASYNC | libc::O_NONBLOCK).into()
             }
             "map executable memory" => libc::mmap(
                 std::ptr::null_mut(),
@@ -913,6 +921,8 @@ fn the_forbidden_calls_work_without_the_filter() {
         "create a socket pair",
         "signal its parent",
         "ask for its seccomp mode",
+        "make a descriptor signal its parent",
+        "set a descriptor's flags with fcntl",
         "map executable memory",
         "make memory executable",
         "ask for the Landlock version",
