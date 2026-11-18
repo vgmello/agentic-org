@@ -18,14 +18,13 @@ gitleaks git --redact
 
 CI runs the same workspace Clippy and tests on macOS and Linux, with no package
 excluded (`.github/workflows/ci.yml`). On Linux the host starts office workers since
-increment X2 of the [implementation plan](docs/implementation-plan.md); the web
-process, release key stores, the systemd service and the container follow in X3 to
-X5. `agentic-org serve` refuses to run as root, so run the tests as an ordinary user.
-A development host refuses a worker executable that its group can write: with a
-umask of `002` (the default of an Ubuntu account) the integration tests copy the
-programs they start into a private folder, and a host you start by hand needs
-`chmod g-w` on `target/debug/agentic-org-office` until increment X3 admits a file
-whose group is the user's own private group.
+increment X2 of the [implementation plan](docs/implementation-plan.md), keeps a
+release build's secrets in a checked directory since X3 and confines the web process
+since X4; the systemd service and the container follow in X5. `agentic-org serve` and
+`setup` refuse to run as root, so run the tests as an ordinary user. A development
+host admits a worker executable that its group can write only when that group is the
+user's own private group (the default of an Ubuntu account with a umask of `002`);
+the integration tests copy the programs they start into a private folder.
 
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, for example through Homebrew.
 CI pins the cargo-deny action by commit and verifies the Gitleaks binary checksum.

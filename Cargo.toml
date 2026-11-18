@@ -103,3 +103,9 @@ strip = true
 # executable, on every host start and in every test that starts a host.
 [profile.dev.package.sha2]
 opt-level = 3
+
+# The host verifies and makes password hashes with Argon2. Unoptimised it takes
+# seconds per sign-in, and tests that sign in over a real connection then miss their
+# read timeouts on a busy machine.
+[profile.dev.package.argon2]
+opt-level = 3

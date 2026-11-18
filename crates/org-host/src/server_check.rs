@@ -1280,9 +1280,11 @@ mod tests {
     ///
     /// Where the executed bytes are checked: a pin whose digest is the program's admits it,
     /// and a child runs; a pin with another digest refuses; no pin refuses, each before any
-    /// child exists. Where a code signature is checked, that check names no publisher, so
-    /// the started child is refused and killed in all three cases: there a release build
-    /// without a team id is never given this check at all (`for_system` answers `Refuse`).
+    /// child exists. Where a code signature is checked, this check names no requirement to
+    /// check a release image against, so the platform starts nothing in any of the three
+    /// cases (its error is not an image refusal: no child existed to refuse); there a
+    /// release build without a team id is never given this check at all (`for_system`
+    /// answers `Refuse`).
     ///
     /// [`Published`]: ServerCheck::Published
     #[test]
@@ -1343,8 +1345,19 @@ mod tests {
                         .spawn(&[], &env, &crate::cloexec::SPAWN_LOCK)
                         .err()
                         .unwrap_or_else(|| panic!("{check:?}: an unsigned image was started"));
-                    let refused = SpawnRefused::of(&error).expect("an image refusal");
-                    assert_eq!(refused.refusal, ImageRefusal::NotTheImage, "{check:?}");
+                    // A release image with no requirement: refused before anything is
+                    // started, so there is no child and no image refusal to name.
+                    assert_eq!(
+                        error.kind(),
+                        io::ErrorKind::InvalidInput,
+                        "{check:?}: {error}"
+                    );
+                    assert!(SpawnRefused::of(&error).is_none(), "{check:?}: {error}");
+                    assert_eq!(
+                        crate::test_programs::recorded_starts(home.path()),
+                        0,
+                        "{check:?}"
+                    );
                 }
             }
         }

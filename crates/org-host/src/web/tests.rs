@@ -1836,6 +1836,10 @@ fn confined_config(after_ready: &str) -> (tempfile::TempDir, Configuration) {
     let steps = format!("first-line\nconfine\nready\n{after_ready}");
     let (dir, mut config) = scripted_config(&steps, |_, _, _| Ok(None));
     let root = fs::canonicalize(dir.path()).unwrap();
+    // The real confinement names the rendezvous by its resolved path, as the kernel sees
+    // it: a temporary directory reached through a link (macOS: `/var` is a link to
+    // `/private/var`) must be given resolved, as every production runtime folder is.
+    config.runtime = root.clone();
     let critical = root.join("critical");
     fs::create_dir(&critical).unwrap();
     config.critical_paths = vec![critical];

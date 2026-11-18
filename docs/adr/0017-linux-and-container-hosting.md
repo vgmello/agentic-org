@@ -108,7 +108,9 @@ These settle what the decisions above left open. The detail is in the
    setup creates, or a mounted secrets volume in a container, recorded at setup. Mode
    `0700`, items `0600`, owned by the service user; ancestors not writable by others
    or by any group but the user's private group; on ext4, XFS, Btrfs or F2FS only;
-   disjoint from the data root by device and inode; a mount point in a container; and
+   disjoint from the data root by device and inode and by its place in the mount
+   table (and, in a container, from the whole data volume); a mount point in a
+   container; and
    an empty store for an instance whose records say keys exist refuses. Anything else
    refuses. The same engine is every development build's store.
 9. **The web process confines itself with a seccomp filter, and with Landlock where

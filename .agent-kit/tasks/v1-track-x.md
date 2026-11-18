@@ -1066,6 +1066,40 @@ with `v1-integration` and what they change for the other team; the web process's
 confinement and its start by the host as they are now; the repairs of X2's host slice
 and of X3. The merge into `v1-integration` needs all three to accept.
 
+**The final review of `daa46cdf`, in three parts** (three fresh read-only reviewers,
+same model as the lead):
+
+| Part | Verdict | What must precede the merge |
+| --- | --- | --- |
+| A: the two merges with `v1-integration` and what they change for the other team | ACCEPT_WITH_FOLLOW_UPS: no blocker and no major. 1,562 of their files accounted for (18 moved or replaced, each traced); 3,205 of their test functions accounted for (17 renamed, each with its successor; none newly ignored; 104 lost a platform gate); all 102 tests they added since the earlier merge present by name; their three behaviour changes complete; the Keychain attributes and sequences unchanged; the whole workspace lints for Linux, macOS and musl | Nothing in its part. It keeps the record's own condition: a macOS CI result on the pushed commit |
+| B: the web process's confinement and its start by the host | CHANGES_REQUIRED: one MAJOR, test only. Three converted web tests give the real Seatbelt confinement a rendezvous path that is not resolved (`/var/folders/…` on macOS is reached through a link), so the confined connect would be denied on a Mac. The filter itself: 143 instructions decoded and found correct; no next hole of the fast-open kind found by probe; Landlock optional found correct | The one-line test fix; then the macOS job |
+| C: the repairs of X2's host slice and of X3 | CHANGES_REQUIRED: one MAJOR, test only. A host test added by X2's repairs expects an image refusal on macOS where the macOS adapter starts nothing and answers a plain error. The store's repairs attacked on ext4, Btrfs, loop volumes and in Docker and found sound; the intermittent channels test traced to a race in the other team's own test, fixed by them in a commit this merge brings | The test fix; then the macOS job |
+
+Both majors are tests that would fail only on macOS, found by reading, in code that
+has never run on a Mac. Repaired by the lead in the commit after this record:
+`a_release_build_without_a_team_admits_only_the_image_the_release_pins` expects what
+the macOS adapter does (nothing started, no image refusal); `confined_config` gives
+the resolved runtime folder. From the same reviews, also done: the real-host tests'
+HQ step has its own bound of 300 s (reviewer B judged the failure in the lead's run
+overload, with a thin margin: one miss recovers, the lead's run needed about ten in
+a row); Argon2 is optimised in development builds (one of the other team's sign-in
+tests missed its 10 s read timeout at load 15 in reviewer A's run); the documents
+reviewer A found stale say what is built; design 3.2 and ADR decision 8 state the
+store as repaired, with the stacked-filesystem limit reviewer C probed. By the
+owner's instruction the two tests that need IPv6 skip that case where the machine
+has no IPv6 loopback.
+
+Follow-ups accepted for after the merge: the development key store is stricter than
+the other team's old one (a key file with a wrong mode is a storage error, not a
+null-key start); a failed `F_FULLFSYNC` no longer falls back to `fsync` in the agent
+spool; the worker launch deadline should be a timing the real-process tests can
+lengthen (with the other team); small parser and wording nits. Reviewer A's list
+"what the other team must be told at the merge" goes to them with the merge.
+
+**Still required before the merge:** the two reviewers who asked for changes confirm
+the repairs on the exact commit, and the macOS CI job runs on it (GitHub's queue for
+this branch is hours long; nothing after `e8cf07fb` has executed on macOS).
+
 ## macOS results from CI
 
 The macOS job (`macos-15`) runs the workspace's tests on every push. Run 44232051595

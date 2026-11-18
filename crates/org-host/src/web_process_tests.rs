@@ -49,6 +49,9 @@ mod browser_sessions;
 mod recovery_custody;
 
 const WAIT: Duration = Duration::from_secs(60);
+/// How long the real-host tests keep asking for the HQ whose worker must start within the
+/// host's launch deadline ([`provision_hq_retrying`]).
+const HQ_WAIT: Duration = Duration::from_secs(300);
 const PASSWORD: &str = "synthetic first password";
 
 struct Reply {
@@ -620,7 +623,9 @@ fn provision_hq_retrying(wire: &mut BufReader<UnixStream>, id: &mut u64, session
             home_team_name: "Core".into(),
         },
     };
-    let until = Instant::now() + WAIT;
+    // Its own, long bound: each retry needs only one launch that fits the host's deadline,
+    // and on a machine busy with other test binaries several in a row can miss it.
+    let until = Instant::now() + HQ_WAIT;
     loop {
         let result = answer::<OrganizationProvision>(wire, *id, &prepared);
         *id += 1;
