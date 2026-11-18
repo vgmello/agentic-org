@@ -206,7 +206,7 @@ pub struct GatewayConfig {
     pub api: ApiLimits,
 }
 
-struct Gateway<B> {
+pub(crate) struct Gateway<B> {
     ui: StaticUi,
     admission: RequestAdmission,
     backend: Arc<B>,
@@ -215,7 +215,7 @@ struct Gateway<B> {
 }
 
 impl<B: ApiBackend> Gateway<B> {
-    fn new(
+    pub(crate) fn new(
         ui: StaticUi,
         backend: B,
         limits: ApiLimits,
@@ -231,7 +231,7 @@ impl<B: ApiBackend> Gateway<B> {
         })
     }
 
-    async fn respond<T>(&self, request: Request<T>) -> Response<Full<Bytes>>
+    pub(crate) async fn respond<T>(&self, request: Request<T>) -> Response<Full<Bytes>>
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -382,6 +382,23 @@ where
     B: ApiBackend,
     S: Future<Output = ()>,
 {
+    run_web_reporting(listener, config, files, initialize, || Ok(()))
+}
+
+/// [`run_gateway`], calling `serving` once after the runtime, listener
+/// registration, backend and web process service are initialized and before the
+/// first accept. Its error stops the web process before it serves any request.
+pub fn run_web_reporting<B, S>(
+    listener: TcpListener,
+    config: GatewayConfig,
+    files: BuildFiles,
+    initialize: impl FnOnce() -> io::Result<(B, S)>,
+    serving: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()>
+where
+    B: ApiBackend,
+    S: Future<Output = ()>,
+{
     config.api.validate()?;
     try_run_http(
         listener,
@@ -393,6 +410,7 @@ where
             let admission = RequestAdmission::new(config.origin.clone());
             let ui = StaticUi::new(files, config.origin, config.hsts);
             let service = Arc::new(Gateway::new(ui, backend, config.api, admission)?);
+            serving()?;
             let handler = move |request: Request<Incoming>| {
                 let service = Arc::clone(&service);
                 async move { Ok::<_, Infallible>(service.respond(request).await) }

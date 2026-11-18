@@ -37,6 +37,7 @@ fn op_methods() {
         (OfficeOpenChannel::METHOD, "office.open_channel"),
         (OperationGet::METHOD, "operation.get"),
         (TlsFetch::METHOD, "tls.fetch"),
+        (WebServing::METHOD, "web.serving"),
         (TlsSet::METHOD, "tls.set"),
         (AccountSetPassword::METHOD, "account.set_password"),
         (AccountResetPassword::METHOD, "account.reset_password"),
@@ -650,6 +651,7 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
     let first = GatewayFirstLine {
         rendezvous: "/run/user/501/agentic-org/r/0123456789abcdef".into(),
         instance_id: "01M72N8MG00000000000000I01".into(),
+        release: None,
     };
     let wire = json!({
         "v": 1, "rendezvous": "/run/user/501/agentic-org/r/0123456789abcdef",
@@ -800,6 +802,7 @@ fn gateway_lines_refuse_unknown_fields() {
     let mut first = serde_json::to_value(GatewayFirstLine {
         rendezvous: "/tmp/agentic-org/rendezvous.sock".into(),
         instance_id: "01JINS0000000000000000000A".into(),
+        release: None,
     })
     .unwrap();
     let mut ready = serde_json::json!({"v": 1, "event": "ready_for_secrets"});
@@ -859,4 +862,11 @@ fn landlock_enforcement_round_trips_every_spelling() {
         );
     }
     assert!(serde_json::from_value::<LandlockEnforcement>(json!("FullyEnforced")).is_err());
+}
+
+#[test]
+fn web_serving_params_are_closed_and_empty() {
+    let params: WebServingParams = serde_json::from_str("{}").unwrap();
+    assert_eq!(serde_json::to_value(params).unwrap(), serde_json::json!({}));
+    assert!(serde_json::from_str::<WebServingParams>(r#"{"ready":true}"#).is_err());
 }

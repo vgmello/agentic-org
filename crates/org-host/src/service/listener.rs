@@ -97,6 +97,85 @@ pub(crate) struct Listener {
 struct Gateway {
     transfer: Arc<std::os::unix::net::UnixDatagram>,
     listen: org_host_control::listen::ListenConfig,
+    /// A successful `tls.fetch` answered on this connection.
+    fetched: AtomicBool,
+    /// The web process's one `web.serving` was accepted.
+    serving: AtomicBool,
+    /// The host refused a `web.serving` as a protocol error and closed control.
+    serving_refused: AtomicBool,
+}
+
+/// How the host takes a `web.serving` notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServingReport {
+    /// Not the admitted web process connection.
+    NotWeb,
+    /// Accepted: the first one, after hello and a successful `tls.fetch`.
+    Accepted,
+    /// Repeated, or before hello/`tls.fetch`: a protocol error.
+    OutOfOrder,
+}
+
+/// Lifetime of the sole authenticated web process control connection. Constructed only by
+/// the web process supervisor, after its image/reader/sandbox admission and handoff ACK.
+/// This is the only production path that gives a connection web process privilege:
+/// host.sock and setup connections stay `ChannelKind::Local`.
+pub(crate) struct WebConnection {
+    connection: Arc<Connection>,
+    thread: Option<JoinHandle<()>>,
+}
+impl WebConnection {
+    pub(crate) fn start(
+        stream: UnixStream,
+        transfer: std::os::unix::net::UnixDatagram,
+        listen: org_host_control::listen::ListenConfig,
+        handler: Arc<dyn Handler>,
+    ) -> io::Result<Self> {
+        let (mut connection, queue) =
+            Connection::new(stream.try_clone()?, Accepted::sample(&stream));
+        Arc::get_mut(&mut connection)
+            .ok_or_else(|| io::Error::other("shared admission"))?
+            .gateway = Some(Gateway {
+            transfer: Arc::new(transfer),
+            listen,
+            fetched: AtomicBool::new(false),
+            serving: AtomicBool::new(false),
+            serving_refused: AtomicBool::new(false),
+        });
+        let serving = Arc::clone(&connection);
+        let thread = thread::Builder::new()
+            .name("web-control".into())
+            .spawn(move || serve(stream, serving, queue, handler, 4))?;
+        Ok(Self {
+            connection,
+            thread: Some(thread),
+        })
+    }
+    pub(crate) fn live(&self) -> bool {
+        !self.connection.closed.load(Ordering::SeqCst)
+    }
+    /// The host refused the web process's `web.serving` as a protocol error.
+    pub(crate) fn serving_refused(&self) -> bool {
+        self.connection
+            .gateway
+            .as_ref()
+            .is_some_and(|g| g.serving_refused.load(Ordering::SeqCst))
+    }
+    /// The web process reported, in order, that its HTTP server is serving.
+    pub(crate) fn reported_serving(&self) -> bool {
+        self.connection
+            .gateway
+            .as_ref()
+            .is_some_and(|g| g.serving.load(Ordering::SeqCst))
+    }
+}
+impl Drop for WebConnection {
+    fn drop(&mut self) {
+        self.connection.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 /// Reverse control connection made by bootstrap mode to setup's listener. It
@@ -585,6 +664,29 @@ impl Connection {
     pub(crate) fn gateway_listen(&self) -> Option<&org_host_control::listen::ListenConfig> {
         self.gateway.as_ref().map(|g| &g.listen)
     }
+    /// Records a successful `tls.fetch` answer on the web process connection.
+    pub(crate) fn note_listener_fetched(&self) {
+        if let Some(web) = &self.gateway {
+            web.fetched.store(true, Ordering::SeqCst);
+        }
+    }
+    /// Takes the web process's `web.serving`: accepted once, after hello and `tls.fetch`.
+    pub(crate) fn report_serving(&self) -> ServingReport {
+        let Some(web) = &self.gateway else {
+            return ServingReport::NotWeb;
+        };
+        if self.hello_completed()
+            && web.fetched.load(Ordering::SeqCst)
+            && web
+                .serving
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            ServingReport::Accepted
+        } else {
+            ServingReport::OutOfOrder
+        }
+    }
 
     pub(crate) fn complete_hello(&self) {
         self.hello_completed.store(true, Ordering::SeqCst);
@@ -610,6 +712,15 @@ impl Connection {
         slot: crate::supervisor::channels::ChannelSlot,
     ) {
         lock(&self.received_channels).insert(channel.into(), slot);
+    }
+
+    /// Refuses a web process's `web.serving` as a protocol error, noting it so the
+    /// supervisor logs that cause rather than only the control EOF that follows.
+    pub(crate) fn refuse_serving(&self, response: Response) {
+        if let Some(web) = &self.gateway {
+            web.serving_refused.store(true, Ordering::SeqCst);
+        }
+        self.refuse_and_finish(response);
     }
 
     /// Drain the refusal before closing, but stop even already-buffered requests.
@@ -858,6 +969,39 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn web_serving_is_taken_only_from_the_web_after_hello_and_tls_fetch() {
+        let plain = Connection::for_test();
+        plain.complete_hello();
+        plain.note_listener_fetched();
+        assert!(matches!(plain.report_serving(), ServingReport::NotWeb));
+        let (host, _peer) = UnixStream::pair().unwrap();
+        let (transfer, _received) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let (mut connection, _queue) =
+            Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+        Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
+            transfer: Arc::new(transfer),
+            listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+            fetched: AtomicBool::new(false),
+            serving: AtomicBool::new(false),
+            serving_refused: AtomicBool::new(false),
+        });
+        connection.note_listener_fetched();
+        assert!(
+            matches!(connection.report_serving(), ServingReport::OutOfOrder),
+            "tls.fetch without hello"
+        );
+        connection.complete_hello();
+        assert!(matches!(
+            connection.report_serving(),
+            ServingReport::Accepted
+        ));
+        assert!(matches!(
+            connection.report_serving(),
+            ServingReport::OutOfOrder
+        ));
+    }
+
+    #[test]
     fn gateway_descriptor_uses_datagram_and_receipt_never_stream_rights() {
         use std::os::fd::AsFd;
         let (host, peer) = UnixStream::pair().unwrap();
@@ -867,6 +1011,9 @@ mod tests {
         Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
             transfer: Arc::new(transfer),
             listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+            fetched: AtomicBool::new(false),
+            serving: AtomicBool::new(false),
+            serving_refused: AtomicBool::new(false),
         });
         assert_eq!(
             connection.channel_kind(),
@@ -1144,6 +1291,72 @@ mod tests {
             },
         );
         assert_eq!(polls.get(), 1);
+    }
+
+    fn loopback_listen() -> org_host_control::listen::ListenConfig {
+        serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap()
+    }
+
+    #[test]
+    fn only_the_admitted_web_connection_is_web_kind() {
+        let (host, peer) = UnixStream::pair().unwrap();
+        let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let web = WebConnection::start(host, transfer, loopback_listen(), Arc::new(Echo)).unwrap();
+        assert_eq!(
+            web.connection.channel_kind(),
+            org_office_launch::v3::ChannelKind::Gateway
+        );
+        assert!(web.connection.gateway_listen().is_some());
+        assert!(web.live());
+
+        // A setup reverse connection never gets web process privilege.
+        let (setup_host, _setup_peer) = UnixStream::pair().unwrap();
+        let setup = SetupConnection::start(setup_host, Arc::new(Echo)).unwrap();
+        assert_eq!(
+            setup.connection.channel_kind(),
+            org_office_launch::v3::ChannelKind::Local
+        );
+        assert!(setup.connection.gateway_listen().is_none());
+
+        // Every connection the host.sock listener accepts is built by `Connection::new`,
+        // which carries no web process.
+        let (accepted, _accepted_peer) = UnixStream::pair().unwrap();
+        let (plain, _queue) =
+            Connection::new(accepted.try_clone().unwrap(), Accepted::sample(&accepted));
+        assert_eq!(
+            plain.channel_kind(),
+            org_office_launch::v3::ChannelKind::Local
+        );
+
+        // Peer EOF ends the web process control connection.
+        drop(peer);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while web.live() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!web.live());
+    }
+
+    #[test]
+    fn host_sock_connections_are_local() {
+        let dir = short_tempdir();
+        let (listener, path) = start(dir.path(), org_socket::effective_uid());
+        let _client = UnixStream::connect(&path).unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let kinds: Vec<_> = lock(&listener.live)
+                .values()
+                .map(|live| live.connection.channel_kind())
+                .collect();
+            if !kinds.is_empty() {
+                assert!(kinds
+                    .iter()
+                    .all(|k| *k == org_office_launch::v3::ChannelKind::Local));
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "no accepted connection");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     struct Echo;
@@ -1791,6 +2004,9 @@ mod channel_lifecycle_tests {
                 Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
                 transfer: Arc::new(transfer),
                 listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+                fetched: AtomicBool::new(false),
+                serving: AtomicBool::new(false),
+                serving_refused: AtomicBool::new(false),
             });
                 Some(org_socket::rights::DatagramReceiver::new(peer))
             } else {

@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 
 use crate::csp;
 
-pub const MAX_BUILD_BYTES: usize = 64 * 1024 * 1024;
-const MAX_BUILD_FILES: usize = 4096;
+pub const MAX_BUILD_BYTES: usize = org_release::MAX_UI_BYTES as usize;
+const MAX_BUILD_FILES: usize = org_release::MAX_UI_ENTRIES;
 const MAX_KEY_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +32,8 @@ pub enum BuildError {
     InvalidPolicy,
     UnreadableBuild,
     UnsafeBuildEntry,
+    UnauthenticatedRelease,
+    ReleaseImageMismatch,
 }
 
 struct BuildFile {

@@ -12,9 +12,44 @@ fn selected_pin_checks_actual_child_kernel_hash_and_never_accepts_debug_skip() {
     pinned.still(pid, Some(token)).unwrap();
     let mut different = expected;
     different[0] ^= 1;
-    assert!(platform.pinned(different).admit(pid).is_err());
+    assert!(platform.clone().pinned(different).admit(pid).is_err());
     assert!(ServerCheck::Skip.pinned(expected).admit(pid).is_err());
+    // The pre-first-line re-check refuses a different image, and the inner check's refusal.
+    assert!(platform
+        .clone()
+        .pinned(different)
+        .still(pid, Some(token))
+        .is_err());
+    let mut other = token;
+    other[0] ^= 1;
+    let changed = ServerCheck::Scripted(Scripted(std::sync::Arc::new(move |step, _| {
+        Ok(Some(if step == Step::Still { other } else { token }))
+    })));
+    assert!(changed.pinned(expected).still(pid, Some(token)).is_err());
     drop(child); // kill and reap this generated suspended test image
     assert!(pinned.admit(pid).is_err());
     assert!(pinned.still(pid, Some(token)).is_err());
+}
+
+#[test]
+fn a_refused_or_pinned_check_never_admits_through_the_plain_decision() {
+    let never = || -> Result<AuditToken, String> { panic!("asked for a token") };
+    assert!(ServerCheck::WebRefused("refused")
+        .admit(std::process::id())
+        .is_err());
+    assert!(admit(
+        &ServerCheck::WebRefused("refused"),
+        never,
+        |_, _| panic!("signature"),
+        |_| panic!("keychain"),
+    )
+    .is_err());
+    // A pinned check is decided only by the live kernel-image adapter.
+    assert!(admit(
+        &ServerCheck::Skip.pinned([0; 20]),
+        never,
+        |_, _| panic!("signature"),
+        |_| panic!("keychain"),
+    )
+    .is_err());
 }

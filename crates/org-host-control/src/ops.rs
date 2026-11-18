@@ -478,6 +478,25 @@ impl Call for TlsFetch {
     type Result = TlsFetchResult;
 }
 
+/// `web.serving` (**web process control connection only**; `not_authorized` on `host.sock` and
+/// setup connections): the web process's one notification that its HTTP server is initialized and
+/// accepting on the listener it was given. Sent exactly once, after a successful `tls.fetch`; the
+/// host answers `{}`. The host reports the web process `running` only after it, and fails the start if
+/// it does not arrive within the host's serving deadline. A repeated or out-of-order notification
+/// is a protocol error: the host answers `invalid_request` and closes the control connection.
+pub struct WebServing;
+
+/// `web.serving`'s params: closed and empty (`{}`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebServingParams {}
+
+impl Call for WebServing {
+    const METHOD: &'static str = "web.serving";
+    type Params = WebServingParams;
+    type Result = Empty;
+}
+
 /// `tls.set` (`host.sock` only; admin, the signed `agentic-org` peer on macOS; journaled): install
 /// a TLS pair. First, as for every journaled op, the journal lookup, which needs the op's
 /// fingerprint, the pair's [`TlsPairFingerprint`]: a pair the PEM reader ([`crate::pem`]) refuses

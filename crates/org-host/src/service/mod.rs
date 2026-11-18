@@ -113,6 +113,32 @@ impl Service {
         self.gateway = state;
         self
     }
+    /// Whether the host may start its web process: host authentication is
+    /// present and HQ is Active. Persisted listener configuration alone never qualifies.
+    pub(crate) fn web_eligible(&self) -> bool {
+        web_start_eligible(self.authentication.is_some(), self.hq_active())
+    }
+    /// The start-eligibility predicate the host wires into its web process supervisor:
+    /// [`Service::web_eligible`], evaluated live on each supervisor poll.
+    pub(crate) fn web_eligibility(self: &Arc<Self>) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        let service = Arc::clone(self);
+        Arc::new(move || service.web_eligible())
+    }
+    /// Whether browsers can be served: eligible, and an admitted web process is serving
+    /// (the supervisor publishes `Running` only between admission and exit/EOF).
+    pub(crate) fn web_ready(&self) -> bool {
+        web_serving(
+            self.authentication.is_some(),
+            self.hq_active(),
+            *crate::sync::lock(&self.gateway),
+        )
+    }
+    fn hq_active(&self) -> bool {
+        self.offices.offices().iter().any(|office| {
+            office.role == org_proto::OfficeRole::Hq
+                && office.status == org_proto::OfficeStatus::Active
+        })
+    }
     #[cfg(test)]
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
@@ -275,6 +301,40 @@ fn deliver_channel(
     }
 }
 
+/// `web.serving` (GW-01 r4): only the admitted web process connection may report, once, after
+/// hello and a successful `tls.fetch`. Anything else from it is a protocol error that closes
+/// the control connection, so supervision fails the start rather than publishing `running`.
+fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
+    use crate::service::listener::ServingReport;
+    use org_host_control::ops::WebServing;
+    let refused = |code, message| Response::error(request.id, ApiError::new(code, message));
+    if connection.gateway_listen().is_none() {
+        connection.send_response(refused(
+            ErrorCode::NotAuthorized,
+            "private gateway connection required",
+        ));
+        return;
+    }
+    if request.params::<WebServing>().is_err() {
+        connection.refuse_serving(refused(
+            ErrorCode::InvalidRequest,
+            "the params don't fit this method",
+        ));
+        return;
+    }
+    match connection.report_serving() {
+        ServingReport::Accepted => {
+            connection.send_response(ok::<WebServing>(request.id, &Default::default()));
+        }
+        ServingReport::OutOfOrder | ServingReport::NotWeb => {
+            connection.refuse_serving(refused(
+                ErrorCode::InvalidRequest,
+                "web.serving is sent once, after hello and tls.fetch",
+            ));
+        }
+    }
+}
+
 fn session_auth_method(request: &Request) -> bool {
     use org_host_control::ops::{
         AccountVerify, OfficeOpenChannel, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
@@ -326,6 +386,10 @@ impl Handler for Service {
             ));
             return;
         };
+        if request.is::<org_host_control::ops::WebServing>() {
+            web_reports_serving(&request, connection);
+            return;
+        }
         if !connection.hello_completed() && !request.is::<Hello>() {
             connection.send_response(Response::error(
                 request.id,
@@ -347,6 +411,7 @@ impl Handler for Service {
                         "verified TLS pair unavailable",
                     ));
                 }
+                connection.note_listener_fetched();
                 Ok(org_host_control::ops::TlsFetchResult::HttpLoopback {
                     origin: snapshot.origin().clone(),
                     hsts: snapshot.hsts(),
@@ -542,8 +607,64 @@ pub(crate) fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
     })
 }
 
+/// The start-eligibility rule: host authentication is present and HQ is Active.
+/// Persisted listener configuration alone never qualifies.
+pub(crate) fn web_start_eligible(authenticated: bool, hq_active: bool) -> bool {
+    authenticated && hq_active
+}
+
+/// The readiness rule: all three conditions, never persisted state alone.
+pub(crate) fn web_serving(authenticated: bool, hq_active: bool, state: GatewayState) -> bool {
+    web_start_eligible(authenticated, hq_active) && state == GatewayState::Running
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    #[test]
+    fn web_start_needs_authentication_and_an_active_hq() {
+        use super::web_start_eligible;
+        assert!(web_start_eligible(true, true));
+        assert!(!web_start_eligible(false, true), "no authentication");
+        assert!(!web_start_eligible(true, false), "no Active HQ");
+        assert!(!web_start_eligible(false, false));
+    }
+
+    /// The service fixture, and the predicate the host wires into its web process
+    /// supervisor, refuse to start the web process without authentication and without an
+    /// Active HQ. An Active HQ needs a real office worker: the ignored real-process
+    /// test covers the eligible case and the authenticated, not-yet-Active window.
+    #[test]
+    fn the_wired_web_eligibility_refuses_without_authentication_or_an_active_hq() {
+        let home = tempfile::tempdir().unwrap();
+        let bare = Arc::new(service(home.path()));
+        assert!(!bare.web_eligible(), "no authentication");
+        assert!(!(bare.web_eligibility())(), "wired: no authentication");
+        let (_root, authentication, _connection) = crate::service::authentication::tests::fixture();
+        let authenticated =
+            Arc::new(service(home.path()).with_authentication(Some(Arc::new(authentication))));
+        assert!(authenticated.offices.offices().is_empty());
+        assert!(!authenticated.web_eligible(), "no Active HQ");
+        assert!(!(authenticated.web_eligibility())(), "wired: no Active HQ");
+        bare.offices.shutdown();
+        authenticated.offices.shutdown();
+    }
+
+    #[test]
+    fn web_ready_needs_authentication_active_hq_and_a_serving_web() {
+        use super::web_serving;
+        assert!(web_serving(true, true, GatewayState::Running));
+        for state in [
+            GatewayState::NotConfigured,
+            GatewayState::Starting,
+            GatewayState::Failed,
+            GatewayState::Unknown,
+        ] {
+            assert!(!web_serving(true, true, state), "{state:?}");
+        }
+        assert!(!web_serving(false, true, GatewayState::Running));
+        assert!(!web_serving(true, false, GatewayState::Running));
+    }
+
     use super::*;
     use std::path::Path;
 
@@ -590,7 +711,7 @@ mod tests {
         }
     }
 
-    pub(super) fn service(home: &Path) -> Service {
+    pub(crate) fn service(home: &Path) -> Service {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
@@ -612,6 +733,209 @@ mod tests {
             &Timings::default(),
         );
         Service::new(offices, broadcast, None)
+    }
+
+    /// A service fixture with an instance id, as an admitted web process's handler, and
+    /// its offices for shutdown.
+    pub(crate) fn web_handler(home: &Path) -> (Arc<Service>, Arc<Offices>) {
+        let mut service = service(home);
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        let offices = service.offices.clone();
+        (Arc::new(service), offices)
+    }
+
+    /// The real handler on an admitted web process control connection, plus its peer end.
+    fn web_peer(
+        home: &Path,
+    ) -> (
+        listener::WebConnection,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+        Arc<Offices>,
+    ) {
+        web_peer_on(
+            home,
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        )
+    }
+
+    /// [`web_peer`] whose web process listens on `listen` (JSON).
+    fn web_peer_on(
+        home: &Path,
+        listen: &str,
+    ) -> (
+        listener::WebConnection,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+        Arc<Offices>,
+    ) {
+        let mut service = service(home);
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        let offices = service.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let listen = serde_json::from_str(listen).unwrap();
+        let web =
+            listener::WebConnection::start(host, transfer, listen, Arc::new(service)).unwrap();
+        (web, std::io::BufReader::new(peer), offices)
+    }
+
+    fn exchange<C: Call>(
+        peer: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
+        id: u64,
+        params: &C::Params,
+    ) -> Option<org_proto::Response> {
+        org_proto::frame::write_message(peer.get_mut(), &Request::new::<C>(id, params).unwrap())
+            .unwrap();
+        org_proto::frame::read_message(peer).ok().flatten()
+    }
+
+    fn refused(response: Option<org_proto::Response>, code: ErrorCode) -> bool {
+        matches!(response.map(|r| r.outcome),
+            Some(org_proto::Outcome::Error(error)) if error.code == code)
+    }
+
+    fn wait_closed(web: &listener::WebConnection) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while web.live() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!web.live(), "protocol error closes the control connection");
+    }
+
+    #[test]
+    fn web_serving_is_accepted_once_after_hello_and_tls_fetch() {
+        use org_host_control::ops::{TlsFetch, WebServing};
+        let home = tempfile::tempdir().unwrap();
+        let (web, mut peer, offices) = web_peer(home.path());
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        exchange::<TlsFetch>(&mut peer, 2, &Default::default())
+            .unwrap()
+            .into_result::<TlsFetch>()
+            .unwrap();
+        assert!(!web.reported_serving());
+        exchange::<WebServing>(&mut peer, 3, &Default::default())
+            .unwrap()
+            .into_result::<WebServing>()
+            .unwrap();
+        assert!(web.reported_serving());
+        assert!(web.live());
+        assert!(!web.serving_refused());
+        // A duplicate is refused and closes the control connection.
+        assert!(refused(
+            exchange::<WebServing>(&mut peer, 4, &Default::default()),
+            ErrorCode::InvalidRequest
+        ));
+        wait_closed(&web);
+        // The supervisor logs the refusal, not only the EOF that follows it.
+        assert!(web.serving_refused());
+        drop(web);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn web_serving_with_params_that_do_not_fit_is_a_protocol_error() {
+        use org_host_control::ops::TlsFetch;
+        let home = tempfile::tempdir().unwrap();
+        let (web, mut peer, offices) = web_peer(home.path());
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        exchange::<TlsFetch>(&mut peer, 2, &Default::default())
+            .unwrap()
+            .into_result::<TlsFetch>()
+            .unwrap();
+        // In order, but its params don't fit `web.serving`.
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id": 3,
+            "method": "web.serving",
+            "params": {"ready": true},
+        }))
+        .unwrap();
+        org_proto::frame::write_message(peer.get_mut(), &request).unwrap();
+        let response = org_proto::frame::read_message(&mut peer).ok().flatten();
+        assert!(refused(response, ErrorCode::InvalidRequest));
+        wait_closed(&web);
+        assert!(!web.reported_serving());
+        assert!(web.serving_refused());
+        drop(web);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn tls_fetch_off_an_http_loopback_listener_is_unavailable_and_never_enables_serving() {
+        use org_host_control::ops::{TlsFetch, WebServing};
+        let home = tempfile::tempdir().unwrap();
+        let (web, mut peer, offices) = web_peer_on(
+            home.path(),
+            r#"{"address":"127.0.0.1","port":8443,"scheme":"https","origin":"https://127.0.0.1:8443","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<TlsFetch>(&mut peer, 2, &Default::default()),
+            ErrorCode::Unavailable
+        ));
+        assert!(refused(
+            exchange::<WebServing>(&mut peer, 3, &Default::default()),
+            ErrorCode::InvalidRequest
+        ));
+        wait_closed(&web);
+        assert!(!web.reported_serving());
+        drop(web);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn web_serving_before_tls_fetch_is_a_protocol_error() {
+        use org_host_control::ops::WebServing;
+        let home = tempfile::tempdir().unwrap();
+        let (web, mut peer, offices) = web_peer(home.path());
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<WebServing>(&mut peer, 2, &Default::default()),
+            ErrorCode::InvalidRequest
+        ));
+        wait_closed(&web);
+        assert!(!web.reported_serving());
+        assert!(web.serving_refused());
+        drop(web);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn web_serving_from_a_local_connection_is_not_authorized() {
+        use org_host_control::ops::WebServing;
+        let home = tempfile::tempdir().unwrap();
+        let mut service = service(home.path());
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        let offices = service.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        // A setup connection and a host.sock connection are both `Local`.
+        let local = listener::SetupConnection::start(host, Arc::new(service)).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<WebServing>(&mut peer, 2, &Default::default()),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(local.live());
+        drop(local);
+        offices.shutdown();
     }
 
     /// Hello and pre-hello requests run inline (see the listener's

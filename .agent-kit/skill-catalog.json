@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "bf25d67008453dcac110692de24c7deaf5a13cf3c93bcf6a07a093ec79e3b0dd"
+      "sha256": "9c56303f0cb84fe80f986963fe14621db76615e5baa7183d814e2ba4d45e1bed"
     },
     {
       "path": "Cargo.toml",
@@ -86,7 +86,7 @@
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
-      "sha256": "6f428f547cfb5d517bb8163c059c128580cfb8ab27db8ca88669f983f0ed8324"
+      "sha256": "4bcb18581f12cb50e5550e242c3c31aa528ff51661ae9522d6a3aa2417dafcbf"
     },
     {
       "path": "crates/org-client/Cargo.toml",

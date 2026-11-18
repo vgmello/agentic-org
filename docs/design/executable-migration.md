@@ -42,7 +42,7 @@ source; recheck it against the commit you work on.
 | --- | --- |
 | `agentic-org` | `serve`, help and version. `setup` refuses without changing state ([`apps/agentic-org/src/lib.rs`](../../apps/agentic-org/src/lib.rs)). The host socket answers only `hello` and `instance.status` (`crates/org-host/src/service/mod.rs`). |
 | `agentic-org-office` | Runs when the host starts it, on macOS only (`crates/org-host/src/spawn.rs`). Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls yet. |
-| `agentic-org-web` | Help and version. Startup refuses to open a listener ([`apps/agentic-org-web/src/main.rs`](../../apps/agentic-org-web/src/main.rs)). |
+| `agentic-org-web` | Help and version. `--serve` runs only after a verified host handoff and otherwise refuses without opening a listener ([`apps/agentic-org-web/src/main.rs`](../../apps/agentic-org-web/src/main.rs)); the host starts it only in debug/test instance composition, and it serves only `GET /api/v1/version`. |
 | `agent-os` | Messaging, directory and work calls against a running office when one is named; with none it writes to a file queue, which is deleted (implementation plan B6). |
 
 Libraries that exist and are not yet reachable from any command: release

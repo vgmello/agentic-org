@@ -627,3 +627,7 @@ fn exercise_restarted_worker(host: &BootstrapHost, socket: &Path, office: &str, 
 #[cfg(target_os = "macos")]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(target_os = "macos")]
+#[path = "web_process_tests.rs"]
+mod web_process_tests;

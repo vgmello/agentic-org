@@ -51,9 +51,14 @@ pub(super) fn dependency(
         Some(serde_json::Value::String(kind)) if kind == "build" => {}
         _ => panic!("unreviewed build dependency or invalid kind for {package}: {value}"),
     }
-    assert_eq!(
-        manifest,
-        scope.root.join("crates/org-host/Cargo.toml"),
+    // Reviewed callers: the host build script (cc + org-release) and the web
+    // web process build script, which may only embed public release trust through
+    // the same pinned org-release helper (no other build edge).
+    let host = manifest == scope.root.join("crates/org-host/Cargo.toml");
+    let web = manifest == scope.root.join("apps/agentic-org-web/Cargo.toml")
+        && value["name"] == "org-release";
+    assert!(
+        host || web,
         "unreviewed build dependency caller for {package}: {value}"
     );
     scope.require(manifest);

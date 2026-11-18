@@ -74,12 +74,17 @@ dependencies = [
  "hyper-util",
  "org-host-control",
  "org-proto",
+ "org-release",
+ "org-socket",
+ "rustix",
  "scraper",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
  "tokio-rustls",
+ "zeroize",
 ]
 
 [[package]]
