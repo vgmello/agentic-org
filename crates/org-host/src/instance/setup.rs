@@ -180,6 +180,13 @@ pub(crate) fn credentials_rule(
     }
 }
 
+/// `path` in the one spelling a record accepts: absolute, UTF-8, without `.`, `..`, a
+/// repeated or a trailing separator. `.` and repeated separators are dropped; `..` is
+/// refused, never resolved.
+pub(crate) fn normalized(path: &Path) -> Result<PathBuf, Error> {
+    super::directory::absolute(path)
+}
+
 pub(crate) struct Journal {
     directory: Directory,
     lock: FileLock,

@@ -61,19 +61,86 @@ fn an_occupied_port_is_an_actionable_error() {
 
 #[test]
 fn the_protection_report_states_encryption_modes_and_isolation() {
-    let on = protection_report(&EncryptionState::On, "alex", &[]);
+    let mac = Wording {
+        name: "FileVault",
+        setting: "FileVault in System Settings › Privacy & Security",
+    };
+    let on = protection_report(&EncryptionState::On, mac, "alex", &[]);
     assert_eq!(on[0], "Disk encryption (FileVault): on.");
     assert!(on[1].contains("readable only by alex (folders 700, files 600)"));
     assert!(on[2].contains("same-user mode"));
-    let off = protection_report(&EncryptionState::Off, "alex", &[]);
-    assert!(off[0].starts_with("Disk encryption is off."));
-    let unknown = protection_report(&EncryptionState::Unknown("no volume".into()), "alex", &[]);
-    assert!(unknown[0].contains("could not be determined (no volume)"));
-    let open = protection_report(&EncryptionState::On, "alex", &[("/r/x".into(), 0o644)]);
+    let off = protection_report(&EncryptionState::Off, mac, "alex", &[]);
+    assert_eq!(
+        off[0],
+        "Disk encryption is off. Agentic Org does not encrypt its data; turn on FileVault in \
+         System Settings › Privacy & Security."
+    );
+    let unknown = protection_report(
+        &EncryptionState::Unknown("no volume".into()),
+        mac,
+        "alex",
+        &[],
+    );
+    assert_eq!(
+        unknown[0],
+        "Disk encryption could not be determined (no volume). Agentic Org does not encrypt \
+         its data; check FileVault in System Settings › Privacy & Security."
+    );
+    let open = protection_report(&EncryptionState::On, mac, "alex", &[("/r/x".into(), 0o644)]);
     assert!(
         open[1].contains("1 path(s)") && open[2] == "  644 /r/x",
         "{open:?}"
     );
+    // This system's own words fit the same sentences.
+    let here = org_platform::disk::wording();
+    let on = protection_report(&EncryptionState::On, here, "alex", &[]);
+    assert_eq!(on[0], format!("Disk encryption ({}): on.", here.name));
+    let off = protection_report(&EncryptionState::Off, here, "alex", &[]);
+    assert!(
+        off[0].ends_with(&format!("turn on {}.", here.setting)),
+        "{off:?}"
+    );
+}
+
+#[test]
+fn a_service_that_stops_at_logout_is_reported_with_the_command_that_changes_it() {
+    assert!(lingering_report(&Lingering::On, "alex").is_empty());
+    assert!(lingering_report(&Lingering::NotApplicable, "alex").is_empty());
+    let off = lingering_report(
+        &Lingering::Off {
+            enable: "loginctl enable-linger alex".into(),
+        },
+        "alex",
+    );
+    assert_eq!(
+        off,
+        [
+            "The service runs only while alex is logged in: it stops at logout and does not \
+             start when the machine starts.",
+            "To keep it running without a login session, run: loginctl enable-linger alex",
+        ]
+    );
+    let unknown = lingering_report(&Lingering::Unknown("loginctl could not run".into()), "alex");
+    assert_eq!(unknown.len(), 1);
+    assert!(
+        unknown[0].contains("(loginctl could not run)"),
+        "{unknown:?}"
+    );
+}
+
+#[test]
+fn a_missing_service_manager_is_reported_with_the_foreground_command() {
+    let text = no_service_manager(ServiceError::Unavailable(
+        "XDG_RUNTIME_DIR is not set, so this session has no systemd user manager".into(),
+    ));
+    assert!(text.contains("XDG_RUNTIME_DIR is not set"), "{text}");
+    assert!(
+        text.contains("\"service\": \"foreground\"") && text.contains("agentic-org serve --setup"),
+        "{text}"
+    );
+    assert!(text.ends_with("nothing was changed"), "{text}");
+    let other = no_service_manager(ServiceError::System("launchctl exited with 5".into()));
+    assert!(!other.contains("foreground"), "{other}");
 }
 
 #[test]
@@ -177,11 +244,19 @@ mod credentials {
 
         if !release_directory_system() {
             // The platform refuses a release directory here, so setup refuses too.
-            let refused = make_credential_directory(&credentials, &id, data_fd(), enter);
+            let before = tree(&account.base);
+            let refused =
+                make_credential_directory(&credentials, &id, data_fd(), &account.base, enter);
             assert!(refused.unwrap_err().contains("cannot be used"));
+            assert_eq!(
+                tree(&account.base),
+                before,
+                "a refused location kept something"
+            );
             return;
         }
-        let made = make_credential_directory(&credentials, &id, data_fd(), enter).unwrap();
+        let made =
+            make_credential_directory(&credentials, &id, data_fd(), &account.base, enter).unwrap();
         assert_eq!(made, credentials.join(&id));
         for dir in [
             account.base.join("state"),
@@ -203,14 +278,25 @@ mod credentials {
         assert_eq!(entries, [".lock"]);
         // A second run finds the same directory and leaves it as it is.
         assert_eq!(
-            make_credential_directory(&credentials, &id, data_fd(), enter).unwrap(),
+            make_credential_directory(&credentials, &id, data_fd(), &account.base, enter).unwrap(),
+            made
+        );
+        // A base spelled with `.` or a repeated separator is the same directory, in the
+        // one spelling the record accepts.
+        let spelled = PathBuf::from(format!(
+            "{}//state/./agentic-org/credentials/",
+            account.base.display()
+        ));
+        assert_eq!(
+            make_credential_directory(&spelled, &id, data_fd(), &account.base, enter).unwrap(),
             made
         );
 
         // A directory the host would refuse is refused now, in the host's words, and is
         // not repaired.
         fs::set_permissions(&made, fs::Permissions::from_mode(0o750)).unwrap();
-        let refused = make_credential_directory(&credentials, &id, data_fd(), enter).unwrap_err();
+        let refused = make_credential_directory(&credentials, &id, data_fd(), &account.base, enter)
+            .unwrap_err();
         assert_eq!(
             refused,
             format!(
@@ -220,20 +306,129 @@ mod credentials {
             )
         );
         assert_eq!(mode(&made), 0o750);
-        // Inside the data root.
-        let refused = make_credential_directory(&data.join("credentials"), &id, data_fd(), enter)
-            .unwrap_err();
-        assert!(refused.ends_with("is inside the data root"), "{refused}");
-        // No absolute base, or an instance ID that is none: nothing is made.
+        // No absolute base, a base with `..`, or an instance ID that is none: nothing is
+        // made and nothing is opened.
+        let before = tree(&account.base);
+        let dotted = account.base.join("state/../elsewhere");
         for (base, instance) in [
             (Path::new("relative/credentials"), id.as_str()),
+            (dotted.as_path(), id.as_str()),
             (credentials.as_path(), "../escape"),
             (credentials.as_path(), ""),
         ] {
             let never = |_: org_platform_host::credentials::ReleaseDirectory<'_>| panic!("opened");
-            assert!(make_credential_directory(base, instance, data_fd(), never).is_err());
+            assert!(
+                make_credential_directory(base, instance, data_fd(), &account.base, never).is_err()
+            );
         }
-        assert!(!account.base.join("state/agentic-org/escape").exists());
+        assert_eq!(tree(&account.base), before);
+    }
+
+    /// Every path below `root` with its kind and mode, sorted: what a refused location
+    /// must leave exactly as it was.
+    fn tree(root: &Path) -> Vec<(PathBuf, bool, u32)> {
+        let mut found = Vec::new();
+        let mut pending = vec![root.to_owned()];
+        while let Some(path) = pending.pop() {
+            let meta = fs::symlink_metadata(&path).unwrap();
+            found.push((path.clone(), meta.is_dir(), meta.mode()));
+            if meta.is_dir() {
+                pending.extend(fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
+            }
+        }
+        found.sort();
+        found
+    }
+
+    /// X3 review S4: a location that is refused leaves nothing behind, whichever rule
+    /// refuses it and however far the walk came. On every system: the rules that make
+    /// nothing are the host's own, and the platform's check is given by the test.
+    #[test]
+    fn a_refused_location_is_left_exactly_as_it_was_found() {
+        let account = account();
+        let data = account.base.join("data");
+        let other = account.base.join("other");
+        for dir in [&data, &other] {
+            fs::create_dir(dir).unwrap();
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        std::os::unix::fs::symlink(&other, account.base.join("link")).unwrap();
+        fs::write(account.base.join("file"), b"x").unwrap();
+        let open = account.base.join("open");
+        fs::create_dir(&open).unwrap();
+        fs::set_permissions(&open, fs::Permissions::from_mode(0o777)).unwrap();
+        let data_root = fs::File::open(&data).unwrap();
+        let data_fd = || std::os::fd::AsFd::as_fd(&data_root);
+        let id = crate::ids::uuid_v7().unwrap();
+        let before = tree(&account.base);
+        let never =
+            |_: org_platform_host::credentials::ReleaseDirectory<'_>| -> Result<
+                org_platform_host::credentials::ReleaseRoot,
+                org_platform_host::credentials::CredentialError,
+            > { panic!("the platform was asked about a location the walk refused") };
+
+        // Inside the data root, at any depth; through a symbolic link; below a file; below
+        // a directory that others can write to. Nothing is made for any of them.
+        for (base, rule) in [
+            (data.join("credentials"), "is inside the data root"),
+            (data.join("a/b/credentials"), "is inside the data root"),
+            (account.base.join("link/credentials"), "is not a directory"),
+            (account.base.join("file/credentials"), "is not a directory"),
+            (open.join("state/credentials"), "is writable by others"),
+        ] {
+            let refused =
+                make_credential_directory(&base, &id, data_fd(), &account.base, never).unwrap_err();
+            assert!(
+                refused.starts_with("the credential directory cannot be used: ")
+                    && refused.contains(rule),
+                "{}: {refused}",
+                base.display()
+            );
+            assert_eq!(tree(&account.base), before, "{}", base.display());
+        }
+        assert!(fs::read_dir(&other).unwrap().next().is_none());
+
+        // The walk passes and makes four directories; then the platform's check refuses
+        // (as it does for a filesystem that cannot hold a store). All four are gone again.
+        let state = account.base.join("state/agentic-org/credentials");
+        let refusing = |location: org_platform_host::credentials::ReleaseDirectory<'_>| {
+            assert!(
+                location.path.is_dir(),
+                "the directory exists when it is checked"
+            );
+            assert!(!location.mount_point_required && !location.expect_items);
+            // What the platform's check leaves in a store it opened.
+            fs::write(location.path.join(".lock"), b"").unwrap();
+            Err(org_platform_host::credentials::CredentialError::Unsafe)
+        };
+        let refused =
+            make_credential_directory(&state, &id, data_fd(), &account.base, refusing).unwrap_err();
+        assert!(
+            refused.starts_with("the credential directory cannot be used: "),
+            "{refused}"
+        );
+        assert_eq!(tree(&account.base), before);
+
+        // Directories that existed before a refusal stay, with what they hold.
+        fs::create_dir_all(account.base.join("state/agentic-org")).unwrap();
+        fs::write(account.base.join("state/keep"), b"x").unwrap();
+        let before = tree(&account.base);
+        assert!(
+            make_credential_directory(&state, &id, data_fd(), &account.base, refusing).is_err()
+        );
+        assert_eq!(tree(&account.base), before);
+
+        // The walk itself: how many directories it made, and that it follows no link.
+        let made = store_directories::make(&state.join(&id), data_fd(), &account.base).unwrap();
+        assert_eq!(made.count(), 2);
+        assert_eq!(mode(&state.join(&id)), 0o700);
+        made.remove();
+        assert_eq!(tree(&account.base), before);
+        assert!(
+            store_directories::make(Path::new("/elsewhere/x"), data_fd(), &account.base)
+                .unwrap_err()
+                .contains("is not below")
+        );
     }
 
     /// A service manager that registers nothing: setup stops there, after its third step.

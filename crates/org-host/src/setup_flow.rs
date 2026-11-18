@@ -34,8 +34,8 @@ use org_host_control::listen::ListenConfig;
 use org_host_control::{
     Administrator, GatewayState, InstanceStatus, InstanceStatusParams, InstanceStatusResult,
 };
-use org_platform::disk::{DiskEncryption, EncryptionState};
-use org_platform::service::{ServiceManager, ServiceStatus, Unit};
+use org_platform::disk::{DiskEncryption, EncryptionState, Wording};
+use org_platform::service::{Lingering, ServiceError, ServiceManager, ServiceStatus, Unit};
 use org_proto::{Hello, HelloParams};
 
 use crate::human::Wire;
@@ -96,11 +96,19 @@ impl CredentialDirectory {
 /// filesystem that can hold it, below directories nobody else can change. Returns its
 /// absolute path, for the record. Every folder this makes has mode 700; an existing one is
 /// left as it is, and a wrong one is refused with its path and the rule it broke, never
-/// repaired.
+/// repaired. A refused location is left exactly as it was found: nothing this call made
+/// remains.
+///
+/// `base` is normalized first, as the record will demand, so that a base spelled with `.`
+/// or a repeated separator is recorded in its one spelling and one with `..` is refused
+/// before anything is made. `judged_from` is where the walk that judges the directories
+/// above the store begins: `/` in the host's composition; a test whose temporary directory
+/// is below a shared one passes its own base, as it passes the platform's test entry.
 pub(crate) fn make_credential_directory(
     base: &Path,
     instance_id: &str,
     data_root: std::os::fd::BorrowedFd<'_>,
+    judged_from: &Path,
     enter: impl FnOnce(
         org_platform_host::credentials::ReleaseDirectory<'_>,
     ) -> Result<
@@ -108,28 +116,213 @@ pub(crate) fn make_credential_directory(
         org_platform_host::credentials::CredentialError,
     >,
 ) -> Result<PathBuf, String> {
-    use std::os::unix::fs::DirBuilderExt;
-    if !base.is_absolute() || !crate::instance::registry::valid_instance_id(instance_id) {
-        return Err("the credential directory has no absolute path; nothing was saved".into());
+    const NO_PATH: &str = "the credential directory has no absolute path; nothing was saved";
+    if !crate::instance::registry::valid_instance_id(instance_id) {
+        return Err(NO_PATH.into());
     }
+    let base = crate::instance::setup::normalized(base).map_err(|_| NO_PATH.to_owned())?;
     let path = base.join(instance_id);
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&path)
-        .map_err(|e| format!("creating the credential directory {}: {e}", path.display()))?;
+    let made = store_directories::make(&path, data_root, judged_from)
+        .map_err(|refused| format!("the credential directory cannot be used: {refused}"))?;
     // Open it once as the host does, so that a directory the host would refuse is refused
     // now, with the same words, and not at the service's first start. No item is expected
-    // yet; a mount point is the container's rule (X5).
-    enter(org_platform_host::credentials::ReleaseDirectory {
+    // yet. A registered service's store is a directory of the account, not a mount.
+    match enter(org_platform_host::credentials::ReleaseDirectory {
         path: &path,
         data_root,
         mount_point_required: false,
         expect_items: false,
-    })
-    .map(drop)
-    .map_err(|refused| format!("the credential directory cannot be used: {refused}"))?;
+    }) {
+        Ok(root) => drop(root),
+        Err(refused) => {
+            made.remove();
+            return Err(format!(
+                "the credential directory cannot be used: {refused}"
+            ));
+        }
+    }
     Ok(path)
+}
+
+/// INTERIM, in one place (X3 review, finding S4): making the directories of a credential
+/// store below ancestors that were judged first.
+///
+/// The platform owns the store's ancestor rule (`org_platform_host::credentials`), and the
+/// right home for this is a function of that crate that walks the path as
+/// `release_directory` does and makes the missing directories below ancestors it judged:
+///
+/// ```text
+/// pub fn create_release_directory(location: ReleaseDirectory<'_>)
+///     -> Result<(), CredentialError>;
+/// ```
+///
+/// (with the test entry `testing::credentials::create_release_directory_below(base, ..)`).
+/// Until it exists, this module makes nothing below a chain it did not judge itself: it
+/// walks from the start one component at a time with `openat(O_DIRECTORY | O_NOFOLLOW)`,
+/// so no symbolic link is followed; every existing directory on the way must be owned by
+/// root or this user, must not be writable by others, and must not be the data root; and
+/// only then is each missing directory made with `mkdirat` (mode 700) below the directory
+/// it holds open. These are the rules that hold on every system. The platform's own check
+/// runs afterwards on the whole path (the group rule, the filesystem, the mode, the mount),
+/// and [`Made::remove`] takes away what was made here when that check refuses.
+mod store_directories {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Component, Path};
+
+    /// The directories one call made, shallowest first, each with its held parent.
+    #[derive(Debug)]
+    pub(super) struct Made(Vec<(OwnedFd, CString)>);
+
+    impl Made {
+        /// Removes what the call made, deepest first, with the lock file the platform's
+        /// check may have left in the store. Nothing that existed before is touched.
+        pub(super) fn remove(self) {
+            let mut deepest = true;
+            for (parent, name) in self.0.into_iter().rev() {
+                if deepest {
+                    // SAFETY: valid descriptor and NUL-terminated names; errors are ignored.
+                    unsafe {
+                        let store = libc::openat(
+                            parent.as_raw_fd(),
+                            name.as_ptr(),
+                            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                        );
+                        if store >= 0 {
+                            libc::unlinkat(store, c".lock".as_ptr(), 0);
+                            libc::close(store);
+                        }
+                    }
+                    deepest = false;
+                }
+                // SAFETY: as above; a directory that is not empty stays.
+                unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) };
+            }
+        }
+
+        #[cfg(test)]
+        pub(super) fn count(&self) -> usize {
+            self.0.len()
+        }
+    }
+
+    fn open_directory(parent: Option<&OwnedFd>, name: &CString) -> std::io::Result<OwnedFd> {
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: `name` is NUL-terminated and `parent`, when given, is an open directory.
+        let fd = unsafe {
+            match parent {
+                Some(parent) => libc::openat(parent.as_raw_fd(), name.as_ptr(), flags),
+                None => libc::open(name.as_ptr(), flags),
+            }
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: `fd` is a new descriptor owned only here.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    fn status(fd: BorrowedFd<'_>) -> std::io::Result<libc::stat> {
+        // SAFETY: stat is plain data that fstat fills in; zeroed is a valid start.
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: an open descriptor and a writable stat.
+        if unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(stat)
+    }
+
+    /// Makes the directories of `path` that are missing, below ancestors judged first (see
+    /// the module). `path` is absolute and normalized, and `judged_from` is `path` or above
+    /// it. A refusal names the directory and the rule, and nothing was made.
+    pub(super) fn make(
+        path: &Path,
+        data_root: BorrowedFd<'_>,
+        judged_from: &Path,
+    ) -> Result<Made, String> {
+        use std::os::fd::AsFd;
+        let os = |at: &Path, e: std::io::Error| format!("{}: {e}", at.display());
+        let rest = path
+            .strip_prefix(judged_from)
+            .map_err(|_| format!("{}: is not below {}", path.display(), judged_from.display()))?;
+        let data = status(data_root).map_err(|e| format!("the data root: {e}"))?;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let user = unsafe { libc::geteuid() };
+        let judge = |at: &Path, fd: &OwnedFd| -> Result<(), String> {
+            let found = status(fd.as_fd()).map_err(|e| os(at, e))?;
+            let rule = if (found.st_dev, found.st_ino) == (data.st_dev, data.st_ino) {
+                "is inside the data root"
+            } else if found.st_uid != 0 && found.st_uid != user {
+                "is owned by another user"
+            } else if found.st_mode & 0o002 != 0 {
+                "is writable by others"
+            } else {
+                return Ok(());
+            };
+            Err(format!("{}: {rule}", at.display()))
+        };
+        let start = CString::new(judged_from.as_os_str().as_bytes())
+            .map_err(|_| format!("{}: is not a path", judged_from.display()))?;
+        let mut current = open_directory(None, &start).map_err(|e| os(judged_from, e))?;
+        let mut at = judged_from.to_owned();
+        judge(&at, &current)?;
+        let mut made = Vec::new();
+        for component in rest.components() {
+            let Component::Normal(part) = component else {
+                return Err(format!("{}: is not a normalized path", path.display()));
+            };
+            let name = CString::new(part.as_bytes())
+                .map_err(|_| format!("{}: is not a path", path.display()))?;
+            at.push(part);
+            let next = match open_directory(Some(&current), &name) {
+                Ok(next) if made.is_empty() => {
+                    judge(&at, &next)?;
+                    next
+                }
+                Ok(next) => next,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // SAFETY: an open, judged parent and a NUL-terminated single name.
+                    if unsafe { libc::mkdirat(current.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+                        let error = std::io::Error::last_os_error();
+                        Made(made).remove();
+                        return Err(os(&at, error));
+                    }
+                    let parent = current.try_clone().map_err(|e| os(&at, e));
+                    let opened = open_directory(Some(&current), &name).map_err(|e| os(&at, e));
+                    match (parent, opened) {
+                        (Ok(parent), Ok(next)) => {
+                            made.push((parent, name));
+                            next
+                        }
+                        (parent, opened) => {
+                            // SAFETY: as above; the directory this call just made.
+                            unsafe {
+                                libc::unlinkat(
+                                    current.as_raw_fd(),
+                                    name.as_ptr(),
+                                    libc::AT_REMOVEDIR,
+                                )
+                            };
+                            Made(made).remove();
+                            return Err(parent.err().or(opened.err()).unwrap_or_default());
+                        }
+                    }
+                }
+                Err(e) => {
+                    Made(made).remove();
+                    // A symbolic link, or something that is not a directory, on the way.
+                    return Err(format!(
+                        "{}: {} is not a directory this user's store can be below ({e})",
+                        path.display(),
+                        at.display()
+                    ));
+                }
+            };
+            current = next;
+        }
+        Ok(Made(made))
+    }
 }
 
 /// Asked once, on the first run only, with the default address; `Ok(None)` accepts it.
@@ -300,19 +493,23 @@ pub(crate) fn mode_exceptions(root: &Path) -> Result<Vec<(PathBuf, u32)>, String
 }
 
 /// The ENC-3 lines: disk encryption, the modes actually found and the isolation mode.
+/// `wording` is what this system calls its disk encryption and where a person turns it on
+/// (`org_platform::disk::wording`).
 pub(crate) fn protection_report(
     encryption: &EncryptionState,
+    wording: Wording,
     user: &str,
     exceptions: &[(PathBuf, u32)],
 ) -> Vec<String> {
+    let Wording { name, setting } = wording;
     let mut lines = vec![match encryption {
-        EncryptionState::On => "Disk encryption (FileVault): on.".to_owned(),
-        EncryptionState::Off => "Disk encryption is off. Agentic Org does not encrypt its data; \
-             turn on FileVault in System Settings › Privacy & Security."
-            .to_owned(),
+        EncryptionState::On => format!("Disk encryption ({name}): on."),
+        EncryptionState::Off => format!(
+            "Disk encryption is off. Agentic Org does not encrypt its data; turn on {setting}."
+        ),
         EncryptionState::Unknown(why) => format!(
             "Disk encryption could not be determined ({why}). Agentic Org does not encrypt \
-             its data; check FileVault in System Settings › Privacy & Security."
+             its data; check {setting}."
         ),
     }];
     if exceptions.is_empty() {
@@ -377,8 +574,11 @@ pub(crate) fn run_at(
     mut request: Request<'_>,
     out: &mut dyn Write,
 ) -> Result<(), String> {
-    // 1. Platform gate.
+    // 1. Platform gate. A system whose service manager does not answer (a Linux machine or
+    // container without a systemd user manager) is refused here, before anything is saved,
+    // with the way to run without one.
     let pin = release_pin()?;
+    platform.service.available().map_err(no_service_manager)?;
     let name = request.name.as_deref();
     let shown = name.unwrap_or("default");
     say(out, format!("Setting up instance \"{shown}\"."))?;
@@ -468,6 +668,7 @@ pub(crate) fn run_at(
                         base,
                         instance.id(),
                         instance.root_descriptor(),
+                        Path::new("/"),
                         org_platform_host::credentials::release_directory,
                     )?);
                 }
@@ -491,6 +692,7 @@ pub(crate) fn run_at(
     let exceptions = mode_exceptions(&record.input.root)?;
     for line in protection_report(
         &platform.disk.state(&record.input.root),
+        org_platform::disk::wording(),
         &user_name(),
         &exceptions,
     ) {
@@ -516,6 +718,9 @@ pub(crate) fn run_at(
             .map_err(|e| fail("saving setup", e))?;
     }
     say(out, "Service registered.")?;
+    for line in lingering_report(&platform.service.lingering(), &user_name()) {
+        say(out, line)?;
+    }
     let port = record.input.listen.port();
     match platform.service.status(&service_id) {
         Ok(ServiceStatus::Running { .. }) => {}
@@ -574,6 +779,38 @@ pub(crate) fn run_at(
         result
     };
     show_link(out, result, name)
+}
+
+/// What setup and the service commands say when no service manager can register a service
+/// here: the platform's reason, then the command that runs an instance without one
+/// (SRV-34). Every other service error is shown as it is.
+pub(crate) fn no_service_manager(error: ServiceError) -> String {
+    match error {
+        ServiceError::Unavailable(_) => format!(
+            "{error}: write a setup file with \"service\": \"foreground\" and run \
+             agentic-org serve --setup <file>; nothing was changed"
+        ),
+        error => fail("asking the service manager", error),
+    }
+}
+
+/// What setup and `service status` say about a service that stops when its user logs out
+/// (Linux host design section 3.4). The command is printed, never run.
+pub(crate) fn lingering_report(lingering: &Lingering, user: &str) -> Vec<String> {
+    match lingering {
+        Lingering::NotApplicable | Lingering::On => Vec::new(),
+        Lingering::Off { enable } => vec![
+            format!(
+                "The service runs only while {user} is logged in: it stops at logout and \
+                 does not start when the machine starts."
+            ),
+            format!("To keep it running without a login session, run: {enable}"),
+        ],
+        Lingering::Unknown(why) => vec![format!(
+            "Whether the service keeps running after {user} logs out could not be \
+             determined ({why})."
+        )],
+    }
 }
 
 /// The service manager's name for an instance: its ID in lowercase (the label is
@@ -775,7 +1012,13 @@ pub fn service(
                     ServiceStatus::Unloaded => "registered, not loaded".into(),
                     ServiceStatus::NotRegistered => "not registered".into(),
                 },
-            )
+            )?;
+            if status != ServiceStatus::NotRegistered {
+                for line in lingering_report(&manager.lingering(), &user_name()) {
+                    say(out, line)?;
+                }
+            }
+            Ok(())
         }
     }
 }

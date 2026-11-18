@@ -3,6 +3,9 @@
 //! (`ORG_DEV_SERVICE_DIR`: the service is a detached child, never launchd; disk encryption is a
 //! fixed answer, never `fdesetup`). Development key files replace the Keychain. No test opens a
 //! real organization root.
+//!
+//! `systemd` (below) runs the same commands through the Linux service adapter itself, with
+//! stand-ins for `systemctl` and `loginctl` (`ORG_DEV_SERVICE_PROGRAMS`).
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
@@ -48,6 +51,9 @@ fn listen(port: u16) -> std::io::Result<std::net::TcpListener> {
 
 struct Account {
     base: PathBuf,
+    /// Set: the system's own service adapter with stand-in programs from this folder,
+    /// instead of the detached-child adapter.
+    programs: Option<PathBuf>,
     _temp: tempfile::TempDir,
 }
 
@@ -66,7 +72,11 @@ impl Account {
             std::fs::set_permissions(base.join(dir), std::fs::Permissions::from_mode(0o700))
                 .unwrap();
         }
-        Self { base, _temp: temp }
+        Self {
+            base,
+            programs: None,
+            _temp: temp,
+        }
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -78,8 +88,13 @@ impl Account {
             .env("PATH", "/usr/bin:/bin")
             .env("ORG_DEV_ACCOUNT_BASE", self.base.join("app"))
             .env("ORG_OFFICE_DEV_KEY_DIR", self.base.join("keys"))
-            .env("ORG_DEV_SERVICE_DIR", self.base.join("svc"))
             .env("ORG_DEV_DISK_ENCRYPTION", "on");
+        match &self.programs {
+            None => command.env("ORG_DEV_SERVICE_DIR", self.base.join("svc")),
+            Some(programs) => command
+                .env("ORG_DEV_SERVICE_PROGRAMS", programs)
+                .env("XDG_RUNTIME_DIR", self.base.join("run")),
+        };
         command
     }
 
@@ -188,7 +203,11 @@ impl Account {
 
 impl Drop for Account {
     fn drop(&mut self) {
-        for (_, pid) in self.service_pids() {
+        let stand_in = self.programs.as_ref().and_then(|programs| {
+            let pid = std::fs::read_to_string(programs.join("pid")).ok()?;
+            Some((String::new(), pid.trim().parse().ok()?))
+        });
+        for (_, pid) in self.service_pids().into_iter().chain(stand_in) {
             // SAFETY: plain signal to a child this test's setup started.
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
         }
@@ -229,7 +248,11 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
         "{out}"
     );
     // ENC-3: the injected encryption answer, the modes as read from disk, the isolation mode.
-    assert!(out.contains("Disk encryption (FileVault): on."), "{out}");
+    let encryption = org_platform::disk::wording().name;
+    assert!(
+        out.contains(&format!("Disk encryption ({encryption}): on.")),
+        "{out}"
+    );
     assert!(out.contains("(folders 700, files 600)"), "{out}");
     assert!(out.contains("same-user mode"), "{out}");
     assert!(out.contains("Service running."), "{out}");
@@ -502,3 +525,5 @@ fn the_registered_account_fixture_serves_with_serve_name() {
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
     assert!(child.wait().unwrap().success());
 }
+
+mod systemd;

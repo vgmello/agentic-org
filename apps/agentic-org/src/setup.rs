@@ -1,11 +1,14 @@
 //! `agentic-org setup [--name <instance>] [--port <port>]`: composes the platform adapters and
 //! runs [`org_host::setup_flow`]. Satellite flags are refused before anything else.
 //!
-//! Development builds with the `test-support` feature compose test adapters instead of launchd
-//! when `ORG_DEV_SERVICE_DIR` names a folder: the service runs as a detached child
-//! (`ChildServiceManager`), and `ORG_DEV_DISK_ENCRYPTION` (`on`, `off`, anything else unknown)
-//! is the disk-encryption answer. Release builds never contain them, and a build without the
-//! adapters refuses `ORG_DEV_SERVICE_DIR` instead of registering a real service.
+//! Development builds with the `test-support` feature compose test adapters instead of the
+//! system's service manager when `ORG_DEV_SERVICE_DIR` names a folder: the service runs as a
+//! detached child (`ChildServiceManager`), and `ORG_DEV_DISK_ENCRYPTION` (`on`, `off`, anything
+//! else unknown) is the disk-encryption answer. `ORG_DEV_SERVICE_PROGRAMS` composes the
+//! system's own service adapter instead, with the programs it runs taken from the folder the
+//! variable names (on Linux, stand-ins for `systemctl` and `loginctl`), so the real adapter is
+//! exercised without systemd. Release builds never contain either, and a build without the
+//! adapters refuses both variables instead of registering a real service.
 use std::ffi::OsString;
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -110,31 +113,76 @@ fn service_environment() -> Vec<(OsString, OsString)> {
 
 pub(crate) fn platform() -> Result<Platform, String> {
     #[cfg(all(debug_assertions, feature = "test-support"))]
-    if let Some(dir) = std::env::var_os("ORG_DEV_SERVICE_DIR").filter(|d| !d.is_empty()) {
+    if let Some(service) = development_service()? {
         use org_platform::disk::EncryptionState;
-        use org_platform::testing::{ChildServiceManager, FakeDiskEncryption};
+        use org_platform::testing::FakeDiskEncryption;
         let state = match std::env::var("ORG_DEV_DISK_ENCRYPTION").as_deref() {
             Ok("on") => EncryptionState::On,
             Ok("off") => EncryptionState::Off,
             _ => EncryptionState::Unknown("development test adapter".into()),
         };
         return Ok(Platform {
-            service: Box::new(ChildServiceManager::new(dir)),
+            service,
             disk: Box::new(FakeDiskEncryption(state)),
             // A development build keeps its secrets in its development key folder.
             credentials: setup_flow::CredentialDirectory::Unused,
         });
     }
     #[cfg(not(all(debug_assertions, feature = "test-support")))]
-    if std::env::var_os("ORG_DEV_SERVICE_DIR").is_some_and(|d| !d.is_empty()) {
-        return Err(
-            "ORG_DEV_SERVICE_DIR names the development test service adapter, which \
-                    this build does not contain; unset it to use the system service manager; \
-                    nothing was changed"
-                .into(),
-        );
+    for variable in [DEV_SERVICE_DIR, DEV_SERVICE_PROGRAMS] {
+        if std::env::var_os(variable).is_some_and(|d| !d.is_empty()) {
+            return Err(format!(
+                "{variable} names a development test service adapter, which this build does \
+                 not contain; unset it to use the system service manager; nothing was changed"
+            ));
+        }
     }
     setup_flow::platform()
+}
+
+/// The service is a detached child, never registered with the system (`ChildServiceManager`).
+#[cfg_attr(
+    all(debug_assertions, feature = "test-support"),
+    allow(
+        dead_code,
+        reason = "named in the refusal of a build without the adapters"
+    )
+)]
+const DEV_SERVICE_DIR: &str = "ORG_DEV_SERVICE_DIR";
+/// The system's own service adapter, with the programs it runs taken from this folder
+/// instead of the system's (on Linux, stand-ins for `systemctl` and `loginctl`).
+#[cfg_attr(
+    all(debug_assertions, feature = "test-support"),
+    allow(
+        dead_code,
+        reason = "named in the refusal of a build without the adapters"
+    )
+)]
+const DEV_SERVICE_PROGRAMS: &str = "ORG_DEV_SERVICE_PROGRAMS";
+
+/// The development service adapter the environment asks for, if it asks for one.
+#[cfg(all(debug_assertions, feature = "test-support"))]
+fn development_service() -> Result<Option<Box<dyn org_platform::service::ServiceManager>>, String> {
+    use org_platform::service::{testing::registered_with_programs, Placement};
+    let named = |variable: &str| std::env::var_os(variable).filter(|d| !d.is_empty());
+    if let Some(dir) = named(DEV_SERVICE_DIR) {
+        return Ok(Some(Box::new(
+            org_platform::testing::ChildServiceManager::new(dir),
+        )));
+    }
+    let Some(programs) = named(DEV_SERVICE_PROGRAMS) else {
+        return Ok(None);
+    };
+    let home = named("HOME").ok_or("HOME is not set")?;
+    let refused = |e: org_platform::Refused| e.to_string();
+    let placement = Placement::user(std::path::Path::new(&home)).map_err(refused)?;
+    registered_with_programs(
+        placement,
+        std::path::Path::new(&programs),
+        named("XDG_RUNTIME_DIR").map(Into::into),
+    )
+    .map(Some)
+    .map_err(refused)
 }
 
 #[cfg(test)]
