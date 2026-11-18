@@ -9,7 +9,8 @@ use std::io;
 use std::mem;
 
 use super::syscalls::{
-    Arch, FCNTL_COMMANDS, IOCTL_REQUESTS, PRCTL_OPTIONS, PROT_EXEC, THREAD_CLONE_FLAGS,
+    Arch, FCNTL_COMMANDS, IOCTL_REQUESTS, PRCTL_OPTIONS, PROT_EXEC, SENDTO_FLAGS,
+    THREAD_CLONE_FLAGS,
 };
 
 /// One instruction (`struct sock_filter`, `include/uapi/linux/filter.h`).
@@ -207,6 +208,44 @@ pub(super) fn program(arch: &Arch, pid: u32) -> Vec<Instruction> {
     let mut fcntl = vec![Step::Load(low(1))];
     fcntl.extend(one_of(FCNTL_COMMANDS));
     decided_by_arguments(&mut program, arch.fcntl, &fcntl);
+    // sendto(fd, buffer, length, flags, destination, destination length): a send on
+    // a connection the process holds. No flag but the two (the kernel reads the
+    // flags as a 32-bit integer), no destination pointer and no destination length:
+    // a destination can connect the socket, or address another one.
+    decided_by_arguments(
+        &mut program,
+        arch.sendto,
+        &[
+            Step::Load(low(3)),
+            Step::Test {
+                code: JUMP_ANY_BIT,
+                k: !SENDTO_FLAGS,
+                yes: To::Kill,
+                no: To::Next,
+            },
+            Step::Load(low(4)),
+            Step::Test {
+                code: JUMP_EQUAL,
+                k: 0,
+                yes: To::Next,
+                no: To::Kill,
+            },
+            Step::Load(high(4)),
+            Step::Test {
+                code: JUMP_EQUAL,
+                k: 0,
+                yes: To::Next,
+                no: To::Kill,
+            },
+            Step::Load(low(5)),
+            Step::Test {
+                code: JUMP_EQUAL,
+                k: 0,
+                yes: To::Allow,
+                no: To::Kill,
+            },
+        ],
+    );
     // mmap(addr, length, prot, ...) and mprotect(addr, length, prot): never
     // executable. `PROT_EXEC` is in the low word.
     for number in [arch.mmap, arch.mprotect] {

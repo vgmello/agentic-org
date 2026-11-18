@@ -32,6 +32,8 @@ const ROLE: &str = "ORG_PLATFORM_CONFINEMENT_CHILD";
 const RENDEZVOUS: &str = "ORG_PLATFORM_CONFINEMENT_RENDEZVOUS";
 const FILE: &str = "ORG_PLATFORM_CONFINEMENT_FILE";
 const WORD: &str = "ORG_PLATFORM_CONFINEMENT_WORD";
+/// The address of the fixture's TCP listener, which nothing confined may reach.
+const TARGET: &str = "ORG_PLATFORM_CONFINEMENT_TARGET";
 
 #[used]
 #[unsafe(link_section = ".init_array")]
@@ -108,6 +110,7 @@ impl Child {
             .env(RENDEZVOUS, &fixture.rendezvous)
             .env(FILE, &fixture.file)
             .env(WORD, word)
+            .env(TARGET, fixture.target.local_addr().unwrap().to_string())
             .env_remove("RUST_BACKTRACE")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -180,12 +183,15 @@ impl Drop for Child {
     }
 }
 
-/// A temporary directory with a rendezvous socket and a file.
+/// A temporary directory with a rendezvous socket and a file, and what a confined
+/// process must never reach: a TCP listener and a named Unix datagram socket.
 struct Fixture {
     _directory: tempfile::TempDir,
     rendezvous: PathBuf,
     file: PathBuf,
     listener: UnixListener,
+    target: TcpListener,
+    datagrams: std::os::unix::net::UnixDatagram,
 }
 
 impl Fixture {
@@ -199,12 +205,38 @@ impl Fixture {
         std::fs::write(&file, b"retained").unwrap();
         let listener = UnixListener::bind(&rendezvous).unwrap();
         listener.set_nonblocking(true).unwrap();
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let datagrams =
+            std::os::unix::net::UnixDatagram::bind(directory.path().join("datagrams")).unwrap();
+        datagrams.set_nonblocking(true).unwrap();
         Self {
             _directory: directory,
             rendezvous,
             file,
             listener,
+            target,
+            datagrams,
         }
+    }
+
+    /// What reached the TCP listener and the datagram socket: the bytes of the first
+    /// connection, if one was made, and of the first datagram, if one arrived.
+    fn reached(&self) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+        let connection = self.target.accept().ok().map(|(mut stream, _)| {
+            stream.set_nonblocking(false).unwrap();
+            stream.set_read_timeout(Some(WAIT)).unwrap();
+            let mut bytes = [0u8; 16];
+            let read = stream.read(&mut bytes).unwrap_or(0);
+            bytes[..read].to_vec()
+        });
+        let mut bytes = [0u8; 16];
+        let datagram = self
+            .datagrams
+            .recv(&mut bytes)
+            .ok()
+            .map(|read| bytes[..read].to_vec());
+        (connection, datagram)
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -559,13 +591,18 @@ fn run(role: &str, report: &Report) -> i32 {
         }
         "unconfined" => {
             // The same attempt with nothing confined.
+            let name = word();
+            let (family, kind) = if wants_a_datagram_socket(&name) {
+                (libc::AF_UNIX, libc::SOCK_DGRAM)
+            } else {
+                (libc::AF_INET, libc::SOCK_STREAM)
+            };
             // SAFETY: a plain socket call; the result is checked and owned at once.
             let socket = unsafe {
-                let socket = libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0);
+                let socket = libc::socket(family, kind, 0);
                 assert!(socket >= 0);
                 OwnedFd::from_raw_fd(socket)
             };
-            let name = word();
             report.outcome(
                 &name,
                 attempt(&name, &Paths::new(&file), socket.as_raw_fd()),
@@ -705,25 +742,45 @@ struct Paths {
     file: CString,
     created: CString,
     address: libc::sockaddr_in,
+    datagrams: libc::sockaddr_un,
 }
 
 impl Paths {
-    /// The fixture's file, a name beside it that does not exist, and the loopback
-    /// discard port, which nothing here listens on.
+    /// The fixture's file, a name beside it that does not exist, the address of its
+    /// TCP listener and the name of its datagram socket.
     fn new(file: &Path) -> Self {
+        let std::net::SocketAddr::V4(target) = variable(TARGET).to_str().unwrap().parse().unwrap()
+        else {
+            panic!("the target is an IPv4 address");
+        };
+        // SAFETY: every bit pattern is a valid sockaddr_un.
+        let mut datagrams: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        datagrams.sun_family = libc::AF_UNIX as libc::sa_family_t;
+        let name = file.with_file_name("datagrams");
+        let name = name.as_os_str().as_bytes();
+        assert!(name.len() < datagrams.sun_path.len());
+        for (to, from) in datagrams.sun_path.iter_mut().zip(name) {
+            *to = *from as libc::c_char;
+        }
         Self {
             file: c_path(file),
             created: c_path(&file.with_file_name("created")),
             address: libc::sockaddr_in {
                 sin_family: libc::AF_INET as libc::sa_family_t,
-                sin_port: 9u16.to_be(),
+                sin_port: target.port().to_be(),
                 sin_addr: libc::in_addr {
-                    s_addr: u32::from(std::net::Ipv4Addr::LOCALHOST).to_be(),
+                    s_addr: u32::from(*target.ip()).to_be(),
                 },
                 sin_zero: [0; 8],
             },
+            datagrams,
         }
     }
+}
+
+/// The forbidden calls that are made on a Unix datagram socket instead of a TCP one.
+fn wants_a_datagram_socket(name: &str) -> bool {
+    name.contains("Unix datagram socket")
 }
 
 /// What a confined process must not do. Each is one system call that is not on the
@@ -743,6 +800,11 @@ const FORBIDDEN: &[&str] = &[
     "connect a socket it was handed",
     "bind a socket it was handed",
     "listen on a socket it was handed",
+    "send to a destination on a TCP socket it was handed",
+    "send with fast open to a destination on a TCP socket it was handed",
+    "send with a flag other than the two it may carry",
+    "send to a destination on a Unix datagram socket it was handed",
+    "call sendmsg",
     "start a program",
     "fork",
     "trace a process",
@@ -806,6 +868,44 @@ fn attempt(name: &str, paths: &Paths, socket: RawFd) -> libc::c_long {
             "connect a socket it was handed" => libc::connect(socket, address, length).into(),
             "bind a socket it was handed" => libc::bind(socket, address, length).into(),
             "listen on a socket it was handed" => libc::listen(socket, 1).into(),
+            "send to a destination on a TCP socket it was handed" => libc::sendto(
+                socket,
+                c"x".as_ptr().cast(),
+                1,
+                libc::MSG_NOSIGNAL,
+                address,
+                length,
+            ) as libc::c_long,
+            "send with fast open to a destination on a TCP socket it was handed" => libc::sendto(
+                socket,
+                c"x".as_ptr().cast(),
+                1,
+                libc::MSG_FASTOPEN,
+                address,
+                length,
+            )
+                as libc::c_long,
+            "send with a flag other than the two it may carry" => libc::sendto(
+                socket,
+                c"x".as_ptr().cast(),
+                1,
+                libc::MSG_MORE,
+                std::ptr::null(),
+                0,
+            ) as libc::c_long,
+            "send to a destination on a Unix datagram socket it was handed" => libc::sendto(
+                socket,
+                c"x".as_ptr().cast(),
+                1,
+                libc::MSG_NOSIGNAL,
+                (&paths.datagrams as *const libc::sockaddr_un).cast(),
+                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+            )
+                as libc::c_long,
+            "call sendmsg" => {
+                let message: libc::msghdr = std::mem::zeroed();
+                libc::sendmsg(socket, &message, libc::MSG_NOSIGNAL) as libc::c_long
+            }
             "start a program" => {
                 libc::execve(program[0], program.as_ptr(), program[1..].as_ptr()).into()
             }
@@ -899,9 +999,12 @@ fn every_forbidden_call_kills_the_process_with_sigsys() {
             assert!(socket >= 0);
             OwnedFd::from_raw_fd(socket)
         };
+        let datagram = std::os::unix::net::UnixDatagram::unbound().unwrap();
         // "listen" needs a bound socket to succeed without the filter.
         let handed = if name.starts_with("listen") {
             listening.as_raw_fd()
+        } else if wants_a_datagram_socket(name) {
+            datagram.as_raw_fd()
         } else {
             unconnected.as_raw_fd()
         };
@@ -913,6 +1016,44 @@ fn every_forbidden_call_kills_the_process_with_sigsys() {
     }
     assert_eq!(std::fs::read(&fixture.file).unwrap(), b"retained");
     assert!(!fixture.path("created").exists());
+    assert_eq!(
+        fixture.reached(),
+        (None, None),
+        "a confined process sent out"
+    );
+}
+
+/// Why a send may name no destination: without the filter, a send with one reaches
+/// a socket the process was never connected to. On a TCP socket that is the
+/// send-time connect of `MSG_FASTOPEN`, which is not a `connect` call.
+#[test]
+fn without_the_filter_a_send_with_a_destination_reaches_another_socket() {
+    let fixture = Fixture::new();
+    let name = "send to a destination on a Unix datagram socket it was handed";
+    let (ended, report) = Child::start("unconfined", &fixture, name).finish();
+    assert_eq!(
+        (ended, report),
+        (Ended::Exited(0), format!("{name}: succeeded\n"))
+    );
+    assert_eq!(fixture.reached(), (None, Some(b"x".to_vec())));
+
+    let name = "send with fast open to a destination on a TCP socket it was handed";
+    let (ended, report) = Child::start("unconfined", &fixture, name).finish();
+    assert_eq!(ended, Ended::Exited(0), "{report}");
+    let mut connected = None;
+    let until = Instant::now() + Duration::from_secs(2);
+    while connected.is_none() && Instant::now() < until {
+        connected = fixture.reached().0;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if report == format!("{name}: succeeded\n") {
+        // The kernel connected the socket and delivered the byte.
+        assert_eq!(connected, Some(b"x".to_vec()));
+    } else {
+        // A system with TCP fast open turned off for clients refuses the send.
+        assert_eq!(report, format!("{name}: error {}\n", libc::EOPNOTSUPP));
+        assert_eq!(connected, None);
+    }
 }
 
 #[test]

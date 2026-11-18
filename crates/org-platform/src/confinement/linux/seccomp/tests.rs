@@ -154,6 +154,7 @@ fn every_listed_number_is_allowed_and_no_other() {
             arch.prctl,
             arch.ioctl,
             arch.fcntl,
+            arch.sendto,
             arch.mmap,
             arch.mprotect,
             arch.tgkill,
@@ -175,12 +176,13 @@ fn every_listed_number_is_allowed_and_no_other() {
                 RET_ALLOW
             } else if number == arch.clone3 {
                 ERRNO_ENOSYS
-            } else if number == arch.mmap || number == arch.mprotect {
-                // No protection asked for: not executable.
+            } else if number == arch.mmap || number == arch.mprotect || number == arch.sendto {
+                // No protection asked for: not executable. No destination.
                 RET_ALLOW
             } else {
                 // Every other call, and with these arguments `clone`, `prctl`,
-                // `ioctl`, `fcntl` and `tgkill` too.
+                // `ioctl`, `fcntl` and `tgkill` too. `sendto` with nothing set
+                // names no destination and passes, as the two memory calls do.
                 RET_KILL_PROCESS
             };
             assert_eq!(action, expected, "{name} {number}");
@@ -192,8 +194,9 @@ fn every_listed_number_is_allowed_and_no_other() {
 fn the_allowed_names_are_the_designs_list_and_three_more() {
     // Linux host design, section 3.3, step 5, in its order, with `epoll_*`,
     // `rt_sig*` and "clocks" read as the calls the runtime makes. The design's
-    // `mmap`, `mprotect`, `fcntl`, `clone`, `prctl`, `ioctl` and signals to itself
-    // are not here: their arguments decide.
+    // `mmap`, `mprotect`, `fcntl`, `sendto`, `clone`, `prctl`, `ioctl` and signals
+    // to itself are not here: their arguments decide. The design's `sendmsg` is not
+    // allowed at all: its destination is where a filter cannot read it.
     let design = [
         "munmap",
         "madvise",
@@ -208,8 +211,6 @@ fn the_allowed_names_are_the_designs_list_and_three_more() {
         "writev",
         "recvfrom",
         "recvmsg",
-        "sendmsg",
-        "sendto",
         "accept4",
         "getsockname",
         "getsockopt",
@@ -261,6 +262,7 @@ const KILLED_X86_64: &[Call] = &[
     ("socket", 41),
     ("connect", 42),
     ("accept", 43),
+    ("sendmsg", 46),
     ("bind", 49),
     ("listen", 50),
     ("socketpair", 53),
@@ -358,6 +360,7 @@ const KILLED_AARCH64: &[Call] = &[
     ("listen", 201),
     ("accept", 202),
     ("connect", 203),
+    ("sendmsg", 211),
     ("mremap", 216),
     ("add_key", 217),
     ("keyctl", 219),
@@ -579,6 +582,76 @@ fn fcntl_is_allowed_only_for_the_three_commands_the_runtime_makes() {
 }
 
 #[test]
+fn a_send_names_no_destination_and_carries_only_the_two_flags() {
+    assert_eq!(
+        (libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL) as u32,
+        SENDTO_FLAGS
+    );
+    assert_eq!(libc::MSG_FASTOPEN, 0x2000_0000);
+    for (name, arch) in tables() {
+        let send = |flags: i32, destination: u64, length: u64| {
+            decide(
+                arch,
+                arch.sendto,
+                [
+                    7,
+                    0x7000_0000,
+                    512,
+                    flags as u32 as u64,
+                    destination,
+                    length,
+                ],
+            )
+        };
+        for flags in [
+            0,
+            libc::MSG_NOSIGNAL,
+            libc::MSG_DONTWAIT,
+            libc::MSG_NOSIGNAL | libc::MSG_DONTWAIT,
+        ] {
+            assert_eq!(send(flags, 0, 0), RET_ALLOW, "{name} {flags:#x}");
+            // A destination, by its pointer (either half) or its length alone.
+            for (destination, length) in [
+                (0x7000_1000, 16),
+                (0x7000_1000, 0),
+                (1 << 32, 0),
+                (1 << 63, 0),
+                (0, 16),
+                (0, 1),
+            ] {
+                assert_eq!(
+                    send(flags, destination, length),
+                    RET_KILL_PROCESS,
+                    "{name} {flags:#x} {destination:#x} {length}"
+                );
+            }
+        }
+        // The send-time connect and every other flag, with and without a destination.
+        for flags in [
+            libc::MSG_FASTOPEN,
+            libc::MSG_FASTOPEN | libc::MSG_NOSIGNAL,
+            libc::MSG_OOB,
+            libc::MSG_MORE,
+            libc::MSG_CONFIRM,
+            libc::MSG_ZEROCOPY,
+            -1,
+        ] {
+            assert_eq!(send(flags, 0, 0), RET_KILL_PROCESS, "{name} {flags:#x}");
+            assert_eq!(send(flags, 0x7000_1000, 16), RET_KILL_PROCESS, "{name}");
+        }
+        // The flags are the fourth argument, read as 32 bits like the kernel reads it.
+        assert_eq!(
+            decide(arch, arch.sendto, [7, 0, 0, 1 << 32, 0, 0]),
+            RET_ALLOW,
+            "{name}"
+        );
+        // `sendmsg` carries its destination in memory: it is not allowed at all.
+        let sendmsg = if name == "x86_64" { 46 } else { 211 };
+        assert_eq!(decide(arch, sendmsg, NONE), RET_KILL_PROCESS, "{name}");
+    }
+}
+
+#[test]
 fn no_memory_is_mapped_or_made_executable() {
     assert_eq!(libc::PROT_EXEC, 4);
     for (name, arch) in tables() {
@@ -694,6 +767,7 @@ const _: () = {
         ("socket", libc::SYS_socket),
         ("connect", libc::SYS_connect),
         ("accept", libc::SYS_accept),
+        ("sendmsg", libc::SYS_sendmsg),
         ("bind", libc::SYS_bind),
         ("listen", libc::SYS_listen),
         ("socketpair", libc::SYS_socketpair),
@@ -795,6 +869,7 @@ const _: () = {
         ("listen", libc::SYS_listen),
         ("accept", libc::SYS_accept),
         ("connect", libc::SYS_connect),
+        ("sendmsg", libc::SYS_sendmsg),
         ("mremap", libc::SYS_mremap),
         ("add_key", libc::SYS_add_key),
         ("keyctl", libc::SYS_keyctl),

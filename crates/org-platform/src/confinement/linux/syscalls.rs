@@ -11,9 +11,18 @@
 //! The list is the design's, read narrowly: of `epoll_*` only the calls the runtime
 //! makes, of `rt_sig*` only the three that act on the process itself, and of the
 //! clocks only reading one. Three calls are here that the design's list does not
-//! name; each says why at its entry. Four of the design's calls are decided by an
+//! name; each says why at its entry. Five of the design's calls are decided by an
 //! argument although the design does not ask for it: `clone` by its exact flags,
-//! `mmap` and `mprotect` by their protection, and `fcntl` by its command.
+//! `mmap` and `mprotect` by their protection, `fcntl` by its command and `sendto` by
+//! its destination and flags. One of the design's calls is not here: `sendmsg`.
+//!
+//! A send can connect. TCP has a connect at send time (`MSG_FASTOPEN` with a
+//! destination, tcp(7)), which neither a filter on `connect` nor Landlock's TCP
+//! connect right sees, and a datagram socket takes a destination with every send.
+//! So `sendto` passes only without a destination and without that flag, and
+//! `sendmsg`, whose destination is in memory where a filter cannot read it, kills.
+//! The web process makes no `sendmsg`: it writes its streams with `sendto` without
+//! a destination, `write` and `writev`, and it only receives descriptors.
 //!
 //! The aarch64 table is the x86-64 table under one rule: the same C library function
 //! reaches the same kernel operation. aarch64 has no `poll`, `epoll_wait`, `open` or
@@ -46,6 +55,8 @@ pub(super) struct Arch {
     pub(super) ioctl: u32,
     /// Allowed only for the commands in [`FCNTL_COMMANDS`].
     pub(super) fcntl: u32,
+    /// Allowed only with flags in [`SENDTO_FLAGS`] and no destination.
+    pub(super) sendto: u32,
     /// Allowed only without `PROT_EXEC`.
     pub(super) mmap: u32,
     /// Allowed only without `PROT_EXEC`.
@@ -70,6 +81,11 @@ pub(super) const IOCTL_REQUESTS: &[u32] = &[0x5421, 0x541B];
 /// signal of its choice to any process of its user when input arrives on a socket it
 /// holds; Landlock stops that only from ABI 6.
 pub(super) const FCNTL_COMMANDS: &[u32] = &[1, 3, 1030];
+
+/// `MSG_DONTWAIT | MSG_NOSIGNAL` (`include/linux/socket.h`; the same values on
+/// x86-64 and aarch64): the only flags a `sendto` may carry. The standard library
+/// sends with `MSG_NOSIGNAL`. `MSG_FASTOPEN` is not among them.
+pub(super) const SENDTO_FLAGS: u32 = 0x40 | 0x4000;
 
 /// The flags of glibc's `pthread_create` (`nptl/pthread_create.c`): `CLONE_VM |
 /// CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM |
@@ -99,10 +115,9 @@ pub(super) const X86_64: Arch = Arch {
         ("close", 3),
         ("poll", 7),
         ("writev", 20),
-        // Sockets it already holds: no `socket`, `connect`, `bind` or `listen`.
-        ("sendto", 44),
+        // Sockets it already holds: no `socket`, `connect`, `bind` or `listen`, and
+        // no `sendmsg`; `sendto` is decided by its destination and flags.
         ("recvfrom", 45),
-        ("sendmsg", 46),
         ("recvmsg", 47),
         ("shutdown", 48),
         ("getsockname", 51),
@@ -152,6 +167,7 @@ pub(super) const X86_64: Arch = Arch {
     prctl: 157,
     ioctl: 16,
     fcntl: 72,
+    sendto: 44,
     mmap: 9,
     mprotect: 10,
     tgkill: 234,
@@ -167,9 +183,7 @@ pub(super) const AARCH64: Arch = Arch {
         // glibc's `poll` is `ppoll` here.
         ("ppoll", 73),
         ("writev", 66),
-        ("sendto", 206),
         ("recvfrom", 207),
-        ("sendmsg", 211),
         ("recvmsg", 212),
         ("shutdown", 210),
         ("getsockname", 204),
@@ -206,6 +220,7 @@ pub(super) const AARCH64: Arch = Arch {
     prctl: 167,
     ioctl: 29,
     fcntl: 25,
+    sendto: 206,
     mmap: 222,
     mprotect: 226,
     tgkill: 131,
@@ -257,9 +272,7 @@ const _: () = {
         ("close", libc::SYS_close),
         ("poll", libc::SYS_poll),
         ("writev", libc::SYS_writev),
-        ("sendto", libc::SYS_sendto),
         ("recvfrom", libc::SYS_recvfrom),
-        ("sendmsg", libc::SYS_sendmsg),
         ("recvmsg", libc::SYS_recvmsg),
         ("shutdown", libc::SYS_shutdown),
         ("getsockname", libc::SYS_getsockname),
@@ -301,6 +314,7 @@ const _: () = {
     assert!(TABLE.prctl as libc::c_long == libc::SYS_prctl);
     assert!(TABLE.ioctl as libc::c_long == libc::SYS_ioctl);
     assert!(TABLE.fcntl as libc::c_long == libc::SYS_fcntl);
+    assert!(TABLE.sendto as libc::c_long == libc::SYS_sendto);
     assert!(TABLE.mmap as libc::c_long == libc::SYS_mmap);
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);
@@ -314,9 +328,7 @@ const _: () = {
         ("close", libc::SYS_close),
         ("ppoll", libc::SYS_ppoll),
         ("writev", libc::SYS_writev),
-        ("sendto", libc::SYS_sendto),
         ("recvfrom", libc::SYS_recvfrom),
-        ("sendmsg", libc::SYS_sendmsg),
         ("recvmsg", libc::SYS_recvmsg),
         ("shutdown", libc::SYS_shutdown),
         ("getsockname", libc::SYS_getsockname),
@@ -358,6 +370,7 @@ const _: () = {
     assert!(TABLE.prctl as libc::c_long == libc::SYS_prctl);
     assert!(TABLE.ioctl as libc::c_long == libc::SYS_ioctl);
     assert!(TABLE.fcntl as libc::c_long == libc::SYS_fcntl);
+    assert!(TABLE.sendto as libc::c_long == libc::SYS_sendto);
     assert!(TABLE.mmap as libc::c_long == libc::SYS_mmap);
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);
