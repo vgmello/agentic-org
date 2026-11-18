@@ -1,0 +1,498 @@
+{
+  "schema_version": 1,
+  "contract_revision": 2,
+  "cases": [
+    {
+      "name": "a remote repository over https",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "plan": {
+          "version": 1,
+          "name": "Acme",
+          "slug": "acme",
+          "repository_remote_url": "https://example.test/acme.git",
+          "state_branch": "org/state"
+        }
+      }
+    },
+    {
+      "name": "a remote repository over ssh",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "ssh://git@example.test/acme.git"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "plan": {
+          "version": 1,
+          "name": "Acme",
+          "slug": "acme",
+          "repository_remote_url": "ssh://git@example.test/acme.git",
+          "state_branch": "org/state"
+        }
+      }
+    },
+    {
+      "name": "a local repository is refused",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "local"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "organization_repository",
+        "rule": "remote_required"
+      }
+    },
+    {
+      "name": "a file URL is not a remote",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "file:///tmp/acme.git"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "organization_repository",
+        "rule": "remote_required"
+      }
+    },
+    {
+      "name": "a remote without a URL",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "organization_repository",
+        "rule": "remote_required"
+      }
+    },
+    {
+      "name": "a credential reference is not supported yet",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git",
+            "credential_ref": {
+              "id": "deploy"
+            }
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "organization_repository",
+        "rule": "unsupported"
+      }
+    },
+    {
+      "name": "a slug that is not kebab-case",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "Acme Inc",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "slug",
+        "rule": "format"
+      }
+    },
+    {
+      "name": "a name with surrounding space",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": " Acme ",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "name",
+        "rule": "format"
+      }
+    },
+    {
+      "name": "a state branch that is not a branch name",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git"
+          },
+          "state_branch": "org state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "state_branch",
+        "rule": "format"
+      }
+    },
+    {
+      "name": "an operation id that is not a ULID",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "0193a5c0-0000-7000-8000-000000000007",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "operation_id",
+        "rule": "format"
+      }
+    },
+    {
+      "name": "a team field does not exist",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git"
+          },
+          "state_branch": "org/state",
+          "home_team_name": "Core"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400
+      }
+    },
+    {
+      "name": "a missing state branch has no default",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git"
+          }
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400
+      }
+    },
+    {
+      "name": "organization with its slug, person and offices",
+      "category": "organization",
+      "wire": {
+        "id": "0193a5c0-0000-7000-8000-000000000001",
+        "name": "Acme",
+        "slug": "acme",
+        "created_at": "2026-11-10T12:00:00.000Z",
+        "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+        "offices": [
+          {
+            "id": "0193a5c0-0000-7000-8000-000000000002",
+            "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+            "name": "HQ",
+            "role": "hq",
+            "host": "This Mac",
+            "status": "active"
+          }
+        ],
+        "recovery": "pending"
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "id": "0193a5c0-0000-7000-8000-000000000001",
+          "name": "Acme",
+          "slug": "acme",
+          "created_at": "2026-11-10T12:00:00.000Z",
+          "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+          "offices": [
+            {
+              "id": "0193a5c0-0000-7000-8000-000000000002",
+              "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+              "name": "HQ",
+              "role": "hq",
+              "host": "This Mac",
+              "status": "active"
+            }
+          ],
+          "recovery": "pending"
+        }
+      }
+    },
+    {
+      "name": "a private office endpoint is never written back",
+      "category": "organization",
+      "wire": {
+        "id": "0193a5c0-0000-7000-8000-000000000001",
+        "name": "Acme",
+        "slug": "acme",
+        "created_at": "2026-11-10T12:00:00.000Z",
+        "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+        "offices": [
+          {
+            "id": "0193a5c0-0000-7000-8000-000000000002",
+            "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+            "name": "HQ",
+            "role": "hq",
+            "host": "This Mac",
+            "status": "active",
+            "endpoint": "/private/office.sock"
+          }
+        ],
+        "recovery": "pending"
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "id": "0193a5c0-0000-7000-8000-000000000001",
+          "name": "Acme",
+          "slug": "acme",
+          "created_at": "2026-11-10T12:00:00.000Z",
+          "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+          "offices": [
+            {
+              "id": "0193a5c0-0000-7000-8000-000000000002",
+              "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+              "name": "HQ",
+              "role": "hq",
+              "host": "This Mac",
+              "status": "active"
+            }
+          ],
+          "recovery": "pending"
+        }
+      }
+    },
+    {
+      "name": "an organization without a slug is not this view",
+      "category": "organization",
+      "wire": {
+        "id": "0193a5c0-0000-7000-8000-000000000001",
+        "name": "Acme",
+        "created_at": "2026-11-10T12:00:00.000Z",
+        "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+        "offices": [
+          {
+            "id": "0193a5c0-0000-7000-8000-000000000002",
+            "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+            "name": "HQ",
+            "role": "hq",
+            "host": "This Mac",
+            "status": "active"
+          }
+        ],
+        "recovery": "pending"
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "linked organizations and creates in flight",
+      "category": "list",
+      "wire": {
+        "organizations": [
+          {
+            "id": "0193a5c0-0000-7000-8000-000000000001",
+            "name": "Acme",
+            "slug": "acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+            "offices": [
+              {
+                "id": "0193a5c0-0000-7000-8000-000000000002",
+                "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+                "name": "HQ",
+                "role": "hq",
+                "host": "This Mac",
+                "status": "active"
+              }
+            ],
+            "recovery": "pending"
+          }
+        ],
+        "creating": [
+          {
+            "operation_id": "01M72N8MG00000000000000006",
+            "name": "Other",
+            "slug": "other"
+          }
+        ]
+      },
+      "expect": {
+        "normalized": {
+          "organizations": [
+            {
+              "id": "0193a5c0-0000-7000-8000-000000000001",
+              "name": "Acme",
+              "slug": "acme",
+              "created_at": "2026-11-10T12:00:00.000Z",
+              "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+              "offices": [
+                {
+                  "id": "0193a5c0-0000-7000-8000-000000000002",
+                  "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+                  "name": "HQ",
+                  "role": "hq",
+                  "host": "This Mac",
+                  "status": "active"
+                }
+              ],
+              "recovery": "pending"
+            }
+          ],
+          "creating": [
+            {
+              "operation_id": "01M72N8MG00000000000000006",
+              "name": "Other",
+              "slug": "other"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod org_mutations;
+pub mod organizations;
 mod outcome;
 mod session;
 mod stream;
