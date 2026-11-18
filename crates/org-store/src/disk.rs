@@ -18,7 +18,6 @@ use std::{
 
 pub(crate) trait Disk: Send + Sync {
     /// Opens a file for appending, creating it `0600` if it is missing.
-    #[allow(dead_code)] // first called by the journal (B1a block 3)
     fn open_append(&self, path: &Path) -> io::Result<Arc<dyn DiskFile>>;
     /// Creates a file `0600`; fails if anything is there.
     fn create_new(&self, path: &Path) -> io::Result<Arc<dyn DiskFile>>;
@@ -38,7 +37,6 @@ pub(crate) trait DiskFile: Send + Sync {
     /// Flushes the file to the drive itself. An error is final: the caller never retries,
     /// because the kernel may have dropped the dirty pages.
     fn flush_full(&self) -> io::Result<()>;
-    #[allow(dead_code)] // first called by the journal (B1a block 3)
     fn truncate(&self, len: u64) -> io::Result<()>;
 }
 
