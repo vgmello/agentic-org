@@ -4,10 +4,11 @@
 	import MessageSquareReply from '@lucide/svelte/icons/message-square-reply';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu';
-	import type { ChatContext } from '../engine';
+	import Logo from '$lib/components/Logo.svelte';
+	import { OFFICE, SYSTEM_NO_REPLY, type ChatContext } from '../engine';
 	import type { DraftText } from '../drafts/store';
 	import { clockTime, collapse, KIND_WORD, nameOf } from '../model';
-	import { REASON_LABEL, REACTIONS, type ChatMessage, type MuteMode, type Reaction } from '../types';
+	import { REASON_LABEL, REACTIONS, type ChatMessage, type MuteMode, type QuestionAnswer, type Reaction } from '../types';
 	import type { MessageRowData } from '../row-data';
 	import AskCard from '../features/answer-ask/AskCard.svelte';
 	import Avatar from './Avatar.svelte';
@@ -34,8 +35,11 @@
 		onpin,
 		onanswer,
 		onaccept,
+		onhandback,
+		onwithdraw,
 		onopen,
 		onretry,
+		oncheck,
 		ondismiss
 	}: {
 		message: ChatMessage;
@@ -48,17 +52,21 @@
 		where?: string;
 		inThread?: boolean;
 		askDraftFor?: (askId: string) => DraftText;
-		delivery?: { status: 'sending' | 'failed'; error?: string };
+		/** A send in flight; `unknown`: the answer was lost, so the outcome is checked before any retry (chat-ux §6). */
+		delivery?: { status: 'sending' | 'failed' | 'unknown' | 'checking'; error?: string };
 		onreact?: (m: ChatMessage, r: Reaction) => void;
 		onthread?: (m: ChatMessage, opener: HTMLElement) => void;
 		onmenu?: (m: ChatMessage, open: boolean, opener: HTMLElement) => void;
 		onturn?: (m: ChatMessage, into: 'bug' | 'request' | 'task', opener: HTMLElement) => void;
 		onmute?: (m: ChatMessage, mode: MuteMode) => void;
 		onpin?: (m: ChatMessage) => void;
-		onanswer?: (m: ChatMessage, answer: { option_id?: string; text?: string }) => Promise<void> | void;
+		onanswer?: (m: ChatMessage, answer: { option_id?: string; text?: string; answers?: QuestionAnswer[] }) => Promise<void> | void;
 		onaccept?: (m: ChatMessage) => Promise<void> | void;
+		onhandback?: (m: ChatMessage, reason: string) => Promise<void> | void;
+		onwithdraw?: (m: ChatMessage, reason: string) => Promise<void> | void;
 		onopen?: (m: ChatMessage) => void;
 		onretry?: (button: HTMLButtonElement) => void;
+		oncheck?: (button: HTMLButtonElement) => void;
 		ondismiss?: () => void;
 	} = $props();
 
@@ -74,10 +82,12 @@
 	const from = $derived(ctx.members.find((m) => m.id === message.from));
 	const replies = $derived(inThread ? [] : rowData.replies);
 	const folded = $derived(rowData.folded);
-	const replyable = $derived(!inThread && !!onthread);
+	// Product notices show as System, with no person's affordances and no replies (chat-ux §4.2).
+	const system = $derived(message.from === OFFICE);
+	const replyable = $derived(!inThread && !!onthread && !system);
 	const long = $derived(collapse(message.body));
 	const mode = $derived(from?.kind === 'agent' ? rowData.mode : 'none');
-	const mark = $derived(kindIcon[message.kind]);
+	const mark = $derived(system ? undefined : kindIcon[message.kind]);
 	const card = $derived(message.kind === 'request' || message.kind === 'handoff');
 	const messageId = $derived(message.id);
 	const isRequest = $derived(message.kind === 'request');
@@ -85,15 +95,18 @@
 	const bridgeName = $derived({ slack: 'Slack', teams: 'Teams', discord: 'Discord' }[message.bridge ?? 'slack']);
 	const reactions = $derived(REACTIONS.map((r) => ({ ...r, who: message.reactions?.[r.id] ?? [] })));
 	const metadata = $derived(mark || message.bridge || message.also_in_channel || message.pinned || where || mode !== 'none');
-	const hasReactions = $derived(reactions.some(r => r.who.length));
-	const details = $derived(message.attachments?.length || hasReactions || (replies.length && onthread) || onopen || delivery);
+	// An announcement is acknowledged with Seen or Looking, so both stay in reach on it (chat-ux §2).
+	const acknowledge = $derived(message.kind === 'announcement' && !system && !delivery && !readOnly);
+	const hasReactions = $derived(acknowledge || reactions.some(r => r.who.length));
+	const whoWords = (ids: string[]) => (ids.length === 0 ? '' : ids.length <= 2 ? ids.map((id) => (id === ctx.actor ? 'you' : nameOf(ctx, id).split(' ')[0])).join(', ') : String(ids.length));
+	const details = $derived(message.attachments?.length || hasReactions || (replies.length && onthread) || onopen || delivery || message.queued);
 </script>
 
 <!-- Metadata threshold: (212.4375 kind + 72 avatar + 24 gap + 32 padding + 4 safety) / 32 = 10.765625rem rounded up. -->
 <!-- Announcement is the widest calibrated KIND_WORD; message-layout.test.ts guards the vocabulary. -->
 <div class="@container">
 <article onpointerenter={() => (hovered = true)} onpointerleave={() => (hovered = false)} onfocusin={() => (focusWithin = true)} onfocusout={(event) => (focusWithin = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))} class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-white/[0.03] focus-within:bg-white/[0.03]" data-testid="message" data-kind={message.kind} data-id={message.id} aria-label="{nameOf(ctx, message.from)}, {clockTime(message.created_at)}">
-	<div class="row-span-2 @max-[10.765625rem]:row-span-1"><Avatar name={nameOf(ctx, message.from)} kind={from?.kind ?? 'person'} /></div>
+	<div class="row-span-2 @max-[10.765625rem]:row-span-1">{#if system}<span class="flex size-9 items-center justify-center" data-testid="system-avatar"><Logo class="size-9 grayscale" /></span>{:else}<Avatar name={nameOf(ctx, message.from)} kind={from?.kind ?? 'person'} />{/if}</div>
 		<div class="col-start-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-sm/6 @max-[10.765625rem]:col-span-2 @max-[10.765625rem]:col-start-1">
 			<span class="font-semibold text-white">{nameOf(ctx, message.from)}</span>
 			<time class="text-xs/5 text-gray-400" datetime={message.created_at}>{clockTime(message.created_at)}</time>
@@ -109,7 +122,7 @@
 	<div class="col-start-2 min-w-0">
 		{#if card}
 			<div class="mt-1">
-				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} draft={askDraft} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : (opener) => onthread?.(message, opener)} />
+				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} draft={askDraft} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onhandback={onhandback ? (reason) => onhandback(message, reason) : undefined} onwithdraw={onwithdraw ? (reason) => onwithdraw(message, reason) : undefined} onreplyinthread={inThread ? undefined : (opener) => onthread?.(message, opener)} />
 			</div>
 		{:else}
 			<div class="mt-0.5 min-w-0 [&_a]:whitespace-normal" data-testid="message-body">
@@ -127,8 +140,8 @@
 			{#if hasReactions}
 				<div class="mt-1 flex flex-wrap gap-1.5" aria-live="off">
 					{#each reactions as r (r.id)}
-						{#if r.who.length}
-							<button type="button" class="inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 outline-1 -outline-offset-1 {r.who.includes(ctx.actor) ? 'bg-indigo-500/20 text-indigo-100 outline-indigo-400/50' : 'bg-white/5 text-gray-200 outline-white/10'}" disabled={!officeRunning} aria-pressed={r.who.includes(ctx.actor)} aria-label="{r.label}, {r.who.length}" title={r.label} onclick={() => onreact?.(message, r.id)}><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /> {r.who.length}</button>
+						{#if r.who.length || acknowledge}
+							<button type="button" class="inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 outline-1 -outline-offset-1 {r.who.includes(ctx.actor) ? 'bg-indigo-500/20 text-indigo-100 outline-indigo-400/50' : 'bg-white/5 text-gray-200 outline-white/10'}" disabled={!officeRunning || readOnly} aria-pressed={r.who.includes(ctx.actor)} aria-label="{r.label}, {r.who.length}" title={r.who.length ? `${r.label}: ${r.who.map((id) => nameOf(ctx, id)).join(', ')}` : r.label} onclick={() => onreact?.(message, r.id)} data-testid="reaction"><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /> {r.label}{#if r.who.length}<span class="text-gray-400" aria-hidden="true">{' · ' + whoWords(r.who)}</span>{/if}</button>
 						{/if}
 					{/each}
 				</div>
@@ -142,8 +155,10 @@
 				<button type="button" class="mt-1 block text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => onopen?.(message)}>Open in conversation</button>
 			{/if}
 
-			{#if delivery?.status === 'sending'}
-				<p class="mt-1 text-xs/5 text-gray-400" data-testid="sending">Sending…</p>
+			{#if delivery?.status === 'sending' || delivery?.status === 'checking' || message.queued}
+				<p class="mt-1 text-xs/5 text-gray-400" data-testid="sending">{delivery?.status === 'checking' ? 'Checking status…' : 'Sending…'}</p>
+			{:else if delivery?.status === 'unknown'}
+				<p class="mt-1 text-xs/5 text-amber-200" role="alert" data-testid="not-confirmed">Delivery not confirmed <button type="button" class="font-semibold underline" onclick={(event) => oncheck?.(event.currentTarget)}>Check status</button></p>
 			{:else if delivery?.status === 'failed'}
 				<p class="mt-1 text-xs/5 text-red-400" role="alert" data-testid="not-delivered">Not delivered: {delivery.error} <button type="button" class="font-semibold underline" onclick={(event) => onretry?.(event.currentTarget)}>Retry</button> · <button type="button" class="underline" onclick={ondismiss}>Dismiss</button></p>
 			{/if}
@@ -159,9 +174,13 @@
 					{/snippet}
 				</DropdownMenuTrigger>{#if menuOpen}
 				<DropdownMenuContent align="end">
+					{#if system}
+						<DropdownMenuItem disabled>{SYSTEM_NO_REPLY}</DropdownMenuItem>
+					{:else}
 					{#each REACTIONS as r (r.id)}
 						<DropdownMenuItem disabled={!officeRunning} onSelect={() => onreact?.(message, r.id)}>React {r.label}</DropdownMenuItem>
 					{/each}
+					{/if}
 					{#if replyable}
 						<DropdownMenuItem onSelect={() => { if (trigger) onthread?.(message, trigger); }}>Reply in thread</DropdownMenuItem>
 					{/if}
@@ -180,9 +199,11 @@
 				</DropdownMenuContent>
 				{/if}
 			</DropdownMenu>{#if toolbar}
+			{#if !system}
 			{#each REACTIONS as r (r.id)}
 				<Button class={actionFocus} type="button" variant="ghost" size="icon-xs" aria-label="React {r.label}" title={r.label} disabled={!officeRunning} onclick={() => onreact?.(message, r.id)}><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /></Button>
 			{/each}
+			{/if}
 			{#if replyable}
 				<Button class={actionFocus} type="button" variant="ghost" size="icon-xs" aria-label="Reply in thread" title="Reply in thread" onclick={(event) => onthread?.(message, event.currentTarget)}><MessageSquareReply aria-hidden="true" /></Button>
 			{/if}
