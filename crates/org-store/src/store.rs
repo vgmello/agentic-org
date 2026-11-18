@@ -38,7 +38,7 @@ pub struct Limits {
     pub unflushed_bytes: u64,
     /// Flushed, files not yet written. At this many bytes the writer takes no new batch.
     pub unmaterialized_bytes: u64,
-    /// Entries the change stream keeps for late subscribers.
+    /// Entries the change stream keeps for late subscribers. Zero is refused at opening.
     pub change_ring: usize,
     /// A journal segment is rolled before an append would take it past this.
     pub segment_bytes: u64,
@@ -344,6 +344,12 @@ impl<E: Engine> Store<E> {
             disk,
             hooks,
         } = parts;
+        if limits.change_ring == 0 {
+            // A ring that keeps nothing would drop every subscriber at its first change.
+            return Err(StoreError::Invalid(
+                "the change ring must keep at least one entry".into(),
+            ));
+        }
         let files = Files::new(&durable, Arc::clone(&disk))?;
         let (journal, recovered) = match opening {
             Opening::Create(facts) => {

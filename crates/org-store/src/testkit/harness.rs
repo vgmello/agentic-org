@@ -21,7 +21,7 @@
 use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    change::{Operation, Timestamp},
+    change::{Ack, Operation, Timestamp},
     custody::{OfficeIdentity, WriterAuthority},
     engine::{Engine, Projector},
     journal::AnchorFacts,
@@ -52,7 +52,8 @@ pub trait FamilyScript<E: Engine>: Sync {
 }
 
 /// One submission the harness made: what was asked, what it answered (an error when the
-/// answer never came), and whether the caller asked for a durable answer.
+/// answer never came), and whether that answer was durable-class: the caller asked for a
+/// durable answer, or the change itself is durable (the class its receipt records).
 type Submitted<S> = (S, Result<Reply, crate::StoreError>, bool);
 
 struct Run<'a, E: Engine, S: FamilyScript<E>> {
@@ -89,6 +90,19 @@ impl<E: Engine + Dump, S: FamilyScript<E>> Run<'_, E, S> {
     ) -> Result<Reply, crate::StoreError> {
         let command = self.script.command(spec);
         store.submit(command.op, durable, command.decide)
+    }
+
+    /// Whether `spec`, just acknowledged, was answered in the durable class. Read from its
+    /// receipt at the acknowledgement: after a power cut the receipt is what is in doubt.
+    fn answered_durable(&self, store: &Store<E>, spec: &S::Spec, context: &str) -> bool {
+        use crate::engine::CoreRead;
+        let Some(op) = self.script.command(spec).op else {
+            return false;
+        };
+        let receipt = store.read(|snapshot| Ok(snapshot.receipt(&op.id)?));
+        let receipt =
+            receipt.unwrap_or_else(|e| panic!("{context}: reading a receipt failed: {e}"));
+        receipt.0.is_some_and(|receipt| receipt.ack == Ack::Durable)
     }
 
     fn existing(&self, engine: &Arc<E>) -> Store<E> {
@@ -330,8 +344,10 @@ where
             break;
         }
         let spec = script.generate(&mut rng, step);
-        let durable = rng.chance(2);
-        let reply = run.submit(&store, &spec, durable);
+        let asked = rng.chance(2);
+        let reply = run.submit(&store, &spec, asked);
+        // An operation is durable by its change too, whatever its caller asked.
+        let durable = asked || (reply.is_ok() && run.answered_durable(&store, &spec, &context));
         submitted.push((spec, reply, durable));
     }
     let fired = run.faults.fired();
@@ -339,7 +355,12 @@ where
     run.faults.kill();
     drop(store);
     if power_cut {
-        let cut = run.faults.power_cut();
+        // Every other seed also loses the directory entries no flush had covered.
+        let cut = if seed % 2 == 1 {
+            run.faults.power_cut_losing_entries()
+        } else {
+            run.faults.power_cut()
+        };
         cut.unwrap_or_else(|e| panic!("{context}: the power cut failed: {e}"));
     }
     let mut guards = Vec::new();
@@ -350,7 +371,8 @@ where
     }
 
     let store = run.existing(&engine);
-    // A committed-class acknowledgement may be taken back by a power cut; no other may.
+    // A committed-class acknowledgement may be taken back by a power cut; no other may,
+    // whether its caller asked for a durable answer or its change is durable by class.
     run.resubmit_all(
         &store,
         &submitted,

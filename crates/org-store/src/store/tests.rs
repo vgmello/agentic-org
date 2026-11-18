@@ -108,6 +108,31 @@ impl Office {
     }
 }
 
+/// How long an answer may take before the test fails. A failure bound, never a wait on
+/// the passing path: a regression that leaves a caller unanswered fails here instead of
+/// hanging the run.
+const ANSWER_BOUND: Duration = Duration::from_secs(60);
+
+/// Runs `call` against the store on another thread and returns what it answers, or
+/// fails when it has not answered within [`ANSWER_BOUND`].
+fn bounded<R: Send + 'static>(
+    what: &str,
+    store: &Arc<TestStore>,
+    call: impl FnOnce(&TestStore) -> R + Send + 'static,
+) -> R {
+    let (answered, answer) = mpsc::channel();
+    let worker = Arc::clone(store);
+    let handle = thread::spawn(move || {
+        let _ = answered.send(call(&worker));
+    });
+    let result = answer
+        .recv_timeout(ANSWER_BOUND)
+        .unwrap_or_else(|e| panic!("{what} was not answered: {e}"));
+    // It has answered: the thread ends, and its handle on the store with it.
+    handle.join().unwrap();
+    result
+}
+
 fn cursor(store: &TestStore) -> Cursor {
     store.read(|s| Ok(s.cursor()?)).unwrap().0.unwrap()
 }
@@ -884,7 +909,12 @@ fn a_durable_request_is_not_answered_when_the_host_cannot_confirm_its_flush() {
     let store = office.create();
     office.custody.close();
     office.put(&store, "c", Ack::Committed).unwrap();
-    let durable = office.put_as(&store, 7, "d", Ack::Durable);
+    let durable_put = |office: &Office| {
+        let probe = office.probe.clone();
+        let op = probe.operation(id(7), "probe.put", "d", b"d");
+        move |store: &TestStore| store.submit(Some(op), false, probe.put("d", b"d", Ack::Durable))
+    };
+    let durable = bounded("the durable request", &store, durable_put(&office));
     assert!(
         matches!(durable, Err(StoreError::Custody(_))),
         "{durable:?}"
@@ -900,7 +930,7 @@ fn a_durable_request_is_not_answered_when_the_host_cannot_confirm_its_flush() {
     office.custody.reopen();
     let store = office.reopen();
     let decisions = office.probe.decisions();
-    let again = office.put_as(&store, 7, "d", Ack::Durable).unwrap();
+    let again = bounded("the durable retry", &store, durable_put(&office)).unwrap();
     assert_eq!(&*again.bytes, b"put d at work 2");
     assert_eq!(office.probe.decisions(), decisions);
     assert_eq!(office.custody.head().unwrap().ordinal, 2);
@@ -936,6 +966,8 @@ fn a_durable_request_waits_for_the_confirmation_and_gets_its_error_when_it_fails
             office.custody.close();
         }
         office.custody.release_confirmations();
+        let waited = answer.recv_timeout(ANSWER_BOUND);
+        waited.unwrap_or_else(|e| panic!("fails {fails}: the durable request: {e}"));
         let result = durable.join().unwrap();
         if fails {
             assert!(matches!(result, Err(StoreError::Custody(_))), "{result:?}");
@@ -991,13 +1023,16 @@ fn a_flusher_that_panics_stops_the_store_and_answers_everyone_waiting() {
     });
     let mut parts = office.parts(Opening::Create(AnchorFacts::default()));
     parts.custody = Arc::clone(&custody) as Arc<dyn WriterAuthority>;
-    let store = Store::open(parts).unwrap();
+    let store = Arc::new(Store::open(parts).unwrap());
     office.put(&store, "a", Ack::Durable).unwrap();
 
     custody
         .armed
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    let durable = office.put(&store, "d", Ack::Durable);
+    let probe = office.probe.clone();
+    let durable = bounded("the durable request", &store, move |store| {
+        store.submit(None, false, probe.put("d", b"d", Ack::Durable))
+    });
     assert!(
         matches!(durable, Err(StoreError::Internal(_))),
         "{durable:?}"
@@ -1006,9 +1041,29 @@ fn a_flusher_that_panics_stops_the_store_and_answers_everyone_waiting() {
         store.status().stopped,
         Some(StoreError::Internal(_))
     ));
-    assert!(matches!(store.sync(), Err(StoreError::Internal(_))));
-    assert!(office.put(&store, "e", Ack::Committed).is_err());
-    assert!(matches!(store.close(), Err(StoreError::Internal(_))));
+    let synced = bounded("the sync", &store, |store| store.sync());
+    assert!(matches!(synced, Err(StoreError::Internal(_))), "{synced:?}");
+    let probe = office.probe.clone();
+    let late = bounded("a later request", &store, move |store| {
+        store.submit(None, false, probe.put("e", b"e", Ack::Committed))
+    });
+    assert!(late.is_err(), "{late:?}");
+    let closed = Arc::try_unwrap(store).ok().unwrap().close();
+    assert!(matches!(closed, Err(StoreError::Internal(_))), "{closed:?}");
+}
+
+#[test]
+fn a_store_without_a_change_ring_is_refused_when_opened() {
+    let mut office = Office::new();
+    office.limits.change_ring = 0;
+    let opened = Store::open(office.parts(Opening::Create(AnchorFacts::default())));
+    assert!(
+        matches!(opened.as_ref().err(), Some(StoreError::Invalid(_))),
+        "{:?}",
+        opened.err()
+    );
+    // Refused before anything is created.
+    assert!(!office.root.exists());
 }
 
 /// Every accepted entry can be written: a file is never a directory, in the projection,
