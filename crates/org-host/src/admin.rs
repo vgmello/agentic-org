@@ -64,7 +64,10 @@ fn denied() -> ApiError {
         "local administrator confirmation at the server machine is required",
     )
 }
-fn unavailable(_: impl std::fmt::Debug) -> ApiError {
+/// The caller sees one generic answer; the host log keeps the cause. Every error passed here
+/// is a kind (a registry, link-store or URL-shape error), never token or secret bytes.
+fn unavailable(cause: impl std::fmt::Debug) -> ApiError {
+    crate::host_log::log(&format!("administrator link unavailable: {cause:?}"));
     ApiError::new(ErrorCode::Unavailable, "the host registry is unavailable")
 }
 fn wall() -> Result<i64, ApiError> {
