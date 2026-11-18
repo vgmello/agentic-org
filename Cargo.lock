@@ -614,6 +614,7 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-socket",
  "serde_json",
@@ -785,6 +786,7 @@ dependencies = [
 name = "org-spool"
 version = "0.0.0"
 dependencies = [
+ "org-platform",
  "serde",
  "serde_json",
 ]

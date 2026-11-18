@@ -28,7 +28,6 @@ apps/agentic-org/tests/instances.rs 2
 apps/agentic-org/tests/keys.rs 8
 apps/agentic-org/tests/service.rs 4
 apps/agentic-org/tests/supervision.rs 17
-crates/org-client/src/agent.rs 3
 crates/org-host/src/app_auth.rs 8
 crates/org-host/src/bootstrap.rs 3
 crates/org-host/src/bootstrap/tests.rs 6
@@ -80,7 +79,6 @@ crates/org-socket/src/rights/stream/tests/typed.rs 7
 crates/org-socket/src/rights/tests.rs 6
 crates/org-socket/src/rights/tests/bounded.rs 5
 crates/org-socket/tests/stream_adoption.rs 1
-crates/org-spool/src/safe_read.rs 5
 crates/org-supervise/src/spawn.rs 1
 crates/org-supervise/tests/lifecycle.rs 1
 crates/org-supervise/tests/recovery_native.rs 25
