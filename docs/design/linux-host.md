@@ -503,19 +503,21 @@ it). As built, where the text above is not exact:
 - The host declares its item stores (`office-keys`, `host-secrets`). A declared store
   that is not the service user's directory with mode `0700` refuses by its own rule,
   naming it, before the store is called empty; only what the engine would hand the
-  host counts as an item; a file named like an item that is not one refuses
-  (`ItemUnsafe`); entries the host did not declare are ignored and never opened (a
-  root-owned `lost+found` in a volume root is tolerated).
-- Whatever an open makes (the lock, an item store's directory) gets its mode set on
-  the descriptor, whatever the process's mask is; nothing that exists is changed.
+  host counts as an item; when the records say keys exist, a file named like an item
+  that is not one refuses the store (`ItemUnsafe`), and otherwise the engine refuses
+  that item when it is used; entries the host did not declare are ignored and never
+  opened (a root-owned `lost+found` in a volume root is tolerated).
+- Whatever an open makes gets its mode set, whatever the process's mask is (the lock
+  and item files on their descriptor; an item store's directory by name in its parent,
+  which is the checked owner-only directory); nothing that exists is changed.
 - The lock file is `.lock`, the engine's name. The layout is `<dir>/.lock`,
   `<dir>/office-keys/<office id>.key` (the raw 32 bytes, as in the Keychain) and
   `<dir>/host-secrets/<name>`.
 - The empty-store rule is checked over the whole store before any view exists. The
   host says keys exist when the office home holds an office folder (a folder is made
   only after its key was stored). A store that holds host secrets but no office key
-  passes the rule; an office whose key is gone is not started and never gets a fresh
-  key.
+  passes the rule; an office whose key is gone is started without a key (its handoff
+  carries none) and never gets a fresh one.
 - The private group is the user's primary group whose member list is empty or names
   only the user. An account that has that group as its primary group is not in the
   member list and is not looked for (it cannot be found without enumerating
