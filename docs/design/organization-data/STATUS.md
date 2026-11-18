@@ -25,6 +25,7 @@ Every numbered document carries one status line. The vocabulary is: **draft** (s
 | --- | --- | --- |
 | 2026-11-18 | 2.16 | The office store ([ADR-0021](../../adr/0021-office-store-architecture.md)): one acceptance journal per office for every family, entries of file changes in segments hashed as stored, host checkpoint per flush (16 rev 4); a message is acknowledged at its journal entry and its file follows (15 rev 10); no separate numbering journal (06 rev 2.10); journal entries use `raw-bytes/1` (08 rev 2.10); the storage tree shows where the journal is. |
 | 2026-11-18 | 2.17 | What reaches an agent's inbox ([ADR-0024](../../adr/0024-a-channel-question-is-watched-for-its-answer.md)): `message_recipient_states` gains `delivered_because` and `related_message_id`; a message's metadata carries `mentions[]`. |
+| 2026-11-18 | 2.18 | An ask carries one to eight questions (`questions[]`), answered together; an answer holds one entry for each question. Owner request. |
 | 2026-11-17 | 2.15 | Every actor is a person or an agent, never `owner`; accounts are tied to persons; creating an organization makes its top-level team, the creator's person record and the HR lead; a project creates its team; agents are onboarded only through HR; areas are removed; older material removed. |
 
 The SQL is a structural draft. Implementing the schema, task mutation/replication, private task-note storage/access controls, memory consolidation and analytics retention is separate work. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.

@@ -80,7 +80,7 @@ Options every command takes:
 | `--schema` | all | Print the command's input and output schema and stop (2.5) |
 | `--help` | all | Print the command's flags in plain text and stop |
 | `--json '<object>'` | commands with input | The whole input, as one JSON object |
-| `--input-file <path>`, `--stdin` | commands with a content field | The content, read as bytes (2.2) |
+| `--input-file <path>`, `--stdin` | commands with input | The content, read as bytes; or, with `--input-format json` or `yaml`, the whole input (2.2) |
 | `--dry-run` | writes | Decide and report; change nothing (2.6) |
 | `--idempotency-key <key>` | writes | A key the caller chooses, for safe retries (2.7) |
 | `--if-match <revision>` | writes to a record with a revision | The revision the caller last saw (2.7) |
@@ -101,6 +101,10 @@ and they combine:
   escaping. Short content can still be given by the field's own flag or in `--json`. A
   command with no content field refuses both flags. The two cannot be given together,
   and bytes that are not valid UTF-8 are refused with `invalid_request`.
+- **`--input-format json` or `--input-format yaml`** makes the file or standard input
+  the whole input object instead of the content field. This is how an input with
+  structure, such as an ask with several questions, is given without quoting anything
+  for the shell. The default, `text`, is the content field.
 
 `agent-os` reads the file itself, as the agent, inside the agent's isolation. The
 content travels in the request. **The office never opens a path that a caller names.**
@@ -352,8 +356,8 @@ command is used. The names are the ones the office's calls already have (`msg.se
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
 | `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `handoff`, or `announcement` with its reason. `--mention <employee>` mentions someone by name, and may be repeated. A hand-off or a mention sent to an idle agent starts a turn for it (C8) | [Chat UX](../specs/chat-ux.md) section 5; [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) | B6 |
-| `msg ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there: it returns the question's ID at once, the office watches the channel for its answer, and `meta` says whether a watch is open (C9). An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
-| `msg reply` | Replies in a thread (B6); answers an ask (B7) | Messaging; ADR-0020 | B6, B7 |
+| `msg ask` | Asks one question, or up to eight at once, with the `ask_user` schema: `choice` (single or multiple), `yes_no` or `free_text`, each with an optional default; `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there: it returns the question's ID at once, the office watches the channel for its answer, and `meta` says whether a watch is open (C9). An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
+| `msg reply` | Replies in a thread (B6); answers an ask, naming each question and option by its ID (B7). A person and an agent answer the same way | Messaging; ADR-0020 | B6, B7 |
 | `msg accept` | Accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
 | `msg withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
 | `msg inbox`, `msg read` | Everything addressed to the caller, unread first, each entry with the reason it is there (`addressed`, `mention`, `thread_reply`, `answer_candidate`) and, for an answer, the question it answers; `--because <reason>` and `--thread <id>` narrow it. One message with its thread. Nothing else from a channel is in the inbox | ADR-0003 decisions 10 and 11; [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) | B6 |
@@ -377,6 +381,84 @@ thread is judged by the watch, a short run of a cheaper model made by the office
 comes to its inbox as `answer_candidate` when it answers the question. If the agent is
 still working, it sees the answer with `msg inbox` or `msg wait --thread`. If it has
 ended its turn, the answer starts a turn for it in the same session.
+
+**Asking structured questions, and answering them.** The asker is an agent; the
+answerer may be a person in the browser or another agent on the command line. Both give
+the same answer record, and the office checks it against the questions.
+
+One question fits in flags:
+
+```sh
+agent-os msg ask --to sam --question-type yes_no --prompt "Rename Open organization?" --default-value no
+agent-os msg ask --to sam --question-type choice --prompt "Which environment first?" \
+  --option dev=Development --option prod=Production --default-value dev
+```
+
+Several questions go in a file, with nothing to escape:
+
+```yaml
+# ask.yaml
+to: sam
+required: true
+body: Before I set up the release pipeline I need four decisions.
+questions:
+  - id: env
+    question_type: choice
+    prompt: Which environment first?
+    options:
+      - {id: dev, label: Development}
+      - {id: prod, label: Production}
+    default_value: dev
+  - id: regions
+    question_type: choice
+    allow_multiple: true
+    prompt: Which regions?
+    options:
+      - {id: eu, label: Europe}
+      - {id: us, label: United States}
+      - {id: ap, label: Asia Pacific}
+  - id: downtime
+    question_type: yes_no
+    prompt: Is five minutes of downtime acceptable?
+  - id: notes
+    question_type: free_text
+    prompt: Anything else I should know?
+    optional: true
+```
+
+```sh
+agent-os msg ask --input-file ask.yaml --input-format yaml
+```
+
+A person sees one form and sends once. An agent that receives the ask is given the
+questions with their IDs and option IDs, at the start of its turn or with `msg read`,
+and answers in one call:
+
+```sh
+agent-os msg reply --id <ask> --answer env=prod --answer regions=eu --answer regions=us \
+  --answer downtime=yes --answer notes="Use the blue cluster."
+```
+
+With one question the ID may be left out: `--answer yes`. The asker's `msg ask` returns
+one result, keyed by question:
+
+```json
+{"ok":true,"data":{"by":"sam","answers":{"env":{"option_ids":["prod"]},"regions":{"option_ids":["eu","us"]},"downtime":{"option_ids":["yes"]},"notes":{"text":"Use the blue cluster."}}},"meta":{"status":"completed"},"error":null}
+```
+
+The rules:
+
+- **Answered together.** Every question that is not `optional` needs its answer. There
+  is no partial answer.
+- **No branching.** No question depends on another's answer. An agent that needs to
+  branch asks again with what it learned.
+- **Checked by the office,** at the ask and at the answer: unique IDs, options that fit
+  the question type, one option where only one is allowed, no unknown question or
+  option. A refusal is `invalid_request`, and its hint lists the valid IDs.
+- **Defaults are for each question.** When an ask that is not required times out, the
+  asker receives the default of each question that has one.
+- **A question to a channel with nobody named is free text only.** A structured answer
+  needs one answerer.
 
 ### 3.4 Tasks
 
