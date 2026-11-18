@@ -61,6 +61,42 @@ fn replace(tx: &rusqlite::Transaction<'_>, link: &NewLink<'_>) -> Result<(), Err
     Ok(())
 }
 
+/// Marks the pending, unexpired link with `digest` used, inside `tx`. A
+/// refusal changes nothing; the caller commits or rolls back.
+pub(super) fn redeem_in(
+    tx: &rusqlite::Transaction<'_>,
+    kind: LinkKind,
+    digest: LinkDigest,
+    now_ms: i64,
+) -> Result<Result<String, Refused>, Error> {
+    let row: Option<(String, String, i64)> = tx
+        .query_row(
+            "SELECT link_id,state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
+            (kind.as_str(), &digest.0[..]),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(store)?;
+    let Some((link_id, state, expires_at_ms)) = row else {
+        return Ok(Err(Refused::Unknown));
+    };
+    if let Err(refused) = redeem_rule(&state, expires_at_ms, now_ms) {
+        return Ok(Err(refused));
+    }
+    let changed = tx
+        .execute(
+            "UPDATE one_time_links SET state='used', ended_at_ms=?2 WHERE link_id=?1 AND state='pending'",
+            (&link_id, now_ms),
+        )
+        .map_err(store)?;
+    // Exactly the row just read must change; anything else is refused and the
+    // transaction rolls back when `tx` drops.
+    if changed != 1 {
+        return Err(Error::Conflict);
+    }
+    Ok(Ok(link_id))
+}
+
 impl HostDb {
     /// Issues a link that replaces the pending one only while no administrator exists. The
     /// check and the write share one IMMEDIATE transaction, so an administrator registered
@@ -138,31 +174,10 @@ impl OneTimeLinks for HostDb {
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store)?;
-        let row: Option<(String, String, i64)> = tx
-            .query_row(
-                "SELECT link_id,state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
-                (kind.as_str(), &digest.0[..]),
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()
-            .map_err(store)?;
-        let Some((link_id, state, expires_at_ms)) = row else {
-            return Ok(Err(Refused::Unknown));
+        let link_id = match redeem_in(&tx, kind, digest, now_ms)? {
+            Ok(link_id) => link_id,
+            Err(refused) => return Ok(Err(refused)),
         };
-        if let Err(refused) = redeem_rule(&state, expires_at_ms, now_ms) {
-            return Ok(Err(refused));
-        }
-        let changed = tx
-            .execute(
-                "UPDATE one_time_links SET state='used', ended_at_ms=?2 WHERE link_id=?1 AND state='pending'",
-                (&link_id, now_ms),
-            )
-            .map_err(store)?;
-        // Exactly the row just read must change; anything else is refused and the
-        // transaction rolls back when `tx` drops.
-        if changed != 1 {
-            return Err(Error::Conflict);
-        }
         tx.commit().map_err(store)?;
         Ok(Ok(link_id))
     }

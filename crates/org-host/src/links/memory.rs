@@ -29,6 +29,29 @@ impl MemoryLinks {
     }
 }
 
+impl MemoryLinks {
+    /// Whether `redeem` would accept `digest` now, without redeeming it. Lets
+    /// another memory adapter check every precondition before it redeems, as
+    /// the registry does in one transaction.
+    pub(crate) fn would_redeem(
+        &self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<Result<(), Refused>, Error> {
+        let rows = self
+            .rows
+            .lock()
+            .map_err(|_| Error::Store(StoreFault::Poisoned))?;
+        Ok(rows
+            .iter()
+            .find(|r| r.kind == kind && r.digest == digest)
+            .map_or(Err(Refused::Unknown), |r| {
+                redeem_rule(r.state, r.pending.expires_at_ms, now_ms)
+            }))
+    }
+}
+
 impl OneTimeLinks for MemoryLinks {
     fn instance_id(&self) -> &str {
         &self.instance_id
