@@ -20,6 +20,7 @@ serde_json.workspace = true
 [dev-dependencies]
 # Test-only: the real office server for tests/office.rs. Never a dependency of the binary.
 agentic-org-office = { path = "../agentic-org-office" }
+org-office = { path = "../../crates/org-office" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 tempfile.workspace = true
 

@@ -14,6 +14,7 @@ version = "0.0.0"
 dependencies = [
  "agentic-org-office",
  "org-client",
+ "org-office",
  "org-office-launch",
  "org-proto",
  "org-spool",

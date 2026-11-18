@@ -19,14 +19,14 @@ use std::time::{Duration, Instant};
 
 use org_client::Client;
 use org_office_launch::{
-    read_server_event, write_host_message, CreateOffice, HostMessage, ServerEvent,
+    read_server_event, write_host_message, HostMessage, ServerEvent, StartOffice,
 };
 use org_proto::location::office_socket_path;
 use org_proto::org::{
     AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams, MemberOffboard,
     MemberOffboardParams,
 };
-use org_proto::{AppToken, DbKey, OfficeRole};
+use org_proto::{AppToken, DbKey};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -215,10 +215,25 @@ impl World {
         office_socket_path(&self.home, OFFICE).unwrap()
     }
 
-    /// Creates the office, hires pixel and nova into it, and returns the running server.
+    /// Stores the office with the library (the worker creates only through HQ creation-v1),
+    /// starts it, hires pixel and nova into it, and returns the running server.
     fn office(&self) -> Server {
+        drop(
+            org_office::Office::create(
+                org_office_launch::office_dir(&self.home, OFFICE).unwrap(),
+                &org_office::NewOffice {
+                    office_id: OFFICE.into(),
+                    office_name: "HQ".into(),
+                    role: org_office::OfficeRole::Hq,
+                    org_id: ORG.into(),
+                    org_name: "Acme".into(),
+                },
+                org_office::Key::from_db_key(DbKey::from_bytes([0xB3; 32])),
+            )
+            .unwrap(),
+        );
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .arg("--create")
+            .args(["--office", OFFICE])
             .env(SERVER_ENV, "1")
             .env("ORG_OFFICE_HOME", &self.home)
             .env("HOME", &self.user)
@@ -244,18 +259,12 @@ impl World {
         };
         write_host_message(
             server.stdin.as_mut().unwrap(),
-            &HostMessage::Create(CreateOffice {
-                org_id: ORG.into(),
-                org_name: "Acme".into(),
-                office_id: OFFICE.into(),
-                office_name: "HQ".into(),
-                role: OfficeRole::Hq,
+            &HostMessage::Start(StartOffice {
                 app_token: token(),
                 db_key: DbKey::from_bytes([0xB3; 32]),
             }),
         )
         .unwrap();
-        assert!(matches!(server.event(), ServerEvent::Created { .. }));
         assert!(matches!(server.event(), ServerEvent::Ready { .. }));
 
         let app = Client::connect(self.socket()).unwrap();
