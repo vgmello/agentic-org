@@ -1,11 +1,11 @@
 use super::*;
 use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
-use org_proto::{DbKey, GrantKey};
+use org_proto::{GrantKey, OfficeSecretsKey};
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
-fn db_key() -> DbKey {
-    DbKey::from_bytes([0xb3; 32])
+fn db_key() -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes([0xb3; 32])
 }
 fn grant() -> GrantKey {
     GrantKey::from_bytes([7; 32])

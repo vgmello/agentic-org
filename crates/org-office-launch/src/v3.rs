@@ -40,7 +40,8 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    is_plain_id, read_secret_line, zero, ByteCounter, DbKey, FirstLine, LaunchError, ServerEvent,
+    is_plain_id, read_secret_line, zero, ByteCounter, FirstLine, LaunchError, OfficeSecretsKey,
+    ServerEvent,
 };
 
 /// An organization's recovery code (X-02 §6.4): staged by the host at `reserved` and sent on
@@ -611,21 +612,21 @@ pub enum HandoffFd {
 pub enum Handoff {
     /// After a create line (HQ): `fds` is `["transfer"]`.
     Create {
-        db_key: DbKey,
+        db_key: OfficeSecretsKey,
         grant_key: GrantKey,
         recovery_code: RecoveryCode,
         fds: Vec<HandoffFd>,
     },
     /// After a start line: `fds` is `["transfer"]`.
     Start {
-        db_key: DbKey,
+        db_key: OfficeSecretsKey,
         grant_key: GrantKey,
         fds: Vec<HandoffFd>,
     },
     /// After a discard line: the key, or `null` when the host has none (present either way, as
     /// in v2). `fds` is `[]`: no transfer socket, and no marker follows.
     Discard {
-        db_key: Option<DbKey>,
+        db_key: Option<OfficeSecretsKey>,
         fds: Vec<HandoffFd>,
     },
 }
@@ -655,7 +656,7 @@ struct RawHandoff {
     _version: Option<IgnoredAny>,
     op: HandoffOp,
     #[serde(default, deserialize_with = "present")]
-    db_key: Option<Option<DbKey>>,
+    db_key: Option<Option<OfficeSecretsKey>>,
     #[serde(default, deserialize_with = "present")]
     grant_key: Option<Option<GrantKey>>,
     #[serde(default, deserialize_with = "present")]
@@ -733,11 +734,14 @@ pub fn encode_handoff(handoff: &Handoff) -> Result<Vec<u8>, LaunchError> {
 
 /// Borrow host-held keys for a start without creating another owned key copy.
 /// The returned line is secret and must be zeroed by the sender on every path.
-pub fn encode_start_handoff(db_key: &DbKey, grant_key: &GrantKey) -> Result<Vec<u8>, LaunchError> {
+pub fn encode_start_handoff(
+    db_key: &OfficeSecretsKey,
+    grant_key: &GrantKey,
+) -> Result<Vec<u8>, LaunchError> {
     #[derive(Serialize)]
     struct Start<'a> {
         op: &'static str,
-        db_key: &'a DbKey,
+        db_key: &'a OfficeSecretsKey,
         grant_key: &'a GrantKey,
         fds: [HandoffFd; 1],
     }
@@ -752,14 +756,14 @@ pub fn encode_start_handoff(db_key: &DbKey, grant_key: &GrantKey) -> Result<Vec<
 /// Borrow the frozen host-held creation material. No owned secret copies and no
 /// alternative framing to the existing create handoff; caller zeroes every line.
 pub fn encode_create_handoff(
-    db_key: &DbKey,
+    db_key: &OfficeSecretsKey,
     grant_key: &GrantKey,
     recovery_code: &RecoveryCode,
 ) -> Result<Vec<u8>, LaunchError> {
     #[derive(Serialize)]
     struct Create<'a> {
         op: &'static str,
-        db_key: &'a DbKey,
+        db_key: &'a OfficeSecretsKey,
         grant_key: &'a GrantKey,
         recovery_code: &'a RecoveryCode,
         fds: [HandoffFd; 1],
@@ -776,11 +780,11 @@ pub fn encode_create_handoff(
 /// Borrow the host-held key (or `None` when the key store has none) for a discard. The key is
 /// present either way, as `null` when absent; `fds` is `[]`: no transfer socket and no marker
 /// follow. No owned secret copy; the caller zeroes the line on every path.
-pub fn encode_discard_handoff(db_key: Option<&DbKey>) -> Result<Vec<u8>, LaunchError> {
+pub fn encode_discard_handoff(db_key: Option<&OfficeSecretsKey>) -> Result<Vec<u8>, LaunchError> {
     #[derive(Serialize)]
     struct Discard<'a> {
         op: &'static str,
-        db_key: Option<&'a DbKey>,
+        db_key: Option<&'a OfficeSecretsKey>,
         fds: [HandoffFd; 0],
     }
     encode_secret(&Discard {

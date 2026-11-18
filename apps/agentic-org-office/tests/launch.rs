@@ -18,7 +18,7 @@ mod test_teardown;
 use joined_client::Client;
 use org_office_launch::{office_dir, OfficeFile};
 use org_proto::location::office_socket_path;
-use org_proto::{frame, AppToken, DbKey, OfficeRole};
+use org_proto::{frame, AppToken, OfficeRole, OfficeSecretsKey};
 use tempfile::TempDir;
 
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
@@ -142,8 +142,8 @@ fn token() -> AppToken {
 }
 
 /// The database key the host would hold for the office.
-fn db_key() -> DbKey {
-    DbKey::from_bytes([0xB3; 32])
+fn db_key() -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes([0xB3; 32])
 }
 
 /// The key as the handoff carries it, to look for in logs.
@@ -476,7 +476,11 @@ fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_del
 
     // The databases are plain SQLite (ADR-0016): with no key, a wrong key or the right one the
     // organization is found, so the discard is refused and nothing is deleted.
-    for key in [None, Some(DbKey::from_bytes([0xC4; 32])), Some(db_key())] {
+    for key in [
+        None,
+        Some(OfficeSecretsKey::from_bytes([0xC4; 32])),
+        Some(db_key()),
+    ] {
         let mut session = handshake(&world, FirstLine::Discard, INSTANCE, key);
         let failed = session.event();
         assert_eq!(failed["code"], "already_exists", "{failed}");
@@ -506,7 +510,7 @@ fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
         &world,
         FirstLine::Start,
         INSTANCE,
-        Some(DbKey::from_bytes([0xC4; 32])),
+        Some(OfficeSecretsKey::from_bytes([0xC4; 32])),
     );
     assert_eq!(session.event()["event"], "ready");
     assert!(session.host_goes_away().success());

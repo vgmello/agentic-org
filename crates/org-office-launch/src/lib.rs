@@ -55,7 +55,7 @@
 //!   `/dev/null` unless it's given its own pipes; stderr (the logs) is inherited. The host opens
 //!   its own descriptors close-on-exec, so no child holds `host.lock`.
 //! - **No app token** travels at launch: a worker's persons act only through owner grants.
-//! - **The database key** ([`DbKey`], 32 bytes) and the grant key travel only in the rendezvous
+//! - **The database key** ([`OfficeSecretsKey`], 32 bytes) and the grant key travel only in the rendezvous
 //!   handoff ([`v3::Handoff`]), never on stdin. The host creates each office's key and stores it
 //!   in its own key store before the office's first `--create`, and sends it on every create,
 //!   start and discard handoff. The server never creates, stores, loads or deletes a key, and
@@ -69,7 +69,7 @@
 //!   buffers and never reallocate them with a secret inside. Copies outside this crate remain:
 //!   the caller's reader and writer buffers (e.g. `Stdin`'s, which may keep the line for the
 //!   process's life; read stdin unbuffered or through a small buffer you control), and serde's
-//!   buffers when a secret arrives with JSON escapes. See `org_proto`'s `DbKey` docs.
+//!   buffers when a secret arrives with JSON escapes. See `org_proto`'s `OfficeSecretsKey` docs.
 //! - **stdout carries nothing.** Worker events ([`ServerEvent`]) travel as v3 lines over the
 //!   rendezvous connection; the host treats stdout as untrusted. Logs go to stderr.
 //! - Lines are JSON, one object per line, at most [`org_proto::MAX_FRAME_BYTES`]
@@ -131,8 +131,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// An office's database key, re-exported from `org_proto` so the host and the server name it
 /// through this contract. It travels only in the rendezvous handoff ([`v3::Handoff`]); see the
 /// crate docs.
-pub use org_proto::DbKey;
-pub use org_proto::DB_KEY_BYTES;
+pub use org_proto::OfficeSecretsKey;
+pub use org_proto::OFFICE_SECRETS_KEY_BYTES;
 
 /// The version of `office.json`, separate from the launch lines' [`v3::LAUNCH_VERSION`]. Bumped only
 /// for a breaking change to the file.

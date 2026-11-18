@@ -1,6 +1,6 @@
 //! Key custody: where the host keeps every office's database key.
 //!
-//! The host creates each office's key (`secrets::generate_db_key`), stores it here before the
+//! The host creates each office's key (`secrets::generate_office_secrets_key`), stores it here before the
 //! office's first `--create`, loads it before every `--office` and `--discard`, and sends it on
 //! the first line of the launch pipe (`org-office-launch`). Its servers never touch a key store.
 //! A key is in the host's memory only from its creation or load until that first line is written.
@@ -38,7 +38,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 
 use crate::code_signing::{hardened_and_clean, Signing};
 
@@ -48,12 +48,12 @@ use crate::code_signing::{hardened_and_clean, Signing};
 pub(crate) trait KeyStore: Send + Sync {
     /// Stores `key` as office `office_id`'s key. Add-only: an existing item is
     /// [`KeyStoreError::Exists`] and is left as it is. On any other error nothing is stored.
-    fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError>;
+    fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError>;
 
     /// Office `office_id`'s key, or `None` if the store has no item for it. An item that isn't a
-    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. A `DbKey` keeps its bytes
+    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. An `OfficeSecretsKey` keeps its bytes
     /// on the heap, so moving it moves a pointer; drop it as soon as its line is written.
-    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError>;
+    fn load(&self, office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError>;
 
     /// Deletes office `office_id`'s key. A missing item is `Ok`.
     fn delete(&self, office_id: &str) -> Result<(), KeyStoreError>;
@@ -294,8 +294,10 @@ mod tests {
         })
         .unwrap();
         let office = "SAMEOFFICE";
-        a.create(office, &DbKey::from_bytes([1; 32])).unwrap();
-        b.create(office, &DbKey::from_bytes([2; 32])).unwrap();
+        a.create(office, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
+        b.create(office, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
         assert_eq!(a.list().unwrap(), vec![office]);
         assert_eq!(b.list().unwrap(), vec![office]);
         let before = b.load(office).unwrap().unwrap();

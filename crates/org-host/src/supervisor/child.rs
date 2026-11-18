@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use org_office_launch::{ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
 use org_proto::location::{self, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
@@ -125,7 +125,7 @@ pub(crate) enum Mode<'a> {
     /// Create the HQ office: its handoff carries the new office's database key and recovery code.
     Create(&'a CreateLine),
     /// Serve the office with this id: its handoff carries its database key from the key store.
-    Office(&'a str, &'a DbKey),
+    Office(&'a str, &'a OfficeSecretsKey),
     /// Remove an unfinished office, then exit. The discard handoff never carries a key.
     Discard(&'a str),
 }
@@ -135,21 +135,21 @@ pub(crate) enum Mode<'a> {
 /// delivers. The first line is the only source of the office's details, so the line the worker
 /// reads and the key the handoff sends always name the same office.
 ///
-/// It is kept as one value, built once, because it owns its key and [`DbKey`] isn't `Clone`: the
+/// It is kept as one value, built once, because it owns its key and [`OfficeSecretsKey`] isn't `Clone`: the
 /// handoff borrows it, and dropping it zeroes it. It lives on the heap (a `Box`), so moving it
 /// moves a pointer, not the secrets. Building it still leaves the usual stack copies behind (see
-/// `DbKey`'s docs).
+/// `OfficeSecretsKey`'s docs).
 pub(crate) struct CreateLine(Box<HqCreate>);
 struct HqCreate {
     first: org_office_launch::v3::CreateLine,
-    db_key: DbKey,
+    db_key: OfficeSecretsKey,
     recovery: org_proto::RecoveryCode,
 }
 
 impl CreateLine {
     pub(crate) fn hq(
         first: org_office_launch::v3::CreateLine,
-        db_key: DbKey,
+        db_key: OfficeSecretsKey,
         recovery: org_proto::RecoveryCode,
     ) -> Self {
         Self(Box::new(HqCreate {
@@ -165,7 +165,7 @@ impl CreateLine {
     }
 
     /// The new office's database key, for the handoff. Never copy it.
-    pub(crate) fn db_key(&self) -> &DbKey {
+    pub(crate) fn db_key(&self) -> &OfficeSecretsKey {
         &self.0.db_key
     }
 }

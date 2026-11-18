@@ -150,7 +150,7 @@ pub(crate) fn hash_password(password: &Password) -> Result<Verifier, ApiError> {
     if password.expose().len() > 4096 {
         return Err(denied());
     }
-    let random = crate::secrets::generate_db_key().map_err(|_| unavailable())?;
+    let random = crate::secrets::generate_office_secrets_key().map_err(|_| unavailable())?;
     let salt = SaltString::encode_b64(&random.expose_bytes()[..16]).map_err(|_| unavailable())?;
     Verifier::new(
         argon()?
@@ -164,7 +164,7 @@ fn digest(handle: &SessionHandle) -> [u8; 32] {
     Sha256::digest(handle.expose().as_bytes()).into()
 }
 fn random_handle() -> Result<SessionHandle, ApiError> {
-    let bytes = crate::secrets::generate_db_key().map_err(|_| unavailable())?;
+    let bytes = crate::secrets::generate_office_secrets_key().map_err(|_| unavailable())?;
     SessionHandle::new(
         bytes
             .expose_bytes()

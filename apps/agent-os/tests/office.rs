@@ -28,7 +28,7 @@ use org_office_launch::ServerEvent;
 use org_proto::org::{
     AgentProfile, AgentRuntime, AgentStatus, MemberAddAgentParams, MemberOffboardParams,
 };
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -508,8 +508,8 @@ impl Run {
 }
 
 /// The database key the host would hold for the office.
-fn db_key() -> DbKey {
-    DbKey::from_bytes([0xB3; 32])
+fn db_key() -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes([0xB3; 32])
 }
 
 /// A ULID made now (the command ids the office accepts), distinct for each `n`.

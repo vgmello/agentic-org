@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use org_office_launch::v3::{self, HostFirstLine, RendezvousEvent};
 use org_office_launch::{FailCode, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
 use org_proto::location::{OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
-use org_proto::{DbKey, GrantKey, RecoveryCode};
+use org_proto::{GrantKey, OfficeSecretsKey, RecoveryCode};
 use serde_json::json;
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
@@ -172,7 +172,7 @@ fn create(home: &Home) {
     );
     let mut reader = accept_ready(&listener);
     let header = v3::encode_create_handoff(
-        &DbKey::from_bytes([7; 32]),
+        &OfficeSecretsKey::from_bytes([7; 32]),
         &GrantKey::from_bytes([9; 32]),
         &RecoveryCode::new("a recovery code".into()).unwrap(),
     )
@@ -217,9 +217,11 @@ fn the_fake_creates_and_starts_an_office_over_the_rendezvous() {
         &json!({"op": "start", "office_id": OFFICE}),
     );
     let mut reader = accept_ready(&listener);
-    let header =
-        v3::encode_start_handoff(&DbKey::from_bytes([7; 32]), &GrantKey::from_bytes([10; 32]))
-            .unwrap();
+    let header = v3::encode_start_handoff(
+        &OfficeSecretsKey::from_bytes([7; 32]),
+        &GrantKey::from_bytes([10; 32]),
+    )
+    .unwrap();
     let _transfer = hand_off(&mut reader, header);
     match event(&mut reader) {
         Some(RendezvousEvent::Server(ServerEvent::Ready { socket, .. })) => {
@@ -342,7 +344,7 @@ fn the_fake_refuses_a_v3_line_naming_a_ulid_instance() {
 #[test]
 fn the_fake_refuses_a_handoff_whose_op_is_not_the_start_lines() {
     let create = v3::encode_create_handoff(
-        &DbKey::from_bytes([7; 32]),
+        &OfficeSecretsKey::from_bytes([7; 32]),
         &GrantKey::from_bytes([9; 32]),
         &RecoveryCode::new("a recovery code".into()).unwrap(),
     )

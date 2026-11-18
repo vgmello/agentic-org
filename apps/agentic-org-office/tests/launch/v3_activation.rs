@@ -249,7 +249,7 @@ pub(super) fn handshake(
     world: &World,
     op: FirstLine,
     instance: &str,
-    key: Option<DbKey>,
+    key: Option<OfficeSecretsKey>,
 ) -> Session {
     handshake_with(world, op, instance, key, |_| {})
 }
@@ -260,7 +260,7 @@ fn handshake_with(
     world: &World,
     op: FirstLine,
     instance: &str,
-    key: Option<DbKey>,
+    key: Option<OfficeSecretsKey>,
     edit: impl FnOnce(&mut CreateLine),
 ) -> Session {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -577,7 +577,7 @@ fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes
         &world,
         FirstLine::Start,
         INSTANCE,
-        Some(DbKey::from_bytes([0; 32])),
+        Some(OfficeSecretsKey::from_bytes([0; 32])),
     );
     // ADR-0016 decision 3: the key only wraps private keys. The plain databases open
     // without it, so a wrong key still serves the office's data.

@@ -96,7 +96,7 @@ fn lookup_error(error: crate::hostdb::Error) -> ApiError {
     };
     ApiError::new(code, "provisioning operation not admissible")
 }
-fn fingerprint(key: &org_proto::DbKey) -> String {
+fn fingerprint(key: &org_proto::OfficeSecretsKey) -> String {
     Sha256::digest(key.expose_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -243,7 +243,7 @@ impl Provisioning {
             None if r.key_fingerprint.is_none()
                 && matches!(std::fs::symlink_metadata(folder),Err(e) if e.kind()==std::io::ErrorKind::NotFound) =>
             {
-                let key = crate::secrets::generate_db_key().map_err(storage)?;
+                let key = crate::secrets::generate_office_secrets_key().map_err(storage)?;
                 self.keys
                     .create(&r.prepared.office_id, &key)
                     .map_err(storage)?;
@@ -335,7 +335,7 @@ impl Provisioning {
             key_fingerprint: None,
             linked: false,
         };
-        let random = crate::secrets::generate_db_key().map_err(storage)?;
+        let random = crate::secrets::generate_office_secrets_key().map_err(storage)?;
         use std::fmt::Write as _;
         let mut formatted = String::with_capacity(49);
         for (index, bytes) in random.expose_bytes()[..20]

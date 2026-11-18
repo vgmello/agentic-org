@@ -17,7 +17,7 @@ fn made() -> (tempfile::TempDir, Office) {
     let office = Office::create(
         folder,
         &new,
-        Key::from_db_key(org_proto::DbKey::from_bytes([5; 32])),
+        Key::from_db_key(org_proto::OfficeSecretsKey::from_bytes([5; 32])),
     )
     .unwrap();
     (dir, office)

@@ -90,8 +90,8 @@ use org_proto::location::{
 };
 use org_proto::OfficeRole;
 use org_proto::{
-    ApiError, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeStatus, Request,
-    Response,
+    ApiError, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeSecretsKey,
+    OfficeStatus, Request, Response,
 };
 use org_socket::rights::{ReceiveError, StreamReceiver};
 use serde::Serialize;
@@ -114,7 +114,7 @@ enum Launch {
     /// A discard's handoff carries no key the fake needs: the databases are plain SQLite, so
     /// its folder is removed whatever it holds.
     Discard {
-        db_key: Option<DbKey>,
+        db_key: Option<OfficeSecretsKey>,
     },
 }
 
@@ -561,7 +561,7 @@ fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
 
 /// Records the database key's fingerprint (never the key), or `null`, in `fake.log`. `more` is
 /// appended (the office id, for a discard).
-fn note_db_key(home: &Path, key: &str, db_key: Option<&DbKey>, more: &str) {
+fn note_db_key(home: &Path, key: &str, db_key: Option<&OfficeSecretsKey>, more: &str) {
     let fingerprint = db_key.map_or_else(|| "null".to_owned(), fingerprint);
     record(
         home,

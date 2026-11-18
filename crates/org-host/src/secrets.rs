@@ -8,11 +8,11 @@
 use std::fs::File;
 use std::io::{self, Read};
 
-use org_proto::{DbKey, DB_KEY_BYTES};
+use org_proto::{OfficeSecretsKey, OFFICE_SECRETS_KEY_BYTES};
 
 /// A fresh database key: 32 bytes from `/dev/urandom`.
-pub(crate) fn generate_db_key() -> io::Result<DbKey> {
-    random(DbKey::from_bytes)
+pub(crate) fn generate_office_secrets_key() -> io::Result<OfficeSecretsKey> {
+    random(OfficeSecretsKey::from_bytes)
 }
 
 /// A fresh non-secret unique name: 16 lowercase hex characters (8 bytes) from `/dev/urandom`,
@@ -24,7 +24,7 @@ pub(crate) fn generate_unique_name() -> io::Result<String> {
 /// 32 bytes from `/dev/urandom`, wrapped by `wrap`. The bytes read are zeroed afterwards (best
 /// effort), whether or not the read succeeded; only the wrapped secret keeps them.
 fn random<T>(wrap: impl FnOnce([u8; 32]) -> T) -> io::Result<T> {
-    const _: () = assert!(DB_KEY_BYTES == 32);
+    const _: () = assert!(OFFICE_SECRETS_KEY_BYTES == 32);
     let mut bytes = [0u8; 32];
     let read = File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes));
     let secret = read.map(|()| wrap(bytes));
@@ -47,9 +47,12 @@ mod tests {
 
     #[test]
     fn keys_are_random() {
-        let (a, b) = (generate_db_key().unwrap(), generate_db_key().unwrap());
+        let (a, b) = (
+            generate_office_secrets_key().unwrap(),
+            generate_office_secrets_key().unwrap(),
+        );
         assert!(a != b);
-        assert!(a != DbKey::from_bytes([0; 32]));
+        assert!(a != OfficeSecretsKey::from_bytes([0; 32]));
     }
 
     #[test]

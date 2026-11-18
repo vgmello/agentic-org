@@ -102,7 +102,7 @@ fn actual_v3_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unk
     });
     let broker = Broker::new("instance".into(), PathBuf::new());
     let (signals, events) = mpsc::channel();
-    let key = DbKey::from_bytes([71; 32]);
+    let key = OfficeSecretsKey::from_bytes([71; 32]);
     let endpoint = broker
         .handoff(
             host,
@@ -150,7 +150,7 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
             std::process::id() + 1,
             None,
             &ServerCheck::Skip,
-            &DbKey::from_bytes([72; 32]),
+            &OfficeSecretsKey::from_bytes([72; 32]),
             None,
             1,
             signals,
@@ -346,7 +346,7 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             std::process::id(),
             None,
             &ServerCheck::Skip,
-            &DbKey::from_bytes([73; 32]),
+            &OfficeSecretsKey::from_bytes([73; 32]),
             None,
             1,
             signals,
@@ -451,7 +451,7 @@ pub(crate) fn worker_fixture(office: &str) -> WorkerFixture {
             std::process::id(),
             None,
             &ServerCheck::Skip,
-            &DbKey::from_bytes([71; 32]),
+            &OfficeSecretsKey::from_bytes([71; 32]),
             None,
             7,
             signals,
@@ -722,7 +722,7 @@ fn incompatible_profile_gets_no_secret_or_descriptor() {
                 std::process::id(),
                 None,
                 &ServerCheck::Skip,
-                &DbKey::from_bytes([71; 32]),
+                &OfficeSecretsKey::from_bytes([71; 32]),
                 None,
                 1,
                 signals,

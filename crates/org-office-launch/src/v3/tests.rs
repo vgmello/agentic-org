@@ -414,7 +414,7 @@ fn line_value(bytes: &[u8]) -> Value {
 #[test]
 fn handoffs_carry_the_keys_and_name_their_descriptors() {
     let create = Handoff::Create {
-        db_key: DbKey::from_bytes([0xcd; 32]),
+        db_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
         grant_key: GrantKey::from_bytes([0xef; 32]),
         recovery_code: RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap(),
         fds: vec![HandoffFd::Transfer],
@@ -442,7 +442,7 @@ fn handoffs_carry_the_keys_and_name_their_descriptors() {
     assert!(!printed.contains("cdcd") && !printed.contains("efef") && !printed.contains("ABCD"));
 
     let start = Handoff::Start {
-        db_key: DbKey::from_bytes([0xcd; 32]),
+        db_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
         grant_key: GrantKey::from_bytes([0xef; 32]),
         fds: vec![HandoffFd::Transfer],
     };
@@ -481,7 +481,7 @@ fn the_borrowing_discard_encoder_matches_the_owned_handoff() {
         .unwrap()
     );
     // With a borrowed key: byte for byte the owned encoding, and it decodes back.
-    let key = DbKey::from_bytes([0xcd; 32]);
+    let key = OfficeSecretsKey::from_bytes([0xcd; 32]);
     let some = encode_discard_handoff(Some(&key)).unwrap();
     assert_eq!(
         line_value(&some),
@@ -490,7 +490,7 @@ fn the_borrowing_discard_encoder_matches_the_owned_handoff() {
     assert_eq!(
         some,
         encode_handoff(&Handoff::Discard {
-            db_key: Some(DbKey::from_bytes([0xcd; 32])),
+            db_key: Some(OfficeSecretsKey::from_bytes([0xcd; 32])),
             fds: vec![],
         })
         .unwrap()
@@ -509,7 +509,7 @@ fn the_borrowing_discard_encoder_matches_the_owned_handoff() {
 #[test]
 fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
     let wrong = Handoff::Start {
-        db_key: DbKey::from_bytes([1; 32]),
+        db_key: OfficeSecretsKey::from_bytes([1; 32]),
         grant_key: GrantKey::from_bytes([2; 32]),
         fds: vec![],
     };

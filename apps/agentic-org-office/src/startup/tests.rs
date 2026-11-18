@@ -4,7 +4,7 @@ use crate::test_teardown::teardown_failed;
 
 use super::*;
 use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
-use org_proto::{DbKey, GrantKey, OfficeRole, RecoveryCode};
+use org_proto::{GrantKey, OfficeRole, OfficeSecretsKey, RecoveryCode};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, Write};
@@ -43,13 +43,13 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
 fn handoff(op: FirstLine) -> Handoff {
     match op {
         FirstLine::Create => Handoff::Create {
-            db_key: DbKey::from_bytes([0xb3; 32]),
+            db_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
             grant_key: GrantKey::from_bytes([7; 32]),
             recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
             fds: vec![HandoffFd::Transfer],
         },
         FirstLine::Start => Handoff::Start {
-            db_key: DbKey::from_bytes([0xb3; 32]),
+            db_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         },
@@ -289,7 +289,7 @@ fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
         let sender = std::thread::spawn(move || {
             let (mut stream, mut reader) = accept(listener);
             let header = Handoff::Discard {
-                db_key: key.then(|| DbKey::from_bytes([0xb3; 32])),
+                db_key: key.then(|| OfficeSecretsKey::from_bytes([0xb3; 32])),
                 fds: vec![],
             };
             stream

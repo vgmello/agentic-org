@@ -7,7 +7,7 @@ use org_office_launch::v3::{
     self, ChannelKind, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
     TransferRecord,
 };
-use org_proto::{DbKey, GrantKey};
+use org_proto::{GrantKey, OfficeSecretsKey};
 use std::io::{BufReader, Read, Seek, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
@@ -72,7 +72,7 @@ fn probe(failure: bool) {
         org_id: ID.into(),
         org_name: "Acme".into(),
     };
-    let key = || Key::from_db_key(DbKey::from_bytes([4; 32]));
+    let key = || Key::from_db_key(OfficeSecretsKey::from_bytes([4; 32]));
     let office = Office::create_for_instance(&folder, &info, key(), INSTANCE).unwrap();
     let path = dir.path().join("rv.sock");
     let listener = UnixListener::bind(&path).unwrap();
@@ -121,7 +121,7 @@ fn probe(failure: bool) {
         assert_eq!(ready["event"], "ready_for_secrets");
         let (worker, transfer) = UnixDatagram::pair().unwrap();
         let handoff = Handoff::Start {
-            db_key: DbKey::from_bytes([4; 32]),
+            db_key: OfficeSecretsKey::from_bytes([4; 32]),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         };

@@ -277,7 +277,7 @@ mod tests {
     use super::*;
     use crate::keys::memory::{Fault, MemoryKeys, Op};
     use org_office_launch::{OFFICES_DIR_NAME, OFFICE_FILE_NAME, REFUSED_DIR_NAME};
-    use org_proto::DbKey;
+    use org_proto::OfficeSecretsKey;
     use std::os::unix::fs::PermissionsExt;
 
     const ORPHAN: &str = "01ORPHANORPHANORPHANORPHAN";
@@ -327,7 +327,8 @@ mod tests {
         .unwrap();
         let keys = MemoryKeys::default();
         for id in [ORPHAN, STORED, UNFINISHED, REFUSED, REFUSED_AGAIN] {
-            keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
+            keys.create(id, &OfficeSecretsKey::from_bytes([1; 32]))
+                .unwrap();
         }
         keys
     }
@@ -597,13 +598,15 @@ mod tests {
         fs::create_dir_all(&stayed).unwrap();
         write_office(&stayed, MISPLACED);
         for id in [RENAMED, MISPLACED] {
-            keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
+            keys.create(id, &OfficeSecretsKey::from_bytes([1; 32]))
+                .unwrap();
         }
         assert_eq!(sweep_a_week_apart(&keys, dir.path()), [ORPHAN]);
         assert!(keys.has(RENAMED) && keys.has(MISPLACED));
 
         // An office.json there that can't be read: nothing is swept, or marked.
-        keys.create(ORPHAN, &DbKey::from_bytes([1; 32])).unwrap();
+        keys.create(ORPHAN, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
         fs::write(moved.join(OFFICE_FILE_NAME), b"{not an office").unwrap();
         assert!(sweep_orphans(&keys, dir.path(), t0() + 30 * DAY).is_empty());
         assert!(keys.has(ORPHAN));
@@ -619,7 +622,8 @@ mod tests {
         // No offices/ at all.
         let dir = tempfile::tempdir().unwrap();
         let keys = MemoryKeys::default();
-        keys.create(ORPHAN, &DbKey::from_bytes([1; 32])).unwrap();
+        keys.create(ORPHAN, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
         assert!(week_apart(&keys, dir.path()));
         assert!(keys.has(ORPHAN));
 
@@ -665,7 +669,9 @@ mod tests {
         let memory = setup(&home);
         let store = crate::keys::dev::DevKeys::new(dir.path().join("k"));
         for id in memory.list().unwrap() {
-            store.create(&id, &DbKey::from_bytes([2; 32])).unwrap();
+            store
+                .create(&id, &OfficeSecretsKey::from_bytes([2; 32]))
+                .unwrap();
         }
         assert_eq!(sweep_a_week_apart(&store, &home), [ORPHAN]);
         assert_eq!(

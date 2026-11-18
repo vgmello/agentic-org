@@ -3,7 +3,7 @@
 use super::child::Signal;
 use crate::{cloexec::SPAWN_LOCK, peer::AuditToken, server_check::ServerCheck, sync::lock};
 use org_office_launch::v3;
-use org_proto::{frame, DbKey, GrantKey};
+use org_proto::{frame, GrantKey, OfficeSecretsKey};
 use std::{
     collections::BTreeMap,
     fs::DirBuilder,
@@ -111,7 +111,7 @@ impl Broker {
             Err(e) => return Err(e),
         }
         crate::home::owner_only_dir(&directory).map_err(launch)?;
-        let nonce = crate::secrets::generate_db_key()?;
+        let nonce = crate::secrets::generate_office_secrets_key()?;
         let name: String = nonce.expose_bytes()[..8]
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -144,7 +144,7 @@ impl Broker {
         pid: u32,
         admitted: Option<AuditToken>,
         check: &ServerCheck,
-        db_key: &DbKey,
+        db_key: &OfficeSecretsKey,
         recovery: Option<&org_proto::RecoveryCode>,
         generation: u64,
         signals: Sender<Signal>,
@@ -295,7 +295,7 @@ impl Broker {
         pid: u32,
         admitted: Option<AuditToken>,
         check: &ServerCheck,
-        db_key: &DbKey,
+        db_key: &OfficeSecretsKey,
         recovery: Option<&org_proto::RecoveryCode>,
         generation: u64,
         signals: Sender<Signal>,
@@ -308,7 +308,7 @@ impl Broker {
         };
         org_socket::rights::set_buffer_sizes(transfer.as_fd(), v3::TRANSFER_SOCKET_BUFFER_BYTES)?;
         org_socket::rights::set_buffer_sizes(worker.as_fd(), v3::TRANSFER_SOCKET_BUFFER_BYTES)?;
-        let random = crate::secrets::generate_db_key()?;
+        let random = crate::secrets::generate_office_secrets_key()?;
         let key = GrantKey::from_bytes(*random.expose_bytes());
         let mut header = match recovery {
             Some(code) => v3::encode_create_handoff(db_key, &key, code),

@@ -690,7 +690,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
-    use org_proto::DbKey;
+    use org_proto::OfficeSecretsKey;
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
     #[cfg(target_os = "macos")]
@@ -819,7 +819,8 @@ mod tests {
         );
         // An item that isn't a key: the same.
         const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
-        keys.create(B, &DbKey::from_bytes([1; 32])).unwrap();
+        keys.create(B, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
         keys.fail(Op::Load, Fault::Corrupt);
         supervisor.start_office(B).unwrap();
         wait_for_state(&supervisor, B, unavailable(OfficeStatusReason::KeyMissing));
@@ -853,7 +854,8 @@ mod tests {
         let program = script(dir.path(), "server", &format!("cat >> '{}'", got.display()));
         let keys = Arc::new(MemoryKeys::default());
         for id in [OFFICE, B] {
-            keys.create(id, &DbKey::from_bytes([3; 32])).unwrap();
+            keys.create(id, &OfficeSecretsKey::from_bytes([3; 32]))
+                .unwrap();
         }
         let requirement = crate::server_check::server_requirement("AB12CD34EF").unwrap();
         let checked = checked_supervisor(
@@ -941,7 +943,8 @@ mod tests {
         let got = dir.path().join("got");
         let program = script(dir.path(), "server", &format!("cat > '{}'", got.display()));
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([6; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([6; 32]))
+            .unwrap();
         let check = scripted(|step, _| match step {
             Step::Admit => Ok(Some([1; 32])),
             Step::Still => Ok(Some([2; 32])),
@@ -1012,7 +1015,7 @@ mod tests {
             .unwrap();
         fs::create_dir(dir.path().join("run")).unwrap();
         let keys = Arc::new(MemoryKeys::default());
-        let key = DbKey::from_bytes([8; 32]);
+        let key = OfficeSecretsKey::from_bytes([8; 32]);
         keys.create(OFFICE, &key).unwrap();
         let seen = dir.path().join("seen");
         // The host closes the server's stdout over v3, so libtest's output goes nowhere.
@@ -1138,7 +1141,7 @@ mod tests {
     fn an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted() {
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
-        let key = DbKey::from_bytes([2; 32]);
+        let key = OfficeSecretsKey::from_bytes([2; 32]);
         keys.create(OFFICE, &key).unwrap();
         let pid_file = dir.path().join("pid");
         // The host closes the server's stdout over v3, so libtest's output goes nowhere.
@@ -1192,7 +1195,8 @@ mod tests {
     fn a_discard_whose_key_cant_be_read_starts_nothing_and_keeps_everything() {
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([7; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([7; 32]))
+            .unwrap();
         let seen = dir.path().join("seen");
         let program = script(
             dir.path(),
@@ -1224,7 +1228,8 @@ mod tests {
             &format!("echo run >> '{}'", ran.display()),
         );
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([3; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([3; 32]))
+            .unwrap();
         let supervisor = Supervisor::unregistered(SupervisorConfig {
             program,
             home: dir.path().to_path_buf(),

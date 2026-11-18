@@ -9,13 +9,13 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::path::PathBuf;
 
 use org_office_launch::is_storage_id;
-use org_proto::{DbKey, DB_KEY_BYTES};
+use org_proto::{OfficeSecretsKey, OFFICE_SECRETS_KEY_BYTES};
 
 use super::{KeyStore, KeyStoreError};
 use crate::secrets::zero;
 
 /// A key's file: 64 hex digits.
-const HEX_LEN: usize = DB_KEY_BYTES * 2;
+const HEX_LEN: usize = OFFICE_SECRETS_KEY_BYTES * 2;
 
 /// The largest key file read: a key with some whitespace around it. A longer file is corrupt.
 const MAX_FILE_BYTES: u64 = 128;
@@ -60,7 +60,7 @@ impl DevKeys {
     }
 
     /// Writes a new key file. `Ok(false)`: one already exists (left as it is).
-    fn write_new(&self, path: &PathBuf, key: &DbKey) -> io::Result<bool> {
+    fn write_new(&self, path: &PathBuf, key: &OfficeSecretsKey) -> io::Result<bool> {
         self.prepare_dir()?;
         // `create_new`: never replaces a key, even one a racing process just made.
         let opened = OpenOptions::new()
@@ -91,7 +91,7 @@ impl DevKeys {
 }
 
 impl KeyStore for DevKeys {
-    fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError> {
+    fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
         let path = self.path(office_id)?;
         match self.write_new(&path, key) {
             Ok(true) => Ok(()),
@@ -100,7 +100,7 @@ impl KeyStore for DevKeys {
         }
     }
 
-    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError> {
+    fn load(&self, office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError> {
         let path = self.path(office_id)?;
         // No symlink, and never blocked by a FIFO: only a regular file can be a key.
         let opened = OpenOptions::new()
@@ -158,7 +158,7 @@ impl KeyStore for DevKeys {
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-fn encode_hex(bytes: &[u8; DB_KEY_BYTES], out: &mut [u8; HEX_LEN]) {
+fn encode_hex(bytes: &[u8; OFFICE_SECRETS_KEY_BYTES], out: &mut [u8; HEX_LEN]) {
     for (i, byte) in bytes.iter().enumerate() {
         out[2 * i] = HEX[usize::from(byte >> 4)];
         out[2 * i + 1] = HEX[usize::from(byte & 0x0f)];
@@ -166,11 +166,11 @@ fn encode_hex(bytes: &[u8; DB_KEY_BYTES], out: &mut [u8; HEX_LEN]) {
 }
 
 /// 64 hex digits (either case, as the server's store read them) as a key, or `None`.
-fn decode_hex(text: &[u8]) -> Option<DbKey> {
+fn decode_hex(text: &[u8]) -> Option<OfficeSecretsKey> {
     if text.len() != HEX_LEN {
         return None;
     }
-    let mut bytes = [0u8; DB_KEY_BYTES];
+    let mut bytes = [0u8; OFFICE_SECRETS_KEY_BYTES];
     let mut ok = true;
     for (i, pair) in text.as_chunks::<2>().0.iter().enumerate() {
         match (nibble(pair[0]), nibble(pair[1])) {
@@ -179,7 +179,7 @@ fn decode_hex(text: &[u8]) -> Option<DbKey> {
         }
     }
     // `from_bytes` takes a copy; the local array is zeroed either way.
-    let key = ok.then(|| DbKey::from_bytes(bytes));
+    let key = ok.then(|| OfficeSecretsKey::from_bytes(bytes));
     zero(&mut bytes);
     key
 }
@@ -200,12 +200,12 @@ mod tests {
 
     const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
-    fn key(seed: u8) -> DbKey {
-        let mut bytes = [0u8; DB_KEY_BYTES];
+    fn key(seed: u8) -> OfficeSecretsKey {
+        let mut bytes = [0u8; OFFICE_SECRETS_KEY_BYTES];
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(29).wrapping_add(seed);
         }
-        DbKey::from_bytes(bytes)
+        OfficeSecretsKey::from_bytes(bytes)
     }
 
     #[test]

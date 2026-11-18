@@ -820,7 +820,7 @@ mod tests {
                     org_id: "ORG1".into(),
                     org_name: "Acme".into(),
                 },
-                Key::from_db_key(org_proto::DbKey::from_bytes([4; 32])),
+                Key::from_db_key(org_proto::OfficeSecretsKey::from_bytes([4; 32])),
             )
             .unwrap(),
         );
