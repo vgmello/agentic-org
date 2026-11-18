@@ -12,6 +12,7 @@ const INSTANCE: &str = "01J00000000000000000000000";
 const NOW: i64 = 1_800_000_000_000;
 const ALICE: &str = "01J0000000000000000000000A";
 const BOB: &str = "01J0000000000000000000000B";
+const UNKNOWN: &str = "01J0000000000000000000000Z";
 const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 pub(crate) struct NoSecrets;
@@ -181,7 +182,7 @@ fn idle_lifetime_ends_thirty_days_after_last_activity() {
         assert!(find(store, 1, NOW + IDLE_MS - 1).is_some());
         assert_eq!(find(store, 1, NOW + IDLE_MS), None);
         // Activity moves the boundary.
-        store.touch(&[(&new.id, NOW + 1_000)]).unwrap();
+        store.touch(&[(&new.id, NOW + 1_000)], NOW + 1_000).unwrap();
         let record = find(store, 1, NOW + IDLE_MS).unwrap();
         assert_eq!(record.last_activity_ms, NOW + 1_000);
         assert_eq!(find(store, 1, NOW + 1_000 + IDLE_MS), None);
@@ -196,16 +197,19 @@ fn touch_is_monotone_and_ignores_unknown_ids() {
         created(store.create(&a, NOW).unwrap());
         created(store.create(&b, NOW).unwrap());
         store
-            .touch(&[
-                (&a.id, NOW + 50),
-                (&b.id, NOW + 20),
-                ("not-a-session", NOW + 99),
-            ])
+            .touch(
+                &[
+                    (&a.id, NOW + 50),
+                    (&b.id, NOW + 20),
+                    ("not-a-session", NOW + 99),
+                ],
+                NOW + 60,
+            )
             .unwrap();
-        store.touch(&[(&a.id, NOW + 10)]).unwrap();
+        store.touch(&[(&a.id, NOW + 10)], NOW + 60).unwrap();
         assert_eq!(find(store, 1, NOW + 60).unwrap().last_activity_ms, NOW + 50);
         assert_eq!(find(store, 2, NOW + 60).unwrap().last_activity_ms, NOW + 20);
-        store.touch(&[]).unwrap();
+        store.touch(&[], NOW + 60).unwrap();
     });
 }
 
@@ -274,19 +278,83 @@ fn reap_returns_exactly_the_expired_sessions() {
 #[test]
 fn the_clock_never_runs_backward() {
     each(|store| {
-        created(store.create(&new_session(ALICE, 1), NOW + 100).unwrap());
+        let first = new_session(ALICE, 1);
+        created(store.create(&first, NOW + 100).unwrap());
         created(store.create(&new_session(ALICE, 2), NOW).unwrap());
         assert_eq!(find(store, 2, NOW).unwrap().created_ms, NOW + 100);
-        // A reap that advanced the clock is not undone by an earlier caller time.
-        store.reap(NOW + 100 + IDLE_MS).unwrap();
-        assert_eq!(find(store, 1, NOW), None);
+        // A reap advances the clock; a later touch from an earlier caller time
+        // is clamped to that clock, not to the caller's time.
+        assert_eq!(store.reap(NOW + 500), Ok(vec![]));
+        store.touch(&[(&first.id, NOW + 400)], NOW).unwrap();
+        assert_eq!(find(store, 1, NOW).unwrap().last_activity_ms, NOW + 400);
+        store.touch(&[(&first.id, NOW + 900)], NOW).unwrap();
+        assert_eq!(find(store, 1, NOW).unwrap().last_activity_ms, NOW + 500);
+    });
+}
+
+#[test]
+fn a_far_future_touch_is_clamped_and_still_reaped_at_clock_plus_idle() {
+    each(|store| {
+        let s = new_session(ALICE, 1);
+        created(store.create(&s, NOW).unwrap());
+        store
+            .touch(&[(&s.id, NOW + 10 * IDLE_MS)], NOW + 10)
+            .unwrap();
+        assert_eq!(find(store, 1, NOW + 10).unwrap().last_activity_ms, NOW + 10);
+        assert_eq!(find(store, 1, NOW + 10 + IDLE_MS), None);
+        assert_eq!(
+            store.reap(NOW + 10 + IDLE_MS),
+            Ok(vec![Ended {
+                id: s.id.clone(),
+                account_id: ALICE.into(),
+            }])
+        );
+    });
+}
+
+#[test]
+fn a_negative_time_is_refused_and_changes_nothing() {
+    each(|store| {
+        let s = new_session(ALICE, 1);
+        assert_eq!(store.create(&s, -1), Err(StoreError::Unavailable));
+        created(store.create(&s, NOW).unwrap());
+        let (cookie, proof) = digests(1);
+        assert_eq!(
+            store.find(&cookie, &proof, &origin(), -1),
+            Err(StoreError::Unavailable)
+        );
+        assert_eq!(
+            store.touch(&[(&s.id, NOW + 5)], -1),
+            Err(StoreError::Unavailable)
+        );
+        assert_eq!(store.reap(-1), Err(StoreError::Unavailable));
+        assert_eq!(find(store, 1, NOW).unwrap().last_activity_ms, NOW);
+    });
+}
+
+#[test]
+fn an_expired_unreaped_duplicate_digest_is_reaped_and_replaced() {
+    each(|store| {
+        let old = new_session(ALICE, 1);
+        created(store.create(&old, NOW).unwrap());
+        // Same cookie digest, presented once the old session has expired.
+        let again = new_session(BOB, 1);
+        let at = NOW + IDLE_MS;
+        assert_eq!(
+            created(store.create(&again, at).unwrap()),
+            vec![Ended {
+                id: old.id.clone(),
+                account_id: ALICE.into(),
+            }]
+        );
+        assert_eq!(find(store, 1, at).unwrap().id, again.id);
     });
 }
 
 #[test]
 fn unknown_account_or_duplicate_digest_is_unavailable_and_stores_nothing() {
     each(|store| {
-        let unknown = new_session("01J0000000000000000000000Z", 1);
+        let unknown = new_session(UNKNOWN, 1);
         assert_eq!(store.create(&unknown, NOW), Err(StoreError::Unavailable));
         assert_eq!(find(store, 1, NOW), None);
         let first = new_session(ALICE, 2);
@@ -316,6 +384,12 @@ fn the_host_wide_bound_reaps_before_refusing_and_refuses_every_account_alike() {
             );
             assert_eq!(find(store, n, later), None);
         }
+        // The bound is checked before the account: an unknown account sees
+        // the same refusal.
+        assert_eq!(
+            store.create(&new_session(UNKNOWN, 90_004), later),
+            Ok(Admission::Full { reaped: vec![] })
+        );
         // Once the first session's idle lifetime ends, it is reaped in the same
         // call and the new session is stored.
         let at = NOW + IDLE_MS;

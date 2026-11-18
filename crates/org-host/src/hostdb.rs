@@ -212,6 +212,7 @@ impl HostDb {
         tx.execute_batch(provisioning::DDL)?;
         tx.execute_batch(recovery::DDL)?;
         tx.execute_batch(links::DDL)?;
+        sessions::create_schema(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         for (name, value) in [
             ("instance_id", init.instance_id.clone()),

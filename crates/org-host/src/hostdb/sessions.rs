@@ -1,9 +1,12 @@
 //! SQLite adapter for the browser-session contract (`crate::sessions`).
 //!
-//! The table is created at open when missing (instances created before B3 keep
-//! working). Creation and the column check share one IMMEDIATE transaction: a
-//! present table whose columns differ rolls everything back and refuses the
-//! open, so the schema is never half-created. `SCHEMA_VERSION` is unchanged (D4).
+//! A new registry creates the table and its indexes with the rest of its schema.
+//! A registry created before B3 gains them at open (instances keep working):
+//! open reads `sqlite_schema` first and writes only when an object is missing,
+//! creating it in one IMMEDIATE transaction after rechecking. Every present
+//! object must match its source DDL text exactly, as the registry requires of
+//! its other tables; a mismatch rolls back and refuses the open, so the schema
+//! is never half-created. `SCHEMA_VERSION` is unchanged (D4).
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::{clock, Error, HostDb};
@@ -14,8 +17,8 @@ use crate::sessions::{
 
 /// The `prev_*` columns hold the previous cookie/proof during the rotation
 /// grace window (used from B7).
-const TABLE_DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS browser_sessions (
+pub(super) const TABLE_DDL: &str = r#"
+CREATE TABLE browser_sessions (
  id TEXT PRIMARY KEY CHECK (length(id) = 36),
  account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
  created_ms INTEGER NOT NULL,
@@ -31,61 +34,72 @@ CREATE TABLE IF NOT EXISTS browser_sessions (
  instance_id TEXT NOT NULL,
  CHECK ((prev_cookie_digest IS NULL) = (prev_proof_digest IS NULL)),
  CHECK ((prev_cookie_digest IS NULL) = (prev_valid_until_ms IS NULL))
-) STRICT, WITHOUT ROWID;
-"#;
-const INDEX_DDL: &str = r#"
-CREATE INDEX IF NOT EXISTS browser_sessions_account ON browser_sessions(account_id);
-CREATE INDEX IF NOT EXISTS browser_sessions_activity ON browser_sessions(last_activity_ms);
-"#;
-/// `(name, type, not null, primary key position)` as `PRAGMA table_info` reports them.
-const COLUMNS: &[(&str, &str, bool, i64)] = &[
-    ("id", "TEXT", true, 1),
-    ("account_id", "TEXT", true, 0),
-    ("created_ms", "INTEGER", true, 0),
-    ("last_activity_ms", "INTEGER", true, 0),
-    ("cookie_digest", "BLOB", true, 0),
-    ("proof_digest", "BLOB", true, 0),
-    ("prev_cookie_digest", "BLOB", false, 0),
-    ("prev_proof_digest", "BLOB", false, 0),
-    ("prev_valid_until_ms", "INTEGER", false, 0),
-    ("scheme", "TEXT", true, 0),
-    ("host", "TEXT", true, 0),
-    ("port", "INTEGER", true, 0),
-    ("instance_id", "TEXT", true, 0),
+) STRICT, WITHOUT ROWID"#;
+/// `(type, name, DDL)` in creation order: the table precedes its indexes, so
+/// a mismatching table is refused before an index is built on it.
+const OBJECTS: [(&str, &str, &str); 3] = [
+    ("table", "browser_sessions", TABLE_DDL),
+    (
+        "index",
+        "browser_sessions_account",
+        "CREATE INDEX browser_sessions_account ON browser_sessions(account_id)",
+    ),
+    (
+        "index",
+        "browser_sessions_activity",
+        "CREATE INDEX browser_sessions_activity ON browser_sessions(last_activity_ms)",
+    ),
 ];
 
 /// What the operator is told when `ensure_schema` refuses.
 pub(crate) const OUTDATED: &str =
     "host database from an earlier development build; run `agentic-org setup` on a new instance";
 
-/// Creates the session table and its indexes if missing, in one IMMEDIATE
-/// transaction. A present table with other columns refuses with `Outdated`
-/// and nothing is created.
-pub(super) fn ensure_schema(db: &mut Connection) -> Result<(), Error> {
-    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    tx.execute_batch(TABLE_DDL)?;
-    let actual = tx
-        .prepare("SELECT name, type, \"notnull\", pk FROM pragma_table_info('browser_sessions') ORDER BY cid")?
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, bool>(2)?,
-                r.get::<_, i64>(3)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let matches = actual.len() == COLUMNS.len()
-        && actual
-            .iter()
-            .zip(COLUMNS)
-            .all(|(a, e)| a.0 == e.0 && a.1.eq_ignore_ascii_case(e.1) && a.2 == e.2 && a.3 == e.3);
-    if !matches {
-        // Dropping `tx` rolls back.
-        crate::host_log::log(OUTDATED);
-        return Err(Error::Outdated);
+/// Creates the session objects in a new registry's own creation transaction.
+pub(super) fn create_schema(tx: &Transaction<'_>) -> Result<(), Error> {
+    for (_, _, ddl) in OBJECTS {
+        tx.execute_batch(ddl)?;
     }
-    tx.execute_batch(INDEX_DDL)?;
+    Ok(())
+}
+
+fn present(db: &Connection, kind: &str, name: &str) -> Result<bool, Error> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type=?1 AND name=?2)",
+        (kind, name),
+        |r| r.get(0),
+    )?)
+}
+/// The stored SQL of a present object must equal its source DDL (whitespace
+/// aside); anything else is a registry from another build.
+fn require(db: &Connection, ddl: &str) -> Result<(), Error> {
+    super::require_schema(db, ddl).map_err(|_| {
+        crate::host_log::log(OUTDATED);
+        Error::Outdated
+    })
+}
+
+/// Read-only when every object is present and matches. Otherwise one
+/// IMMEDIATE transaction rechecks, creates what is missing and verifies all;
+/// a mismatch rolls back with `Outdated` and nothing is created.
+pub(super) fn ensure_schema(db: &mut Connection) -> Result<(), Error> {
+    let mut complete = true;
+    for (kind, name, _) in OBJECTS {
+        complete &= present(db, kind, name)?;
+    }
+    if complete {
+        return OBJECTS.iter().try_for_each(|(_, _, ddl)| require(db, ddl));
+    }
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for (kind, name, ddl) in OBJECTS {
+        // Dropping `tx` on an error rolls back.
+        if present(&tx, kind, name)? {
+            require(&tx, ddl)?;
+        } else {
+            tx.execute_batch(ddl)?;
+            require(&tx, ddl)?;
+        }
+    }
     tx.commit()?;
     Ok(())
 }
@@ -220,19 +234,17 @@ impl BrowserSessions for HostDb {
             origin: stored_origin,
         }))
     }
-    fn touch(&self, activity: &[(&str, i64)]) -> Result<(), StoreError> {
-        let mut db = self.connection.lock().map_err(unavailable)?;
-        let tx = db
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(unavailable)?;
-        for (id, ms) in activity {
-            tx.execute(
-                "UPDATE browser_sessions SET last_activity_ms=max(last_activity_ms, ?2) WHERE id=?1",
-                (id, ms),
-            )
-            .map_err(unavailable)?;
-        }
-        tx.commit().map_err(unavailable)
+    fn touch(&self, activity: &[(&str, i64)], now_ms: i64) -> Result<(), StoreError> {
+        self.session_tx(now_ms, |tx, now| {
+            for (id, ms) in activity {
+                tx.execute(
+                    "UPDATE browser_sessions SET last_activity_ms=max(last_activity_ms, min(?2, ?3)) WHERE id=?1",
+                    (id, ms, now),
+                )
+                .map_err(unavailable)?;
+            }
+            Ok(())
+        })
     }
     fn end(&self, id: &str) -> Result<Option<Ended>, StoreError> {
         let mut db = self.connection.lock().map_err(unavailable)?;

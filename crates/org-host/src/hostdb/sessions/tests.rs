@@ -157,3 +157,52 @@ fn a_session_table_with_other_columns_refuses_the_open_and_creates_nothing() {
         assert_eq!(sql, handmade);
     }
 }
+
+/// Replaces the session objects with `table` (and no indexes) on a closed registry.
+fn handmade_table(home: &std::path::Path, table: &str) {
+    raw_db(home)
+        .execute_batch(&format!(
+            "DROP INDEX browser_sessions_account; DROP INDEX browser_sessions_activity; DROP TABLE browser_sessions; {table};"
+        ))
+        .unwrap();
+}
+
+#[test]
+fn a_session_table_with_the_same_columns_but_no_cascade_is_refused() {
+    let (home, db) = sqlite();
+    drop(db);
+    let table = super::TABLE_DDL.replace(" ON DELETE CASCADE", "");
+    assert_ne!(table, super::TABLE_DDL);
+    handmade_table(home.path(), &table);
+    assert!(matches!(
+        HostDb::open(home.path(), &NoSecrets),
+        Err(Error::Outdated)
+    ));
+    assert_eq!(names(&raw_db(home.path())), ["browser_sessions"]);
+}
+
+#[test]
+fn a_present_index_with_another_definition_is_refused() {
+    let (home, db) = sqlite();
+    drop(db);
+    raw_db(home.path())
+        .execute_batch(
+            "DROP INDEX browser_sessions_activity; CREATE INDEX browser_sessions_activity ON browser_sessions(created_ms);",
+        )
+        .unwrap();
+    assert!(matches!(
+        HostDb::open(home.path(), &NoSecrets),
+        Err(Error::Outdated)
+    ));
+}
+
+#[test]
+fn a_missing_index_alone_is_recreated() {
+    let (home, db) = sqlite();
+    drop(db);
+    raw_db(home.path())
+        .execute_batch("DROP INDEX browser_sessions_activity;")
+        .unwrap();
+    HostDb::open(home.path(), &NoSecrets).unwrap();
+    assert_eq!(names(&raw_db(home.path())).len(), 3);
+}

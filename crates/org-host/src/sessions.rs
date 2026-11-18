@@ -13,7 +13,7 @@
 //!
 //! Time is host wall milliseconds supplied by the caller, so tests inject it.
 //! Adapters make it monotone: a call never observes an earlier time than one
-//! already applied.
+//! already applied. A negative time is refused as `Unavailable`.
 
 use sha2::{Digest as _, Sha256};
 
@@ -203,9 +203,10 @@ pub(crate) trait BrowserSessions {
         origin: &Origin,
         now_ms: i64,
     ) -> Result<Option<SessionRecord>, StoreError>;
-    /// Raises each session's last activity to the given time if later. Unknown
-    /// IDs are ignored.
-    fn touch(&self, activity: &[(&str, i64)]) -> Result<(), StoreError>;
+    /// Raises each session's last activity to the given time if later, never
+    /// past the store's monotone time (at least `now_ms`), which it advances.
+    /// A caller cannot extend a session beyond host time. Unknown IDs are ignored.
+    fn touch(&self, activity: &[(&str, i64)], now_ms: i64) -> Result<(), StoreError>;
     /// Deletes one session.
     fn end(&self, id: &str) -> Result<Option<Ended>, StoreError>;
     /// Deletes every session of `account_id` except `except`, sorted by ID.

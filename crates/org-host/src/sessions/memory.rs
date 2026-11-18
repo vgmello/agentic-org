@@ -56,22 +56,36 @@ fn remove(rows: &mut Vec<Row>, drop: impl Fn(&Row) -> bool) -> Vec<Ended> {
     gone
 }
 
+/// The store's monotone time for a call at `now_ms`; negative times are refused
+/// as the registry's clock refuses them.
+fn clock(state: &State, now_ms: i64) -> Result<i64, StoreError> {
+    if now_ms < 0 {
+        return Err(StoreError::Unavailable);
+    }
+    Ok(now_ms.max(state.high_ms))
+}
+
 impl BrowserSessions for MemorySessions {
+    /// The registry's order: reap, then the bound, then the account and
+    /// uniqueness checks, whose failure undoes the whole call.
     fn create(&self, new: &NewSession, now_ms: i64) -> Result<Admission, StoreError> {
         let mut state = self.lock()?;
-        let now = now_ms.max(state.high_ms);
-        let duplicate = state
-            .rows
-            .iter()
-            .any(|r| r.record.id == new.id || r.cookie == new.cookie);
-        if !self.accounts.contains(&new.account_id) || duplicate {
-            return Err(StoreError::Unavailable);
+        let now = clock(&state, now_ms)?;
+        let expired = |r: &Row| !is_live(r.record.last_activity_ms, now);
+        let live = state.rows.iter().filter(|r| !expired(r)).count();
+        if live < SESSION_LIMIT {
+            let duplicate = state
+                .rows
+                .iter()
+                .filter(|r| !expired(r))
+                .any(|r| r.record.id == new.id || r.cookie == new.cookie);
+            if !self.accounts.contains(&new.account_id) || duplicate {
+                return Err(StoreError::Unavailable);
+            }
         }
         state.high_ms = now;
-        let reaped = remove(&mut state.rows, |r| {
-            !is_live(r.record.last_activity_ms, now)
-        });
-        if state.rows.len() >= SESSION_LIMIT {
+        let reaped = remove(&mut state.rows, expired);
+        if live >= SESSION_LIMIT {
             return Ok(Admission::Full { reaped });
         }
         state.rows.push(Row {
@@ -95,7 +109,7 @@ impl BrowserSessions for MemorySessions {
         now_ms: i64,
     ) -> Result<Option<SessionRecord>, StoreError> {
         let state = self.lock()?;
-        let now = now_ms.max(state.high_ms);
+        let now = clock(&state, now_ms)?;
         Ok(state
             .rows
             .iter()
@@ -107,11 +121,13 @@ impl BrowserSessions for MemorySessions {
             })
             .map(|r| r.record.clone()))
     }
-    fn touch(&self, activity: &[(&str, i64)]) -> Result<(), StoreError> {
+    fn touch(&self, activity: &[(&str, i64)], now_ms: i64) -> Result<(), StoreError> {
         let mut state = self.lock()?;
+        let now = clock(&state, now_ms)?;
+        state.high_ms = now;
         for (id, ms) in activity {
             if let Some(row) = state.rows.iter_mut().find(|r| r.record.id == *id) {
-                row.record.last_activity_ms = row.record.last_activity_ms.max(*ms);
+                row.record.last_activity_ms = row.record.last_activity_ms.max((*ms).min(now));
             }
         }
         Ok(())
@@ -132,7 +148,7 @@ impl BrowserSessions for MemorySessions {
     }
     fn reap(&self, now_ms: i64) -> Result<Vec<Ended>, StoreError> {
         let mut state = self.lock()?;
-        let now = now_ms.max(state.high_ms);
+        let now = clock(&state, now_ms)?;
         state.high_ms = now;
         Ok(remove(&mut state.rows, |r| {
             !is_live(r.record.last_activity_ms, now)
