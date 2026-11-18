@@ -1,8 +1,9 @@
 # ADR-0022 · The service host creates its own registry; setup has no reverse bootstrap
 
-Status: **accepted** (A2 decision D1). Partly implemented: the registry is created
-with no account and the reverse-bootstrap wire is removed; the first-start creation
-in `serve` and `admin.link.initial` are A2 increment B3. The
+Status: **accepted** (A2 decision D1). Implemented on macOS: the registry is created
+with no account by `serve --name` at first start, the reverse-bootstrap wire is
+removed, and setup asks for its link with `admin.link.initial`. Uninstall clearing
+the `host-registry.created` marker is FC-022. The
 [standalone design](../design/standalone-server.md#setup-executable-and-release-store)
 follows it.
 
