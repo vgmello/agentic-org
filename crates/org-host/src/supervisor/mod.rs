@@ -69,7 +69,9 @@ pub(crate) struct SupervisorConfig {
 
 pub(crate) struct Supervisor {
     config: SupervisorConfig,
-    spawner: Spawner,
+    /// `None` on a host with no registered instance: it starts and discards no office server
+    /// (setup must run first). Every server is launched over the instance's rendezvous.
+    spawner: Option<Spawner>,
     state: Mutex<State>,
     /// One log per socket handle, shared by every run of that office (`--create`, `--office`,
     /// `--discard`) while any of them still writes it, so two writers never rotate the same
@@ -115,7 +117,7 @@ pub(crate) enum CreateOutcome<'a> {
     /// The office is stored; its server is still running, waiting to be adopted.
     Created(Box<Adoptable<'a>>),
     /// The server reported a failure and has exited.
-    Failed(FailCode),
+    Failed,
     /// The server exited without `created` or `failed`.
     Crashed,
     /// No `created` or `failed` in time; the server was killed.
@@ -205,17 +207,33 @@ impl Drop for Registration<'_> {
 
 impl Supervisor {
     pub(crate) fn socket_path(&self, office_id: &str) -> Option<PathBuf> {
-        self.spawner.socket_path(office_id)
+        self.spawner.as_ref()?.socket_path(office_id)
     }
 
-    pub(crate) fn new(config: SupervisorConfig) -> Self {
+    /// A supervisor for the registered instance `instance`: every create, start and discard
+    /// goes through that instance's launch rendezvous.
+    pub(crate) fn new(config: SupervisorConfig, instance: &str) -> Self {
+        let runtime = config
+            .runtime_dir
+            .clone()
+            .unwrap_or_else(|| config.home.join("run"));
         let spawner = Spawner {
             program: config.program.clone(),
             home: config.home.clone(),
             runtime_dir: config.runtime_dir.clone(),
             check: Arc::clone(&config.server_check),
-            broker: None,
+            broker: Arc::new(channels::Broker::new(instance.into(), runtime)),
         };
+        Self::with_spawner(config, Some(spawner))
+    }
+
+    /// A supervisor for a host with no registered instance: it never starts or discards an
+    /// office server, and every attempt fails saying setup must run first.
+    pub(crate) fn unregistered(config: SupervisorConfig) -> Self {
+        Self::with_spawner(config, None)
+    }
+
+    fn with_spawner(config: SupervisorConfig, spawner: Option<Spawner>) -> Self {
         Self {
             config,
             spawner,
@@ -226,6 +244,12 @@ impl Supervisor {
         }
     }
 
+    fn spawner(&self) -> io::Result<&Spawner> {
+        self.spawner.as_ref().ok_or_else(|| {
+            io::Error::other("no registered instance on this host: setup must run first")
+        })
+    }
+
     pub(crate) fn with_protected_offices(
         mut self,
         offices: std::collections::BTreeSet<String>,
@@ -233,23 +257,14 @@ impl Supervisor {
         self.protected_offices = offices;
         self
     }
-    /// Only the registered protected host enables v3. Legacy unregistered
-    /// fixtures retain their v2 launch contract until explicit admission.
-    pub(crate) fn with_v3(mut self, instance: &str) -> Self {
-        let runtime = self
-            .config
-            .runtime_dir
-            .clone()
-            .unwrap_or_else(|| self.config.home.join("run"));
-        self.spawner.broker = Some(Arc::new(channels::Broker::new(instance.into(), runtime)));
-        self
-    }
     pub(crate) fn endpoint(&self, office: &str) -> Option<Arc<channels::Endpoint>> {
-        self.spawner.broker.as_ref()?.endpoint(office)
+        self.spawner.as_ref()?.broker.endpoint(office)
     }
     pub(crate) fn with_writers(mut self, writers: Arc<crate::writer::Writers>) -> Self {
-        if let Some(broker) = &mut self.spawner.broker {
-            Arc::get_mut(broker).expect("unstarted broker").writers = Some(writers);
+        if let Some(spawner) = &mut self.spawner {
+            Arc::get_mut(&mut spawner.broker)
+                .expect("unstarted broker")
+                .writers = Some(writers);
         }
         self
     }
@@ -335,45 +350,6 @@ impl Supervisor {
         }
     }
 
-    /// Stores `create`'s database key, then starts `agentic-org-office --create` and sends it
-    /// `create`; the key is zeroed in memory once the line is written. Its app token becomes the
-    /// office's token for this host run if the office is adopted.
-    pub(crate) fn begin_create(
-        &self,
-        create: CreateOffice,
-    ) -> Result<PendingCreate<'_>, CreateStartError> {
-        let (sender, signals) = mpsc::channel();
-        let registration = self
-            .register(&sender)
-            .map_err(|e| CreateStartError::NotStarted(e.to_string()))?;
-        // No key is made for a server that may not be started at all (no team id).
-        self.config
-            .server_check
-            .may_spawn()
-            .map_err(CreateStartError::NotStarted)?;
-        let mut line = CreateLine::new(create);
-        // Before the spawn: no server ever holds a key the host hasn't stored.
-        if let Err(e) = self.config.keys.create(line.office_id(), line.db_key()) {
-            return Err(CreateStartError::NotStarted(format!(
-                "couldn't store the new office's key: {e}"
-            )));
-        }
-        let log = self.log_for(line.office_id());
-        let spawned = self
-            .spawner
-            .spawn(Mode::Create(&line), 0, sender.clone(), Arc::clone(&log));
-        line.drop_key();
-        let child = spawned.map_err(|e| CreateStartError::KeyStored(e.into()))?;
-        Ok(PendingCreate {
-            registration,
-            line,
-            child,
-            signals,
-            sender,
-            log,
-        })
-    }
-
     /// Protected selected reservation has already installed its original key and
     /// writer custody. No create/discard cleanup is permitted on this path.
     pub(crate) fn begin_hq_create(
@@ -408,7 +384,8 @@ impl Supervisor {
         let mut line = CreateLine::hq(create, child::HqCreate { first, recovery });
         let log = self.log_for(line.office_id());
         let spawned = self
-            .spawner
+            .spawner()
+            .map_err(|e| CreateStartError::NotStarted(e.to_string()))?
             .spawn(Mode::Create(&line), 0, sender.clone(), Arc::clone(&log));
         line.drop_key();
         let child = spawned.map_err(|e| CreateStartError::KeyStored(e.into()))?;
@@ -442,12 +419,9 @@ impl Supervisor {
                 return Ok(DiscardOutcome::KeyUnreadable);
             }
         };
-        let spawned = self.spawner.spawn(
-            Mode::Discard(office_id, key.as_ref()),
-            0,
-            sender,
-            self.log_for(office_id),
-        );
+        let spawned =
+            self.spawner()?
+                .spawn(Mode::Discard(office_id), 0, sender, self.log_for(office_id));
         // The line is written (or can't be): only the key store holds the key from here on.
         drop(key);
         let mut child = spawned.map_err(io::Error::from)?;
@@ -650,9 +624,8 @@ impl Supervisor {
         ));
         let runner = OfficeRunner {
             office_id: office_id.to_owned(),
-            token: Arc::clone(&token),
             keys: Arc::clone(&self.config.keys),
-            spawner: self.spawner.clone(),
+            spawner: self.spawner()?.clone(),
             timings: self.config.timings.clone(),
             state: Arc::clone(&state),
             signals,
@@ -717,7 +690,7 @@ impl<'a> PendingCreate<'a> {
                         host_log::untrusted(&message)
                     ));
                     self.child.stop(Instant::now() + grace);
-                    return CreateOutcome::Failed(code);
+                    return CreateOutcome::Failed;
                 }
                 Signal::Event { .. } => {}
                 Signal::Closed { .. } => {
@@ -763,8 +736,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
-    use org_office_launch::write_server_event;
-    use org_proto::{AppToken, DbKey, OfficeRole};
+    use org_proto::DbKey;
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
     #[cfg(target_os = "macos")]
@@ -789,17 +761,30 @@ mod tests {
             discard_timeout: Duration::from_secs(10),
             ..Timings::default()
         };
-        Supervisor::new(SupervisorConfig {
-            program,
-            home: dir.to_path_buf(),
-            runtime_dir: None,
-            logs_dir: dir.join("logs"),
-            log_max_bytes: 1024,
-            timings,
-            keys: Arc::clone(keys) as Arc<dyn KeyStore>,
-            server_check: Arc::new(check),
-            sweep_orphans: false,
-        })
+        // The launch rendezvous is bound in `<home>/run`.
+        fs::create_dir_all(dir.join("run")).unwrap();
+        Supervisor::new(
+            SupervisorConfig {
+                program,
+                home: dir.to_path_buf(),
+                runtime_dir: None,
+                logs_dir: dir.join("logs"),
+                log_max_bytes: 1024,
+                timings,
+                keys: Arc::clone(keys) as Arc<dyn KeyStore>,
+                server_check: Arc::new(check),
+                sweep_orphans: false,
+            },
+            INSTANCE,
+        )
+    }
+
+    /// A temporary directory under `/tmp`, so the launch rendezvous path fits a socket address.
+    fn short_tempdir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix("sv")
+            .tempdir_in("/tmp")
+            .unwrap()
     }
 
     /// An executable `sh` script in `dir`.
@@ -810,66 +795,9 @@ mod tests {
         path
     }
 
-    fn create_message(key: DbKey) -> CreateOffice {
-        CreateOffice {
-            org_id: "01ORG".into(),
-            org_name: "Acme".into(),
-            office_id: OFFICE.into(),
-            office_name: "HQ".into(),
-            role: OfficeRole::Hq,
-            app_token: AppToken::from_bytes([1; 32]),
-            db_key: key,
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_create_reported_after_shutdown_began_is_stopped_not_adopted() {
-        let dir = tempfile::tempdir().unwrap();
-        let office = OfficeFile::new(
-            OFFICE,
-            "HQ",
-            OfficeRole::Hq,
-            "01ORG",
-            "Acme",
-            "2026-11-08T00:00:00.000Z",
-        );
-        let mut created = Vec::new();
-        write_server_event(&mut created, &ServerEvent::Created { office }).unwrap();
-        // A server that reports `created` at once, then keeps running.
-        let program = script(
-            dir.path(),
-            "server",
-            &format!(
-                "printf '%s' '{}'\nexec /bin/sleep 30",
-                String::from_utf8(created).unwrap()
-            ),
-        );
-        let keys = Arc::new(MemoryKeys::default());
-        let supervisor = supervisor(dir.path(), program, &keys);
-        let pending = supervisor
-            .begin_create(create_message(DbKey::from_bytes([2; 32])))
-            .unwrap();
-        let pid = pending.child.pid();
-        let CreateOutcome::Created(adoptable) = pending.wait(Duration::from_secs(10)) else {
-            panic!("the server didn't report created");
-        };
-        // The shutdown begins between `created` and the adoption.
-        supervisor.shutdown();
-        assert_eq!(supervisor.adopt(*adoptable).status, OfficeStatus::Offline);
-        assert_eq!(supervisor.state(OFFICE), None, "adopted after shutdown");
-        // SAFETY: signal 0 only checks the pid.
-        assert!(
-            unsafe { libc::kill(pid as libc::pid_t, 0) } != 0,
-            "the server outlived the shutdown"
-        );
-        // The office was created: its key stays.
-        assert!(keys.holds(OFFICE, &DbKey::from_bytes([2; 32])));
-    }
-
     #[test]
     fn no_office_is_started_once_shutdown_began() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
         let supervisor = supervisor(dir.path(), dir.path().join("no-such-server"), &keys);
         supervisor.shutdown();
@@ -896,7 +824,7 @@ mod tests {
 
     #[test]
     fn a_start_without_a_usable_key_spawns_nothing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_tempdir();
         let ran = dir.path().join("ran");
         let program = script(
             dir.path(),
@@ -966,7 +894,7 @@ mod tests {
     #[test]
     fn a_server_that_isnt_the_signed_one_gets_nothing() {
         const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_tempdir();
         let got = dir.path().join("got");
         let program = script(dir.path(), "server", &format!("cat >> '{}'", got.display()));
         let keys = Arc::new(MemoryKeys::default());
@@ -986,15 +914,13 @@ mod tests {
             s.status == OfficeStatus::Offline && s.reason == Some(OfficeStatusReason::StorageError)
         });
         checked.shutdown();
-        let pending = checked.begin_create(create_message(DbKey::from_bytes([4; 32])));
-        assert!(pending.is_err());
         // They got no line: nothing reached `got` (it isn't even there: they were stopped while
         // still suspended; that suspension holds is `spawn`'s own test).
         assert!(!got.exists(), "a server that isn't the signed one ran");
         assert!(keys.has(OFFICE) && keys.has(B));
 
-        // No team id: nothing is spawned at all, and a create makes no key.
-        let dir = tempfile::tempdir().unwrap();
+        // No team id: nothing is spawned at all.
+        let dir = short_tempdir();
         let ran = dir.path().join("ran");
         let program = script(
             dir.path(),
@@ -1007,20 +933,6 @@ mod tests {
         wait_for_state(&refusing, B, |s| {
             s.status == OfficeStatus::Offline && s.reason == Some(OfficeStatusReason::StorageError)
         });
-        let stores = || {
-            keys.calls()
-                .iter()
-                .filter(|(op, _)| *op == Op::Create)
-                .count()
-        };
-        let before = stores();
-        let created = refusing.begin_create(create_message(DbKey::from_bytes([5; 32])));
-        assert!(matches!(created, Err(CreateStartError::NotStarted(_))));
-        assert_eq!(
-            stores(),
-            before,
-            "a key was stored for a server that can't be started"
-        );
         refusing.shutdown();
         assert!(!ran.exists(), "a server was started without a team id");
     }
@@ -1039,7 +951,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn the_check_runs_while_the_child_is_still_suspended() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_tempdir();
         let ran = dir.path().join("ran");
         let program = script(dir.path(), "server", &format!("touch '{}'", ran.display()));
         let keys = Arc::new(MemoryKeys::default());
@@ -1071,7 +983,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_child_whose_token_changed_before_its_line_gets_nothing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_tempdir();
         let got = dir.path().join("got");
         let program = script(dir.path(), "server", &format!("cat > '{}'", got.display()));
         let keys = Arc::new(MemoryKeys::default());
@@ -1086,142 +998,6 @@ mod tests {
         thread::sleep(Duration::from_millis(200));
         assert_eq!(fs::read(&got).unwrap_or_default(), b"", "it got a line");
         assert!(keys.has(OFFICE));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_create_stores_its_key_before_its_server_starts() {
-        let dir = tempfile::tempdir().unwrap();
-        // A server that records its run and exits at once.
-        let ran = dir.path().join("ran");
-        let program = script(
-            dir.path(),
-            "server",
-            &format!("echo \"$@\" >> '{}'", ran.display()),
-        );
-        let keys = Arc::new(MemoryKeys::default());
-        let supervisor = supervisor(dir.path(), program, &keys);
-        let pending = supervisor
-            .begin_create(create_message(DbKey::from_bytes([3; 32])))
-            .unwrap();
-        // Stored first, then spawned (the spawn returned, so the key was stored before it).
-        assert_eq!(keys.calls(), [(Op::Create, OFFICE.to_owned())]);
-        assert!(keys.holds(OFFICE, &DbKey::from_bytes([3; 32])));
-        // The line is written, so the create line's copy of the key is zeroed.
-        assert!(*pending.line.db_key() == DbKey::from_bytes([0; 32]));
-        // Ended without reporting: the key stays (only a discard deletes it).
-        assert!(matches!(
-            pending.wait(Duration::from_secs(10)),
-            CreateOutcome::Crashed
-        ));
-        assert!(keys.has(OFFICE));
-        assert_eq!(fs::read_to_string(&ran).unwrap(), "--create\n");
-    }
-
-    #[test]
-    fn a_create_whose_key_cant_be_stored_starts_nothing_and_touches_no_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let ran = dir.path().join("ran");
-        let program = script(
-            dir.path(),
-            "server",
-            &format!("echo \"$@\" >> '{}'", ran.display()),
-        );
-        let keys = Arc::new(MemoryKeys::default());
-        let supervisor = supervisor(dir.path(), program, &keys);
-        // An item already there isn't this create's: it is left as it is.
-        keys.create(OFFICE, &DbKey::from_bytes([9; 32])).unwrap();
-        let err = supervisor
-            .begin_create(create_message(DbKey::from_bytes([4; 32])))
-            .err()
-            .expect("an existing key refuses the create");
-        assert!(matches!(err, CreateStartError::NotStarted(_)), "{err}");
-        assert!(keys.holds(OFFICE, &DbKey::from_bytes([9; 32])));
-        // A store that fails: nothing stored, nothing started.
-        keys.delete(OFFICE).unwrap();
-        keys.fail(Op::Create, Fault::Os(-34018));
-        let err = supervisor
-            .begin_create(create_message(DbKey::from_bytes([4; 32])))
-            .err()
-            .expect("a failing store refuses the create");
-        assert!(matches!(err, CreateStartError::NotStarted(_)), "{err}");
-        assert!(!keys.has(OFFICE));
-        assert!(!ran.exists(), "a server started");
-    }
-
-    #[test]
-    fn a_create_whose_server_cant_start_keeps_its_key_for_the_discard() {
-        let dir = tempfile::tempdir().unwrap();
-        let keys = Arc::new(MemoryKeys::default());
-        let supervisor = supervisor(dir.path(), dir.path().join("no-such-server"), &keys);
-        let err = supervisor
-            .begin_create(create_message(DbKey::from_bytes([5; 32])))
-            .err()
-            .expect("no server to start");
-        assert!(matches!(err, CreateStartError::KeyStored(_)), "{err}");
-        assert!(keys.holds(OFFICE, &DbKey::from_bytes([5; 32])));
-        assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
-    }
-
-    /// A `--discard` server that records its first line's `db_key` (`null` or `key`) and reports
-    /// what `report` says.
-    fn discard_server(dir: &Path, report: &str) -> PathBuf {
-        let seen = dir.join("seen");
-        let mut line = Vec::new();
-        match report {
-            "discarded" => write_server_event(&mut line, &ServerEvent::Discarded).unwrap(),
-            _ => write_server_event(
-                &mut line,
-                &ServerEvent::Failed {
-                    code: FailCode::StorageError,
-                    message: "refused".into(),
-                },
-            )
-            .unwrap(),
-        }
-        script(
-            dir,
-            &format!("server-{report}"),
-            &format!(
-                "read -r first\ncase \"$first\" in *'\"db_key\":null'*) echo null >> '{seen}';; \
-                 *) echo key >> '{seen}';; esac\nprintf '%s' '{}'",
-                String::from_utf8(line).unwrap(),
-                seen = seen.display()
-            ),
-        )
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_discard_deletes_the_key_only_after_discarded() {
-        let dir = tempfile::tempdir().unwrap();
-        let keys = Arc::new(MemoryKeys::default());
-        let key = DbKey::from_bytes([6; 32]);
-        keys.create(OFFICE, &key).unwrap();
-
-        let refusing = supervisor(dir.path(), discard_server(dir.path(), "failed"), &keys);
-        assert_eq!(
-            refusing.discard(OFFICE).unwrap(),
-            DiscardOutcome::Failed(FailCode::StorageError)
-        );
-        assert!(
-            keys.holds(OFFICE, &key),
-            "a refused discard deleted the key"
-        );
-
-        let discarding = supervisor(dir.path(), discard_server(dir.path(), "discarded"), &keys);
-        assert_eq!(
-            discarding.discard(OFFICE).unwrap(),
-            DiscardOutcome::Discarded
-        );
-        assert!(!keys.has(OFFICE));
-        // Without a key: a `null` line, and a delete that finds nothing.
-        assert_eq!(
-            discarding.discard(OFFICE).unwrap(),
-            DiscardOutcome::Discarded
-        );
-        let seen = fs::read_to_string(dir.path().join("seen")).unwrap();
-        assert_eq!(seen, "key\nkey\nnull\n");
     }
 
     /// Names the file where this test binary, run again as a v3 `--discard` server by
@@ -1296,7 +1072,7 @@ mod tests {
                 std::env::current_exe().unwrap().display()
             ),
         );
-        let supervisor = supervisor(dir.path(), program, &keys).with_v3(INSTANCE);
+        let supervisor = supervisor(dir.path(), program, &keys);
         assert_eq!(
             supervisor.discard(OFFICE).unwrap(),
             DiscardOutcome::Discarded
@@ -1315,10 +1091,16 @@ mod tests {
 
     #[test]
     fn a_discard_whose_key_cant_be_read_starts_nothing_and_keeps_everything() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
         keys.create(OFFICE, &DbKey::from_bytes([7; 32])).unwrap();
-        let supervisor = supervisor(dir.path(), discard_server(dir.path(), "discarded"), &keys);
+        let seen = dir.path().join("seen");
+        let program = script(
+            dir.path(),
+            "server",
+            &format!("echo run >> '{}'", seen.display()),
+        );
+        let supervisor = supervisor(dir.path(), program, &keys);
         for fault in [Fault::Corrupt, Fault::Io, Fault::Os(-25308)] {
             keys.fail(Op::Load, fault);
             assert_eq!(
@@ -1327,7 +1109,40 @@ mod tests {
                 "{fault:?}"
             );
         }
-        assert!(!dir.path().join("seen").exists(), "a server started");
+        assert!(!seen.exists(), "a server started");
+        assert!(keys.has(OFFICE));
+        assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
+    }
+
+    /// G1: a host with no registered instance spawns nothing: no discard, no office start.
+    #[test]
+    fn an_unregistered_supervisor_spawns_nothing() {
+        let dir = short_tempdir();
+        let ran = dir.path().join("ran");
+        let program = script(
+            dir.path(),
+            "server",
+            &format!("echo run >> '{}'", ran.display()),
+        );
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &DbKey::from_bytes([3; 32])).unwrap();
+        let supervisor = Supervisor::unregistered(SupervisorConfig {
+            program,
+            home: dir.path().to_path_buf(),
+            runtime_dir: None,
+            logs_dir: dir.path().join("logs"),
+            log_max_bytes: 1024,
+            timings: Timings::default(),
+            keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+            server_check: Arc::new(ServerCheck::Skip),
+            sweep_orphans: false,
+        });
+        let err = supervisor.discard(OFFICE).unwrap_err();
+        assert!(err.to_string().contains("setup must run first"), "{err}");
+        let err = supervisor.start_office(OFFICE).unwrap_err();
+        assert!(err.to_string().contains("setup must run first"), "{err}");
+        supervisor.shutdown();
+        assert!(!ran.exists(), "an unregistered host started a server");
         assert!(keys.has(OFFICE));
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
     }

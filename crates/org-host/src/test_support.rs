@@ -6,8 +6,8 @@ use std::sync::{
 use std::time::Duration;
 
 use org_proto::{
-    ApiError, Call, Empty, ErrorCode, Event, ListOfficesResult, ListOrganizationsResult,
-    OfficeList, OrganizationCreate, OrganizationList, Request, Response, ServerMessage, Subscribe,
+    ApiError, Call, Empty, Event, ListOfficesResult, ListOrganizationsResult, OfficeList,
+    OrganizationList, Request, Response, ServerMessage, Subscribe,
 };
 use serde_json::Value;
 
@@ -34,18 +34,7 @@ impl Fixture {
         })
     }
     pub fn submit(self: &Arc<Self>, request: Request) {
-        if request.is::<OrganizationCreate>() {
-            match request.params::<OrganizationCreate>() {
-                Ok(params) => {
-                    if let Err(error) = self.offices.create_organization(&params.name, |org| {
-                        self.answer::<OrganizationCreate>(request.id, Ok(org.clone()))
-                    }) {
-                        self.answer::<OrganizationCreate>(request.id, Err(error));
-                    }
-                }
-                Err(_) => self.invalid(request.id),
-            }
-        } else if request.is::<OrganizationList>() {
+        if request.is::<OrganizationList>() {
             self.broadcast.snapshot(|| {
                 self.answer::<OrganizationList>(
                     request.id,
@@ -79,14 +68,6 @@ impl Fixture {
             Err(error) => Response::error(id, error),
         };
         self.tx.send(ServerMessage::Response(response)).unwrap();
-    }
-    fn invalid(&self, id: u64) {
-        self.tx
-            .send(ServerMessage::Response(Response::error(
-                id,
-                ApiError::new(ErrorCode::InvalidRequest, "invalid fixture params"),
-            )))
-            .unwrap();
     }
     pub fn recv(&self, timeout: Duration) -> Option<ServerMessage> {
         lock(&self.rx).recv_timeout(timeout).ok()

@@ -712,17 +712,20 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn service(home: &Path) -> Service {
-        let supervisor = Supervisor::new(SupervisorConfig {
-            program: home.join("no-such-server"),
-            home: home.to_path_buf(),
-            runtime_dir: None,
-            logs_dir: home.join("logs"),
-            log_max_bytes: 1024,
-            timings: Timings::default(),
-            keys: Arc::new(MemoryKeys::default()),
-            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
-            sweep_orphans: false,
-        });
+        let supervisor = Supervisor::new(
+            SupervisorConfig {
+                program: home.join("no-such-server"),
+                home: home.to_path_buf(),
+                runtime_dir: None,
+                logs_dir: home.join("logs"),
+                log_max_bytes: 1024,
+                timings: Timings::default(),
+                keys: Arc::new(MemoryKeys::default()),
+                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+                sweep_orphans: false,
+            },
+            "01JD5Z00000000000000000NST",
+        );
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             home,

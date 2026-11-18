@@ -3,17 +3,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_office_launch::{
-    read_server_event, write_host_line, CreateOffice, HostLine, ServerEvent, CREATE_FLAG,
-    DISCARD_FLAG, OFFICE_FLAG,
-};
+use org_office_launch::{CreateOffice, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
 use org_proto::location::{self, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
 
@@ -62,7 +59,8 @@ pub(crate) struct Spawner {
     pub(crate) runtime_dir: Option<PathBuf>,
     /// Who may get a first line: every child is checked before it's written (`server_check`).
     pub(crate) check: Arc<ServerCheck>,
-    pub(super) broker: Option<Arc<super::channels::Broker>>,
+    /// The instance's launch rendezvous: every create, start and discard goes through it.
+    pub(super) broker: Arc<super::channels::Broker>,
 }
 
 /// Why a server wasn't started.
@@ -99,20 +97,16 @@ impl From<SpawnError> for io::Error {
     }
 }
 
-/// Which server to start, with what its first line carries. Every first line is written with
-/// `write_host_line`, which borrows the secrets (never copies them) and zeroes its encoded line.
+/// Which server to start, with what its launch handoff carries. Every launch goes through the
+/// instance's rendezvous; the handoff borrows the secrets (never copies them).
 #[derive(Clone, Copy)]
 pub(crate) enum Mode<'a> {
-    /// Create an office: its first line is this create message (the new office's app token and
-    /// database key).
+    /// Create the HQ office: its handoff carries the new office's database key and recovery code.
     Create(&'a CreateLine),
-    /// Serve the office with this id: its first line is a start with the office's app token for
-    /// this host run and its database key from the key store.
-    Office(&'a str, &'a AppToken, &'a DbKey),
-    /// Remove an unfinished office, then exit. A legacy v2 first line is a discard with the
-    /// office's database key, or `null` when the host has none; the v3 discard handoff never
-    /// carries the key.
-    Discard(&'a str, Option<&'a DbKey>),
+    /// Serve the office with this id: its handoff carries its database key from the key store.
+    Office(&'a str, &'a DbKey),
+    /// Remove an unfinished office, then exit. The discard handoff never carries a key.
+    Discard(&'a str),
 }
 
 /// The `--create` first line: the new office's create message, holding its app token for this
@@ -129,10 +123,6 @@ pub(crate) struct HqCreate {
 }
 
 impl CreateLine {
-    pub(crate) fn new(create: CreateOffice) -> Self {
-        Self(Box::new(create), None)
-    }
-
     pub(crate) fn hq(create: CreateOffice, context: HqCreate) -> Self {
         Self(Box::new(create), Some(context))
     }
@@ -212,18 +202,15 @@ impl Spawner {
             host_log::log(&format!("didn't start an office server: {why}"));
             SpawnError::Untrusted(why)
         })?;
-        let rendezvous = match (&self.broker, mode) {
-            (Some(broker), Mode::Office(..) | Mode::Discard(..)) => Some(broker.bind()?),
-            (Some(broker), Mode::Create(line)) if line.1.is_some() => Some(broker.bind()?),
-            (_, Mode::Create(line)) if line.1.is_some() => {
-                return Err(io::Error::other("registered HQ creation requires launch v3").into())
-            }
-            _ => None,
-        };
+        // The only creation is HQ provisioning: a create line always carries its HQ context.
+        if let Mode::Create(CreateLine(_, None)) = mode {
+            return Err(io::Error::other("a create needs its HQ creation context").into());
+        }
+        let rendezvous = self.broker.bind()?;
         let args: Vec<&OsStr> = match mode {
             Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
             Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
-            Mode::Discard(id, _) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
+            Mode::Discard(id) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
         };
         let mut env: Vec<(OsString, OsString)> = PASSED_ENV
             .iter()
@@ -268,14 +255,8 @@ impl Spawner {
             started: Instant::now(),
         };
         running.process.resume()?;
-        let v3_signals = signals.clone();
-        if rendezvous.is_none() {
-            thread::Builder::new()
-                .name(format!("office-{pid}-out"))
-                .spawn(move || read_events(stdout, generation, &signals))?;
-        } else {
-            drop(stdout);
-        }
+        // Events come over the rendezvous; stdout carries nothing the host reads.
+        drop(stdout);
         thread::Builder::new()
             .name(format!("office-{pid}-err"))
             .spawn(move || copy_stderr(stderr, &log))?;
@@ -288,19 +269,20 @@ impl Spawner {
             running.kill();
             return Err(SpawnError::Untrusted(why));
         }
-        self.attach_control(&mut running, mode, rendezvous, admitted, v3_signals)?;
+        self.attach_control(&mut running, mode, rendezvous, admitted, signals)?;
         Ok(running)
     }
     fn attach_control(
         &self,
         running: &mut RunningChild,
         mode: Mode<'_>,
-        rendezvous: Option<super::channels::Rendezvous>,
+        rendezvous: super::channels::Rendezvous,
         admitted: Option<crate::peer::AuditToken>,
         v3_signals: Sender<Signal>,
     ) -> Result<(), SpawnError> {
-        match (&self.broker, rendezvous, mode) {
-            (Some(broker), Some(rendezvous), Mode::Office(id, _, db_key)) => {
+        let broker = &self.broker;
+        match mode {
+            Mode::Office(id, db_key) => {
                 let first = org_office_launch::v3::HostFirstLine::Start(
                     org_office_launch::v3::OfficeLine {
                         id_profile: org_office_launch::is_selected_entity_id(id)
@@ -335,7 +317,8 @@ impl Spawner {
                     v3_signals,
                 )?);
             }
-            (Some(broker), Some(context), Mode::Create(line)) => {
+            Mode::Create(line) => {
+                let context = rendezvous;
                 let hq = line
                     .1
                     .as_ref()
@@ -376,7 +359,7 @@ impl Spawner {
                 )?);
             }
             // The discard handoff carries no secret: the key store's key (if any) stays here.
-            (Some(broker), Some(rendezvous), Mode::Discard(id, _)) => {
+            Mode::Discard(id) => {
                 let first = org_office_launch::v3::HostFirstLine::Discard(
                     org_office_launch::v3::OfficeLine {
                         id_profile: org_office_launch::is_selected_entity_id(id)
@@ -410,37 +393,12 @@ impl Spawner {
                     v3_signals,
                 )?;
             }
-            _ => running.write_first_line(mode),
         }
         Ok(())
     }
 }
 
 impl RunningChild {
-    /// The first line on a new server's control pipe, the one place that writes it: `--create`
-    /// gets the create message, `--office` the start message (the app token and the database
-    /// key), `--discard` the discard message (the database key or `null`). `write_host_line`
-    /// zeroes its encoded copy of the line.
-    fn write_first_line(&mut self, mode: Mode<'_>) {
-        let pid = self.process.id();
-        let Some(stdin) = self.stdin.as_mut() else {
-            return;
-        };
-        let line = match mode {
-            Mode::Create(CreateLine(create, None)) => HostLine::Create(create),
-            Mode::Create(CreateLine(_, Some(_))) => return,
-            Mode::Office(_, app_token, db_key) => HostLine::Start { app_token, db_key },
-            Mode::Discard(_, db_key) => HostLine::Discard { db_key },
-        };
-        let written = write_host_line(stdin, &line);
-        // A child that dies at once makes this fail with a broken pipe; its stdout then closes
-        // and that is reported as a crash, so the error itself adds nothing. The error never
-        // holds a secret: it is an I/O error or a fixed message.
-        if let Err(e) = written {
-            host_log::log(&format!("couldn't write to office server {pid}: {e}"));
-        }
-    }
-
     /// Closes the control pipe: the server shuts down cleanly.
     pub(crate) fn close_stdin(&mut self) {
         if let Some(channel) = self.channel.take() {
@@ -456,12 +414,6 @@ impl RunningChild {
         if !self.wait_until(deadline) {
             self.kill();
         }
-    }
-
-    #[cfg(test)]
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn pid(&self) -> u32 {
-        self.process.id()
     }
 
     /// Whether the process has exited (it is reaped if so). Doesn't wait.
@@ -491,28 +443,6 @@ impl Drop for RunningChild {
     fn drop(&mut self) {
         self.kill();
     }
-}
-
-/// The stdout reader: forwards control lines until EOF or an error that leaves the pipe out of
-/// step. Lines it can't use (bad JSON, another version) are logged and skipped.
-fn read_events(stdout: impl Read, generation: u64, signals: &Sender<Signal>) {
-    let mut reader = BufReader::new(stdout);
-    loop {
-        match read_server_event(&mut reader) {
-            Ok(Some(event)) => {
-                if signals.send(Signal::Event { generation, event }).is_err() {
-                    return;
-                }
-            }
-            Ok(None) => break,
-            Err(e) if e.closes_stream() => {
-                host_log::log(&format!("an office server's control pipe failed: {e}"));
-                break;
-            }
-            Err(e) => host_log::log(&format!("ignored a line from an office server: {e}")),
-        }
-    }
-    let _ = signals.send(Signal::Closed { generation });
 }
 
 /// The stderr copier: drains stderr to the end (so the server never blocks on a full pipe),

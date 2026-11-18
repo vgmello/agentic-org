@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use org_office_launch::{FailCode, ServerEvent};
-use org_proto::{AppToken, OfficeStatusReason};
+use org_proto::OfficeStatusReason;
 
 use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
 use super::state::{OfficeState, SharedState};
@@ -40,10 +40,6 @@ const EXIT_LINES_WAIT: Duration = Duration::from_millis(200);
 /// Everything one office's supervision thread owns.
 pub(crate) struct OfficeRunner {
     pub(crate) office_id: String,
-    /// The office's app token for this host run: every start gets it. Shared with the
-    /// supervisor, which hands the token to the app (`office.app_token`).
-    pub(crate) token: Arc<AppToken>,
-    /// Where the office's database key is kept; loaded before every start.
     pub(crate) keys: Arc<dyn KeyStore>,
     pub(crate) spawner: Spawner,
     pub(crate) timings: Timings,
@@ -195,7 +191,7 @@ impl OfficeRunner {
                 };
             }
         };
-        let mode = Mode::Office(&self.office_id, &self.token, &key);
+        let mode = Mode::Office(&self.office_id, &key);
         let spawned = self
             .spawner
             .spawn(mode, *generation, self.sender.clone(), self.log.clone());

@@ -25,13 +25,6 @@ use crate::ids::handle_of;
 /// starts or discards anything in it.
 pub(crate) const REFUSED_DIR_NAME: &str = ".refused";
 
-/// The name of every HQ office the host creates.
-pub(crate) const HQ_OFFICE_NAME: &str = "HQ";
-
-/// How many fresh office ids to try before giving up on a unique handle. A clash of 60 random
-/// bits is already all but impossible; this only bounds a broken random source.
-const MAX_ID_ATTEMPTS: usize = 16;
-
 /// The offices on this Mac.
 #[derive(Debug, Default)]
 pub(crate) struct Catalog {
@@ -60,24 +53,11 @@ pub(crate) struct OrganizationEntry<'a> {
     pub(crate) offices: Vec<&'a OfficeFile>,
 }
 
-/// A new organization and its HQ office, checked against the catalog: what the create message
-/// carries, apart from the app token, which supervision adds.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CreatePlan {
-    pub(crate) org_id: String,
-    pub(crate) org_name: String,
-    pub(crate) office_id: String,
-    pub(crate) office_name: String,
-    pub(crate) role: OfficeRole,
-}
-
 /// Why a create can't go ahead.
 #[derive(Debug)]
 pub(crate) enum PlanError {
     /// An organization with that name (ignoring case) is already on this Mac.
     NameTaken,
-    /// No id could be made.
-    Ids(io::Error),
 }
 
 impl Catalog {
@@ -186,41 +166,6 @@ impl Catalog {
             name_key: name.key().into(),
         });
         Ok(())
-    }
-
-    /// The details of a new organization and its HQ, checked against this catalog and the
-    /// creates in flight: the name must be free, and the office id's handle unique (re-rolled
-    /// until it is). The name and handle are then reserved, until the create fails
-    /// ([`Catalog::release`]) or its office is inserted. `new_id` makes ids (injected so the
-    /// re-roll can be tested).
-    pub(crate) fn plan_create(
-        &mut self,
-        name: &OrganizationName,
-        mut new_id: impl FnMut() -> io::Result<String>,
-    ) -> Result<CreatePlan, PlanError> {
-        if self.has_organization_named(name) {
-            return Err(PlanError::NameTaken);
-        }
-        let org_id = new_id().map_err(PlanError::Ids)?;
-        for _ in 0..MAX_ID_ATTEMPTS {
-            let office_id = new_id().map_err(PlanError::Ids)?;
-            if !self.handle_taken(&office_id) {
-                self.reserved.push(Reservation {
-                    office_id: office_id.clone(),
-                    name_key: name.key().to_owned(),
-                });
-                return Ok(CreatePlan {
-                    org_id,
-                    org_name: name.as_str().to_owned(),
-                    office_id,
-                    office_name: HQ_OFFICE_NAME.to_owned(),
-                    role: OfficeRole::Hq,
-                });
-            }
-        }
-        Err(PlanError::Ids(io::Error::other(
-            "no office id with a unique socket handle",
-        )))
     }
 
     /// The organizations on this Mac, ordered by `created_at` then id, each with its offices
@@ -513,83 +458,6 @@ mod tests {
         let dir = home.join("offices").join(folder);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(OFFICE_FILE_NAME), bytes).unwrap();
-    }
-
-    #[test]
-    fn names_are_unique_ignoring_case_and_handles_are_rerolled() {
-        let mut catalog = Catalog::default();
-        catalog.insert(office(
-            "01AAAAAAAAAAAAAAAAAAAAAAAA",
-            "01ORG",
-            "Acme",
-            OfficeRole::Hq,
-            T,
-        ));
-        let acme = OrganizationName::parse(" ACME ").unwrap();
-        assert!(matches!(
-            catalog.plan_create(&acme, || unreachable!()),
-            Err(PlanError::NameTaken)
-        ));
-
-        // The second id clashes with the existing handle (ignoring case), so it is re-rolled.
-        let mut ids = vec![
-            "01ORGNEW".to_owned(),
-            "01BBBBBBBBBBBBAAAAAAAAAAAA".to_lowercase(),
-            "01CCCCCCCCCCCCCCCCCCCCCCCC".to_owned(),
-        ]
-        .into_iter();
-        let other = OrganizationName::parse("Other").unwrap();
-        let plan = catalog
-            .plan_create(&other, || Ok(ids.next().unwrap()))
-            .unwrap();
-        assert_eq!(plan.org_id, "01ORGNEW");
-        assert_eq!(plan.office_id, "01CCCCCCCCCCCCCCCCCCCCCCCC");
-        assert_eq!(plan.org_name, "Other");
-        assert_eq!(plan.office_name, "HQ");
-        assert_eq!(plan.role, OfficeRole::Hq);
-    }
-
-    #[test]
-    fn a_planned_create_reserves_its_name_and_handle_until_released_or_inserted() {
-        let mut catalog = Catalog::default();
-        let acme = OrganizationName::parse("Acme").unwrap();
-        let first = catalog
-            .plan_create(&acme, {
-                let mut ids = ["01ORG1", "01AAAAAAAAAAAAAAAAAAAAAAAA"].into_iter();
-                move || Ok(ids.next().unwrap().to_owned())
-            })
-            .unwrap();
-        // The name is taken while the first create is in flight, ignoring case.
-        let upper = OrganizationName::parse("ACME").unwrap();
-        assert!(matches!(
-            catalog.plan_create(&upper, || unreachable!()),
-            Err(PlanError::NameTaken)
-        ));
-        // So is its handle: another name's office id with the same handle is re-rolled.
-        let other = OrganizationName::parse("Other").unwrap();
-        let mut ids = [
-            "01ORG2",
-            "01BBBBBBBBBBBBAAAAAAAAAAAA",
-            "01CCCCCCCCCCCCCCCCCCCCCCCC",
-        ]
-        .into_iter();
-        let second = catalog
-            .plan_create(&other, || Ok(ids.next().unwrap().to_owned()))
-            .unwrap();
-        assert_eq!(second.office_id, "01CCCCCCCCCCCCCCCCCCCCCCCC");
-        // A failed create releases its reservation; inserting the office ends it too.
-        catalog.release(&first.office_id);
-        assert!(!catalog.has_organization_named(&upper));
-        assert!(!catalog.handle_taken(&first.office_id));
-        catalog.insert(office(
-            &second.office_id,
-            &second.org_id,
-            &second.org_name,
-            OfficeRole::Hq,
-            T,
-        ));
-        assert!(catalog.reserved.is_empty());
-        assert!(catalog.has_organization_named(&other));
     }
 
     #[test]
