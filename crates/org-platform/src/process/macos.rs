@@ -49,6 +49,17 @@ fn sysctl(name: &str) -> io::Result<String> {
         .map_err(|_| invalid("invalid system identity"))
 }
 
+/// Disables core dumps. macOS has no attribute that closes a process to its own user:
+/// a signed release image is kept closed by its code signature.
+pub(super) fn harden_self() -> io::Result<()> {
+    super::no_core_dumps()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn hardened() -> io::Result<bool> {
+    super::shared::core_dumps_disabled()
+}
+
 pub(super) fn check_version() -> io::Result<()> {
     if sysctl("kern.osrelease")?
         .split('.')

@@ -148,3 +148,46 @@ fn native_deadline_failure_classification_preserves_io() {
         .get_ref()
         .is_some_and(|source| source.is::<DeadlineElapsed>()));
 }
+
+/// Set in the child of [`hardening_holds_in_the_process_that_asked_and_cannot_be_undone`].
+const HARDEN_CHILD: &str = "ORG_PLATFORM_TEST_HARDEN";
+
+/// [`super::harden_self`] on every system with an adapter: afterwards the process reports
+/// itself hardened, its core limits are 0 and cannot be raised again, and asking twice
+/// changes nothing. A child of the test does it, so the test binary keeps its limits.
+#[test]
+fn hardening_holds_in_the_process_that_asked_and_cannot_be_undone() {
+    if std::env::var_os(HARDEN_CHILD).is_some() {
+        super::harden_self().unwrap();
+        assert!(super::testing::hardened().unwrap());
+        let raised = libc::rlimit {
+            rlim_cur: 1,
+            rlim_max: 1,
+        };
+        // SAFETY: a valid, initialized limit. Raising a hard limit is refused to an
+        // unprivileged process; root may raise it, which the parent takes into account.
+        let refused = unsafe { libc::setrlimit(libc::RLIMIT_CORE, &raised) } != 0;
+        // SAFETY: no arguments and no side effects; it cannot fail.
+        assert!(refused || unsafe { libc::geteuid() } == 0);
+        super::harden_self().unwrap();
+        assert!(super::testing::hardened().unwrap());
+        println!("hardened");
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "process::adapter_tests::hardening_holds_in_the_process_that_asked_and_cannot_be_undone",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(HARDEN_CHILD, "1")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && text.contains("hardened"),
+        "{text}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
