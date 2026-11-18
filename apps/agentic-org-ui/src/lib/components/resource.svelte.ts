@@ -1,6 +1,8 @@
-// One read of a settings screen's data, with the four states every screen shows: loading, ready, error (with Retry)
-// and unavailable (the production adapter does not serve it yet). A later call to `reload` keeps the old data on screen.
+// One read for a screen part, with the states every place shows (app-shell-ux §6a): loading (a skeleton),
+// unavailable (the production adapter does not serve it yet: never sample data), error (what failed, with Retry)
+// and ready. It loads when created; a later `reload` keeps the shown data until the new answer arrives.
 import { toAppError } from '$lib/office/api';
+import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 
 export type ResourceState = 'loading' | 'ready' | 'error' | 'unavailable';
 
@@ -25,21 +27,21 @@ export class Resource<T> {
 			if (run !== this.#run) return;
 			this.data = value;
 			this.state = 'ready';
+			this.message = '';
 		} catch (e) {
 			if (run !== this.#run) return;
 			const failure = toAppError(e);
 			this.message = failure.message;
 			this.state =
-				failure.source === 'api' && failure.code === 'unavailable' ? 'unavailable' : 'error';
+				failure.source === 'api' &&
+				failure.code === 'unavailable' &&
+				failure.message === UNAVAILABLE_MESSAGE
+					? 'unavailable'
+					: 'error';
 			// An old answer is never shown beside a failure it no longer matches.
 			this.data = undefined;
 		} finally {
 			if (run === this.#run) this.reloading = false;
 		}
 	}
-}
-
-/** A failure the settings screens raise themselves (a refused save, a conflict): `toAppError` passes it through. */
-export function fail(code: string, message: string, extra: Record<string, unknown> = {}): never {
-	throw Object.assign(new Error(message), { source: 'app' as const, code, message, ...extra });
 }

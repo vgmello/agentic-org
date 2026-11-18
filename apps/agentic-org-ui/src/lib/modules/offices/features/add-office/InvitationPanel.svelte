@@ -4,9 +4,9 @@
   setup steps on the other machine. The secret is entered there through a protected prompt, never as a command-line argument.
 -->
 <script lang="ts">
-	import CopyButton from '$lib/modules/settings/components/CopyButton.svelte';
+	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { mobileButton } from '$lib/modules/settings/components/classes';
+	import { mobileButton } from '$lib/components/classes';
 	import type { Issued } from '../../types';
 
 	let { issued, ondone }: { issued: Issued; ondone: () => void } = $props();

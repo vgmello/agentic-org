@@ -44,6 +44,13 @@ Data from the org snapshot (members, teams, projects): import `orgApi` from `$li
 - `SkeletonRows` – first-load rows with a Loading label and "Still loading" after 2 s.
 - `Avatar` – round initials for agents and people (kind is a word, never a shape). `StatTile` – one figure inside a `dl`.
 - `NotBuilt` – "{Title} isn't built yet" / "Not in this release". `MiniIcon` – Heroicons solid 20 inside controls.
+- `Resource` (`resource.svelte.ts`) + `Loaded` – one read and its states: `new Resource(() => api.x(orgId))` loads at once;
+  `<Loaded {resource} label error isEmpty emptyTitle …>{#snippet children(data)}…{/snippet}</Loaded>` renders skeleton,
+  unavailable (with `place` + `area`, the route's NotBuilt), error with Retry, empty, then the content. `reload()` after a change.
+- `ConfirmDialog` – destructive or consequential confirmation with its -ing word. `CopyButton`. `focus.ts`
+  `neighbourFocus` – after removing a row, focus the next one. `classes.ts` – form and button class strings;
+  `pills.ts` – status pill tones. Use these rather than a module's private copy; a module never imports another
+  module's internals.
 - Existing: `DividedRow`, `StatusPill`, `Callout`; primitives in `ui/` (button, dialog, sheet, dropdown-menu, input, label, checkbox, badge, alert).
 
 ## Page skeleton

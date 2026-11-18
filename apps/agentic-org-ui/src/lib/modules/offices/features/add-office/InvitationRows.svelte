@@ -8,7 +8,7 @@
 	import MailX from '@lucide/svelte/icons/mail-x';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { tone } from '$lib/modules/settings/components/pills';
+	import { tone } from '$lib/components/pills';
 	import { expiresText } from '../../time';
 	import type { Invitation } from '../../types';
 
