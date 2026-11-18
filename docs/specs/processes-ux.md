@@ -81,7 +81,7 @@ Saved as `processes/<document-id>.md` at organization scope; nested team and pro
 
 ## 3. Flow 2 · How an agent receives its processes
 
-- **Reading them:** `agent-os process catalog`, `process inspect --key <key>` and `process inspect --key <key> --why` give the agent the effective set, a document's full text and the chain that produced it (PROC-8).
+- **Reading them:** `agent-os process list`, `process inspect --key <key>` and `process inspect --key <key> --why` give the agent the effective set, a document's full text and the chain that produced it (PROC-8).
 - **At launch:** the agent's system instructions carry a must-follow section with every applicable non-overridable document in full, and a guidance section: "Your processes for T-A17: Review and merge (organization rev 3), Code review (Checkout rev 2), Release checklist (checkout rev 1)", with summaries and how to retrieve the full text.
 - **Fresh contexts:** a new session or an observed context reset receives the current effective set again; an earlier delivery never substitutes for delivery to a new context.
 - **Can't compute the set:** if the effective set can't be computed at launch, the agent gets "Couldn't load your processes; using the last set from <time>" and works from that set, and the owner sees a warning in Needs you if it lasts over an hour. With no earlier set (the agent's first launch), the agent gets "Couldn't load your processes, and there's no earlier copy." and the owner is warned at once.
@@ -99,7 +99,7 @@ Each task targets zero or more repositories, and each project/repository associa
 - PROC-5 · Not in v1: private processes.
 - PROC-6 · Withdrawn: contributing teams add no documents, so there is no cross-team conflict policy.
 - PROC-7 · At launch the agent gets every applicable non-overridable document in full in a must-follow section, and overridable documents as summaries with retrievable full text within the size cap. A new session or a context reset gets them again.
-- PROC-8 · `agent-os process catalog [--task <reference>]` (the effective set with sources), `process inspect --key <key>` (the effective text) and `process inspect --key <key> --why` (the chain organization → team → project, which level wins and why) use the same words as the app. Commands that write or approve processes are not in v1.
+- PROC-8 · `agent-os process list [--task <reference>]` (the effective set with sources), `process inspect --key <key>` (the effective text) and `process inspect --key <key> --why` (the chain organization → team → project, which level wins and why) use the same words as the app. Commands that write or approve processes are not in v1.
 - PROC-9 · Content views show source, scope, lifecycle, owner, key and revision, and the computed winner for each key.
 - PROC-10 · An agent's profile shows the processes it follows for its current work, or, with no current work, "No current work" and the organization's processes.
 - PROC-11 · Not in v1: approval of process changes.

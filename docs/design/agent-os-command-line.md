@@ -62,9 +62,13 @@ agent-os <resource> <verb> [--flag <value>]...
   takes.
 - A task is named by its reference (`T-B37`). Every other record is named by its ID,
   or by its key or slug where the data contract gives it one.
-- Verbs are reused across resources so that an agent can guess: `list`, `inspect`,
-  `create`, `update`. A domain verb is used where the requirement names one
-  (`transition`, `post`, `ask`, `hire`).
+- **Every verb is a verb, and the common ones are the same everywhere,** so that an
+  agent can guess: `list`, `inspect`, `create`, `update`. A resource has its own verb
+  only for an action the common ones do not say (`send`, `ask`, `reply`, `transition`,
+  `assign`, `hire`, `push`).
+- **One resource for one kind of record.** A name is the word the data contract and the
+  office's calls already use, so the command an agent types, the call on the wire and
+  the record in the file read the same.
 
 Options every command takes:
 
@@ -260,7 +264,7 @@ variable that names the caller.
   envelope for each line:
 
   ```json
-  {"command":"thread list","input":{"limit":5},"options":{"fields":"id,from,subject"}}
+  {"command":"msg inbox","input":{"limit":5},"options":{"fields":"id,from,subject"}}
   ```
 
   It is the same table, parser and envelope, and an option is spelled as its flag. It
@@ -306,41 +310,41 @@ outcome of a required ask, and the office performs both steps (ADR-0020 decision
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
 | `org inspect` | The organization, its offices and its top team | [Organization](organization-data/01-organization-structure.md) | B2 |
-| `team roster` | The members of a team (default: the caller's home team) with their leads and presence | [Organization](organization-data/01-organization-structure.md), ADR-0003 decision 14 | B2 |
-| `agent inspect` | One employee's card: person or agent, team, role, lead, status | [Employees](organization-data/04-agent-structure.md) | B2 |
-| `agent status` | Sets or clears the caller's own status line (`status.set`, committed) | ADR-0003 decision 14 | B6 |
+| `team list`, `team inspect` | The teams; one team (default: the caller's home team) with its lead, its members and their presence | [Organization](organization-data/01-organization-structure.md), ADR-0003 decision 14 | B2 |
+| `agent inspect` | One employee's card, for an agent or a person: team, role, lead, status | [Employees](organization-data/04-agent-structure.md) | B2 |
+| `status set`, `status clear` | The caller's own status line (`status.set`, committed) | ADR-0003 decision 14 | B6 |
 | `project list`, `project inspect` | The projects the caller can see; one project with its team, repositories and processes | [Projects](organization-data/02-project-structure.md) | B3 |
 | `team create`, `team update`, `person add` and the like | A person's commands: the owner changes structure. B2 names them under this grammar | [Who may change what](organization-data/04-agent-structure.md) | B2 |
 | `project create` | A person's command: the owner | [Who may change what](organization-data/04-agent-structure.md) | B3 |
-| `hr roles`, `hr inspect-role` | The organization's roles; one role's body and requirements | [Roles UX](../specs/roles-ux.md) | C2 |
+| `hr list-roles`, `hr inspect-role` | The organization's roles; one role's body and requirements | [Roles UX](../specs/roles-ux.md) | C2 |
 | `hr hire` | Asks for a new agent, in words or with the fields filled in. Returns `gate_required` with the request and, when the caller named the home team, who approves; otherwise the approver is known once the HR lead has drafted the proposal. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields or ask the owner. Nothing is provisioned before a person approves | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
 
 ### 3.3 Messages, questions and approvals
 
-`channel`, `consult` and `thread` are three intents over one conversation and message
-model ([messaging](organization-data/15-messaging-and-chat.md)). They write the same
-records through the same calls (`msg.send`, `msg.ask`, `msg.reply` and the
-recipient-state calls); the wire names belong to `org-proto`.
+There is one family, `msg`, for one conversation and message model
+([messaging](organization-data/15-messaging-and-chat.md)). Whether a message goes to a
+person, an agent or a channel is a matter of whom it is addressed to, not of which
+command is used. The names are the ones the office's calls already have (`msg.send`,
+`msg.ask`, `msg.reply`), so nothing is renamed between the command and the wire.
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `channel list`, `channel join`, `channel leave` | The channels the caller may see; joining and leaving a manual channel | [Chat UX](../specs/chat-ux.md) (CHAT-19) | B6 |
-| `channel post` | Posts in a conversation or to a person, with a kind: `handoff` or `announcement` with its reason | Chat UX section 5 | B6 |
-| `channel ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. To a person it holds for the answer, and returns `completed` with it, `timed_out`, or, when required, `suspended`. To a channel with nobody named it is a question that does not hold, and `--required` is refused | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020 | B7 |
-| `consult ask` | The same ask, addressed to an agent, or to a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team | Messaging; [employees](organization-data/04-agent-structure.md) | B7 |
-| `thread list`, `thread read` | Everything addressed to the caller, whatever its kind, unread first; one thread in full | ADR-0003 decisions 10 and 11 | B6 |
-| `thread reply` | Replies in a thread (B6); answers an ask (B7) | Messaging; ADR-0020 | B6, B7 |
-| `thread accept` | Accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
-| `thread withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
-| `thread done`, `thread defer` | The caller's own triage state | ADR-0003 decision 11 | B6 |
-| `thread wait` | Holds until something arrives or the wait ends | [Agent sessions](agent-sessions.md) (holds are capped) | B6 |
+| `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `handoff`, or `announcement` with its reason | [Chat UX](../specs/chat-ux.md) section 5 | B6 |
+| `msg ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020; [employees](organization-data/04-agent-structure.md) | B7 |
+| `msg reply` | Replies in a thread (B6); answers an ask (B7) | Messaging; ADR-0020 | B6, B7 |
+| `msg accept` | Accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
+| `msg withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
+| `msg inbox`, `msg read` | Everything addressed to the caller, whatever its kind, unread first; one message with its thread | ADR-0003 decisions 10 and 11 | B6 |
+| `msg done`, `msg defer` | The caller's own triage state | ADR-0003 decision 11 | B6 |
+| `msg wait` | Holds until something arrives or the wait ends | [Agent sessions](agent-sessions.md) (holds are capped) | B6 |
+| `channel list`, `channel join`, `channel leave` | The channels the caller may see; joining and leaving a manual channel | Chat UX (CHAT-19) | B6 |
 
 **Approvals in milestone one.** An approval here is a record with its own rules: who
 approves is derived from that person's position, never named by the requester, and a
 rejection needs a reason ([the hire flow](../specs/our-org-in-the-app.md), section
 7.1). Milestone one has one approval, the hire, and `hr hire` answers `gate_required`
 for it. For anything else an agent that needs a person's go-ahead asks a required
-yes-or-no question with `channel ask`; that is a question, not a recorded approval.
+yes-or-no question with `msg ask`; that is a question, not a recorded approval.
 `gate open` and `gate status` are in section 6.
 
 ### 3.4 Tasks
@@ -359,7 +363,7 @@ yes-or-no question with `channel ask`; that is a question, not a recorded approv
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `process catalog` | The processes that apply to the caller's current work, or to a named task, with where each comes from and which must be followed | [Processes design](processes.md) (`process.effective`), PROC-8 | C5 |
+| `process list` | The processes that apply to the caller's current work, or to a named task, with where each comes from and which must be followed | [Processes design](processes.md) (`process.effective`), PROC-8 | C5 |
 | `process inspect` | One process's full text by key; with `--why`, the chain from organization to team to project and which level won | The same (`process.show`, `process.why`) | C5 |
 | `policy list`, `policy inspect` | The same two reads for documents of kind `standard` | The same | C5 |
 | `skill list`, `skill read` | The product's built-in guidance on its own commands | Processes design, decision 4 | C5 |
@@ -385,17 +389,28 @@ of each repository's worktree.
 
 | Today | Becomes |
 | --- | --- |
+| `msg send`, `msg ask`, `msg reply`, `msg inbox`, `msg read`, `msg done`, `msg defer`, `msg wait` | The same names, in the grammar of section 2: named flags only, the envelope, the office for every call |
 | `whoami` | `session inspect` |
-| `who` | `team roster`, `agent inspect` |
-| `status` | `agent status` |
-| `msg send` | `channel post` |
-| `msg ask` | `channel ask`, `consult ask` |
-| `msg reply`, `msg inbox`, `msg read`, `msg done`, `msg defer`, `msg wait` | `thread reply`, `thread list`, `thread read`, `thread done`, `thread defer`, `thread wait` |
+| `who` | `team inspect`, `agent inspect` |
+| `status` | `status set`, `status clear` |
 | `profile set`, `msg register`, `msg deregister` | Deleted. An agent exists only through a hire |
 | `msg notify`, `msg due`, `relay`, the file queue, `--as`, `$ORG_AGENT`, `--office` | Deleted with the file queue (B6) |
 
 Nothing is kept beside its replacement
 ([non-negotiable 14](../architecture-non-negotiables.md)).
+
+### 3.8 Names that differ from the requirement
+
+The requirement's own rule is one uniform grammar. Six of its names are changed to keep
+that rule, and for no other reason.
+
+| Requirement | Here | Why |
+| --- | --- | --- |
+| `channel post`, `channel ask`, `consult ask`, `thread list`, `thread reply` | `msg send`, `msg ask`, `msg inbox`, `msg reply` | Owner, 2026-11-18: keep `msg`. One record, one family; the addressee decides where it goes. `channel` stays for the channels themselves |
+| `team roster` | `team inspect` | `roster` is not a verb; `inspect` is the verb an agent guesses |
+| `hr roles` | `hr list-roles` | The same |
+| `process catalog` | `process list` | The same. `catalog` is left free for a catalogue of Process Packages |
+| `session suspend`, `session resume`, `grant check`, `worktree create`, `worktree cleanup`, `gate open`, `gate status` | Not commands | Sections 3.1, 3.3, 3.6 and 6 |
 
 ## 4. Milestone one: one office on a Mac
 
@@ -406,12 +421,12 @@ the table.
 | --- | --- | --- |
 | 1 | **K1** (new) | The shared library: the command table, the parser, the three ways to give input, the envelope and its three formats, `--fields`, `--limit` and `--cursor`, `--help`, `--schema`, exit codes, and the contract tests of section 8, run against a test office that is a stub inside the test process. No command of today is converted |
 | 1 | A5 | `agentic-org` uses the library for a signed-in person, with the first two rows on the real path: `org inspect` and one of the owner's writes, served by today's office |
-| 2 | B2, B3 | On the new store: `org inspect`, `team roster`, `agent inspect`, the owner's commands for teams and people, `project list`, `project inspect`, `project create`. With the first write: `--dry-run`, `--idempotency-key`, `--if-match`, `--durable` |
-| 3 | C2 | `hr roles`, `hr inspect-role`, `hr hire` and the `gate_required` outcome |
+| 2 | B2, B3 | On the new store: `org inspect`, `team list`, `team inspect`, `agent inspect`, the owner's commands for teams and people, `project list`, `project inspect`, `project create`. With the first write: `--dry-run`, `--idempotency-key`, `--if-match`, `--durable` |
+| 3 | C2 | `hr list-roles`, `hr inspect-role`, `hr hire` and the `gate_required` outcome |
 | 3 | C3 | The binding and the launch variables of 2.8; `agent-os` refuses to run without a binding; `session inspect`, `grant list`; the short catalogue in the agent's instructions; the empty MCP configuration |
-| 3 | C5 | `process catalog`, `process inspect`, `policy list`, `policy inspect`, `skill list`, `skill read` |
-| 4 | B6 | `channel list`, `join`, `leave`, `post`; `thread list`, `read`, `reply`, `accept`, `done`, `defer`, `wait`; `agent status`; `session attach`. Today's `msg` commands, the file queue and the relay are deleted |
-| 4 | B7 | `channel ask`, `consult ask`, answering with `thread reply`, `thread withdraw`, and the `timed_out` and `withdrawn` outcomes |
+| 3 | C5 | `process list`, `process inspect`, `policy list`, `policy inspect`, `skill list`, `skill read` |
+| 4 | B6 | `msg send`, `reply`, `accept`, `inbox`, `read`, `done`, `defer`, `wait`; `channel list`, `join`, `leave`; `status set`, `clear`; `session attach`. Every `msg` command goes to the office; the file queue and the relay are deleted |
+| 4 | B7 | `msg ask`, answering with `msg reply`, `msg withdraw`, and the `timed_out` and `withdrawn` outcomes |
 | 4 | C6 | The `suspended` outcome of a required ask |
 | 5 | B5 | `task` and `checklist` |
 | 5 | C7 | `repo list`, `repo attach`, `worktree list`, `repo push` |
@@ -501,6 +516,6 @@ CLI-14 with C2, B7 and C6.
 
 `apps/agent-os/src/main.rs` parses arguments by hand, with positional arguments, prints
 text unless `--json` is given, and uses several exit codes. Its commands are the left
-column of 3.7. Most write to a file queue; five go to an office when one is named. The
+column of 3.7; the `msg` names stay and their parsing does not. Most write to a file queue; five go to an office when one is named. The
 caller is named by `$ORG_AGENT` or `--as` and is not authenticated on the file-queue
 path. None of it is kept.

@@ -82,7 +82,7 @@ The office composes an agent's instructions ([session design](../design/agent-se
 - ROLE-5 · The roles view lists role name, revision and employee count and shows body, provenance and history. Labels use words plus icons.
 - ROLE-6 · Not in v1: drift review between a role revision and an override.
 - ROLE-7 · An agent's instructions are composed by the office from its identity and role, its execution configuration, the turn's objective, the applicable processes and standards, `agent-os` help and the project's instruction files (session design, decision 8); editable home notes never become authority-bearing instructions, and execution configuration stays distinct from identity and role records.
-- ROLE-8 · Withdrawn: there is no `agent-os role` command family. An agent reads roles with `agent-os hr roles` and `hr inspect-role` ([agent command line](../design/agent-os-command-line.md), section 3.2).
+- ROLE-8 · Withdrawn: there is no `agent-os role` command family. An agent reads roles with `agent-os hr list-roles` and `hr inspect-role` ([agent command line](../design/agent-os-command-line.md), section 3.2).
 - ROLE-9 · An employee's `role_id` is updated with the expected employee revision; free-text `role_text` is kept without inventing a role.
 - ROLE-10 · Role views cover loading, no roles, no role association, stale or unreachable organization data, invalid role details and revision conflicts without losing input. Empty copy never promises that HR can run.
 - ROLE-11 · Not in v1: generated employee harnesses and private specialists.

@@ -440,7 +440,7 @@ on the offers of design section 10.
 - **Build:** the organization, teams, employees and roles of the data contract. One home
   team per employee. One status field. A team lead who is a direct member. HQ gives
   teams their numbers. The many-to-many membership model is deleted.
-- **Commands:** `org inspect`, `team roster`, `agent inspect`, and the owner's commands
+- **Commands:** `org inspect`, `team list`, `team inspect`, `agent inspect`, and the owner's commands
   for teams and people, which this increment names under the grammar. With the first
   write on the new store: `--dry-run`, `--idempotency-key`, `--if-match` and `--durable`
   ([command line design](design/agent-os-command-line.md), sections 2.6, 2.7 and 3.2; CLI-4, 5 and 6).
@@ -591,7 +591,7 @@ on the offers of design section 10.
   - The built-in HR lead drafts the proposal once agents can run (C3). Until then, and
     whenever HR cannot run, the same flow works with the form.
   - Edit, move, pause, resume and offboard an agent.
-- **Commands:** `hr roles`, `hr inspect-role` and `hr hire`, which answers
+- **Commands:** `hr list-roles`, `hr inspect-role` and `hr hire`, which answers
   `gate_required` with the request and, once it is known, who approves ([command line design](design/agent-os-command-line.md), section 3.2;
   CLI-14).
 - **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
@@ -651,7 +651,7 @@ on the offers of design section 10.
   its work, with the non-overridable ones marked as must-follow.
 - **Build:** the one-chain resolution (organization, the accountable team's chain, the
   project) and its delivery at launch.
-- **Commands:** `process catalog`, `process inspect`, `policy list`, `policy inspect`,
+- **Commands:** `process list`, `process inspect`, `policy list`, `policy inspect`,
   `skill list` and `skill read` ([command line design](design/agent-os-command-line.md), section 3.5).
 - **Read:** [processes design](design/processes.md), [processes UX](specs/processes-ux.md).
   Rows FC-110, FC-112.
@@ -674,9 +674,10 @@ on the offers of design section 10.
   - A send is acknowledged at the local commit and relayed afterwards.
   - `agent-os` talks to the office for every call and gains the long-running mode. The
     file queue, `crates/org-spool` and the route through it are deleted.
-- **Commands:** `channel list`, `join`, `leave` and `post`; `thread list`, `read`,
-  `reply`, `accept`, `done`, `defer` and `wait`; `agent status`; `session attach`, which is the
-  long-running mode. Today's `msg` commands are deleted with the file queue
+- **Commands:** `msg send`, `reply`, `accept`, `inbox`, `read`, `done`, `defer` and
+  `wait`, keeping today's names in the new grammar; `channel list`, `join` and `leave`;
+  `status set` and `clear`; `session attach`, which is the long-running mode. The file
+  queue goes, and every `msg` command goes to the office
   ([command line design](design/agent-os-command-line.md), sections 2.9, 3.3 and 3.7; CLI-13).
 - **Read:** [messaging and chat](design/organization-data/15-messaging-and-chat.md),
   [ADR-0003](adr/0003-agent-messaging-office-first.md),
@@ -703,8 +704,9 @@ on the offers of design section 10.
     single choice, multiple choice, yes/no, free text. A default is preselected.
   - A required ask that is not answered in time returns "required answer pending". The
     suspension that follows is increment C6.
-- **Commands:** `channel ask` and `consult ask`, answering with `thread reply`,
-  `thread withdraw`, and the `timed_out` and `withdrawn` outcomes ([command line design](design/agent-os-command-line.md), sections 2.3 and 3.3; CLI-14).
+- **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel;
+  answering with `msg reply`; `msg withdraw`; and the `timed_out` and `withdrawn`
+  outcomes ([command line design](design/agent-os-command-line.md), sections 2.3 and 3.3; CLI-14).
 - **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
   [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
   (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
