@@ -315,6 +315,7 @@ impl Spawner {
                     None,
                     running.generation,
                     v3_signals,
+                    &mut || running.process.try_wait().unwrap_or(false),
                 )?);
             }
             Mode::Create(line) => {
@@ -356,6 +357,7 @@ impl Spawner {
                     Some(&hq.recovery),
                     running.generation,
                     v3_signals,
+                    &mut || running.process.try_wait().unwrap_or(false),
                 )?);
             }
             // The discard handoff carries no secret: the key store's key (if any) stays here.
@@ -391,6 +393,7 @@ impl Spawner {
                     &self.check,
                     running.generation,
                     v3_signals,
+                    &mut || running.process.try_wait().unwrap_or(false),
                 )?;
             }
         }

@@ -319,6 +319,15 @@ impl TestHome {
             .collect()
     }
 
+    /// The fingerprints of the grant keys the fake's v3 runs for `key` got over the rendezvous,
+    /// in order (one per run whose handoff carried one).
+    pub fn grant_fingerprints(&self, key: &str) -> Vec<String> {
+        self.log_fields("grant", key)
+            .iter()
+            .map(|f| f[3].clone())
+            .collect()
+    }
+
     /// The fingerprints of the database keys the fake's runs for `key` ("create" or an office
     /// id) got, in order (`null` for none).
     pub fn db_key_fingerprints(&self, key: &str) -> Vec<String> {
