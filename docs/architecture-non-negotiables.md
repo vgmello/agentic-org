@@ -7,7 +7,7 @@ and recorded. It is short on purpose: everything not listed here is yours to dec
 ## What we are aiming for
 
 - **Fast.** What an agent does all day (reading its inbox, sending a message, creating
-  or updating a task) answers in single-digit milliseconds, with a target median of
+  a task or commenting on one) answers in single-digit milliseconds, with a target median of
   1 ms and 95th percentile of 2 ms for an office-local call in the long-running mode.
 - **Works alone.** An office keeps working when HQ or the network is unreachable.
 - **Reliable and light.** Nothing acknowledged is lost. Memory and disk use stay small.
@@ -95,8 +95,9 @@ These hold across every increment. Each names the document that owns its detail.
 ### Speed
 
 18. **The commands an agent uses all day are fast** (owner, 2026-11-18). Reading the
-    inbox, sending a message, replying, and creating, reading or updating a task
-    answer in single-digit milliseconds from one office-local store, with the targets
+    inbox, sending a message, replying, and reading a task, creating one or commenting
+    on one (the list is in section 2.11 of the command design) answer in single-digit
+    milliseconds from one office-local store, with the targets
     stated above. Nothing may be added to the path of these commands that makes them
     wait: no second journal or commit point, no call to HQ, no model call, no wait
     for the drive beyond their declared class. A command that is slow by nature

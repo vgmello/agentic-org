@@ -38,13 +38,21 @@ approver and had no command to approve with.
    named, or who may hire nowhere. The answer is `not_authorized` with the hint
    "You don't have access to hire. Ask your team lead." Nothing is recorded as a
    request, and no turn starts for the HR lead.
+   - The office does not read a message to decide. Every direct message and mention
+     to the HR lead from a caller who may hire nowhere is refused.
+   - A caller who may hire somewhere reaches the HR lead. The team is checked when
+     the draft is written and again when it is confirmed: a draft for a team the
+     caller may not hire into is refused there.
 4. **Asking goes by conversation.** An employee that needs a colleague asks its lead,
    as it asks for anything else. A lead that may not hire asks its own lead. There is
    no record that travels up the chain.
 5. **The hirer confirms what is created.** The HR lead drafts the proposal, or the
    hirer fills in the fields. The hirer sees exactly what will be created and
    confirms it; product code then provisions the agent. A call that gives every
-   required field is its own confirmation.
+   required field is its own confirmation. Only the hirer who started the request,
+   or the owner, confirms it or tries it again, and the permission is checked again
+   each time; a draft whose hirer was deactivated or lost the permission can only
+   be confirmed by the owner.
 6. **The hire is recorded.** A hire request records who hired, the proposal, the
    reason, when it was confirmed and the agent it produced. Its states are
    `drafting`, `hiring`, `hired`, `withdrawn` and `failed`. "Hired by" on an agent's

@@ -656,8 +656,8 @@ on the offers of design section 10.
   uses its types, and nothing launches an agent.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
   recover processes the office owned before a restart, not to launch an agent.
-- **Done when:** a hired agent completes an instruction given from its page, and the HR
-  lead drafts a hire proposal when asked.
+- **Done when:** a hired agent completes an instruction given from its page, the HR
+  lead drafts a hire proposal when asked, and LIVE-9 to LIVE-13 pass.
 - **Needs:** C1, C2.
 
 ### C4 · See what an agent did
@@ -784,8 +784,10 @@ on the offers of design section 10.
 - **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-7),
   [how agents run](specs/agent-run-modes-ux.md) (RUN-3),
   [command line design](design/agent-os-command-line.md) section 3.3. Row FC-169.
-- **Done when:** WAKE-1 to WAKE-7 and LIVE-1 to LIVE-8 pass.
-- **Needs:** B7, C3. LIVE-8 also needs C6.
+- **Done when:** WAKE-1 to WAKE-7 and LIVE-1 and LIVE-4 to LIVE-7 pass, and the
+  hourly-limit part of LIVE-3. LIVE-8 is finished with C6, LIVE-2 with L4 (it needs
+  turn permits) and the budget part of LIVE-3 with L3.
+- **Needs:** B7, C3.
 
 ### C9 · A channel's watcher feeds responses back to the agents who asked
 
@@ -826,8 +828,9 @@ on the offers of design section 10.
 - **Read:** ADR-0028 (AVAIL-1 to AVAIL-6), [how agents run](specs/agent-run-modes-ux.md)
   (RUN-3), [agent sessions](design/agent-sessions.md). Row FC-186.
 - **Code today:** nothing starts an agent.
-- **Done when:** AVAIL-1 to AVAIL-6 pass.
-- **Needs:** C8 and, for assignments, B4.
+- **Done when:** AVAIL-1 to AVAIL-6 pass, and HIRE-2 and HIRE-7 of
+  [ADR-0029](adr/0029-only-who-may-hire-hires.md).
+- **Needs:** C8, C2 and, for assignments, B4.
 
 ---
 
@@ -863,7 +866,8 @@ on the offers of design section 10.
 - **Done when:** every rule the data documents state for tasks is enforced by the office
   and covered by the engine-independent work suite; a task created with the office
   unable to reach HQ has its final reference at once; the code's tables match the draft
-  schema for tasks. The screen criteria (TSK, BUG, CHK, WORK) are finished in B5.
+  schema for tasks; TASKAUTH-2 and TASKAUTH-3 pass. The screen criteria (TSK, BUG,
+  CHK, WORK) and TASKAUTH-1, which needs an agent, are finished in B5.
 - **Needs:** B3.
 
 ### B5 · Tasks in `agent-os` and in the browser
@@ -882,7 +886,7 @@ on the offers of design section 10.
 - **Done when:** the TSK, BUG, CHK and WORK criteria that need no agent runtime pass in
   browser tests against a real instance; a task created in the browser is updated from
   a terminal and the browser shows the change without a reload.
-- **Needs:** B4, A3, A5. The agent part needs C3.
+- **Needs:** B4, A3, A5. The agent part needs C3. TASKAUTH-1 passes once an agent runs.
 
 ### C7 · Repositories and worktrees
 
@@ -1165,7 +1169,7 @@ product without it.
 | L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
 | L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
 | L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8, C10 and L7's feature records |
-| L8 | Private task notes: an agent's own plan, reasoning and test notes on a task, read by the author and by people and never by another agent; `agent-os task note` | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), [ADR-0031](adr/0031-any-employee-changes-tasks.md) (TASKAUTH-4 to TASKAUTH-7), FC-053. Needs B5 |
+| L8 | Private task notes: an agent's own plan, reasoning and test notes on a task, read by the author and by people and never by another agent; `agent-os task note` | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), [ADR-0031](adr/0031-any-employee-changes-tasks.md) (TASKAUTH-4 to TASKAUTH-7), FC-053. Needs B5 and C3 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |
 

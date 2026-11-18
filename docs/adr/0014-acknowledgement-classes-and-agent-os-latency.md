@@ -116,7 +116,9 @@ classes defined here.
    `msg.ask` is the one operation that holds its caller. Every ask has a deadline:
    the caller may state how long it expects a reply to take, otherwise the default
    of [ADR-0020](0020-required-asks-suspend-and-resume.md) applies (one system setting,
-   10 minutes), and the wait ends there with a timeout result. ADR-0020 also adds the
+   10 minutes), and the wait ends there with a timeout result. One command does not
+   hold its caller for that whole wait: it returns within a short hold and the wait
+   is continued by another call (ADR-0020 decision 15). ADR-0020 also adds the
    required ask, which suspends the agent until it is answered. The ask itself
    is committed and acknowledged like a send; only waiting for the reply is slow.
 

@@ -39,14 +39,28 @@ told:
    mention, an ask or a hand-off addressed to it, a task assigned to it, and an
    answer to its own question.
 2. **A start that cannot happen now is kept.** When one of those arrives and the
-   agent has an open turn, or admission refuses the start, or the hourly limit holds
-   it, the office records a **pending start** for the agent: a durable record of the
-   agent and of the items waiting. It is a file of the office's local records,
-   written through the acceptance journal, so a restart does not lose it.
-3. **The office tries a pending start again** when the agent's turn ends, when a
-   turn permit or a pool connection is freed, when a budget hold or a pause is
-   lifted, when the hour of the limit has passed, and when the office starts. One
-   turn takes everything that is waiting: its instruction lists the items.
+   agent cannot be started now, for any reason, the office records a **pending
+   start** for the agent: a durable record of the agent, the items waiting and the
+   reason. The reasons are: the agent has an open turn; it is paused; it is
+   suspended on a required answer; admission refuses the start (no permit, no
+   connection, HQ not reachable, no route that is ready, its execution
+   configuration is off, a budget hold); the hourly limit holds it; automatic starts
+   are stopped for it (decision 12). The record is a file of the office's local
+   records, written through the acceptance journal, so a restart does not lose it.
+3. **The office tries a pending start again when its reason can have changed:**
+   - the agent's turn ends, or its suspension ends;
+   - a pause is lifted, or a person clears the stop of decision 12;
+   - a turn permit or a pool connection is freed, or HQ is reachable again;
+   - a route becomes ready (a sign-in, a binding or a driver), or the execution
+     configuration is turned on;
+   - a budget hold is released;
+   - the hour of the limit has passed;
+   - the office starts.
+
+   One turn takes everything that is waiting: its instruction lists the items.
+   Before the start, the office removes an item whose message was withdrawn or whose
+   question is closed; if nothing is left, no turn starts. When the agent is
+   offboarded, its pending start is discarded and each sender is told.
 4. **Ending a turn means "nothing more I can do now".** The office does not start an
    agent again only because it has open tasks. It starts it when something new
    waits for it. The [agent instructions](../design/agent-instructions.md) tell an
@@ -61,7 +75,9 @@ told:
 7. **Two agents waiting on each other do not stop each other.** An agent suspended on
    a required answer (ADR-0020) is started by that answer, and also by a question or
    a hand-off from the employee it is waiting for. It is resumed with that message
-   and told that its own question is still open. Its presence reads "Waiting for an
+   and told that its own question is still open. This start is recorded as an `ask`
+   or a `handoff`, not as a `resume`, and the hourly limit counts it, so two agents
+   cannot start each other this way without end. Its presence reads "Waiting for an
    answer from" that employee; this is one of the states of ADR-0028 decision 6.
 
 ### After a restart
@@ -71,13 +87,20 @@ told:
    gone. Then it resumes the same vendor session with one input: that the agent was
    interrupted by a restart, at what time, which tool call was running if one was,
    and that the agent must check the state of that work before repeating it.
-   - A product change the agent sent through `agent-os` is safe to send again: the
-     office answers a repeated operation with its first answer.
+   - The office knows every product change it accepted. The input lists the
+     `agent-os` commands of this run that the office accepted after the last tool
+     result the session holds, each with its command line and its answer, so the
+     agent does not send them again. (A repeated command would carry a new
+     idempotency key, because the first call never returned its key.)
    - What a shell command did is not known to the office. The agent checks.
    - The resumed turn is the same turn. It is not counted by the hourly limit.
+   - It passes the normal start checks first: a turn permit and the budget hold. If
+     one refuses, the turn is blocked and continues when the reason has gone.
+   - The stall time of decision 11 is counted from the resume.
 9. **A person is needed only when the office cannot continue safely:** it cannot
    prove the run's processes are gone, the vendor session cannot be resumed, or three
-   resumes in a row fail. The turn is then `recovery_required`, the agent shows as
+   resumes in a row fail. A resume cut short by another restart is not a failed
+   resume. The turn is then `recovery_required`, the agent shows as
    unable to run with the reason, and what waits for it is kept as a pending start.
    This replaces "a crash never triggers an automatic rerun" in the supervision
    design: nothing is run again; the session is continued and the agent decides.
@@ -86,7 +109,14 @@ told:
 
 10. **The office watches every open turn for activity.** Activity is model output, a
     tool call starting or finishing, including one of a sub-agent, and an `agent-os`
-    call from the run. A held `msg wait` counts while its hold lasts.
+    call from the run.
+    - A `msg wait` for an open question counts while its hold lasts. A `msg wait`
+      with no question does not: an agent with nothing to do ends its turn.
+    - A tool action waiting for a person's approval counts while the request is
+      open; the approval has its own expiry in the session design.
+    - Every adapter must report the tool activity of sub-agents. For a vendor tool
+      that cannot, the stall time of that adapter is set long enough for a
+      sub-agent's whole run, and the adapter's notes say so.
 11. **A turn with no activity for the stall time is stopped.** The stall time is a
     system setting, 15 minutes unless changed; it is longer than the longest tool
     call a vendor tool allows. The office asks the vendor tool to stop, then stops

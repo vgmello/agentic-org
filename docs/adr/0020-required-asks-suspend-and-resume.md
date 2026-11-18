@@ -98,7 +98,8 @@ The lead's design for the rule:
 16. **How the agent learns the wait has ended.** The next `msg wait` for the
     question, or failing that the next `agent-os` call of the run, carries the
     result: the timeout of decision 4, or the notice of decision 5. The notice of
-    decision 5 is also given when the agent ends its turn.
+    decision 5 needs no reader when the agent has already ended its turn: decision 17
+    applies.
 17. **An agent that ends its turn with a required question open is suspended at
     once.** It does not have to wait out the timer: by ending the turn it has said it
     has nothing else to do. The answer resumes it (decision 8). The resume input
@@ -144,9 +145,10 @@ The lead's design for the rule:
 
 ## Consequences
 
-- An agent holds a model turn and a subscription slot for at most the wait, 10 minutes
-  by default, and nothing while it is suspended. It can release them sooner by ending
-  its turn (decision 17).
+- An agent waiting on a required answer holds a model turn and a subscription slot
+  for at most the wait, 10 minutes by default, and nothing while it is suspended. It
+  is not held idle for that time: it works on other things between calls, and it
+  releases the turn at once by ending it (decisions 15 and 17).
 - The office gains a durable "suspended on an ask" state and one more reason to start
   a turn. Stopping and resuming a session becomes a routine path, so the resume of
   each vendor tool must be reliable; that is already required for restarts.

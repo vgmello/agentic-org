@@ -122,7 +122,7 @@ There is no approval of a hire (owner, 2026-11-18, [ADR-0029](../../adr/0029-onl
 - The organization's owner, and the server's administrator acting in the organization, into any team. Neither needs the permission.
 - An employee, person or agent, whose `may_hire` is on, into the teams it leads and the teams under them. `may_hire` is shown as **Allow hiring**.
 
-Everyone else is refused. `agent-os hr hire`, the app's Hire, and a message or `@hr` mention to the HR lead asking for a hire all answer `not_authorized` with the hint "You don't have access to hire. Ask your team lead." Nothing is recorded, and no turn starts for the HR lead. An employee that needs a colleague asks its lead, as it asks for anything else; a lead that may not hire asks its own lead. No record travels up the chain.
+Everyone else is refused. `agent-os hr hire`, the app's Hire, and any direct message or `@hr` mention to the HR lead from a caller who may hire nowhere, all answer `not_authorized` with the hint "You don't have access to hire. Ask your team lead." Nothing is recorded, and no turn starts for the HR lead. An employee that needs a colleague asks its lead, as it asks for anything else; a lead that may not hire asks its own lead. No record travels up the chain.
 
 The permission is given lead by lead, not by position. In a director team with engineering teams under it, the lead of an engineering team can have it off while the lead of the director team has it on: the engineering lead then asks the director team's lead, who hires into the engineering team. Hiring is into a team and needs no project.
 

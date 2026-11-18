@@ -2561,14 +2561,14 @@ GROUP BY v.organization_id, v.document_id, v.version;
 -- Review of 2026-11-18: rules the documents state that no constraint held.
 CREATE TRIGGER task_affects_feature_same_project_insert BEFORE INSERT ON task_details
 WHEN NEW.affects_feature_id IS NOT NULL
-BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE NOT EXISTS (
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
- WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS f.project_id); END;
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
 CREATE TRIGGER task_affects_feature_same_project_update BEFORE UPDATE OF affects_feature_id ON task_details
 WHEN NEW.affects_feature_id IS NOT NULL
-BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE NOT EXISTS (
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
- WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS f.project_id); END;
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
 CREATE TRIGGER cleanup_record_same_office_insert BEFORE INSERT ON process_cleanup_records
 WHEN NEW.execution_process_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'cleanup record and its process are in different offices') WHERE EXISTS (
@@ -2583,3 +2583,7 @@ BEGIN SELECT RAISE(ABORT,'only an agent is placed in an office') WHERE EXISTS (
 CREATE TRIGGER placement_requires_agent_update BEFORE UPDATE OF employee_id,organization_id ON agent_placements
 BEGIN SELECT RAISE(ABORT,'only an agent is placed in an office') WHERE EXISTS (
  SELECT 1 FROM employees e WHERE e.organization_id=NEW.organization_id AND e.id=NEW.employee_id AND e.kind<>'agent'); END;
+CREATE TRIGGER task_project_keeps_affected_feature BEFORE UPDATE OF project_id ON tasks
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
+ WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;

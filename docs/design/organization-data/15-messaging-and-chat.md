@@ -18,7 +18,7 @@ Three kinds of record that messaging depends on are local to one office and live
 
 | Record | Path under `durable/local/offices/<office-id>/` | Holds | Built with |
 | --- | --- | --- | --- |
-| Suspension | `supervision/suspensions/<employee-id>.json` | The suspended agent, its session, each required question it waits on and whom it asked, and since when ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md) decision 9) | B7 |
+| Suspension | `supervision/suspensions/<employee-id>.json` | The suspended agent, its session, each required question it waits on and whom it asked, and since when ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md) decision 9) | C6 |
 | Pending start | `supervision/pending-starts/<employee-id>.json` | The items waiting for an agent that could not be started, the reason and since when ([ADR-0030](../../adr/0030-an-agent-works-while-it-has-work.md)) | C8 |
 | Watch and judged marks | `messaging/watches/<question-message-id>.json`, `messaging/channel-marks/<conversation-id>.json` | An open channel question's watch; how far each origin of a channel has been judged (ADR-0024 decision 16) | C9 |
 
