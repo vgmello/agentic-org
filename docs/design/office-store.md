@@ -506,6 +506,62 @@ store (L8).
 
 ## 6. Rebuilding
 
+```rust
+/// Rebuilds the projection from the files and the journal, deterministically, and swaps it in.
+pub fn rebuild<E: Engine>(
+    durable: &DurableRoot,             // <data-root>/<organization-id>/durable
+    journal: &mut Journal,             // this office's, opened and verified
+    engine: &E,
+    families: &[&dyn Projector<E>],
+) -> Result<RebuildReport, RebuildError>;
+```
+
+1. Materialize the journal's retained entries, so the files hold everything accepted.
+2. Through `Engine::replace`, into a fresh projection beside the live one: walk every
+   projected tree (`state/`, `messaging/`, `recovery/commands/`, `accounting/`,
+   `budgets/`, `authority/`, `local/offices/<office-id>/`) in byte order of path. Each
+   file goes to the one projector that owns its path, then `set_source` records its
+   hash. A file no family owns is a failure.
+3. Run every family's `validate`. Set the cursor to the journal head. Swap the new
+   projection in.
+
+Every failure carries the path and the reason. A family marks the records whose failure
+refuses the rebuild (for the organization family: the organization record and the teams
+and employees it needs, as document 16's opening rule says); any other failing record is
+left out and listed in the report, which the office shows.
+
+**It is deterministic.** Its input is a sorted list of files, and a projector is a pure
+function of a path and its bytes: no clock, no random value, no minted ID. Values that
+span records are SQL views or queries, never stored by one file's projector.
+
+**When it runs.** At opening when the projection is missing, was built by another schema
+digest, or is ahead of or inconsistent with the journal; when an existing organization
+is opened from its repository (R1: the office starts a new journal incarnation whose
+anchor names the Git commit it opened, then rebuilds); and when an operator asks.
+
+**The property that proves it.** `org-store`'s testkit provides one harness every family
+runs, on both engines:
+
+```text
+for a generated sequence of the family's commands (valid, invalid, retried, interleaved):
+    A = projection after Store::submit of each command, through the real writer
+    B = rebuild() from the durable directory A left behind, into a fresh engine
+    assert dump(A) == dump(B)
+and with a crash injected at a random point (section 4): reopen, then
+    assert dump(reopened) == dump(rebuild()) and every acknowledged operation is present
+```
+
+`dump` is a testkit-only canonical listing of every row, sorted. Because the write path
+and rebuild call the same projector on the same bytes, a difference means a projector
+kept state or read something other than its file.
+
+**A projection schema change before v1 ships** is a new digest. The SQLite projection's
+digest is the SHA-256 of the DDL it loads: the contract's `schema.sql`, the adapter's
+own tables (`store_cursor`, `store_sources`) and its extra indexes. Opening with a
+different digest deletes the projection and rebuilds it. There is no migration code. A
+change to a file format before v1 is a change to its codec; files in a format the code
+no longer reads are refused by path, because nothing has shipped to keep.
+
 ## 7. Reading
 
 ## 8. Speed
