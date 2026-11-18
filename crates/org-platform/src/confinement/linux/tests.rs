@@ -469,6 +469,22 @@ fn a_report_needs_a_landlock_abi_of_three_or_more_and_ignores_seccomp() {
 }
 
 #[test]
+fn a_failed_allocator_limit_refuses_naming_the_call() {
+    // glibc's mallopt returns 1 for this parameter whatever the process's state, so
+    // the refusal is tested on the decision alone: nothing here provokes the call
+    // itself to fail.
+    super::one_arena(1).unwrap();
+    for failed in [0, -1, 2] {
+        let error = super::one_arena(failed).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("{REFUSAL}: mallopt(M_ARENA_MAX, 1) failed")
+        );
+        assert_eq!(error.raw_os_error(), None);
+    }
+}
+
+#[test]
 fn a_relative_rendezvous_is_refused_before_anything_changes() {
     let before = own_status();
     let error = confinement::confine_web(Path::new("relative/r")).unwrap_err();

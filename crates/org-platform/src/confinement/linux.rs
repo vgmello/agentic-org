@@ -179,7 +179,31 @@ fn no_new_privileges() -> io::Result<()> {
     prctl("prctl(PR_SET_NO_NEW_PRIVS)", libc::PR_SET_NO_NEW_PRIVS, 1)
 }
 
-/// The design's six steps, in order. Any error leaves the caller without a stream:
+/// The outcome of `mallopt(M_ARENA_MAX, 1)`, which returns 1 when it set the limit.
+///
+/// glibc gives each thread an allocator arena of its own, and the first time the
+/// heap of one of those shrinks it opens `/proc/sys/vm/overcommit_memory`
+/// (`malloc/arena.c`, `shrink_heap`). The filter kills that open, and the web
+/// process's worker threads reach it under ordinary load. With the limit every
+/// thread allocates from the main arena, which grows and shrinks with `brk` and
+/// reads no file.
+///
+/// The limit holds only for a process that never had a second thread, which is what
+/// the contract asks of the caller. An earlier thread, even one that has ended, may
+/// have left a second arena behind; a later thread can take it over, and its first
+/// shrink is then killed by the filter. That fails closed: the process dies, it is
+/// never left unconfined.
+///
+/// The cost is one allocator lock for all threads. Each thread keeps its own cache
+/// of small blocks.
+fn one_arena(result: libc::c_int) -> io::Result<()> {
+    match result {
+        1 => Ok(()),
+        _ => Err(refuse("mallopt(M_ARENA_MAX, 1) failed")),
+    }
+}
+
+/// The design's six steps, in order, after the allocator limit of [`one_arena`]. Any error leaves the caller without a stream:
 /// the one connected in step 2 is dropped here. After step 4 a failure leaves the
 /// process partly confined, and it still refuses.
 pub(super) fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
@@ -187,6 +211,10 @@ pub(super) fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcem
     if !rendezvous.is_absolute() {
         return Err(refuse("the rendezvous path is not absolute"));
     }
+    // Before anything is changed: one allocator arena. A refusal here leaves the
+    // process as it was.
+    // SAFETY: `mallopt` takes two integers and changes only the allocator's limit.
+    one_arena(unsafe { libc::mallopt(libc::M_ARENA_MAX, 1) })?;
     // 1. No core dump and no same-user tracing; then the preconditions.
     super::disable_core_dumps()?;
     prctl("prctl(PR_SET_DUMPABLE)", libc::PR_SET_DUMPABLE, 0)?;

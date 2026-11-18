@@ -186,6 +186,22 @@ mod vector {
             // A forbidden operation would kill this process, so each one has its own
             // probe child. This process shows what must keep working: a thread,
             // memory, the clock and randomness, then the approved descriptors below.
+            // Threads that allocate and free in their own allocator arenas, as the
+            // web process's workers do under load. glibc must not open a file for it.
+            let workers: Vec<_> = (0..4)
+                .map(|_| {
+                    std::thread::spawn(|| {
+                        for _ in 0..4 {
+                            let blocks: Vec<Vec<u8>> =
+                                (0..256).map(|_| vec![1u8; 48 << 10]).collect();
+                            assert_eq!(blocks.len(), 256);
+                        }
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().unwrap();
+            }
             let started = std::time::Instant::now();
             let sum = std::thread::spawn(|| {
                 let block = vec![1u8; 8 << 20];

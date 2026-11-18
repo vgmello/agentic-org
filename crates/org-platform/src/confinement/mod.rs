@@ -135,17 +135,28 @@ pub fn disable_core_dumps() -> io::Result<()> {
 /// the one connection the policy allows. Failure must terminate the caller before
 /// readiness. Unsupported platforms never return success.
 ///
-/// GNU/Linux, in this order: disable core dumps and same-user tracing; require
-/// exactly one thread now (a thread that has ended does not count) and exactly
-/// descriptors 0 to 2; connect to `rendezvous`, an absolute path, the last socket
-/// the process creates; set no-new-privileges; restrict the process with Landlock
-/// (ABI 3 or higher, every right of the ABI handled, no rule); install the seccomp
+/// GNU/Linux, in this order: limit the C library's allocator to one arena; disable
+/// core dumps and same-user tracing; require exactly one thread now (a thread that
+/// has ended does not count) and exactly descriptors 0 to 2; connect to
+/// `rendezvous`, an absolute path, the last socket the process creates; set
+/// no-new-privileges; restrict the process with Landlock (ABI 3 or higher, every
+/// right of the ABI handled, no rule); install the seccomp
 /// filter. Any failure returns an error that names the call and the cause, and the
 /// connected stream is dropped: the caller never holds a stream unconfined. After a
 /// failure of the last two steps the process is partly confined and must still exit.
 /// After it returns, opening a file, creating, connecting or binding a socket and
 /// starting a program each kill the process. The host therefore starts the web
 /// process without `RUST_BACKTRACE`: a backtrace opens files.
+///
+/// The allocator limit is there because glibc opens
+/// `/proc/sys/vm/overcommit_memory` the first time the heap of an arena other than
+/// the main one shrinks, and the filter kills that open. If the limit cannot be set,
+/// the call refuses before it has changed anything. The limit holds only when this
+/// is called before the process ever had a second thread: an earlier thread, even
+/// one that was joined, may have left a second arena, and then a later thread's
+/// allocator can make that open and the process is killed. That is the filter
+/// failing closed, never an unconfined process. The cost is one allocator lock for
+/// all threads; each thread keeps its own cache of small blocks.
 pub fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
     native::confine_web(rendezvous)
 }
