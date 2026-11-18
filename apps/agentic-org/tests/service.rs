@@ -247,13 +247,15 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
         matches!(fixture.recv(std::time::Duration::from_secs(30)),Some(ServerMessage::Response(r)) if r.id==0)
     );
 
-    let (starting, sent) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
+    // `last_id` is the id of the writer's last list call, 0 until the writer has decided
+    // which call that is.
+    let (starting, last_id) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
     let answered = Arc::new(AtomicU64::new(0));
     let writer = {
         let out = Arc::clone(&fixture);
-        let (starting, sent, answered) = (
+        let (starting, last_id, answered) = (
             Arc::clone(&starting),
-            Arc::clone(&sent),
+            Arc::clone(&last_id),
             Arc::clone(&answered),
         );
         std::thread::spawn(move || {
@@ -267,6 +269,14 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
                 }
                 let last = !starting.load(Ordering::SeqCst);
                 id += 1;
+                if last {
+                    // Published before the call is made: its answer cannot reach the reader
+                    // before the reader can know that it is the last one. (The reader must
+                    // not learn it from this thread having ended: the answer is queued
+                    // inside `submit`, so the reader can read it, find this thread still
+                    // running and wait for a message that never comes.)
+                    last_id.store(id, Ordering::SeqCst);
+                }
                 // Both lists, in turn.
                 let method = if id % 2 == 1 {
                     "organization.list"
@@ -275,7 +285,6 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
                 };
                 let line = format!("{{\"id\":{id},\"method\":\"{method}\",\"params\":{{}}}}\n");
                 out.submit(serde_json::from_str(&line).unwrap());
-                sent.store(id, Ordering::SeqCst);
                 if last {
                     return;
                 }
@@ -318,10 +327,16 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
             std::time::Instant::now() < deadline,
             "the run took over 60 s"
         );
-        let done = writer.is_finished() && answers == sent.load(Ordering::SeqCst);
-        if done {
+        // Done when the answer to the writer's last call has been read: every call before
+        // it was answered before it, on this one connection.
+        let last = last_id.load(Ordering::SeqCst);
+        if last != 0 && answers == last {
             break;
         }
+        assert!(
+            last != 0 || !writer.is_finished(),
+            "the writer ended before its last list call"
+        );
         let message = fixture
             .recv(std::time::Duration::from_secs(30))
             .expect("native event or response");
