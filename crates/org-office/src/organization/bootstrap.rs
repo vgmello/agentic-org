@@ -217,9 +217,11 @@ fn materialize(p: &PreparedV1, office_name: &str, at: &str) -> Result<Materializ
         provenance(at, creator),
         json!({"id":creator,"name":p.creator.name,"handle":p.creator.handle,"kind":"person","home_team_id":p.home_team_id,"role_id":null,"reports_to_employee_id":null,"status":"active","offboarded_at":null}),
     );
+    // The data contract's employee record: `status` only. Whether the agent runs is not a
+    // field of its profile (docs/design/organization-data).
     let hr = with(
         provenance(at, creator),
-        json!({"id":p.hr_employee_id,"name":"HR","handle":org_proto::selected_bootstrap::HR_HANDLE,"kind":"agent","home_team_id":p.home_team_id,"role_id":null,"reports_to_employee_id":null,"status":"active","agent_status":"paused","offboarded_at":null}),
+        json!({"id":p.hr_employee_id,"name":"HR","handle":org_proto::selected_bootstrap::HR_HANDLE,"kind":"agent","home_team_id":p.home_team_id,"role_id":null,"reports_to_employee_id":null,"status":"active","offboarded_at":null}),
     );
     files.insert("organization.yaml".into(), yaml(&org)?);
     files.insert(

@@ -321,6 +321,10 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     let doc = org_docs::SourceDoc::parse(&profile).unwrap();
     assert_eq!(doc.front_matter()["home_team_id"], p.home_team_id);
     assert!(doc.front_matter().get("is_owner").is_none());
+    // The data contract's bytes: an agent's profile has `status` and no `agent_status`.
+    assert_eq!(doc.front_matter()["status"], "active");
+    assert!(doc.front_matter().get("agent_status").is_none());
+    assert!(!profile.contains("agent_status"), "{profile}");
     assert_eq!(doc.front_matter()["created_by_kind"], "employee");
     assert_eq!(doc.front_matter()["created_by_id"], OWNER);
 }

@@ -251,6 +251,8 @@ fn assert_organization_files(base: &Path, organization: &str, creator: &str, slu
     assert!(is_uuid_v7(hr_id.to_str().unwrap()), "HR id {hr_id:?}");
     let hr = read(&agents[0]);
     assert!(has_field(&hr, "handle", "hr"), "{hr}");
+    assert!(has_field(&hr, "status", "active"), "{hr}");
+    assert!(!hr.contains("agent_status"), "{hr}");
 }
 
 /// A `key: value` line of a YAML document, with the value quoted or bare.
