@@ -94,7 +94,7 @@ employees; a built-in HR agent is not exempt from the employee constraints.
   launch paths come only from instance, office and member identity.
 - Pause commits durably at HQ while a disconnected office's stop is pending; an
   already-forwarded uncertain outcome stays Pending confirmation by operation ID.
-- A lead's approval precedes provisioning a hire ([ADR-0022](0022-a-lead-approves-a-hire.md)).
+- A lead's approval precedes provisioning a hire ([ADR-0027](0027-a-lead-approves-a-hire.md)).
 - Creation includes CA escrow, recovery-code provisioning and protected delivery
   ([ADR-0007](0007-hq-creation-escrow.md), [ADR-0011](0011-protected-recovery-delivery.md)).
   Manual recovery after losing HQ is REC-1 in the

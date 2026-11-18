@@ -1,4 +1,4 @@
-# ADR-0021 · A development process is content; the product runs no methodology
+# ADR-0026 · A development process is content; the product runs no methodology
 
 Status: **decided by the lead 2026-11-18** to place the owner's
 [REQ-06](../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) and
@@ -6,8 +6,8 @@ Status: **decided by the lead 2026-11-18** to place the owner's
 selected architecture, and updated the same day with the owner's answers: a
 development process is a primitive separate from organization processes, it declares
 the project's tabs, it can be imported as a file, a lead approves a hire
-([ADR-0022](0022-a-lead-approves-a-hire.md)) and agents start other agents
-([ADR-0023](0023-an-ask-or-an-assignment-starts-an-agent.md)). Implementation pending.
+([ADR-0027](0027-a-lead-approves-a-hire.md)) and agents start other agents
+([ADR-0028](0028-an-agent-is-always-available.md)). Implementation pending.
 The requirement calls it a process package; the product calls it a development
 process.
 
@@ -57,7 +57,7 @@ Three rules already in force constrain how:
    project; a non-overridable document is always followed.
 4. **A development process gives no right to hire and starts no agent.** A development process can tell a lead
    when to ask for a hire. Who may approve one is decided by the lead chain and the
-   permission to hire ([ADR-0022](0022-a-lead-approves-a-hire.md)), never by a development process.
+   permission to hire ([ADR-0027](0027-a-lead-approves-a-hire.md)), never by a development process.
 5. **A project's own documents live in one tree, `projects/<project-id>/docs/`, with
    one index, `index.yaml`.** The development process declares the starting sections. The office
    writes the index in the same accepted change as every write to the tree, from what
@@ -95,7 +95,7 @@ PKG-1 is the test of this record: a second built-in development process is added
   on proves unreliable, declared handoffs run by the office are the next step, and
   they would need a new decision record because they are option 1 in small.
 - Agents hand work to each other: an ask or an assignment starts the next agent
-  ([ADR-0023](0023-an-ask-or-an-assignment-starts-an-agent.md)). That is a rule about
+  ([ADR-0028](0028-an-agent-is-always-available.md)). That is a rule about
   turns, not about development processes, and no process can change it.
 - The product gains general parts that other development processes can use: the documentation tree
   and index, issued versions, code links and tasks that realize a version.

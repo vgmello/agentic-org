@@ -144,7 +144,7 @@ development process ([development process design](development-processes.md#5-two
 ### 3.2 Derive
 
 5. The product lead hands over, and the assignment starts the technical lead
-   ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)): it creates a task for the technical lead, "Derive the
+   ([ADR-0028](../adr/0028-an-agent-is-always-available.md)): it creates a task for the technical lead, "Derive the
    Technical DSS", naming the Product DSS versions just issued.
 6. The technical lead reads those versions and what changed since the versions the
    Technical DSS was last derived from (`agent-os doc diff`). For each technical
@@ -176,7 +176,7 @@ development process ([development process design](development-processes.md#5-two
     A lead with hiring power approves: the request goes up the lead chain until it
     reaches one, and the technical lead's own request is enough when it leads the
     project's team and has the Allow hiring permission
-    ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). Tasks are assigned as the
+    ([ADR-0027](../adr/0027-a-lead-approves-a-hire.md)). Tasks are assigned as the
     hires complete.
 
 ### 3.4 Build
@@ -288,7 +288,7 @@ they test the skills' text as much as the product.
 ## 8. Open points
 
 - **Unattended running.** Steps 5, 10 and 12 start the next agent
-  ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)). How well a
+  ([ADR-0028](../adr/0028-an-agent-is-always-available.md)). How well a
   whole change runs with nobody watching is what the run with real agents measures.
 - **Cost.** A factory spends without a person watching each step. Task and agent
   budgets ([document 17](organization-data/17-budgets-and-controls.md)) are the limit;

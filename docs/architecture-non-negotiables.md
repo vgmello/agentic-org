@@ -58,7 +58,7 @@ These hold across every increment. Each names the document that owns its detail.
    place in the organization. Two records carry it, a team's lead appointment and a
    lead's permission to hire, and each is given only by someone already above
    the holder. No other field on a record grants authority, and nobody grants any to
-   themselves. ([ADR-0022](adr/0022-a-lead-approves-a-hire.md))
+   themselves. ([ADR-0027](adr/0027-a-lead-approves-a-hire.md))
 10. **Agents run headless, apart from the data.** The office starts each agent as a
     supervised child process with a private home. An agent never holds the
     organization's secrets, a credential that can push, or another agent's sign-in.

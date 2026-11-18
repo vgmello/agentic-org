@@ -342,7 +342,7 @@ such if shown.
 
 A turn starts from an explicit instruction, from something addressed to the agent (a
 direct message, a mention, an ask or a task assigned to it), from the answer to a
-required ask, or from a recovery ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
+required ask, or from a recovery ([ADR-0028](../adr/0028-an-agent-is-always-available.md)).
 Channel messages that do not mention the agent, and schedules, never create model
 work by themselves. What arrives during an open turn waits and never interrupts it.
 A second open turn returns `BUSY`.
@@ -458,7 +458,7 @@ again on hand-back, and the command warns about this when it starts.
   the office.
 - **Delivery** follows ADR-0003: a message is kept for the agent's next turn boundary,
   never interrupts a busy turn, and never wakes a paused agent. A message addressed to
-  an agent that has no turn open starts one (ADR-0023). A reply that satisfies
+  an agent that has no turn open starts one (ADR-0028). A reply that satisfies
   a wait creates no second turn.
 - **Presence:** `busy`, `idle`, `needs_you`, `with_you`, `waiting` (on a required
   answer, naming whom), `asleep` and `offline`. An agent holding an `agent-os` wait

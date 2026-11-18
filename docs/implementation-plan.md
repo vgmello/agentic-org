@@ -582,13 +582,13 @@ Three things to know about the order:
   agent, and it starts and answers with nobody pressing Run. An idle agent shows as
   Available.
 - **Build:** the starts of
-  [ADR-0023](adr/0023-an-ask-or-an-assignment-starts-an-agent.md): a direct message, a
+  [ADR-0028](adr/0028-an-agent-is-always-available.md): a direct message, a
   mention, an ask or a task assigned to the agent. A start never interrupts, passes
   the permit and budget checks, and one agent may start another only so many times an
   hour. Presence returned with a send and an ask, and built-in guidance on waiting or
   sending and continuing.
-- **Read:** ADR-0023 (WAKE-1 to WAKE-8), [run modes](specs/agent-run-modes-ux.md)
-  RUN-3, [agent sessions](design/agent-sessions.md). Row FC-179.
+- **Read:** ADR-0028 (AVAIL-1 to AVAIL-8), [run modes](specs/agent-run-modes-ux.md)
+  RUN-3, [agent sessions](design/agent-sessions.md). Row FC-186.
 - **Code today:** nothing starts an agent.
 - **Needs:** C3, B6, B7 and, for assignments, B4.
 
@@ -896,10 +896,10 @@ product without it.
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
 | L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
-| L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-173. With or before L7, whose project-wide documents live in the tree |
-| L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-168 to FC-172, FC-177, FC-180. Needs C2, C3 and L11 |
-| L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-174, FC-175. Needs L11, B4 and C7 |
-| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-176, FC-178. Needs L12, L13, B7, C6, C8 and L7's feature records |
+| L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
+| L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
+| L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
+| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8 and L7's feature records |
 | L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |

@@ -1,4 +1,4 @@
-# ADR-0023 · An agent is always available: what is addressed to it starts it
+# ADR-0028 · An agent is always available: what is addressed to it starts it
 
 Status: **decided by the owner 2026-11-18**. "Anything can start an agent. If the agent
 is mentioned, if the agent has a task assigned to it: agents are like a person. The
@@ -83,14 +83,14 @@ and carry on when it will not.
 
 | ID | Passing evidence |
 | --- | --- |
-| WAKE-1 | A direct message, a mention, an ask and a task assignment each start a turn for an agent with none open, from a person and from an agent, and the Runs tab names who and what started it. |
-| WAKE-2 | A channel message without a mention, and a comment on a task the agent is not assigned, start nothing and are in its inbox at its next turn. |
-| WAKE-3 | An agent whose process is not running shows as Available to people and to agents; a paused agent shows as Paused and is not started. |
-| WAKE-4 | Something that arrives during an open turn does not interrupt it; a turn for it starts when the open one ends. |
-| WAKE-5 | With a budget hold on the agent, what arrives waits with that reason and the turn starts when the hold clears. |
-| WAKE-6 | An agent suspended on a required ask is resumed by something new addressed to it and told which required answers are still open. |
-| WAKE-7 | A send and an ask return the recipient's presence; for a person who is away it gives the time since. |
-| WAKE-8 | Two agents that answer each other's asks with asks stop at the hourly limit without a person acting, while a third agent can still start either of them. |
+| AVAIL-1 | A direct message, a mention, an ask and a task assignment each start a turn for an agent with none open, from a person and from an agent, and the Runs tab names who and what started it. |
+| AVAIL-2 | A channel message without a mention, and a comment on a task the agent is not assigned, start nothing and are in its inbox at its next turn. |
+| AVAIL-3 | An agent whose process is not running shows as Available to people and to agents; a paused agent shows as Paused and is not started. |
+| AVAIL-4 | Something that arrives during an open turn does not interrupt it; a turn for it starts when the open one ends. |
+| AVAIL-5 | With a budget hold on the agent, what arrives waits with that reason and the turn starts when the hold clears. |
+| AVAIL-6 | An agent suspended on a required ask is resumed by something new addressed to it and told which required answers are still open. |
+| AVAIL-7 | A send and an ask return the recipient's presence; for a person who is away it gives the time since. |
+| AVAIL-8 | Two agents that answer each other's asks with asks stop at the hourly limit without a person acting, while a third agent can still start either of them. |
 
 ## Consequences
 

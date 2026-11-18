@@ -1,4 +1,4 @@
-# ADR-0022 · A lead with hiring power approves a hire
+# ADR-0027 · A lead with hiring power approves a hire
 
 Status: **decided by the owner 2026-11-18**, in answer to the hiring point of
 [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md): "Not a
@@ -55,7 +55,7 @@ an agent the owner trusted to staff its team.
   may spend on new employees. The owner wants that as a separate, explicit switch,
   for people and agents alike.
 - **A permission in the development process.** A development process is content and grants nothing
-  ([ADR-0021](0021-development-processes-are-content.md)).
+  ([ADR-0026](0026-development-processes-are-content.md)).
 
 ## Acceptance criteria
 

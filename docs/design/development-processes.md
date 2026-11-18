@@ -11,7 +11,7 @@ records are owned by
 [roles](organization-data/01-organization-structure.md) and
 [employees](organization-data/04-agent-structure.md) own what it builds on. The
 decision and what was rejected are in
-[ADR-0021](../adr/0021-development-processes-are-content.md). The first one, for
+[ADR-0026](../adr/0026-development-processes-are-content.md). The first one, for
 desired state specifications, is in the
 [desired state design](desired-state-specifications.md).
 
@@ -73,7 +73,7 @@ team marked not overridable is always followed.
 8. **Hiring stays the product's.** An agent asks for a hire; HR drafts it; a lead
    approves it; product code provisions it
    ([document 04](organization-data/04-agent-structure.md#who-approves-a-hire),
-   [ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). A lead approves only with the
+   [ADR-0027](../adr/0027-a-lead-approves-a-hire.md)). A lead approves only with the
    Allow hiring permission, and a request goes up the lead chain until it reaches
    someone who has it. A development process decides when a lead asks and for which
    role; it gives no one the right to approve.
@@ -96,7 +96,7 @@ team marked not overridable is always followed.
     agents and people for.
 14. **Agents hand work to each other as people do.** An agent is always available:
     a message, a mention, an ask or a task addressed to it starts it
-    ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
+    ([ADR-0028](../adr/0028-an-agent-is-always-available.md)).
 15. **Changing a project's development process removes nothing.**
 
 ## 1. Where each thing lives
@@ -476,16 +476,16 @@ Each step is usable on its own. Increments are in the
 [implementation plan](../implementation-plan.md) (L11 to L14).
 
 1. **The tree and the index** for every project, with `agent-os doc` and the Docs tab
-   (FC-173). It needs no development process.
+   (FC-180). It needs no development process.
 2. **Development processes and a project's choice of one:** records, catalogue,
    editor and import, the select, the seed roster, the tabs, skills in an agent's
    instructions, and process and standard writes by agents of the project's team
-   (FC-168, FC-169, FC-170, FC-172, FC-177, FC-180). Needs the agent launch path (C3).
-3. **Hiring from a skill:** `role show` and the role on `hire request` (FC-171). Needs
+   (FC-175, FC-176, FC-177, FC-179, FC-184, FC-187). Needs the agent launch path (C3).
+3. **Hiring from a skill:** `role show` and the role on `hire request` (FC-178). Needs
    the hire flow (C2).
-4. **Issued versions, code links and realizing tasks** (FC-174, FC-175), then **the
-   DSS process** (FC-176) ([desired state design](desired-state-specifications.md))
-   and **feature delivery** (FC-178).
+4. **Issued versions, code links and realizing tasks** (FC-181, FC-182), then **the
+   DSS process** (FC-183) ([desired state design](desired-state-specifications.md))
+   and **feature delivery** (FC-185).
 
 ## What the code does today
 

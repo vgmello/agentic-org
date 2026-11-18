@@ -115,7 +115,7 @@ model turn.
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · What is addressed to an agent starts it: a direct message, a mention, an ask or a task assigned to it, from a person or an agent; so do an explicit Run and the answer to a required ask ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md), WAKE-1 to WAKE-8). A channel message without a mention starts nothing. A start never interrupts an open turn and passes the same checks as Run, and one agent may start another only so many times an hour. An agent that is not working shows as Available, whether or not its process is running.
+- RUN-3 · What is addressed to an agent starts it: a direct message, a mention, an ask or a task assigned to it, from a person or an agent; so do an explicit Run and the answer to a required ask ([ADR-0028](../adr/0028-an-agent-is-always-available.md), AVAIL-1 to AVAIL-8). A channel message without a mention starts nothing. A start never interrupts an open turn and passes the same checks as Run, and one agent may start another only so many times an hour. An agent that is not working shows as Available, whether or not its process is running.
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.

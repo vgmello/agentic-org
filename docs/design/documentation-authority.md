@@ -21,14 +21,14 @@ in the "What the code does today" section of each design.
 | What never varies, and what an engineer decides | [Architecture non-negotiables](../architecture-non-negotiables.md) |
 | How far each feature has got | [Feature checklist](../FEATURES.md), with evidence; [feature areas](../FEATURE-AREAS.md) for categories |
 | Records, fields, canonical files, draft SQL | [Data contract index](organization-data/README.md) and its numbered documents |
-| Development processes, a project's process, the project documentation tree and its index, issued versions and code links | [Document 18](organization-data/18-development-processes-and-project-documentation.md); behaviour in [development processes](development-processes.md) and [desired state specifications](desired-state-specifications.md); the decision in [ADR-0021](../adr/0021-development-processes-are-content.md) |
-| Who approves a hire; an agent lead's permission to hire | [ADR-0022](../adr/0022-a-lead-approves-a-hire.md), [employees](organization-data/04-agent-structure.md#who-approves-a-hire), [hire flow](../specs/our-org-in-the-app.md) |
+| Development processes, a project's process, the project documentation tree and its index, issued versions and code links | [Document 18](organization-data/18-development-processes-and-project-documentation.md); behaviour in [development processes](development-processes.md) and [desired state specifications](desired-state-specifications.md); the decision in [ADR-0026](../adr/0026-development-processes-are-content.md) |
+| Who approves a hire; an agent lead's permission to hire | [ADR-0027](../adr/0027-a-lead-approves-a-hire.md), [employees](organization-data/04-agent-structure.md#who-approves-a-hire), [hire flow](../specs/our-org-in-the-app.md) |
 | Teams, home team, reporting, project accountability | [Organization](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md), [employees](organization-data/04-agent-structure.md) |
 | Typed tasks, references, assignment and history | [Tasks and features](organization-data/03-features-and-work.md), [identity and numbering](organization-data/06-identity-and-numbering.md), [assignment](organization-data/12-task-assignment-and-history.md), [ADR-0019](../adr/0019-office-coded-task-numbers.md) |
 | Chat data, visibility and who writes what | [Messaging](organization-data/15-messaging-and-chat.md), [ADR-0003](../adr/0003-agent-messaging-office-first.md) |
 | How fast an operation answers, and when it is acknowledged | [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) |
 | How an ask waits; required asks | [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) |
-| What starts an agent's turn | [ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md), [agent sessions](agent-sessions.md) |
+| What starts an agent's turn | [ADR-0028](../adr/0028-an-agent-is-always-available.md), [agent sessions](agent-sessions.md) |
 | Durable sources versus rebuildable caches | [Storage contract](organization-data/README.md#shared-storage-contract), [recovery](organization-data/16-recovery-and-office-continuity.md) |
 | Replaceable storage engine | [ADR-0018](../adr/0018-storage-engine-independence.md) |
 | Encryption and secrets | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
