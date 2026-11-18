@@ -9,3 +9,8 @@ publish = false
 [dependencies]
 libc.workspace = true
 org-platform = { path = "../org-platform" }
+
+[dev-dependencies]
+# tests/confinement_example.rs: a container profile that refuses the Linux
+# confinement calls (ADR-0017 LNX-3).
+org-platform = { path = "../org-platform", features = ["test-support"] }

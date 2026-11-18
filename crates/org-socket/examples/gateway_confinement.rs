@@ -1,8 +1,14 @@
 //! Disposable real-process confinement check. Run outside a restricting parent
 //! sandbox: cargo run --locked --offline -p org-socket --example gateway_confinement.
 //! Never touches services, credentials or organization roots.
-//! The vector is written for the macOS adapter (ADR-0008); where the web process has
-//! no confinement adapter it refuses to run.
+//!
+//! One vector for every system with a web confinement adapter (macOS: ADR-0008;
+//! GNU/Linux: Linux host design, section 3.3); where the web process has none it
+//! refuses to run. What a system expects comes from the contract, never from a
+//! platform conditional: the child's `enforced` line carries what `confine_web`
+//! reported, as the web process's ready line does, and a report with a seccomp filter
+//! means a forbidden operation kills the process instead of returning an error. There
+//! each denial is proved by its own child, which must die of `SIGSYS`.
 mod vector {
     use org_platform::confinement::{self, Enforcement};
     use org_socket::rights::{self, StreamReceiver};
@@ -15,6 +21,7 @@ mod vector {
             unix::{
                 fs::DirBuilderExt,
                 net::{UnixListener, UnixStream},
+                process::ExitStatusExt,
             },
         },
         path::{Path, PathBuf},
@@ -22,11 +29,24 @@ mod vector {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     const WAIT: Duration = Duration::from_secs(5);
-    /// What the macOS adapter reports, and what the parent verifies the child with.
-    const REPORT: Enforcement = Enforcement {
-        landlock_abi: None,
-        seccomp: false,
-    };
+    /// The contract's fixed refusal text; an adapter that can say more appends a
+    /// colon and the cause.
+    const REFUSAL: &str = "gateway confinement unavailable";
+    /// The operations a confined process must not complete, one probe child each
+    /// where a forbidden operation kills.
+    const PROBES: [&str; 11] = [
+        "read",
+        "write",
+        "create",
+        "rename",
+        "remove",
+        "environment",
+        "unix-connect",
+        "tcp-connect",
+        "tcp-bind",
+        "exec",
+        "thread-read",
+    ];
     struct Root(PathBuf);
     impl Drop for Root {
         fn drop(&mut self) {
@@ -55,41 +75,139 @@ mod vector {
         reader.read_line(&mut line).unwrap();
         line
     }
+    /// What `confine_web` reported, as one line for the parent: the example's ready
+    /// line.
+    fn enforced(report: &Enforcement) -> String {
+        let landlock = report
+            .landlock_abi
+            .map_or("none".to_owned(), |abi| abi.to_string());
+        format!("enforced landlock={landlock} seccomp={}\n", report.seccomp)
+    }
+    /// The report of a child's `enforced` line.
+    fn reported(line: &str) -> Enforcement {
+        let fields = line
+            .strip_prefix("enforced landlock=")
+            .and_then(|rest| rest.strip_suffix('\n'))
+            .and_then(|rest| rest.split_once(" seccomp="));
+        let Some((landlock, seccomp)) = fields else {
+            panic!("the child did not report enforcement: {line:?}");
+        };
+        Enforcement {
+            landlock_abi: (landlock != "none").then(|| landlock.parse().unwrap()),
+            seccomp: seccomp.parse().unwrap(),
+        }
+    }
+    /// A process that does not meet the entry preconditions: the refusal must be the
+    /// entry check's, not a failed connect to the rendezvous. It has no OS error
+    /// number, it has the adapter's refusal text, and nothing was confined.
+    fn refused_at_entry(root: &Path, rendezvous: &Path) {
+        let error = confinement::confine_web(rendezvous).unwrap_err();
+        assert!(
+            error.raw_os_error().is_none(),
+            "refused at entry, not at connect: {error}"
+        );
+        let text = error.to_string();
+        assert!(
+            text == REFUSAL || text.starts_with(&format!("{REFUSAL}: ")),
+            "the adapter's own refusal: {text}"
+        );
+        assert_eq!(fs::read(root.join("fixture")).unwrap(), b"retained");
+    }
+    /// One forbidden operation, by its probe name.
+    fn attempt(probe: &str, root: &Path, outbound: &str) -> std::io::Result<()> {
+        let fixture = root.join("fixture");
+        match probe {
+            "read" => fs::read(fixture).map(drop),
+            "write" => fs::write(fixture, b"changed"),
+            "create" => fs::write(root.join("created"), b"created"),
+            "rename" => fs::rename(fixture, root.join("renamed")),
+            "remove" => fs::remove_file(fixture),
+            "environment" => fs::read("/proc/self/environ").map(drop),
+            "unix-connect" => UnixStream::connect(root.join("unrelated")).map(drop),
+            "tcp-connect" => TcpStream::connect(outbound).map(drop),
+            "tcp-bind" => TcpListener::bind("127.0.0.1:0").map(drop),
+            "exec" => Command::new("/usr/bin/true").status().map(drop),
+            "thread-read" => std::thread::spawn(move || fs::read(fixture).map(drop))
+                .join()
+                .unwrap(),
+            other => panic!("unknown probe {other}"),
+        }
+    }
+    /// Confines this process, or prints the refusal and exits with status 2: a
+    /// process that cannot confine itself reports why and serves nothing.
+    fn confine(rendezvous: &Path) -> (UnixStream, Enforcement) {
+        confinement::disable_core_dumps().unwrap();
+        // Connected to the approved rendezvous and confined, inside the adapter.
+        let (approved, report) = match confinement::confine_web(rendezvous) {
+            Ok(confined) => confined,
+            Err(error) => {
+                println!("refused: {error}");
+                std::process::exit(2);
+            }
+        };
+        confinement::verify_ready_report(&report).unwrap();
+        print!("{}", enforced(&report));
+        std::io::stdout().flush().unwrap();
+        (approved, report)
+    }
     fn child(args: &[String]) {
         let root = Path::new(&args[1]);
         let rendezvous = Path::new(&args[2]);
         if args[0] == "--thread" {
             std::thread::spawn(|| {}).join().unwrap();
-            // `confine_web` confines and then connects. The refusal must be the entry
-            // check's, not a failed connect to the rendezvous: it has no OS error
-            // number, it has the entry check's text, and nothing was confined.
-            let error = confinement::confine_web(rendezvous).unwrap_err();
-            assert!(
-                error.raw_os_error().is_none(),
-                "refused at entry, not at connect: {error}"
-            );
-            assert_eq!(error.to_string(), "gateway confinement unavailable");
-            assert_eq!(fs::read(root.join("fixture")).unwrap(), b"retained");
+            // A second thread that lives through the call: every adapter refuses a
+            // process that has another thread, and one refuses any that ever had.
+            let (release, parked) = std::sync::mpsc::channel::<()>();
+            let second = std::thread::spawn(move || parked.recv());
+            refused_at_entry(root, rendezvous);
+            drop(release);
+            let _ = second.join().unwrap();
             println!("thread-refused");
             return;
         }
-        confinement::disable_core_dumps().unwrap();
-        // Confined first, then connected to the approved rendezvous, inside the adapter.
-        let (mut approved, report) = confinement::confine_web(rendezvous).unwrap();
-        assert_eq!(report, REPORT);
-        println!("enforced");
-        std::io::stdout().flush().unwrap();
+        if args[0] == "--descriptor" {
+            let held = fs::File::open(root.join("fixture")).unwrap();
+            refused_at_entry(root, rendezvous);
+            drop(held);
+            println!("descriptor-refused");
+            return;
+        }
+        if args[0] == "--probe" {
+            let (_approved, report) = confine(rendezvous);
+            assert!(report.seccomp, "a probe child is for a filter that kills");
+            // Not reached where the filter works: the operation kills this process.
+            let outcome = attempt(&args[4], root, &args[3]);
+            println!("survived {}: {outcome:?}", args[4]);
+            return;
+        }
+        let (mut approved, report) = confine(rendezvous);
         approved.set_read_timeout(Some(WAIT)).unwrap();
-        denied(fs::read(root.join("fixture")));
-        denied(fs::write(root.join("fixture"), b"changed"));
-        denied(UnixStream::connect(root.join("unrelated")));
-        denied(TcpStream::connect(&args[3]));
-        denied(TcpListener::bind("127.0.0.1:0"));
-        denied(Command::new("/usr/bin/true").status());
-        let fixture = root.join("fixture");
-        std::thread::spawn(move || denied(fs::read(fixture)))
+        if report.seccomp {
+            // A forbidden operation would kill this process, so each one has its own
+            // probe child. This process shows what must keep working: a thread,
+            // memory, the clock and randomness, then the approved descriptors below.
+            let started = std::time::Instant::now();
+            let sum = std::thread::spawn(|| {
+                let block = vec![1u8; 8 << 20];
+                block.iter().map(|byte| u64::from(*byte)).sum::<u64>()
+            })
             .join()
             .unwrap();
+            assert_eq!(sum, 8 << 20);
+            assert!(started.elapsed() < WAIT);
+            assert!(SystemTime::now().duration_since(UNIX_EPOCH).is_ok());
+        } else {
+            denied(fs::read(root.join("fixture")));
+            denied(fs::write(root.join("fixture"), b"changed"));
+            denied(UnixStream::connect(root.join("unrelated")));
+            denied(TcpStream::connect(&args[3]));
+            denied(TcpListener::bind("127.0.0.1:0"));
+            denied(Command::new("/usr/bin/true").status());
+            let fixture = root.join("fixture");
+            std::thread::spawn(move || denied(fs::read(fixture)))
+                .join()
+                .unwrap();
+        }
         let mut random = [0; 32];
         confinement::fill_entropy(&mut random).unwrap();
         assert_ne!(random, [0; 32]);
@@ -115,13 +233,40 @@ mod vector {
         client.write_all(b"accepted").unwrap();
         approved.write_all(b"complete").unwrap();
     }
+    fn spawn(role: &[&str], root: &Path, rendezvous: &Path, outbound: &str) -> Running {
+        Running(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    role[0],
+                    root.to_str().unwrap(),
+                    rendezvous.to_str().unwrap(),
+                    outbound,
+                ])
+                .args(&role[1..])
+                // As the host starts the web process: a backtrace opens files, which
+                // a confined process cannot do.
+                .env_remove("RUST_BACKTRACE")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+        )
+    }
     pub(super) fn run() {
         let args: Vec<_> = std::env::args().skip(1).collect();
         if !args.is_empty() {
+            // A child does what the web process does: it confines itself, or says
+            // why it cannot. Only the parent asks whether the system has an adapter.
             child(&args);
             return;
         }
-        let temp = PathBuf::from("/private/tmp").join(format!(
+        // No adapter, no run: the vector never reports a pass without enforcement.
+        if let Err(refused) = confinement::web_confinement_supported() {
+            panic!("this reviewed vector needs a web confinement adapter: {refused}");
+        }
+        // `/private/tmp` on macOS, `/tmp` on Linux: short enough for a socket path.
+        let temp = fs::canonicalize("/tmp").unwrap().join(format!(
             "agw-{}-{}",
             std::process::id(),
             SystemTime::now()
@@ -134,26 +279,19 @@ mod vector {
         fs::write(root.0.join("fixture"), b"retained").unwrap();
         let unrelated = UnixListener::bind(root.0.join("unrelated")).unwrap();
         let outbound = TcpListener::bind("127.0.0.1:0").unwrap();
+        let outbound_address = outbound.local_addr().unwrap().to_string();
+        let mut kills = false;
         for name in ["r", "r\"\\\né"] {
             let path = root.0.join(name);
             let listener = UnixListener::bind(&path).unwrap();
-            let mut process = Running(
-                Command::new(std::env::current_exe().unwrap())
-                    .args([
-                        "--child",
-                        root.0.to_str().unwrap(),
-                        path.to_str().unwrap(),
-                        &outbound.local_addr().unwrap().to_string(),
-                    ])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
-                    .spawn()
-                    .unwrap(),
-            );
+            let mut process = spawn(&["--child"], &root.0, &path, &outbound_address);
             let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
-            assert_eq!(line(&mut stdout), "enforced\n");
-            confinement::verify_web(process.0.id(), &REPORT, &[&root.0.join("fixture")]).unwrap();
+            // The report is checked as the host checks the ready line's, then the
+            // process itself.
+            let report = reported(&line(&mut stdout));
+            confinement::verify_ready_report(&report).unwrap();
+            confinement::verify_web(process.0.id(), &report, &[&root.0.join("fixture")]).unwrap();
+            kills = report.seccomp;
             let (mut stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(WAIT)).unwrap();
             let inherited = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -173,25 +311,47 @@ mod vector {
             assert_eq!(&got, b"complete");
             assert!(process.0.wait().unwrap().success());
         }
-        let mut negative = Running(
-            Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--thread",
-                    root.0.to_str().unwrap(),
-                    root.0.join("r").to_str().unwrap(),
-                    &outbound.local_addr().unwrap().to_string(),
-                ])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap(),
-        );
-        assert_eq!(
-            line(&mut BufReader::new(negative.0.stdout.take().unwrap())),
-            "thread-refused\n"
-        );
-        assert!(negative.0.wait().unwrap().success());
+        if kills {
+            // The filter kills on a forbidden call: no operation returns, so each is
+            // attempted by its own confined child, which must die of SIGSYS having
+            // printed nothing after its report.
+            let path = root.0.join("probe");
+            let listener = UnixListener::bind(&path).unwrap();
+            for probe in PROBES {
+                let mut process = spawn(&["--probe", probe], &root.0, &path, &outbound_address);
+                let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
+                let report = reported(&line(&mut stdout));
+                assert!(report.seccomp, "{probe}");
+                let (held, _) = listener.accept().unwrap();
+                let mut rest = String::new();
+                stdout.read_to_string(&mut rest).unwrap();
+                assert_eq!(rest, "", "{probe}: the operation returned");
+                let status = process.0.wait().unwrap();
+                assert_eq!(
+                    status.signal(),
+                    Some(libc::SIGSYS),
+                    "{probe}: the forbidden call must kill the process ({status})"
+                );
+                drop(held);
+            }
+            assert!(!root.0.join("created").exists());
+            assert!(!root.0.join("renamed").exists());
+            println!(
+                "{} forbidden operations each killed their confined process with SIGSYS",
+                PROBES.len()
+            );
+        }
+        for (role, expected) in [
+            ("--thread", "thread-refused\n"),
+            ("--descriptor", "descriptor-refused\n"),
+        ] {
+            let mut negative = spawn(&[role], &root.0, &root.0.join("r"), &outbound_address);
+            assert_eq!(
+                line(&mut BufReader::new(negative.0.stdout.take().unwrap())),
+                expected
+            );
+            assert!(negative.0.wait().unwrap().success());
+        }
         drop((unrelated, outbound));
         assert_eq!(fs::read(root.0.join("fixture")).unwrap(), b"retained");
         println!("PASS: normal/special pathname, main-thread enforcement, parent observation, inherited listener/rights, denied ambient I/O/exec/connect, inherited thread policy and never-threaded refusal; disposable roots only");
@@ -199,9 +359,5 @@ mod vector {
 }
 
 fn main() {
-    // No adapter, no run: the vector never reports a pass without enforcement.
-    if let Err(refused) = org_platform::confinement::web_confinement_supported() {
-        panic!("this reviewed vector is macOS only: {refused}");
-    }
     vector::run();
 }
