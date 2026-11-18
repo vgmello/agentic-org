@@ -35,13 +35,13 @@ export type Phase =
 	  }
 	| { kind: 'created'; organization: OrganizationView };
 
-/** True while the fields are read-only and Create sends nothing. */
 /**
  * Why a phase is reported. `outcome` follows Create, Try again, Check again or HQ's answer;
  * `typed` follows a keystroke, which must never move focus away from the field being typed in.
  */
 export type ReportCause = 'outcome' | 'typed';
 
+/** True while the fields are read-only and Create sends nothing. */
 export const isWorking = (phase: Phase): boolean =>
 	phase.kind === 'creating' || phase.kind === 'checking';
 
