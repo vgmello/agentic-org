@@ -145,6 +145,25 @@ pub fn disable_core_dumps() -> io::Result<()> {
 /// starting a program each kill the process. The host therefore starts the web
 /// process without `RUST_BACKTRACE`: a backtrace opens files.
 ///
+/// What the caller must not do once confined on GNU/Linux, because the filter's
+/// list lacks the call and the process would be killed, not refused:
+///
+/// - anything that opens a file: `std::fs`, a backtrace,
+///   `std::thread::available_parallelism` (it reads `/proc/self/cgroup` and the
+///   control group's files), the local time zone (`localtime`), name resolution,
+///   loading a library;
+/// - `std::thread::sleep` (`clock_nanosleep`); a runtime's timers and a channel's
+///   timed wait are `epoll_wait` and `futex`, which are on the list;
+/// - asking who it is: `geteuid`, `getuid` and the like;
+/// - a new socket, `connect`, `bind`, `listen`, a send that names a destination or
+///   carries a flag other than `MSG_DONTWAIT` and `MSG_NOSIGNAL`, and `sendmsg`: it
+///   can receive descriptors, not send them;
+/// - a new process, a signal to another process, executable memory.
+///
+/// It may start threads, allocate and grow memory, read the fixed clocks, get random
+/// bytes, and read, write, poll, accept on and shut down the descriptors it holds
+/// and receives.
+///
 /// The allocator limit is there because glibc opens
 /// `/proc/sys/vm/overcommit_memory` the first time the heap of an arena other than
 /// the main one shrinks, and the filter kills that open. If the limit cannot be set,

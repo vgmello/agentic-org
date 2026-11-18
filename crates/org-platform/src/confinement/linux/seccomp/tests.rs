@@ -159,6 +159,7 @@ fn every_listed_number_is_allowed_and_no_other() {
             arch.mprotect,
             arch.mremap,
             arch.tgkill,
+            arch.clock_gettime,
         ];
         for number in by_argument {
             assert!(!allowed.contains(&number), "{name} {number}");
@@ -177,9 +178,17 @@ fn every_listed_number_is_allowed_and_no_other() {
                 RET_ALLOW
             } else if number == arch.clone3 {
                 ERRNO_ENOSYS
-            } else if [arch.mmap, arch.mprotect, arch.sendto, arch.mremap].contains(&number) {
+            } else if [
+                arch.mmap,
+                arch.mprotect,
+                arch.sendto,
+                arch.mremap,
+                arch.clock_gettime,
+            ]
+            .contains(&number)
+            {
                 // No protection asked for: not executable. No destination. No
-                // flag: resized in place.
+                // flag: resized in place. Clock 0: the wall clock.
                 RET_ALLOW
             } else {
                 // Every other call, and with these arguments `clone`, `prctl`,
@@ -196,7 +205,7 @@ fn every_listed_number_is_allowed_and_no_other() {
 fn the_allowed_names_are_the_designs_list_and_four_more() {
     // Linux host design, section 3.3, step 5, in its order, with `epoll_*`,
     // `rt_sig*` and "clocks" read as the calls the runtime makes. The design's
-    // `mmap`, `mprotect`, `fcntl`, `sendto`, `clone`, `prctl`, `ioctl` and signals
+    // `mmap`, `mprotect`, `fcntl`, `sendto`, `clock_gettime`, `clone`, `prctl`, `ioctl` and signals
     // to itself are not here: their arguments decide, as they do for `mremap`,
     // which the design does not name. The design's `sendmsg` is not
     // allowed at all: its destination is where a filter cannot read it.
@@ -221,7 +230,6 @@ fn the_allowed_names_are_the_designs_list_and_four_more() {
         "shutdown",
         "close",
         "poll",
-        "clock_gettime",
         "getrandom",
         "rt_sigaction",
         "rt_sigprocmask",
@@ -711,6 +719,37 @@ fn memory_is_resized_or_moved_by_the_kernel_never_placed() {
             u64::MAX,
         ] {
             assert_eq!(flags(other), RET_KILL_PROCESS, "{name} {other:#x}");
+        }
+    }
+}
+
+#[test]
+fn only_a_fixed_clock_is_read_never_another_processs() {
+    for (name, arch) in tables() {
+        let clock = |clock: i32| {
+            decide(
+                arch,
+                arch.clock_gettime,
+                [clock as u32 as u64, 0x7000_0000, 0, 0, 0, 0],
+            )
+        };
+        for fixed in [
+            libc::CLOCK_REALTIME,
+            libc::CLOCK_MONOTONIC,
+            libc::CLOCK_PROCESS_CPUTIME_ID,
+            libc::CLOCK_THREAD_CPUTIME_ID,
+            libc::CLOCK_MONOTONIC_RAW,
+            libc::CLOCK_REALTIME_COARSE,
+            libc::CLOCK_MONOTONIC_COARSE,
+            libc::CLOCK_BOOTTIME,
+            libc::CLOCK_TAI,
+        ] {
+            assert_eq!(clock(fixed), RET_ALLOW, "{name} {fixed}");
+        }
+        // `MAKE_PROCESS_CPUCLOCK(pid, CPUCLOCK_SCHED)` for process 1, a clock
+        // device's id, and -1.
+        for dynamic in [(!1 << 3) | 2, (!5 << 3) | 3, -1, i32::MIN] {
+            assert_eq!(clock(dynamic), RET_KILL_PROCESS, "{name} {dynamic}");
         }
     }
 }

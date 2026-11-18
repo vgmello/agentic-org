@@ -11,10 +11,19 @@
 //! The list is the design's, read narrowly: of `epoll_*` only the calls the runtime
 //! makes, of `rt_sig*` only the three that act on the process itself, and of the
 //! clocks only reading one. Four calls are here that the design's list does not
-//! name, and `mremap` with two flags; each says why at its entry. Five of the design's calls are decided by an
-//! argument although the design does not ask for it: `clone` by its exact flags,
-//! `mmap` and `mprotect` by their protection, `fcntl` by its command and `sendto` by
-//! its destination and flags. One of the design's calls is not here: `sendmsg`.
+//! name, and `mremap` with two flags; each says why at its entry. Six of the
+//! design's calls are decided by an argument although the design does not ask for
+//! it: `clone` by its exact flags, `mmap` and `mprotect` by their protection,
+//! `fcntl` by its command, `sendto` by its destination and flags and
+//! `clock_gettime` by its clock. One of the design's calls is not here: `sendmsg`.
+//!
+//! What stays open on purpose, because the runtime needs the call in a form the
+//! filter cannot narrow: `sched_getaffinity` names a thread by its id (glibc asks
+//! for the calling thread's own id, not 0), so it also tells another process's
+//! processor set; `futex` allows the priority-inheritance operations, whose word
+//! can name another thread; `getsockopt` can ask for a descriptor of the peer
+//! process (`SO_PEERPIDFD`), which nothing on the list can signal, wait for or
+//! enter. None of them gives the process a file, a socket or a signal.
 //!
 //! A send can connect. TCP has a connect at send time (`MSG_FASTOPEN` with a
 //! destination, tcp(7)), which neither a filter on `connect` nor Landlock's TCP
@@ -65,6 +74,9 @@ pub(super) struct Arch {
     pub(super) mremap: u32,
     /// Allowed only towards this process's own threads ("signals to itself").
     pub(super) tgkill: u32,
+    /// Allowed only for a clock that is not another process's or a device's: a
+    /// clock id that is not negative.
+    pub(super) clock_gettime: u32,
 }
 
 /// `PR_SET_NAME` (`include/uapi/linux/prctl.h`): a new thread names itself. The
@@ -108,6 +120,12 @@ pub(super) const PROT_EXEC: u32 = 4;
 /// `MREMAP_FIXED` and `MREMAP_DONTUNMAP`, which place a mapping at a chosen address
 /// or keep the old one, kill.
 pub(super) const MREMAP_FLAGS: &[u32] = &[0, 1];
+
+/// Clock ids from this value up are negative as the kernel reads them (a 32-bit
+/// integer): the CPU-time clock of another process or thread, or a clock device
+/// (`include/linux/posix-timers.h`). The runtime reads only the fixed clocks, 0 to
+/// 11.
+pub(super) const FIRST_DYNAMIC_CLOCK: u32 = 0x8000_0000;
 
 /// `AUDIT_ARCH_X86_64`: `EM_X86_64 | __AUDIT_ARCH_64BIT | __AUDIT_ARCH_LE`.
 const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
@@ -173,8 +191,7 @@ pub(super) const X86_64: Arch = Arch {
         // timed wait (`poll`, a `futex` with a timeout) that a stop signal
         // interrupted; without it a stopped and continued process dies.
         ("restart_syscall", 219),
-        // Clocks and randomness.
-        ("clock_gettime", 228),
+        // Randomness; `clock_gettime` is decided by its clock.
         ("getrandom", 318),
     ],
     clone: 56,
@@ -187,6 +204,7 @@ pub(super) const X86_64: Arch = Arch {
     mprotect: 10,
     mremap: 25,
     tgkill: 234,
+    clock_gettime: 228,
 };
 
 pub(super) const AARCH64: Arch = Arch {
@@ -229,7 +247,6 @@ pub(super) const AARCH64: Arch = Arch {
         ("sigaltstack", 132),
         ("getpid", 172),
         ("restart_syscall", 128),
-        ("clock_gettime", 113),
         ("getrandom", 278),
     ],
     clone: 220,
@@ -242,6 +259,7 @@ pub(super) const AARCH64: Arch = Arch {
     mprotect: 226,
     mremap: 216,
     tgkill: 131,
+    clock_gettime: 113,
 };
 
 /// The table of the architecture this build runs on, or `None` where the adapter has
@@ -319,7 +337,6 @@ const _: () = {
         ("sigaltstack", libc::SYS_sigaltstack),
         ("getpid", libc::SYS_getpid),
         ("restart_syscall", libc::SYS_restart_syscall),
-        ("clock_gettime", libc::SYS_clock_gettime),
         ("getrandom", libc::SYS_getrandom),
     ];
     assert!(allowed.len() == TABLE.allowed.len());
@@ -338,6 +355,7 @@ const _: () = {
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
     assert!(TABLE.mremap as libc::c_long == libc::SYS_mremap);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);
+    assert!(TABLE.clock_gettime as libc::c_long == libc::SYS_clock_gettime);
 };
 #[cfg(target_arch = "aarch64")]
 const _: () = {
@@ -377,7 +395,6 @@ const _: () = {
         ("sigaltstack", libc::SYS_sigaltstack),
         ("getpid", libc::SYS_getpid),
         ("restart_syscall", libc::SYS_restart_syscall),
-        ("clock_gettime", libc::SYS_clock_gettime),
         ("getrandom", libc::SYS_getrandom),
     ];
     assert!(allowed.len() == TABLE.allowed.len());
@@ -396,4 +413,5 @@ const _: () = {
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
     assert!(TABLE.mremap as libc::c_long == libc::SYS_mremap);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);
+    assert!(TABLE.clock_gettime as libc::c_long == libc::SYS_clock_gettime);
 };
