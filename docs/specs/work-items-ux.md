@@ -24,8 +24,8 @@ A task's status is one of `todo`, `in_progress`, `blocked`, `cancelled` and `don
 6. **Reporter is immutable.** Show original admitted creator separately from current assignment, latest updater and recorded fix/closure actor. Missing historical provenance stays unknown.
 7. **Bug presentation is first class.** Reporting, triage and reproduction, duplicate and closure evidence are kept in task details. Nothing but a title, a description and valid accountability is needed to capture a bug.
 8. **Knowledge lives in organization Git.** Projects have docs even with no code repository. A feature's definition is its feature.md; supporting docs require explicit project and optional same-project feature/release/deployment scope.
-9. **History is durable.** Every accepted task revision, including shared metadata, has an immutable event; accepted snapshot/history/receipt must recover together. Work assignment does not transfer write authority to an office.
-10. **Private notes are a separate required capability.** Author-only CRUD, separate durable storage, no administrator exception, no shared count or existence metadata. Existing note comments remain shared.
+9. **History is durable.** Any active employee, person or agent, creates, edits, assigns and moves tasks at its own discretion, with no separate task capability, and every change is tracked ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). Every accepted task revision, including shared metadata, has an immutable event; accepted snapshot/history/receipt must recover together. Work assignment does not transfer write authority to an office.
+10. **Private task notes are a separate required capability.** Only the author edits or deletes a note. The author reads it, and so does any person who can read the task; another agent never does, in any answer, search, feed, notification, summary, export or in the context the office gives it. A person's note is hidden from agents the same way. Separate durable storage, no shared count or existence metadata. Existing note comments remain shared.
 11. **No implied execution engine.** Assignment does not start a session or grant access. Handoff preserves worktrees. Budget controls, provider routing and execution placement have their own contracts.
 12. **Accessible alternatives are required.** Every drag has menu/keyboard paths; statuses/severity/priority always have words; conflicts preserve unsaved content.
 
@@ -43,7 +43,7 @@ A task's status is one of `todo`, `in_progress`, `blocked`, `cancelled` and `don
 | Priority | Order of work: Urgent, High, Normal, Low |
 | Fix task | Task with authored fixes link to a bug-typed task; inverse fixed_by is derived |
 | Shared comment | Visible task discussion, including old comments called note |
-| Private note | Author-only task note in the separate private store |
+| Private task note | The author's own working note on a task, in the separate private store; read by its author and by people, never by another agent |
 | Supporting doc | Stable-ID organization Git knowledge with required project scope |
 | Feature definition | feature.md describes current behavior/rules/limitations, not a supporting-doc duplicate |
 | Pending number | A durably saved feature awaiting its number from HQ; not an unsaved draft. A task never shows it |
@@ -151,7 +151,7 @@ Main column: description and report detail from task details (reproduction/expec
 
 Activity shows assignment old/new pair, status/resolution and metadata changes, actors/times and causes when known. Unknown future events render as “Unknown change” and remain retained. Closed/archived tasks retain history and stable references.
 
-**Shared discussion** and **Private notes** are distinct controls. The former note comment is labeled Shared comment. The private pane contains only the current author's notes, supports multiple notes/edit/delete with revision conflict recovery, and never shows anyone else's count, author or existence. An assignee/team lead/administrator gains no access. Reassignment preserves original private ownership. Publishing explicitly previews a new shared comment and asks the author to confirm its audience; the private original stays private. Private-note failure cannot fall back to a shared save. Private retention, authorized recovery and deletion follow document 05, including backups; no note bodies/IDs/author association enter shared history/Git.
+**Shared discussion** and **Private notes** are distinct controls. The former note comment is labeled Shared comment. The private pane shows the current author's notes, with multiple notes/edit/delete and revision conflict recovery. A person who can read the task also sees the other authors' notes there, each with its author, read-only. Notes are hidden from agents: an agent sees only its own, and never another author's count, author or existence, whatever its assignment or leadership. Reassignment preserves original private ownership and gives the new assignee, when it is an agent, nothing of the earlier author's notes. Publishing explicitly previews a new shared comment and asks the author to confirm its audience; the private original stays private. Private-note failure cannot fall back to a shared save. Private retention, authorized recovery and deletion follow document 05, including backups; no note bodies/IDs/author association enter shared history/Git.
 
 ### 7.2 Fix tasks
 
@@ -245,7 +245,7 @@ Accepted task snapshot/events/receipt recover together before success; hourly Gi
 
 ## 13. Accessibility
 
-Severity/priority/status always have icon and word. Example screen-reader row: “Bug T-A42, Prevent overlapping reservations, severity major, priority high, accountable Payments, assigned team Platform, assignee Ana, person.” Board columns are labeled lists; group headings support heading navigation. Dialogs trap/restore focus, field errors use aria-describedby and visible text, and action failure explanations are keyboard accessible. The triage region is labeled. Privacy controls name the audience in plain words; author-private content never enters shared live-region announcements.
+Severity/priority/status always have icon and word. Example screen-reader row: “Bug T-A42, Prevent overlapping reservations, severity major, priority high, accountable Payments, assigned team Platform, assignee Ana, person.” Board columns are labeled lists; group headings support heading navigation. Dialogs trap/restore focus, field errors use aria-describedby and visible text, and action failure explanations are keyboard accessible. The triage region is labeled. Privacy controls name the audience in plain words; private task note content never enters shared live-region announcements.
 
 ## 14. UX acceptance criteria
 
@@ -364,7 +364,7 @@ Criteria marked "Not in v1" belong to §16.
 - WORK-4 · Every task type displays its type word and icon and its T- reference.
 - WORK-5 · Displayed severity, priority and status have a meaningful icon and word, announced to screen readers. Severity/priority remain separate meta text, with neutral priority icons and no amber except an actual owner blocker; Normal may be omitted on rows/cards. Each row has one work-status signal.
 - WORK-6 · Changes by others appear without a reload and never reorder a list while a menu is open in it.
-- WORK-7 · The admitted actor is recorded for every accepted change. Neither this UX nor assignment grants permissions.
+- WORK-7 · The admitted actor is recorded for every accepted change. Any active employee, person or agent, may create, edit, assign and move tasks; a paused, offboarded or deactivated employee is refused (ADR-0031). Neither this UX nor assignment grants other permissions.
 - WORK-8 · All types use T- references that are complete on their own, such as T-A42; lookup by reference finds exactly one task or none, in any view. M-2 needs a release as well as a project. A feature's Pending number retains stable row identity and a copyable stable ID; replacing its label does not reorder rows.
 - WORK-9 · Work remembers its type tab per authorized organization independently of filters and board/list preferences; an empty queue preserves it and an unavailable view has a safe supported fallback.
 - WORK-10 · AC-IA18-1–3's Show views retain `?view=`, select the stated default and include both people and agents. Needs me and Inbox agree for supported sources, with no task row for an unlinked hand-off; unavailable source types are not inferred.
@@ -378,7 +378,7 @@ Criteria marked "Not in v1" belong to §16.
 - TSK-16 · Type changes preserve stable ID/number/metadata.
 - DOC-10 · Each supporting doc requires project and at most one same-project feature/release/deployment; scope/path/kind agree, current requires an active accountable employee, and scope moves preserve ID without duplicate canonical copies.
 - DOC-11 · Feature definitions use stable-ID feature.md paths, local_slug plus derived project prefix, explicit owners/status and behavior/limitation sections; task completion never silently rewrites feature status.
-- TSK-17 · PN-01–06 in document 05 are required: author-only private CRUD/conflicts, no admin exception or shared existence metadata, durable recovery/closure continuity, unchanged privacy after assignment, explicit publish and documented retention/backup deletion. Shared note comments stay shared.
+- TSK-17 · PN-01–06 in document 05 are required: only the author edits or deletes a private note, with conflicts; the author and people who can read the task read it; another agent gets nothing, including shared existence metadata; durable recovery/closure continuity, unchanged privacy after assignment, explicit publish and documented retention/backup deletion. Shared note comments stay shared.
 - TSK-18 · Output shows only permitted resolvable recorded deliverables and any shared completion explanation; missing evidence is explicit. Done alone never implies review, merge, validation, release or deployment. There are no arbitrary URL or path writes and no outcome gates.
 
 ## 15. Open questions

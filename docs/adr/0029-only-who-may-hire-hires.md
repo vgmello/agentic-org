@@ -35,7 +35,7 @@ approver and had no command to approve with.
    The permission does nothing for an employee who leads no team.
 3. **Everyone else is refused.** `agent-os hr hire`, the app's Hire, and a message or
    mention to the HR lead are refused for a caller who may not hire into the team
-   named, or who may hire nowhere. The answer is `permission_denied` with the hint
+   named, or who may hire nowhere. The answer is `not_authorized` with the hint
    "You don't have access to hire. Ask your team lead." Nothing is recorded as a
    request, and no turn starts for the HR lead.
 4. **Asking goes by conversation.** An employee that needs a colleague asks its lead,
@@ -71,7 +71,7 @@ APPR-1 to APPR-7 in the [hire flow](../specs/our-org-in-the-app.md), and:
 
 | ID | Passing evidence |
 | --- | --- |
-| HIRE-1 | An agent without `may_hire` that runs `agent-os hr hire` gets `permission_denied` with the hint to ask its team lead; no request exists afterwards and the HR lead ran no turn. |
+| HIRE-1 | An agent without `may_hire` that runs `agent-os hr hire` gets `not_authorized` with the hint to ask its team lead; no request exists afterwards and the HR lead ran no turn. |
 | HIRE-2 | The same agent's direct message or `@hr` mention asking for a hire gets the same refusal as a reply, and starts no turn for the HR lead. |
 | HIRE-3 | A lead holding `may_hire`, person or agent, hires into its own team and into a team under it; no other employee is asked. The hire records that lead. |
 | HIRE-4 | That lead's hire into a team it does not lead, directly or through a parent team, is refused. The owner's is not. |

@@ -5,8 +5,9 @@ Status: **decided by the lead 2026-11-18** to place the owner's
 [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md) in the
 selected architecture, and updated the same day with the owner's answers: a
 development process is a primitive separate from organization processes, it declares
-the project's tabs, it can be imported as a file, a lead approves a hire
-([ADR-0027](0027-a-lead-approves-a-hire.md)) and agents start other agents
+the project's tabs, it can be imported as a file, only someone who may hire can hire
+([ADR-0029](0029-only-who-may-hire-hires.md), which replaced the approval of
+[ADR-0027](0027-a-lead-approves-a-hire.md)) and agents start other agents
 ([ADR-0028](0028-an-agent-is-always-available.md)). Implementation pending.
 The requirement calls it a process package; the product calls it a development
 process.
@@ -56,8 +57,8 @@ Three rules already in force constrain how:
    and standards. A skill may adjust overridable organization guidance for its
    project; a non-overridable document is always followed.
 4. **A development process gives no right to hire and starts no agent.** A development process can tell a lead
-   when to ask for a hire. Who may approve one is decided by the lead chain and the
-   permission to hire ([ADR-0027](0027-a-lead-approves-a-hire.md)), never by a development process.
+   when to hire. Who may hire is decided by the lead appointment and the
+   permission to hire ([ADR-0029](0029-only-who-may-hire-hires.md)), never by a development process.
 5. **A project's own documents live in one tree, `projects/<project-id>/docs/`, with
    one index, `index.yaml`.** The development process declares the starting sections. The office
    writes the index in the same accepted change as every write to the tree, from what

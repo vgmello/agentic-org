@@ -62,7 +62,7 @@ below the owner bar without inventing a manager reference.
   field mismatches, and a lead whose home team is elsewhere.
 - Creating an employee requires a valid home team. The owner's person and the HR
   lead get the top-level team made with the organization. An agent is created only
-  by an approved hire; the built-in HR lead is the one exception. A runnable agent
+  by a confirmed hire from someone who may hire; the built-in HR lead is the one exception. A runnable agent
   also needs a valid execution configuration and placement.
 - A home-team move is one revision-checked, recoverable operation. A lead
   appointment that the move would invalidate is resolved first, and paths change

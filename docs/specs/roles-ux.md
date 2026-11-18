@@ -72,7 +72,7 @@ Follow approved processes and enforced permission policy.
 
 The office composes an agent's instructions ([session design](../design/agent-sessions.md), decision 8) from its identity and role (`profile.md`, including the referenced role's body), its prompt and tools (`execution.md`), the turn's explicit objective, the effective processes and standards, built-in `agent-os` help, and the project's instruction files from the verified integration-branch cache. A referenced role grants no authority and starts nothing. Composing a per-agent role override is not in v1.
 
-- **Hire:** when the HR lead can't run, the requester can leave `role_id` unset or select an existing role (`our-org-in-the-app.md` §7). The Hire review shows the role (name and revision) and any execution suggestions for the owner to confirm; suggestions are not role fields.
+- **Hire:** when the HR lead can't run, the hirer can leave `role_id` unset or select an existing role (`our-org-in-the-app.md` §7). The Hire review shows the role (name and revision) and any execution suggestions for the hirer to confirm; suggestions are not role fields.
 
 ## 3. UX acceptance criteria (ROLE)
 

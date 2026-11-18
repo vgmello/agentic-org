@@ -23,8 +23,9 @@ encrypted by the application ([ADR-0016](0016-no-application-level-data-encrypti
 
 1. **Engine: SQLite through `rusqlite`.** Only the authorized storage service opens
    its database; browser and agent clients use its domain operations (ADR-0001).
-   The separate private-note store enforces author-only access rather than reusing
-   broad shared-task reads.
+   The separate private-note store enforces its own reading rule (the author and
+   people, never another agent, [ADR-0031](0031-any-employee-changes-tasks.md)) rather
+   than reusing broad shared-task reads.
 2. **Concurrency: one writer per database.** The server keeps one write connection
    on one thread and sends every write to it through a channel. Reads use their own
    connections (WAL) with a `busy_timeout`. Any number of client connections can
@@ -69,7 +70,7 @@ encrypted by the application ([ADR-0016](0016-no-application-level-data-encrypti
 | Chat, recipient state and attachments | Protected messaging sources under document 15 | Authorized shared projection, not the sole recoverable copy |
 | Budget policies, extensions, notices and holds | Protected budget sources and recoverable mutation receipts under document 17 | Evaluation/read projection; retained decisions are not regenerated from spend |
 | Number allocations, command receipts, placement generations and process evidence | Durable authority, recovery and supervisor journals under documents 06, 11 and 16 | Rebuildable indexes where specified; recreating a cache grants no launch authority |
-| Author-private task notes | Separate durable private database, protected mirrors and receipts, and retention policy under document 05 | Canonical private store, not a disposable shared cache |
+| Private task notes | Separate durable private database, protected mirrors and receipts, and retention policy under document 05 | Canonical private store, not a disposable shared cache |
 | Credentials and authentication state | Protected host and office credential stores | Not part of the organization-data schema |
 
 Every write connection enables `foreign_keys` and `recursive_triggers`. An

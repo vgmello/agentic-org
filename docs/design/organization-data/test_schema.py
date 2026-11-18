@@ -1139,34 +1139,35 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=2 WHERE id='ana'"))
 
     def hire(self, request="hire", **fields):
-        values = dict(organization_id="org", id=request, schema_version=1, revision=1, state="waiting",
-                      requested_by_employee_id="ana", home_team_id="payments",
+        values = dict(organization_id="org", id=request, schema_version=1, revision=1, state="drafting",
+                      requested_by_employee_id="reporter", home_team_id="payments",
                       created_at="2026-11-18T09:00:00Z", updated_at="2026-11-18T09:00:00Z")
         values.update(fields)
         insert(self.db, "hire_requests", **values)
 
-    def test_a_hire_request_records_who_asked_who_it_waits_for_and_who_decided(self):
-        self.hire(approver_employee_id="reporter",
-                  escalations_json='[{"employee_id": "ana", "reason": "no hiring power"}]')
-        self.hire("approved", state="approved", decided_by_employee_id="reporter",
-                  decided_at="2026-11-18T10:00:00Z", failed_step="register with messaging")
+    def test_a_hire_request_records_who_hired_when_it_was_confirmed_and_why_it_closed(self):
+        confirmed = dict(confirmed_at="2026-11-18T10:00:00Z")
+        self.hire()
+        self.hire("hiring", state="hiring", failed_step="register with messaging", **confirmed)
         insert(self.db, "employees", organization_id="org", id="marlowe", handle="marlowe",
                schema_version=1, revision=1, kind="agent", name="Marlowe", home_team_id="payments")
-        self.hire("hired", state="hired", decided_by_employee_id="reporter",
-                  decided_at="2026-11-18T10:00:00Z", employee_id="marlowe")
+        self.hire("hired", state="hired", employee_id="marlowe", **confirmed)
+        self.hire("withdrawn", state="withdrawn", closed_reason="no longer needed")
+        self.hire("failed", state="failed", failed_step="home", closed_reason="given up", **confirmed)
         self.db.commit()
-        decided = dict(decided_by_employee_id="reporter", decided_at="2026-11-18T10:00:00Z")
-        for fields in (dict(state="approved"),                        # approved by nobody
-                       dict(state="waiting", **decided),              # decided while still waiting
-                       dict(state="rejected", **decided),             # rejected without a reason
-                       dict(state="hired", **decided),                # hired without an employee
-                       dict(state="waiting", employee_id="marlowe"),  # an employee before the hire
-                       dict(state="waiting", failed_step="home"),     # a failed step before approval
-                       dict(state="waiting", home_team_id="missing"),
-                       dict(state="waiting", requested_by_employee_id="missing"),
-                       dict(state="promoted")):
+        for fields in (dict(state="hiring"),                                     # hiring before it is confirmed
+                       dict(state="drafting", **confirmed),                      # confirmed while still drafting
+                       dict(state="hired", **confirmed),                         # hired without an employee
+                       dict(state="drafting", employee_id="marlowe"),            # an employee before the hire
+                       dict(state="drafting", failed_step="home"),               # a failed step before provisioning
+                       dict(state="withdrawn"),                                  # withdrawn without a reason
+                       dict(state="failed", closed_reason="", **confirmed),      # failed with an empty reason
+                       dict(state="drafting", home_team_id="missing"),
+                       dict(state="drafting", requested_by_employee_id="missing"),
+                       dict(state="waiting"),                                    # no approval states remain
+                       dict(state="approved", **confirmed)):
             self.refused(lambda: self.hire("bad", **fields))
-        self.refused(lambda: self.hire("twice", state="hired", employee_id="marlowe", **decided))
+        self.refused(lambda: self.hire("twice", state="hired", employee_id="marlowe", **confirmed))
 
     def test_a_task_is_in_the_releases_of_its_milestone_and_of_release_contents(self):
         for release in ("r1", "r2"):

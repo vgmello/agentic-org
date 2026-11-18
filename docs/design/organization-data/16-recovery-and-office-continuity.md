@@ -306,7 +306,7 @@ CREATE TABLE mutation_receipts (
 CREATE TABLE office_origin_streams (
   organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
-  stream_kind TEXT NOT NULL CHECK (stream_kind IN ('organization','work','message_content','message_state')),
+  stream_kind TEXT NOT NULL CHECK (stream_kind IN ('organization','work','message')),
   incarnation TEXT NOT NULL,
   high_water_sequence INTEGER NOT NULL CHECK (high_water_sequence>=0),
   journal_ref TEXT NOT NULL,

@@ -27,7 +27,7 @@ an agent the owner trusted to staff its team.
 
 1. **A lead with hiring power approves a hire.** Hiring power is the `may_hire`
    permission of an employee, shown as Allow hiring
-   ([document 04](../design/organization-data/04-agent-structure.md#who-approves-a-hire)).
+   ([document 04](../design/organization-data/04-agent-structure.md#who-may-hire)).
 2. **A request escalates until it reaches someone who has it.** It goes up the lead
    chain from the team the new agent joins and stops at the first lead whose
    `may_hire` is on. A lead without it does not decide; the request passes on, and

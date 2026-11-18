@@ -581,7 +581,7 @@ The store never runs Git and never opens a network connection.
 trees: chat in `messaging/` (document 15's layout, one writing office per file), receipts
 in `recovery/commands/`, usage in `accounting/`, budgets in `budgets/`, HQ authority in
 `authority/`, office-local state in `local/offices/<office-id>/`. Nothing outside
-`state/` is published. The author-private task notes are the one exception: document 05
+`state/` is published. Private task notes are the one exception: document 05
 makes them a separate durable database with its own writer and receipts, outside this
 store (L8).
 

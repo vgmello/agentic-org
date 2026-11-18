@@ -26,7 +26,7 @@ satellite completed an operation.
    separate authorities. People have no execution. A lead is a direct member of the
    home team and manages its subtree. The owner is a person; the host records
    ownership on that person's account, never in an employee field. An agent exists
-   only through an approved hire, provisioned by product code; the built-in HR lead,
+   only through a hire by someone who may hire, provisioned by product code; the built-in HR lead,
    created with the organization, is the one exception. No agent is started by
    hand, brought in from outside or bound to a run the office did not start.
 3. **One open turn and one main process per agent.** A runnable agent selects one

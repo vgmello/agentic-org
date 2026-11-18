@@ -202,7 +202,7 @@ rebuildable caches under `runtime/<office-id>/`:
 │   ├── messaging/            # protected envelopes and attachments (15)
 │   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
 │   ├── budgets/              # policies, periods, events, extensions and holds (17)
-│   ├── private/              # HQ only: author-private task notes (05)
+│   ├── private/              # HQ only: private task notes (05)
 │   ├── local/offices/        # private local bindings and agents' private homes, never Git
 │   └── checkpoints/          # local and unpushed code recovery
 └── runtime/<office-id>/      # caches: rebuildable

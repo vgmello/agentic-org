@@ -516,7 +516,7 @@ on the offers of design section 10.
     only decides whose instructions an agent follows
     ([supervision design](design/employee-supervision.md), decision 6). The few rights
     that are not everyone's (changing the structure, inviting and removing access,
-    the two hand-overs, approving a hire, creating organizations) and who holds each
+    the two hand-overs, hiring, creating organizations) and who holds each
     are one table in the [agent structure contract](design/organization-data/04-agent-structure.md#accounts-people-and-the-organization-owner).
 - **Read:** [installation and access UX](specs/server-installation-and-access-ux.md)
   (accounts), [agent structure](design/organization-data/04-agent-structure.md),
@@ -602,7 +602,7 @@ on the offers of design section 10.
     whenever HR cannot run, the same flow works with the form.
   - Edit, move, pause, resume and offboard an agent.
 - **Commands:** `role list`, `role inspect` and `hr hire`, which is refused with
-  `permission_denied` for a caller who may not hire ([command line design](design/agent-os-command-line.md), section 3.2;
+  `not_authorized` for a caller who may not hire ([command line design](design/agent-os-command-line.md), section 3.2;
   CLI-14).
 - **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
   hire flow; who may hire; STAFF, HRL and APPR criteria), [roles UX](specs/roles-ux.md),

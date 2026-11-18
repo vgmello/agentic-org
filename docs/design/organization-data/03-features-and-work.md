@@ -280,7 +280,7 @@ project_id TEXT NOT NULL,
   owner_employee_id TEXT,
   work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('planned', 'in_progress', 'live', 'retired')),
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
@@ -415,7 +415,7 @@ A task has zero or one `task_details` row, sharing its identity and revision. Th
 | `done_anyway_json` | Front matter `details.done_anyway`: object `{reason, steps: [step-id, ...]}`; preserves exceptional completion evidence without implementing that workflow |
 | `what_happened`, `expected`, `steps`, `environment` | Bug reproduction text, kept distinct from the task description |
 | `severity_confirmed`, `reopen_count`, `closed_reason` | Confirmation flag, nonnegative reopen count, and closure explanation |
-| `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity; validate required target type and cycles when the command is accepted |
+| `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity, held through `record_refs` (with the fixed `related_task_kind`) so that the reference survives when the other task becomes a tombstone; validate required target type and cycles when the command is accepted |
 | `affects_feature_id` | Affected feature, distinct from the feature implementing the fix; the task's project must match the affected feature's project |
 | `request_kind`, `request_text`, `route_reason`, `routing_source`, `routed_by_employee_id` | Original request content/category and routing decision; `routing_source` is `person | rule | copilot`, never an employee FK. An independently known actor may populate nullable `routed_by_employee_id`; otherwise it stays NULL |
 | `request_outcome_json` | Front matter `details.request_outcome`: object with optional `feature`, `docs`, `draft_tasks`, `estimate`. `feature` is `{type: new | extends, feature_id}`; each `docs[]` entry is `{project_id, doc_key}`; each `draft_tasks[]` entry has required `draft_id`, `title` and optional `description`, `assignee_id`, `team_id`, `priority`. `estimate` has `effort` (free text such as "a week", unrelated to the task's numeric `effort` in points), `cost_usd_cents_min`, `cost_usd_cents_max`; amounts are nonnegative and min≤max. This is a proposal estimate, not a budget. Validate nested project/feature/doc/employee references; draft IDs are not created tasks |
@@ -462,6 +462,7 @@ CREATE TABLE task_details (
   routed_by_employee_id TEXT,
   request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
   merged_into_task_id TEXT,
+  related_task_kind TEXT NOT NULL DEFAULT 'task' CHECK (related_task_kind='task'),
   decline_reason TEXT,
   suggested_triager_id TEXT,
   suggested_verifier_id TEXT,
@@ -469,8 +470,8 @@ CREATE TABLE task_details (
   CHECK (duplicate_of_task_id IS NULL OR duplicate_of_task_id<>task_id),
   CHECK (merged_into_task_id IS NULL OR merged_into_task_id<>task_id),
   FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,duplicate_of_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,merged_into_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,related_task_kind,duplicate_of_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,related_task_kind,merged_into_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,affects_feature_id) REFERENCES features(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,routed_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,suggested_triager_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
@@ -504,6 +505,7 @@ erDiagram
         TEXT routed_by_employee_id FK "optional"
         TEXT request_outcome_json "optional"
         TEXT merged_into_task_id FK "optional"
+        TEXT related_task_kind "required"
         TEXT decline_reason "optional"
         TEXT suggested_triager_id FK "optional"
         TEXT suggested_verifier_id FK "optional"
