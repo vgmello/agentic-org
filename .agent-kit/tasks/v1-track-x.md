@@ -47,7 +47,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
 | X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
 | X2 first worker on Linux (LNX-1) | Built, reviewed and repaired; LNX-1 passes on Linux and in a default Docker container; a fresh final review of the repairs is owed | See below |
-| X3 host secrets on Linux (LNX-4) | Integrated (`d13aa040`); under fresh review | See below |
+| X3 host secrets on Linux (LNX-4) | Built, reviewed and repaired (`ce7dd5a1`); a fresh final review of the repairs is owed | See below |
 | X4 web process confined on Linux (LNX-3) | Adapter reviewed and repaired; Landlock optional; host slice integrated (`4823b23a`); the real-host LNX-3 test and the last web tests are in work; a fresh review of the host work is owed | See below |
 | X5 service and container (LNX-2) | In work (one worker, worktree `x/x5-service`) | |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
@@ -815,6 +815,16 @@ target; guard tests; the refusing target's tests; `org-platform`, `org-platform-
 `org-host` and `agentic-org` unprivileged: 1,053 passed, none failed. The list of
 platform predicates: 17 files, 104 predicates.
 
+**Repairs: integrated at `ce7dd5a1`** (branch `x/x3-repairs`, two commits ending at
+`fac893ed`, by the store's author, who confirmed S1 on a real kernel and rejected no
+finding; the table below says what each became). Lead's checks: lint for the three
+targets, guard tests, 971 tests of the platform and host crates unprivileged with
+none failing, and the bind-mount cases as root. From the author's reading of the
+source, asked by the reviewer: when the host-secrets directory alone is lost, nothing
+is regenerated for an existing office (writer custody and a pending recovery code
+refuse), but the start itself does not refuse; a marker in the data root
+(`selected-writer.required`) could make `expect_items` exact per item store. Open.
+
 **Review: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the lead, on
 `4823b23a..d13aa040`). It built trees as root on ext4, tmpfs and overlay and attacked
 them as three other users; ran the store's tests ten times as uid 1000 and as root
@@ -899,6 +909,39 @@ time):
   `release::tests::held_release_directory_cannot_switch_to_replaced_path`
   (`PermissionDenied`), and `dependency_closure` on both systems (`cargo metadata
   --offline` needs a crate of the other system that the runner's cache lacks).
+
+Run 44285111130 on `6af7ede0` (code as of X2's host slice, `e8cf07fb`; read
+2026-11-18 about 12:40 UTC; the seven newer heads had no Rust job result yet, the
+runners' queue being hours long):
+
+- macOS: `lnx1` passed (the hard-linked socket works there), `supervision` 19,
+  `service` 7, `setup` 8, `contract` 11, `keys` 3, `binary` 6, `app_token` 5,
+  `host_control` 14, `instances` 1; `org-host` 607 passed with only the six known
+  `release::store` failures; `org-platform` 99, `org-platform-host` 88 and its
+  presence test, `org-socket` 59; 68 tests named admission, 50 credentials, 11
+  keychain, 18 server_check, 24 custody and 43 `web::tests` passed, none failed.
+- macOS, new: `org-socket` `confinement_example`
+  `the_example_passes_where_the_web_process_can_be_confined` failed: the example's
+  child answered `refused: gateway confinement unavailable`.
+- Linux (`ubuntu-26.04`): `lnx1` passed; every `apps/agentic-org` suite passed;
+  `org-host` 593 passed. New failures, all from the runner's environment meeting a
+  test's assumption, none seen in the sandbox:
+  - all three `confinement_example` tests: `the process must hold exactly descriptors
+    0, 1 and 2; it holds [0, 1, 2, 142, 145]`. The runner leaves two descriptors open
+    in the test process and the test's children inherit them; the entry check refuses,
+    correctly. The macOS failure above is very probably the same (the macOS adapter
+    gives no reason). The product's own start closes everything above 2. With X4's
+    author: the example starts its children with only descriptors 0 to 2, and a test
+    holds a stray descriptor on purpose.
+  - `admission::linux::tests::a_program_that_root_owns_is_admitted` and
+    `web::tests::running_ended_reads_the_refusal…`: `open` failed with ELOOP. On
+    Ubuntu 26.04 `/usr/bin/true` and its like are symbolic links into a multi-call
+    program, and the admission refuses a link at the pinned path. The first is fixed
+    by the lead (`ce7dd5a1`); the web tests move to compiled programs with X4's
+    author.
+  - `web::tests::the_supervisor_refuses_a_platform_without_a_confinement_adapter`:
+    the known one, rewritten at `4823b23a`.
+- The job "Platform conditionals list only shrinks" passed.
 
 This is a debug, unsigned build: the Keychain, the publisher check of a signed image,
 Seatbelt on a signed web process and the presence dialog are still owed from a Mac
