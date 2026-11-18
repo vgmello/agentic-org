@@ -1,6 +1,6 @@
 # Project structure
 
-Status: **selected** data contract, revision 2.11. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md). A project's process package, its documentation tree and issued document versions are defined in [document 18](18-process-packages-and-project-documentation.md).
+Status: **selected** data contract, revision 2.12. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md). A project's process package, its documentation tree and issued document versions are defined in [document 18](18-process-packages-and-project-documentation.md).
 
 ## Relationships
 
@@ -137,6 +137,8 @@ Each project has exactly one owning team and optional contributing teams. Its or
 A project may use several repositories, including shared infrastructure or libraries. `integration_branch` is required on each project/repository association; the same repository can use different integration branches for different projects. A contributing-team registration and a task assignment express different facts: assigning a task does not rewrite the project's contributing-team list or grant repository access.
 
 A release has an `R-<number>` reference and an optional plain-text `version_label`, such as `1.4.0` or `Spring launch`. The label is independent of identity and need not follow semantic versioning. A release belongs to one project and contains zero or more milestones. Every milestone requires exactly one same-project release. A task can reference zero or one milestone. Releases are delivery records, not organization-wide repository branches.
+
+Releases and milestones are first-class in every project, whatever process package it follows, and no package can leave them out (owner, 2026-11-18). A release is how a project's work reaches people, so every planned change goes into one. A milestone is optional: a release may have none.
 
 Project investment/token totals are derived from [usage records](10-usage-and-cost-accounting.md), including explicitly attributed project overhead. A project/team/task move does not retroactively change recorded consumption. Release accounting uses captured release attribution, not every later release-manifest membership.
 

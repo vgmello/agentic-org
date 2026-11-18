@@ -66,7 +66,8 @@ Three rules already in force constrain how:
 7. **The desired state of a versioned document is its latest issued version,** written
    once. Whether the code matches it is derived from the tasks that realize it.
 8. **DSS is the first built-in package** and proves the rule: it is delivered as
-   content. Features, milestones and releases are records a package may use or not;
+   content. Releases and milestones are first-class for every process, and releases are not
+   optional; features are a record a package may use or not;
    software delivery by features is a second built-in package.
 9. **A package stays in its organization.** There are built-in packages and packages
    an organization's people create and edit. Nothing exports or imports one.

@@ -102,7 +102,7 @@ Written by the lead on 2026-11-18. It adds no requirement; it places the owner's
 **Points the owner settled, 2026-11-18.**
 
 1. **A lead approves every hire.** "Not a person, a lead approves every hire." When the lead is a person, that person approves. When the lead is an agent, it approves only if a person has turned on its May hire permission, a field of the agent ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md), [document 04](../design/organization-data/04-agent-structure.md#who-approves-a-hire)). A lead who may approve hires into its own team without a second approval.
-2. **Features belong to their own process.** DSS does not use feature records. Software delivery by features is a different package, `feature-delivery`, built in beside `dss`; a package's manifest says which of features, milestones and releases it uses ([process package design](../design/process-packages.md#3a-features-and-a-second-package)).
+2. **Features belong to their own process.** DSS does not use feature records. Software delivery by features is a different package, `feature-delivery`, built in beside `dss`; a package's manifest says whether it uses features. Releases and milestones are first-class for every process: every change goes into a release, and milestones are optional ([process package design](../design/process-packages.md#3a-features-and-a-second-package)).
 3. **Packages do not move between organizations.** There are built-in packages and packages the organization's people create and edit. Export and import are not built; the requirement's "portable" means a package is self-contained and can be reused across projects and copied.
 
 **Points that need the owner.**

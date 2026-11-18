@@ -72,7 +72,6 @@ roles:
 kinds:
   - { key: product-dss, title: Product DSS, versioned: true }
   - { key: technical-dss, title: Technical DSS, versioned: true }
-uses: [milestones, releases]
 folders:
   - { path: product, title: Product documentation, kinds: [product-dss] }
   - { path: technical, title: Technical documentation, kinds: [technical-dss] }
@@ -90,7 +89,7 @@ stages:
 | `write-product-dss` | Product lead | Talk with the person until the behaviour is clear; write it under its product domain; confirm; issue. |
 | `derive-technical-dss` | Technical lead | From an issued Product DSS version, update the Technical DSS: standards first, then the person. |
 | `record-a-standard` | Technical lead | When a decision will be needed again, write or update a project standard. |
-| `plan-and-staff` | Both leads | Break both layers into tasks; decide the roles needed; ask HR. |
+| `plan-and-staff` | Both leads | Break both layers into tasks; put them in a release, with milestones if useful; decide the roles needed; ask HR. |
 | `answer-architecture-questions` | Technical lead | Answer engineers from the Technical DSS and standards; change the specification when the answer changes it. |
 | `build-from-the-specification` | Everyone | Read the versions a task realizes; ask the technical lead; keep code links current. Written for everyone so that an engineer hired with any role receives it. |
 | `reconcile-a-new-version` | Both leads | When a version is issued over an earlier one, find what it changes and plan the work. |
@@ -117,7 +116,8 @@ because of it, each naming the Product DSS version it follows.
 Both are ordinary tree documents with `versioned: true`. The product knows neither
 name.
 
-The package does not use feature records: the Product DSS is the definition, and a
+The package works with releases and milestones, as every process does, and does not
+use feature records: the Product DSS is the definition, and a
 task points at the versions it realizes. Software delivery by features is another
 package ([process package design](process-packages.md#3a-features-and-a-second-package)).
 
@@ -161,8 +161,10 @@ package ([process package design](process-packages.md#3a-features-and-a-second-p
 ### 3.3 Plan and staff
 
 9. The leads break the work into tasks. Each task's `realizes` names the versions,
-   product or technical or both, that it brings the code in line with; milestones and
-   releases group them when the project uses them. A task says which code links it is
+   product or technical or both, that it brings the code in line with. Every change goes
+   into a release: the leads put the tasks in the project's next release, creating it
+   if there is none, and may group them in milestones of that release. Milestones are
+   optional; the release is not (owner, 2026-11-18). A task says which code links it is
    expected to touch.
 10. They decide which roles the tasks need. For each, the technical lead reads the role
     (`agent-os role show`) and asks HR for the hire with a reason
@@ -272,6 +274,7 @@ These calls are general and belong to the documentation tree
 | DSS-9 | An engineer's question to the technical lead is answered in the lead's existing session, and an answer that changes the specification results in a new issued version. |
 | DSS-10 | No specialist is hired before both layers have an issued version; each hire has the approval of a lead who may approve. |
 | DSS-11 | The whole flow runs with no code in the product that names DSS, a DSS role or a DSS kind (PKG-1). |
+| DSS-12 | The tasks that realize an issued version are all in a release of the project, with or without a milestone, and the version's page names the release; a realizing task in no release is marked. |
 
 DSS-5, DSS-6, DSS-9 and DSS-10 are checked by running the package with real agents:
 they test the skills' text as much as the product.

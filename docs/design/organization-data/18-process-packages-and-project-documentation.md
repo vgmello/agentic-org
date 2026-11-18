@@ -1,6 +1,6 @@
 # Process packages and project documentation
 
-Status: **selected** data contract, revision 1.1. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: process packages, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [process package design](../process-packages.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
+Status: **selected** data contract, revision 1.2. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: process packages, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [process package design](../process-packages.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
 
 The product carries no methodology. A process package is content: a manifest, role definitions, skills and document templates. Nothing here is a process execution engine, and no record in this document starts work, changes a status or blocks an action.
 
@@ -221,7 +221,7 @@ stages:
     title: Specify the product
     summary: Talk with the person until the behaviour is clear, then issue it.
     lead_role: product-lead
-uses: [milestones, releases]
+uses: []
 ```
 
 This is an organization's copy of the built-in `dss` package, shortened. A copy has its own key, because a key is unique in the organization.
@@ -229,7 +229,7 @@ This is an organization's copy of the built-in `dss` package, shortened. A copy 
 - **`roles[]`** are the roles the package needs. `seed: true` marks the few that start the project; the others are hired when the work calls for them. `hats` are labels for people, shown on the roster to say what a combined role covers; nothing reads them. Each role has a definition at `roles/<key>.md`, with the body headings of a [role record](../../specs/roles-ux.md).
 - **`kinds[]`** are document kinds the package adds to the built-in ones (`brief`, `decision`, `design`, `report`, `changelog`). A package cannot redefine a built-in kind. `versioned: true` means documents of that kind are [issued in versions](#issued-versions). A kind may have a template at `templates/<key>.md`.
 - **`folders[]`** are the sections a project's documentation starts with. `kinds` says what a folder is for; it guides and is not enforced.
-- **`uses[]`** names the optional records the package works with: `features`, `milestones`, `releases`. Tasks, documents, messages and hiring are always there. The list only decides what a project that follows the package shows and what its skills may refer to: a project whose package does not use features has no Features tab while it has no feature. It removes no record and refuses no call.
+- **`uses[]`** names the optional records the package works with. There is one today: `features`. Releases and milestones are not listed because they are first-class in every project, whatever its package, and a package cannot leave them out (owner, 2026-11-18); so are tasks, documents, messages and hiring. The list only decides what a project that follows the package shows and what its skills may refer to: a project whose package does not use features has no Features tab while it has no feature. It removes no record and refuses no call.
 - **`stages[]`** describe the order of work for people and agents. An entry has a `key`, a `title`, an optional `summary` and an optional `lead_role` naming a declared role. The product shows stages to people and includes them in an agent's instructions. No code acts on one.
 
 A skill is a Markdown file whose front matter says who it is for:
@@ -416,6 +416,8 @@ realizes:
   - document_id: 01930000-0000-7000-8000-0000000000e2
     version: 2
 ```
+
+Whatever the process, the change goes into a release (owner, 2026-11-18): the tasks that realize a version are in a release of the project, listed in its content or grouped in one of its milestones ([document 09](09-release-content-and-flags.md), [document 02](02-project-structure.md)). A milestone is optional; the release is not. A version's page names the release its tasks are in and marks any task that is in none.
 
 `realizes[]` is authored in the task's front matter. Each entry names an issued version of a tree document in the task's own project; the accepting service checks both. A task may realize several versions and a version may be realized by several tasks.
 
@@ -697,7 +699,7 @@ GROUP BY v.organization_id, v.document_id, v.version;
 
 `document_versions` has no foreign key to `documents`: an issued version is history and outlives the live row, resolved through `record_refs` like any historical reference. The other direction is enforced: a document's `version` must be one of its issued versions. Version rows are written once; the two triggers refuse an update, a delete and a replace.
 
-Rules checked by the accepting service, not by SQL: a project's package is `current` when chosen; a stage's `lead_role` is a declared role; `uses[]` holds only `features`, `milestones` and `releases`; a document's kind is built in or declared by a package; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
+Rules checked by the accepting service, not by SQL: a project's package is `current` when chosen; a stage's `lead_role` is a declared role; `uses[]` holds only `features`; a document's kind is built in or declared by a package; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
 
 ## Acceptance criteria
 

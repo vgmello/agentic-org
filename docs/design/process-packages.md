@@ -176,10 +176,13 @@ package's skills at their next start.
 
 ## 3a. Features, and a second package
 
-Features, milestones and releases are records of the product that a package may use or
-leave alone (owner, 2026-11-18). A package says which in its manifest's `uses`. A
-project whose package does not use features shows no Features tab while it has no
-feature; nothing is removed and no call is refused.
+Releases and milestones are first-class in the product and every process works with
+them: whatever the package, a change goes into a release, and a milestone may group
+work inside it. Milestones are optional; releases are not (owner, 2026-11-18).
+Features are different: they are a record that a package uses or leaves alone. A
+package that works with features says so in its manifest's `uses`. A project whose
+package does not shows no Features tab while it has no feature; nothing is removed and
+no call is refused.
 
 This is how two well-specified processes sit on the same product:
 
@@ -188,7 +191,8 @@ This is how two well-specified processes sit on the same product:
 | What it is | Specify the product and the system as desired state, then keep the code in line | Software delivery by features: requests are scoped into features, features are built by tasks and shipped in releases |
 | The specification is | Versioned Product DSS and Technical DSS documents | Each feature's definition, `feature.md` ([features UX](../specs/features-ux.md)) |
 | A task points at | The document versions it realizes | Its feature |
-| `uses` | `milestones`, `releases` | `features`, `milestones`, `releases` |
+| Delivered through | A release; milestones optional | A release; milestones optional |
+| `uses` | Nothing optional | `features` |
 | Kinds it adds | `product-dss`, `technical-dss` | None; it uses decisions, designs and reports |
 | Seed roles | Product lead, technical lead | Product lead, engineering lead |
 | Starting sections | `product`, `technical` | `decisions`, `designs`, `reports` |
@@ -200,7 +204,8 @@ release, and staffing. Their text is written when the package is built. It is co
 only, which is the proof of PKG-1. Iterations, boards and other habits of an agile
 team are skills and stages of such a package, not parts of the product.
 
-A project with no package keeps features, milestones and releases as they are today.
+A project with no package has features, as today. Every project has releases and
+milestones.
 
 ## 4. How skills reach an agent
 
@@ -372,6 +377,7 @@ Built-in packages are files in the product's source, compiled into the office.
 | PKG-14 | With no package, a project's tree starts with `decisions`, `designs` and `reports`, and resolution is exactly the process design's. |
 | PKG-15 | A project whose package does not list `features` in `uses` shows no Features tab while it has no feature; one whose package lists it, and one with no package, shows it. Changing the package hides no existing feature. |
 | PKG-16 | Any person of the organization creates, copies and edits an organization package; an agent's write of a package is refused; there is no export or import of a package. |
+| PKG-17 | Releases and milestones are available in every project whatever its package, and no manifest field hides or removes them; a manifest that lists anything but `features` in `uses` is refused. |
 
 ## 10. Open points
 
