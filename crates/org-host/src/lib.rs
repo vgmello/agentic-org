@@ -60,6 +60,8 @@ mod hostdb;
 pub mod human;
 mod ids;
 // Composed into `admin.link.initial` and `admin.reset` by A2 B3.
+#[cfg(all(test, debug_assertions))]
+mod enc1_process_tests;
 #[cfg_attr(not(test), allow(dead_code))]
 mod links;
 pub mod release;
