@@ -460,6 +460,50 @@ Receipts are never deleted by the store; expiry is a reviewed procedure (documen
 
 ## 5. Files
 
+**From record to file.** The family's codec turns a record into the exact bytes the data
+contract defines, at the path it names, under the tree it belongs to:
+`state/teams/<team-id>/team.yaml`,
+`state/projects/<project-id>/work/tasks/<task-id>.md`,
+`state/work-history/tasks/<task-id>/<revision>.json`,
+`messaging/conversations/<conversation-id>/messages/<message-id>.json`,
+`recovery/commands/<operation-id>.json`, `local/offices/<office-id>/task-counter.yaml`.
+File names are stable IDs; a readable reference is never a path. Editing an existing
+Markdown record goes through `org-docs`'s source-preserving editor over the bytes
+`UnitOfWork::source` returns, so only the changed fields' tokens differ (ADR-0006).
+
+**How a file is written.** The flusher writes the final state of each path touched
+since the materialized mark, never intermediate versions:
+
+1. Write a temporary file in the same directory and flush its data (`org-platform`'s
+   `fs::full_sync`).
+2. `Create`: exclusive rename (`rename_noreplace_at`); existing identical bytes are a
+   no-op, other bytes stop the office. `Put` and `Remove`: the current bytes must hash
+   to the projection's recorded source hash or to a version in the retained entries;
+   then rename over, or unlink.
+3. After the round: flush each touched directory, one full flush, then write the
+   materialized mark.
+
+So after any crash a file is wholly old or wholly new, and bytes the office did not
+write are never replaced silently: the office stops and names the path. Directories are
+created `0700` and files `0600`. A team move is a `Remove` and a `Put` for every file
+under the team, which its decision lists with `sources_under` and `source`.
+
+**Publishing to Git is not the store's job.** The publisher, built with the Git work
+(C7), takes the store's state barrier (which pauses materialization for its duration),
+copies `durable/state/` into the organization repository's clone under
+`runtime/<office-id>/repositories/`, commits and pushes on the schedule the data contract
+sets (hourly for pending work, promptly for important knowledge). Because only flushed
+entries are materialized, the tree under the barrier is a consistent cut at one ordinal.
+The store never runs Git and never opens a network connection.
+
+**Protected local records** use the same writer and the same publication rule, in other
+trees: chat in `messaging/` (document 15's layout, one writing office per file), receipts
+in `recovery/commands/`, usage in `accounting/`, budgets in `budgets/`, HQ authority in
+`authority/`, office-local state in `local/offices/<office-id>/`. Nothing outside
+`state/` is published. The author-private task notes are the one exception: document 05
+makes them a separate durable database with its own writer and receipts, outside this
+store (L8).
+
 ## 6. Rebuilding
 
 ## 7. Reading
