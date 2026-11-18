@@ -1,8 +1,9 @@
 # Agentic Org as the main process of a container (ADR-0017 decisions 4 and 10, LNX-2).
 #
-# Build, from the repository root, after building the four executables:
+# Build, from the repository root, after building the four executables and the UI:
 #
 #   cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+#   (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 #   docker build -f deploy/container/Dockerfile -t agentic-org .
 #
 # Run (nothing else is needed; see README.md in this folder for volumes and the first link):
@@ -18,8 +19,9 @@
 ARG BASE=debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0
 FROM ${BASE}
 
-# Where the four prebuilt executables are, relative to the build context.
+# Where the four prebuilt executables and the built UI are, relative to the build context.
 ARG BIN=target/debug
+ARG UI=apps/agentic-org-ui/build
 
 # tini is PID 1: it forwards the stop signal to `serve` and reaps the agent processes that
 # outlive their parents.
@@ -40,6 +42,9 @@ RUN groupadd --gid 61000 agentic \
 COPY --chown=root:root --chmod=0755 \
      ${BIN}/agentic-org ${BIN}/agentic-org-office ${BIN}/agentic-org-web ${BIN}/agent-os \
      /opt/agentic-org/bin/
+# The web process serves the UI build beside its executable, and nothing else.
+COPY --chown=root:root ${UI}/ /opt/agentic-org/bin/ui/
+RUN chmod -R u=rwX,go=rX /opt/agentic-org/bin/ui
 COPY --chown=root:root --chmod=0644 deploy/container/setup.json /etc/agentic-org/setup.json
 
 # `agent-os` is first on an agent's PATH. ORG_OFFICE_DEV_KEY_DIR is the development key
@@ -54,6 +59,7 @@ VOLUME ["/data", "/secrets"]
 
 USER 61000:61000
 WORKDIR /
+# Plain HTTP (`http_published` in setup.json): publish it on the Docker host's 127.0.0.1.
 EXPOSE 8443
 
 # No HEALTHCHECK: the product has no command yet that fails when the instance does not

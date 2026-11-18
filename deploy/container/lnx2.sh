@@ -6,6 +6,7 @@
 #
 #   cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
 #   cargo build --locked -p agentic-org --example lnx2-office
+#   (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 #   deploy/container/lnx2.sh
 #
 # Environment: LNX2_BIN (where the executables are, default target/debug), LNX2_IMAGE (the
@@ -17,7 +18,9 @@
 #   2. the first registration link comes from `docker exec -u 0 ... admin reset --user`,
 #      and only from root at a terminal;
 #   3. an office worker starts and `agent-os` sends and reads inside the container
-#      (the office is stored by the test's own program: no command creates one yet);
+#      (the office is stored by the test's own program: no command creates one yet); and
+#      the browser address answers from the Docker host over plain HTTP: the version, the
+#      UI's index, the page of the registration link, and a refusal for any other Host;
 #   4. LNX-4: everything under /secrets is the service user's, files 600 and folders 700,
 #      and no key is under /data; nothing was written outside the two volumes;
 #   5. `docker stop` ends the service inside the runtime's grace, with exit code 0;
@@ -141,6 +144,8 @@ secrets_listing() {
 for program in agentic-org agentic-org-office agentic-org-web agent-os examples/lnx2-office; do
     [ -x "$repo/$bin/$program" ] || fail "$bin/$program is not built (see the head of this script)"
 done
+[ -f "$repo/apps/agentic-org-ui/build/index.html" ] || fail "the UI is not built (see the head of this script)"
+command -v curl >/dev/null || fail "curl is needed on the Docker host"
 docker version >/dev/null 2>&1 || fail "no Docker daemon answers"
 
 say "build the image from deploy/container/Dockerfile"
@@ -172,8 +177,8 @@ echo "filesystems: /data is $(docker exec "$tag-a" stat -f -c %T /data), /secret
 
 say "2. the first registration link: root, naming the service user, at a terminal"
 link=$(docker exec -t -u 0 "$tag-a" agentic-org admin reset --user "$user" | tr -d '\r')
-has 'https://localhost:8443/register#' "$link" || fail "no registration link: $link"
-echo "a link was printed for https://localhost:8443/register#<token>"
+has 'http://localhost:8443/register#' "$link" || fail "no registration link: $link"
+echo "a link was printed for http://localhost:8443/register#<token>"
 if has 'register#' "$(logs "$tag-a")"; then fail "the link reached the container log"; fi
 if out=$(docker exec -u 0 "$tag-a" agentic-org admin reset --user "$user" 2>&1); then
     fail "a link was printed without a terminal: $out"
@@ -208,6 +213,36 @@ read_back=$(agent "$tag-a" nova msg read --next --json)
 has '"body":"hello nova"' "$read_back" || fail "nova read: $read_back"
 echo "nova read it back"
 agent "$tag-a" pixel msg send --to nova --subject kept --json "read me after the replacement" >/dev/null
+
+say "3b. the browser address, from the Docker host, over plain HTTP"
+# The configured origin is http://localhost:8443, which the documented run command gives a
+# browser on the Docker host. This test may publish another host port, so it names the
+# origin's authority itself; a browser sends it by opening http://localhost:8443.
+browser() { curl -sS -m 10 -o "$scratch/body" -D "$scratch/head" -w '%{http_code}' -H "Host: ${2:-localhost:8443}" "http://127.0.0.1:$port$1" 2>/dev/null || true; }
+answers_http() { [ "$(browser /api/v1/version)" = 200 ]; }
+started=$(now)
+wait_until "the web process to serve" answers_http
+echo "GET /api/v1/version: 200 $(tr -d '\n' < "$scratch/body" | head -c 200)"
+[ "$(browser /)" = 200 ] || fail "the UI's index: $(head -n 1 "$scratch/head")"
+has '<html' "$(cat "$scratch/body")" || fail "the index is not the UI"
+has '^content-security-policy:' "$(tr 'A-Z' 'a-z' < "$scratch/head")" || fail "the index has no policy"
+echo "GET /: 200, $(wc -c < "$scratch/body") bytes of HTML with its content security policy"
+if has '^(strict-transport-security|set-cookie):' "$(tr 'A-Z' 'a-z' < "$scratch/head")"; then
+    fail "plain HTTP answered with HSTS or a cookie: $(cat "$scratch/head")"
+fi
+register=$(browser /register)
+echo "GET /register (the page of the registration link): $register"
+for other in "127.0.0.1:8443" "localhost:$port" "$(hostname):8443" "192.0.2.7:8443"; do
+    [ "$other" = "localhost:8443" ] && continue
+    code=$(browser /api/v1/version "$other")
+    [ "$code" = 400 ] || fail "Host: $other was answered with $code"
+done
+echo "any other Host (127.0.0.1:8443, another port, this machine's name, another address): 400"
+log=$(logs "$tag-a")
+grep -E 'web process started' <<<"$log" | sed 's/^/  /' || fail "the host did not log the web process's start"
+grep -E 'serving plain HTTP on a published port' <<<"$log" | sort -u | sed 's/^/  /'
+has 'serving plain HTTP on a published port' "$log" || fail "the plain-HTTP notice is not in the log"
+has 'web process started, confined by the seccomp filter' "$log" || fail "the web process is not confined by the filter"
 
 say "4. LNX-4 in the container, and nothing outside the volumes"
 secrets_listing "$tag-a" | sed 's/^/  /'
@@ -346,8 +381,8 @@ if exited "$tag-h"; then
     echo "  $log"
     has 'data' "${log%%; in the foreground mode*}" || fail "the refusal does not name the data root"
 else
-    echo "  NOT REFUSED BY THIS BUILD: the store is not below the instance's data root"
-    echo "  (/data/instance), and the check that reads the mount table is not in this build."
+    echo "  NOT REFUSED BY THIS BUILD: the store is beside the instance's data root"
+    echo "  (/data/instance), not below it, and the store is compared with the data root only."
     if [ -n "${LNX2_REQUIRE_DISJOINT_MOUNTS:-}" ]; then
         fail "secrets inside the data directory were accepted"
     fi

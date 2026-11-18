@@ -6,25 +6,40 @@ decisions 4 and 10; [Linux host design](../../docs/design/linux-host.md), sectio
 
 ## Run it
 
-Build the four executables and the image from the repository root, then run it. Nothing
-else is needed: no option, no file to write, no certificate to make.
+Build the four executables, the UI and the image from the repository root, then run it.
+Nothing else is needed: no option, no file to write, no certificate to make.
 
 ```sh
 cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+(cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 docker build -f deploy/container/Dockerfile -t agentic-org .
 docker run -d --name agentic-org -p 127.0.0.1:8443:8443 agentic-org
 ```
+
+Then open **`http://localhost:8443`** in a browser on the Docker host.
+
+**The container serves plain HTTP. Publish it on `127.0.0.1` only**, as the command above
+does. Published on another interface (`-p 8443:8443`, `-p 0.0.0.0:8443:8443`), sign-in and
+every session travel unencrypted on that network. HTTPS is not available yet. Setup and
+the host say the same in the log at every start ("serving plain HTTP on a published
+port").
+
+The address is exactly `http://localhost:8443`: keep the port 8443 on both sides of `-p`.
+The web process answers only requests for that origin; `http://127.0.0.1:8443`, another
+port or the machine's name in the address bar get `400`. That is the same check as on a
+Mac, not a loosening: the listener is on every address of the container only because a
+published port arrives on the container's network interface, never on its loopback.
 
 At its first start the container sets the instance up from
 `/etc/agentic-org/setup.json` (`agentic-org serve --setup`), then serves it in the
 foreground. `docker logs agentic-org` shows what setup did. `docker stop` ends it within
 a second or two; the runtime's default grace of 10 seconds is never needed.
 
-**State of this build.** The host, the offices and `agent-os` work in the container.
-The browser address (`https://localhost:8443`) is **not served yet**: the host can
-neither make nor verify the listener's certificate, and its web start serves loopback
-HTTP only. Setup says so in the log ("Browser access: not available yet"). A
-configuration that names a certificate pair is refused, never stored unverified.
+**State of this build.** The host, the web process (confined as on a Linux machine: its
+seccomp filter, and Landlock where the kernel has it), the offices and `agent-os` work in
+the container. The web process starts once the instance has an active HQ office; before
+that nothing listens on the port. The page the registration link opens (`/register`) is
+not built yet: the UI's index and the API answer, the link itself answers `404`.
 
 ## Keep the instance: two named volumes
 
@@ -131,7 +146,7 @@ JSON object (an unknown property is refused):
 | `service` | `"foreground"`: nothing is registered; the container runtime is the supervisor. (`"registered"` is the account's service manager, on a machine.) |
 | `root` | The instance's data folder, absolute. |
 | `credentials` | The secrets directory, absolute: a mounted volume that setup never makes. |
-| `listen` | `address`, `port`, `scheme` (`"https"` or `"http_loopback"`), `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). |
+| `listen` | `address`, `port`, `scheme`, `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). The image's scheme is `"http_published"`: plain HTTP on an address that is not loopback, accepted only with `"service": "foreground"` and only with `localhost`, `127.0.0.1` or `[::1]` as the origin's host. The others are `"http_loopback"` (exactly `127.0.0.1` or `::1`) and `"https"` (not served by this build). |
 | `certificate` | Optional, HTTPS only: `chain` and `key`, absolute paths. Refused by this build. |
 
 The instance's configuration does not change after its first start: a container whose
@@ -149,14 +164,17 @@ not exercised by this image, though setup checks `/secrets` by the release store
 
 - A signed release from the release pipeline, installed under `/opt/agentic-org`, and a
   release build that carries its pinned runtime release (setup refuses without one).
-- The host's certificate for the HTTPS listener: making one at first start, or verifying
-  a supplied pair; and the host's web start for an HTTPS listener.
+- HTTPS: the host's certificate for the listener (making one at first start, or
+  verifying a supplied pair) and the host's web start for an HTTPS listener. Until then
+  the container serves plain HTTP for a port published on the Docker host's loopback.
 - `ORG_OFFICE_DEV_KEY_DIR` removed: a release build keeps its keys in `/secrets` itself.
 
 ## The test (LNX-2)
 
 `deploy/container/lnx2.sh` builds the image and checks all of the above in real
-containers: the plain run, the link, a worker with an `agent-os` send and read, the modes
-in `/secrets`, that nothing is written outside the volumes, the stop, the replaced
-container, the empty secrets volume, anonymous volumes, and the store's refusals. It
-needs the workspace built, including `cargo build -p agentic-org --example lnx2-office`.
+containers: the plain run, the link, a worker with an `agent-os` send and read, the
+browser address over plain HTTP from the Docker host (the API, the UI's index, `400` for
+any other Host, the web process's confinement in the host log), the modes in `/secrets`,
+that nothing is written outside the volumes, the stop, the replaced container, the empty
+secrets volume, anonymous volumes, and the store's refusals. It needs the workspace and
+the UI built, including `cargo build -p agentic-org --example lnx2-office`, and `curl`.

@@ -10,3 +10,4 @@
 !target/release/agentic-org-office
 !target/release/agentic-org-web
 !target/release/agent-os
+!apps/agentic-org-ui/build

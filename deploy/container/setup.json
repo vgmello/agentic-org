@@ -6,8 +6,8 @@
   "listen": {
     "address": "0.0.0.0",
     "port": 8443,
-    "scheme": "https",
-    "origin": "https://localhost:8443",
+    "scheme": "http_published",
+    "origin": "http://localhost:8443",
     "hsts": "off"
   }
 }
