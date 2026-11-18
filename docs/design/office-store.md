@@ -390,6 +390,11 @@ head to the host's writer custody; writes the final state of each path touched b
 newly flushed entries (section 5); and advances the materialized mark. A committed
 operation never waits for the drive, even in a batch with a durable one.
 
+**Why the projection comes before the files.** Reads and the next decision need the
+change at once; files need a flush each and are wanted only by rebuild, Git and backup.
+Both are derived from the same entry, and the projection is a function of the files'
+bytes, so their order does not change what a rebuild produces.
+
 **Visible at commit, acknowledged by class.** A durable change is readable in the
 office from its projection commit, a few milliseconds before its flush. A power cut in
 that window removes it, as it removes committed-class changes. Nothing leaves the office
@@ -729,8 +734,9 @@ uses them yet.
   never rerun once published; an anchor and a hash chain; ordinals apart from origin
   positions; exhaustion checked before publication (writes stop, receipt lookups
   continue); files materialized to their final state from a verified predecessor, and
-  unfamiliar bytes stop recovery; the crash points `Prepared`, `SqlCommitted` and
-  `BeforeReply` and their reopen tests. What changes: an entry carries file changes,
+  unfamiliar bytes stop recovery; the crash points of `acceptance/crash.rs` (from
+  `Prepared` through `SqlCommitted` and `BeforeReply`) and their reopen tests, mapped
+  onto the crash table of section 4. What changes: an entry carries file changes,
   not SQL rows with a projection-schema digest; entries are appended to segments, not
   written one file each; the hash is over the stored bytes; the host confirms once per
   flush; there are no capture triggers and no per-read verification.
@@ -751,4 +757,53 @@ uses them yet.
 
 ## 12. What it does not do
 
+- **No generic repository layer or ORM.** Each family writes the queries it needs; a
+  generic layer would be a second schema to keep in step with the contract's.
+- **No event sourcing of everything.** The journal is a short-lived commit log, released
+  once its files are safe. History is what the data contract keeps (task events, files),
+  not a replay of every operation since the start.
+- **No migrations.** The projection is rebuilt when its schema changes; file formats
+  change before v1 by replacing them.
+- **No query language** or generic query API. A read port has named methods.
+- **No caching layer.** SQLite's page cache and the operating system's suffice; the only
+  memory the store keeps is the journal tail not yet materialized, the sequence
+  high-waters and the change ring.
+- **No second writer, async runtime or connection pool for writes.** One thread decides
+  and appends; the drive's speed is absorbed by group flushing, not by parallel writers.
+- **No network and no Git.** Relaying, replication and publication are consumers of the
+  store, never parts of it.
+- **No encryption** of data (ADR-0016). Private keys are records wrapped by the office
+  secrets key before they reach the store.
+- **No database per family.** One projection per office keeps cross-family reads in one
+  snapshot and one writer.
+
 ## 13. Open points
+
+Each needs a decision during B1; the recommendation is what this design assumes.
+
+1. **Generic office or trait objects.** Making `Office` generic over `E: Engine` spreads a
+   type parameter through the office. Recommendation: keep `Office` non-generic. Box the
+   engine behind a blanket supertrait `OfficeTx: OrganizationRead + OrganizationWrite +
+   …` that grows by one bound per family, and pass families `&dyn` ports (trait
+   upcasting is stable). Decide in B1a with the first family.
+2. **The flush interval.** Default 50 ms. Recommendation: keep it unless B1c's
+   measurement on the reference Mac shows the full flush costs more than a tenth of it
+   under load.
+3. **Parsing on the write path.** The projector decodes the bytes the decision just
+   encoded. Recommendation: keep it so (it is what makes the write path and rebuild one
+   function), and only if B1c shows the YAML decode over budget, let the projector take
+   the decision's typed record as a hint, with the rebuild harness still proving equality.
+4. **Segment release.** Recommendation: 64 MiB segments; release a segment once every
+   consumer cursor has passed its last entry, after writing `checkpoint.json` with the
+   head, the high-waters and the materialized mark.
+5. **Where the DDL comes from.** Recommendation: the SQLite engine loads the contract's
+   `docs/design/organization-data/schema.sql` verbatim (`include_str!`) plus its own
+   tables and indexes, so there is one DDL source and `test_schema.py` keeps testing it.
+   The alternative, a copy per family, drifts.
+6. **Receipt file count.** One file per operation (document 16) is many small files over
+   30 days. Recommendation: keep the contract's layout in v1 and count files in B1c; if
+   it hurts, propose daily receipt segments to the contract owner.
+7. **The clean-stop marker** that tells the work family to jump its task counter to the
+   mark. Recommendation: a file under `local/offices/<office-id>/` written after the last
+   flush of an orderly stop and removed at open.
+
