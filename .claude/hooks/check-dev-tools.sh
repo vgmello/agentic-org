@@ -52,6 +52,7 @@ if [ -f "$pw_json" ] && has node; then
 	# One line per browser listing every acceptable revision, since some
 	# platforms (older macOS for webkit) use a revisionOverrides entry.
 	while read -r browser revisions; do
+		[ -n "$browser" ] || continue
 		found=
 		for rev in $revisions; do
 			[ -d "$pw_cache/$browser-$rev" ] && found=1
@@ -80,7 +81,7 @@ else
 	toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml 2>/dev/null)"
 	if [ -n "$toolchain" ] && ! rustup toolchain list 2>/dev/null | grep -q "^$toolchain-"; then
 		need "Rust $toolchain" "the toolchain pinned in rust-toolchain.toml" "\`rustup toolchain install $toolchain\` (from the repository root)"
-	elif ! rustup which rust-analyzer >/dev/null 2>&1; then
+	elif [ -n "$toolchain" ] && ! rustup component list --installed --toolchain "$toolchain" 2>/dev/null | grep -q '^rust-analyzer'; then
 		need rust-analyzer "Rust code navigation for the LSP tool" "\`rustup component add rust-analyzer\` (from the repository root)"
 	fi
 fi
@@ -96,6 +97,25 @@ if has typescript-language-server; then
 fi
 
 has python3 || need python3 "runs the agent kit checks (.agent-kit/runtime/kit_hooks.py check)" "install Python 3"
+
+# The agent kit's starter_kit_context MCP server (.mcp.json) serves Repowise lookup
+# and Hindsight recall. Read this checkout's setup receipts and check the recorded
+# memory daemon process; never probe or start services.
+ready() { # ready <receipt> <status>
+	grep -q "\"$2\"" "$1" 2>/dev/null && grep -qF "\"root\": \"$root\"" "$1" 2>/dev/null
+}
+ready .agent-kit/logs/context/setup.json CONTEXT_READY ||
+	need "Repowise code index" "the starter_kit_context lookup tool has no index for this checkout" \
+		"\`python3 .agent-kit/runtime/kit_context.py setup --query Client --expect-path crates/org-client/src/lib.rs\`"
+memory=.agent-kit/logs/memory/hindsight/setup.json
+pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$memory" 2>/dev/null)"
+if ! has hindsight-embed; then
+	need "Hindsight memory" "the starter_kit_context recall tool needs the local hindsight-embed daemon" \
+		"install it as in the \"Local memory daemon\" section of .agent-kit/ADOPTION.md, then \`python3 .agent-kit/runtime/kit_memory.py setup\`"
+elif ! ready "$memory" HINDSIGHT_READY || [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+	need "Hindsight memory" "the local hindsight-embed daemon is not set up or not running for this checkout" \
+		"\`python3 .agent-kit/runtime/kit_memory.py setup\`"
+fi
 has cargo-deny || need cargo-deny "required local check (cargo deny --locked check)" "install cargo-deny 0.20.2 (see DEVELOPMENT.md)"
 has gitleaks || need gitleaks "required local secret scan" "install Gitleaks 8.30.1 (see DEVELOPMENT.md)"
 has playwright-cli || need playwright-cli "the playwright-cli browser skill" "\`bun add --global --exact @playwright/cli@0.1.24\`"
