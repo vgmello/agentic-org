@@ -390,7 +390,11 @@ it restarts the worker; it never races a live worker over its agents.
   (`keys/dev.rs`), an in-memory store with fault injection for tests (`keys/memory.rs`),
   and, for every other operating system, an adapter that refuses each call with a
   reported reason (`keys/unsupported.rs`). `keys/platform.rs` holds the only
-  `cfg(target_os)` choice; the supervisor and provisioning never branch on the platform.
+  `cfg(target_os)` choice and owns the Keychain preconditions (the compiled-in access
+  group, its entitlement and the host's own hardening). Another operating system gets the
+  refusing adapter before any of them is checked, so its operator sees "this operating
+  system has no office secrets key store", never a macOS-only reason. The supervisor and
+  provisioning never branch on the platform.
 - The organization name rule is `org_proto::OrganizationName`: trimmed, Unicode
   lowercase as its key, refusing empty, too long and control characters
   (`invalid_name`).
