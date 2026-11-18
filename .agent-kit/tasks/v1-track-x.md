@@ -574,6 +574,14 @@ Lead's decisions on what the worker raised:
 | Two host tests are macOS adapter tests by nature and keep their predicate | They move into `org-platform-host`'s macOS tests in X6. |
 | The setup tests fail when the whole suite is run as root | Accepted: the host refuses root; tests run as an ordinary user, as in CI. |
 
+**Lead's verification of slice 2 at `e8cf07fb`:** lint for Linux (whole workspace),
+macOS and the refusing target; `platform_conditionals`, `libc_only`; the whole
+workspace unprivileged: 69 test binaries, 3,443 tests passed, 4 failed, none of them
+this slice's (`dependency_closure` needs the network; two `org-socket` tests need
+IPv6; one `web::tests` test whose premise X4 ended and whose rewrite is on X4's
+branch). `lnx1` passed. A fresh read-only review of `cbb9b515..e8cf07fb` and of the
+lead's adapter repair (`db6b3bfe`) is in progress.
+
 ## X4 · The web process confined on Linux (in work)
 
 **Split.** The adapter (`crates/org-platform/src/confinement/linux*`, proved with the
@@ -732,3 +740,36 @@ time):
 This is a debug, unsigned build: the Keychain, the publisher check of a signed image,
 Seatbelt on a signed web process and the presence dialog are still owed from a Mac
 (the lists under X1c and X1d).
+
+## Owner direction, 2026-11-18: Docker without extra configuration; Landlock optional
+
+The owner: the product must work in Docker ("that's no question") and without extra
+configuration; a Debian base image is fine for now; and asked why Landlock is needed
+at all. Consequences taken by the lead and recorded here until the ADR and the design
+are rewritten with the code:
+
+- **Landlock is used when the kernel offers it and is never required** (amends
+  ADR-0017 decision 9 and LNX-3). The seccomp filter is the mandatory layer and still
+  fails closed. Reason: in every test the filter kills a forbidden call before
+  Landlock is asked; the one hole found in review (a fast-open send that connects)
+  went through Landlock and was closed in the filter; and requiring Landlock from
+  kernel 6.2 excludes common hosts. X4's author is making the change and measuring
+  whether any allowed call is stopped by Landlock alone.
+- **The container must start with a plain `docker run`** (amends decision 10 and
+  design 3.4): the custom seccomp and AppArmor options exist only for the agents'
+  vendor sandboxes and become optional; the operator-supplied certificate becomes
+  optional, with a certificate the container makes for itself at first start as the
+  lead's recommendation, put to the owner (not yet answered).
+
+Measured on this machine the same day (Docker 29.10 daemon started in the sandbox,
+image `debian:stable-slim` = Debian 13.7 with glibc 2.41, host kernel 6.18, Docker's
+default seccomp profile, no option beyond a bind mount of the build output):
+
+| What ran in the container | User | Result |
+| --- | --- | --- |
+| The confinement example (`gateway_confinement`, adapter as of `e8cf07fb`) | 61000 | PASS: Landlock and the filter both apply under Docker's default profile |
+| The Linux admission adapter's unit tests (26) | 61000 | 26 passed: `memfd_create`, `clone` with a pidfd, `close_range` and `execveat` are all allowed |
+| `lnx1` (real `agentic-org serve`, real worker, real `agent-os`) | 1000 | passed |
+
+Not measured: Docker Desktop on a Mac, an older Docker or host kernel, the product's
+own image (X5).
