@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "mode": "clone",
+  "reason": "Owner decision 2026-11-18: fresh Codex reviews run the project's checks themselves. Each review turn works in a disposable copy-on-write clone of the checkout (deleted afterwards); the real checkout, the run folder and shared temp folders stay read-only. Network is on so tests that open a local port can run; accepted risk: a reviewer could also reach the internet with what it can read. The runner reads this file from the task's base commit, so a change under review cannot widen its own review.",
+  "exclude": ["target", ".repowise"],
+  "network_access": true
+}
