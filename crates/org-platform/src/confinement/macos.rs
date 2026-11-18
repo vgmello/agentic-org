@@ -4,6 +4,9 @@
 use super::refused;
 use std::{ffi::CString, io, mem, path::Path, ptr};
 
+// Test support: Seatbelt has no system calls a container's profile could refuse.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) use super::refused::refuse_call;
 pub(super) use super::shared::fill_entropy;
 use super::Enforcement;
 use crate::Refused;

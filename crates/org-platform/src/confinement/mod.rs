@@ -18,8 +18,13 @@
 //! # Systems
 //!
 //! - macOS: the Seatbelt profile of ADR-0008 and the host's `sandbox_check` probes.
-//! - GNU/Linux: no adapter yet. Increment X4 writes it (Landlock and seccomp); until
-//!   then every adapter function refuses, as on every other target.
+//! - GNU/Linux (x86-64 and aarch64, Linux 6.2 or later with Landlock enabled): a
+//!   Landlock domain that allows no path and a seccomp filter that kills the process
+//!   on every system call outside a fixed list; the host reads the child's
+//!   no-new-privileges and seccomp state from `/proc`. Where the kernel or a
+//!   container's profile lacks or refuses either mechanism, [`confine_web`] and
+//!   [`web_confinement_supported`] refuse and name the call and the cause
+//!   (ADR-0017 LNX-3).
 //! - Every other Unix target: each adapter function returns the refusal
 //!   ([`crate::Refused`], as an [`io::ErrorKind::Unsupported`] error where the
 //!   function returns `io::Result`).
@@ -27,6 +32,13 @@
 //! [`disable_core_dumps`] is the same call on every system and is not an adapter
 //! function. [`fill_entropy`] is the same `getentropy` loop on macOS and GNU/Linux and
 //! refuses elsewhere.
+//!
+//! # Refusals
+//!
+//! An adapter's own refusal (a precondition that does not hold, a mechanism that is
+//! unavailable, a child that is not confined) is an error without an OS error number
+//! whose text is `gateway confinement unavailable`. The Linux adapter appends a colon
+//! and the cause. A failed connection to the rendezvous keeps its OS error number.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -46,8 +58,7 @@ mod linux;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use linux as native;
 
-// Unused in a build for macOS, where only its tests call it. GNU/Linux uses all of it
-// but the entropy refusal, until increment X4 writes the Linux adapter.
+// Unused in a build for macOS and for GNU/Linux, where only its tests call it.
 #[cfg_attr(
     any(target_os = "macos", all(target_os = "linux", target_env = "gnu")),
     allow(dead_code)
@@ -65,6 +76,9 @@ mod shared;
 ))]
 mod adapter_tests;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
 #[cfg(test)]
 mod tests;
 
@@ -74,18 +88,29 @@ mod tests;
 ///
 /// macOS: no Landlock and no seccomp filter (Seatbelt is observed by the host
 /// itself, in [`verify_web`]).
+///
+/// GNU/Linux: the Landlock ABI and `seccomp: true`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Enforcement {
     /// The Landlock ABI the process restricted itself under, in full, where it used
-    /// Landlock. An adapter that cannot enforce its whole ruleset fails; it reports
-    /// nothing.
+    /// Landlock: every right that ABI knows is handled and no rule allows anything.
+    /// On a kernel with a newer ABI than the adapter knows, this is the newest one
+    /// the adapter knows. An adapter that cannot enforce its whole ruleset fails; it
+    /// reports nothing.
     pub landlock_abi: Option<u32>,
-    /// Whether the process installed its seccomp filter.
+    /// Whether the process installed its seccomp filter. Where it did, a forbidden
+    /// system call kills the process; it never returns an error. The ready line has
+    /// no field for this: the host observes the filter on the process itself, and
+    /// the Linux [`verify_ready_report`] and [`verify_web`] do not read this field.
     pub seccomp: bool,
 }
 
+/// The fixed text of this module's own refusals. An adapter that can say more
+/// appends a colon and the cause.
+const REFUSAL: &str = "gateway confinement unavailable";
+
 fn refused() -> io::Error {
-    io::Error::other("gateway confinement unavailable")
+    io::Error::other(REFUSAL)
 }
 
 /// Disable core dumps before loading any potentially sensitive process state.
@@ -109,6 +134,17 @@ pub fn disable_core_dumps() -> io::Result<()> {
 /// and exactly the host's three stdio descriptors, then connect to `rendezvous`,
 /// the one connection the policy allows. Failure must terminate the caller before
 /// readiness. Unsupported platforms never return success.
+///
+/// GNU/Linux, in this order: disable core dumps and same-user tracing; require
+/// exactly one thread now (a thread that has ended does not count) and exactly
+/// descriptors 0 to 2; connect to `rendezvous`, an absolute path, the last socket
+/// the process creates; set no-new-privileges; restrict the process with Landlock
+/// (ABI 3 or higher, every right of the ABI handled, no rule); install the seccomp
+/// filter. Any failure returns an error that names the call and the cause, and the
+/// connected stream is dropped: the caller never holds a stream unconfined. After a
+/// failure of the last two steps the process is partly confined and must still exit.
+/// Once it returns, the process must not start with `RUST_BACKTRACE` set (a backtrace
+/// opens files) and must not open, connect, bind or execute anything: each kills it.
 pub fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
     native::confine_web(rendezvous)
 }
@@ -116,6 +152,14 @@ pub fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
 /// Whether this platform has a web process confinement adapter. The host asks before
 /// any bind, child or secret handoff. macOS: supported. Every other target refuses
 /// with the reason until its adapter exists (ADR-0017 LNX-3/LNX-5).
+///
+/// GNU/Linux: answered from what the asking process can observe without confining
+/// itself: the architecture has a system call list, the Landlock version query
+/// answers ABI 3 or higher, and the kernel can kill a process from a seccomp filter.
+/// A refusal's `capability` text carries the reason in brackets (which call failed,
+/// with which error, or which ABI is too old). The web process can still fail to
+/// confine itself afterwards, for example under a profile that refuses
+/// `landlock_restrict_self`; then it exits before it reports ready.
 pub fn web_confinement_supported() -> Result<(), Refused> {
     native::supported()
 }
@@ -123,6 +167,9 @@ pub fn web_confinement_supported() -> Result<(), Refused> {
 /// Checks the confinement report of the web process's ready line. macOS has no
 /// Landlock and no seccomp, so a report of either refuses. Every other target
 /// refuses until its adapter checks its own report.
+///
+/// GNU/Linux: requires a Landlock ABI of 3 or higher. The `seccomp` field is not
+/// read: the ready line cannot carry it, and [`verify_web`] observes the filter.
 pub fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()> {
     native::verify_ready_report(enforcement)
 }
@@ -131,6 +178,17 @@ pub fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()> {
 /// is checked as in [`verify_ready_report`], then the child's confinement itself.
 /// macOS queries permissions for the critical paths without opening or reading
 /// those paths.
+///
+/// GNU/Linux reads `/proc/<pid>/status` once and requires `NoNewPrivs: 1`,
+/// `Seccomp: 2` and more seccomp filters than the calling process has itself: a
+/// child inherits its parent's filters, as under a container's profile, so only one
+/// more is the web process's own. A missing or unreadable entry refuses. It cannot
+/// observe another process's Landlock domain, so `critical` is not used and the
+/// Landlock state is the report's alone: the host trusts it as far as it trusts the
+/// image it admitted. It cannot tell which filter the process installed either. The
+/// caller must hold the child unreaped across this call and check through its own
+/// child handle that it is still alive: the process id then names the admitted child
+/// and no other process.
 pub fn verify_web(pid: u32, enforcement: &Enforcement, critical: &[&Path]) -> io::Result<()> {
     native::verify_web(pid, enforcement, critical)
 }

@@ -35,6 +35,15 @@ pub(super) fn fill_entropy(_bytes: &mut [u8]) -> io::Result<()> {
     Err(Refused::unsupported(CAPABILITY).into())
 }
 
+/// Test support: nothing here confines with system calls a profile could refuse.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn refuse_call(
+    _command: &mut std::process::Command,
+    _call: super::testing::RefusedCall,
+) -> io::Result<()> {
+    Err(Refused::unsupported(CAPABILITY).into())
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::net::UnixListener;
@@ -97,6 +106,19 @@ mod tests {
         assert_refused(fill_entropy(&mut bytes));
         assert_eq!(bytes, [0u8; 300]);
         assert_refused(fill_entropy(&mut []));
+    }
+
+    #[test]
+    fn no_profile_is_put_on_a_command() {
+        use super::super::testing::RefusedCall;
+        for call in [
+            RefusedCall::LandlockCreateRuleset,
+            RefusedCall::LandlockRestrictSelf,
+            RefusedCall::Seccomp,
+        ] {
+            let mut command = std::process::Command::new("/nonexistent/program");
+            assert_refused(refuse_call(&mut command, call));
+        }
     }
 
     #[test]
