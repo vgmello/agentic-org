@@ -24,9 +24,10 @@ ARG BIN=target/debug
 ARG UI=apps/agentic-org-ui/build
 
 # tini is PID 1: it forwards the stop signal to `serve` and reaps the agent processes that
-# outlive their parents.
+# outlive their parents. Pinned by version, as the base is by digest.
+ARG TINI_VERSION=0.19.0-3+b8
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tini \
+ && apt-get install -y --no-install-recommends tini=${TINI_VERSION} \
  && rm -rf /var/lib/apt/lists/*
 
 # The service user: a dedicated high UID and GID, unlikely to match an account of the

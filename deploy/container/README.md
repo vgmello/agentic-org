@@ -10,6 +10,8 @@ Build the four executables, the UI and the image from the repository root, then 
 Nothing else is needed: no option, no file to write, no certificate to make.
 
 ```sh
+# Always build the four executables right before the image: a `cargo test` leaves a
+# build with test adapters under the same names.
 cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
 (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 docker build -f deploy/container/Dockerfile -t agentic-org .
@@ -32,8 +34,9 @@ published port arrives on the container's network interface, never on its loopba
 
 At its first start the container sets the instance up from
 `/etc/agentic-org/setup.json` (`agentic-org serve --setup`), then serves it in the
-foreground. `docker logs agentic-org` shows what setup did. `docker stop` ends it within
-a second or two; the runtime's default grace of 10 seconds is never needed.
+foreground. `docker logs agentic-org` shows what setup did. `docker stop` ends it with
+exit code 0, normally within a second; a worker that does not stop when asked is killed
+after 5 seconds, so the service always ends inside the runtime's default grace of 10.
 
 **State of this build.** The host, the web process (confined as on a Linux machine: its
 seccomp filter, and Landlock where the kernel has it), the offices and `agent-os` work in
@@ -67,7 +70,8 @@ be in the volume too, and the product refuses a data folder that contains them.
 ## The first registration link
 
 Setup prints no link and nothing secret reaches the container's log. The administrator's
-registration link comes from root at a terminal, naming the service user:
+registration link comes only from root at a terminal, naming the service user (the
+instance refuses to give its first link to anyone else):
 
 ```sh
 docker exec -it -u 0 agentic-org agentic-org admin reset --user agentic
@@ -78,8 +82,8 @@ terminal (`-t`), as the service user, or as any other user prints no link.
 
 ## What the secrets volume must be
 
-The credential store checks its directory at every start and refuses, naming the
-directory and the rule, when:
+The host checks the secrets directory at every start, before it reads or writes a key,
+and refuses to start, naming the directory and the rule, when:
 
 - it is not a mount point: a plain directory of the image (overlayfs) or a plain
   directory inside another volume. The image's declared volumes are mounts, named or not;
@@ -100,6 +104,9 @@ default Linux host and inside Docker Desktop's virtual machine on a Mac) and pas
 Do not place the secrets folder inside the folder that is mounted as `/data`
 (`-v ./agentic:/data -v ./agentic/secrets:/secrets`): a copy of the data folder would
 then hold the keys.
+
+A first start that is refused leaves nothing in the data volume: correct the mistake and
+start again. Once an instance is set up, its configuration does not change.
 
 ## Who can reach the volumes
 
@@ -130,10 +137,23 @@ docker run -d --name agentic-org -p 127.0.0.1:8443:8443 \
 Leave `--security-opt apparmor=…` out on a Docker host without AppArmor. Never use
 `seccomp=unconfined`, `apparmor=unconfined` or `--privileged`.
 
-Without them the host, the web process's confinement, the offices and `agent-os` all
-work. What does not work is creating a user namespace inside the container, so an agent
-whose vendor sandbox needs one is not started. Whether a given vendor sandbox needs more
-than its user namespace (mounts inside it) is not known until the runtime adapters exist.
+## Optional: less for the container to hold
+
+The service needs no capability and writes only to its two volumes, so the container
+also runs with a read-only root filesystem, without new privileges and with every
+capability dropped but the three that root's `admin reset` uses inside it (to read the
+service user's folders as that user, and to reach its socket):
+
+```sh
+docker run -d --name agentic-org -p 127.0.0.1:8443:8443 \
+  --read-only --security-opt no-new-privileges \
+  --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE \
+  -v agentic-org-data:/data -v agentic-org-secrets:/secrets agentic-org
+```
+
+With `--cap-drop ALL` alone the service runs the same, but
+`docker exec -u 0 … admin reset --user agentic` is refused ("acting as the service user:
+Operation not permitted"), and `docker exec` cannot add a capability back.
 
 ## The setup file
 
@@ -156,9 +176,14 @@ file differs from what its volumes were set up with refuses to start.
 
 The image holds the workspace's own build output (`--build-arg BIN=target/debug`, the
 default). The host logs that the office worker has no publisher check, and it keeps its
-keys in its development key store, `/secrets/dev-keys`, not in the release store: the
-release store's own start-time refusals (an empty store where keys are expected) are
-not exercised by this image, though setup checks `/secrets` by the release store's rules.
+keys in its development key store, `/secrets/dev-keys`, not in the release store.
+
+What the every-start check covers in this image: where `/secrets` is (a mount point, its
+owner and mode, its filesystem, apart from the data folder). What it does not cover: which
+keys are there. The release store refuses a start whose keys are missing; the development
+store does not, so a new, empty secrets volume on an existing data volume starts: no key
+is made in place of a lost one, and each office whose key is gone is reported in the log
+("has no usable key") and not started.
 
 ### What a release image still needs
 

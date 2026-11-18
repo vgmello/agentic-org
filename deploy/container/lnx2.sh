@@ -2,12 +2,14 @@
 # ADR-0017 LNX-2: the whole instance in a container built from this repository's container
 # file, with a plain `docker run`, and again after the container is replaced.
 #
-# Usage, from anywhere, with Docker running and the workspace built:
+# Usage, from anywhere, with Docker running, cargo on the PATH and the UI built:
 #
-#   cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
-#   cargo build --locked -p agentic-org --example lnx2-office
 #   (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 #   deploy/container/lnx2.sh
+#
+# It builds the four executables and its own office program itself, immediately before
+# the image, so that the image never holds what an earlier `cargo test` left in the build
+# folder (a build with the test adapters), and it checks the packed `agentic-org` for that.
 #
 # Environment: LNX2_BIN (where the executables are, default target/debug), LNX2_IMAGE (the
 # tag to build, default agentic-org:lnx2-<pid>; kept when given, removed otherwise),
@@ -101,7 +103,7 @@ exited() { [ "$(docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null)" = exite
 instance_id() { docker exec "$1" cat "$record" | sed -n 's/.*"instance_id":"\([^"]*\)".*/\1/p'; }
 # The worker's socket in the instance's runtime folder.
 worker_socket() {
-    docker exec "$1" sh -c 'find /data/.cache/agentic-org/tmp -type s ! -name host.sock 2>/dev/null | head -n 1'
+    docker exec "$1" sh -c 'find /data/.cache/agentic-org/tmp -type s ! -name host.sock 2>/dev/null' | sed -n 1p
 }
 # A worker process runs and its socket exists. (The runtime folder is in the data volume,
 # so a socket file alone may be a stopped worker's.)
@@ -141,8 +143,19 @@ secrets_listing() {
         printf "%s %s %s\n" "$(stat -c "%u:%g %a" "$f")" "$(sha256sum < "$f" | cut -d" " -f1)" "$f"; done'
 }
 
+say "build the executables (never what a test run left in $bin)"
+profile=()
+case "$bin" in
+target/debug) ;;
+target/release) profile=(--release) ;;
+*) fail "LNX2_BIN is target/debug or target/release" ;;
+esac
+(cd "$repo" &&
+    cargo build --locked "${profile[@]}" -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os &&
+    cargo build --locked "${profile[@]}" -p agentic-org --example lnx2-office) >"$scratch/cargo.log" 2>&1 ||
+    fail "cargo build failed: $(tail -n 5 "$scratch/cargo.log")"
 for program in agentic-org agentic-org-office agentic-org-web agent-os examples/lnx2-office; do
-    [ -x "$repo/$bin/$program" ] || fail "$bin/$program is not built (see the head of this script)"
+    [ -x "$repo/$bin/$program" ] || fail "$bin/$program is not built"
 done
 [ -f "$repo/apps/agentic-org-ui/build/index.html" ] || fail "the UI is not built (see the head of this script)"
 command -v curl >/dev/null || fail "curl is needed on the Docker host"
@@ -153,6 +166,13 @@ started=$(now)
 docker build -q -f "$here/Dockerfile" --build-arg BIN="$bin" -t "$image" "$repo" >/dev/null
 echo "built $image in $(since "$started") s; size $(docker image inspect -f '{{.Size}}' "$image" | awk '{ printf "%.1f MB", $1 / 1000000 }')"
 built=yes
+# The packed `agentic-org` is not a build with the test adapters: such a build takes the
+# development service adapter this variable names; any other refuses it by name.
+seams=$(docker run --rm -e ORG_DEV_SERVICE_DIR=/nonexistent -e ORG_DEV_ACCOUNT_BASE=not-absolute \
+    --entrypoint agentic-org "$image" service status 2>&1 || true)
+has 'ORG_DEV_SERVICE_DIR names a development test service adapter, which this build does not contain' "$seams" ||
+    fail "the image's agentic-org is a test-support build: $seams"
+echo "the packed agentic-org has no test adapters"
 
 say "1. a plain docker run on two named volumes"
 volumes+=("$tag-data" "$tag-secrets")
@@ -187,7 +207,7 @@ has 'Run this in a terminal' "$out" || fail "without a terminal: $out"
 if out=$(docker exec -t "$tag-a" agentic-org admin reset 2>&1); then
     fail "the service user reset the administrator: $out"
 fi
-has 'reset by root' "$out" || fail "as the service user: $out"
+has 'needs root. Run it with sudo' "$out" || fail "as the service user: $out"
 if out=$(docker exec -t -u 65534 "$tag-a" agentic-org admin reset --user "$user" 2>&1); then
     fail "a third user reset the administrator: $out"
 fi
@@ -269,6 +289,22 @@ echo "docker stop: $took s, exit code $code"
 [ "$code" = 0 ] || fail "the service ended with $code (137 is the runtime's kill after its grace)"
 awk -v t="$took" 'BEGIN { exit !(t < 8) }' || fail "the service took $took s to stop"
 
+say "5b. docker stop with a worker that does not act on the stop (X5 review V2)"
+docker start "$tag-a" >/dev/null
+wait_until "the instance to serve again" serving "$tag-a"
+wait_until "the office worker" worker_runs "$tag-a"
+worker=$(docker exec "$tag-a" sh -c 'for p in /proc/[0-9]*; do if tr "\0" " " < "$p/cmdline" 2>/dev/null | grep -q "agentic-org-office --office"; then basename "$p"; fi; done' || true)
+worker=${worker%%$'\n'*}
+[ -n "$worker" ] || fail "no worker process to stop"
+docker exec "$tag-a" sh -c "kill -STOP $worker"
+started=$(now)
+docker stop "$tag-a" >/dev/null
+took=$(since "$started")
+code=$(docker inspect -f '{{.State.ExitCode}}' "$tag-a")
+echo "docker stop with the worker stopped (SIGSTOP): $took s, exit code $code"
+[ "$code" = 0 ] || fail "the service ended with $code: the runtime had to kill it"
+awk -v t="$took" 'BEGIN { exit !(t < 8) }' || fail "the service took $took s to stop"
+
 say "6. a new container on the same volumes"
 docker rm "$tag-a" >/dev/null
 run "$tag-b" -p "127.0.0.1:$port:8443" -v "$tag-data:/data" -v "$tag-secrets:/secrets"
@@ -317,6 +353,33 @@ started=$(now)
 docker stop "$tag-d" >/dev/null
 echo "docker stop: $(since "$started") s, exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-d")"
 docker rm -f -v "$tag-d" >/dev/null
+
+say "8b. a refused first start leaves nothing, and the corrected file then works (X5 review V1)"
+volumes+=("$tag-v1")
+docker volume create "$tag-v1" >/dev/null
+sed 's|"/secrets"|"/secret"|' "$here/setup.json" > "$scratch/typo.json"
+chmod 644 "$scratch/typo.json"
+run "$tag-v1a" -v "$tag-v1:/data" -v "$scratch/typo.json:/etc/agentic-org/setup.json:ro"
+wait_until "the mistyped container to end" exited "$tag-v1a"
+logs "$tag-v1a" | tail -n 1 | cut -c1-200 | sed 's/^/  /'
+[ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-v1a")" != 0 ] || fail "a mistyped credential directory started"
+left=$(docker run --rm -v "$tag-v1:/data" --entrypoint /bin/sh "$image" -c 'find /data -mindepth 1 \( -name instance -o -name "setup.v1.json" -o -name "instance.json" \)')
+[ -z "$left" ] || fail "the refused start left: $left"
+docker rm -f -v "$tag-v1a" >/dev/null
+run "$tag-v1b" -v "$tag-v1:/data"
+wait_until "the corrected container to serve" serving "$tag-v1b"
+echo "  no record and no data folder were left; the image's own file then serves on the same data volume"
+
+say "8c. the secrets volume is judged at every start (X5 review V3)"
+docker rm -f "$tag-v1b" >/dev/null
+run "$tag-v3" -v "$tag-v1:/data" --tmpfs /secrets:uid=61000,gid=61000,mode=0700
+wait_until "the container on a memory filesystem to end" exited "$tag-v3"
+log=$(logs "$tag-v3" | tail -n 1)
+echo "  ${log:0:260}"
+[ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-v3")" != 0 ] || fail "a memory filesystem as /secrets started"
+has 'credential directory' "$log" || fail "the refusal does not name the credential directory"
+[ -z "$(docker run --rm -v "$tag-v1:/data" --entrypoint /bin/sh "$image" -c 'find /data -name "*.key"')" ] || fail "a key was written"
+docker rm -f -v "$tag-v3" >/dev/null
 
 say "9. what the credential store refuses"
 # refused <name> <words expected in the log> <docker run options...>
