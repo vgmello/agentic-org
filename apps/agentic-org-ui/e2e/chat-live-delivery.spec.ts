@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 type Announcement = { log: string; text: string };
 declare global {
@@ -59,9 +60,7 @@ async function take(page: Page) {
 
 async function open(page: Page, id = 'c-release-v1') {
 	await observe(page);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, `/chat?c=${id}`);
 	await expect(page.getByRole('log', { name: 'Messages', exact: true })).toBeVisible();

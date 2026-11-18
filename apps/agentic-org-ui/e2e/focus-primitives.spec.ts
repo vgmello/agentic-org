@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { enterMockedOrganization } from './mock-organization';
 import { visit } from './ready';
 import { shot } from './shot';
 import { buttons, menu, consumerFocus, keyboardFocus, outline, token, setupFocus, readable, outlineContrast } from './focus-primitives';
@@ -17,8 +18,7 @@ for (const width of [320, 640, 960, 1280]) {
 }
 
 test('BUG-102 BUG-70: ProcessSheet caller override uses the same indigo focus and closes', { tag: '@webkit' }, async ({ page }) => {
-	await visit(page, '/create'); await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click(); await expect(page).toHaveURL(/\/agents$/);
+	await enterMockedOrganization(page); await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/processes?place=team:web'); await page.locator('[data-testid=process-row][data-key="code-review"]').click();
 	const close = page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true });
 	await keyboardFocus(page, close); await outline(close, 2, await token(page));

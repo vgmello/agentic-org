@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 const side = (page: Page) => page.getByRole('navigation', { name: 'Chat', exact: true });
 const mainNav = (page: Page) => page.getByRole('navigation', { name: 'Main', exact: true });
@@ -8,9 +9,7 @@ const thread = (page: Page) => page.getByTestId('thread-panel');
 const fullTitle = (place: string) => `${place} · Chat · Agentic Org`;
 
 async function open(page: Page, search = '') {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, `/chat${search}`);
 	await expect(side(page)).toBeVisible();
