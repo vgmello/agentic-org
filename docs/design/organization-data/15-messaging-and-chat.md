@@ -76,7 +76,7 @@ Each employee's state is stored in that employee's own files (see [Storage and d
 | `message_reactions` | `participants/<employee-id>/reactions/<message-id>.json`: employee/reaction/time |
 | Card state shown with a message (no table of its own; assembled in the `messages` projection) | `answer` and acceptance from the answerer's `participants/<employee-id>/answers/<message-id>.json`; the close outcome from `messages/<message-id>.close.json`; pins from `pins[]` in `conversation.json`. None of it is stored in the message file. |
 
-**What reaches an agent's inbox** ([ADR-0024](../../adr/0024-a-channel-question-is-watched-for-its-answer.md)). A recipient-state file exists for an agent only when a message is addressed to it, and `delivered_because` says why: `addressed` (a direct message, an ask or a hand-off), `mention` (the message's `metadata_json.mentions[]` holds the agent's employee ID; the accepting office resolves each mention and refuses one it cannot resolve), `thread_reply` (a reply in a thread the agent started or replied in) or `answer_candidate` (the watch judged the message to answer the agent's open channel question; `related_message_id` is that question). Other channel messages create no recipient state for an agent. A watch is a durable local record of the asker's office, outside organization data.
+**What reaches an agent's inbox** ([ADR-0024](../../adr/0024-a-channel-question-is-watched-for-its-answer.md)). A recipient-state file exists for an agent only when a message is addressed to it, and `delivered_because` says why: `addressed` (a direct message, an ask or a hand-off), `thread_reply` (a reply in a thread the agent started or replied in), `mention` (the message's `metadata_json.mentions[]` holds the agent's employee ID) or `answer_candidate` (the channel's watcher judged the message to respond to an open channel question of the agent). There is one file for a message and a recipient: when several reasons apply it carries the first in that order, and `related_message_ids_json` lists every question of the agent that the message was matched to. Other channel messages create no recipient state for an agent. **Mentions.** The accepting office fills `mentions[]` from the text: an `@` that starts the text or follows a character that is neither a letter nor a digit, outside code, followed by the longest run of handle characters that is an existing handle (a trailing full stop, hyphen or underscore is ignored), naming an employee who is not inactive and is a member of the conversation. `@here` and an `@word` that names nobody mention no one. **Watches.** The watch a channel question opens, and the marks of how far each channel has been judged, are durable local records of the asker's office, outside organization data.
 
 Thread last-message/time/count, participant summaries, unread lists/counts and urgent flags are derived. Preserve each original delivery identity `(origin_office_id, origin_incarnation, origin_sequence)` and organization epoch/sequence; a retry cannot create a second message. Recipient-state origin is independent of message-content origin.
 
@@ -199,7 +199,7 @@ CREATE TABLE message_recipient_states (
   updated_at TEXT NOT NULL,
   reason TEXT,
   delivered_because TEXT NOT NULL DEFAULT 'addressed' CHECK (delivered_because IN ('addressed','mention','thread_reply','answer_candidate')),
-  related_message_id TEXT,
+  related_message_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(related_message_ids_json) AND json_type(related_message_ids_json)='array'),
   expired_waiting_person INTEGER NOT NULL DEFAULT 0 CHECK (expired_waiting_person IN (0,1)),
   owner_office_id TEXT NOT NULL,
   origin_incarnation TEXT NOT NULL,
@@ -339,7 +339,7 @@ erDiagram
         TEXT updated_at "required"
         TEXT reason "optional"
         TEXT delivered_because "required"
-        TEXT related_message_id "optional"
+        TEXT related_message_ids_json "required"
         INTEGER expired_waiting_person "required"
         TEXT owner_office_id FK "required"
         TEXT origin_incarnation "required"

@@ -1852,7 +1852,7 @@ CREATE TABLE message_recipient_states (
   updated_at TEXT NOT NULL,
   reason TEXT,
   delivered_because TEXT NOT NULL DEFAULT 'addressed' CHECK (delivered_because IN ('addressed','mention','thread_reply','answer_candidate')),
-  related_message_id TEXT,
+  related_message_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(related_message_ids_json) AND json_type(related_message_ids_json)='array'),
   expired_waiting_person INTEGER NOT NULL DEFAULT 0 CHECK (expired_waiting_person IN (0,1)),
   owner_office_id TEXT NOT NULL,
   origin_incarnation TEXT NOT NULL,

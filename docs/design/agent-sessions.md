@@ -246,7 +246,9 @@ The decisions this design applies:
      sandbox's own real-path enforcement holds.
    - **The fixed denies override every allow rule.** If a runtime's approval bridge
      does not work, actions needing approval are denied and the run ends `blocked`.
-8. **Instructions are composed by the office** from the employee's identity and role
+8. **Instructions are composed by the office** from the product's built-in
+   [agent instructions](agent-instructions.md), which come first and are the same for
+   every agent, the employee's identity and role
    (`profile.md`), its prompt and tools (`execution.md`), the turn's explicit
    objective, the effective processes and standards
    ([process design](processes.md#32-delivery-to-sessions-proc-7)), built-in `agent-os`
@@ -348,7 +350,9 @@ A turn starts only from an explicit instruction, the answer to a required ask, b
 addressed by another agent or receiving an answer to its own question while idle
 ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), or a recovery. Other
 messages, assignments and schedules never create model work by themselves.
-A second open turn returns `BUSY`.
+A second open turn returns `BUSY`. An agent ends a turn with one line saying what it
+did; the office keeps it as the turn's outcome summary, shown in the turn's history and
+sent to no one ([agent instructions](agent-instructions.md)).
 
 1. **Admit.** Authenticate the caller and scope, validate placement and configuration
    revisions, persist the immutable input and the actor-bound operation receipt before
