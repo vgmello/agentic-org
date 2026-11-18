@@ -1,7 +1,18 @@
 {
   "version": 2,
   "mode": "clone",
-  "reason": "Owner decision 2026-11-18: fresh Codex reviews run the project's checks themselves. Each review turn works in a disposable copy-on-write clone of the checkout (deleted afterwards); the real checkout, the run folder and shared temp folders stay read-only. Network is on so tests that open a local port can run; accepted risk: a reviewer could also reach the internet with what it can read. The runner reads this file from the task's base commit, so a change under review cannot widen its own review.",
-  "exclude": ["target", ".repowise"],
-  "network_access": true
+  "sandbox": "danger-full-access",
+  "reason": "Owner decisions 2026-11-18: fresh Codex reviews run the project's checks themselves, including browser checks. Each review turn works in a disposable copy-on-write clone of the checkout (deleted afterwards) with the user's Codex config and MCP servers off. Because macOS's Codex sandbox refuses to launch browsers, the owner chose danger-full-access for review turns: a reviewer can write anywhere this user can and reach the network; accepted risk. The runner rejects a review that changes source files, HEAD or the index (fingerprint), or git config, hooks and info (with file modes), shallow, object alternates, linked-worktree pointers or the protected_refs below (integration branches, tags, replace refs); worktrees added or removed meanwhile, and other branches' upstream tracking settings in git config, are ignored. It does not detect changes to other branches, remote-tracking refs, stash, other worktrees being deleted, ignored files (node_modules, .env), the run folder, git objects, a core.hooksPath target, included, global or submodule git config, anything outside the checkout, or writes by a process that escaped the turn after it ended. Concurrent git activity that changes something guarded (for example committing to v1-integration, a fetch that brings a new tag, moving or repairing a worktree, sparse-checkout, or editing git config during a review) blocks the review; it fails closed. The runner reads this file from the task's base commit, so a change under review cannot widen its own review.",
+  "exclude": [
+    "target",
+    ".repowise"
+  ],
+  "network_access": true,
+  "protected_refs": [
+    "refs/heads/main",
+    "refs/heads/v1",
+    "refs/heads/v1-integration",
+    "refs/tags/",
+    "refs/replace/"
+  ]
 }

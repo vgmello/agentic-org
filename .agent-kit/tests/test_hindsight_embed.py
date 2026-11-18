@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import sys
+import shutil
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -173,9 +174,18 @@ class ReviewIsolationTests(unittest.TestCase):
                 policy.write_text(text); git('add', '.'); git('commit', '-qm', 'policy')
                 with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                     kit_codex.review_sandbox(repo, git('rev-parse', 'HEAD'))
+            for bad, message in ((dict(sandbox='root'), 'sandbox must be'),
+                                 (dict(sandbox='danger-full-access', network_access=False), 'always has network'),
+                                 (dict(sandbox='danger-full-access'), 'needs protected_refs'),
+                                 (dict(protected_refs=['main']), 'refs/... patterns')):
+                policy.write_text(json.dumps({'version': 2, 'mode': 'clone', 'network_access': True, 'exclude': [], **bad}))
+                git('add', '.'); git('commit', '-qm', 'bad sandbox')
+                with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, message):
+                    kit_codex.review_sandbox(repo, git('rev-parse', 'HEAD'))
             policy.write_text(json.dumps({'version': 2, 'mode': 'clone', 'network_access': False, 'exclude': ['target']}))
             git('add', '.'); git('commit', '-qm', 'good')
             box = kit_codex.review_sandbox(repo, git('rev-parse', 'HEAD'))
+            self.assertEqual(box['sandbox'], 'workspace-write', 'the sandbox defaults to workspace-write')
             self.assertEqual(box['exclude'], sorted({'target', *kit_codex.CLONE_ALWAYS_EXCLUDED}))
             policy.write_text(json.dumps({'version': 2, 'mode': 'clone', 'network_access': True, 'exclude': []}))
             self.assertFalse(kit_codex.review_sandbox(repo, git('rev-parse', 'HEAD'))['network_access'],
@@ -219,6 +229,137 @@ class ReviewIsolationTests(unittest.TestCase):
             args = popen.call_args.args[0]
             self.assertEqual(args[2:5], ['-C', str(repo), 'resume'])
             self.assertEqual(Path(popen.call_args.kwargs['cwd']), repo)
+
+    def test_full_access_review_keeps_the_clone_and_drops_workspace_flags(self):
+        import subprocess
+        import uuid
+        import kit_codex
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory).resolve() / 'repo'
+            (repo / 'src').mkdir(parents=True)
+            real_popen = kit_codex.subprocess.Popen
+            seen = {}
+            def launch(args, **kwargs):
+                if args[0] != 'codex':
+                    return real_popen(args, **kwargs)
+                seen['cwd'] = Path(kwargs['cwd'])
+                def communicate(prompt, timeout):
+                    seen['prompt'] = prompt
+                    Path(args[args.index('--output-last-message') + 1]).write_text(
+                        json.dumps({'verdict': 'clean', 'summary': 'fixture', 'findings': []}))
+                    for event in ({'type': 'thread.started', 'thread_id': str(uuid.uuid4())}, {'type': 'turn.completed', 'usage': {}}):
+                        kwargs['stdout'].write(json.dumps(event) + '\n')
+                    kwargs['stdout'].flush()
+                process = Mock(returncode=0)
+                process.communicate.side_effect = communicate
+                return process
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            box = {'mode': 'clone', 'sandbox': 'danger-full-access', 'network_access': True, 'exclude': ['.agent-kit/reviews']}
+            with patch.object(kit_codex.subprocess, 'Popen', side_effect=launch) as popen, patch.object(kit_codex.os, 'killpg'):
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run', 'review', 'Review only', 'high', 10, review_box=box)
+            tamper = {'hook': True}
+            def tampering(args, **kwargs):
+                if args[0] == 'codex' and tamper.pop('hook', False):
+                    (repo / '.git/hooks/pre-commit').write_text('#!/bin/sh\necho planted\n')
+                return launch(args, **kwargs)
+            with patch.object(kit_codex.subprocess, 'Popen', side_effect=tampering), patch.object(kit_codex.os, 'killpg'), \
+                    self.assertRaisesRegex(ValueError, 'Git state the runner guards changed'):
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run2', 'review', 'Review only', 'high', 10, review_box=box)
+            def stalls(args, **kwargs):  # plants a hook, then times out
+                if args[0] != 'codex':
+                    return real_popen(args, **kwargs)
+                (repo / '.git/hooks/post-commit').write_text('#!/bin/sh\necho planted\n')
+                process = Mock(returncode=None)
+                process.communicate.side_effect = subprocess.TimeoutExpired('codex', 10)
+                return process
+            with patch.object(kit_codex.subprocess, 'Popen', side_effect=stalls), patch.object(kit_codex.os, 'killpg'), \
+                    self.assertRaisesRegex(ValueError, 'Git state the runner guards changed') as caught:
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run3', 'final', 'Review only', 'high', 10, review_box=box)
+            self.assertIn('timed out', str(caught.exception.__context__), 'the timeout stays attached')
+            args = next(c.args[0] for c in popen.call_args_list if c.args[0][0] == 'codex')
+            overrides = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-c']
+            self.assertIn('sandbox_mode="danger-full-access"', overrides)
+            self.assertIn('--skip-git-repo-check', args)
+            self.assertFalse([o for o in overrides if o.startswith('sandbox_workspace_write.')])
+            self.assertIn('--ignore-user-config', args)
+            self.assertNotEqual(seen['cwd'], repo)
+            self.assertFalse(seen['cwd'].exists(), 'the clone is still deleted')
+            self.assertIn('worktree links or protected branches, tags and replace refs change', seen['prompt'])
+
+    def test_git_guard_covers_what_git_runs_and_protected_refs_but_not_concurrent_work(self):
+        import subprocess
+        import kit_codex
+        protected = ['refs/heads/integration', 'refs/tags/', 'refs/replace/']
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            repo = base / 'repo'
+            def git(*args, at=repo):
+                subprocess.run(['git', '-C', str(at), '-c', 'user.name=t', '-c', 'user.email=t@t', *args], check=True,
+                               capture_output=True)
+            git('init', '-q', at=base)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            git('commit', '-q', '--allow-empty', '-m', 'base')
+            git('branch', 'integration')
+            for name in ('wt', 'other'):
+                git('worktree', 'add', '-q', str(base / name))
+            def append(path, text):
+                with path.open('a') as handle:
+                    handle.write(text)
+            def changed(at, change):
+                before = kit_codex.git_guard(at, protected)
+                self.assertEqual([], kit_codex.guard_changed(before, kit_codex.git_guard(at, protected)), 'stable')
+                change()
+                return kit_codex.guard_changed(before, kit_codex.git_guard(at, protected))
+            (repo / '.git/hooks/pre-push').write_text('#!/bin/sh\n')
+            (repo / '.git/hooks/pre-push').chmod(0o644)
+            blocking = {
+                'config': lambda: append(repo / '.git/config', '[core]\n\tfsmonitor = x\n'),
+                'info': lambda: append(repo / '.git/info/exclude', 'hidden\n'),
+                'common config.worktree': lambda: (repo / '.git/config.worktree').write_text('[core]\n'),
+                'own config.worktree': lambda: (repo / '.git/worktrees/wt/config.worktree').write_text('[core]\n'),
+                "another worktree's pointer": lambda: append(repo / '.git/worktrees/other/commondir', '\n'),
+                'alternates': lambda: (repo / '.git/objects/info/alternates').write_text('/elsewhere\n'),
+                'protected branch moved': lambda: git('branch', '-f', 'integration', 'wt'),
+                'tag': lambda: git('tag', 'v-moved'),
+                'shallow': lambda: (repo / '.git/shallow').write_text('0' * 40 + '\n'),
+                'protected branch tracking': lambda: git('branch', '--set-upstream-to', 'wt', 'integration'),
+                'own info': lambda: ((repo / '.git/worktrees/wt/info').mkdir(exist_ok=True),
+                                     (repo / '.git/worktrees/wt/info/sparse-checkout').write_text('/x\n')),
+                'hook made executable': lambda: (repo / '.git/hooks/pre-push').chmod(0o755),
+                'hooks replaced by a link': lambda: (shutil.move(repo / '.git/hooks', base / 'hooks'),
+                                                     (repo / '.git/hooks').symlink_to(base / 'hooks')),
+            }
+            git('commit', '-q', '--allow-empty', '-m', 'x', at=base / 'wt')
+            for name, change in blocking.items():
+                with self.subTest(change=name):
+                    self.assertTrue(changed(base / 'wt', change))
+            # Reviewing the main checkout guards the same things.
+            self.assertTrue(changed(repo, lambda: append(repo / '.git/config', '[core]\n\tpager = x\n')))
+            git('commit', '-q', '--allow-empty', '-m', 'z', at=base / 'other')
+            self.assertTrue(changed(repo, lambda: git('branch', '-f', 'integration', 'other')))
+            # Ordinary concurrent work elsewhere does not block a review.
+            quiet = {
+                'commit in another worktree': lambda: git('commit', '-q', '--allow-empty', '-m', 'y', at=base / 'other'),
+                'switch branches elsewhere': lambda: git('switch', '-q', '-c', 'feature', at=base / 'other'),
+                'new branch': lambda: git('branch', 'scratch'),
+                'delete branch': lambda: git('branch', '-D', 'scratch'),
+                'stash': lambda: ((base / 'other/f').write_text('x'), git('add', 'f', at=base / 'other'),
+                                  git('stash', '-q', at=base / 'other')),
+                'pack refs': lambda: git('pack-refs', '--all'),
+                'branch with upstream elsewhere': lambda: git('switch', '-q', '-c', 'tracked', '--track', 'origin/main',
+                                                              at=base / 'other'),
+                'push -u style tracking': lambda: git('branch', '--set-upstream-to', 'origin/main', 'scratch2'),
+                'delete a tracked branch': lambda: git('branch', '-D', 'scratch2'),
+                'add a worktree': lambda: git('worktree', 'add', '-q', str(base / 'third')),
+                'remove a worktree': lambda: git('worktree', 'remove', str(base / 'third')),
+            }
+            # A remote to track: the origin's main is the base commit.
+            git('remote', 'add', 'origin', str(repo))
+            git('fetch', '-q', 'origin', 'main:refs/remotes/origin/main')
+            git('branch', 'scratch2')
+            for name, change in quiet.items():
+                with self.subTest(quiet=name):
+                    self.assertEqual([], changed(base / 'wt', change))
 
     @unittest.skipUnless(sys.platform == 'darwin', 'BSD file flags')
     def test_remove_clone_clears_locks_a_reviewer_can_set(self):

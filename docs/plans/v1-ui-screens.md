@@ -82,6 +82,9 @@ fresh review, merged with `--no-ff`. At most two are built at once, on disjoint 
   outrank it, above all `docs/specs/app-shell-ux.md` section 6a. Its UI/UX Pro Max companion
   skill is disabled (owner, 2026-11-18). Every UI feature also gets a fresh principal-designer
   UX review (the persona's review job and consistency audit) before its Codex cycle.
+  When the screens are built, a principal-designer walkthrough goes through every built page in
+  the running app (owner, 2026-11-18): quality, consistency across pages and the persona's audit,
+  at the plan's widths and at 200% text. Its findings are fixed before step 9 is called done.
 - **Checks kept green on every commit:** type check, unit tests, lint and build. Existing
   browser tests that pin the old routes and the old look are brought in line in the last
   step, not screen by screen.

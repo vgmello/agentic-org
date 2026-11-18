@@ -18,7 +18,7 @@
     ".agent-kit/reference/CONTEXT_TOOLS.md": "8dee331705b95453870e4bd4d691a84ef122851fb9b1389f34a68b332456933e",
     ".agent-kit/reference/HINDSIGHT.md": "a2744f7b427f6e32db6370686403274a785acf10dfe76e3aaa68ba0e82296008",
     ".agent-kit/reference/PROJECT_CAPABILITIES.md": "2ca5efb0992d078b8b858f2eb1af9d7d68d31dae3d987fdf012ea41713fdf67b",
-    ".agent-kit/runtime/kit_codex.py": "7c81d83a9d24d7b57041e39199de74ae1698921ccb9c4bdd8b4dd66807588460",
+    ".agent-kit/runtime/kit_codex.py": "52750209fea0c855ca080d70b2e8e17b9875688ba615b21df8f0c7fef2251fcd",
     ".agent-kit/runtime/kit_codex_hooks.py": "8dfc1893876d81fc87ed47f1ae6b9bca97da1a123a5cefc24d0ef0be12eb26ae",
     ".agent-kit/runtime/kit_config.py": "9fcd60f0e7572f7b145267e05ed04871c883a8e6e8943b53560c6ba57f2d224f",
     ".agent-kit/runtime/kit_context.py": "8dbcefebfc9e80d9fc58f37499f873ab32529a3455a142f750c4ce005768146d",
@@ -73,13 +73,13 @@
     "AGENTS.md": "cc2dd7a13948e5ee836acbe072dfd4c0f7e18ad91973c710b5efad6861f22f19",
     ".agent-kit/runtime/kit_hindsight_embed.py": "2a60a49711d30708f76de68c807f65c0f9bcb69e790bfe1ae11b9c13ea8447e9",
     ".agent-kit/policy/hindsight/embed.json": "9217050898e809066002cdba90262cb79af75320df62d45795b0f1cd10f28de1",
-    ".agent-kit/policy/review-sandbox.json": "b5710bfcc2446b2aed30f98e2c4c1eeb15323c3107a58ca3f2d4d6f8b9351af3"
+    ".agent-kit/policy/review-sandbox.json": "19b941f4e340d3b7848a52de24df0b0d3e09a36e1e662c78068ecf654156f130"
   },
   "kit_version": "0.10.0",
   "mode": "codex-only",
   "version": 1,
   "local_adaptations": {
-    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process. Owner switched the Codex model from gpt-6.1-sol to gpt-6.2-sol on 2026-11-18 (live call confirmed access); the routing policy, runner, validator, doctor text, Codex roles, plan-review recipe and model references in reference/skills docs carry that local model pin. Efforts and gates unchanged. Fresh reviews run in a disposable copy-on-write clone of the checkout with a private temp folder (policy/review-sandbox.json, read from the task's base commit), so they can run every project check while the real checkout, run folder and shared temp stay read-only; the user Codex config (and its MCP servers) is not loaded; the turn's processes are killed and the clone deleted afterwards; repair turns are pinned to the real checkout with -C. Network is on (accepted risk; owner decision 2026-11-18).",
+    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process. Owner switched the Codex model from gpt-6.1-sol to gpt-6.2-sol on 2026-11-18 (live call confirmed access); the routing policy, runner, validator, doctor text, Codex roles, plan-review recipe and model references in reference/skills docs carry that local model pin. Efforts and gates unchanged. Fresh reviews run in a disposable copy-on-write clone of the checkout with a private temp folder (policy/review-sandbox.json, read from the task's base commit), so they can run every project check (read-only real checkout in workspace-write mode); the user Codex config (and its MCP servers) is not loaded; the turn's processes are killed and the clone deleted afterwards; repair turns are pinned to the real checkout with -C. Network is on (accepted risk; owner decision 2026-11-18). Review turns use danger-full-access so browser checks can run (owner decision 2026-11-18; macOS's Codex sandbox refuses browsers); the runner rejects a review that changes source files, HEAD, the index, git config, hooks and info (with modes), the policy's protected refs (integration branches, tags, replace refs), shallow, object alternates or linked-worktree pointers (also after a timeout or failed cleanup); other branches and their upstream tracking settings, remote-tracking refs, stash, other worktrees added or deleted, ignored files, the run folder, git objects, hooksPath targets, included/global/submodule git config, paths outside the checkout and escaped processes are not detected. Kit docs that call reviews read-only mean review-only in full-access mode.",
     "source_revision": "01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1",
     "files": {
       ".agent-kit/runtime/kit_hindsight.py": {
@@ -100,7 +100,7 @@
       },
       ".agent-kit/runtime/kit_codex.py": {
         "upstream_sha256": "730b2ae4f14611886d9ed5f8cbaabf1daec3aeac52b5f53a9e0950c6fbccf878",
-        "local_sha256": "7c81d83a9d24d7b57041e39199de74ae1698921ccb9c4bdd8b4dd66807588460"
+        "local_sha256": "52750209fea0c855ca080d70b2e8e17b9875688ba615b21df8f0c7fef2251fcd"
       },
       ".agents/skills/plan-review/SKILL.md": {
         "upstream_sha256": "241ed1641b19611521e3f759d4a5c0c041e7ed1f68a4dcccf4d1dff09924e5c8",
@@ -148,7 +148,7 @@
       },
       ".agent-kit/policy/review-sandbox.json": {
         "upstream_sha256": null,
-        "local_sha256": "b5710bfcc2446b2aed30f98e2c4c1eeb15323c3107a58ca3f2d4d6f8b9351af3"
+        "local_sha256": "19b941f4e340d3b7848a52de24df0b0d3e09a36e1e662c78068ecf654156f130"
       }
     }
   }
