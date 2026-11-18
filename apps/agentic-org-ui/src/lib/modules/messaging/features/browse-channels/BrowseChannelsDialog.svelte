@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import type { BrowseRow } from '$lib/modules/messaging/model';
 
 	/**
@@ -45,31 +51,73 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent class="sm:max-w-xl max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto" onCloseAutoFocus={(event) => { if (returnFocus) { event.preventDefault(); returnFocus(); } }}>
+	<DialogContent
+		class="sm:max-w-xl max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto"
+		onCloseAutoFocus={(event) => {
+			if (returnFocus) {
+				event.preventDefault();
+				returnFocus();
+			}
+		}}
+	>
 		<DialogHeader>
-			<DialogTitle text={'Browse channels'} />
-			<DialogDescription>Channels you can find in this organization. Project and team channels follow their members.</DialogDescription>
+			<DialogTitle text="Browse channels" />
+			<DialogDescription
+				>Channels you can find in this organization. Project and team channels follow their members.</DialogDescription
+			>
 		</DialogHeader>
-		<ul role="list" class="-mx-2 max-h-[60dvh] divide-y divide-white/5 overflow-y-auto" data-testid="browse-list">
+		<ul
+			role="list"
+			class="-mx-2 max-h-[60dvh] divide-y divide-white/5 overflow-y-auto"
+			data-testid="browse-list"
+		>
 			{#each rows as r (r.conversation.id)}
 				<li class="flex flex-wrap items-center gap-x-4 gap-y-2 px-2 py-3" data-testid="browse-row">
 					<div class="min-w-0 flex-1 basis-56">
 						<p class="text-sm/6 font-semibold text-white">#{r.conversation.name}</p>
-						{#if r.conversation.purpose}<p class="text-sm/6 text-gray-300">{r.conversation.purpose}</p>{/if}
+						{#if r.conversation.purpose}<p class="text-sm/6 text-gray-300">
+								{r.conversation.purpose}
+							</p>{/if}
+						<!-- eslint-disable svelte/no-useless-mustaches -- the spaces must be inside a mustache: Svelte trims a block's leading whitespace -->
 						<p class="text-xs/5 text-gray-400">
-							{r.scope ?? (r.conversation.access === 'invite' ? 'By invitation' : 'Open to everyone')} · {r.conversation.members.length} {r.conversation.members.length === 1 ? 'member' : 'members'}{#if r.member}{' · You\'re a member'}{/if}
+							{r.scope ??
+								(r.conversation.access === 'invite' ? 'By invitation' : 'Open to everyone')} · {r
+								.conversation.members.length}
+							{r.conversation.members.length === 1
+								? 'member'
+								: 'members'}{#if r.member}{" · You're a member"}{/if}
 						</p>
+						<!-- eslint-enable svelte/no-useless-mustaches -->
 					</div>
 					{#if r.action === 'open'}
-						<Button type="button" size="sm" variant="ghost" onclick={() => onopen(r.conversation.id)}>Open</Button>
+						<Button
+							type="button"
+							size="sm"
+							variant="ghost"
+							onclick={() => onopen(r.conversation.id)}>Open</Button
+						>
 					{:else if r.action === 'join'}
-						<Button type="button" size="sm" variant="outline" disabled={!officeRunning || !!busy} onclick={() => run(r.conversation.id, onjoin)}>Join</Button>
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							disabled={!officeRunning || !!busy}
+							onclick={() => run(r.conversation.id, onjoin)}>Join</Button
+						>
 					{:else if r.action === 'request'}
-						<Button type="button" size="sm" variant="outline" disabled={!officeRunning || !!busy} onclick={() => run(r.conversation.id, onrequest)}>Request invitation</Button>
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							disabled={!officeRunning || !!busy}
+							onclick={() => run(r.conversation.id, onrequest)}>Request invitation</Button
+						>
 					{:else if r.action === 'requested'}
 						<p class="text-xs/5 text-gray-400">Invitation requested</p>
 					{:else}
-						<p class="text-xs/5 text-gray-400">Follows its {r.conversation.auto?.type === 'team' ? 'team' : 'project'}</p>
+						<p class="text-xs/5 text-gray-400">
+							Follows its {r.conversation.auto?.type === 'team' ? 'team' : 'project'}
+						</p>
 					{/if}
 				</li>
 			{/each}

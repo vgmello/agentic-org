@@ -9,5 +9,6 @@ export const textareaClass =
 export const helpClass = 'mt-2 text-xs/5 text-gray-400';
 export const errorClass = 'mt-2 text-xs/5 text-red-300';
 /** The red primary of a destructive confirmation (spec 6.4: "Remove Studio Mac (red)"). */
-export const dangerButton = 'bg-red-500 text-white hover:bg-red-500/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300';
+export const dangerButton =
+	'bg-red-500 text-white hover:bg-red-500/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300';
 export const mobileButton = 'max-[639px]:min-h-11';

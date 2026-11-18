@@ -8,7 +8,14 @@
 	import type { Snippet } from 'svelte';
 	import { toAppError } from '$lib/office/api';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { dangerButton, mobileButton } from './classes';
 
 	let {
@@ -62,13 +69,31 @@
 	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
 		<DialogHeader>
 			<DialogTitle text={title} />
-			{#if description}<DialogDescription class="[overflow-wrap:anywhere]">{description}</DialogDescription>{/if}
+			{#if description}<DialogDescription class="[overflow-wrap:anywhere]"
+					>{description}</DialogDescription
+				>{/if}
 		</DialogHeader>
-		{#if body}<div class="space-y-2 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">{@render body()}</div>{/if}
-		{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+		{#if body}<div class="space-y-2 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+				{@render body()}
+			</div>{/if}
+		{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+				{error}
+			</p>{/if}
 		<DialogFooter>
-			<Button type="button" variant="outline" class={mobileButton} disabled={busy} onclick={() => (open = false)}>{cancelLabel}</Button>
-			<Button type="button" class="{mobileButton} {destructive ? dangerButton : ''}" aria-busy={busy} aria-disabled={busy} onclick={confirm}>{busy ? busyLabel : confirmLabel}</Button>
+			<Button
+				type="button"
+				variant="outline"
+				class={mobileButton}
+				disabled={busy}
+				onclick={() => (open = false)}>{cancelLabel}</Button
+			>
+			<Button
+				type="button"
+				class="{mobileButton} {destructive ? dangerButton : ''}"
+				aria-busy={busy}
+				aria-disabled={busy}
+				onclick={confirm}>{busy ? busyLabel : confirmLabel}</Button
+			>
 		</DialogFooter>
 	</DialogContent>
 </Dialog>

@@ -1,8 +1,19 @@
 // Words for the member screens, as pure functions: presence, turn states, who started a turn, durations and ages.
-import type { AttemptOutcome, MemberRow, Presence, PresenceId, StartedByKind, Turn, TurnState } from './types';
+import type {
+	AttemptOutcome,
+	MemberRow,
+	Presence,
+	PresenceId,
+	StartedByKind,
+	Turn,
+	TurnState
+} from './types';
 
 /** Presence words in the spec's priority order (our-org-in-the-app §5). */
-export const PRESENCE: Record<PresenceId, { word: string; tone: 'amber' | 'indigo' | 'green' | 'gray' | 'sky' }> = {
+export const PRESENCE: Record<
+	PresenceId,
+	{ word: string; tone: 'amber' | 'indigo' | 'green' | 'gray' | 'sky' }
+> = {
 	needs_you: { word: 'Needs you', tone: 'amber' },
 	with_you: { word: 'With you', tone: 'indigo' },
 	working: { word: 'Working', tone: 'indigo' },
@@ -13,7 +24,8 @@ export const PRESENCE: Record<PresenceId, { word: string; tone: 'amber' | 'indig
 	unknown: { word: 'Status unknown', tone: 'gray' }
 };
 
-export const presenceLabel = (p: Presence): string => (p.detail ? `${PRESENCE[p.id].word} ${p.detail}` : PRESENCE[p.id].word);
+export const presenceLabel = (p: Presence): string =>
+	p.detail ? `${PRESENCE[p.id].word} ${p.detail}` : PRESENCE[p.id].word;
 
 /** What a row shows: nothing when unknown (rows omit unknown pills, AC-IA08). */
 export const rowPresence = (m: Pick<MemberRow, 'presence'>): Presence | undefined =>
@@ -91,7 +103,8 @@ export function startedByText(s: Turn['startedBy']): string {
 export function outcomeText(t: Turn): string {
 	if (t.state === 'failed') return `Failed: ${t.failure ?? 'no reason recorded'}`;
 	if (t.state === 'succeeded') return t.summary ?? 'Succeeded';
-	if (t.state === 'recovery_required') return `Recovery required${t.failure ? `: ${t.failure}` : ''}`;
+	if (t.state === 'recovery_required')
+		return `Recovery required${t.failure ? `: ${t.failure}` : ''}`;
 	if (t.state === 'blocked') return `Blocked${t.failure ? `: ${t.failure}` : ''}`;
 	if (t.state === 'cancelled') return t.summary ?? 'Cancelled';
 	return TURN_STATE[t.state];
@@ -123,8 +136,15 @@ export function ageText(iso: string | undefined, now = Date.now()): string {
 
 /** 24-hour date and time for a row, e.g. "18 Nov, 09:12". */
 export const whenText = (iso: string) =>
-	new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+	new Date(iso).toLocaleString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23'
+	});
 
 export const usd = (n: number) => `$${n.toFixed(2)}`;
 
-export const tokens = (n: number | undefined) => (n === undefined ? 'unknown' : n.toLocaleString('en-US'));
+export const tokens = (n: number | undefined) =>
+	n === undefined ? 'unknown' : n.toLocaleString('en-US');

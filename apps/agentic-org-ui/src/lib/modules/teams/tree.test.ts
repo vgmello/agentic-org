@@ -2,12 +2,32 @@ import { describe, expect, it } from 'vitest';
 import { focusAfterRemoval, indentTeams } from './tree';
 import type { TeamRow } from './types';
 
-const t = (id: string, name: string, parentId?: string): TeamRow => ({ id, name, ref: '', parentId, people: 0, agents: 0, projects: [], maxMembers: 6, status: 'active' });
+const t = (id: string, name: string, parentId?: string): TeamRow => ({
+	id,
+	name,
+	ref: '',
+	parentId,
+	people: 0,
+	agents: 0,
+	projects: [],
+	maxMembers: 6,
+	status: 'active'
+});
 
 describe('indentTeams', () => {
 	it('flattens the tree in reading order with depths', () => {
-		const rows = indentTeams([t('w', 'Web', 'e'), t('e', 'Engineering'), t('p', 'Platform', 'e'), t('d', 'Design')]);
-		expect(rows.map((r) => `${r.depth}:${r.team.name}`)).toEqual(['0:Design', '0:Engineering', '1:Platform', '1:Web']);
+		const rows = indentTeams([
+			t('w', 'Web', 'e'),
+			t('e', 'Engineering'),
+			t('p', 'Platform', 'e'),
+			t('d', 'Design')
+		]);
+		expect(rows.map((r) => `${r.depth}:${r.team.name}`)).toEqual([
+			'0:Design',
+			'0:Engineering',
+			'1:Platform',
+			'1:Web'
+		]);
 		expect(rows.find((r) => r.team.id === 'e')?.children).toBe(2);
 	});
 	it('never hides a team in a loop', () => {

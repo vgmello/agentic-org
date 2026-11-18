@@ -58,16 +58,25 @@ type Extra = {
 	openTurn?: string;
 };
 const extras = data.members as Record<string, Extra>;
-const teamExtras = teamsData as Record<string, { number: number; purpose?: string; maxMembers?: number }>;
+const teamExtras = teamsData as Record<
+	string,
+	{ number: number; purpose?: string; maxMembers?: number }
+>;
 
 // ---- scenarios and errors ----
 
 export const scenario = () => new URLSearchParams(location.search).get('mock');
 export async function gate() {
 	if (scenario() === 'slow') await new Promise((r) => setTimeout(r, 2500));
-	if (scenario() === 'fails') throw { source: 'api', code: 'internal', message: "HQ didn't answer. Check that the office is running, then try again." };
+	if (scenario() === 'fails')
+		throw {
+			source: 'api',
+			code: 'internal',
+			message: "HQ didn't answer. Check that the office is running, then try again."
+		};
 }
-export const fail = (code: string, message: string) => Object.assign(new Error(message), { source: 'api', code, message });
+export const fail = (code: string, message: string) =>
+	Object.assign(new Error(message), { source: 'api', code, message });
 
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 const MIN = 60_000;
@@ -89,7 +98,9 @@ export async function snapshotFor(organizationId: string): Promise<OrgSnapshot> 
 }
 
 export async function officesFor(organizationId: string) {
-	const connection = (await officeApi.connections()).find((c) => c.organization.id === organizationId);
+	const connection = (await officeApi.connections()).find(
+		(c) => c.organization.id === organizationId
+	);
 	return connection?.organization.offices ?? [];
 }
 
@@ -107,14 +118,22 @@ export function teamRef(s: OrgSnapshot, id: string | undefined): TeamRef | undef
 export function homeTeamId(s: OrgSnapshot, memberId: string): string | undefined {
 	const override = extras[memberId]?.homeTeamId;
 	if (override && s.teams.some((t) => t.id === override)) return override;
-	return s.memberships.find((m) => m.member_id === memberId && s.teams.some((t) => t.id === m.team_id))?.team_id;
+	return s.memberships.find(
+		(m) => m.member_id === memberId && s.teams.some((t) => t.id === m.team_id)
+	)?.team_id;
 }
 
 export const handleOf = (m: Member) =>
-	m.kind === 'agent' ? (m.agent?.messaging_name ?? m.id) : (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+	m.kind === 'agent'
+		? (m.agent?.messaging_name ?? m.id)
+		: (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
 
 const statusOf = (m: Member): MemberRow['status'] =>
-	m.agent?.status === 'paused' ? 'paused' : m.agent?.status === 'offboarded' ? 'inactive' : 'active';
+	m.agent?.status === 'paused'
+		? 'paused'
+		: m.agent?.status === 'offboarded'
+			? 'inactive'
+			: 'active';
 
 function presenceOf(m: Member): MemberRow['presence'] {
 	if (statusOf(m) === 'inactive') return undefined;
@@ -146,13 +165,23 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 				canSignIn: m.kind === 'person' && (state.access.get(m.id) ?? x.canSignIn ?? false),
 				presence: presenceOf(m),
 				homeTeam: teamRef(s, homeTeamId(s, m.id)),
-				office: m.kind === 'agent' ? (office ? { id: office.id, name: office.name, observedAt: ago((x.execution?.observedAgoS ?? 60) * 1000) } : null) : undefined,
+				office:
+					m.kind === 'agent'
+						? office
+							? {
+									id: office.id,
+									name: office.name,
+									observedAt: ago((x.execution?.observedAgoS ?? 60) * 1000)
+								}
+							: null
+						: undefined,
 				reportsTo: boss ? { id: boss.id, name: boss.name } : undefined,
 				workingOn: x.workingOn ?? (task ? { ref: task.ref, title: task.title } : undefined),
 				runsOn: m.kind === 'agent' ? x.runsOn : undefined,
 				howItRuns: m.kind === 'agent' ? x.howItRuns : undefined,
 				contact: m.contact ?? x.contact,
-				directReports: s.members.filter((r) => r.reports_to_member_id === m.id && r.id !== m.id).length,
+				directReports: s.members.filter((r) => r.reports_to_member_id === m.id && r.id !== m.id)
+					.length,
 				inactiveSince: m.agent?.offboarded_at
 			};
 		});
@@ -164,8 +193,17 @@ function execution(m: Member, x: Extra, officeName: string | undefined): Executi
 	return {
 		requested: e.pool && e.model ? { pool: e.pool, model: e.model } : null,
 		connection: e.connection,
-		turnState: (state.added.get(m.id)?.some((t) => t.state === 'running') ? 'running' : e.turnState) as TurnState | 'idle',
-		office: officeName && e.generation ? { name: officeName, generation: e.generation, observedAt: ago((e.observedAgoS ?? 60) * 1000) } : undefined,
+		turnState: (state.added.get(m.id)?.some((t) => t.state === 'running')
+			? 'running'
+			: e.turnState) as TurnState | 'idle',
+		office:
+			officeName && e.generation
+				? {
+						name: officeName,
+						generation: e.generation,
+						observedAt: ago((e.observedAgoS ?? 60) * 1000)
+					}
+				: undefined,
 		readiness: { known: true, reasons: e.reasons },
 		home: e.home
 	};
@@ -173,7 +211,8 @@ function execution(m: Member, x: Extra, officeName: string | undefined): Executi
 
 // ---- turns ----
 
-const nameOf = (s: OrgSnapshot, id: string | undefined) => s.members.find((m) => m.id === id)?.name ?? id ?? '';
+const nameOf = (s: OrgSnapshot, id: string | undefined) =>
+	s.members.find((m) => m.id === id)?.name ?? id ?? '';
 
 async function turnsFor(organizationId: string, memberId: string): Promise<Turn[]> {
 	const s = await snapshotFor(organizationId);
@@ -185,20 +224,36 @@ async function turnsFor(organizationId: string, memberId: string): Promise<Turn[
 		state: string;
 		summary?: string;
 		failure?: string;
-		attempts: { connection: string; model: string; outcome: string; reason?: string; input?: number; output?: number; usageComplete: boolean }[];
+		attempts: {
+			connection: string;
+			model: string;
+			outcome: string;
+			reason?: string;
+			input?: number;
+			output?: number;
+			usageComplete: boolean;
+		}[];
 		cost: { usd: number; complete: boolean } | null;
 		hasLog: boolean;
 	}[];
 	const turns = listed.map((t): Turn => {
 		const startedAt = ago(t.startedAgoMin * MIN);
-		const endedAt = t.durationS !== undefined ? new Date(Date.parse(startedAt) + t.durationS * 1000).toISOString() : undefined;
+		const endedAt =
+			t.durationS !== undefined
+				? new Date(Date.parse(startedAt) + t.durationS * 1000).toISOString()
+				: undefined;
 		return {
 			id: t.id,
 			startedAt,
 			endedAt,
 			startedBy: {
 				kind: t.startedBy.kind as Turn['startedBy']['kind'],
-				...(t.startedBy.by ? { by: { id: t.startedBy.by, name: nameOf(s, t.startedBy.by) }, byViewer: t.startedBy.by === viewerId() } : {})
+				...(t.startedBy.by
+					? {
+							by: { id: t.startedBy.by, name: nameOf(s, t.startedBy.by) },
+							byViewer: t.startedBy.by === viewerId()
+						}
+					: {})
 			},
 			state: t.state as TurnState,
 			summary: t.summary,
@@ -222,7 +277,10 @@ async function turnsFor(organizationId: string, memberId: string): Promise<Turn[
 
 // ---- work, activity, conversations ----
 
-export function workRows(s: OrgSnapshot, filter: (t: (typeof tasksData)[number]) => boolean): WorkRow[] {
+export function workRows(
+	s: OrgSnapshot,
+	filter: (t: (typeof tasksData)[number]) => boolean
+): WorkRow[] {
 	return tasksData
 		.map((t) => ({ ...t, assigneeId: state.assigned.get(t.ref) ?? t.assigneeId }))
 		.filter(filter)
@@ -237,19 +295,40 @@ export function workRows(s: OrgSnapshot, filter: (t: (typeof tasksData)[number])
 }
 
 export const activityFor = (pick: (a: (typeof activityData)[number]) => boolean) =>
-	activityData.filter(pick).map((a) => ({ id: a.id, at: ago(a.agoMin * MIN), actor: a.actor, kind: a.kind, text: a.text }));
+	activityData.filter(pick).map((a) => ({
+		id: a.id,
+		at: ago(a.agoMin * MIN),
+		actor: a.actor,
+		kind: a.kind,
+		text: a.text
+	}));
 
 export const conversationsFor = (pick: (c: (typeof conversationsData)[number]) => boolean) =>
-	conversationsData
-		.filter(pick)
-		.map((c) => ({ id: c.id, title: c.title, kind: c.kind as 'channel' | 'direct' | 'thread', lastAt: ago(c.agoMin * MIN), preview: c.preview }));
+	conversationsData.filter(pick).map((c) => ({
+		id: c.id,
+		title: c.title,
+		kind: c.kind as 'channel' | 'direct' | 'thread',
+		lastAt: ago(c.agoMin * MIN),
+		preview: c.preview
+	}));
 
 /** The effective processes for a team: the organization's, with the team's replacements and additions. */
 export function processesForTeam(s: OrgSnapshot, teamId: string | undefined): ProcessRow[] {
-	const org: ProcessRow[] = processesData.organization.map((p) => ({ ...p, level: 'organization', relation: p.relation as ProcessRow['relation'] }));
-	const own = teamId ? ((processesData.teams as Record<string, typeof processesData.organization>)[teamId] ?? []) : [];
+	const org: ProcessRow[] = processesData.organization.map((p) => ({
+		...p,
+		level: 'organization',
+		relation: p.relation as ProcessRow['relation']
+	}));
+	const own = teamId
+		? ((processesData.teams as Record<string, typeof processesData.organization>)[teamId] ?? [])
+		: [];
 	const teamName = teamRef(s, teamId)?.name;
-	const mine: ProcessRow[] = own.map((p) => ({ ...p, level: 'team', from: teamName, relation: p.relation as ProcessRow['relation'] }));
+	const mine: ProcessRow[] = own.map((p) => ({
+		...p,
+		level: 'team',
+		from: teamName,
+		relation: p.relation as ProcessRow['relation']
+	}));
 	return [...org.filter((o) => !mine.some((m) => m.key === o.key)), ...mine];
 }
 
@@ -280,7 +359,9 @@ export const membersApi: MembersApi = {
 		const viewer = viewerId();
 		const ownerId = ownerIdOf(s);
 		const isOwner = viewer === ownerId;
-		const leads = s.teams.filter((t) => t.lead_member_id === memberId).map((t) => teamRef(s, t.id)!);
+		const leads = s.teams
+			.filter((t) => t.lead_member_id === memberId)
+			.map((t) => teamRef(s, t.id)!);
 		// Only the owner, or a person above this employee, changes Allow hiring; nobody changes their own (§7.1).
 		const above = (() => {
 			let cur = m.reports_to_member_id;
@@ -309,15 +390,28 @@ export const membersApi: MembersApi = {
 			...row,
 			title: m.agent?.title ?? x.title,
 			focus: m.agent?.focus,
-			hired: m.kind === 'agent' && x.hired ? { at: ago(x.hired.agoDays * 24 * 60 * MIN), by: { id: x.hired.by, name: nameOf(s, x.hired.by) } } : undefined,
+			hired:
+				m.kind === 'agent' && x.hired
+					? {
+							at: ago(x.hired.agoDays * 24 * 60 * MIN),
+							by: { id: x.hired.by, name: nameOf(s, x.hired.by) }
+						}
+					: undefined,
 			leads,
 			allowHiring: {
 				on: allowOn,
 				canChange: !self && (isOwner || above),
-				reason: self ? "You can't change your own." : !(isOwner || above) ? 'Only the owner, or a person above them, changes this.' : undefined
+				reason: self
+					? "You can't change your own."
+					: !(isOwner || above)
+						? 'Only the owner, or a person above them, changes this.'
+						: undefined
 			},
 			currentTask: row.workingOn,
-			supervision: m.kind === 'agent' && x.supervision ? { ...x.supervision, tone: x.supervision.tone as 'ok' } : undefined,
+			supervision:
+				m.kind === 'agent' && x.supervision
+					? { ...x.supervision, tone: x.supervision.tone as 'ok' }
+					: undefined,
 			execution: exec,
 			openTurn: open ? { id: open.id, startedAt: open.startedAt } : undefined,
 			cannotStart,
@@ -358,19 +452,30 @@ export const membersApi: MembersApi = {
 	async processes(organizationId, memberId) {
 		await gate();
 		const s = await snapshotFor(organizationId);
-		const hasCurrentWork = tasksData.some((t) => (state.assigned.get(t.ref) ?? t.assigneeId) === memberId && t.state !== 'done');
-		return { hasCurrentWork, rows: processesForTeam(s, hasCurrentWork ? homeTeamId(s, memberId) : undefined) };
+		const hasCurrentWork = tasksData.some(
+			(t) => (state.assigned.get(t.ref) ?? t.assigneeId) === memberId && t.state !== 'done'
+		);
+		return {
+			hasCurrentWork,
+			rows: processesForTeam(s, hasCurrentWork ? homeTeamId(s, memberId) : undefined)
+		};
 	},
 	async role(organizationId, memberId) {
 		await gate();
 		const { m } = await member(organizationId, memberId);
-		const role = (rolesData as Record<string, { name: string; revision: number; body: string }>)[memberId];
+		const role = (rolesData as Record<string, { name: string; revision: number; body: string }>)[
+			memberId
+		];
 		return { role, roleText: m.agent?.role, title: m.agent?.title ?? extras[memberId]?.title };
 	},
 	async runNow(organizationId, memberId, note) {
 		await gate();
 		const profile = await membersApi.profile(organizationId, memberId);
-		if (profile.openTurn) throw fail('busy', `${profile.name} is already running a turn. It takes new input when that turn ends.`);
+		if (profile.openTurn)
+			throw fail(
+				'busy',
+				`${profile.name} is already running a turn. It takes new input when that turn ends.`
+			);
 		if (profile.cannotStart) throw fail('cannot_start', profile.cannotStart);
 		const turn: Turn = {
 			id: `t-new-${Date.now()}`,
@@ -378,7 +483,15 @@ export const membersApi: MembersApi = {
 			startedBy: { kind: 'run', byViewer: true, by: { id: viewerId(), name: 'you' } },
 			state: 'running',
 			summary: note || undefined,
-			attempts: [{ n: 1, connection: profile.execution?.connection ?? 'Default connection', model: profile.execution?.requested?.model ?? 'unknown', outcome: 'running', usageComplete: false }],
+			attempts: [
+				{
+					n: 1,
+					connection: profile.execution?.connection ?? 'Default connection',
+					model: profile.execution?.requested?.model ?? 'unknown',
+					outcome: 'running',
+					usageComplete: false
+				}
+			],
 			hasLog: false
 		};
 		state.added.set(memberId, [turn, ...(state.added.get(memberId) ?? [])]);
@@ -387,7 +500,8 @@ export const membersApi: MembersApi = {
 	async setAllowHiring(organizationId, memberId, on) {
 		await gate();
 		const profile = await membersApi.profile(organizationId, memberId);
-		if (!profile.allowHiring.canChange) throw fail('not_authorized', profile.allowHiring.reason ?? "You can't change this.");
+		if (!profile.allowHiring.canChange)
+			throw fail('not_authorized', profile.allowHiring.reason ?? "You can't change this.");
 		state.allowHiring.set(memberId, on);
 	},
 	async assignableTasks(organizationId) {
@@ -395,7 +509,11 @@ export const membersApi: MembersApi = {
 		const s = await snapshotFor(organizationId);
 		return tasksData
 			.filter((t) => !(state.assigned.get(t.ref) ?? t.assigneeId) && t.state !== 'done')
-			.map((t) => ({ ref: t.ref, title: t.title, project: s.projects?.find((p) => p.id === t.projectId)?.name }));
+			.map((t) => ({
+				ref: t.ref,
+				title: t.title,
+				project: s.projects?.find((p) => p.id === t.projectId)?.name
+			}));
 	},
 	async assignTask(_organizationId, memberId, ref) {
 		await gate();
@@ -420,10 +538,12 @@ export const membersApi: MembersApi = {
 	},
 	async handOverOwnership(organizationId, toMemberId, password) {
 		await gate();
-		if (password !== 'owner-password') throw fail('wrong_password', "That password isn't right. Nothing changed.");
+		if (password !== 'owner-password')
+			throw fail('wrong_password', "That password isn't right. Nothing changed.");
 		const s = await snapshotFor(organizationId);
 		const to = s.members.find((m) => m.id === toMemberId);
-		if (!to || to.kind !== 'person') throw fail('invalid', 'Only an active person with an account can become the owner.');
+		if (!to || to.kind !== 'person')
+			throw fail('invalid', 'Only an active person with an account can become the owner.');
 		state.ownerId = toMemberId;
 	}
 };

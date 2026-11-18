@@ -6,7 +6,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { toAppError } from '$lib/office/api';
 	import type { OrgSession } from '$lib/org/session';
 	import type { LeadCandidate, TeamRow } from '../../types';
@@ -45,8 +52,16 @@
 		busy = true;
 		try {
 			const current = (await session.snapshot()).teams.find((t) => t.id === shown!.id);
-			if (!current) throw { source: 'api', code: 'not_found', message: `${shown.name} isn't here any more.` };
-			await session.command({ method: 'team.set_lead', params: { team_id: shown.id, expected_version: current.version, lead_member_id: choice || undefined } });
+			if (!current)
+				throw { source: 'api', code: 'not_found', message: `${shown.name} isn't here any more.` };
+			await session.command({
+				method: 'team.set_lead',
+				params: {
+					team_id: shown.id,
+					expected_version: current.version,
+					lead_member_id: choice || undefined
+				}
+			});
 			open = false;
 			ondone({ team: shown.name, lead: candidates?.find((c) => c.id === choice)?.name });
 		} catch (e) {
@@ -62,31 +77,61 @@
 		<form onsubmit={save} class="contents">
 			<DialogHeader>
 				<DialogTitle text={`Change the lead of ${shown?.name ?? ''}`} />
-				<DialogDescription>The lead manages {shown?.name}'s whole subtree, including the leads of teams under it. Only someone whose home team is {shown?.name} can lead it. Reporting lines don't change.</DialogDescription>
+				<DialogDescription
+					>The lead manages {shown?.name}'s whole subtree, including the leads of teams under it.
+					Only someone whose home team is {shown?.name} can lead it. Reporting lines don't change.</DialogDescription
+				>
 			</DialogHeader>
 			<fieldset class="space-y-1">
 				<legend class="sr-only">Lead</legend>
 				{#if candidates === undefined}
 					<p class="text-sm/6 text-gray-400" role="status">Loading who can lead…</p>
 				{:else}
-					<label class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-white hover:bg-white/5 has-focus-visible:outline-2 has-focus-visible:outline-indigo-400">
-						<input type="radio" name="lead" value="" bind:group={choice} class="size-4 accent-indigo-500" /> No lead
+					<label
+						class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-white hover:bg-white/5 has-focus-visible:outline-2 has-focus-visible:outline-indigo-400"
+					>
+						<input
+							type="radio"
+							name="lead"
+							value=""
+							bind:group={choice}
+							class="size-4 accent-indigo-500"
+						/> No lead
 					</label>
 					{#each candidates as c (c.id)}
-						<label class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-white hover:bg-white/5 has-focus-visible:outline-2 has-focus-visible:outline-indigo-400">
-							<input type="radio" name="lead" value={c.id} bind:group={choice} class="size-4 accent-indigo-500" />
-							<span class="[overflow-wrap:anywhere]">{c.name}</span><span class="text-xs/5 text-gray-400">{c.kind === 'agent' ? 'Agent' : 'Person'}</span>
+						<label
+							class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-white hover:bg-white/5 has-focus-visible:outline-2 has-focus-visible:outline-indigo-400"
+						>
+							<input
+								type="radio"
+								name="lead"
+								value={c.id}
+								bind:group={choice}
+								class="size-4 accent-indigo-500"
+							/>
+							<span class="[overflow-wrap:anywhere]">{c.name}</span><span
+								class="text-xs/5 text-gray-400">{c.kind === 'agent' ? 'Agent' : 'Person'}</span
+							>
 						</label>
 					{/each}
 					{#if candidates.length === 0}
-						<p class="text-sm/6 text-gray-400">Nobody has {shown?.name} as their home team yet. Move someone here first with Move home team on their profile.</p>
+						<p class="text-sm/6 text-gray-400">
+							Nobody has {shown?.name} as their home team yet. Move someone here first with Move home
+							team on their profile.
+						</p>
 					{/if}
 				{/if}
 			</fieldset>
-			{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+					{error}
+				</p>{/if}
 			<DialogFooter>
-				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
-				<Button type="submit" aria-busy={busy} disabled={busy || candidates === undefined}>{busy ? 'Saving…' : 'Save lead'}</Button>
+				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}
+					>Cancel</Button
+				>
+				<Button type="submit" aria-busy={busy} disabled={busy || candidates === undefined}
+					>{busy ? 'Saving…' : 'Save lead'}</Button
+				>
 			</DialogFooter>
 		</form>
 	</DialogContent>

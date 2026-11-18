@@ -29,7 +29,8 @@ export class Resource<T> {
 			if (run !== this.#run) return;
 			const failure = toAppError(e);
 			this.message = failure.message;
-			this.state = failure.source === 'api' && failure.code === 'unavailable' ? 'unavailable' : 'error';
+			this.state =
+				failure.source === 'api' && failure.code === 'unavailable' ? 'unavailable' : 'error';
 			// An old answer is never shown beside a failure it no longer matches.
 			this.data = undefined;
 		} finally {

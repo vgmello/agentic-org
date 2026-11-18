@@ -1,40 +1,40 @@
 {
- "organization": [
-  {
-   "key": "one-open-branch",
-   "name": "One open branch",
-   "revision": 1,
-   "relation": "not_overridable"
-  },
-  {
-   "key": "review-and-merge",
-   "name": "Review and merge",
-   "revision": 3,
-   "relation": "inherited"
-  },
-  {
-   "key": "code-review",
-   "name": "Code review",
-   "revision": 1,
-   "relation": "inherited"
-  }
- ],
- "teams": {
-  "web": [
-   {
-    "key": "code-review",
-    "name": "Code review",
-    "revision": 2,
-    "relation": "replaces"
-   }
-  ],
-  "platform": [
-   {
-    "key": "release-checklist",
-    "name": "Release checklist",
-    "revision": 1,
-    "relation": "added"
-   }
-  ]
- }
+	"organization": [
+		{
+			"key": "one-open-branch",
+			"name": "One open branch",
+			"revision": 1,
+			"relation": "not_overridable"
+		},
+		{
+			"key": "review-and-merge",
+			"name": "Review and merge",
+			"revision": 3,
+			"relation": "inherited"
+		},
+		{
+			"key": "code-review",
+			"name": "Code review",
+			"revision": 1,
+			"relation": "inherited"
+		}
+	],
+	"teams": {
+		"web": [
+			{
+				"key": "code-review",
+				"name": "Code review",
+				"revision": 2,
+				"relation": "replaces"
+			}
+		],
+		"platform": [
+			{
+				"key": "release-checklist",
+				"name": "Release checklist",
+				"revision": 1,
+				"relation": "added"
+			}
+		]
+	}
 }

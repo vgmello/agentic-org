@@ -15,7 +15,14 @@
 		variant = 'outline',
 		size = 'default',
 		class: className = ''
-	}: { text: string; label?: string; copiedLabel?: string; variant?: 'outline' | 'default' | 'secondary'; size?: 'default' | 'sm' | 'xs'; class?: string } = $props();
+	}: {
+		text: string;
+		label?: string;
+		copiedLabel?: string;
+		variant?: 'outline' | 'default' | 'secondary';
+		size?: 'default' | 'sm' | 'xs';
+		class?: string;
+	} = $props();
 
 	let copied = $state(false);
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -33,5 +40,7 @@
 	}
 </script>
 
-<Button type="button" {variant} {size} class="{mobileButton} {className}" onclick={copy}>{copied ? copiedLabel : label}</Button>
+<Button type="button" {variant} {size} class="{mobileButton} {className}" onclick={copy}
+	>{copied ? copiedLabel : label}</Button
+>
 <span class="sr-only" role="status">{copied ? `${copiedLabel}.` : ''}</span>

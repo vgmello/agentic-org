@@ -1,19 +1,60 @@
 # v1 UI screens: build plan
 
 Branch `v1-ui`, started from `v1-integration`. Owner direction, 2026-11-18: build every
-screen and interaction the specs call for that is not already built, with mock data, and
-leave review for one final pass before the branch is merged. This page is the list of
-screens and the order they are built in. Each row's Status is updated as it lands.
+screen and interaction the specs call for that is not already built, with mock data. This
+page is the list of screens and the order they are built in. Each row's Status is updated
+as it lands.
 
-## Where the work stands (handover, 2026-11-18)
+Owner direction, later on 2026-11-18, replacing the earlier "review once at the end":
+**the UI must be production ready except for the mock APIs**, and that includes its
+structure and architecture (thin routes, domain modules owning their features, mocks only
+under `e2e/fakes`, declared cross-area couplings). **Every feature gets a Codex review
+cycle when it is done** (`.agents/skills/review-cycle`, `kit_codex.py start` → origin
+validation → `final-review`), plus a fresh independent review, before it is merged into
+`v1-ui`. Lint (`bun run lint`) is part of "green" alongside check, test, format and build.
 
-- Steps 0 and 1 are complete and were checked (type check, unit tests, build) when merged.
-- Steps 2, 3 and Chat were stopped part-way and merged as they were, in commits titled
-  "UI work in progress". **The merged branch has not been type-checked, tested or built.**
-  Start by running `bun run check` and `bun run build` in `apps/agentic-org-ui` and fixing
-  what they report, then walk each step's rows against the running app to see which
-  screens exist.
+## Where the work stands (2026-11-18, second session)
+
+- Steps 0 and 1 are complete.
+- The "UI work in progress" merges are repaired: type check, unit tests, format check and
+  build pass; lint passes except nine unused names in the Chat route that belong to the
+  unfinished Chat features below.
+- An audit of the in-progress rows (against their specs) found most of them were never
+  built: the APIs, types and mocks exist, the screens do not. Per row:
+  - **Teams index** has gaps only (dead "Hire requests" link, team links reach a
+    placeholder). **Members** and **Org chart** are still the old screens on the old
+    `$lib/org` snapshot, with the wrong filters, zoom/fit tabs and an "Add an existing
+    agent" sheet the spec forbids. **Team page, member profile, supervision/Run now,
+    session log, sign-in access dialogs and Hire** are not built.
+  - **Offices** works but its route is 772 lines and its code lives outside
+    `modules/offices`. **Processes** is the old read-only view with its mock in `src`.
+    **Agent setup, Roles, Members and access, Costs, Updates** are placeholders.
+  - **Chat** misses pins, hand back, withdraw, check status, the live HR note, error
+    with Retry; its route is 1,482 lines and its mock ships in `src`.
+- Cross-cutting architecture to fix as each area is rebuilt: one shared `Resource` /
+  `Loaded` state primitive (today duplicated in `members` and `settings`, and reached into
+  by `teams` and offices); team and people dialogs in `src/lib/components` move into their
+  modules; mocks leave `src` (`messaging/sample.ts`, `processes/{sample,world}.ts`,
+  `copilot/api.ts`); routes get thin.
 - Steps 4 to 9 have not started.
+
+### Build order
+
+Each item is one feature: built in its own worktree from `v1-ui`, Codex review cycle,
+fresh review, merged with `--no-ff`. At most two are built at once, on disjoint modules.
+
+1. Foundation: shared `Resource` / `Loaded` / confirm dialog / focus helpers.
+2. Member profile with supervision, Run now, session log and sign-in access dialogs ·
+   Team page.
+3. Members directory · Hire (requests list, refused view, Allow hiring, wizard).
+4. Org chart to the spec (one reporting tree, owner bar, Hand over ownership).
+5. Settings: Agent setup · Roles.
+6. Settings: Members and access, Costs, Updates · Processes (Standards, editor,
+   development processes; mock out of `src`).
+7. Offices route into `modules/offices` · Chat (missing features, module extraction, mock
+   out of `src`).
+8. Steps 4 to 8 in table order, two at a time where modules are disjoint.
+9. Step 9.
 - Each builder followed [the builder brief](v1-ui-builder-brief.md): file ownership, the
   mock rules, the checks and the report format. The assignment for each step is its table
   below plus the specs named in the inventory of `docs/specs/`.

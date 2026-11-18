@@ -43,13 +43,25 @@
 {:else if res.state === 'unavailable'}
 	<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8">
 		<p class="text-sm/6 font-semibold text-white">Not available yet</p>
-		<p class="mt-1 max-w-xl text-sm/6 text-gray-400">This server doesn't serve {label} yet. Nothing is shown rather than a guess.</p>
+		<p class="mt-1 max-w-xl text-sm/6 text-gray-400">
+			This server doesn't serve {label} yet. Nothing is shown rather than a guess.
+		</p>
 	</div>
 {:else if res.state === 'error'}
-	<ErrorState title={errorTitle} message={res.error} onretry={() => res.load()} retrying={res.retrying} />
+	<ErrorState
+		title={errorTitle}
+		message={res.error}
+		onretry={() => res.load()}
+		retrying={res.retrying}
+	/>
 {:else if res.value !== undefined}
 	{#if isEmpty?.(res.value) && emptyTitle}
-		<EmptyState title={emptyTitle} description={emptyDescription} level={emptyLevel} action={emptyAction} />
+		<EmptyState
+			title={emptyTitle}
+			description={emptyDescription}
+			level={emptyLevel}
+			action={emptyAction}
+		/>
 	{:else}
 		{@render children(res.value)}
 	{/if}

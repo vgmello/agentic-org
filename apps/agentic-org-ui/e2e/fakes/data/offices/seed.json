@@ -28,14 +28,54 @@
 			"agents": ["pax"]
 		}
 	],
-	"joinRequests": [{ "id": "join-laptop", "officeName": "Laptop", "fromAddress": "192.168.1.44", "requestedMinutesAgo": 2, "invitationCreatedMinutesAgo": 35 }],
+	"joinRequests": [
+		{
+			"id": "join-laptop",
+			"officeName": "Laptop",
+			"fromAddress": "192.168.1.44",
+			"requestedMinutesAgo": 2,
+			"invitationCreatedMinutesAgo": 35
+		}
+	],
 	"invitations": [
-		{ "id": "inv-field", "officeName": "Field Mac", "state": "invited", "createdMinutesAgo": 180, "expiresInMinutes": 1260 },
-		{ "id": "inv-mini", "officeName": "Old mini", "state": "expired", "createdMinutesAgo": 4000, "expiresInMinutes": -1200 },
-		{ "id": "inv-pi", "officeName": "Lab Pi", "state": "rejected", "createdMinutesAgo": 700, "expiresInMinutes": 500, "note": "The join for Lab Pi was declined at HQ. Nothing was added to this organization." }
+		{
+			"id": "inv-field",
+			"officeName": "Field Mac",
+			"state": "invited",
+			"createdMinutesAgo": 180,
+			"expiresInMinutes": 1260
+		},
+		{
+			"id": "inv-mini",
+			"officeName": "Old mini",
+			"state": "expired",
+			"createdMinutesAgo": 4000,
+			"expiresInMinutes": -1200
+		},
+		{
+			"id": "inv-pi",
+			"officeName": "Lab Pi",
+			"state": "rejected",
+			"createdMinutesAgo": 700,
+			"expiresInMinutes": 500,
+			"note": "The join for Lab Pi was declined at HQ. Nothing was added to this organization."
+		}
 	],
 	"outbox": [
-		{ "id": "ob-1", "officeKey": "build", "description": "Assign T-A12 to Pax Moreau", "state": "blocked", "reason": "Build box is offline, so HQ can't confirm it.", "sinceMinutesAgo": 95 },
-		{ "id": "ob-2", "officeKey": "studio", "description": "Message to Noor Haddad in #web", "state": "pending", "sinceMinutesAgo": 1 }
+		{
+			"id": "ob-1",
+			"officeKey": "build",
+			"description": "Assign T-A12 to Pax Moreau",
+			"state": "blocked",
+			"reason": "Build box is offline, so HQ can't confirm it.",
+			"sinceMinutesAgo": 95
+		},
+		{
+			"id": "ob-2",
+			"officeKey": "studio",
+			"description": "Message to Noor Haddad in #web",
+			"state": "pending",
+			"sinceMinutesAgo": 1
+		}
 	]
 }

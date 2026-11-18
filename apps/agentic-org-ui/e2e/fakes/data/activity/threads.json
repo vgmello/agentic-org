@@ -1,66 +1,66 @@
 {
- "th-1": {
-  "counterpart": "mira",
-  "owner_may_reply": false,
-  "messages": [
-   {
-    "from": "sam",
-    "ago": 5,
-    "body": "Milestone one: your part and status please"
-   },
-   {
-    "from": "mira",
-    "ago": 8,
-    "body": "No W7 draft or design branch yet; I will push the first one before the end of today."
-   },
-   {
-    "from": "sam",
-    "ago": 9,
-    "body": null
-   }
-  ]
- },
- "th-2": {
-  "counterpart": "sam",
-  "owner_may_reply": true,
-  "messages": [
-   {
-    "from": "sam",
-    "ago": 14,
-    "body": "Milestone one, today: everyone updates their task before the stand-up."
-   },
-   {
-    "from": "you",
-    "ago": 12,
-    "body": "Thanks Sam. I will read the updates after lunch."
-   }
-  ]
- },
- "th-3": {
-  "counterpart": "ines",
-  "owner_may_reply": false,
-  "messages": [
-   {
-    "from": "hana",
-    "ago": 400,
-    "body": "Please start the onboarding checklist for Quinn."
-   },
-   {
-    "from": "ines",
-    "ago": 430,
-    "body": "Started: laptop, accounts and the first-week plan are in progress."
-   }
-  ]
- },
- "th-4": {
-  "counterpart": "mira",
-  "owner_may_reply": false,
-  "messages": [
-   {
-    "from": "mira",
-    "ago": 0,
-    "body": "Alex, a quick question about the Beacon checkout work: should I wait for the design tokens?"
-   }
-  ]
- }
+	"th-1": {
+		"counterpart": "mira",
+		"owner_may_reply": false,
+		"messages": [
+			{
+				"from": "sam",
+				"ago": 5,
+				"body": "Milestone one: your part and status please"
+			},
+			{
+				"from": "mira",
+				"ago": 8,
+				"body": "No W7 draft or design branch yet; I will push the first one before the end of today."
+			},
+			{
+				"from": "sam",
+				"ago": 9,
+				"body": null
+			}
+		]
+	},
+	"th-2": {
+		"counterpart": "sam",
+		"owner_may_reply": true,
+		"messages": [
+			{
+				"from": "sam",
+				"ago": 14,
+				"body": "Milestone one, today: everyone updates their task before the stand-up."
+			},
+			{
+				"from": "you",
+				"ago": 12,
+				"body": "Thanks Sam. I will read the updates after lunch."
+			}
+		]
+	},
+	"th-3": {
+		"counterpart": "ines",
+		"owner_may_reply": false,
+		"messages": [
+			{
+				"from": "hana",
+				"ago": 400,
+				"body": "Please start the onboarding checklist for Quinn."
+			},
+			{
+				"from": "ines",
+				"ago": 430,
+				"body": "Started: laptop, accounts and the first-week plan are in progress."
+			}
+		]
+	},
+	"th-4": {
+		"counterpart": "mira",
+		"owner_may_reply": false,
+		"messages": [
+			{
+				"from": "mira",
+				"ago": 0,
+				"body": "Alex, a quick question about the Beacon checkout work: should I wait for the design tokens?"
+			}
+		]
+	}
 }

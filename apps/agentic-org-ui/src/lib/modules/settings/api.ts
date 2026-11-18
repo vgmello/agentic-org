@@ -15,15 +15,27 @@ import type {
 export interface SettingsApi {
 	general(organizationId: string): Promise<GeneralSettings>;
 	/** Makes `memberId`'s account the administrator, confirmed with the administrator's own password. */
-	handOverAdministrator(organizationId: string, memberId: string, password: string): Promise<GeneralSettings>;
+	handOverAdministrator(
+		organizationId: string,
+		memberId: string,
+		password: string
+	): Promise<GeneralSettings>;
 
 	agentSetups(organizationId: string): Promise<AgentSetupList>;
 	/** Saves an agent's execution configuration against the revision the person saw; rejects with `conflict` when it moved. */
-	saveExecution(organizationId: string, memberId: string, edit: ExecutionEdit): Promise<AgentSetupList>;
+	saveExecution(
+		organizationId: string,
+		memberId: string,
+		edit: ExecutionEdit
+	): Promise<AgentSetupList>;
 
 	access(organizationId: string): Promise<AccessOverview>;
 	/** A one-time registration link (no account yet) or set-new-password link (has an account). Replaces the previous one. */
-	issueLink(organizationId: string, memberId: string, kind: IssuedLink['kind']): Promise<IssuedLink>;
+	issueLink(
+		organizationId: string,
+		memberId: string,
+		kind: IssuedLink['kind']
+	): Promise<IssuedLink>;
 	removeAccess(organizationId: string, memberId: string): Promise<AccessOverview>;
 
 	prices(organizationId: string): Promise<PriceRate[]>;

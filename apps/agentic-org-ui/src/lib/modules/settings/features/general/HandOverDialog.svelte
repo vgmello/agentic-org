@@ -8,11 +8,24 @@
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/office/api';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { settingsApi } from '../../api';
-	import { errorClass, helpClass, inputClass, mobileButton, selectClass } from '../../components/classes';
+	import {
+		errorClass,
+		helpClass,
+		inputClass,
+		mobileButton,
+		selectClass
+	} from '../../components/classes';
 	import type { GeneralSettings } from '../../types';
 
 	let {
@@ -20,7 +33,12 @@
 		general,
 		ondone,
 		onCloseAutoFocus
-	}: { open: boolean; general: GeneralSettings; ondone: (next: GeneralSettings) => void; onCloseAutoFocus?: (event: Event) => void } = $props();
+	}: {
+		open: boolean;
+		general: GeneralSettings;
+		ondone: (next: GeneralSettings) => void;
+		onCloseAutoFocus?: (event: Event) => void;
+	} = $props();
 
 	let chosen = $state('');
 	let password = $state('');
@@ -47,7 +65,11 @@
 		busy = true;
 		error = undefined;
 		try {
-			const next = await settingsApi.handOverAdministrator(general.organization.id, person.memberId, password);
+			const next = await settingsApi.handOverAdministrator(
+				general.organization.id,
+				person.memberId,
+				password
+			);
 			open = false;
 			ondone(next);
 			toast.success(`${person.name} is now this instance's administrator.`);
@@ -67,34 +89,78 @@
 			<DialogHeader>
 				<DialogTitle text="Hand over administrator" />
 				<DialogDescription class="[overflow-wrap:anywhere]">
-					{#if person}Make {person.name} ({person.username}) this instance's administrator? You'll keep your account and your organizations, but you won't be able to create organizations or collect recovery codes.{:else}The administrator creates organizations and collects recovery codes. There is always exactly one.{/if}
+					{#if person}Make {person.name} ({person.username}) this instance's administrator? You'll
+						keep your account and your organizations, but you won't be able to create organizations
+						or collect recovery codes.{:else}The administrator creates organizations and collects
+						recovery codes. There is always exactly one.{/if}
 				</DialogDescription>
 			</DialogHeader>
 			{#if general.handOverCandidates.length === 0}
-				<p class="text-sm/6 text-gray-300" data-testid="no-candidates">Nobody else has an account yet. Invite a person to sign in under <a href={resolve('/settings/access')} class="font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-indigo-400">Members and access</a> first.</p>
+				<p class="text-sm/6 text-gray-300" data-testid="no-candidates">
+					Nobody else has an account yet. Invite a person to sign in under <a
+						href={resolve('/settings/access')}
+						class="font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-indigo-400"
+						>Members and access</a
+					> first.
+				</p>
 			{:else}
 				<div>
-					<Label for="handover-person" class="block text-sm/6 font-medium text-white">New administrator</Label>
+					<Label for="handover-person" class="block text-sm/6 font-medium text-white"
+						>New administrator</Label
+					>
 					<div class="mt-2">
-						<select id="handover-person" bind:value={chosen} class={selectClass} aria-describedby="handover-person-help">
+						<select
+							id="handover-person"
+							bind:value={chosen}
+							class={selectClass}
+							aria-describedby="handover-person-help"
+						>
 							<option value="">Choose a person…</option>
-							{#each general.handOverCandidates as c (c.memberId)}<option value={c.memberId}>{c.name} ({c.username})</option>{/each}
+							{#each general.handOverCandidates as c (c.memberId)}<option value={c.memberId}
+									>{c.name} ({c.username})</option
+								>{/each}
 						</select>
 					</div>
-					<p id="handover-person-help" class={helpClass}>People who have an account in one of your organizations.</p>
+					<p id="handover-person-help" class={helpClass}>
+						People who have an account in one of your organizations.
+					</p>
 				</div>
 				<div>
-					<Label for="handover-password" class="block text-sm/6 font-medium text-white">Your password</Label>
+					<Label for="handover-password" class="block text-sm/6 font-medium text-white"
+						>Your password</Label
+					>
 					<div class="mt-2">
-						<Input bind:ref={passwordInput} id="handover-password" type="password" autocomplete="current-password" bind:value={password} disabled={!person} aria-invalid={error ? true : undefined} aria-describedby={error ? 'handover-error' : undefined} class={inputClass} />
+						<Input
+							bind:ref={passwordInput}
+							id="handover-password"
+							type="password"
+							autocomplete="current-password"
+							bind:value={password}
+							disabled={!person}
+							aria-invalid={error ? true : undefined}
+							aria-describedby={error ? 'handover-error' : undefined}
+							class={inputClass}
+						/>
 					</div>
 					{#if error}<p id="handover-error" class={errorClass} role="alert">{error}</p>{/if}
 				</div>
 			{/if}
 			<DialogFooter>
-				<Button type="button" variant="outline" class={mobileButton} disabled={busy} onclick={() => (open = false)}>Cancel</Button>
+				<Button
+					type="button"
+					variant="outline"
+					class={mobileButton}
+					disabled={busy}
+					onclick={() => (open = false)}>Cancel</Button
+				>
 				{#if general.handOverCandidates.length > 0}
-					<Button type="submit" class={mobileButton} disabled={!person} aria-busy={busy} aria-disabled={busy}>{busy ? 'Handing over…' : 'Hand over'}</Button>
+					<Button
+						type="submit"
+						class={mobileButton}
+						disabled={!person}
+						aria-busy={busy}
+						aria-disabled={busy}>{busy ? 'Handing over…' : 'Hand over'}</Button
+					>
 				{/if}
 			</DialogFooter>
 		</form>

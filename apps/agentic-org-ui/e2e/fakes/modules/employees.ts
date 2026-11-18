@@ -12,7 +12,8 @@ const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 export const employeesApi: EmployeesApi = {
 	async hireAccess(organizationId) {
 		const s = await snapshotFor(organizationId);
-		if (new URLSearchParams(location.search).get('hire') === 'refused') return { teamIds: [], seesAll: false };
+		if (new URLSearchParams(location.search).get('hire') === 'refused')
+			return { teamIds: [], seesAll: false };
 		return { teamIds: s.teams.map((t) => t.id), seesAll: true };
 	},
 	async hireRequests(organizationId) {
@@ -39,14 +40,23 @@ export const employeesApi: EmployeesApi = {
 	async withdraw(_organizationId, requestId) {
 		await gate();
 		const r = requests.find((x) => x.id === requestId);
-		if (!r || (changed.get(requestId)?.state ?? r.state) !== 'drafting') throw fail('conflict', 'Only a request that is still drafting can be withdrawn.');
-		changed.set(requestId, { state: 'withdrawn', closedReason: 'Withdrawn by you', updatedAt: new Date().toISOString() });
+		if (!r || (changed.get(requestId)?.state ?? r.state) !== 'drafting')
+			throw fail('conflict', 'Only a request that is still drafting can be withdrawn.');
+		changed.set(requestId, {
+			state: 'withdrawn',
+			closedReason: 'Withdrawn by you',
+			updatedAt: new Date().toISOString()
+		});
 	},
 	async retry(_organizationId, requestId) {
 		await gate();
 		const r = requests.find((x) => x.id === requestId);
 		if (!r || !r.failedStep) throw fail('conflict', 'This hire has nothing left to finish.');
 		// The mock keeps the member out of the org snapshot, so the finished hire is shown as still hiring.
-		changed.set(requestId, { failedStep: undefined, doneSteps: [...(r.doneSteps ?? []), 'Registered with messaging'], updatedAt: new Date().toISOString() });
+		changed.set(requestId, {
+			failedStep: undefined,
+			doneSteps: [...(r.doneSteps ?? []), 'Registered with messaging'],
+			updatedAt: new Date().toISOString()
+		});
 	}
 };

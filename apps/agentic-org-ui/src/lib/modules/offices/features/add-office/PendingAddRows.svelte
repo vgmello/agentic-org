@@ -9,16 +9,47 @@
 	import { plural } from '../../copy';
 	import type { PendingAdd } from '../../types';
 
-	let { pending, onopen, oncancel }: { pending: PendingAdd[]; onopen: (add: PendingAdd, button: HTMLElement) => void; oncancel: (add: PendingAdd, button: HTMLElement) => void } = $props();
+	let {
+		pending,
+		onopen,
+		oncancel
+	}: {
+		pending: PendingAdd[];
+		onopen: (add: PendingAdd, button: HTMLElement) => void;
+		oncancel: (add: PendingAdd, button: HTMLElement) => void;
+	} = $props();
 </script>
 
 {#each pending as add (add.id)}
-	<li class="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-white/5 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8" data-testid="pending-add">
-		<button type="button" class="min-w-0 flex-1 basis-56 text-left outline-none [&:focus-visible>.cover]:outline-2 [&:focus-visible>.cover]:outline-indigo-400 [&:focus-visible>.cover]:-outline-offset-2" aria-label="{add.name}, waiting for {plural(add.waitingFor.length, 'agent', 'agents')} to stop. Opens the form." onclick={(e) => onopen(add, e.currentTarget)}>
-			<span class="flex items-center gap-x-2 text-sm/6 font-semibold text-white [overflow-wrap:anywhere]"><Hourglass class="size-4 shrink-0 text-gray-400" aria-hidden="true" />{add.name}</span>
-			<span class="mt-1 block text-xs/5 text-gray-400">Waiting for {plural(add.waitingFor.length, 'agent', 'agents')} to stop · on {add.instance}</span>
+	<li
+		class="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-white/5 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
+		data-testid="pending-add"
+	>
+		<button
+			type="button"
+			class="min-w-0 flex-1 basis-56 text-left outline-none [&:focus-visible>.cover]:outline-2 [&:focus-visible>.cover]:outline-indigo-400 [&:focus-visible>.cover]:-outline-offset-2"
+			aria-label="{add.name}, waiting for {plural(
+				add.waitingFor.length,
+				'agent',
+				'agents'
+			)} to stop. Opens the form."
+			onclick={(e) => onopen(add, e.currentTarget)}
+		>
+			<span
+				class="flex items-center gap-x-2 text-sm/6 font-semibold text-white [overflow-wrap:anywhere]"
+				><Hourglass class="size-4 shrink-0 text-gray-400" aria-hidden="true" />{add.name}</span
+			>
+			<span class="mt-1 block text-xs/5 text-gray-400"
+				>Waiting for {plural(add.waitingFor.length, 'agent', 'agents')} to stop · on {add.instance}</span
+			>
 			<span class="cover absolute inset-0" aria-hidden="true"></span>
 		</button>
-		<Button variant="outline" size="sm" class="relative z-10 max-[639px]:min-h-11" aria-label="Cancel adding {add.name}" onclick={(e) => oncancel(add, e.currentTarget)}>Cancel</Button>
+		<Button
+			variant="outline"
+			size="sm"
+			class="relative z-10 max-[639px]:min-h-11"
+			aria-label="Cancel adding {add.name}"
+			onclick={(e) => oncancel(add, e.currentTarget)}>Cancel</Button
+		>
 	</li>
 {/each}

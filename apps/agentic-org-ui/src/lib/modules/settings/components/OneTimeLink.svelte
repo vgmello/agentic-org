@@ -9,14 +9,20 @@
 
 	let { link, who }: { link: IssuedLink; who: string } = $props();
 	const expires = $derived(
-		new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(link.expiresAt))
+		new Intl.DateTimeFormat(undefined, {
+			weekday: 'short',
+			hour: '2-digit',
+			minute: '2-digit'
+		}).format(new Date(link.expiresAt))
 	);
 </script>
 
 <div class="space-y-3">
 	<p class="text-sm/6 text-gray-300">
 		Send this link to {who}. It works once and expires in 24 hours ({expires}).
-		{link.kind === 'invite' ? `${who} opens it and chooses a username and password.` : `${who} opens it and chooses a new password. That signs the account out everywhere.`}
+		{link.kind === 'invite'
+			? `${who} opens it and chooses a username and password.`
+			: `${who} opens it and chooses a new password. That signs the account out everywhere.`}
 	</p>
 	<div class="flex flex-wrap items-center gap-2">
 		<input
@@ -28,5 +34,8 @@
 		/>
 		<CopyButton text={link.url} label="Copy link" />
 	</div>
-	<p class="text-xs/5 text-gray-400">It's shown only now. If it's lost, {link.kind === 'invite' ? 'invite' : 'make a new link for'} {who} again.</p>
+	<p class="text-xs/5 text-gray-400">
+		It's shown only now. If it's lost, {link.kind === 'invite' ? 'invite' : 'make a new link for'}
+		{who} again.
+	</p>
 </div>

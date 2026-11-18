@@ -5,7 +5,13 @@
 	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { applyMention, mentionAt, mentionOptions, parseSlash, slashSuggestions } from '$lib/modules/messaging/model';
+	import {
+		applyMention,
+		mentionAt,
+		mentionOptions,
+		parseSlash,
+		slashSuggestions
+	} from '$lib/modules/messaging/model';
 	import { CHAT_LIMITS, type Conversation } from '$lib/modules/messaging/types';
 
 	/**
@@ -37,10 +43,14 @@
 		/** A thread: the channel a reply can also be sent to. */
 		alsoIn?: string;
 		/** Resolves `false` when the message was not sent, so the text stays in the box. */
-		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
+		onsend: (
+			text: string,
+			options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }
+		) => Promise<boolean | void> | boolean | void;
 	} = $props();
 
-	const attachmentFocus = 'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+	const attachmentFocus =
+		'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
 	const drafts: Record<string, string> = {};
 	let attached = $state<HTMLUListElement>();
 	let attachButton = $state<HTMLButtonElement>();
@@ -81,7 +91,7 @@
 			if (lastKey && !lastDraft) drafts[lastKey] = text;
 			lastKey = key;
 			lastDraft = nextDraft;
-			text = nextDraft ? nextDraft.read() : drafts[key] ?? '';
+			text = nextDraft ? nextDraft.read() : (drafts[key] ?? '');
 			if (nextDraft && text) void restoreCaret(nextDraft, text);
 			attachments = [];
 			alsoInChannel = false;
@@ -116,12 +126,16 @@
 		picked = 0;
 	}
 	async function removeAttachment(name: string) {
-		const index = attachments.indexOf(name), key = resetKey;
-		const next = attachments[index + 1], previous = attachments[index - 1];
+		const index = attachments.indexOf(name),
+			key = resetKey;
+		const next = attachments[index + 1],
+			previous = attachments[index - 1];
 		attachments = attachments.filter((attachment) => attachment !== name);
 		await tick();
 		if (key !== resetKey) return;
-		const buttons = [...(attached?.querySelectorAll<HTMLButtonElement>('button[data-attachment]') ?? [])];
+		const buttons = [
+			...(attached?.querySelectorAll<HTMLButtonElement>('button[data-attachment]') ?? [])
+		];
 		const nextButton = buttons.find((button) => button.dataset.attachment === next);
 		const previousButton = buttons.find((button) => button.dataset.attachment === previous);
 		(nextButton ?? previousButton ?? attachButton)?.focus();
@@ -159,7 +173,8 @@
 		const clearDraft = sendingDraft?.clearOnSuccess();
 		const submittedText = text;
 		try {
-			if ((await onsend(submittedText, { alsoInChannel, attachments, asMessage })) === false) return;
+			if ((await onsend(submittedText, { alsoInChannel, attachments, asMessage })) === false)
+				return;
 			if (clearDraft) clearDraft();
 			else drafts[key] = '';
 			if (key === resetKey && sendingDraft === draft && text === submittedText) {
@@ -169,7 +184,9 @@
 			}
 		} finally {
 			busy = false;
-			queueMicrotask(() => { if (key === resetKey && sendingDraft === draft) box?.focus(); });
+			queueMicrotask(() => {
+				if (key === resetKey && sendingDraft === draft) box?.focus();
+			});
 		}
 	}
 
@@ -194,7 +211,11 @@
 				return;
 			}
 		}
-		if (e.key === 'Enter' && !e.isComposing && (e.metaKey || e.ctrlKey || (enterSends && !e.shiftKey))) {
+		if (
+			e.key === 'Enter' &&
+			!e.isComposing &&
+			(e.metaKey || e.ctrlKey || (enterSends && !e.shiftKey))
+		) {
 			e.preventDefault();
 			void send();
 		}
@@ -210,24 +231,62 @@
 </script>
 
 <div class="border-t border-white/10 px-4 py-3">
-	{#if note ?? typedNote}<p class="mb-2 text-sm/6 {canWrite ? 'text-sky-200' : 'text-gray-300'}" data-testid="composer-note" aria-live="polite">{note ?? typedNote}</p>{/if}
+	{#if note ?? typedNote}<p
+			class="mb-2 text-sm/6 {canWrite ? 'text-sky-200' : 'text-gray-300'}"
+			data-testid="composer-note"
+			aria-live="polite"
+		>
+			{note ?? typedNote}
+		</p>{/if}
 	{#if canWrite}
 		<div class="relative">
 			{#if popup}
-				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 max-w-full overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
+				<ul
+					id="composer-popup-{resetKey}"
+					role="listbox"
+					aria-label={popup === 'mention' ? 'Mention' : 'Commands'}
+					class="absolute bottom-full z-20 mb-1 max-h-56 w-72 max-w-full overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10"
+					data-testid="composer-popup"
+				>
 					{#if popup === 'mention'}
 						{#each mentions as o, i (o.handle)}
-							<li id="composer-opt-{resetKey}-{i}" role="option" aria-selected={i === picked % mentions.length}>
-								<button type="button" class="flex w-full items-baseline gap-x-2 px-3 py-1.5 text-left text-sm/6 {i === picked % mentions.length ? 'bg-white/10' : 'hover:bg-white/5'}" onmousedown={(e) => (e.preventDefault(), pickMention(o.handle))}>
-									<span class="font-semibold text-white">{o.name}</span><span class="text-gray-400">@{o.handle}</span>
+							<li
+								id="composer-opt-{resetKey}-{i}"
+								role="option"
+								aria-selected={i === picked % mentions.length}
+							>
+								<button
+									type="button"
+									class="flex w-full items-baseline gap-x-2 px-3 py-1.5 text-left text-sm/6 {i ===
+									picked % mentions.length
+										? 'bg-white/10'
+										: 'hover:bg-white/5'}"
+									onmousedown={(e) => (e.preventDefault(), pickMention(o.handle))}
+								>
+									<span class="font-semibold text-white">{o.name}</span><span class="text-gray-400"
+										>@{o.handle}</span
+									>
 								</button>
 							</li>
 						{/each}
 					{:else}
 						{#each slashes as c, i (c.name)}
-							<li id="composer-opt-{resetKey}-{i}" role="option" aria-selected={i === picked % slashes.length}>
-								<button type="button" class="flex w-full flex-col px-3 py-1.5 text-left text-sm/6 {i === picked % slashes.length ? 'bg-white/10' : 'hover:bg-white/5'}" onmousedown={(e) => (e.preventDefault(), pickSlash(c.name))}>
-									<span class="font-mono font-semibold text-white">{c.usage}</span><span class="text-xs/5 text-gray-400">{c.help}</span>
+							<li
+								id="composer-opt-{resetKey}-{i}"
+								role="option"
+								aria-selected={i === picked % slashes.length}
+							>
+								<button
+									type="button"
+									class="flex w-full flex-col px-3 py-1.5 text-left text-sm/6 {i ===
+									picked % slashes.length
+										? 'bg-white/10'
+										: 'hover:bg-white/5'}"
+									onmousedown={(e) => (e.preventDefault(), pickSlash(c.name))}
+								>
+									<span class="font-mono font-semibold text-white">{c.usage}</span><span
+										class="text-xs/5 text-gray-400">{c.help}</span
+									>
 								</button>
 							</li>
 						{/each}
@@ -243,27 +302,54 @@
 				aria-describedby={error ? `composer-error-${resetKey}` : undefined}
 				aria-autocomplete="list"
 				aria-controls={popup ? `composer-popup-${resetKey}` : undefined}
-				aria-activedescendant={popup ? `composer-opt-${resetKey}-${picked % (popup === 'mention' ? mentions.length : slashes.length)}` : undefined}
+				aria-activedescendant={popup
+					? `composer-opt-${resetKey}-${picked % (popup === 'mention' ? mentions.length : slashes.length)}`
+					: undefined}
 				{rows}
 				{placeholder}
 				maxlength={CHAT_LIMITS.bodyMax}
 				disabled={busy}
 				{onkeydown}
-				oninput={(event) => { draft?.write(event.currentTarget.value); error = undefined; unknownCommand = false; track(); }}
+				oninput={(event) => {
+					draft?.write(event.currentTarget.value);
+					error = undefined;
+					unknownCommand = false;
+					track();
+				}}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
 				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
-				data-testid="composer"
-			></textarea>
+				data-testid="composer"></textarea>
 		</div>
-		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand}{' '}<button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
+		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert">
+				<span>{error}</span>{#if unknownCommand}{' '}<button
+						type="button"
+						class="font-semibold underline"
+						disabled={busy}
+						onclick={() => void send(true)}>Send as message</button
+					>{/if}
+			</p>{/if}
 		{#if attachments.length}
-			<ul bind:this={attached} class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto" aria-label="Attached">
+			<ul
+				bind:this={attached}
+				class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto"
+				aria-label="Attached"
+			>
 				{#each attachments as a (a)}
-					<li class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">
+					<li
+						class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200"
+					>
 						<HeroIcon variant="micro" name="paper-clip" />
 						<span class="min-w-0 truncate" title={a}>{a}</span>
-						<button type="button" data-attachment={a} class="shrink-0 text-gray-400 hover:text-white {attachmentFocus}" aria-label="Remove {a}" title="Remove {a}" onclick={() => void removeAttachment(a)}><HeroIcon class="text-current" variant="mini" name="x-mark" /></button>
+						<button
+							type="button"
+							data-attachment={a}
+							class="shrink-0 text-gray-400 hover:text-white {attachmentFocus}"
+							aria-label="Remove {a}"
+							title="Remove {a}"
+							onclick={() => void removeAttachment(a)}
+							><HeroIcon class="text-current" variant="mini" name="x-mark" /></button
+						>
 					</li>
 				{/each}
 			</ul>
@@ -271,12 +357,46 @@
 		<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-gray-400">
 				<span><kbd class="font-mono">@</kbd> mention · <kbd class="font-mono">/</kbd> command</span>
-				<button type="button" bind:this={attachButton} class="inline-flex items-center gap-x-1 hover:text-white {attachmentFocus}" onclick={() => files?.click()}><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach</button>
-				<input bind:this={files} type="file" multiple class="hidden" aria-label="Attach files" onchange={(e) => { attachments = [...new Set([...attachments, ...[...(e.currentTarget.files ?? [])].map((f) => f.name)])].slice(0, 10); e.currentTarget.value = ''; }} />
-				<label class="inline-flex items-center gap-x-1"><input type="checkbox" checked={enterSends} onchange={(e) => setEnterSends(e.currentTarget.checked)} class="accent-indigo-500" /> Enter sends</label>
-				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also send to {alsoIn}</label>{/if}
+				<button
+					type="button"
+					bind:this={attachButton}
+					class="inline-flex items-center gap-x-1 hover:text-white {attachmentFocus}"
+					onclick={() => files?.click()}
+					><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach</button
+				>
+				<input
+					bind:this={files}
+					type="file"
+					multiple
+					class="hidden"
+					aria-label="Attach files"
+					onchange={(e) => {
+						attachments = [
+							...new Set([...attachments, ...[...(e.currentTarget.files ?? [])].map((f) => f.name)])
+						].slice(0, 10);
+						e.currentTarget.value = '';
+					}}
+				/>
+				<label class="inline-flex items-center gap-x-1"
+					><input
+						type="checkbox"
+						checked={enterSends}
+						onchange={(e) => setEnterSends(e.currentTarget.checked)}
+						class="accent-indigo-500"
+					/> Enter sends</label
+				>
+				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"
+						><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also
+						send to {alsoIn}</label
+					>{/if}
 			</div>
-			<Button type="button" size="sm" disabled={busy || text.trim() === ''} onclick={() => void send()}><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button>
+			<Button
+				type="button"
+				size="sm"
+				disabled={busy || text.trim() === ''}
+				onclick={() => void send()}
+				><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button
+			>
 		</div>
 	{/if}
 </div>

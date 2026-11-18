@@ -11,21 +11,35 @@
 	let { rows, hideAssignee = false }: { rows: WorkRow[]; hideAssignee?: boolean } = $props();
 	const STATE: Record<WorkState, { word: string; class: string }> = {
 		todo: { word: 'To do', class: '' },
-		in_progress: { word: 'In progress', class: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30' },
+		in_progress: {
+			word: 'In progress',
+			class: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30'
+		},
 		in_review: { word: 'In review', class: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30' },
 		blocked: { word: 'Blocked', class: 'bg-red-400/10 text-red-300 ring-red-400/20' },
 		done: { word: 'Done', class: 'bg-green-400/10 text-green-300 ring-green-400/20' }
 	};
-	const PRIORITY = { urgent: 'Urgent', high: 'High priority', medium: 'Medium priority', low: 'Low priority' } as const;
+	const PRIORITY = {
+		urgent: 'Urgent',
+		high: 'High priority',
+		medium: 'Medium priority',
+		low: 'Low priority'
+	} as const;
 </script>
 
 <ul role="list" class="divide-y divide-white/5">
 	{#each rows as row (row.ref)}
-		<li class="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
+		<li
+			class="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
+		>
 			<div class="min-w-0 flex-1 basis-60">
 				<p class="text-sm/6 font-semibold text-white">
-					<a href={resolve(`/work/${row.ref}` as '/')} class="rounded-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
-						><span class="absolute inset-0" aria-hidden="true"></span><span class="font-mono font-normal text-gray-400">{row.ref}</span>
+					<a
+						href={resolve(`/work/${row.ref}` as '/')}
+						class="rounded-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+						><span class="absolute inset-0" aria-hidden="true"></span><span
+							class="font-mono font-normal text-gray-400">{row.ref}</span
+						>
 						<span class="[overflow-wrap:anywhere]">{row.title}</span></a
 					>
 				</p>

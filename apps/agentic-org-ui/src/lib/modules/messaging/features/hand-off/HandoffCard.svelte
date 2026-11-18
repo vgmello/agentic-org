@@ -42,8 +42,11 @@
 	const long = $derived(collapse(message.body));
 	const outcome = $derived(handoffOutcome(message, ctx));
 	const closed = $derived(!!outcome);
-	const canAccept = $derived(message.addressed_to === ctx.actor && !(readOnly && appOnly(message, ctx)));
-	const btn = 'h-auto min-h-8 max-w-full whitespace-normal px-2.5 py-1 text-center max-[640px]:min-h-[max(44px,2rem)]';
+	const canAccept = $derived(
+		message.addressed_to === ctx.actor && !(readOnly && appOnly(message, ctx))
+	);
+	const btn =
+		'h-auto min-h-8 max-w-full whitespace-normal px-2.5 py-1 text-center max-[640px]:min-h-[max(44px,2rem)]';
 
 	async function go(run: () => Promise<void> | void) {
 		if (!officeRunning || busy) return;
@@ -68,7 +71,14 @@
 	}
 </script>
 
-<div data-ask-id={message.id} class="rounded-lg border {closed ? 'border-white/10 bg-white/[0.03]' : 'border-indigo-400/30 bg-indigo-400/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3" data-testid="handoff-card" data-answered={closed ? 'true' : 'false'}>
+<div
+	data-ask-id={message.id}
+	class="rounded-lg border {closed
+		? 'border-white/10 bg-white/[0.03]'
+		: 'border-indigo-400/30 bg-indigo-400/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3"
+	data-testid="handoff-card"
+	data-answered={closed ? 'true' : 'false'}
+>
 	<p class="text-xs/5 font-semibold text-indigo-200">
 		<HeroIcon variant="micro" name="arrows-right-left" />
 		Hand-off: {nameOf(ctx, message.from)} → {whoOf(ctx, message.addressed_to ?? '')}
@@ -76,25 +86,80 @@
 	</p>
 	<div class="mt-2">
 		<Rich body={expanded ? message.body : long.shown} />
-		{#if long.hidden > 0}<button type="button" class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button>{/if}
+		{#if long.hidden > 0}<button
+				type="button"
+				class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200"
+				aria-expanded={expanded}
+				onclick={() => (expanded = !expanded)}
+				>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button
+			>{/if}
 	</div>
 	{#if message.linked_ref}
-		<p class="mt-2 text-xs/5 text-gray-400" data-testid="linked-ref">Linked to <span class="rounded bg-white/10 px-1.5 py-0.5 font-mono font-semibold text-gray-100">{message.linked_ref}</span></p>
+		<p class="mt-2 text-xs/5 text-gray-400" data-testid="linked-ref">
+			Linked to <span
+				class="rounded bg-white/10 px-1.5 py-0.5 font-mono font-semibold text-gray-100"
+				>{message.linked_ref}</span
+			>
+		</p>
 	{/if}
 
 	{#if closed}
-		<p class="mt-3 text-sm/6 {message.accepted_by ? 'text-emerald-300' : 'text-gray-300'}" data-testid="answered">{outcome}</p>
+		<p
+			class="mt-3 text-sm/6 {message.accepted_by ? 'text-emerald-300' : 'text-gray-300'}"
+			data-testid="answered"
+		>
+			{outcome}
+		</p>
 	{:else}
 		<div class="mt-3 flex flex-wrap items-center gap-2">
-			{#if canAccept}<Button type="button" size="sm" variant="outline" class={btn} disabled={busy || !officeRunning} onclick={() => go(onaccept)}>Accept</Button>{/if}
-			{#if onreplyinthread}<Button type="button" size="sm" variant="ghost" class={btn} onclick={(event) => onreplyinthread?.(event.currentTarget)}>Reply…</Button>{/if}
-			{#if canAccept && onhandback}<Button type="button" size="sm" variant="ghost" class={btn} disabled={busy || !officeRunning} aria-expanded={handingBack} onclick={openHandBack}>Hand back…</Button>{/if}
+			{#if canAccept}<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					class={btn}
+					disabled={busy || !officeRunning}
+					onclick={() => go(onaccept)}>Accept</Button
+				>{/if}
+			{#if onreplyinthread}<Button
+					type="button"
+					size="sm"
+					variant="ghost"
+					class={btn}
+					onclick={(event) => onreplyinthread?.(event.currentTarget)}>Reply…</Button
+				>{/if}
+			{#if canAccept && onhandback}<Button
+					type="button"
+					size="sm"
+					variant="ghost"
+					class={btn}
+					disabled={busy || !officeRunning}
+					aria-expanded={handingBack}
+					onclick={openHandBack}>Hand back…</Button
+				>{/if}
 		</div>
 		{#if handingBack}
-			<form class="mt-2 flex flex-wrap items-start gap-2" onsubmit={(e) => (e.preventDefault(), go(() => onhandback?.(reason)))}>
+			<form
+				class="mt-2 flex flex-wrap items-start gap-2"
+				onsubmit={(e) => (e.preventDefault(), go(() => onhandback?.(reason)))}
+			>
 				<label class="sr-only" for="handback-{message.id}">Why do you hand it back?</label>
-				<textarea id="handback-{message.id}" bind:this={reasonBox} bind:value={reason} rows="2" maxlength={20000} disabled={busy} placeholder="Why do you hand it back?" class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[639px]:text-base"></textarea>
-				<Button type="submit" size="sm" variant="outline" disabled={busy || !officeRunning || reason.trim() === ''}>Hand back to {nameOf(ctx, message.from)}</Button>
+				<textarea
+					id="handback-{message.id}"
+					bind:this={reasonBox}
+					bind:value={reason}
+					rows="2"
+					maxlength={20000}
+					disabled={busy}
+					placeholder="Why do you hand it back?"
+					class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[639px]:text-base"
+				></textarea>
+				<Button
+					type="submit"
+					size="sm"
+					variant="outline"
+					disabled={busy || !officeRunning || reason.trim() === ''}
+					>Hand back to {nameOf(ctx, message.from)}</Button
+				>
 			</form>
 		{/if}
 	{/if}

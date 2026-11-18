@@ -6,7 +6,12 @@ export type RecoveryState =
 	| { state: 'preparing' }
 	| { state: 'waiting' }
 	| { state: 'shown'; shownOn?: string; again?: { count: number; lastOn?: string } }
-	| { state: 'collected'; collectedOn?: string; shownOn?: string; again?: { count: number; lastOn?: string } }
+	| {
+			state: 'collected';
+			collectedOn?: string;
+			shownOn?: string;
+			again?: { count: number; lastOn?: string };
+	  }
 	| { state: 'failed'; reason: string }
 	| { state: 'unknown' };
 
@@ -133,7 +138,8 @@ export interface AgentExecution {
 }
 
 /** What the office observes about running the agent. Unknown is never read as ready. */
-export type Readiness = { kind: 'ready' } | { kind: 'needs_setup'; reason: string } | { kind: 'unknown' };
+export type Readiness =
+	{ kind: 'ready' } | { kind: 'needs_setup'; reason: string } | { kind: 'unknown' };
 
 export interface AgentSetup {
 	memberId: string;

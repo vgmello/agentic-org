@@ -1,15 +1,68 @@
 {
 	"profiles": [
-		{ "id": "mp-claude", "name": "Claude Code · default", "models": ["claude-sonnet-4-5", "claude-opus-4-5"] },
+		{
+			"id": "mp-claude",
+			"name": "Claude Code · default",
+			"models": ["claude-sonnet-4-5", "claude-opus-4-5"]
+		},
 		{ "id": "mp-codex", "name": "Codex · default", "models": ["gpt-5-codex"] }
 	],
 	"byMember": {
-		"sam": { "profile": "mp-claude", "model": "claude-opus-4-5", "driver": "Claude Code", "readiness": { "kind": "ready" }, "employeeRevision": 3, "executionRevision": 2 },
-		"noor": { "profile": "mp-claude", "model": "claude-sonnet-4-5", "driver": "Claude Code", "readiness": { "kind": "ready" }, "employeeRevision": 2, "executionRevision": 1 },
-		"kai": { "profile": "mp-codex", "model": "gpt-5-codex", "driver": "Codex", "readiness": { "kind": "needs_setup", "reason": "Codex isn't signed in on Studio Mac" }, "employeeRevision": 2, "executionRevision": 4 },
-		"mira": { "profile": "mp-claude", "model": "claude-sonnet-4-5", "driver": null, "readiness": { "kind": "unknown" }, "employeeRevision": 1, "executionRevision": 1 },
-		"juno": { "profile": "mp-claude", "model": "claude-sonnet-4-5", "driver": "Claude Code", "readiness": { "kind": "ready" }, "employeeRevision": 1, "executionRevision": 1 },
-		"pax": { "profile": null, "model": null, "driver": null, "readiness": { "kind": "unknown" }, "employeeRevision": 1, "executionRevision": 0 },
-		"ines": { "profile": "mp-claude", "model": "claude-sonnet-4-5", "driver": "Claude Code", "readiness": { "kind": "ready" }, "employeeRevision": 1, "executionRevision": 1 }
+		"sam": {
+			"profile": "mp-claude",
+			"model": "claude-opus-4-5",
+			"driver": "Claude Code",
+			"readiness": { "kind": "ready" },
+			"employeeRevision": 3,
+			"executionRevision": 2
+		},
+		"noor": {
+			"profile": "mp-claude",
+			"model": "claude-sonnet-4-5",
+			"driver": "Claude Code",
+			"readiness": { "kind": "ready" },
+			"employeeRevision": 2,
+			"executionRevision": 1
+		},
+		"kai": {
+			"profile": "mp-codex",
+			"model": "gpt-5-codex",
+			"driver": "Codex",
+			"readiness": { "kind": "needs_setup", "reason": "Codex isn't signed in on Studio Mac" },
+			"employeeRevision": 2,
+			"executionRevision": 4
+		},
+		"mira": {
+			"profile": "mp-claude",
+			"model": "claude-sonnet-4-5",
+			"driver": null,
+			"readiness": { "kind": "unknown" },
+			"employeeRevision": 1,
+			"executionRevision": 1
+		},
+		"juno": {
+			"profile": "mp-claude",
+			"model": "claude-sonnet-4-5",
+			"driver": "Claude Code",
+			"readiness": { "kind": "ready" },
+			"employeeRevision": 1,
+			"executionRevision": 1
+		},
+		"pax": {
+			"profile": null,
+			"model": null,
+			"driver": null,
+			"readiness": { "kind": "unknown" },
+			"employeeRevision": 1,
+			"executionRevision": 0
+		},
+		"ines": {
+			"profile": "mp-claude",
+			"model": "claude-sonnet-4-5",
+			"driver": "Claude Code",
+			"readiness": { "kind": "ready" },
+			"employeeRevision": 1,
+			"executionRevision": 1
+		}
 	}
 }

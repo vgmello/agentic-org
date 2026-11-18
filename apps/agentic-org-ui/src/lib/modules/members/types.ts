@@ -156,7 +156,8 @@ export type StartedByKind =
 	| 'resume'
 	| 'recovery';
 
-export type AttemptOutcome = 'running' | 'succeeded' | 'failed' | 'switched' | 'cancelled' | 'skipped';
+export type AttemptOutcome =
+	'running' | 'succeeded' | 'failed' | 'switched' | 'cancelled' | 'skipped';
 
 export interface Attempt {
 	n: number;

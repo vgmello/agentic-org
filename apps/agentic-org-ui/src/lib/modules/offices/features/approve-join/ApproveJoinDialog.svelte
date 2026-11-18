@@ -9,10 +9,22 @@
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/office/api';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { errorClass, helpClass, inputClass, mobileButton } from '$lib/modules/settings/components/classes';
+	import {
+		errorClass,
+		helpClass,
+		inputClass,
+		mobileButton
+	} from '$lib/modules/settings/components/classes';
 	import { officesApi } from '../../api';
 	import { CODE_HINT, groupCode, readCheckCode } from '../../check-code';
 	import { agoText } from '../../time';
@@ -58,7 +70,13 @@
 	});
 	const read = $derived(readCheckCode(typed));
 	const name = $derived(shown?.officeName ?? 'this office');
-	const created = $derived(shown ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(shown.invitationCreatedAt)) : '');
+	const created = $derived(
+		shown
+			? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(
+					new Date(shown.invitationCreatedAt)
+				)
+			: ''
+	);
 
 	function change(event: Event & { currentTarget: HTMLInputElement }) {
 		const next = readCheckCode(event.currentTarget.value);
@@ -118,25 +136,43 @@
 			</DialogHeader>
 			{#if error}<p class="text-sm/6 text-red-300" role="alert">{error}</p>{/if}
 			<DialogFooter>
-				<Button type="button" variant="outline" class={mobileButton} disabled={!!busy} onclick={() => (stage = 'approve')}>Back</Button>
-				<Button type="button" class={mobileButton} aria-busy={busy === 'decline'} aria-disabled={!!busy} onclick={decline}>{busy === 'decline' ? 'Declining…' : 'Decline'}</Button>
+				<Button
+					type="button"
+					variant="outline"
+					class={mobileButton}
+					disabled={!!busy}
+					onclick={() => (stage = 'approve')}>Back</Button
+				>
+				<Button
+					type="button"
+					class={mobileButton}
+					aria-busy={busy === 'decline'}
+					aria-disabled={!!busy}
+					onclick={decline}>{busy === 'decline' ? 'Declining…' : 'Decline'}</Button
+				>
 			</DialogFooter>
 		{:else if stage === 'ended'}
 			<DialogHeader>
 				<DialogTitle text={`${name}'s invitation is cancelled`} />
 			</DialogHeader>
 			<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{error}</p>
-			<DialogFooter><Button type="button" class={mobileButton} onclick={() => (open = false)}>Close</Button></DialogFooter>
+			<DialogFooter
+				><Button type="button" class={mobileButton} onclick={() => (open = false)}>Close</Button
+				></DialogFooter
+			>
 		{:else}
 			<form class="grid gap-6" onsubmit={approve} novalidate>
 				<DialogHeader>
 					<DialogTitle text={`Approve ${name}?`} />
 					<DialogDescription class="[overflow-wrap:anywhere]">
-						A computer at {shown?.fromAddress} used the invitation for {name} (created today at {created}) {shown ? agoText(shown.requestedAt, Date.now()) : ''}.
+						A computer at {shown?.fromAddress} used the invitation for {name} (created today at {created})
+						{shown ? agoText(shown.requestedAt, Date.now()) : ''}.
 					</DialogDescription>
 				</DialogHeader>
 				<div>
-					<Label for="check-code" class="block text-sm/6 font-medium text-white">Type the check code shown on {name}</Label>
+					<Label for="check-code" class="block text-sm/6 font-medium text-white"
+						>Type the check code shown on {name}</Label
+					>
 					<div class="mt-2">
 						<Input
 							bind:ref={input}
@@ -147,17 +183,34 @@
 							autocapitalize="characters"
 							spellcheck={false}
 							aria-invalid={error || hint ? true : undefined}
-							aria-describedby="check-code-help{hint ? ' check-code-hint' : ''}{error ? ' check-code-error' : ''}"
+							aria-describedby="check-code-help{hint ? ' check-code-hint' : ''}{error
+								? ' check-code-error'
+								: ''}"
 							class="{inputClass} font-mono tracking-widest"
 						/>
 					</div>
 					{#if hint}<p id="check-code-hint" class={errorClass}>{CODE_HINT}</p>{/if}
 					{#if error}<p id="check-code-error" class={errorClass} role="alert">{error}</p>{/if}
-					<p id="check-code-help" class={helpClass}>Verify the code on the destination terminal or through your trusted authenticated session to that machine. Decline unsolicited or unverified relayed codes.</p>
+					<p id="check-code-help" class={helpClass}>
+						Verify the code on the destination terminal or through your trusted authenticated
+						session to that machine. Decline unsolicited or unverified relayed codes.
+					</p>
 				</div>
 				<DialogFooter>
-					<Button type="button" variant="outline" class={mobileButton} disabled={!!busy} onclick={() => (stage = 'decline')}>Decline</Button>
-					<Button type="submit" class="{mobileButton} [overflow-wrap:anywhere]" disabled={!read.complete} aria-busy={busy === 'approve'} aria-disabled={!!busy}>{busy === 'approve' ? 'Approving…' : `Approve ${name}`}</Button>
+					<Button
+						type="button"
+						variant="outline"
+						class={mobileButton}
+						disabled={!!busy}
+						onclick={() => (stage = 'decline')}>Decline</Button
+					>
+					<Button
+						type="submit"
+						class="{mobileButton} [overflow-wrap:anywhere]"
+						disabled={!read.complete}
+						aria-busy={busy === 'approve'}
+						aria-disabled={!!busy}>{busy === 'approve' ? 'Approving…' : `Approve ${name}`}</Button
+					>
 				</DialogFooter>
 			</form>
 		{/if}

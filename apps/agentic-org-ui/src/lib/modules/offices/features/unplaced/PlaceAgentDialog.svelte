@@ -3,7 +3,14 @@
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/office/api';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
 	import { errorClass, mobileButton, selectClass } from '$lib/modules/settings/components/classes';
 	import type { Member } from '$lib/proto';
@@ -50,7 +57,9 @@
 		try {
 			await officesApi.placeAgent(organizationId, shown.id, office);
 			open = false;
-			toast.success(`${shown.name} is placed in ${offices.find((o) => o.id === office)?.name ?? 'the office'}.`);
+			toast.success(
+				`${shown.name} is placed in ${offices.find((o) => o.id === office)?.name ?? 'the office'}.`
+			);
 			await onchanged();
 		} catch (e) {
 			error = toAppError(e).message;
@@ -65,12 +74,20 @@
 		<form class="grid gap-5" onsubmit={submit} novalidate>
 			<DialogHeader>
 				<DialogTitle text={`Place ${shown?.name ?? ''}`} />
-				<DialogDescription>{shown?.name} keeps its teams, reporting and history. It runs in the office you choose.</DialogDescription>
+				<DialogDescription
+					>{shown?.name} keeps its teams, reporting and history. It runs in the office you choose.</DialogDescription
+				>
 			</DialogHeader>
 			<div>
 				<Label for="place-office" class="block text-sm/6 font-medium text-white">Office</Label>
 				<div class="mt-2">
-					<select id="place-office" bind:value={office} class={selectClass} aria-invalid={error ? true : undefined} aria-describedby={error ? 'place-office-error' : undefined}>
+					<select
+						id="place-office"
+						bind:value={office}
+						class={selectClass}
+						aria-invalid={error ? true : undefined}
+						aria-describedby={error ? 'place-office-error' : undefined}
+					>
 						<option value="">Choose an office…</option>
 						{#each offices as o (o.id)}<option value={o.id}>{o.name}</option>{/each}
 					</select>
@@ -78,8 +95,16 @@
 				{#if error}<p id="place-office-error" class={errorClass} role="alert">{error}</p>{/if}
 			</div>
 			<DialogFooter>
-				<Button type="button" variant="outline" class={mobileButton} disabled={busy} onclick={() => (open = false)}>Cancel</Button>
-				<Button type="submit" class={mobileButton} aria-busy={busy} aria-disabled={busy}>{busy ? 'Placing…' : 'Place'}</Button>
+				<Button
+					type="button"
+					variant="outline"
+					class={mobileButton}
+					disabled={busy}
+					onclick={() => (open = false)}>Cancel</Button
+				>
+				<Button type="submit" class={mobileButton} aria-busy={busy} aria-disabled={busy}
+					>{busy ? 'Placing…' : 'Place'}</Button
+				>
 			</DialogFooter>
 		</form>
 	</DialogContent>

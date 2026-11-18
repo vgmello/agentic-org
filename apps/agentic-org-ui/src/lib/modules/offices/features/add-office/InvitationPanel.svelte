@@ -10,13 +10,22 @@
 	import type { Issued } from '../../types';
 
 	let { issued, ondone }: { issued: Issued; ondone: () => void } = $props();
-	const expires = $derived(new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(issued.invitation.expiresAt)));
+	const expires = $derived(
+		new Intl.DateTimeFormat(undefined, {
+			weekday: 'short',
+			hour: '2-digit',
+			minute: '2-digit'
+		}).format(new Date(issued.invitation.expiresAt))
+	);
 </script>
 
 <div class="space-y-4" data-testid="invitation-panel">
 	<ol class="list-decimal space-y-1 pl-5 text-sm/6 text-gray-300">
 		<li>On the other machine, start Agentic Org's office setup.</li>
-		<li>Paste this invitation when it asks. It's a protected prompt: the invitation never goes on the command line.</li>
+		<li>
+			Paste this invitation when it asks. It's a protected prompt: the invitation never goes on the
+			command line.
+		</li>
 		<li>The setup shows a check code. You type it here to approve the join.</li>
 	</ol>
 	<div class="flex flex-wrap items-center gap-2">
@@ -29,6 +38,11 @@
 		/>
 		<CopyButton text={issued.secret} label="Copy invitation" copiedLabel="Copied invitation" />
 	</div>
-	<p class="text-xs/5 text-gray-400">It works once and expires in 24 hours ({expires}). It's shown only now. If it's lost, make a new invitation: that cancels this one.</p>
-	<div class="flex justify-end"><Button type="button" class={mobileButton} onclick={ondone}>Done</Button></div>
+	<p class="text-xs/5 text-gray-400">
+		It works once and expires in 24 hours ({expires}). It's shown only now. If it's lost, make a new
+		invitation: that cancels this one.
+	</p>
+	<div class="flex justify-end">
+		<Button type="button" class={mobileButton} onclick={ondone}>Done</Button>
+	</div>
 </div>

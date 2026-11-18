@@ -1,5 +1,13 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
-import type { ActivityEntry, ConversationRow, ProcessRow, TeamDetail, TeamProjectRow, TeamRow, WorkRow } from './types';
+import type {
+	ActivityEntry,
+	ConversationRow,
+	ProcessRow,
+	TeamDetail,
+	TeamProjectRow,
+	TeamRow,
+	WorkRow
+} from './types';
 
 /** What the Teams index and a team's page read, and archiving a team. Moves, renames and leads go through `orgApi`. */
 export interface TeamsApi {

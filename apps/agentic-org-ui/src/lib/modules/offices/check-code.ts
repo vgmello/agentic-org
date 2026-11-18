@@ -30,7 +30,9 @@ export function readCheckCode(raw: string): CodeRead {
 }
 
 /** "K7QP4MZT" shown as "K7QP 4MZT". */
-export const groupCode = (code: string): string => (code.length > 4 ? `${code.slice(0, 4)} ${code.slice(4)}` : code);
+export const groupCode = (code: string): string =>
+	code.length > 4 ? `${code.slice(0, 4)} ${code.slice(4)}` : code;
 
 /** Whether a typed code is the one HQ expects, by the same reading. */
-export const codesMatch = (typed: string, expected: string): boolean => readCheckCode(typed).code === readCheckCode(expected).code;
+export const codesMatch = (typed: string, expected: string): boolean =>
+	readCheckCode(typed).code === readCheckCode(expected).code;

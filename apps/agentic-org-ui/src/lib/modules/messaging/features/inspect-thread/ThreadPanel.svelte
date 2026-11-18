@@ -4,7 +4,14 @@
 	import { Button } from '$lib/components/ui/button';
 	import { OFFICE, SYSTEM_NO_REPLY, type ChatContext } from '$lib/modules/messaging/engine';
 	import { composerState, titleOf } from '$lib/modules/messaging/model';
-	import type { ChatMessage, ChatState, Conversation, MuteMode, QuestionAnswer, Reaction } from '$lib/modules/messaging/types';
+	import type {
+		ChatMessage,
+		ChatState,
+		Conversation,
+		MuteMode,
+		QuestionAnswer,
+		Reaction
+	} from '$lib/modules/messaging/types';
 	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
 	import MessageRow from '../../components/MessageRow.svelte';
 	import type { MessageRows } from '../../row-data';
@@ -51,12 +58,18 @@
 		readOnly?: boolean;
 		onclose: () => void;
 		undelivered?: Snippet;
-		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
+		onsend: (
+			text: string,
+			options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }
+		) => Promise<boolean | void> | boolean | void;
 		onreact: (m: ChatMessage, r: Reaction) => void;
 		onturn: (m: ChatMessage, into: 'bug' | 'request' | 'task', opener: HTMLElement) => void;
 		onmute: (m: ChatMessage, mode: MuteMode) => void;
 		onpin: (m: ChatMessage) => void;
-		onanswer: (m: ChatMessage, answer: { option_id?: string; text?: string; answers?: QuestionAnswer[] }) => Promise<void> | void;
+		onanswer: (
+			m: ChatMessage,
+			answer: { option_id?: string; text?: string; answers?: QuestionAnswer[] }
+		) => Promise<void> | void;
 		onaccept: (m: ChatMessage) => Promise<void> | void;
 		onhandback?: (m: ChatMessage, reason: string) => Promise<void> | void;
 		onwithdraw?: (m: ChatMessage, reason: string) => Promise<void> | void;
@@ -69,7 +82,11 @@
 	const drafts = $derived(draftStore.forThread(threadId));
 	const replies = $derived(rows.forMessage(root).replies);
 	// A System notice takes no replies (chat-ux §4.2).
-	const compose = $derived(root.from === OFFICE ? { canWrite: false, note: SYSTEM_NO_REPLY, wakes: [] } : composerState(chatState, ctx, conversation, officeRunning, cannotRun));
+	const compose = $derived(
+		root.from === OFFICE
+			? { canWrite: false, note: SYSTEM_NO_REPLY, wakes: [] }
+			: composerState(chatState, ctx, conversation, officeRunning, cannotRun)
+	);
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
 	export function focusClose() {
@@ -78,22 +95,99 @@
 	}
 </script>
 
-<aside data-chat-panel class="absolute inset-y-0 right-0 {sidebarInline ? 'left-[256px]' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
+<aside
+	data-chat-panel
+	class="absolute inset-y-0 right-0 {sidebarInline
+		? 'left-[256px]'
+		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-white/10 bg-gray-800"
+	aria-label="Thread"
+	data-testid="thread-panel"
+>
 	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
-		<Button type="button" variant="ghost" size="icon-sm" class="scroll-mt-16" aria-label="Close thread" bind:ref={closeButton} onclick={onclose}><X aria-hidden="true" /></Button>
+		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">
+			Thread <span class="font-normal text-gray-400">in {title}</span>
+		</h2>
+		<Button
+			type="button"
+			variant="ghost"
+			size="icon-sm"
+			class="scroll-mt-16"
+			aria-label="Close thread"
+			bind:ref={closeButton}
+			onclick={onclose}><X aria-hidden="true" /></Button
+		>
 	</div>
-	<div class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]" data-focus-scope>
+	<div
+		class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]"
+		data-focus-scope
+	>
 		{#key threadId}
-			<div class="space-y-1" role="log" aria-label="Thread messages" aria-live="polite" aria-relevant="additions">
-				<MessageRow active={active(root)} {onmenu} message={root} {ctx} rowData={rows.forMessage(root)} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} {onhandback} {onwithdraw} />
-				<p class="px-2 pt-2 text-xs/5 text-gray-400" aria-live="off" data-testid="thread-count">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</p>
+			<div
+				class="space-y-1"
+				role="log"
+				aria-label="Thread messages"
+				aria-live="polite"
+				aria-relevant="additions"
+			>
+				<MessageRow
+					active={active(root)}
+					{onmenu}
+					message={root}
+					{ctx}
+					rowData={rows.forMessage(root)}
+					{now}
+					{readOnly}
+					{officeRunning}
+					inThread
+					askDraftFor={drafts.ask}
+					{onreact}
+					{onturn}
+					{onmute}
+					{onpin}
+					{onanswer}
+					{onaccept}
+					{onhandback}
+					{onwithdraw}
+				/>
+				<p class="px-2 pt-2 text-xs/5 text-gray-400" aria-live="off" data-testid="thread-count">
+					{replies.length}
+					{replies.length === 1 ? 'reply' : 'replies'}
+				</p>
 				{#each replies as r (r.id)}
-					<MessageRow active={active(r)} {onmenu} message={r} {ctx} rowData={rows.forMessage(r)} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} {onhandback} {onwithdraw} />
+					<MessageRow
+						active={active(r)}
+						{onmenu}
+						message={r}
+						{ctx}
+						rowData={rows.forMessage(r)}
+						{now}
+						{readOnly}
+						{officeRunning}
+						inThread
+						askDraftFor={drafts.ask}
+						{onreact}
+						{onturn}
+						{onmute}
+						{onpin}
+						{onanswer}
+						{onaccept}
+						{onhandback}
+						{onwithdraw}
+					/>
 				{/each}
 			</div>
 		{/key}
 		{@render undelivered?.()}
 	</div>
-	<Composer placeholder="Reply in thread" canWrite={compose.canWrite && !readOnly} note={compose.note} {conversation} {ctx} resetKey="thread:{root.id}" draft={drafts.reply} alsoIn={conversation.kind === 'channel' ? title : undefined} {onsend} />
+	<Composer
+		placeholder="Reply in thread"
+		canWrite={compose.canWrite && !readOnly}
+		note={compose.note}
+		{conversation}
+		{ctx}
+		resetKey="thread:{root.id}"
+		draft={drafts.reply}
+		alsoIn={conversation.kind === 'channel' ? title : undefined}
+		{onsend}
+	/>
 </aside>

@@ -8,7 +8,6 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import DividedRow from '$lib/components/DividedRow.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import Callout from '$lib/components/Callout.svelte';
 	import OfficeDetailsSheet from '$lib/components/OfficeDetailsSheet.svelte';
 	import OfficeStatusBadge from '$lib/components/OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
@@ -33,10 +32,32 @@
 	import UnplacedAgents from '$lib/modules/offices/features/unplaced/UnplacedAgents.svelte';
 	import { orgApi } from '$lib/org/api';
 	import { sessionFor } from '$lib/org/session';
-	import type { Issued, Invitation, JoinRequest, OutboxItem, PendingAdd } from '$lib/modules/offices/types';
+	import type {
+		Issued,
+		Invitation,
+		JoinRequest,
+		OutboxItem,
+		PendingAdd
+	} from '$lib/modules/offices/types';
 	import type { Member } from '$lib/proto';
 	import { officeApi, toAppError } from '$lib/office/api';
-	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, repairReasonCopy, rowLabel, sampleRestartDeadlines, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck, type RestartDeadlineSample } from '$lib/offices/model';
+	import {
+		agentsIn,
+		applyStatusUpdate,
+		displayStatusFor,
+		isHq,
+		orderOffices,
+		repairReasonCopy,
+		rowLabel,
+		sampleRestartDeadlines,
+		secondaryText,
+		statusInfo,
+		unplacedAgents,
+		whyForLabel,
+		whyStopped,
+		type LiveCheck,
+		type RestartDeadlineSample
+	} from '$lib/offices/model';
 	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
 
@@ -79,7 +100,10 @@
 	const satelliteIds = $derived(new Set(overview?.satellites.map((o) => o.id)));
 	const detailsOf = (id: string) => overview?.details[id];
 	/** An office that joined, as its row words it: where it is and when it was last seen. */
-	const shownOffice = (o: OfficeInfo): OfficeInfo => (satelliteIds.has(o.id) ? { ...o, host: satelliteWhere(o, detailsOf(o.id), now), endpoint: undefined } : o);
+	const shownOffice = (o: OfficeInfo): OfficeInfo =>
+		satelliteIds.has(o.id)
+			? { ...o, host: satelliteWhere(o, detailsOf(o.id), now), endpoint: undefined }
+			: o;
 	const offices = $derived(orderOffices(current));
 	const here = $derived(data.connection.office);
 	// The agent counts arrive after the list: `undefined` while they are being counted.
@@ -111,7 +135,9 @@
 		invalidate('app:offices');
 	}
 	const rawSnapshot = $derived(counts && 'snapshot' in counts ? counts.snapshot : undefined);
-	const snapshot = $derived(rawSnapshot ? withPlacements(rawSnapshot, overview?.placements ?? {}) : undefined);
+	const snapshot = $derived(
+		rawSnapshot ? withPlacements(rawSnapshot, overview?.placements ?? {}) : undefined
+	);
 	const sample = $derived(!!counts && 'snapshot' in counts && counts.sample);
 	const countError = $derived(counts && 'error' in counts ? counts.error : undefined);
 	const unplaced = $derived(snapshot ? unplacedAgents(snapshot, current) : []);
@@ -132,7 +158,11 @@
 		const request = ++refreshSequence;
 		try {
 			const found = (await officeApi.peekOrganizations()).find((o) => o.id === id);
-			if (id === data.connection.organization.id && revision === statusRevision && request > successfulRefresh) {
+			if (
+				id === data.connection.organization.id &&
+				revision === statusRevision &&
+				request > successfulRefresh
+			) {
 				// A successful empty result also fences older reads, preserving the absence it reported.
 				successfulRefresh = request;
 				if (found) reported = found.offices;
@@ -148,16 +178,22 @@
 			void refreshOffices();
 		}
 		// A Retry that worked removes the button the keyboard was on: move focus to the row instead of dropping it.
-		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
+		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]'))
+			rowButton(here.id)?.focus();
 	});
-	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
-// A new deadline gets an immediate sample, which anchors its stable live-status announcement.
-let deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
-let countdownClock = $state(Date.now());
-// Capture the new deadline before rendering its visible and accessible text.
-$effect.pre(() => {
-	deadlineSamples = sampleRestartDeadlines(current, untrack(() => deadlineSamples), Date.now());
-});
+	const rowButton = (officeId: string) =>
+		document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
+	// A new deadline gets an immediate sample, which anchors its stable live-status announcement.
+	let deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
+	let countdownClock = $state(Date.now());
+	// Capture the new deadline before rendering its visible and accessible text.
+	$effect.pre(() => {
+		deadlineSamples = sampleRestartDeadlines(
+			current,
+			untrack(() => deadlineSamples),
+			Date.now()
+		);
+	});
 	onMount(() => {
 		// The host says when an office's status changes: show it now instead of at the next check.
 		let stopListening: (() => void) | undefined;
@@ -187,9 +223,11 @@ $effect.pre(() => {
 		function tick() {
 			const now = Date.now();
 			countdownClock = now;
-			const delay = Math.min(...deadlines
-				.filter((deadline) => deadline > now)
-				.map((deadline) => (deadline - now) % 10_000 + 1));
+			const delay = Math.min(
+				...deadlines
+					.filter((deadline) => deadline > now)
+					.map((deadline) => ((deadline - now) % 10_000) + 1)
+			);
 			// Cross the exact deadline boundary by 1 ms before displaying the next lower step.
 			if (Number.isFinite(delay)) timer = setTimeout(tick, delay);
 		}
@@ -197,22 +235,25 @@ $effect.pre(() => {
 		return () => clearTimeout(timer);
 	});
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
-const deadlineObservedAt = (office: OfficeInfo) => {
-	const sample = deadlineSamples.get(office.id);
-	return sample && sample.deadline === office.next_restart_at ? sample.observedAt : undefined;
-};
+	const deadlineObservedAt = (office: OfficeInfo) => {
+		const sample = deadlineSamples.get(office.id);
+		return sample && sample.deadline === office.next_restart_at ? sample.observedAt : undefined;
+	};
 	const labelWhyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = current.find((o) => o.id === officeId);
-	return office && (shown === 'offline' || shown === 'unavailable')
-		? whyForLabel(office, new Date(deadlineObservedAt(office) ?? Date.now()))
-		: undefined;
+		return office && (shown === 'offline' || shown === 'unavailable')
+			? whyForLabel(office, new Date(deadlineObservedAt(office) ?? Date.now()))
+			: undefined;
 	};
 	const whyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = current.find((o) => o.id === officeId);
-	if (!office || (shown !== 'offline' && shown !== 'unavailable')) return undefined;
-	return whyStopped(office, new Date(Math.max(countdownClock, deadlineObservedAt(office) ?? countdownClock)));
+		if (!office || (shown !== 'offline' && shown !== 'unavailable')) return undefined;
+		return whyStopped(
+			office,
+			new Date(Math.max(countdownClock, deadlineObservedAt(office) ?? countdownClock))
+		);
 	};
 	// Another organization's office is another thing to verify: don't carry the last answer over.
 	let lastOffice: string | undefined;
@@ -225,7 +266,16 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 		lastOffice = id;
 	});
 	// An office that joined is reported by HQ (not by this connection), so its saved status is its status.
-	const statusOf = (officeId: string) => (satelliteIds.has(officeId) ? (current.find((o) => o.id === officeId)?.status ?? 'unknown') : displayStatusFor(officeId, here.id, check, current.find((o) => o.id === officeId)?.status, capabilities));
+	const statusOf = (officeId: string) =>
+		satelliteIds.has(officeId)
+			? (current.find((o) => o.id === officeId)?.status ?? 'unknown')
+			: displayStatusFor(
+					officeId,
+					here.id,
+					check,
+					current.find((o) => o.id === officeId)?.status,
+					capabilities
+				);
 
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
@@ -241,7 +291,6 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 		detailsId = id;
 		detailsOpen = true;
 	}
-
 
 	// ---- add, approve, remove, rename, place and the outboxes (offices-and-teams-ux §6) ----------------------------------
 	const orgId = $derived(data.connection.organization.id);
@@ -283,7 +332,11 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	let retryingItem = $state<string | undefined>();
 
 	const canAddOnInstance = $derived(overview?.viewer.isAdministrator ?? false);
-	const placeable = $derived(orderOffices(current).filter((o) => o.status !== 'pending').map((o) => ({ id: o.id, name: o.name })));
+	const placeable = $derived(
+		orderOffices(current)
+			.filter((o) => o.status !== 'pending')
+			.map((o) => ({ id: o.id, name: o.name }))
+	);
 
 	async function issue(invitation: Invitation) {
 		issued = await officesApi.newInvitation(orgId, invitation.id);
@@ -340,146 +393,236 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 
 <svelte:head><title>Offices · Organization settings · Agentic Org</title></svelte:head>
 
-<PageHeader title="Offices" count={offices.length} countLabel={offices.length === 1 ? 'office' : 'offices'} description="Where {organization}'s agents run. HQ keeps the records and approves new offices; other offices keep a copy.">
+<PageHeader
+	title="Offices"
+	count={offices.length}
+	countLabel={offices.length === 1 ? 'office' : 'offices'}
+	description="Where {organization}'s agents run. HQ keeps the records and approves new offices; other offices keep a copy."
+>
 	{#snippet actions()}
-		<Button disabled={!overview} aria-describedby={extra.state === 'error' ? 'overview-error' : undefined} onclick={(e) => ((via(e.currentTarget), (resumeAdd = undefined), (addOpen = true)))}><Plus aria-hidden="true" /> Add office</Button>
+		<Button
+			disabled={!overview}
+			aria-describedby={extra.state === 'error' ? 'overview-error' : undefined}
+			onclick={(e) => (via(e.currentTarget), (resumeAdd = undefined), (addOpen = true))}
+			><Plus aria-hidden="true" /> Add office</Button
+		>
 	{/snippet}
 </PageHeader>
 
 <!-- The outer width governs both header gutters and the full-width divided rows. -->
 <div class="@container">
-<div class="{compactRow.gutters} space-y-5 px-4 py-6 sm:px-6 lg:px-8">
-	{#if sample}
-		<!-- TEMPORARY: agent counts and placement come from the invented organization until the real snapshot is wired in. -->
-		<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note">
-			<Badge variant="secondary">Sample data</Badge> The agents below are invented, not yours.
-		</p>
-	{/if}
+	<div class="{compactRow.gutters} space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+		{#if sample}
+			<!-- TEMPORARY: agent counts and placement come from the invented organization until the real snapshot is wired in. -->
+			<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note">
+				<Badge variant="secondary">Sample data</Badge> The agents below are invented, not yours.
+			</p>
+		{/if}
 
-	{#if extra.state === 'error'}
-		<p id="overview-error" class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20" role="alert" data-testid="overview-error">
-			<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
-			<span class="[overflow-wrap:anywhere]">Can't read join requests, invitations and offices that joined: {extra.message}</span>
-			<Button variant="outline" size="xs" aria-busy={extra.reloading} aria-disabled={extra.reloading} onclick={() => !extra.reloading && extra.reload()}>{extra.reloading ? 'Retrying…' : 'Retry'}</Button>
-		</p>
-	{/if}
+		{#if extra.state === 'error'}
+			<p
+				id="overview-error"
+				class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20"
+				role="alert"
+				data-testid="overview-error"
+			>
+				<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
+				<span class="[overflow-wrap:anywhere]"
+					>Can't read join requests, invitations and offices that joined: {extra.message}</span
+				>
+				<Button
+					variant="outline"
+					size="xs"
+					aria-busy={extra.reloading}
+					aria-disabled={extra.reloading}
+					onclick={() => !extra.reloading && extra.reload()}
+					>{extra.reloading ? 'Retrying…' : 'Retry'}</Button
+				>
+			</p>
+		{/if}
 
-	{#if overview && overview.joinRequests.length > 0}
-		<ul class="{compactRow.bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Join requests">
-			{#each overview.joinRequests as request (request.id)}
-				<JoinRequestRow {request} {now} onreview={(button) => (via(button), (approving = request), (approveOpen = true))} />
+		{#if overview && overview.joinRequests.length > 0}
+			<ul class="{compactRow.bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Join requests">
+				{#each overview.joinRequests as request (request.id)}
+					<JoinRequestRow
+						{request}
+						{now}
+						onreview={(button) => (via(button), (approving = request), (approveOpen = true))}
+					/>
+				{/each}
+			</ul>
+		{/if}
+
+		<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
+		<p class="sr-only" role="status" data-testid="live-status">
+			{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id))
+				.label}{labelWhyOf(here.id) ? `: ${labelWhyOf(here.id)}` : ''}
+		</p>
+
+		<ul class="{compactRow.bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Offices">
+			{#each offices as office (office.id)}
+				{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
+				<DividedRow
+					data-testid="office-row"
+					data-office={office.id}
+					class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 hover:bg-white/[0.025]"
+				>
+					<button
+						type="button"
+						class="{compactRow.name} min-w-[min(6ch,100%)] flex-1 basis-[6ch] text-left outline-none [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-indigo-400 max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
+						aria-label={rowLabel(
+							shownOffice(office),
+							agents,
+							here.id === office.id,
+							statusOf(office.id),
+							whyOf(office.id)
+						)}
+						aria-haspopup="dialog"
+						onclick={(event) => open(office.id, event.currentTarget)}
+					>
+						<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}
+							>{office.name}{#if isHq(office) && office.name !== 'HQ'}<span
+									class="font-normal text-gray-400">{' · HQ'}</span
+								>{/if}</span
+						>
+						<span class="mt-3 flex flex-wrap items-baseline gap-x-2 text-xs/5 text-gray-400">
+							<span
+								class="max-w-full [overflow-wrap:anywhere]"
+								title={whyOf(office.id)}
+								data-testid="office-location"
+							>
+								{#if office.status_reason === 'unsupported_version' && whyOf(office.id)}
+									{repairReasonCopy.before}<OfficeRepairLocation {office} />{repairReasonCopy.after}
+								{:else}{statusOf(office.id) === 'unreachable'
+										? "Can't reach this office"
+										: (whyOf(office.id) ??
+											secondaryText(shownOffice(office)) +
+												(here.id === office.id ? " (you're here)" : ''))}{/if}
+							</span>
+							<span data-testid="agent-count" aria-hidden="true">
+								{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
+								{:else if countError}—
+								{:else}<span
+										class="inline-block h-4 w-14 animate-pulse rounded bg-white/10 align-middle motion-reduce:animate-none"
+										data-testid="count-skeleton"
+									></span>{/if}
+							</span>
+						</span>
+						<span class="absolute inset-0" aria-hidden="true"></span>
+					</button>
+					<!-- The button's label already says the status and the count: not read twice. -->
+					<span
+						class="ml-auto inline-flex max-w-full flex-none flex-wrap items-center justify-end gap-x-2 gap-y-2"
+						data-testid="office-actions"
+					>
+						<span class="contents" aria-hidden="true"
+							><OfficeStatusBadge status={statusOf(office.id)} /></span
+						>
+						{#if statusOf(office.id) === 'unreachable' || (office.id === here.id && retryingProbe)}
+							<!-- Stays mounted while it works (aria-disabled, not disabled), so keyboard focus isn't lost. -->
+							<Button
+								variant="outline"
+								size="xs"
+								data-testid="retry-office"
+								class="relative z-10 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+								aria-label="{check === 'checking' ? 'Retrying…' : 'Retry'} reaching {office.name}"
+								aria-disabled={check === 'checking'}
+								aria-busy={check === 'checking'}
+								onclick={() => check !== 'checking' && probe.run('explicit')}
+								>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button
+							>
+						{/if}
+						<ChevronRight
+							class="{compactRow.chevron} ml-2 size-5 shrink-0 text-gray-400"
+							aria-hidden="true"
+						/>
+					</span>
+				</DividedRow>
+			{:else}
+				<DividedRow
+					class="{compactRow.gutters} py-12 text-center text-sm/6 text-gray-400"
+					data-testid="no-offices">No offices to show.</DividedRow
+				>
 			{/each}
 		</ul>
-	{/if}
 
-	<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
-	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}{labelWhyOf(here.id) ? `: ${labelWhyOf(here.id)}` : ''}</p>
+		{#if overview && (overview.pendingAdds.length > 0 || overview.invitations.length > 0)}
+			<ul
+				class="{compactRow.bleed} -mx-4 sm:-mx-6 lg:-mx-8"
+				aria-label="Invitations and offices being added"
+			>
+				<PendingAddRows
+					pending={overview.pendingAdds}
+					onopen={(add, button) => (via(button), (resumeAdd = add), (addOpen = true))}
+					oncancel={(add, button) => (via(button), (stopping = add), (stopOpen = true))}
+				/>
+				<InvitationRows
+					invitations={overview.invitations}
+					{now}
+					oncancel={(invitation, button) => (
+						via(button),
+						(cancelling = invitation),
+						(cancelInviteOpen = true)
+					)}
+					onrenew={renew}
+					onremove={removeInvitation}
+				/>
+			</ul>
+		{/if}
 
-	<ul class="{compactRow.bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Offices">
-		{#each offices as office (office.id)}
-			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
-			<DividedRow data-testid="office-row" data-office={office.id} class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 hover:bg-white/[0.025]">
-				<button
-					type="button"
-					class="{compactRow.name} min-w-[min(6ch,100%)] flex-1 basis-[6ch] text-left outline-none [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-indigo-400 max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
-					aria-label={rowLabel(shownOffice(office), agents, here.id === office.id, statusOf(office.id), whyOf(office.id))}
-					aria-haspopup="dialog"
-					onclick={(event) => open(office.id, event.currentTarget)}
-				>
-					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}{#if isHq(office) && office.name !== 'HQ'}<span class="font-normal text-gray-400">{' · HQ'}</span>{/if}</span>
-					<span class="mt-3 flex flex-wrap items-baseline gap-x-2 text-xs/5 text-gray-400">
-					<span class="max-w-full [overflow-wrap:anywhere]" title={whyOf(office.id)} data-testid="office-location">
-						{#if office.status_reason === 'unsupported_version' && whyOf(office.id)}
-							{repairReasonCopy.before}<OfficeRepairLocation {office} />{repairReasonCopy.after}
-						{:else}{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(shownOffice(office)) + (here.id === office.id ? " (you're here)" : ''))}{/if}
-					</span>
-					<span data-testid="agent-count" aria-hidden="true">
-						{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
-						{:else if countError}—
-						{:else}<span class="inline-block h-4 w-14 animate-pulse rounded bg-white/10 align-middle motion-reduce:animate-none" data-testid="count-skeleton"></span>{/if}
-					</span>
-					</span>
-					<span class="absolute inset-0" aria-hidden="true"></span>
-				</button>
-				<!-- The button's label already says the status and the count: not read twice. -->
-				<span class="ml-auto inline-flex max-w-full flex-none flex-wrap items-center justify-end gap-x-2 gap-y-2" data-testid="office-actions">
-					<span class="contents" aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
-				{#if statusOf(office.id) === 'unreachable' || (office.id === here.id && retryingProbe)}
-					<!-- Stays mounted while it works (aria-disabled, not disabled), so keyboard focus isn't lost. -->
-					<Button
-						variant="outline"
-						size="xs"
-						data-testid="retry-office"
-						class="relative z-10 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-						aria-label="{check === 'checking' ? 'Retrying…' : 'Retry'} reaching {office.name}"
-						aria-disabled={check === 'checking'}
-						aria-busy={check === 'checking'}
-						onclick={() => check !== 'checking' && probe.run('explicit')}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
-				{/if}
-					<ChevronRight class="{compactRow.chevron} ml-2 size-5 shrink-0 text-gray-400" aria-hidden="true" />
-				</span>
-			</DividedRow>
-		{:else}
-			<DividedRow class="{compactRow.gutters} py-12 text-center text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</DividedRow>
+		{#each offices.filter((o) => o.status === 'update_needed' && satelliteIds.has(o.id)) as stale (stale.id)}
+			<p class="text-xs/5 text-gray-400" data-testid="version-note">
+				{stale.name} runs an older version of Agentic Org, so new features wait until it updates.
+			</p>
 		{/each}
-	</ul>
+		{#if overview && offices.length === 1 && overview.invitations.length === 0 && overview.pendingAdds.length === 0 && overview.joinRequests.length === 0}
+			<p class="text-xs/5 text-gray-400" data-testid="hq-only-hint">
+				Add an office to run agents on another machine, or to keep a copy of the records there.
+			</p>
+		{/if}
 
-	{#if overview && (overview.pendingAdds.length > 0 || overview.invitations.length > 0)}
-		<ul class="{compactRow.bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Invitations and offices being added">
-			<PendingAddRows
-				pending={overview.pendingAdds}
-				onopen={(add, button) => (via(button), (resumeAdd = add), (addOpen = true))}
-				oncancel={(add, button) => (via(button), (stopping = add), (stopOpen = true))}
+		{#if countError}
+			<p
+				class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20"
+				role="alert"
+				data-testid="count-error"
+			>
+				<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
+				<span class="[overflow-wrap:anywhere]">Can't count agents right now: {countError}</span>
+				<Button
+					variant="outline"
+					size="xs"
+					class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+					aria-disabled={retrying}
+					aria-busy={retrying}
+					onclick={() => !retrying && retry()}>{retrying ? 'Retrying…' : 'Retry'}</Button
+				>
+			</p>
+		{/if}
+
+		{#if unplaced.length > 0}
+			<UnplacedAgents
+				agents={unplaced}
+				bleed={compactRow.bleed}
+				gutters={compactRow.gutters}
+				onplace={(agent, button) => (via(button), (placing = agent), (placeOpen = true))}
+				onoffboard={(agent, button) => (via(button), (offboarding = agent), (offboardOpen = true))}
 			/>
-			<InvitationRows
-				invitations={overview.invitations}
+		{/if}
+
+		{#if overview && overview.outbox.length > 0}
+			<OutboxList
+				items={overview.outbox}
 				{now}
-				oncancel={(invitation, button) => (via(button), (cancelling = invitation), (cancelInviteOpen = true))}
-				onrenew={renew}
-				onremove={removeInvitation}
+				bleed={compactRow.bleed}
+				gutters={compactRow.gutters}
+				retrying={retryingItem}
+				onretry={(item) => retryItem(item)}
+				ondiscard={(item, button) => (via(button), (discarding = item), (discardOpen = true))}
 			/>
-		</ul>
-	{/if}
-
-	{#each offices.filter((o) => o.status === 'update_needed' && satelliteIds.has(o.id)) as stale (stale.id)}
-		<p class="text-xs/5 text-gray-400" data-testid="version-note">{stale.name} runs an older version of Agentic Org, so new features wait until it updates.</p>
-	{/each}
-	{#if overview && offices.length === 1 && overview.invitations.length === 0 && overview.pendingAdds.length === 0 && overview.joinRequests.length === 0}
-		<p class="text-xs/5 text-gray-400" data-testid="hq-only-hint">Add an office to run agents on another machine, or to keep a copy of the records there.</p>
-	{/if}
-
-	{#if countError}
-		<p class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20" role="alert" data-testid="count-error">
-			<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
-			<span class="[overflow-wrap:anywhere]">Can't count agents right now: {countError}</span>
-			<Button variant="outline" size="xs" class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60" aria-disabled={retrying} aria-busy={retrying} onclick={() => !retrying && retry()}>{retrying ? 'Retrying…' : 'Retry'}</Button>
-		</p>
-	{/if}
-
-	{#if unplaced.length > 0}
-		<UnplacedAgents
-			agents={unplaced}
-			bleed={compactRow.bleed}
-			gutters={compactRow.gutters}
-			onplace={(agent, button) => (via(button), (placing = agent), (placeOpen = true))}
-			onoffboard={(agent, button) => (via(button), (offboarding = agent), (offboardOpen = true))}
-		/>
-	{/if}
-
-	{#if overview && overview.outbox.length > 0}
-		<OutboxList
-			items={overview.outbox}
-			{now}
-			bleed={compactRow.bleed}
-			gutters={compactRow.gutters}
-			retrying={retryingItem}
-			onretry={(item) => retryItem(item)}
-			ondiscard={(item, button) => (via(button), (discarding = item), (discardOpen = true))}
-		/>
-	{/if}
-	<p class="text-xs/5 text-gray-400">Shown from HQ. Statuses include last-seen information.</p>
-</div>
-
+		{/if}
+		<p class="text-xs/5 text-gray-400">Shown from HQ. Statuses include last-seen information.</p>
+	</div>
 </div>
 
 <OfficeDetailsSheet
@@ -504,8 +647,22 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	onremove={detailsFor && !isHq(detailsFor) && overview ? removeOfficeFromSheet : undefined}
 />
 
-<AddOfficeDialog bind:open={addOpen} organizationId={orgId} {canAddOnInstance} resume={resumeAdd} onchanged={reload} onCloseAutoFocus={restoreOpener} />
-<ApproveJoinDialog bind:open={approveOpen} request={approving} organizationId={orgId} organizationName={organization} onchanged={reload} onCloseAutoFocus={restoreOpener} />
+<AddOfficeDialog
+	bind:open={addOpen}
+	organizationId={orgId}
+	{canAddOnInstance}
+	resume={resumeAdd}
+	onchanged={reload}
+	onCloseAutoFocus={restoreOpener}
+/>
+<ApproveJoinDialog
+	bind:open={approveOpen}
+	request={approving}
+	organizationId={orgId}
+	organizationName={organization}
+	onchanged={reload}
+	onCloseAutoFocus={restoreOpener}
+/>
 <ConfirmDialog
 	bind:open={cancelInviteOpen}
 	title={`Cancel the invitation for ${cancelling?.officeName ?? ''}?`}
@@ -547,7 +704,12 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	onconfirm={async () => {
 		if (!stopping) return;
 		const cancelled = await officesApi.cancelAdd(orgId, stopping.id);
-		if (!cancelled) throw { source: 'app', code: 'too_late', message: `Too late to cancel: ${stopping.name} is being added now.` };
+		if (!cancelled)
+			throw {
+				source: 'app',
+				code: 'too_late',
+				message: `Too late to cancel: ${stopping.name} is being added now.`
+			};
 		await reload();
 		toast.success(`${stopping.name} wasn't added.`);
 	}}
@@ -559,7 +721,9 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	organizationName={organization}
 	agents={removing && snapshot ? agentsIn(snapshot, removing.id).length : 0}
 	tasks={removing ? (detailsOf(removing.id)?.tasks ?? 0) : 0}
-	offline={removing ? statusOf(removing.id) === 'offline' || statusOf(removing.id) === 'unreachable' : false}
+	offline={removing
+		? statusOf(removing.id) === 'offline' || statusOf(removing.id) === 'unreachable'
+		: false}
 	onchanged={async () => {
 		await reload();
 		toast.success(`${removing?.name ?? 'The office'} was removed.`);
@@ -568,7 +732,14 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	}}
 	onCloseAutoFocus={(e) => (e.preventDefault(), rowButton(here.id)?.focus())}
 />
-<PlaceAgentDialog bind:open={placeOpen} agent={placing} offices={placeable} organizationId={orgId} onchanged={reload} onCloseAutoFocus={restoreOpener} />
+<PlaceAgentDialog
+	bind:open={placeOpen}
+	agent={placing}
+	offices={placeable}
+	organizationId={orgId}
+	onchanged={reload}
+	onCloseAutoFocus={restoreOpener}
+/>
 <OffboardAgentDialog
 	bind:open={offboardOpen}
 	agent={offboarding}
@@ -582,7 +753,9 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 <ConfirmDialog
 	bind:open={discardOpen}
 	title="Discard this command?"
-	description={discarding ? `${discarding.description} won't be sent to ${discarding.officeName}.` : ''}
+	description={discarding
+		? `${discarding.description} won't be sent to ${discarding.officeName}.`
+		: ''}
 	confirmLabel="Discard"
 	busyLabel="Discarding…"
 	cancelLabel="Keep it"

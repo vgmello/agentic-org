@@ -17,13 +17,20 @@ function parseJson(text: string | undefined): unknown {
 }
 
 /** The files an apply_patch body touches, with each one's change. */
-export function filesFromPatch(patch: string): { path: string; action: FileAction; lines: string[] }[] {
+export function filesFromPatch(
+	patch: string
+): { path: string; action: FileAction; lines: string[] }[] {
 	const files: { path: string; action: FileAction; lines: string[] }[] = [];
 	for (const line of patch.split('\n')) {
 		const header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
 		if (header) {
-			files.push({ path: header[2].trim(), action: header[1] === 'Add' ? 'create' : header[1] === 'Delete' ? 'delete' : 'edit', lines: [] });
-		} else if (files.length > 0 && !line.startsWith('***')) files[files.length - 1].lines.push(line);
+			files.push({
+				path: header[2].trim(),
+				action: header[1] === 'Add' ? 'create' : header[1] === 'Delete' ? 'delete' : 'edit',
+				lines: []
+			});
+		} else if (files.length > 0 && !line.startsWith('***'))
+			files[files.length - 1].lines.push(line);
 	}
 	return files;
 }
@@ -36,7 +43,11 @@ function commandText(args: unknown): string | undefined {
 }
 
 /** Parse the lines of one Codex rollout file into entries, in file order. */
-export function parseCodex(lines: unknown[]): { entries: SessionEntry[]; toolVersion?: string; startedAt?: string } {
+export function parseCodex(lines: unknown[]): {
+	entries: SessionEntry[];
+	toolVersion?: string;
+	startedAt?: string;
+} {
 	const entries: SessionEntry[] = [];
 	let toolVersion: string | undefined;
 	let startedAt: string | undefined;
@@ -50,7 +61,12 @@ export function parseCodex(lines: unknown[]): { entries: SessionEntry[]; toolVer
 		if (line.type === 'session_meta') {
 			toolVersion = str(payload.cli_version);
 			startedAt = str(payload.timestamp) ?? at;
-			return entries.push({ id, at, kind: 'notice', text: `Session started in ${str(payload.cwd) ?? 'its home'}` });
+			return entries.push({
+				id,
+				at,
+				kind: 'notice',
+				text: `Session started in ${str(payload.cwd) ?? 'its home'}`
+			});
 		}
 		if (line.type === 'turn_context') return;
 		if (line.type === 'event_msg') {
@@ -60,7 +76,15 @@ export function parseCodex(lines: unknown[]): { entries: SessionEntry[]; toolVer
 				if (!last) return entries.push({ id, at, kind: 'usage', complete: false });
 				const inputTokens = num(last.input_tokens);
 				const outputTokens = num(last.output_tokens);
-				return entries.push({ id, at, kind: 'usage', inputTokens, outputTokens, cachedTokens: num(last.cached_input_tokens), complete: inputTokens !== undefined && outputTokens !== undefined });
+				return entries.push({
+					id,
+					at,
+					kind: 'usage',
+					inputTokens,
+					outputTokens,
+					cachedTokens: num(last.cached_input_tokens),
+					complete: inputTokens !== undefined && outputTokens !== undefined
+				});
 			}
 			// user_message / agent_message repeat the response items; the response items are the record.
 			if (kind === 'user_message' || kind === 'agent_message' || kind === 'agent_reasoning') return;
@@ -69,7 +93,8 @@ export function parseCodex(lines: unknown[]): { entries: SessionEntry[]; toolVer
 		if (line.type !== 'response_item') return raw();
 		if (kind === 'reasoning') return;
 		if (kind === 'message') {
-			const role = payload.role === 'user' ? 'user' : payload.role === 'assistant' ? 'assistant' : 'system';
+			const role =
+				payload.role === 'user' ? 'user' : payload.role === 'assistant' ? 'assistant' : 'system';
 			const text = Array.isArray(payload.content)
 				? payload.content
 						.filter(isObj)
@@ -82,10 +107,25 @@ export function parseCodex(lines: unknown[]): { entries: SessionEntry[]; toolVer
 			const name = str(payload.name) ?? 'tool';
 			const args = parseJson(str(payload.arguments));
 			const command = commandText(args);
-			entries.push({ id, at, kind: 'tool_call', callId: str(payload.call_id), tool: name, summary: command ?? name, input: str(payload.arguments) ?? '' });
+			entries.push({
+				id,
+				at,
+				kind: 'tool_call',
+				callId: str(payload.call_id),
+				tool: name,
+				summary: command ?? name,
+				input: str(payload.arguments) ?? ''
+			});
 			if (command?.startsWith('apply_patch') && isObj(args) && Array.isArray(args.command))
 				filesFromPatch(String(args.command[1] ?? '')).forEach((f, i) =>
-					entries.push({ id: `${id}.f${i}`, at, kind: 'file', path: f.path, action: f.action, diff: f.action === 'delete' ? undefined : diffFromPatch(f.lines) })
+					entries.push({
+						id: `${id}.f${i}`,
+						at,
+						kind: 'file',
+						path: f.path,
+						action: f.action,
+						diff: f.action === 'delete' ? undefined : diffFromPatch(f.lines)
+					})
 				);
 			return;
 		}
@@ -93,15 +133,40 @@ export function parseCodex(lines: unknown[]): { entries: SessionEntry[]; toolVer
 			const name = str(payload.name) ?? 'tool';
 			const input = str(payload.input) ?? '';
 			const files = name === 'apply_patch' ? filesFromPatch(input) : [];
-			entries.push({ id, at, kind: 'tool_call', callId: str(payload.call_id), tool: name, summary: files.length ? `apply_patch ${files.map((f) => f.path).join(', ')}` : name, input });
-			files.forEach((f, i) => entries.push({ id: `${id}.f${i}`, at, kind: 'file', path: f.path, action: f.action, diff: f.action === 'delete' ? undefined : diffFromPatch(f.lines) }));
+			entries.push({
+				id,
+				at,
+				kind: 'tool_call',
+				callId: str(payload.call_id),
+				tool: name,
+				summary: files.length ? `apply_patch ${files.map((f) => f.path).join(', ')}` : name,
+				input
+			});
+			files.forEach((f, i) =>
+				entries.push({
+					id: `${id}.f${i}`,
+					at,
+					kind: 'file',
+					path: f.path,
+					action: f.action,
+					diff: f.action === 'delete' ? undefined : diffFromPatch(f.lines)
+				})
+			);
 			return;
 		}
 		if (kind === 'function_call_output' || kind === 'custom_tool_call_output') {
 			const parsed = parseJson(str(payload.output));
 			const output = isObj(parsed) ? (str(parsed.output) ?? '') : (str(payload.output) ?? '');
-			const exit = isObj(parsed) && isObj(parsed.metadata) ? num(parsed.metadata.exit_code) : undefined;
-			return entries.push({ id, at, kind: 'tool_result', callId: str(payload.call_id), ok: exit === undefined || exit === 0, output });
+			const exit =
+				isObj(parsed) && isObj(parsed.metadata) ? num(parsed.metadata.exit_code) : undefined;
+			return entries.push({
+				id,
+				at,
+				kind: 'tool_result',
+				callId: str(payload.call_id),
+				ok: exit === undefined || exit === 0,
+				output
+			});
 		}
 		raw();
 	});

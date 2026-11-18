@@ -7,4 +7,6 @@
 
 <svelte:head><title>{pageTitle('General', 'Organization settings')}</title></svelte:head>
 
-{#key data.connection.organization.id}<GeneralPanel organizationId={data.connection.organization.id} />{/key}
+{#key data.connection.organization.id}<GeneralPanel
+		organizationId={data.connection.organization.id}
+	/>{/key}

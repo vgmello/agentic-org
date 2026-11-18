@@ -1,235 +1,224 @@
 {
- "open": [
-  {
-   "id": "inbox-1",
-   "kind": "approval",
-   "source": "Run approval",
-   "title": "Apply the database migration to staging",
-   "who": "kai",
-   "why": "T-27 needs the new office_status column before the footer can show it. The migration adds one nullable column and can be rolled back.",
-   "state": "open",
-   "actions": [
-    "approve",
-    "deny"
-   ],
-   "team": "platform",
-   "project": "atlas",
-   "recommendation": "Approve. It is reversible and touches staging only.",
-   "ago": 35,
-   "exp_in": 300,
-   "open": {
-    "path": "/work/T-27",
-    "label": "Open T-27"
-   },
-   "fail_first": "The run this approval belongs to ended while you were reading. Open T-27 to start it again."
-  },
-  {
-   "id": "inbox-2",
-   "kind": "question",
-   "source": "Task question",
-   "title": "Should the basket be kept in local storage or on the server?",
-   "who": "noor",
-   "why": "T-14 loses the basket on refresh. Local storage is quick to build; server storage keeps the basket when someone changes device.",
-   "state": "open",
-   "actions": [
-    "reply"
-   ],
-   "team": "web",
-   "project": "beacon",
-   "recommendation": "Server storage: baskets then follow people between devices.",
-   "ago": 90,
-   "open": {
-    "path": "/work/T-14",
-    "label": "Open T-14"
-   }
-  },
-  {
-   "id": "inbox-3",
-   "kind": "decision",
-   "source": "Proposed decision",
-   "title": "Which sign-in rate limit should we ship?",
-   "who": "sam",
-   "why": "T-12 adds rate limiting to sign-in. The three options trade protection against lockouts for people who mistype.",
-   "state": "open",
-   "actions": [
-    "choose"
-   ],
-   "team": "eng",
-   "project": "atlas",
-   "recommendation": "Five attempts per minute per account: strong enough, and it rarely locks out a real person.",
-   "ago": 200,
-   "exp_in": 1500,
-   "choices": [
-    {
-     "id": "c5",
-     "label": "5 attempts per minute per account"
-    },
-    {
-     "id": "c10",
-     "label": "10 attempts per minute per account"
-    },
-    {
-     "id": "ip",
-     "label": "20 attempts per minute per address, none per account"
-    }
-   ],
-   "open": {
-    "path": "/work/T-12",
-    "label": "Open T-12"
-   }
-  }
- ],
- "more": [
-  {
-   "id": "inbox-4",
-   "kind": "problem",
-   "source": "Run crashed",
-   "title": "Noor Haddad's run on T-19 stopped with an error",
-   "who": "noor",
-   "why": "The release notes run ended after 1 min: the changelog file could not be read (permission denied).",
-   "state": "open",
-   "actions": [
-    "dismiss"
-   ],
-   "team": "web",
-   "project": "atlas",
-   "ago": 300,
-   "open": {
-    "path": "/work/T-19",
-    "label": "Open T-19"
-   }
-  },
-  {
-   "id": "inbox-5",
-   "kind": "problem",
-   "source": "Critical bug",
-   "title": "Checkout page loses the basket on refresh",
-   "who": "mira",
-   "why": "Reported as Critical. It stays here until it is assigned or closed; triage alone does not clear it.",
-   "state": "open",
-   "actions": [],
-   "team": "web",
-   "project": "beacon",
-   "ago": 420,
-   "open": {
-    "path": "/work/T-14",
-    "label": "Assign\u2026"
-   }
-  },
-  {
-   "id": "inbox-6",
-   "kind": "approval",
-   "source": "Review request",
-   "title": "Review the footer status change",
-   "who": "kai",
-   "why": "Kai asks you to review branch kai/office-status before it merges. Reviews are done on the task.",
-   "state": "open",
-   "actions": [],
-   "team": "platform",
-   "project": "atlas",
-   "ago": 500,
-   "open": {
-    "path": "/work/T-27",
-    "label": "Open T-27"
-   }
-  },
-  {
-   "id": "inbox-7",
-   "kind": "question",
-   "source": "Task question",
-   "title": "Which name should the 0.2 release use?",
-   "who": "quinn",
-   "why": "The release notes need a name. Quinn found two in older notes and wants to keep one.",
-   "state": "open",
-   "actions": [
-    "reply"
-   ],
-   "project": "atlas",
-   "recommendation": "Use the newer name everywhere.",
-   "ago": 640,
-   "exp_in": 4000,
-   "open": {
-    "path": "/work/T-19",
-    "label": "Open T-19"
-   }
-  }
- ],
- "handled": [
-  {
-   "id": "inbox-h1",
-   "kind": "approval",
-   "source": "Run approval",
-   "title": "Run the unit tests outside the sandbox",
-   "who": "kai",
-   "why": "T-27 needed network access for one test.",
-   "state": "handled",
-   "actions": [],
-   "team": "platform",
-   "project": "atlas",
-   "ago": 1400,
-   "handled": {
-    "outcome": "Approved",
-    "by": "you",
-    "ago": 1380
-   }
-  },
-  {
-   "id": "inbox-h2",
-   "kind": "problem",
-   "source": "Run crashed",
-   "title": "Mira Castillo's run on T-23 stopped with an error",
-   "who": "mira",
-   "why": "The run ended after 2 min: the test server did not start.",
-   "state": "handled",
-   "actions": [],
-   "team": "web",
-   "project": "atlas",
-   "ago": 1800,
-   "handled": {
-    "outcome": "Dismissed",
-    "by": "you",
-    "ago": 1700
-   }
-  },
-  {
-   "id": "inbox-h3",
-   "kind": "question",
-   "source": "Task question",
-   "title": "Should search match work item references?",
-   "who": "noor",
-   "why": "T-23 asks whether T-12 style references should be found by search.",
-   "state": "handled",
-   "actions": [],
-   "team": "web",
-   "project": "atlas",
-   "ago": 2600,
-   "handled": {
-    "outcome": "Answered in the command line",
-    "by": "you",
-    "ago": 2500
-   },
-   "open": {
-    "path": "/work/T-23",
-    "label": "Open T-23"
-   }
-  },
-  {
-   "id": "inbox-h4",
-   "kind": "decision",
-   "source": "Proposed decision",
-   "title": "Where do release notes live?",
-   "who": "hana",
-   "why": "Two places were proposed for the notes.",
-   "state": "handled",
-   "actions": [],
-   "team": "people",
-   "project": "onboarding",
-   "ago": 3200,
-   "handled": {
-    "outcome": "Decided: in the project's Documents",
-    "by": "you",
-    "ago": 3100
-   }
-  }
- ]
+	"open": [
+		{
+			"id": "inbox-1",
+			"kind": "approval",
+			"source": "Run approval",
+			"title": "Apply the database migration to staging",
+			"who": "kai",
+			"why": "T-27 needs the new office_status column before the footer can show it. The migration adds one nullable column and can be rolled back.",
+			"state": "open",
+			"actions": ["approve", "deny"],
+			"team": "platform",
+			"project": "atlas",
+			"recommendation": "Approve. It is reversible and touches staging only.",
+			"ago": 35,
+			"exp_in": 300,
+			"open": {
+				"path": "/work/T-27",
+				"label": "Open T-27"
+			},
+			"fail_first": "The run this approval belongs to ended while you were reading. Open T-27 to start it again."
+		},
+		{
+			"id": "inbox-2",
+			"kind": "question",
+			"source": "Task question",
+			"title": "Should the basket be kept in local storage or on the server?",
+			"who": "noor",
+			"why": "T-14 loses the basket on refresh. Local storage is quick to build; server storage keeps the basket when someone changes device.",
+			"state": "open",
+			"actions": ["reply"],
+			"team": "web",
+			"project": "beacon",
+			"recommendation": "Server storage: baskets then follow people between devices.",
+			"ago": 90,
+			"open": {
+				"path": "/work/T-14",
+				"label": "Open T-14"
+			}
+		},
+		{
+			"id": "inbox-3",
+			"kind": "decision",
+			"source": "Proposed decision",
+			"title": "Which sign-in rate limit should we ship?",
+			"who": "sam",
+			"why": "T-12 adds rate limiting to sign-in. The three options trade protection against lockouts for people who mistype.",
+			"state": "open",
+			"actions": ["choose"],
+			"team": "eng",
+			"project": "atlas",
+			"recommendation": "Five attempts per minute per account: strong enough, and it rarely locks out a real person.",
+			"ago": 200,
+			"exp_in": 1500,
+			"choices": [
+				{
+					"id": "c5",
+					"label": "5 attempts per minute per account"
+				},
+				{
+					"id": "c10",
+					"label": "10 attempts per minute per account"
+				},
+				{
+					"id": "ip",
+					"label": "20 attempts per minute per address, none per account"
+				}
+			],
+			"open": {
+				"path": "/work/T-12",
+				"label": "Open T-12"
+			}
+		}
+	],
+	"more": [
+		{
+			"id": "inbox-4",
+			"kind": "problem",
+			"source": "Run crashed",
+			"title": "Noor Haddad's run on T-19 stopped with an error",
+			"who": "noor",
+			"why": "The release notes run ended after 1 min: the changelog file could not be read (permission denied).",
+			"state": "open",
+			"actions": ["dismiss"],
+			"team": "web",
+			"project": "atlas",
+			"ago": 300,
+			"open": {
+				"path": "/work/T-19",
+				"label": "Open T-19"
+			}
+		},
+		{
+			"id": "inbox-5",
+			"kind": "problem",
+			"source": "Critical bug",
+			"title": "Checkout page loses the basket on refresh",
+			"who": "mira",
+			"why": "Reported as Critical. It stays here until it is assigned or closed; triage alone does not clear it.",
+			"state": "open",
+			"actions": [],
+			"team": "web",
+			"project": "beacon",
+			"ago": 420,
+			"open": {
+				"path": "/work/T-14",
+				"label": "Assign\u2026"
+			}
+		},
+		{
+			"id": "inbox-6",
+			"kind": "approval",
+			"source": "Review request",
+			"title": "Review the footer status change",
+			"who": "kai",
+			"why": "Kai asks you to review branch kai/office-status before it merges. Reviews are done on the task.",
+			"state": "open",
+			"actions": [],
+			"team": "platform",
+			"project": "atlas",
+			"ago": 500,
+			"open": {
+				"path": "/work/T-27",
+				"label": "Open T-27"
+			}
+		},
+		{
+			"id": "inbox-7",
+			"kind": "question",
+			"source": "Task question",
+			"title": "Which name should the 0.2 release use?",
+			"who": "quinn",
+			"why": "The release notes need a name. Quinn found two in older notes and wants to keep one.",
+			"state": "open",
+			"actions": ["reply"],
+			"project": "atlas",
+			"recommendation": "Use the newer name everywhere.",
+			"ago": 640,
+			"exp_in": 4000,
+			"open": {
+				"path": "/work/T-19",
+				"label": "Open T-19"
+			}
+		}
+	],
+	"handled": [
+		{
+			"id": "inbox-h1",
+			"kind": "approval",
+			"source": "Run approval",
+			"title": "Run the unit tests outside the sandbox",
+			"who": "kai",
+			"why": "T-27 needed network access for one test.",
+			"state": "handled",
+			"actions": [],
+			"team": "platform",
+			"project": "atlas",
+			"ago": 1400,
+			"handled": {
+				"outcome": "Approved",
+				"by": "you",
+				"ago": 1380
+			}
+		},
+		{
+			"id": "inbox-h2",
+			"kind": "problem",
+			"source": "Run crashed",
+			"title": "Mira Castillo's run on T-23 stopped with an error",
+			"who": "mira",
+			"why": "The run ended after 2 min: the test server did not start.",
+			"state": "handled",
+			"actions": [],
+			"team": "web",
+			"project": "atlas",
+			"ago": 1800,
+			"handled": {
+				"outcome": "Dismissed",
+				"by": "you",
+				"ago": 1700
+			}
+		},
+		{
+			"id": "inbox-h3",
+			"kind": "question",
+			"source": "Task question",
+			"title": "Should search match work item references?",
+			"who": "noor",
+			"why": "T-23 asks whether T-12 style references should be found by search.",
+			"state": "handled",
+			"actions": [],
+			"team": "web",
+			"project": "atlas",
+			"ago": 2600,
+			"handled": {
+				"outcome": "Answered in the command line",
+				"by": "you",
+				"ago": 2500
+			},
+			"open": {
+				"path": "/work/T-23",
+				"label": "Open T-23"
+			}
+		},
+		{
+			"id": "inbox-h4",
+			"kind": "decision",
+			"source": "Proposed decision",
+			"title": "Where do release notes live?",
+			"who": "hana",
+			"why": "Two places were proposed for the notes.",
+			"state": "handled",
+			"actions": [],
+			"team": "people",
+			"project": "onboarding",
+			"ago": 3200,
+			"handled": {
+				"outcome": "Decided: in the project's Documents",
+				"by": "you",
+				"ago": 3100
+			}
+		}
+	]
 }

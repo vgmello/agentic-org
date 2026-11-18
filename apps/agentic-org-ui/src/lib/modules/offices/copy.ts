@@ -23,9 +23,15 @@ export function removeOfficeText(f: RemoveFacts): string {
 		parts.push(
 			`${f.agents === 1 ? 'Its agent stops' : `Its ${f.agents} agents stop`} running there and ${f.agents === 1 ? 'becomes' : 'become'} unplaced: you choose a new office for ${f.agents === 1 ? 'it' : 'each'}, or offboard ${f.agents === 1 ? 'it' : 'them'}.`
 		);
-		if (f.tasks > 0) parts.push(`HQ takes back ${f.agents === 1 ? 'its' : 'their'} ${plural(f.tasks, 'task', 'tasks')}.`);
+		if (f.tasks > 0)
+			parts.push(
+				`HQ takes back ${f.agents === 1 ? 'its' : 'their'} ${plural(f.tasks, 'task', 'tasks')}.`
+			);
 	}
-	if (f.offline) parts.push(`If ${f.office} is offline, it keeps its copy until it next connects, then deletes it.`);
+	if (f.offline)
+		parts.push(
+			`If ${f.office} is offline, it keeps its copy until it next connects, then deletes it.`
+		);
 	parts.push('To add it again, send a new invitation.');
 	return parts.join(' ');
 }

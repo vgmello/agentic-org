@@ -29,7 +29,15 @@
 	$effect(() => {
 		if (open && office) shown = office;
 	});
-	const text = $derived(removeOfficeText({ office: shown?.name ?? '', organization: organizationName, agents, tasks, offline }));
+	const text = $derived(
+		removeOfficeText({
+			office: shown?.name ?? '',
+			organization: organizationName,
+			agents,
+			tasks,
+			offline
+		})
+	);
 </script>
 
 <ConfirmDialog

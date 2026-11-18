@@ -600,6 +600,21 @@
 			"from": "e2e/agents-roster.spec.ts",
 			"to": "src/routes/(shell)/projects/+page.svelte",
 			"why": "Opens Projects to check the Agents views navigation leaves the roster."
+		},
+		{
+			"from": "src/lib/modules/teams/features/browse-teams/TeamsIndex.svelte",
+			"to": "src/lib/components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog,DeleteTeamDialog}.svelte",
+			"why": "The Teams index reuses the org chart's team dialogs (new, move, rename, delete) without owning them; the org-chart specs cover those dialogs."
+		},
+		{
+			"from": "src/routes/(shell)/settings/offices/+page.svelte",
+			"to": "src/lib/modules/employees/index.ts",
+			"why": "Offices lists unplaced agents and opens the employees module's Offboard agent dialog; the org-chart category owns and tests that dialog."
+		},
+		{
+			"from": "e2e/fakes/modules/employees.ts",
+			"to": "src/lib/modules/employees/{api,types}.ts",
+			"why": "The dev-mock fake implements the employees module's api contract and only needs its types; the fake is never part of a production build."
 		}
 	],
 	"rules": {
@@ -654,7 +669,7 @@
 			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access}/**",
 			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
-			"src/routes/(shell)/teams/(views)/+layout.svelte",
+			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
 			"src/routes/(shell)/settings/+layout.svelte",
 			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt}.svelte",
 			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo}.*",

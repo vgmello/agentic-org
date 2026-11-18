@@ -8,13 +8,15 @@ export interface IndentedTeam {
 	children: number;
 }
 
-const byName = (a: TeamRow, b: TeamRow) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id);
+const byName = (a: TeamRow, b: TeamRow) =>
+	a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id);
 
 export function indentTeams(rows: TeamRow[]): IndentedTeam[] {
 	const ids = new Set(rows.map((r) => r.id));
 	const kids = new Map<string | undefined, TeamRow[]>();
 	for (const r of rows) {
-		const parent = r.parentId && ids.has(r.parentId) && r.parentId !== r.id ? r.parentId : undefined;
+		const parent =
+			r.parentId && ids.has(r.parentId) && r.parentId !== r.id ? r.parentId : undefined;
 		kids.set(parent, [...(kids.get(parent) ?? []), r]);
 	}
 	const out: IndentedTeam[] = [];
@@ -32,8 +34,18 @@ export function indentTeams(rows: TeamRow[]): IndentedTeam[] {
 }
 
 /** Where focus goes when a row disappears: the next surviving row, else the previous, else nothing (the heading). */
-export function focusAfterRemoval(order: string[], removed: string, survivors: Set<string>): string | undefined {
+export function focusAfterRemoval(
+	order: string[],
+	removed: string,
+	survivors: Set<string>
+): string | undefined {
 	const at = order.indexOf(removed);
 	if (at < 0) return undefined;
-	return order.slice(at + 1).find((id) => survivors.has(id)) ?? order.slice(0, at).reverse().find((id) => survivors.has(id));
+	return (
+		order.slice(at + 1).find((id) => survivors.has(id)) ??
+		order
+			.slice(0, at)
+			.reverse()
+			.find((id) => survivors.has(id))
+	);
 }

@@ -34,7 +34,12 @@
 {:else if resource.state === 'unavailable'}
 	<NotBuilt title={place} {place} area="Organization settings" />
 {:else if resource.state === 'error'}
-	<ErrorState title={error} message={resource.message} onretry={() => resource.reload()} retrying={resource.reloading} />
+	<ErrorState
+		title={error}
+		message={resource.message}
+		onretry={() => resource.reload()}
+		retrying={resource.reloading}
+	/>
 {:else if resource.data !== undefined}
 	{@render children(resource.data)}
 {/if}

@@ -1,5 +1,31 @@
 [
-	{ "id": "01JC0PRICE00000000000000001", "provider": "Anthropic", "model": "Claude Sonnet", "inputPerMTok": 3, "outputPerMTok": 15, "cacheReadPerMTok": 0.3, "cacheWritePerMTok": 3.75, "effectiveFrom": "2026-09-01" },
-	{ "id": "01JC0PRICE00000000000000002", "provider": "Anthropic", "model": "Claude Opus", "inputPerMTok": 15, "outputPerMTok": 75, "cacheReadPerMTok": 1.5, "cacheWritePerMTok": 18.75, "effectiveFrom": "2026-09-01" },
-	{ "id": "01JC0PRICE00000000000000003", "provider": "OpenAI", "model": "GPT-5 Codex", "inputPerMTok": 1.25, "outputPerMTok": 10, "cacheReadPerMTok": 0.125, "effectiveFrom": "2026-10-15" }
+	{
+		"id": "01JC0PRICE00000000000000001",
+		"provider": "Anthropic",
+		"model": "Claude Sonnet",
+		"inputPerMTok": 3,
+		"outputPerMTok": 15,
+		"cacheReadPerMTok": 0.3,
+		"cacheWritePerMTok": 3.75,
+		"effectiveFrom": "2026-09-01"
+	},
+	{
+		"id": "01JC0PRICE00000000000000002",
+		"provider": "Anthropic",
+		"model": "Claude Opus",
+		"inputPerMTok": 15,
+		"outputPerMTok": 75,
+		"cacheReadPerMTok": 1.5,
+		"cacheWritePerMTok": 18.75,
+		"effectiveFrom": "2026-09-01"
+	},
+	{
+		"id": "01JC0PRICE00000000000000003",
+		"provider": "OpenAI",
+		"model": "GPT-5 Codex",
+		"inputPerMTok": 1.25,
+		"outputPerMTok": 10,
+		"cacheReadPerMTok": 0.125,
+		"effectiveFrom": "2026-10-15"
+	}
 ]

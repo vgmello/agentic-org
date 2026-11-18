@@ -1,13 +1,30 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
-	import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '$lib/components/ui/sheet';
+	import {
+		Sheet,
+		SheetContent,
+		SheetDescription,
+		SheetFooter,
+		SheetHeader,
+		SheetTitle
+	} from '$lib/components/ui/sheet';
 	import OfficeStatusBadge from './OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { toast } from 'svelte-sonner';
 	import pkg from '../../../package.json';
 	import { officeApi, toAppError } from '$lib/office/api';
 	import OfficeRepairLocation from '$lib/offices/OfficeRepairLocation.svelte';
-	import { agentsIn, copyDetails, repairReasonCopy, restartAction, restartOutcome, roleInfo, secondaryText, statusInfo, type DisplayStatus } from '$lib/offices/model';
+	import {
+		agentsIn,
+		copyDetails,
+		repairReasonCopy,
+		restartAction,
+		restartOutcome,
+		roleInfo,
+		secondaryText,
+		statusInfo,
+		type DisplayStatus
+	} from '$lib/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
 	import { agoText } from '$lib/modules/offices/time';
 	import { syncText } from '$lib/modules/offices/layer';
@@ -136,11 +153,13 @@
 		for (let i = 0; i < 15 && live(); i++) {
 			await onrestarted?.();
 			if (!live()) return;
-			if (office?.id !== id || (office.status !== 'offline' && office.status !== 'unavailable')) break;
+			if (office?.id !== id || (office.status !== 'offline' && office.status !== 'unavailable'))
+				break;
 			await new Promise((r) => setTimeout(r, 2000));
 		}
 		if (!live()) return;
-		const back = office?.id === id && office.status !== 'offline' && office.status !== 'unavailable';
+		const back =
+			office?.id === id && office.status !== 'offline' && office.status !== 'unavailable';
 		restarting = false;
 		// The button goes with the stop; keep the keyboard somewhere sensible.
 		if (back) sheetContent?.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.focus();
@@ -149,7 +168,9 @@
 	async function copy() {
 		if (!office) return;
 		try {
-			await navigator.clipboard.writeText(copyDetails(office, statusInfo(status).label, new Date(), pkg.version));
+			await navigator.clipboard.writeText(
+				copyDetails(office, statusInfo(status).label, new Date(), pkg.version)
+			);
 			toast.success('Copied the details.');
 		} catch {
 			toast.error("Couldn't copy. Select the details and copy them yourself.");
@@ -158,7 +179,8 @@
 
 	function toggleRepair(event: MouseEvent) {
 		// WebKit doesn't focus a button on a pointer click.
-		if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus({ preventScroll: true });
+		if (event.currentTarget instanceof HTMLElement)
+			event.currentTarget.focus({ preventScroll: true });
 		repairOpen = !repairOpen;
 		commandCopied = false;
 	}
@@ -174,43 +196,79 @@
 </script>
 
 <Sheet bind:open>
-	<SheetContent bind:ref={sheetContent} {onCloseAutoFocus} side="right" class="w-full max-w-md overflow-y-auto max-[640px]:max-w-full max-[640px]:data-[side=right]:w-full">
+	<SheetContent
+		bind:ref={sheetContent}
+		{onCloseAutoFocus}
+		side="right"
+		class="w-full max-w-md overflow-y-auto max-[640px]:max-w-full max-[640px]:data-[side=right]:w-full"
+	>
 		{#if office}
 			<SheetHeader class="pr-14">
 				<SheetTitle class="[overflow-wrap:anywhere]">{office.name}</SheetTitle>
 				<SheetDescription>{roleInfo(office).description}</SheetDescription>
 			</SheetHeader>
-			<dl class="grid grid-cols-1 gap-x-6 gap-y-2 px-4 text-sm/6 min-[480px]:grid-cols-[auto_1fr] min-[480px]:gap-y-3" data-testid="office-details">
+			<dl
+				class="grid grid-cols-1 gap-x-6 gap-y-2 px-4 text-sm/6 min-[480px]:grid-cols-[auto_1fr] min-[480px]:gap-y-3"
+				data-testid="office-details"
+			>
 				<dt class="text-gray-400">Name</dt>
-				<dd class="min-w-0 text-white">{#if onrename}<RenameOffice name={office.name} onsave={onrename} />{:else}<span class="[overflow-wrap:anywhere]">{office.name}</span>{/if}</dd>
+				<dd class="min-w-0 text-white">
+					{#if onrename}<RenameOffice name={office.name} onsave={onrename} />{:else}<span
+							class="[overflow-wrap:anywhere]">{office.name}</span
+						>{/if}
+				</dd>
 				<dt class="text-gray-400">Role</dt>
 				<dd class="text-white">{roleInfo(office).label}</dd>
 				<dt class="text-gray-400">Where</dt>
-				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">{secondaryText(office) + (here ? " (you're here)" : '')}</dd>
+				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
+					{secondaryText(office) + (here ? " (you're here)" : '')}
+				</dd>
 				<dt class="text-gray-400">Status</dt>
 				<dd><OfficeStatusBadge {status} /></dd>
 				{#if why}
 					<dt class="text-gray-400">Why</dt>
 					<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
-						<p data-testid="office-why">{#if office.status_reason === 'unsupported_version'}{repairReasonCopy.before}<OfficeRepairLocation {office} />{repairReasonCopy.after}{:else}{why}{/if}</p>
+						<p data-testid="office-why">
+							{#if office.status_reason === 'unsupported_version'}{repairReasonCopy.before}<OfficeRepairLocation
+									{office}
+								/>{repairReasonCopy.after}{:else}{why}{/if}
+						</p>
 						{#if office.status_reason === 'unsupported_version'}
-							<Button variant="outline" class="mt-2 h-auto min-h-9 whitespace-normal py-2 text-left"
-								aria-expanded={repairOpen} aria-controls={repairId} onclick={toggleRepair}>
+							<Button
+								variant="outline"
+								class="mt-2 h-auto min-h-9 whitespace-normal py-2 text-left"
+								aria-expanded={repairOpen}
+								aria-controls={repairId}
+								onclick={toggleRepair}
+							>
 								{repairOpen ? 'Hide repair instructions' : 'Show local CLI repair instructions'}
 							</Button>
 							<div id={repairId} hidden={!repairOpen} class="mt-3 space-y-2 text-gray-300">
 								<p>On <OfficeRepairLocation {office} />, run:</p>
-								<pre class="overflow-x-auto rounded-md bg-black/20 px-3 py-2 text-xs text-white"><code>{repairCommand}</code></pre>
-								<Button variant="outline" size="sm" onclick={copyRepairCommand}>{commandCopied ? 'Copied' : 'Copy command'}</Button>
-								<p>It checks the Agentic Org instance on that machine and says what to repair. Follow its steps there. This page updates on its own when the office is back.</p>
-								<p>If <OfficeRepairLocation {office} /> runs more than one instance, add <code>--name &lt;instance&gt;</code>.</p>
+								<pre
+									class="overflow-x-auto rounded-md bg-black/20 px-3 py-2 text-xs text-white"><code
+										>{repairCommand}</code
+									></pre>
+								<Button variant="outline" size="sm" onclick={copyRepairCommand}
+									>{commandCopied ? 'Copied' : 'Copy command'}</Button
+								>
+								<p>
+									It checks the Agentic Org instance on that machine and says what to repair. Follow
+									its steps there. This page updates on its own when the office is back.
+								</p>
+								<p>
+									If <OfficeRepairLocation {office} /> runs more than one instance, add
+									<code>--name &lt;instance&gt;</code>.
+								</p>
 							</div>
 						{/if}
 					</dd>
 				{/if}
 				{#if details}
 					<dt class="text-gray-400">Last seen</dt>
-					<dd class="text-white" data-testid="office-last-seen">{details.lastSeenAt ? agoText(details.lastSeenAt, Date.now()) : 'Not known'}</dd>
+					<dd class="text-white" data-testid="office-last-seen">
+						{details.lastSeenAt ? agoText(details.lastSeenAt, Date.now()) : 'Not known'}
+					</dd>
 					<dt class="text-gray-400">Sync</dt>
 					<dd class="text-white" data-testid="office-sync">{syncText(details)}</dd>
 					{#if details.version}
@@ -218,26 +276,54 @@
 						<dd class="text-white">Agentic Org {details.version}</dd>
 					{/if}
 					<dt class="text-gray-400">Follows</dt>
-					<dd class="min-w-0 text-white [overflow-wrap:anywhere]">{details.follows.length === 0 ? 'No projects yet' : details.follows.join(', ')}</dd>
+					<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
+						{details.follows.length === 0 ? 'No projects yet' : details.follows.join(', ')}
+					</dd>
 				{/if}
 				<dt class="text-gray-400">Agents here</dt>
 				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
-					{#if !snapshot}{counting ? 'Counting…' : "Couldn't be counted"}{:else}{agents.length === 0 ? 'None' : agents.map((a) => a.name).join(', ')}{/if}
-					{#if sample && agents.length > 0}<Badge variant="secondary" data-testid="sample-data-note-sheet">Sample data</Badge>{/if}
+					{#if !snapshot}{counting ? 'Counting…' : "Couldn't be counted"}{:else}{agents.length === 0
+							? 'None'
+							: agents.map((a) => a.name).join(', ')}{/if}
+					{#if sample && agents.length > 0}<Badge
+							variant="secondary"
+							data-testid="sample-data-note-sheet">Sample data</Badge
+						>{/if}
 				</dd>
 			</dl>
 			<p class="sr-only" role="status">{restarting ? 'Restarting…' : ''}</p>
 			{#if why && (action.note || unsupported)}
-				<p class="px-4 text-sm/6 text-gray-300" data-testid="restart-note">{action.note ?? 'Update Agentic Org to restart offices from here'}</p>
+				<p class="px-4 text-sm/6 text-gray-300" data-testid="restart-note">
+					{action.note ?? 'Update Agentic Org to restart offices from here'}
+				</p>
 			{/if}
-			{#if restartNote}<p class="px-4 text-sm/6 text-red-300" role="alert" data-testid="restart-error">{restartNote}</p>{/if}
+			{#if restartNote}<p
+					class="px-4 text-sm/6 text-red-300"
+					role="alert"
+					data-testid="restart-error"
+				>
+					{restartNote}
+				</p>{/if}
 			{#if onremove}
-				<div class="px-4"><Button variant="outline" class="text-red-300 max-[639px]:min-h-11" onclick={onremove} data-testid="remove-office">Remove office…</Button></div>
+				<div class="px-4">
+					<Button
+						variant="outline"
+						class="text-red-300 max-[639px]:min-h-11"
+						onclick={onremove}
+						data-testid="remove-office">Remove office…</Button
+					>
+				</div>
 			{/if}
 			{#if why}
 				<SheetFooter class="mt-auto">
 					{#if action.label && !unsupported}
-						<Button aria-disabled={restarting} aria-busy={restarting} class="aria-disabled:opacity-50" onclick={restart} data-testid="restart-office">{restarting ? 'Restarting…' : action.label}</Button>
+						<Button
+							aria-disabled={restarting}
+							aria-busy={restarting}
+							class="aria-disabled:opacity-50"
+							onclick={restart}
+							data-testid="restart-office">{restarting ? 'Restarting…' : action.label}</Button
+						>
 					{/if}
 					<Button variant="outline" onclick={copy}>Copy details</Button>
 				</SheetFooter>

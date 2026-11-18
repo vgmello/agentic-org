@@ -56,16 +56,44 @@
 {#if editing}
 	<form class="space-y-2" onsubmit={save} novalidate>
 		<Label for="rename-office" class="sr-only">Office name</Label>
-		<Input bind:ref={input} id="rename-office" bind:value autocomplete="off" aria-invalid={error ? true : undefined} aria-describedby={error ? 'rename-office-error' : undefined} class={inputClass} />
+		<Input
+			bind:ref={input}
+			id="rename-office"
+			bind:value
+			autocomplete="off"
+			aria-invalid={error ? true : undefined}
+			aria-describedby={error ? 'rename-office-error' : undefined}
+			class={inputClass}
+		/>
 		{#if error}<p id="rename-office-error" class={errorClass} role="alert">{error}</p>{/if}
 		<div class="flex flex-wrap gap-2">
-			<Button type="submit" size="sm" class="max-[639px]:min-h-11" aria-busy={busy} aria-disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
-			<Button type="button" variant="outline" size="sm" class="max-[639px]:min-h-11" disabled={busy} onclick={stop}>Cancel</Button>
+			<Button
+				type="submit"
+				size="sm"
+				class="max-[639px]:min-h-11"
+				aria-busy={busy}
+				aria-disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button
+			>
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				class="max-[639px]:min-h-11"
+				disabled={busy}
+				onclick={stop}>Cancel</Button
+			>
 		</div>
 	</form>
 {:else}
 	<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
 		<span class="min-w-0 text-white [overflow-wrap:anywhere]">{name}</span>
-		<Button bind:ref={renameButton} variant="outline" size="sm" class="max-[639px]:min-h-11" aria-label="Rename {name}" onclick={start}>Rename</Button>
+		<Button
+			bind:ref={renameButton}
+			variant="outline"
+			size="sm"
+			class="max-[639px]:min-h-11"
+			aria-label="Rename {name}"
+			onclick={start}>Rename</Button
+		>
 	</div>
 {/if}

@@ -10,10 +10,22 @@
 	import { toAppError } from '$lib/office/api';
 	import { trimWhiteSpace, validateName } from '$lib/name';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { errorClass, helpClass, inputClass, mobileButton } from '$lib/modules/settings/components/classes';
+	import {
+		errorClass,
+		helpClass,
+		inputClass,
+		mobileButton
+	} from '$lib/modules/settings/components/classes';
 	import { officesApi } from '../../api';
 	import { waitingText } from '../../copy';
 	import type { AddProgress, Issued, PendingAdd } from '../../types';
@@ -179,7 +191,13 @@
 		stage = 'form';
 	}
 	const readOnly = $derived(stage === 'working' || stage === 'waiting');
-	const title = $derived(stage === 'invitation' && issued ? `Invitation for ${issued.invitation.officeName}` : canAddOnInstance ? 'Add office' : 'Add an office on another machine');
+	const title = $derived(
+		stage === 'invitation' && issued
+			? `Invitation for ${issued.invitation.officeName}`
+			: canAddOnInstance
+				? 'Add office'
+				: 'Add an office on another machine'
+	);
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
@@ -187,7 +205,9 @@
 		<DialogHeader>
 			<DialogTitle text={title} />
 			<DialogDescription class="[overflow-wrap:anywhere]">
-				{#if stage === 'invitation'}Send it to the machine that will run this office.{:else if stage === 'refused'}An office on this instance needs this HQ's administrator.{:else}An office is another machine or instance that runs agents and keeps a copy of the records.{/if}
+				{#if stage === 'invitation'}Send it to the machine that will run this office.{:else if stage === 'refused'}An
+					office on this instance needs this HQ's administrator.{:else}An office is another machine
+					or instance that runs agents and keeps a copy of the records.{/if}
 			</DialogDescription>
 		</DialogHeader>
 
@@ -196,34 +216,82 @@
 		{:else if stage === 'refused'}
 			<p class="text-sm/6 text-red-300" role="alert">{error}</p>
 			<DialogFooter>
-				<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}>Close</Button>
-				<Button type="button" class={mobileButton} onclick={inviteInstead}>Invite another machine</Button>
+				<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}
+					>Close</Button
+				>
+				<Button type="button" class={mobileButton} onclick={inviteInstead}
+					>Invite another machine</Button
+				>
 			</DialogFooter>
 		{:else if stage === 'failed'}
 			<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{error}</p>
 			<DialogFooter>
-				<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}>Close</Button>
-				<Button type="button" class={mobileButton} onclick={() => (stage = 'form')}>Try again</Button>
+				<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}
+					>Close</Button
+				>
+				<Button type="button" class={mobileButton} onclick={() => (stage = 'form')}
+					>Try again</Button
+				>
 			</DialogFooter>
 		{:else}
 			<form class="grid gap-5" onsubmit={submit} novalidate>
 				<div>
-					<Label for="office-name" class="block text-sm/6 font-medium text-white">Office name</Label>
+					<Label for="office-name" class="block text-sm/6 font-medium text-white">Office name</Label
+					>
 					<div class="mt-2">
-						<Input bind:ref={nameInput} id="office-name" bind:value={name} readonly={readOnly} autocomplete="off" aria-invalid={nameError ? true : undefined} aria-describedby={nameError ? 'office-name-error' : 'office-name-help'} class={inputClass} />
+						<Input
+							bind:ref={nameInput}
+							id="office-name"
+							bind:value={name}
+							readonly={readOnly}
+							autocomplete="off"
+							aria-invalid={nameError ? true : undefined}
+							aria-describedby={nameError ? 'office-name-error' : 'office-name-help'}
+							class={inputClass}
+						/>
 					</div>
-					{#if nameError}<p id="office-name-error" class={errorClass} role="alert">{nameError}</p>{:else}<p id="office-name-help" class={helpClass}>Unique within this organization. You can rename it later.</p>{/if}
+					{#if nameError}<p id="office-name-error" class={errorClass} role="alert">
+							{nameError}
+						</p>{:else}<p id="office-name-help" class={helpClass}>
+							Unique within this organization. You can rename it later.
+						</p>{/if}
 				</div>
 				{#if canAddOnInstance}
 					<fieldset class="space-y-2" disabled={readOnly}>
 						<legend class="text-sm/6 font-medium text-white">Where it runs</legend>
-						<label class="flex min-h-9 items-start gap-x-3 text-sm/6 text-gray-300 max-[639px]:min-h-11">
-							<input type="radio" name="where" value="instance" bind:group={where} class="mt-1.5 size-4 accent-indigo-500" />
-							<span><span class="block font-medium text-white">On this instance</span><span class="block text-xs/5 text-gray-400">A new office on the machine that runs HQ.</span></span>
+						<label
+							class="flex min-h-9 items-start gap-x-3 text-sm/6 text-gray-300 max-[639px]:min-h-11"
+						>
+							<input
+								type="radio"
+								name="where"
+								value="instance"
+								bind:group={where}
+								class="mt-1.5 size-4 accent-indigo-500"
+							/>
+							<span
+								><span class="block font-medium text-white">On this instance</span><span
+									class="block text-xs/5 text-gray-400"
+									>A new office on the machine that runs HQ.</span
+								></span
+							>
 						</label>
-						<label class="flex min-h-9 items-start gap-x-3 text-sm/6 text-gray-300 max-[639px]:min-h-11">
-							<input type="radio" name="where" value="machine" bind:group={where} class="mt-1.5 size-4 accent-indigo-500" />
-							<span><span class="block font-medium text-white">On another machine</span><span class="block text-xs/5 text-gray-400">An invitation you send to it. You approve the join here.</span></span>
+						<label
+							class="flex min-h-9 items-start gap-x-3 text-sm/6 text-gray-300 max-[639px]:min-h-11"
+						>
+							<input
+								type="radio"
+								name="where"
+								value="machine"
+								bind:group={where}
+								class="mt-1.5 size-4 accent-indigo-500"
+							/>
+							<span
+								><span class="block font-medium text-white">On another machine</span><span
+									class="block text-xs/5 text-gray-400"
+									>An invitation you send to it. You approve the join here.</span
+								></span
+							>
 						</label>
 					</fieldset>
 				{/if}
@@ -234,29 +302,73 @@
 							{@const order = ['creating', 'synchronizing', 'ready']}
 							{@const at = order.indexOf(progress.phase)}
 							{@const mine = order.indexOf(phase)}
-							<li class={mine < at ? 'text-gray-300' : mine === at ? 'font-semibold text-white' : 'text-gray-500'} aria-current={mine === at ? 'step' : undefined}>
+							<li
+								class={mine < at
+									? 'text-gray-300'
+									: mine === at
+										? 'font-semibold text-white'
+										: 'text-gray-500'}
+								aria-current={mine === at ? 'step' : undefined}
+							>
 								{label}{mine < at ? ' · done' : mine === at ? '…' : ''}
 							</li>
 						{/each}
 					</ol>
-					<p class="sr-only" role="status">{progress.phase === 'creating' ? 'Creating' : 'Synchronizing'}</p>
+					<p class="sr-only" role="status">
+						{progress.phase === 'creating' ? 'Creating' : 'Synchronizing'}
+					</p>
 				{/if}
 				{#if stage === 'waiting'}
-					<div class="space-y-2 rounded-lg bg-white/5 p-4 text-sm/6 text-gray-300 outline-1 -outline-offset-1 outline-white/10" data-testid="add-waiting">
-						<p class="font-medium text-white" role="status">{waitingText(progress?.waitingFor ?? resume?.waitingFor ?? [])}.</p>
-						<p>{name} is added once the instance confirms it is safe. No agent is automatically stopped or restarted for this.</p>
+					<div
+						class="space-y-2 rounded-lg bg-white/5 p-4 text-sm/6 text-gray-300 outline-1 -outline-offset-1 outline-white/10"
+						data-testid="add-waiting"
+					>
+						<p class="font-medium text-white" role="status">
+							{waitingText(progress?.waitingFor ?? resume?.waitingFor ?? [])}.
+						</p>
+						<p>
+							{name} is added once the instance confirms it is safe. No agent is automatically stopped
+							or restarted for this.
+						</p>
 					</div>
 				{/if}
-				{#if note}<p class="text-sm/6 text-gray-300" role="status" data-testid="add-note">{note}</p>{/if}
+				{#if note}<p class="text-sm/6 text-gray-300" role="status" data-testid="add-note">
+						{note}
+					</p>{/if}
 				{#if error}<p class="text-sm/6 text-red-300" role="alert">{error}</p>{/if}
 
 				<DialogFooter>
 					{#if readOnly}
-						<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}>Close</Button>
-						<Button type="button" class={mobileButton} aria-busy={busy} aria-disabled={busy} onclick={cancel}>{busy ? 'Cancelling…' : 'Cancel'}</Button>
+						<Button
+							type="button"
+							variant="outline"
+							class={mobileButton}
+							onclick={() => (open = false)}>Close</Button
+						>
+						<Button
+							type="button"
+							class={mobileButton}
+							aria-busy={busy}
+							aria-disabled={busy}
+							onclick={cancel}>{busy ? 'Cancelling…' : 'Cancel'}</Button
+						>
 					{:else}
-						<Button type="button" variant="outline" class={mobileButton} disabled={busy} onclick={() => (open = false)}>Cancel</Button>
-						<Button type="submit" class={mobileButton} aria-busy={busy} aria-disabled={busy}>{busy ? (where === 'machine' ? 'Creating invitation…' : 'Adding…') : where === 'machine' ? 'Create invitation' : 'Add office'}</Button>
+						<Button
+							type="button"
+							variant="outline"
+							class={mobileButton}
+							disabled={busy}
+							onclick={() => (open = false)}>Cancel</Button
+						>
+						<Button type="submit" class={mobileButton} aria-busy={busy} aria-disabled={busy}
+							>{busy
+								? where === 'machine'
+									? 'Creating invitation…'
+									: 'Adding…'
+								: where === 'machine'
+									? 'Create invitation'
+									: 'Add office'}</Button
+						>
 					{/if}
 				</DialogFooter>
 			</form>

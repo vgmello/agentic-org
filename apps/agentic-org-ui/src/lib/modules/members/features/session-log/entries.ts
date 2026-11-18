@@ -20,7 +20,13 @@ export type SessionEntry =
 	| (Base & { kind: 'tool_call'; callId?: string; tool: string; summary: string; input: string })
 	| (Base & { kind: 'tool_result'; callId?: string; ok: boolean; output: string })
 	| (Base & { kind: 'file'; path: string; action: FileAction; diff?: DiffLine[] })
-	| (Base & { kind: 'usage'; inputTokens?: number; outputTokens?: number; cachedTokens?: number; complete: boolean })
+	| (Base & {
+			kind: 'usage';
+			inputTokens?: number;
+			outputTokens?: number;
+			cachedTokens?: number;
+			complete: boolean;
+	  })
 	| (Base & { kind: 'notice'; text: string })
 	/** A line the parser does not recognise: shown as it was, never dropped (REQ-05 settle 1). */
 	| (Base & { kind: 'raw'; source: string });
@@ -40,8 +46,13 @@ export interface SessionLog {
 export const isToolEntry = (e: SessionEntry) => e.kind === 'tool_call' || e.kind === 'tool_result';
 
 /** What the toggles leave on screen: tool calls and results, and file entries, can each be hidden. */
-export function visibleEntries(entries: SessionEntry[], show: { tools: boolean; files: boolean }): SessionEntry[] {
-	return entries.filter((e) => (show.tools || !isToolEntry(e)) && (show.files || e.kind !== 'file'));
+export function visibleEntries(
+	entries: SessionEntry[],
+	show: { tools: boolean; files: boolean }
+): SessionEntry[] {
+	return entries.filter(
+		(e) => (show.tools || !isToolEntry(e)) && (show.files || e.kind !== 'file')
+	);
 }
 
 export interface TouchedFile {
@@ -54,14 +65,26 @@ export interface TouchedFile {
 	entryIds: string[];
 }
 
-const STRENGTH: Record<FileAction, number> = { reference: 0, read: 1, edit: 2, create: 3, delete: 3 };
+const STRENGTH: Record<FileAction, number> = {
+	reference: 0,
+	read: 1,
+	edit: 2,
+	create: 3,
+	delete: 3
+};
 
 /** The touched-files list: each file once, in first-touched order, with its added/removed line counts. */
 export function touchedFiles(entries: SessionEntry[]): TouchedFile[] {
 	const byPath = new Map<string, TouchedFile>();
 	for (const e of entries) {
 		if (e.kind !== 'file') continue;
-		const file = byPath.get(e.path) ?? { path: e.path, action: e.action, added: 0, removed: 0, entryIds: [] };
+		const file = byPath.get(e.path) ?? {
+			path: e.path,
+			action: e.action,
+			added: 0,
+			removed: 0,
+			entryIds: []
+		};
 		if (STRENGTH[e.action] > STRENGTH[file.action]) file.action = e.action;
 		file.added += e.diff?.filter((l) => l.op === 'add').length ?? 0;
 		file.removed += e.diff?.filter((l) => l.op === 'remove').length ?? 0;
@@ -82,7 +105,8 @@ export function usageTotals(entries: SessionEntry[]) {
 		any = true;
 		input += e.inputTokens ?? 0;
 		output += e.outputTokens ?? 0;
-		if (!e.complete || e.inputTokens === undefined || e.outputTokens === undefined) complete = false;
+		if (!e.complete || e.inputTokens === undefined || e.outputTokens === undefined)
+			complete = false;
 	}
 	return any ? { input, output, complete } : undefined;
 }

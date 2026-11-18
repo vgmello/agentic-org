@@ -1,886 +1,679 @@
 [
- {
-  "id": "a1",
-  "ago": 2,
-  "actor": "noor",
-  "kind": "run",
-  "action": "run",
-  "text": "is working on {link}",
-  "href": {
-   "path": "/work/T-14",
-   "label": "T-14 Checkout page loses the basket on refresh"
-  },
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": [],
-  "run": {
-   "id": "run-41",
-   "member": "noor",
-   "state": "running",
-   "start_ago": 2,
-   "trigger": "Assigned by Alex Kim",
-   "log": [
-    "Read the basket store and the checkout route",
-    "Wrote a failing test for a refresh with items in the basket"
-   ]
-  }
- },
- {
-  "id": "a2",
-  "ago": 5,
-  "actor": "sam",
-  "kind": "conversation",
-  "action": "message",
-  "text": "sent a message to Mira Castillo",
-  "preview": "Milestone one: your part and status please",
-  "teams": [
-   "eng",
-   "web"
-  ],
-  "projects": [],
-  "members": [
-   "mira"
-  ],
-  "thread": {
-   "id": "th-1",
-   "with": "Mira Castillo"
-  }
- },
- {
-  "id": "a3",
-  "ago": 8,
-  "actor": "mira",
-  "kind": "conversation",
-  "action": "message",
-  "text": "replied to Sam Okafor",
-  "preview": "No W7 draft or design branch yet; I will push the first one before the end of today.",
-  "teams": [
-   "eng",
-   "web"
-  ],
-  "projects": [],
-  "members": [
-   "sam"
-  ],
-  "thread": {
-   "id": "th-1",
-   "with": "Sam Okafor"
-  }
- },
- {
-  "id": "a4",
-  "ago": 14,
-  "actor": "sam",
-  "kind": "conversation",
-  "action": "broadcast",
-  "text": "sent a message to 7 members",
-  "preview": "Milestone one, today: everyone updates their task before the stand-up.",
-  "teams": [
-   "eng"
-  ],
-  "projects": [],
-  "members": [
-   "noor",
-   "kai",
-   "mira",
-   "juno",
-   "pax",
-   "quinn",
-   "hana"
-  ],
-  "thread": {
-   "id": "th-2",
-   "with": "7 members"
-  }
- },
- {
-  "id": "a5",
-  "ago": 21,
-  "actor": "kai",
-  "kind": "work",
-  "action": "merge",
-  "text": "merged server-dev/create-org into v1 \u00b7 3 commits",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a6",
-  "ago": 27,
-  "actor": "kai",
-  "kind": "run",
-  "action": "run",
-  "text": "finished a run on {link}",
-  "href": {
-   "path": "/work/T-27",
-   "label": "T-27 Show the office status in the footer"
-  },
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": [],
-  "run": {
-   "id": "run-39",
-   "member": "kai",
-   "state": "succeeded",
-   "start_ago": 31,
-   "dur": 4,
-   "trigger": "Assigned by Sam Okafor",
-   "outcome": "Finished: the footer now shows the office status",
-   "log": [
-    "Added the status line to the footer",
-    "Ran the unit tests: 214 passed",
-    "Opened branch kai/office-status"
-   ]
-  }
- },
- {
-  "id": "a7",
-  "ago": 33,
-  "actor": "noor",
-  "kind": "work",
-  "action": "task-done",
-  "text": "finished {link}",
-  "href": {
-   "path": "/work/T-23",
-   "label": "T-23 Search should match work item references"
-  },
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a8",
-  "ago": 41,
-  "actor": "pax",
-  "kind": "work",
-  "action": "status",
-  "text": "changed status Working \u2192 Waiting",
-  "preview": "waiting for the reviewer",
-  "status": true,
-  "teams": [
-   "design"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a9",
-  "ago": 44,
-  "actor": "pax",
-  "kind": "work",
-  "action": "status",
-  "text": "changed status Waiting \u2192 Working",
-  "preview": "review is in",
-  "status": true,
-  "teams": [
-   "design"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a10",
-  "ago": 50,
-  "actor": "pax",
-  "kind": "work",
-  "action": "status",
-  "text": "changed status Working \u2192 Waiting",
-  "preview": "waiting for the design tokens",
-  "status": true,
-  "teams": [
-   "design"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a11",
-  "ago": 55,
-  "actor": "pax",
-  "kind": "work",
-  "action": "status",
-  "text": "changed status Waiting \u2192 Working",
-  "preview": "tokens landed",
-  "status": true,
-  "teams": [
-   "design"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a12",
-  "ago": 70,
-  "actor": "mira",
-  "kind": "work",
-  "action": "bug",
-  "text": "reported bug {link} in Beacon \u00b7 Major",
-  "href": {
-   "path": "/work/T-14",
-   "label": "T-14 Checkout page loses the basket on refresh"
-  },
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a13",
-  "ago": 95,
-  "actor": "quinn",
-  "kind": "work",
-  "action": "comment",
-  "text": "commented on {link}",
-  "href": {
-   "path": "/work/T-12",
-   "label": "T-12 Add sign-in rate limiting"
-  },
-  "preview": "Rate limiting should also cover the invite link.",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a14",
-  "ago": 96,
-  "actor": "quinn",
-  "kind": "work",
-  "action": "comment",
-  "text": "commented on {link}",
-  "href": {
-   "path": "/work/T-19",
-   "label": "T-19 Write the release notes for 0.2"
-  },
-  "preview": "The 0.2 notes mention the old name.",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a15",
-  "ago": 97,
-  "actor": "quinn",
-  "kind": "work",
-  "action": "comment",
-  "text": "commented on {link}",
-  "href": {
-   "path": "/work/T-21",
-   "label": "T-21 Let people export a project's costs"
-  },
-  "preview": "Costs export should say API-equivalent for subscriptions.",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a16",
-  "ago": 130,
-  "actor": "you",
-  "kind": "org",
-  "action": "member",
-  "text": "moved Pax Moreau to Design",
-  "teams": [
-   "design"
-  ],
-  "projects": [],
-  "members": [
-   "pax"
-  ]
- },
- {
-  "id": "a17",
-  "ago": 180,
-  "actor": "you",
-  "kind": "org",
-  "action": "team",
-  "text": "created the team Platform under Engineering",
-  "teams": [
-   "platform",
-   "eng"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a18",
-  "ago": 240,
-  "actor": "you",
-  "kind": "decision",
-  "action": "decision",
-  "text": "approved the staging migration plan",
-  "preview": "Reversible, staging only.",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": [
-   "kai"
-  ]
- },
- {
-  "id": "a19",
-  "ago": 320,
-  "actor": "noor",
-  "kind": "run",
-  "action": "run",
-  "text": "ran into a problem on {link}",
-  "href": {
-   "path": "/work/T-19",
-   "label": "T-19 Write the release notes for 0.2"
-  },
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": [],
-  "run": {
-   "id": "run-37",
-   "member": "noor",
-   "state": "failed",
-   "start_ago": 321,
-   "dur": 1,
-   "trigger": "Assigned by Sam Okafor",
-   "outcome": "Stopped with an error: the changelog file could not be read",
-   "log": [
-    "Opened CHANGELOG.md",
-    "Error: permission denied reading CHANGELOG.md"
-   ]
-  }
- },
- {
-  "id": "a20",
-  "ago": 400,
-  "actor": "hana",
-  "kind": "conversation",
-  "action": "message",
-  "text": "sent a message to In\u00eas Duarte",
-  "preview": "Please start the onboarding checklist for Quinn.",
-  "teams": [
-   "people"
-  ],
-  "projects": [
-   "onboarding"
-  ],
-  "members": [
-   "ines"
-  ],
-  "thread": {
-   "id": "th-3",
-   "with": "In\u00eas Duarte"
-  }
- },
- {
-  "id": "a21",
-  "ago": 430,
-  "actor": "ines",
-  "kind": "conversation",
-  "action": "message",
-  "text": "replied to Hana Weiss",
-  "preview": "Started: laptop, accounts and the first-week plan are in progress.",
-  "teams": [
-   "people"
-  ],
-  "projects": [
-   "onboarding"
-  ],
-  "members": [
-   "hana"
-  ],
-  "thread": {
-   "id": "th-3",
-   "with": "Hana Weiss"
-  }
- },
- {
-  "id": "a22",
-  "ago": 520,
-  "actor": "leo",
-  "kind": "work",
-  "action": "task",
-  "text": "opened a task in Onboarding kit",
-  "preview": "Write the welcome email",
-  "teams": [
-   "people"
-  ],
-  "projects": [
-   "onboarding"
-  ],
-  "members": []
- },
- {
-  "id": "a23",
-  "ago": 1500,
-  "actor": "sam",
-  "kind": "work",
-  "action": "task",
-  "text": "assigned {link} to Kai Lindqvist",
-  "teams": [
-   "eng",
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": [
-   "kai"
-  ],
-  "href": {
-   "path": "/work/T-27",
-   "label": "T-27 Show the office status in the footer"
-  }
- },
- {
-  "id": "a24",
-  "ago": 1530,
-  "actor": "kai",
-  "kind": "run",
-  "action": "run",
-  "text": "finished a run on {link}",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": [],
-  "href": {
-   "path": "/work/T-27",
-   "label": "T-27 Show the office status in the footer"
-  },
-  "run": {
-   "id": "run-53",
-   "member": "kai",
-   "state": "succeeded",
-   "start_ago": 1536,
-   "dur": 5,
-   "trigger": "Assigned by Sam Okafor",
-   "outcome": "Finished",
-   "log": [
-    "Ran the unit tests: all passed"
-   ]
-  }
- },
- {
-  "id": "a25",
-  "ago": 1600,
-  "actor": "juno",
-  "kind": "work",
-  "action": "task",
-  "text": "opened a task in Beacon",
-  "teams": [
-   "design"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a26",
-  "ago": 1700,
-  "actor": "mira",
-  "kind": "conversation",
-  "action": "message",
-  "text": "sent a message to Noor Haddad",
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": [
-   "noor"
-  ]
- },
- {
-  "id": "a27",
-  "ago": 1780,
-  "actor": "noor",
-  "kind": "work",
-  "action": "task-done",
-  "text": "finished a task in Beacon",
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a28",
-  "ago": 1900,
-  "actor": "kai",
-  "kind": "work",
-  "action": "merge",
-  "text": "merged kai/ci-cache into v1 \u00b7 1 commit",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a29",
-  "ago": 2000,
-  "actor": "you",
-  "kind": "org",
-  "action": "member",
-  "text": "added Quinn Adeyemi to Engineering",
-  "teams": [
-   "eng"
-  ],
-  "projects": [],
-  "members": [
-   "quinn"
-  ]
- },
- {
-  "id": "a30",
-  "ago": 2200,
-  "actor": "avery",
-  "kind": "work",
-  "action": "comment",
-  "text": "commented on {link}",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": [],
-  "href": {
-   "path": "/work/T-21",
-   "label": "T-21 Let people export a project's costs"
-  }
- },
- {
-  "id": "a31",
-  "ago": 2400,
-  "actor": "hana",
-  "kind": "org",
-  "action": "team",
-  "text": "renamed a team in People",
-  "teams": [
-   "people"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a32",
-  "ago": 2600,
-  "actor": "pax",
-  "kind": "work",
-  "action": "task",
-  "text": "opened a task in Beacon",
-  "teams": [
-   "design"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a33",
-  "ago": 3000,
-  "actor": "noor",
-  "kind": "work",
-  "action": "task",
-  "text": "opened a task in Atlas",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a34",
-  "ago": 3210,
-  "actor": "kai",
-  "kind": "work",
-  "action": "task-done",
-  "text": "finished a task in Beacon",
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a35",
-  "ago": 3420,
-  "actor": "mira",
-  "kind": "conversation",
-  "action": "message",
-  "text": "sent a message in #general",
-  "teams": [
-   "eng"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a36",
-  "ago": 3630,
-  "actor": "juno",
-  "kind": "org",
-  "action": "member",
-  "text": "updated a profile in People",
-  "teams": [
-   "people"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a37",
-  "ago": 3840,
-  "actor": "pax",
-  "kind": "work",
-  "action": "merge",
-  "text": "merged a branch into v1 \u00b7 2 commits",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a38",
-  "ago": 4050,
-  "actor": "sam",
-  "kind": "work",
-  "action": "task",
-  "text": "opened a task in Atlas",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a39",
-  "ago": 4260,
-  "actor": "quinn",
-  "kind": "work",
-  "action": "task-done",
-  "text": "finished a task in Beacon",
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a40",
-  "ago": 4470,
-  "actor": "leo",
-  "kind": "conversation",
-  "action": "message",
-  "text": "sent a message in #general",
-  "teams": [
-   "eng"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a41",
-  "ago": 4680,
-  "actor": "noor",
-  "kind": "org",
-  "action": "member",
-  "text": "updated a profile in People",
-  "teams": [
-   "people"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a42",
-  "ago": 4890,
-  "actor": "kai",
-  "kind": "work",
-  "action": "merge",
-  "text": "merged a branch into v1 \u00b7 2 commits",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a43",
-  "ago": 5100,
-  "actor": "mira",
-  "kind": "work",
-  "action": "task",
-  "text": "opened a task in Atlas",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a44",
-  "ago": 5310,
-  "actor": "juno",
-  "kind": "work",
-  "action": "task-done",
-  "text": "finished a task in Beacon",
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a45",
-  "ago": 5520,
-  "actor": "pax",
-  "kind": "conversation",
-  "action": "message",
-  "text": "sent a message in #general",
-  "teams": [
-   "eng"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a46",
-  "ago": 5730,
-  "actor": "sam",
-  "kind": "org",
-  "action": "member",
-  "text": "updated a profile in People",
-  "teams": [
-   "people"
-  ],
-  "projects": [],
-  "members": []
- },
- {
-  "id": "a47",
-  "ago": 5940,
-  "actor": "quinn",
-  "kind": "work",
-  "action": "merge",
-  "text": "merged a branch into v1 \u00b7 2 commits",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a48",
-  "ago": 6150,
-  "actor": "leo",
-  "kind": "work",
-  "action": "task",
-  "text": "opened a task in Atlas",
-  "teams": [
-   "platform"
-  ],
-  "projects": [
-   "atlas"
-  ],
-  "members": []
- },
- {
-  "id": "a49",
-  "ago": 6360,
-  "actor": "noor",
-  "kind": "work",
-  "action": "task-done",
-  "text": "finished a task in Beacon",
-  "teams": [
-   "web"
-  ],
-  "projects": [
-   "beacon"
-  ],
-  "members": []
- },
- {
-  "id": "a50",
-  "ago": 6570,
-  "actor": "kai",
-  "kind": "conversation",
-  "action": "message",
-  "text": "sent a message in #general",
-  "teams": [
-   "eng"
-  ],
-  "projects": [],
-  "members": []
- }
+	{
+		"id": "a1",
+		"ago": 2,
+		"actor": "noor",
+		"kind": "run",
+		"action": "run",
+		"text": "is working on {link}",
+		"href": {
+			"path": "/work/T-14",
+			"label": "T-14 Checkout page loses the basket on refresh"
+		},
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": [],
+		"run": {
+			"id": "run-41",
+			"member": "noor",
+			"state": "running",
+			"start_ago": 2,
+			"trigger": "Assigned by Alex Kim",
+			"log": [
+				"Read the basket store and the checkout route",
+				"Wrote a failing test for a refresh with items in the basket"
+			]
+		}
+	},
+	{
+		"id": "a2",
+		"ago": 5,
+		"actor": "sam",
+		"kind": "conversation",
+		"action": "message",
+		"text": "sent a message to Mira Castillo",
+		"preview": "Milestone one: your part and status please",
+		"teams": ["eng", "web"],
+		"projects": [],
+		"members": ["mira"],
+		"thread": {
+			"id": "th-1",
+			"with": "Mira Castillo"
+		}
+	},
+	{
+		"id": "a3",
+		"ago": 8,
+		"actor": "mira",
+		"kind": "conversation",
+		"action": "message",
+		"text": "replied to Sam Okafor",
+		"preview": "No W7 draft or design branch yet; I will push the first one before the end of today.",
+		"teams": ["eng", "web"],
+		"projects": [],
+		"members": ["sam"],
+		"thread": {
+			"id": "th-1",
+			"with": "Sam Okafor"
+		}
+	},
+	{
+		"id": "a4",
+		"ago": 14,
+		"actor": "sam",
+		"kind": "conversation",
+		"action": "broadcast",
+		"text": "sent a message to 7 members",
+		"preview": "Milestone one, today: everyone updates their task before the stand-up.",
+		"teams": ["eng"],
+		"projects": [],
+		"members": ["noor", "kai", "mira", "juno", "pax", "quinn", "hana"],
+		"thread": {
+			"id": "th-2",
+			"with": "7 members"
+		}
+	},
+	{
+		"id": "a5",
+		"ago": 21,
+		"actor": "kai",
+		"kind": "work",
+		"action": "merge",
+		"text": "merged server-dev/create-org into v1 \u00b7 3 commits",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a6",
+		"ago": 27,
+		"actor": "kai",
+		"kind": "run",
+		"action": "run",
+		"text": "finished a run on {link}",
+		"href": {
+			"path": "/work/T-27",
+			"label": "T-27 Show the office status in the footer"
+		},
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": [],
+		"run": {
+			"id": "run-39",
+			"member": "kai",
+			"state": "succeeded",
+			"start_ago": 31,
+			"dur": 4,
+			"trigger": "Assigned by Sam Okafor",
+			"outcome": "Finished: the footer now shows the office status",
+			"log": [
+				"Added the status line to the footer",
+				"Ran the unit tests: 214 passed",
+				"Opened branch kai/office-status"
+			]
+		}
+	},
+	{
+		"id": "a7",
+		"ago": 33,
+		"actor": "noor",
+		"kind": "work",
+		"action": "task-done",
+		"text": "finished {link}",
+		"href": {
+			"path": "/work/T-23",
+			"label": "T-23 Search should match work item references"
+		},
+		"teams": ["web"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a8",
+		"ago": 41,
+		"actor": "pax",
+		"kind": "work",
+		"action": "status",
+		"text": "changed status Working \u2192 Waiting",
+		"preview": "waiting for the reviewer",
+		"status": true,
+		"teams": ["design"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a9",
+		"ago": 44,
+		"actor": "pax",
+		"kind": "work",
+		"action": "status",
+		"text": "changed status Waiting \u2192 Working",
+		"preview": "review is in",
+		"status": true,
+		"teams": ["design"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a10",
+		"ago": 50,
+		"actor": "pax",
+		"kind": "work",
+		"action": "status",
+		"text": "changed status Working \u2192 Waiting",
+		"preview": "waiting for the design tokens",
+		"status": true,
+		"teams": ["design"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a11",
+		"ago": 55,
+		"actor": "pax",
+		"kind": "work",
+		"action": "status",
+		"text": "changed status Waiting \u2192 Working",
+		"preview": "tokens landed",
+		"status": true,
+		"teams": ["design"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a12",
+		"ago": 70,
+		"actor": "mira",
+		"kind": "work",
+		"action": "bug",
+		"text": "reported bug {link} in Beacon \u00b7 Major",
+		"href": {
+			"path": "/work/T-14",
+			"label": "T-14 Checkout page loses the basket on refresh"
+		},
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a13",
+		"ago": 95,
+		"actor": "quinn",
+		"kind": "work",
+		"action": "comment",
+		"text": "commented on {link}",
+		"href": {
+			"path": "/work/T-12",
+			"label": "T-12 Add sign-in rate limiting"
+		},
+		"preview": "Rate limiting should also cover the invite link.",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a14",
+		"ago": 96,
+		"actor": "quinn",
+		"kind": "work",
+		"action": "comment",
+		"text": "commented on {link}",
+		"href": {
+			"path": "/work/T-19",
+			"label": "T-19 Write the release notes for 0.2"
+		},
+		"preview": "The 0.2 notes mention the old name.",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a15",
+		"ago": 97,
+		"actor": "quinn",
+		"kind": "work",
+		"action": "comment",
+		"text": "commented on {link}",
+		"href": {
+			"path": "/work/T-21",
+			"label": "T-21 Let people export a project's costs"
+		},
+		"preview": "Costs export should say API-equivalent for subscriptions.",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a16",
+		"ago": 130,
+		"actor": "you",
+		"kind": "org",
+		"action": "member",
+		"text": "moved Pax Moreau to Design",
+		"teams": ["design"],
+		"projects": [],
+		"members": ["pax"]
+	},
+	{
+		"id": "a17",
+		"ago": 180,
+		"actor": "you",
+		"kind": "org",
+		"action": "team",
+		"text": "created the team Platform under Engineering",
+		"teams": ["platform", "eng"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a18",
+		"ago": 240,
+		"actor": "you",
+		"kind": "decision",
+		"action": "decision",
+		"text": "approved the staging migration plan",
+		"preview": "Reversible, staging only.",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": ["kai"]
+	},
+	{
+		"id": "a19",
+		"ago": 320,
+		"actor": "noor",
+		"kind": "run",
+		"action": "run",
+		"text": "ran into a problem on {link}",
+		"href": {
+			"path": "/work/T-19",
+			"label": "T-19 Write the release notes for 0.2"
+		},
+		"teams": ["web"],
+		"projects": ["atlas"],
+		"members": [],
+		"run": {
+			"id": "run-37",
+			"member": "noor",
+			"state": "failed",
+			"start_ago": 321,
+			"dur": 1,
+			"trigger": "Assigned by Sam Okafor",
+			"outcome": "Stopped with an error: the changelog file could not be read",
+			"log": ["Opened CHANGELOG.md", "Error: permission denied reading CHANGELOG.md"]
+		}
+	},
+	{
+		"id": "a20",
+		"ago": 400,
+		"actor": "hana",
+		"kind": "conversation",
+		"action": "message",
+		"text": "sent a message to In\u00eas Duarte",
+		"preview": "Please start the onboarding checklist for Quinn.",
+		"teams": ["people"],
+		"projects": ["onboarding"],
+		"members": ["ines"],
+		"thread": {
+			"id": "th-3",
+			"with": "In\u00eas Duarte"
+		}
+	},
+	{
+		"id": "a21",
+		"ago": 430,
+		"actor": "ines",
+		"kind": "conversation",
+		"action": "message",
+		"text": "replied to Hana Weiss",
+		"preview": "Started: laptop, accounts and the first-week plan are in progress.",
+		"teams": ["people"],
+		"projects": ["onboarding"],
+		"members": ["hana"],
+		"thread": {
+			"id": "th-3",
+			"with": "Hana Weiss"
+		}
+	},
+	{
+		"id": "a22",
+		"ago": 520,
+		"actor": "leo",
+		"kind": "work",
+		"action": "task",
+		"text": "opened a task in Onboarding kit",
+		"preview": "Write the welcome email",
+		"teams": ["people"],
+		"projects": ["onboarding"],
+		"members": []
+	},
+	{
+		"id": "a23",
+		"ago": 1500,
+		"actor": "sam",
+		"kind": "work",
+		"action": "task",
+		"text": "assigned {link} to Kai Lindqvist",
+		"teams": ["eng", "platform"],
+		"projects": ["atlas"],
+		"members": ["kai"],
+		"href": {
+			"path": "/work/T-27",
+			"label": "T-27 Show the office status in the footer"
+		}
+	},
+	{
+		"id": "a24",
+		"ago": 1530,
+		"actor": "kai",
+		"kind": "run",
+		"action": "run",
+		"text": "finished a run on {link}",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": [],
+		"href": {
+			"path": "/work/T-27",
+			"label": "T-27 Show the office status in the footer"
+		},
+		"run": {
+			"id": "run-53",
+			"member": "kai",
+			"state": "succeeded",
+			"start_ago": 1536,
+			"dur": 5,
+			"trigger": "Assigned by Sam Okafor",
+			"outcome": "Finished",
+			"log": ["Ran the unit tests: all passed"]
+		}
+	},
+	{
+		"id": "a25",
+		"ago": 1600,
+		"actor": "juno",
+		"kind": "work",
+		"action": "task",
+		"text": "opened a task in Beacon",
+		"teams": ["design"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a26",
+		"ago": 1700,
+		"actor": "mira",
+		"kind": "conversation",
+		"action": "message",
+		"text": "sent a message to Noor Haddad",
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": ["noor"]
+	},
+	{
+		"id": "a27",
+		"ago": 1780,
+		"actor": "noor",
+		"kind": "work",
+		"action": "task-done",
+		"text": "finished a task in Beacon",
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a28",
+		"ago": 1900,
+		"actor": "kai",
+		"kind": "work",
+		"action": "merge",
+		"text": "merged kai/ci-cache into v1 \u00b7 1 commit",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a29",
+		"ago": 2000,
+		"actor": "you",
+		"kind": "org",
+		"action": "member",
+		"text": "added Quinn Adeyemi to Engineering",
+		"teams": ["eng"],
+		"projects": [],
+		"members": ["quinn"]
+	},
+	{
+		"id": "a30",
+		"ago": 2200,
+		"actor": "avery",
+		"kind": "work",
+		"action": "comment",
+		"text": "commented on {link}",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": [],
+		"href": {
+			"path": "/work/T-21",
+			"label": "T-21 Let people export a project's costs"
+		}
+	},
+	{
+		"id": "a31",
+		"ago": 2400,
+		"actor": "hana",
+		"kind": "org",
+		"action": "team",
+		"text": "renamed a team in People",
+		"teams": ["people"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a32",
+		"ago": 2600,
+		"actor": "pax",
+		"kind": "work",
+		"action": "task",
+		"text": "opened a task in Beacon",
+		"teams": ["design"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a33",
+		"ago": 3000,
+		"actor": "noor",
+		"kind": "work",
+		"action": "task",
+		"text": "opened a task in Atlas",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a34",
+		"ago": 3210,
+		"actor": "kai",
+		"kind": "work",
+		"action": "task-done",
+		"text": "finished a task in Beacon",
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a35",
+		"ago": 3420,
+		"actor": "mira",
+		"kind": "conversation",
+		"action": "message",
+		"text": "sent a message in #general",
+		"teams": ["eng"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a36",
+		"ago": 3630,
+		"actor": "juno",
+		"kind": "org",
+		"action": "member",
+		"text": "updated a profile in People",
+		"teams": ["people"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a37",
+		"ago": 3840,
+		"actor": "pax",
+		"kind": "work",
+		"action": "merge",
+		"text": "merged a branch into v1 \u00b7 2 commits",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a38",
+		"ago": 4050,
+		"actor": "sam",
+		"kind": "work",
+		"action": "task",
+		"text": "opened a task in Atlas",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a39",
+		"ago": 4260,
+		"actor": "quinn",
+		"kind": "work",
+		"action": "task-done",
+		"text": "finished a task in Beacon",
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a40",
+		"ago": 4470,
+		"actor": "leo",
+		"kind": "conversation",
+		"action": "message",
+		"text": "sent a message in #general",
+		"teams": ["eng"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a41",
+		"ago": 4680,
+		"actor": "noor",
+		"kind": "org",
+		"action": "member",
+		"text": "updated a profile in People",
+		"teams": ["people"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a42",
+		"ago": 4890,
+		"actor": "kai",
+		"kind": "work",
+		"action": "merge",
+		"text": "merged a branch into v1 \u00b7 2 commits",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a43",
+		"ago": 5100,
+		"actor": "mira",
+		"kind": "work",
+		"action": "task",
+		"text": "opened a task in Atlas",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a44",
+		"ago": 5310,
+		"actor": "juno",
+		"kind": "work",
+		"action": "task-done",
+		"text": "finished a task in Beacon",
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a45",
+		"ago": 5520,
+		"actor": "pax",
+		"kind": "conversation",
+		"action": "message",
+		"text": "sent a message in #general",
+		"teams": ["eng"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a46",
+		"ago": 5730,
+		"actor": "sam",
+		"kind": "org",
+		"action": "member",
+		"text": "updated a profile in People",
+		"teams": ["people"],
+		"projects": [],
+		"members": []
+	},
+	{
+		"id": "a47",
+		"ago": 5940,
+		"actor": "quinn",
+		"kind": "work",
+		"action": "merge",
+		"text": "merged a branch into v1 \u00b7 2 commits",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a48",
+		"ago": 6150,
+		"actor": "leo",
+		"kind": "work",
+		"action": "task",
+		"text": "opened a task in Atlas",
+		"teams": ["platform"],
+		"projects": ["atlas"],
+		"members": []
+	},
+	{
+		"id": "a49",
+		"ago": 6360,
+		"actor": "noor",
+		"kind": "work",
+		"action": "task-done",
+		"text": "finished a task in Beacon",
+		"teams": ["web"],
+		"projects": ["beacon"],
+		"members": []
+	},
+	{
+		"id": "a50",
+		"ago": 6570,
+		"actor": "kai",
+		"kind": "conversation",
+		"action": "message",
+		"text": "sent a message in #general",
+		"teams": ["eng"],
+		"projects": [],
+		"members": []
+	}
 ]

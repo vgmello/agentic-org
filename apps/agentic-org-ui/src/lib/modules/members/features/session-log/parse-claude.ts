@@ -28,9 +28,12 @@ function toolSummary(name: string, input: Json): string {
 }
 
 function fileDiff(name: string, input: Json): DiffLine[] | undefined {
-	if (name === 'Edit') return diffFromReplace(str(input.old_string) ?? '', str(input.new_string) ?? '');
+	if (name === 'Edit')
+		return diffFromReplace(str(input.old_string) ?? '', str(input.new_string) ?? '');
 	if (name === 'MultiEdit' && Array.isArray(input.edits))
-		return input.edits.filter(isObj).flatMap((e) => diffFromReplace(str(e.old_string) ?? '', str(e.new_string) ?? ''));
+		return input.edits
+			.filter(isObj)
+			.flatMap((e) => diffFromReplace(str(e.old_string) ?? '', str(e.new_string) ?? ''));
 	if (name === 'Write') return diffFromReplace('', str(input.content) ?? '');
 	return undefined;
 }
@@ -46,7 +49,11 @@ function resultText(content: unknown): string {
 }
 
 /** Parse the lines of one Claude Code conversation file into entries, in file order. */
-export function parseClaude(lines: unknown[]): { entries: SessionEntry[]; toolVersion?: string; startedAt?: string } {
+export function parseClaude(lines: unknown[]): {
+	entries: SessionEntry[];
+	toolVersion?: string;
+	startedAt?: string;
+} {
 	const entries: SessionEntry[] = [];
 	let toolVersion: string | undefined;
 	let startedAt: string | undefined;
@@ -58,8 +65,10 @@ export function parseClaude(lines: unknown[]): { entries: SessionEntry[]; toolVe
 		startedAt ??= at;
 		toolVersion ??= str(line.version);
 		const type = str(line.type);
-		if (type === 'summary') return entries.push({ id, at, kind: 'notice', text: `Summary: ${str(line.summary) ?? ''}` });
-		if (type === 'system') return entries.push({ id, at, kind: 'notice', text: str(line.content) ?? 'System notice' });
+		if (type === 'summary')
+			return entries.push({ id, at, kind: 'notice', text: `Summary: ${str(line.summary) ?? ''}` });
+		if (type === 'system')
+			return entries.push({ id, at, kind: 'notice', text: str(line.content) ?? 'System notice' });
 		if (type !== 'user' && type !== 'assistant') return raw();
 		const message = line.message;
 		if (!isObj(message)) return raw();
@@ -70,18 +79,43 @@ export function parseClaude(lines: unknown[]): { entries: SessionEntry[]; toolVe
 		} else if (Array.isArray(content)) {
 			content.forEach((part, p) => {
 				const pid = `${id}.${p}`;
-				if (!isObj(part)) return entries.push({ id: pid, at, kind: 'raw', source: JSON.stringify(part) });
+				if (!isObj(part))
+					return entries.push({ id: pid, at, kind: 'raw', source: JSON.stringify(part) });
 				const kind = str(part.type);
-				if (kind === 'text') entries.push({ id: pid, at, kind: 'message', role, text: str(part.text) ?? '' });
+				if (kind === 'text')
+					entries.push({ id: pid, at, kind: 'message', role, text: str(part.text) ?? '' });
 				else if (kind === 'thinking') return;
 				else if (kind === 'tool_use') {
 					const name = str(part.name) ?? 'tool';
 					const input = isObj(part.input) ? part.input : {};
-					entries.push({ id: pid, at, kind: 'tool_call', callId: str(part.id), tool: name, summary: toolSummary(name, input), input: JSON.stringify(input, null, 2) });
+					entries.push({
+						id: pid,
+						at,
+						kind: 'tool_call',
+						callId: str(part.id),
+						tool: name,
+						summary: toolSummary(name, input),
+						input: JSON.stringify(input, null, 2)
+					});
 					const path = str(input.file_path) ?? str(input.notebook_path);
-					if (path && FILE_TOOLS[name]) entries.push({ id: `${pid}.f`, at, kind: 'file', path, action: FILE_TOOLS[name], diff: fileDiff(name, input) });
+					if (path && FILE_TOOLS[name])
+						entries.push({
+							id: `${pid}.f`,
+							at,
+							kind: 'file',
+							path,
+							action: FILE_TOOLS[name],
+							diff: fileDiff(name, input)
+						});
 				} else if (kind === 'tool_result')
-					entries.push({ id: pid, at, kind: 'tool_result', callId: str(part.tool_use_id), ok: part.is_error !== true, output: resultText(part.content) });
+					entries.push({
+						id: pid,
+						at,
+						kind: 'tool_result',
+						callId: str(part.tool_use_id),
+						ok: part.is_error !== true,
+						output: resultText(part.content)
+					});
 				else entries.push({ id: pid, at, kind: 'raw', source: JSON.stringify(part) });
 			});
 		} else return raw();
@@ -89,7 +123,15 @@ export function parseClaude(lines: unknown[]): { entries: SessionEntry[]; toolVe
 		if (role === 'assistant' && usage) {
 			const inputTokens = num(usage.input_tokens);
 			const outputTokens = num(usage.output_tokens);
-			entries.push({ id: `${id}.u`, at, kind: 'usage', inputTokens, outputTokens, cachedTokens: num(usage.cache_read_input_tokens), complete: inputTokens !== undefined && outputTokens !== undefined });
+			entries.push({
+				id: `${id}.u`,
+				at,
+				kind: 'usage',
+				inputTokens,
+				outputTokens,
+				cachedTokens: num(usage.cache_read_input_tokens),
+				complete: inputTokens !== undefined && outputTokens !== undefined
+			});
 		}
 	});
 	return { entries, toolVersion, startedAt };

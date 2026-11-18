@@ -2,7 +2,15 @@ import type { OrgApi } from '$lib/org/api';
 import { applyChat, emptyChat, syncAuto, tick } from './engine';
 import { chatContext } from './model';
 import { SAMPLE_DIRECTORY, sampleChatFull } from './sample';
-import type { ChatAccepted, ChatCall, ChatCallStatus, ChatMessage, ChatRefusal, ChatSnapshot, ChatState } from './types';
+import type {
+	ChatAccepted,
+	ChatCall,
+	ChatCallStatus,
+	ChatMessage,
+	ChatRefusal,
+	ChatSnapshot,
+	ChatState
+} from './types';
 
 /**
  * What the Chat screen needs from an office: a snapshot, the calls of ADR-0003 section 6 (amended 2026-11-08: chat, proposed), and a
@@ -46,9 +54,21 @@ export interface MockChatOptions {
 	schedule?: (run: () => void, ms: number) => void;
 }
 
-const unavailable = (): ChatRefusal => ({ source: 'api', code: 'unavailable', message: "The office didn't answer." });
+const unavailable = (): ChatRefusal => ({
+	source: 'api',
+	code: 'unavailable',
+	message: "The office didn't answer."
+});
 
-export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date().toISOString(), scenario = scenarioFromUrl, replyMs = 1800, schedule = (run, ms) => void setTimeout(run, ms) }: MockChatOptions = {}): ChatApi {
+export function createMockChat(
+	org: Pick<OrgApi, 'view'>,
+	{
+		now = () => new Date().toISOString(),
+		scenario = scenarioFromUrl,
+		replyMs = 1800,
+		schedule = (run, ms) => void setTimeout(run, ms)
+	}: MockChatOptions = {}
+): ChatApi {
 	const states = new Map<string, ChatState>();
 	const listeners = new Map<string, Set<() => void>>();
 	const failed = new Set<string>();
@@ -58,7 +78,12 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 
 	const context = async (organizationId: string, extra: { newId?: (p: string) => string } = {}) => {
 		const { snapshot } = await org.view(organizationId);
-		return chatContext(snapshot, { now: now(), typing_ms: replyMs + 1200, directory: snapshot.members.length > 1 ? SAMPLE_DIRECTORY : [], ...extra });
+		return chatContext(snapshot, {
+			now: now(),
+			typing_ms: replyMs + 1200,
+			directory: snapshot.members.length > 1 ? SAMPLE_DIRECTORY : [],
+			...extra
+		});
 	};
 	const offline = () => scenario() === 'offline' || scenario() === 'nocopy';
 	const load = async (organizationId: string): Promise<ChatState> => {
@@ -88,8 +113,10 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 		if (scenario() === 'hq' && call.method === 'msg.send' && accepted.id) {
 			const c = state.conversations.find((x) => x.id === accepted.conversation_id);
 			const { snapshot } = await org.view(organizationId);
-			const here = (id: string) => snapshot.members.find((m) => m.id === id)?.office_id !== undefined;
-			if (c?.members.some((id) => id !== ctx.actor && !here(id))) state.messages.find((m) => m.id === accepted.id)!.queued = true;
+			const here = (id: string) =>
+				snapshot.members.find((m) => m.id === id)?.office_id !== undefined;
+			if (c?.members.some((id) => id !== ctx.actor && !here(id)))
+				state.messages.find((m) => m.id === accepted.id)!.queued = true;
 		}
 		states.set(organizationId, state);
 		notify(organizationId);
@@ -107,8 +134,22 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 				schedule(() => {
 					const current = states.get(organizationId);
 					if (!current) return;
-					const reply: ChatMessage = { id: `m-r${current.seq + 1}`, conversation_id: c.id, from: typing[0], kind: 'reply', body: 'Sample reply: got it. I will only post again if something needs you.', created_at: now() };
-					states.set(organizationId, { ...current, seq: current.seq + 1, messages: [...current.messages, reply], typing: current.typing.filter((t) => !(t.conversation_id === c.id && t.member_id === typing[0])) });
+					const reply: ChatMessage = {
+						id: `m-r${current.seq + 1}`,
+						conversation_id: c.id,
+						from: typing[0],
+						kind: 'reply',
+						body: 'Sample reply: got it. I will only post again if something needs you.',
+						created_at: now()
+					};
+					states.set(organizationId, {
+						...current,
+						seq: current.seq + 1,
+						messages: [...current.messages, reply],
+						typing: current.typing.filter(
+							(t) => !(t.conversation_id === c.id && t.member_id === typing[0])
+						)
+					});
 					notify(organizationId);
 				}, replyMs);
 			}
@@ -119,7 +160,12 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 	return {
 		async snapshot(organizationId) {
 			// No retained copy: unavailable, never an empty conversation (chat-ux §6).
-			if (scenario() === 'nocopy') throw { source: 'api', code: 'unavailable', message: "The office isn't running, and there's no copy of the conversations to read." } satisfies ChatRefusal;
+			if (scenario() === 'nocopy')
+				throw {
+					source: 'api',
+					code: 'unavailable',
+					message: "The office isn't running, and there's no copy of the conversations to read."
+				} satisfies ChatRefusal;
 			const state = await load(organizationId);
 			const ctx = await context(organizationId);
 			const directory = ctx.members.filter((m) => SAMPLE_DIRECTORY.some((d) => d.id === m.id));
@@ -129,7 +175,9 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 				office_running: !offline(),
 				...(offline() ? { copy_at: new Date(Date.parse(now()) - COPY_AGE_MS).toISOString() } : {}),
 				...(directory.length ? { directory } : {}),
-				...(scenario() === 'hr-down' && directory.some((m) => m.id === 'hr') ? { cannot_run: ['hr'] } : {})
+				...(scenario() === 'hr-down' && directory.some((m) => m.id === 'hr')
+					? { cannot_run: ['hr'] }
+					: {})
 			};
 		},
 		async status(organizationId, changeId) {
@@ -138,8 +186,13 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 			return accepted ? { state: 'applied', accepted } : { state: 'not_found' };
 		},
 		command(organizationId, call) {
-			const run = (queues.get(organizationId) ?? Promise.resolve()).then(() => apply(organizationId, call));
-			queues.set(organizationId, run.catch(() => undefined));
+			const run = (queues.get(organizationId) ?? Promise.resolve()).then(() =>
+				apply(organizationId, call)
+			);
+			queues.set(
+				organizationId,
+				run.catch(() => undefined)
+			);
 			return run;
 		},
 		subscribe(organizationId, listener) {
