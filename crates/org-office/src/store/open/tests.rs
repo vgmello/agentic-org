@@ -5,7 +5,9 @@ use std::{
 };
 
 use org_store::{
-    testkit::{id, identity, FakeCustody, FamilyScript, Faults, FixedClock, MemoryEngine, Rng},
+    testkit::{
+        id, identity, FakeCustody, FamilyScript, Faults, FixedClock, MemoryEngine, Probe, Rng,
+    },
     Actor, AnchorFacts, Opening, Outcome, Reply, Store, StoreError,
 };
 
@@ -17,6 +19,8 @@ use crate::organization::{
     testkit::{creation_command, OrganizationScript, Step, CREATION_AT},
 };
 
+mod crashes;
+
 pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
 
 /// One office's directories, custody and disk, which outlive any one opening.
@@ -24,6 +28,7 @@ pub(super) struct Place {
     root: PathBuf,
     pub(super) custody: Arc<FakeCustody>,
     pub(super) faults: Arc<Faults>,
+    pub(super) probe: Probe,
     _dir: tempfile::TempDir,
 }
 
@@ -34,6 +39,7 @@ impl Place {
             root: dir.path().canonicalize().expect("a real path"),
             custody: Arc::new(FakeCustody::new()),
             faults: Faults::new(),
+            probe: Probe::new(&identity().office_id),
             _dir: dir,
         }
     }
@@ -54,6 +60,9 @@ impl Place {
         config.opening = opening;
         // The disk every opening of this office is on: it fails and dies when told to.
         config.testing.faults = Some(Arc::clone(&self.faults));
+        config.testing.probe = Some(self.probe.clone());
+        // Flushes come from durable requests, back-pressure, syncing and closing only.
+        config.flush_interval = std::time::Duration::from_secs(3_600);
         config
     }
 

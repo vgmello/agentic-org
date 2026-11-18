@@ -268,6 +268,15 @@ impl OfficeStore {
         }
     }
 
+    /// The digest of the DDL the SQLite projection is made from.
+    #[cfg(test)]
+    pub(crate) fn schema_digest(&self) -> Option<String> {
+        match self {
+            OfficeStore::Sqlite(opened) => Some(opened.engine.schema_digest()),
+            OfficeStore::Memory(_) => None,
+        }
+    }
+
     /// Every row of the projection, to compare with another of the same engine.
     #[cfg(any(test, feature = "testkit"))]
     pub fn dump(&self) -> Vec<String> {

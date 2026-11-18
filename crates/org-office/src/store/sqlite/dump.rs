@@ -56,4 +56,9 @@ impl SqliteEngine {
     ) -> Result<Self, org_store::EngineError> {
         Self::open_as(path, super::schema::Schema::current().with(ddl))
     }
+
+    /// The digest of the DDL this projection is made from.
+    pub(crate) fn schema_digest(&self) -> String {
+        self.schema.digest()
+    }
 }
