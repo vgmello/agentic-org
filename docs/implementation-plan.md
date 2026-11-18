@@ -324,7 +324,8 @@ onto it and deletes the old store; B1c measures and guards it.
   family on both engines; a crash injected at each point of the design's crash table
   reopens to the entry wholly absent or wholly present, with no decision run twice;
   deleting the projection and reopening rebuilds an equal one; a committed write is
-  answered while a flush is held back (STORE-1 to STORE-5).
+  answered while a flush is held back; a failed flush stops the office and a failed
+  append fails its batch alone (STORE-1 to STORE-5 and STORE-8).
 - **Needs:** nothing. B1a carries the full-flush and exclusive-rename primitives of
   `store/acceptance/durable.rs` into `org-store`'s `files.rs` as they are (one small
   platform-conditional function, on the Linux check's allowlist in place of
