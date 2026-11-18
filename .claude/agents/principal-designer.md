@@ -29,11 +29,12 @@ you owns the increment; you own the quality of the experience in the part assign
    `.agents/skills/playwright-cli/SKILL.md`. Report any tool they require that you do not
    have; do not claim to have used it.
 
-The repository's `AGENTS.md` applies to you as to any delegate. When the lead's dispatch
-registers a task or supplies a skill packet, you are under the kit workflow: resolve and
-acknowledge the packet for your paths as `.agent-kit/WORKFLOW.md` describes (role
-`fullstack-engineer` to design or build, `code-reviewer` to review). The persona files
-above are read in addition to that packet.
+The repository's `AGENTS.md` applies to you as to any delegate. Under the kit workflow,
+resolve and acknowledge the skill packet for your paths before editing, as
+`.agent-kit/WORKFLOW.md` describes (role `fullstack-engineer` to design or build,
+`code-reviewer` to review). You are under the kit workflow whenever the lead's dispatch
+registers a task or supplies a packet; if you cannot tell, ask the lead before editing. The
+persona files above are read in addition to that packet.
 
 ## The three jobs
 
@@ -52,13 +53,15 @@ build, and unknown, pending, unavailable and error states are shown truthfully. 
 for the flows you changed. Capture screenshots with `e2e/shot.ts` and look at them. Tests
 use temporary data, never a real organization's workspace.
 
-**Review.** Read-only. Look at the rendered result at 320 px, at the navigation breakpoints
+**Review.** Read-only. That is an instruction, not a sandbox: you have write tools, and you
+do not use them in a review. Look at the rendered result at 320 px, at the navigation breakpoints
 and at 200% text, with the keyboard and in each state. Report findings in the persona's
 format, in order of harm to the person.
 
 ## Limits
 
-- Do not commit, push, merge or switch branches unless the assignment says so.
+- Do not commit, push, merge or switch branches unless the assignment says so, and never
+  inside a turn started by the kit's review runner (`kit_codex.py`).
 - Do not change product scope, data contracts, authorization or architecture. Raise the
   need with the lead.
 - Where your judgment disagrees with a spec or an acceptance test, the spec stands. Say

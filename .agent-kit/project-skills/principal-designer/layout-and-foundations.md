@@ -134,7 +134,7 @@ chat") makes the person do the ranking. Arrange by what they need next.
 - **Numbers.** Tabular figures in columns and in anything that updates in place.
   Right-align numeric columns so magnitudes compare.
 - **Avoid** centered paragraphs, justified text on the web and all caps beyond a short
-  label. All caps removes the word shapes that make scanning fast.
+  label. Long runs of capitals read more slowly and take more room.
 - **Legibility floor.** About 12 px for anything meant to be read. Inputs below 16 px make
   mobile browsers zoom.
 - **Long values.** Decide per field whether it wraps, truncates or clamps, and keep the
@@ -149,7 +149,8 @@ chat") makes the person do the ranking. Arrange by what they need next.
   colors and for illustration-led products where color is the content. It says nothing
   about contrast, which matters more than proportion.
 - **Contrast is a threshold.** WCAG 2.2 AA: 4.5:1 for text, 3:1 for large text, 3:1 for
-  meaningful icons, control boundaries and focus indicators. Check hover, selected, tinted
+  meaningful icons, control boundaries and focus indicators. Large means at least 24 px, or
+  about 18.7 px bold; this product's 16 px headings are not large text. Check hover, selected, tinted
   and placeholder states, which is where it usually fails. The ratio is a floor: thin or
   small text can pass and still be hard to read.
 - **Never color alone.** About one man in twelve has a color-vision deficiency, most often
@@ -158,8 +159,9 @@ chat") makes the person do the ranking. Arrange by what they need next.
 - **Shadows match their environment.** On light surfaces pure black shadows look dirty:
   tint them toward the background or brand hue and layer a tight one under a soft one.
   *Breaks on* strongly colored backgrounds, where a tint goes muddy, and on dark surfaces,
-  where shadows barely register. There, show elevation with a lighter surface and a
-  hairline border.
+  where shadows barely register. There, in general, show elevation with a lighter surface
+  and a hairline border. This product keeps overlays on the same surface as the page and
+  uses only the hairline.
 - **On dark themes**, saturated colors vibrate and fail contrast on tints: use the lighter,
   less saturated steps for text and status. Large areas of pure white text on pure black
   glare. Keep one or the other off the extreme.
@@ -169,8 +171,9 @@ chat") makes the person do the ranking. Arrange by what they need next.
 
 ## Access beyond contrast
 
-These are thresholds from WCAG 2.2, level A and AA. They are requirements, and each one
-also makes the product better for everyone.
+Most of these are WCAG 2.2 requirements at level A or AA; the heading outline is
+established practice that the criteria on headings and structure lean on. Treat all of them
+as requirements here. Each one also makes the product better for everyone.
 
 - **Everything works from the keyboard**, in an order that matches what is seen, with a
   visible focus indicator at every step.
@@ -183,7 +186,8 @@ also makes the product better for everyone.
   technology.
 - **Content reflows at 320 px and at 200% text** without loss and without scrolling in two
   directions.
-- **Anything done by dragging can also be done with single clicks or the keyboard.**
+- **Anything done by dragging can also be done with single clicks or taps.** A keyboard
+  alternative is needed as well, but does not replace the single-pointer one.
 - **Do not ask twice.** Information the person already gave in the same process is filled
   in or offered for selection.
 - **Signing in does not depend on memory or a puzzle.** Allow paste and password managers.

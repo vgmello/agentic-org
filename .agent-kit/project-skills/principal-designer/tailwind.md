@@ -18,25 +18,36 @@ tokens in `apps/agentic-org-ui/src/app.css`, and builds component variants with
   reading measure.
 - **Targets.** `size-6` is 24 px, `size-9` is 36 px, `min-h-11` or `size-11` is 44 px. Raise
   targets for touch with a narrow-only variant.
-- **Extend the hit area, not the shape.** A pseudo-element can carry the target:
-  `relative after:absolute after:inset-x-0 after:-inset-y-1` on a 36 px segment inside an
-  `h-11 p-1` track gives a 44 px hit area while the drawn tile stays 36 px. Do not put
-  `min-h-11` on a child of a padded container: the container then exceeds 44 px and no
-  longer matches the field beside it.
+- **Make the element the target and draw the smaller shape inside it.** This is the
+  first choice: the interactive element itself is 44 px, and what looks like a 36 px tile
+  is drawn by an inner element or a pseudo-element, for example a segment that fills an
+  `h-11` track with `relative before:absolute before:inset-1 before:rounded-md
+  aria-pressed:before:bg-white/10`. The element's own box is then 44 px.
+- **This product's tests measure the element's box.** Existing browser tests assert that a
+  control's bounding box is at least 44 px below 640 px, and a pseudo-element that extends
+  outside the element (`after:-inset-y-1`) does not enlarge that box. Use that technique
+  only where the element cannot grow, verify it with `elementFromPoint`, and tell the lead
+  that the control's test would need to change. Never loosen a test to fit a design.
+- **Do not put `min-h-11` on a child of a padded container** without removing the
+  container's padding: the container then exceeds 44 px and no longer matches the field
+  beside it.
 - **Sizes are rem.** They grow with the person's text size, which is what you want. A fixed
   pixel height in brackets does not, so it needs a reason.
 
 ## Color and surfaces
 
 - **Tokens before palette.** Use the semantic utilities the project defines
-  (`bg-background`, `text-muted-foreground`, `border-border`, `bg-primary`,
-  `text-destructive`) so a role changes in one place. Reach for a raw palette step only
+  (`bg-background`, `text-muted-foreground`, `border-border`, `bg-primary`) so a role
+  changes in one place. Two tokens do not yet match section 6a, which wins: error and
+  destructive text is `text-red-300`, not `text-destructive`, and a form field's boundary is
+  gray-500, not the `input` or `border` token. Reach for a raw palette step only
   where section 6a of the app shell spec names one.
 - **Opacity modifiers make tints that follow the surface**: `border-white/10`, `bg-white/5`,
   `bg-black/10`. Here row dividers are `divide-y divide-white/5` on the list, not a border
   on every row.
-- **No shadow, gradient or glow utilities on dark surfaces in this product.** Elevation is a
-  lighter surface plus a hairline border or ring.
+- **No shadow, gradient or glow utilities on dark surfaces in this product.** Dialogs and
+  popovers use `bg-popover`, the same gray-800 as the page, set apart by a hairline ring or
+  border and the scrim. Do not give an overlay a lighter surface.
 - **Check contrast on the tint, not on the page.** Text that passes on the page background
   can fail on `bg-indigo-500/10`.
 

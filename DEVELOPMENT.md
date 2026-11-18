@@ -89,8 +89,9 @@ rust-analyzer navigation, types, references and rename edits. Follow the UI's
 
 ### The principal designer agent
 
-For any new or changed screen, component or flow in `apps/agentic-org-ui`, and for UX
-reviews, dispatch the `principal-designer` agent. It is defined for both tools:
+For a new or changed screen, component or flow in `apps/agentic-org-ui`, and for UX
+reviews, a lead may dispatch the `principal-designer` agent when it is useful. It is defined
+for both tools:
 `.claude/agents/principal-designer.md` for Claude Code and
 `.codex/agents/principal-designer.toml` for Codex. Both are thin: they point at one persona,
 `.agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
@@ -101,8 +102,10 @@ and runs a measured consistency audit before handing over. Product specs outrank
 lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
 
 The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
-checkout (`.claude/skills/`, ignored by Git); the persona file gives the pinned install
-command. It is optional and nothing depends on it.
+checkout (`.claude/skills/`, ignored by Git). It is optional and nothing depends on it.
+Installing it is a lead's decision: the installer adds six other, uninspected skills that
+must be removed, and whatever is left is offered to every Claude session in that checkout.
+The persona file gives the pinned command and the limits.
 
 The project pins `@sveltejs/mcp`; `bun run mcp:svelte` starts that installed version.
 For a manually configured Codex server, match the project's version:

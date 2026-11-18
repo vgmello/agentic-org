@@ -82,8 +82,10 @@ means for a design, and when it stops applying.
   "seven plus or minus two" is not a limit on menu length. The real consequence is narrower:
   never make a person carry a value from one screen to the next. Show it again where it is
   needed. Recognition is cheap, recall is expensive.
-- **First and last items are remembered best.** Put the most used destinations at the ends
-  of a list of navigation items, not buried in the middle.
+- **First and last items are remembered best.** This is a finding about recall, so it
+  applies weakly to a list that stays visible. Where you are free to choose an order, do
+  not bury the most used item in the middle. This product's navigation order is fixed by
+  its spec.
 - **Conventions are learnability for free (Jakob's law).** People spend most of their time
   in other products. *Breaks when* the convention itself causes errors for your task, and
   the gain from changing it is large and repeated daily. Then change it once, everywhere.
@@ -122,8 +124,9 @@ means for a design, and when it stops applying.
 ## Waiting
 
 - **0.1 s feels instant, 1 s keeps the train of thought, 10 s is the limit of attention.**
-  Under about 400 ms a person still feels in direct control. Acknowledge every input within
-  100 ms even when the work is not finished.
+  People also work faster and stay engaged when a system answers within about 400 ms, an
+  older finding about productivity, not a limit of perception. Acknowledge every input
+  within 100 ms even when the work is not finished.
 - **An unexplained wait feels longer than an explained one, and an uncertain wait longer
   than a known one.** Say what is happening and, when you can, how much is left. A progress
   indicator that keeps moving is tolerated far longer than a frozen one.

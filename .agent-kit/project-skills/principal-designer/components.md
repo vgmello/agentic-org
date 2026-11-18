@@ -16,7 +16,8 @@ primitives in `apps/agentic-org-ui/src/lib/components/ui` before drawing a new o
   out near twice the visual vertical padding. Less looks cramped; much more looks like a
   banner.
 - **Icon and label.** The icon is about the label's line height or slightly smaller (16 px
-  with 14 px text, 20 px with 16 px). The gap is 6 to 8 px. Trim the padding on the icon's
+  with 14 px text, 20 px with 16 px, in general; this product uses solid 20 px icons in
+  controls and solid 16 px in status and metadata). The gap is 6 to 8 px. Trim the padding on the icon's
   side by a couple of pixels, because an icon carries its own empty space.
 - **Label.** Medium or semibold weight, one line, one to three words. It never wraps and
   never truncates: shorten the words instead.
@@ -24,9 +25,11 @@ primitives in `apps/agentic-org-ui/src/lib/components/ui` before drawing a new o
   pill reads friendly and consumer, square reads formal. Pick one and hold it.
 - **Minimum width.** A two-letter label should not make a tiny target. *Breaks for*
   icon-only buttons, which are square.
-- **The target may be larger than the shape.** At least 24 by 24 CSS px with a pointer and
-  44 to 48 px for touch (WCAG 2.5.8 and 2.5.5). Meet the target by extending the hit area
-  into the space around the control, not by inflating what is drawn. A button grown to 44 px
+- **The target may be larger than the shape.** WCAG 2.5.8 (level AA) requires 24 by 24
+  CSS px. WCAG 2.5.5 (level AAA) and Apple ask for 44; Material asks for 48. This product
+  requires 24 px on desktop and 44 px below 640 px. Meet the target by making the
+  interactive element that size and drawing a smaller shape inside it, not by inflating
+  what is drawn. A button grown to 44 px
   inside a container that has its own padding makes the container 52 px, and it becomes the
   heaviest thing in its row.
 - **Separate touch targets need room between them**, about 8 px, so a thumb does not land
