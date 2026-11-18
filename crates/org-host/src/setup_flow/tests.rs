@@ -370,6 +370,23 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
     assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
 }
 
+/// What setup and the host say of a published plain-HTTP listener: the loopback to publish
+/// on, what happens on another interface, the address to open, and that there is no HTTPS.
+#[test]
+fn a_published_plain_http_listener_is_announced_with_where_it_is_safe() {
+    let listen: ListenConfig = serde_json::from_str(
+        r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        published_http_notice(&listen),
+        "serving plain HTTP on a published port (0.0.0.0:8443): publish it on the Docker \
+         host's 127.0.0.1 only (docker run -p 127.0.0.1:8443:8443); published on another \
+         interface, sign-in and every session travel unencrypted on that network. Open \
+         http://localhost:8443. HTTPS is not available yet."
+    );
+}
+
 /// The configuration file is read strictly and read-only, and says what it is missing.
 #[test]
 fn a_configuration_file_is_read_without_changing_anything() {

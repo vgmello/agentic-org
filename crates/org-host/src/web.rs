@@ -439,9 +439,16 @@ impl Supervisor {
         // web process cannot be confined.
         // Each refusal names its cause for the host log.
         org_platform::confinement::web_confinement_supported().map_err(unconfinable)?;
-        if config.listen.scheme() != ListenMode::HttpLoopback {
+        // Plain HTTP, in one of its two modes: on loopback, or on the published port of a
+        // foreground instance, which the registered start has already judged against the
+        // instance's service mode. HTTPS needs a verified pair, which no host has yet.
+        if !matches!(
+            config.listen.scheme(),
+            ListenMode::HttpLoopback | ListenMode::HttpPublished
+        ) {
             return Err(io::Error::other(
-                "the web process requires a verified HTTP loopback listener",
+                "the web process requires a plain HTTP listener (http_loopback, or \
+                 http_published in the foreground mode): HTTPS has no verified certificate yet",
             ));
         }
         config

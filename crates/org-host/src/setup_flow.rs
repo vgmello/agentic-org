@@ -78,6 +78,22 @@ pub(crate) const HTTPS_NOT_SERVED: &str = "Browser access: not available yet. Th
      is HTTPS, and this build cannot make or verify the listener's certificate; the service, \
      its offices and agentic-org admin reset work without it.";
 
+/// What setup and the host say, once each, of a listener that is plain HTTP on a published
+/// port (`http_published`): where it is safe, what happens elsewhere, and that there is no
+/// HTTPS yet. `address` is the listen address and port.
+pub(crate) fn published_http_notice(listen: &ListenConfig) -> String {
+    format!(
+        "serving plain HTTP on a published port ({}:{}): publish it on the Docker host's \
+         127.0.0.1 only (docker run -p 127.0.0.1:{port}:{port}); published on another \
+         interface, sign-in and every session travel unencrypted on that network. Open {}. \
+         HTTPS is not available yet.",
+        listen.address(),
+        listen.port(),
+        listen.origin().as_str(),
+        port = listen.port(),
+    )
+}
+
 /// The platform adapters setup composes.
 pub struct Platform {
     pub service: Box<dyn ServiceManager>,
@@ -154,6 +170,21 @@ pub(crate) fn make_credential_directory(
         data_root,
         judged_from,
         enter,
+    )
+}
+
+/// Opens a credential directory exactly as the host opens it at every start
+/// (`release_store::open`): with the host's two item stores declared, so that setup and the
+/// host judge the same directories by the same rules.
+fn open_as_the_host_will(
+    location: org_platform_host::credentials::ReleaseDirectory<'_>,
+) -> Result<
+    org_platform_host::credentials::ReleaseRoot,
+    org_platform_host::credentials::CredentialError,
+> {
+    org_platform_host::credentials::release_directory_with_stores(
+        location,
+        &crate::release_store::ITEM_STORES,
     )
 }
 
@@ -439,8 +470,13 @@ impl Configuration {
 ///   `foreground` on a system that keeps them in a directory (Linux), where it must be a
 ///   mounted volume that setup never makes; refused on a system that keeps them in the
 ///   Keychain.
-/// - `listen`: `address`, `port`, `scheme` (`"http_loopback"` or `"https"`), `origin` and
-///   `hsts` (`"off"`, `"on"`, `"clear"`), as the instance stores them.
+/// - `listen`: `address`, `port`, `scheme`, `origin` and `hsts` (`"off"`, `"on"`,
+///   `"clear"`), as the instance stores them. `scheme` is `"http_loopback"` (plain HTTP on
+///   exactly `127.0.0.1` or `::1`), `"https"`, or `"http_published"`: plain HTTP on an
+///   address that is not loopback, with `localhost`, `127.0.0.1` or `[::1]` as the origin's
+///   host, accepted only with `"service": "foreground"` (a container whose port the
+///   runtime publishes on the Docker host's loopback). It is never implied: `http_loopback`
+///   with another address is refused.
 /// - `certificate` (optional, HTTPS only): `chain` and `key`, the absolute paths of the
 ///   listener's certificate chain and private key.
 ///
@@ -878,14 +914,14 @@ pub(crate) fn run_at(
                         record.input.service == Service::Foreground,
                         instance.root_descriptor(),
                         Path::new("/"),
-                        org_platform_host::credentials::release_directory,
+                        open_as_the_host_will,
                     )?),
                     (None, CredentialDirectory::Below(base)) => Some(make_credential_directory(
                         base,
                         instance.id(),
                         instance.root_descriptor(),
                         Path::new("/"),
-                        org_platform_host::credentials::release_directory,
+                        open_as_the_host_will,
                     )?),
                     (None, CredentialDirectory::Unused) => None,
                 };
@@ -904,8 +940,16 @@ pub(crate) fn run_at(
     if let Some(credentials) = &record.credentials {
         say(out, format!("Secrets: {}", credentials.display()))?;
     }
-    if record.input.listen.scheme() == org_host_control::listen::ListenMode::Https {
-        say(out, HTTPS_NOT_SERVED)?;
+    match record.input.listen.scheme() {
+        org_host_control::listen::ListenMode::Https => say(out, HTTPS_NOT_SERVED)?,
+        org_host_control::listen::ListenMode::HttpPublished => say(
+            out,
+            format!(
+                "Browser access: {}",
+                published_http_notice(&record.input.listen)
+            ),
+        )?,
+        org_host_control::listen::ListenMode::HttpLoopback => {}
     }
 
     // 4. ENC-3, with the modes read back from disk.

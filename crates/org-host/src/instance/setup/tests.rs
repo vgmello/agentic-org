@@ -480,3 +480,99 @@ fn an_input_names_a_credential_directory_only_where_the_system_keeps_one() {
     assert_eq!(input.fits(Some(ProtectedStore::Keychain)), Ok(()));
     assert_eq!(input.fits(None), Ok(()));
 }
+
+/// Plain HTTP on a published port is chosen by name, for a foreground instance only. An
+/// input, a configuration file and a record are all judged: with `registered` it is refused
+/// when it is read, before anything is made, and a record edited by hand to say so is not
+/// read by the host.
+#[test]
+fn http_published_is_only_for_the_foreground_mode_and_is_never_implied() {
+    let published: ListenConfig = serde_json::from_str(
+        r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
+    )
+    .unwrap();
+    let mut foreground = input(PathBuf::from("/data/instance"));
+    foreground.service = Service::Foreground;
+    foreground.listen = published.clone();
+    assert!(foreground.validate().is_ok());
+    let mut registered = foreground.clone();
+    registered.service = Service::Registered;
+    let refused = registered.validate().unwrap_err().to_string();
+    assert!(refused.contains(PUBLISHED_NEEDS_FOREGROUND), "{refused}");
+    // The same two as configuration files.
+    let text = |service: &str, scheme: &str, address: &str, origin: &str| {
+        format!(
+            r#"{{"version":1,"service":"{service}","root":"/data/instance","credentials":"/secrets",
+                "listen":{{"address":"{address}","port":8443,"scheme":"{scheme}","origin":"{origin}","hsts":"off"}}}}"#
+        )
+    };
+    let read = |service, scheme, address, origin| {
+        Input::from_configuration(text(service, scheme, address, origin).as_bytes())
+    };
+    assert!(read(
+        "foreground",
+        "http_published",
+        "0.0.0.0",
+        "http://localhost:8443"
+    )
+    .is_ok());
+    assert!(read(
+        "foreground",
+        "http_published",
+        "0.0.0.0",
+        "http://127.0.0.1:8443"
+    )
+    .is_ok());
+    let refused = read(
+        "registered",
+        "http_published",
+        "0.0.0.0",
+        "http://localhost:8443",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        refused.contains("only for \"service\": \"foreground\""),
+        "{refused}"
+    );
+    // Never implied, never widened: plain `http_loopback` with another address, another
+    // spelling of the scheme, a published listener on loopback, or a host that is not a
+    // loopback name are all refused, in either service mode.
+    for service in ["foreground", "registered"] {
+        for (scheme, address, origin) in [
+            ("http_loopback", "0.0.0.0", "http://localhost:8443"),
+            ("http_loopback", "0.0.0.0", "http://0.0.0.0:8443"),
+            ("http", "0.0.0.0", "http://localhost:8443"),
+            ("http-published", "0.0.0.0", "http://localhost:8443"),
+            ("http_published", "127.0.0.1", "http://127.0.0.1:8443"),
+            ("http_published", "0.0.0.0", "http://office.example:8443"),
+            ("http_published", "0.0.0.0", "http://192.168.1.20:8443"),
+            ("http_published", "0.0.0.0", "https://localhost:8443"),
+        ] {
+            assert!(
+                read(service, scheme, address, origin).is_err(),
+                "{service} {scheme} {address} {origin}"
+            );
+        }
+    }
+    // A record: written for a foreground instance, then edited by hand to `registered`.
+    let (_temp, base) = base();
+    let mut stored = foreground.clone();
+    stored.root = base.join("instance");
+    stored.credentials = None;
+    let journal = Journal::open(&base, None).unwrap();
+    let record = journal.freeze(stored, true, pin()).unwrap();
+    drop(journal);
+    assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
+    let file = base.join("setup/default/setup.v1.json");
+    let edited = fs::read_to_string(&file).unwrap().replacen(
+        "\"service\":\"foreground\"",
+        "\"service\":\"registered\"",
+        1,
+    );
+    assert!(edited.contains("\"service\":\"registered\""));
+    fs::write(&file, edited).unwrap();
+    let refused = Journal::snapshot(&base, None).unwrap_err().to_string();
+    assert!(refused.contains("http_published"), "{refused}");
+    assert!(Journal::open(&base, None).unwrap().read().is_err());
+}

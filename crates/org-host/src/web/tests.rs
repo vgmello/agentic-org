@@ -1111,10 +1111,44 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
     if org_platform::confinement::web_confinement_supported().is_ok() {
         assert_eq!(
             error.to_string(),
-            "the web process requires a verified HTTP loopback listener"
+            "the web process requires a plain HTTP listener (http_loopback, or http_published \
+             in the foreground mode): HTTPS has no verified certificate yet"
         );
     }
     assert_eq!(*lock(&state), GatewayState::NotConfigured);
+}
+
+/// The listener gate admits the two plain HTTP modes: a published listener of a foreground
+/// instance passes it as a loopback one does, and the supervisor starts.
+#[test]
+fn the_supervisor_admits_a_published_plain_http_listener() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let published: ListenConfig = serde_json::from_str(
+        r#"{"address":"0.0.0.0","port":48125,"scheme":"http_published","origin":"http://localhost:48125","hsts":"off"}"#,
+    )
+    .unwrap();
+    let started = Supervisor::start(
+        Configuration {
+            listen: published,
+            ..startable(dir.path())
+        },
+        Arc::new(NoOps),
+        Arc::clone(&state),
+        // Never eligible: the gate is what this asks about, and nothing is started.
+        Arc::new(|| false),
+    );
+    match started {
+        Ok(supervisor) => drop(supervisor),
+        // Only a system that cannot confine the web process refuses, and for that reason.
+        Err(error) => {
+            assert!(org_platform::confinement::web_confinement_supported().is_err());
+            assert!(
+                !error.to_string().contains("plain HTTP listener"),
+                "{error}"
+            );
+        }
+    }
 }
 
 /// A configuration that every check but confinement would let start: a debug

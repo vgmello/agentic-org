@@ -105,6 +105,24 @@ fn a_configuration_that_cannot_be_used_is_refused_and_nothing_is_saved() {
         "version.json",
         &registered(&account, port).replacen("\"version\":1", "\"version\":2", 1),
     );
+    // Plain HTTP on a published port is the foreground mode's: chosen for a registered
+    // service it is refused, whatever the address and the origin are.
+    let published = file(
+        &account,
+        "published.json",
+        &registered(&account, port)
+            .replacen("\"127.0.0.1\"", "\"0.0.0.0\"", 1)
+            .replacen("\"http_loopback\"", "\"http_published\"", 1)
+            .replacen("http://127.0.0.1:", "http://localhost:", 1),
+    );
+    // Never implied by plain `http_loopback` and another address.
+    let implied = file(
+        &account,
+        "implied.json",
+        &registered(&account, port)
+            .replacen("\"registered\"", "\"foreground\"", 1)
+            .replacen("\"127.0.0.1\"", "\"0.0.0.0\"", 1),
+    );
     let missing = account.base.join("missing.json").display().to_string();
     for (args, expected) in [
         (
@@ -147,6 +165,22 @@ fn a_configuration_that_cannot_be_used_is_refused_and_nothing_is_saved() {
             "no other property is accepted",
         ),
         (vec!["serve", "--setup"], "--setup needs a file"),
+        (
+            vec!["setup", "--non-interactive", "--config", &published],
+            "only for \"service\": \"foreground\"",
+        ),
+        (
+            vec!["serve", "--setup", &published],
+            "only for \"service\": \"foreground\"",
+        ),
+        (
+            vec!["setup", "--non-interactive", "--config", &implied],
+            "no other property is accepted",
+        ),
+        (
+            vec!["serve", "--setup", &implied],
+            "no other property is accepted",
+        ),
     ] {
         let refused = account.run(&args);
         let (out, err) = text(&refused);

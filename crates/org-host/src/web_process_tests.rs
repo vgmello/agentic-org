@@ -256,6 +256,13 @@ fn built_program(variable: &str, name: &str) -> PathBuf {
 /// (`ORG_TEST_OFFICE_BIN` and `ORG_TEST_WEB_BIN` name others) under a disposable root on
 /// disk. Uses request IDs 1 and 2.
 pub(super) fn start_signed_in() -> Started {
+    start_signed_in_on(false)
+}
+
+/// [`start_signed_in`], with the browser listener as a foreground instance in a container
+/// has it when `published`: plain HTTP on every address (`http_published`), reached through
+/// this machine's loopback, which is its origin.
+fn start_signed_in_on(published: bool) -> Started {
     let office = built_program("ORG_TEST_OFFICE_BIN", "agentic-org-office");
     let web = built_program("ORG_TEST_WEB_BIN", "agentic-org-web");
     let temp =
@@ -282,10 +289,17 @@ pub(super) fn start_signed_in() -> Started {
     let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = reserved.local_addr().unwrap();
     drop(reserved);
-    let listen = serde_json::from_value(serde_json::json!({
-        "address":"127.0.0.1","port":address.port(),"scheme":"http_loopback",
-        "origin":format!("http://{address}"),"hsts":"off"
-    }))
+    let listen = serde_json::from_value(if published {
+        serde_json::json!({
+            "address":"0.0.0.0","port":address.port(),"scheme":"http_published",
+            "origin":format!("http://{address}"),"hsts":"off"
+        })
+    } else {
+        serde_json::json!({
+            "address":"127.0.0.1","port":address.port(),"scheme":"http_loopback",
+            "origin":format!("http://{address}"),"hsts":"off"
+        })
+    })
     .unwrap();
 
     let mut config = crate::Config::new(base.join("unused-home"), worker);
@@ -573,7 +587,7 @@ fn lnx_3_host(outcome: &str) {
         socket: _,
         mut wire,
         session,
-    } = start_signed_in();
+    } = start_signed_in_on(outcome == "serves published");
     println!("\nhost.sock: hello and account.verify answered");
     let mut id = 3;
     let state = |wire: &mut BufReader<UnixStream>, id: &mut u64| {
@@ -622,6 +636,42 @@ fn lnx_3_host(outcome: &str) {
     match outcome {
         "serves" => {
             serving(&host);
+        }
+        "serves published" => {
+            serving(&host);
+            // The wildcard listener accepts on every address of this machine; only a
+            // request for the configured origin is answered. Another Host is refused
+            // before any route, and so is a request for the address it arrived on.
+            for host_header in [
+                "192.0.2.7:8443",
+                "localhost",
+                &format!("0.0.0.0:{}", address.port()),
+            ] {
+                let mut stream = TcpStream::connect(address).unwrap();
+                stream.set_read_timeout(Some(WAIT)).unwrap();
+                stream
+                    .write_all(
+                        format!(
+                            "GET /api/v1/version HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+                let mut response = String::new();
+                stream.read_to_string(&mut response).unwrap();
+                let status = response.split(' ').nth(1).unwrap_or("none").to_owned();
+                println!("published: another host: {status}");
+            }
+            let index = http(address, "GET", "/", "", "");
+            println!(
+                "published: index {} hsts {} cookie {}",
+                index.status,
+                index
+                    .headers
+                    .to_ascii_lowercase()
+                    .contains("strict-transport-security"),
+                index.headers.to_ascii_lowercase().contains("set-cookie")
+            );
         }
         "serves again" => {
             let killed = serving(&host);
@@ -710,6 +760,43 @@ fn lnx_3_a_real_host_starts_the_real_web_process_confined_and_logs_by_what() {
     // One admission for both starts: the web image was read, and its digest logged, once.
     let read = run.logged("agentic-org-web; every server this host starts runs the bytes");
     assert_eq!(read.len(), 1, "{:?}", run.log);
+}
+
+/// A foreground instance's published listener (`http_published`): the real host binds
+/// every address, the real web process serves the configured loopback origin confined as
+/// always, sets no `Strict-Transport-Security` and no cookie, and refuses a request that
+/// names any other host.
+#[test]
+fn a_real_host_serves_plain_http_on_a_published_listener_for_its_loopback_origin_only() {
+    const NAME: &str = "web_process_tests::a_real_host_serves_plain_http_on_a_published_listener_for_its_loopback_origin_only";
+    if let Some(outcome) = host_outcome() {
+        return lnx_3_host(&outcome);
+    }
+    let Some(run) = as_host(NAME, "serves published", None) else {
+        return;
+    };
+    assert!(
+        run.fact("web process: version 200 NoNewPrivs 1 Seccomp 2"),
+        "{}",
+        run.facts
+    );
+    let refused: Vec<&str> = run
+        .facts
+        .lines()
+        .filter(|line| line.starts_with("published: another host: "))
+        .collect();
+    assert_eq!(refused.len(), 3, "{}", run.facts);
+    for line in refused {
+        let status: u16 = line.rsplit(' ').next().unwrap().parse().unwrap();
+        assert!((400..500).contains(&status), "{line}");
+    }
+    assert!(
+        run.fact("published: index 200 hsts false cookie false"),
+        "{}",
+        run.facts
+    );
+    assert!(run.fact("state: Running"), "{}", run.facts);
+    assert_eq!(run.logged(STARTED).len(), 1, "{:?}", run.log);
 }
 
 /// LNX-3 where a container's profile refuses Landlock, at its version query, at the

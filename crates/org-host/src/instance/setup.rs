@@ -107,8 +107,9 @@ impl Input {
                 "the credential directory must be an absolute, normalized path",
             ));
         }
-        // Loopback HTTP, or HTTPS on any address: the two listeners the web process has.
-        // Plain HTTP off loopback is not a listener (`ListenOrigin::check`).
+        // Loopback HTTP; HTTPS on any address; or, chosen by its own name, plain HTTP on a
+        // published port, which only a foreground instance may have. Plain HTTP with a
+        // non-loopback address is never implied (`ListenOrigin::check`).
         if self
             .listen
             .origin()
@@ -120,9 +121,18 @@ impl Input {
             .is_err()
         {
             return Err(Error::Invalid(
-                "the listener must be loopback HTTP on its own address, or HTTPS, with an \
-                 origin that names its scheme and port",
+                "the listener must be loopback HTTP on its own address (http_loopback), plain \
+                 HTTP on a published port with a loopback origin (http_published), or HTTPS, \
+                 with an origin that names its scheme and port",
             ));
+        }
+        if self
+            .listen
+            .scheme()
+            .fits_service(self.service == Service::Foreground)
+            .is_err()
+        {
+            return Err(Error::Invalid(PUBLISHED_NEEDS_FOREGROUND));
         }
         if let Some(certificate) = &self.certificate {
             if self.listen.scheme() != org_host_control::listen::ListenMode::Https {
@@ -172,11 +182,19 @@ impl Input {
     }
 }
 
+/// What an input, a configuration or a record is told when its listener is plain HTTP on a
+/// published port and its service mode is not `foreground` (`ListenMode::fits_service`).
+/// Refused when the input is read, before anything is made, and again whenever the record
+/// is read, so a record edited by hand does not start a host.
+pub(crate) const PUBLISHED_NEEDS_FOREGROUND: &str = "\"scheme\": \"http_published\" (plain HTTP \
+     on a published port) is only for \"service\": \"foreground\", the main process of a \
+     container; a registered service listens with http_loopback";
+
 /// What a configuration that does not parse is told: the whole shape, since a strict
 /// reader cannot say which property a person meant.
 pub(crate) const CONFIGURATION_SHAPE: &str = "the setup configuration is not valid: it is one \
      JSON object with \"version\": 1, \"service\": \"registered\" or \"foreground\", \"root\": an \
-     absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"http_loopback\" or \"https\", \
+     absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"http_loopback\", \"http_published\" or \"https\", \
      \"origin\", \"hsts\": \"off\", \"on\" or \"clear\"}, and optionally \"credentials\": an \
      absolute path and \"certificate\": {\"chain\", \"key\"}: two absolute paths; no other \
      property is accepted";

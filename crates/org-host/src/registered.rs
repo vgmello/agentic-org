@@ -48,6 +48,14 @@ impl Host {
         config.admit_runtime()?;
         let record = Journal::snapshot(&paths.base, name)
             .map_err(|e| refused("reading the setup record", e))?;
+        // The record was validated as it was read: a listener that is plain HTTP on a
+        // published port with a service mode other than foreground (a record edited by
+        // hand) never comes this far. Said once per start, before anything is bound.
+        if record.input.listen.scheme() == org_host_control::listen::ListenMode::HttpPublished {
+            host_log::log(&crate::setup_flow::published_http_notice(
+                &record.input.listen,
+            ));
+        }
         let id = record.instance_id.clone().ok_or_else(|| {
             refused(
                 "reading the setup record",

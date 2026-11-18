@@ -307,6 +307,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         HostControl::from_handoff(control, transfer, line.instance_id, Arc::new(|| fatal()))?;
     let (mode, origin, hsts) = match host.fetch_listener().map_err(|_| failure())? {
         TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
+        TlsFetchResult::HttpPublished { origin, hsts } => (ListenMode::HttpPublished, origin, hsts),
         TlsFetchResult::Https {
             cert,
             key,

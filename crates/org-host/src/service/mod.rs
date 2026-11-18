@@ -551,17 +551,24 @@ impl Handler for Service {
                         "private gateway connection required",
                     )
                 })?;
-                if snapshot.scheme() != org_host_control::listen::ListenMode::HttpLoopback {
-                    return Err(ApiError::new(
-                        ErrorCode::Unavailable,
-                        "verified TLS pair unavailable",
-                    ));
-                }
+                use org_host_control::listen::ListenMode;
+                use org_host_control::ops::TlsFetchResult;
+                // The two plain HTTP modes carry no pair. Which of them a listener has was
+                // judged against the instance's service mode when the host started
+                // (`registered`), before the listener was bound.
+                let (origin, hsts) = (snapshot.origin().clone(), snapshot.hsts());
+                let answer = match snapshot.scheme() {
+                    ListenMode::HttpLoopback => TlsFetchResult::HttpLoopback { origin, hsts },
+                    ListenMode::HttpPublished => TlsFetchResult::HttpPublished { origin, hsts },
+                    ListenMode::Https => {
+                        return Err(ApiError::new(
+                            ErrorCode::Unavailable,
+                            "verified TLS pair unavailable",
+                        ));
+                    }
+                };
                 connection.note_listener_fetched();
-                Ok(org_host_control::ops::TlsFetchResult::HttpLoopback {
-                    origin: snapshot.origin().clone(),
-                    hsts: snapshot.hsts(),
-                })
+                Ok(answer)
             }));
             return;
         }
@@ -1043,6 +1050,38 @@ pub(crate) mod tests {
         wait_closed(&web);
         assert!(!web.reported_serving());
         assert!(web.serving_refused());
+        drop(web);
+        offices.shutdown();
+    }
+
+    /// A published plain-HTTP listener is answered as that mode, with its origin and no
+    /// pair, and the web process may then report that it serves.
+    #[test]
+    fn tls_fetch_on_a_published_listener_answers_http_published_and_enables_serving() {
+        use org_host_control::ops::{TlsFetch, TlsFetchResult, WebServing};
+        let home = tempfile::tempdir().unwrap();
+        let (web, mut peer, offices) = web_peer_on(
+            home.path(),
+            r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let fetched = exchange::<TlsFetch>(&mut peer, 2, &Default::default())
+            .unwrap()
+            .into_result::<TlsFetch>()
+            .unwrap();
+        let TlsFetchResult::HttpPublished { origin, hsts } = fetched else {
+            panic!("not the published mode: {fetched:?}");
+        };
+        assert_eq!(origin.as_str(), "http://localhost:8443");
+        assert_eq!(hsts, org_host_control::listen::Hsts::Off);
+        exchange::<WebServing>(&mut peer, 3, &Default::default())
+            .unwrap()
+            .into_result::<WebServing>()
+            .unwrap();
+        assert!(web.reported_serving());
         drop(web);
         offices.shutdown();
     }
