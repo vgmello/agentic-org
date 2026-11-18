@@ -36,6 +36,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// How long a started child has to connect to the rendezvous, send its ready line
+/// and acknowledge the handoff. [`Supervisor::start`] always uses this; tests pass a
+/// longer bound to [`Running::start`] so a loaded machine cannot fail them.
 const WAIT: Duration = Duration::from_secs(5);
 /// Consecutive failed starts before the supervisor gives up.
 const MAX_STARTS: usize = 5;
@@ -154,7 +157,7 @@ impl Supervisor {
                     &*eligible,
                     Timing::PRODUCTION,
                     &|line| crate::host_log::log(line),
-                    || Running::start(&config, Arc::clone(&handler)),
+                    || Running::start(&config, Arc::clone(&handler), WAIT),
                 )
             })
             .map_err(os_failed("start the supervisor thread"))?;
@@ -385,7 +388,13 @@ fn ended_cause(serving_refused: bool, exit: Option<String>, live: bool) -> Strin
     }
 }
 impl Running {
-    fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Self> {
+    /// Spawns, admits and hands off to one web process. `wait` bounds the steps
+    /// from spawn through the handoff ACK.
+    fn start(
+        config: &Configuration,
+        handler: Arc<dyn Handler>,
+        wait: Duration,
+    ) -> io::Result<Self> {
         config
             .check
             .may_spawn()
@@ -453,7 +462,7 @@ impl Running {
                 while matches!(stderr.read(&mut bytes), Ok(n) if n > 0) {}
             })
             .map_err(os_failed("start the stderr drain"))?;
-        let until = Instant::now() + WAIT;
+        let until = Instant::now() + wait;
         let mut stream = rendezvous.accept(&mut spawned.process, until)?;
         crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
             .map_err(|_| failed("the rendezvous peer is not the admitted child"))?;
