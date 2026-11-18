@@ -47,14 +47,14 @@ fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
-/// A child of `program` that a debug build's check admitted and that has not been let run:
-/// it stays alive (on macOS suspended) without running anything, until it is dropped.
-fn held_child(program: &str, args: &[&str]) -> org_platform_host::admission::Started {
-    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+/// A child that a debug build's check admitted and that has not been let run: the fake web
+/// process, from a copy in `dir`. It stays alive until it is dropped: on macOS suspended,
+/// without running anything; where a child runs from its start, its one step is to stay.
+fn held_child(dir: &Path) -> org_platform_host::admission::Started {
     let held = ServerCheck::Skip
-        .admission(Path::new(program))
+        .admission(&fake_program(dir, "stay\n"))
         .unwrap()
-        .start(&args, &ChildEnv::new(), &SPAWN_LOCK)
+        .start(&[], &ChildEnv::new(), &SPAWN_LOCK)
         .unwrap();
     org_platform_host::testing::admission::unreleased(held)
 }
@@ -1396,7 +1396,7 @@ fn a_rendezvous_folder_that_is_a_symlink_is_refused_before_binding() {
 fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let rendezvous = Rendezvous::bind(dir.path()).unwrap();
-    let mut spawned = held_child("/bin/sleep", &["30"]);
+    let mut spawned = held_child(dir.path());
     // The deadline has passed: no connection is accepted, and the child still runs.
     let error = rendezvous
         .accept(&mut spawned.child, Instant::now())
@@ -1507,20 +1507,24 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     use org_proto::frame;
     let home = tempfile::tempdir().unwrap();
     let (handler, offices) = crate::service::tests::web_handler(home.path());
-    let running = |program: &str, args: &[&str], resume: bool| {
+    // Each child is the fake web process in a folder of its own: one that stays (held, not
+    // let run, where the system starts a child suspended), or one that is let run and
+    // takes `steps`.
+    let children = tempfile::tempdir().unwrap();
+    let running = |steps: Option<&str>| {
+        let dir = tempfile::tempdir_in(children.path()).unwrap().keep();
         let (host, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
         let (transfer, _child) = UnixDatagram::pair().unwrap();
         let control = WebConnection::start(host, transfer, loopback(), handler.clone()).unwrap();
-        let spawned = if resume {
-            ServerCheck::Skip
-                .admission(Path::new(program))
+        let spawned = match steps {
+            Some(steps) => ServerCheck::Skip
+                .admission(&fake_program(&dir, steps))
                 .unwrap()
                 .spawn(&[], &ChildEnv::new(), &SPAWN_LOCK)
-                .unwrap()
-        } else {
-            held_child(program, args)
+                .unwrap(),
+            None => held_child(&dir),
         };
         let running = Running {
             control,
@@ -1542,7 +1546,7 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     };
 
     // A refused web.serving wins over the EOF it causes; the child still runs.
-    let (mut refused, mut peer) = running("/bin/sleep", &["30"], false);
+    let (mut refused, mut peer) = running(None);
     let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
     call(&mut peer, hello.unwrap()).expect("hello answered");
     let early = org_proto::Request::new::<WebServing>(2, &Default::default()).unwrap();
@@ -1555,14 +1559,14 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     );
 
     // A reaped child's status, while the control connection is still open.
-    let (mut exited, _peer) = running("/usr/bin/false", &[], true);
+    let (mut exited, _peer) = running(Some("exit 1\n"));
     wait_for("the child exits", || !exited.serving());
     assert!(exited.control.live());
     assert_eq!(exited.ended(), "the child exited (exit code 1)");
 
     // Control EOF while the child still runs (on macOS it is suspended, elsewhere
-    // it sleeps).
-    let (mut closed, peer) = running("/bin/sleep", &["30"], false);
+    // it stays).
+    let (mut closed, peer) = running(None);
     assert!(closed.serving());
     drop(peer);
     wait_for("control EOF", || !closed.serving());
@@ -2044,8 +2048,8 @@ fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standar
     let line = format!("{LANDLOCK_NOT_APPLIED_PREFIX}landlock_restrict_self failed with EPERM");
     // The child stays alive, as a web process that serves does: the line is found
     // as soon as it is read, long before the wait ends.
-    let (mut child, captured, _stdin) = shell(&format!(
-        "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; sleep 30"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "stderr agentic-org-web: some other notice\nstderr {line}\nstay\n"
     ));
     let asked = Instant::now();
     assert_eq!(
@@ -2055,7 +2059,7 @@ fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standar
     assert!(asked.elapsed() < WAIT);
     assert!(matches!(child.try_wait(), Ok(false)));
     // A child that says nothing: the wait passes, and no longer.
-    let (mut silent, captured, _stdin) = shell("sleep 30");
+    let (mut silent, captured, _stdin) = stepping("stay\n");
     let asked = Instant::now();
     assert_eq!(captured.landlock_not_applied(STDERR_GRACE), None);
     assert!(asked.elapsed() >= STDERR_GRACE);
@@ -2104,28 +2108,24 @@ fn the_start_line_names_the_layers_and_why_landlock_is_missing() {
     );
 }
 
-/// A real child of `/bin/sh` that runs `script`, with its captured standard error.
-fn shell(script: &str) -> (Child, Arc<Stderr>, fs::File) {
-    // The shell's own file: an admission does not follow a link to its program.
-    let shell = fs::canonicalize("/bin/sh").unwrap();
+/// A real child, the fake web process taking `steps`, started and let run as the web
+/// process is, with its captured standard error. The last value keeps its folder.
+fn stepping(steps: &str) -> (Child, Arc<Stderr>, (fs::File, tempfile::TempDir)) {
+    let dir = tempfile::tempdir().unwrap();
     let spawned = ServerCheck::Skip
-        .admission(&shell)
+        .admission(&fake_program(dir.path(), steps))
         .unwrap()
-        .spawn(
-            &[OsStr::new("-c"), OsStr::new(script)],
-            &web_env(),
-            &SPAWN_LOCK,
-        )
+        .spawn(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
         .unwrap();
     let captured = Stderr::capture(spawned.stderr).unwrap();
-    (spawned.child, captured, spawned.stdin)
+    (spawned.child, captured, (spawned.stdin, dir))
 }
 
 #[test]
 fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
     let line = format!("{REFUSAL_PREFIX}seccomp failed with ENOMEM");
-    let (mut child, captured, _stdin) = shell(&format!(
-        "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; exit 1"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "stderr agentic-org-web: some other notice\nstderr {line}\nexit 1\n"
     ));
     wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
     let error = with_refusal(
@@ -2143,14 +2143,14 @@ fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
 #[test]
 fn a_child_that_exited_without_a_refusal_line_leaves_the_cause_as_it_is() {
     for script in [
-        "exit 1",
-        "echo 'agentic-org-web: authenticated startup unavailable' >&2; exit 1",
+        "exit 1\n",
+        "stderr agentic-org-web: authenticated startup unavailable\nexit 1\n",
         // Not printable: a tab in the reason.
-        "printf 'agentic-org-web: startup refused: confinement: a\\tb\\n' >&2; exit 1",
+        "stderr agentic-org-web: startup refused: confinement: a\tb\nexit 1\n",
         // No line feed.
-        "printf 'agentic-org-web: startup refused: confinement: cut' >&2; exit 1",
+        "stderr-raw agentic-org-web: startup refused: confinement: cut\nexit 1\n",
     ] {
-        let (mut child, captured, _stdin) = shell(script);
+        let (mut child, captured, _stdin) = stepping(script);
         wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
         let error = with_refusal(failed("the cause"), &captured, &mut child);
         assert_eq!(
@@ -2165,8 +2165,8 @@ fn a_child_that_exited_without_a_refusal_line_leaves_the_cause_as_it_is() {
 fn a_child_whose_control_stream_ended_gets_a_moment_to_exit_and_any_other_none() {
     let eof = || io::Error::other(ControlEof("web process start failed: control EOF".into()));
     // It closes its stream, writes its line and exits a moment later.
-    let (mut child, captured, _stdin) = shell(&format!(
-        "sleep 0.1; echo '{REFUSAL_PREFIX}seccomp failed with EPERM' >&2; exit 1"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "pause 100\nstderr {REFUSAL_PREFIX}seccomp failed with EPERM\nexit 1\n"
     ));
     let error = with_refusal(eof(), &captured, &mut child);
     assert_eq!(
@@ -2176,8 +2176,8 @@ fn a_child_whose_control_stream_ended_gets_a_moment_to_exit_and_any_other_none()
     );
     // It stays alive: the cause is unchanged after the grace, and the child still
     // runs for its owner to kill.
-    let (mut child, captured, _stdin) = shell(&format!(
-        "echo '{REFUSAL_PREFIX}written by a child that stays' >&2; sleep 30"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "stderr {REFUSAL_PREFIX}written by a child that stays\nstay\n"
     ));
     let asked = Instant::now();
     let error = with_refusal(eof(), &captured, &mut child);
@@ -2195,11 +2195,12 @@ fn a_child_whose_control_stream_ended_gets_a_moment_to_exit_and_any_other_none()
 #[test]
 fn a_child_that_exited_after_its_sandbox_was_verified_is_refused() {
     // Still running: the check passes and reaps nothing.
-    let mut sleeping = held_child("/bin/sleep", &["30"]);
+    let dir = tempfile::tempdir().unwrap();
+    let mut sleeping = held_child(dir.path());
     still_running(&mut sleeping.child).unwrap();
     still_running(&mut sleeping.child).unwrap();
     // Exited: the status that was read may be another process's by now.
-    let (mut child, _captured, _stdin) = shell("exit 4");
+    let (mut child, _captured, _stdin) = stepping("exit 4\n");
     wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
     assert_eq!(
         still_running(&mut child).unwrap_err().to_string(),
@@ -2213,14 +2214,16 @@ fn the_web_process_gets_nothing_of_the_hosts_environment() {
     // A real child started with it sees no variable, whatever this process has
     // (this test process has at least a PATH).
     assert!(std::env::var_os("PATH").is_some());
+    let dir = tempfile::tempdir().unwrap();
     let mut spawned = ServerCheck::Skip
-        .admission(Path::new("/usr/bin/env"))
+        .admission(&fake_program(dir.path(), "env\n"))
         .unwrap()
-        .spawn(&[], &web_env(), &SPAWN_LOCK)
+        .spawn(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
         .unwrap();
     let mut printed = String::new();
     spawned.stdout.read_to_string(&mut printed).unwrap();
-    assert_eq!(printed, "");
+    // It ran, and printed its whole environment: nothing.
+    assert_eq!(printed, "environment:\n");
     wait_for("the child exits", || {
         matches!(spawned.child.try_wait(), Ok(true))
     });

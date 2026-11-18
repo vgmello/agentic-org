@@ -169,6 +169,14 @@ fn web_pid(program: &Path) -> String {
     pids.into_iter().next().unwrap()
 }
 
+/// Kills the process `pid`, a web process this test's own host started.
+fn kill(pid: &str) {
+    let pid: libc::pid_t = pid.parse().unwrap();
+    // SAFETY: a signal to one process, named by the id `web_pid` just found for the
+    // unique program path of this test's own web process.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+}
+
 /// A registered instance as the service host will find it after setup and the
 /// administrator's registration: the instance reserved with its browser address,
 /// its registry created under the host and instance locks, one administrator.
@@ -399,11 +407,7 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     // 3. Control EOF: kill the admitted web process. Readiness turns false; the
     //    supervisor's bounded restart serves a new process.
     let killed = web_pid(&program);
-    let status = Command::new("/bin/kill")
-        .args(["-KILL", &killed])
-        .status()
-        .unwrap();
-    assert!(status.success());
+    kill(&killed);
     wait_until("web_ready false after EOF", || !web_ready(&host));
     wait_until("restarted web_ready", || web_ready(&host));
     wait_until("restarted HTTP readiness", || http_ready(address));
@@ -415,13 +419,8 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     drop(wire);
     drop(host);
     // Host shutdown drops the web process first: no web process survives.
-    let left = Command::new("/usr/bin/pgrep")
-        .arg("-f")
-        .arg(&program)
-        .output()
-        .unwrap();
     assert!(
-        left.stdout.is_empty(),
+        web_pids(&program).is_empty(),
         "web process reaped on host shutdown"
     );
 }
@@ -626,11 +625,7 @@ fn lnx_3_host(outcome: &str) {
         }
         "serves again" => {
             let killed = serving(&host);
-            let status = Command::new("/bin/kill")
-                .args(["-KILL", &killed])
-                .status()
-                .unwrap();
-            assert!(status.success());
+            kill(&killed);
             wait_until("web_ready false after the kill", || !web_ready(&host));
             assert_ne!(serving(&host), killed, "a new web process");
         }

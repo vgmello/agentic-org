@@ -24,6 +24,10 @@
 //! - `close`: close the control connection.
 //! - `exec`: replace this process by this program again (a new image, the same process
 //!   id), which takes the remaining steps on the same control connection.
+//! - `stderr <text>`: write the text and a line feed on standard error.
+//! - `stderr-raw <text>`: write the text on standard error, with no line feed.
+//! - `env`: print `environment:` and then this process's environment variables, one
+//!   `NAME=value` line each, on standard output.
 //! - `stay`: stay alive until standard input ends (the host is gone or has dropped this
 //!   child) or 20 seconds have passed, then exit 0.
 //!
@@ -211,6 +215,14 @@ fn main() {
                 }
             }
             "pause" => pause(rest.parse().unwrap_or(0)),
+            "stderr" => eprintln!("{rest}"),
+            "stderr-raw" => eprint!("{rest}"),
+            "env" => {
+                println!("environment:");
+                for (name, value) in std::env::vars_os() {
+                    println!("{}={}", name.to_string_lossy(), value.to_string_lossy());
+                }
+            }
             "close" => control = None,
             "exec" => {
                 let Some(stream) = control.take() else {
