@@ -105,10 +105,16 @@ pub enum StoreError {
     Exhausted(&'static str),
     /// The journal append failed. The whole batch was rolled back; nothing was accepted.
     Append(String),
-    /// The store is not accepting. When this answers a request whose entry was already
-    /// appended, the outcome is unknown, not failed: retry by operation ID after reopening.
+    /// The store is not accepting. A request that was waiting for an answer when the
+    /// store stopped may have been appended: retry by operation ID after reopening.
     Stopped {
         path: Option<String>,
+        reason: String,
+    },
+    /// The operation's entry is in the journal, so it is accepted, but the projection
+    /// could not take it and the store stopped. Not a failure of the operation: submit it
+    /// again with the same operation ID after reopening, and it answers.
+    OutcomeUnknown {
         reason: String,
     },
     /// The journal refused: at opening, or a failure that stops it.
@@ -142,6 +148,10 @@ impl fmt::Display for StoreError {
                 reason,
             } => write!(f, "store stopped at {path}: {reason}"),
             Self::Stopped { path: None, reason } => write!(f, "store stopped: {reason}"),
+            Self::OutcomeUnknown { reason } => write!(
+                f,
+                "appended, outcome unknown ({reason}); retry with the same operation ID"
+            ),
             Self::Journal(error) => error.fmt(f),
             Self::Files(error) => error.fmt(f),
             Self::Custody(message) => write!(f, "writer custody: {message}"),

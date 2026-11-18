@@ -21,7 +21,7 @@ use crate::{
     error::StoreError,
     files::Files,
     flusher,
-    journal::{AnchorFacts, Entry, Journal, Recovered},
+    journal::{AnchorFacts, Entry, Journal, JournalError, Recovered},
     rebuild::{materialize, rebuild_with, Projectors},
     sequences::{FeedPosition, Sequences},
     writer::{self, UnitOfWork},
@@ -266,12 +266,23 @@ impl<E: Engine> Core<E> {
 
     /// Appends a batch and accounts for it under one lock, so the flusher never sees the
     /// journal ahead of the accounting: a flush that covers these entries moves them on.
-    pub(crate) fn append(
-        &self,
-        entries: &[Arc<Entry>],
-    ) -> Result<(), crate::journal::JournalError> {
+    /// A store that stopped since the batch began appends nothing: the check is made
+    /// under the same lock that stopping takes. An error means nothing was appended.
+    pub(crate) fn append(&self, entries: &[Arc<Entry>]) -> Result<(), StoreError> {
         let mut flow = self.flow();
-        self.journal.append(entries)?;
+        if let Some(fatal) = &flow.fatal {
+            return Err(fatal.clone());
+        }
+        // B1c: measure. The segment write runs under the flow lock, so a submit, a status
+        // read and the flusher's accounting wait for it (review finding F8).
+        if let Err(error) = self.journal.append(entries) {
+            drop(flow);
+            let failure = StoreError::Append(error.to_string());
+            if matches!(error, JournalError::Broken { .. }) {
+                self.stop(StoreError::Journal(error));
+            }
+            return Err(failure);
+        }
         for entry in entries {
             let bytes = entry.stored().len() as u64;
             flow.unflushed.push_back((entry.ordinal(), bytes));

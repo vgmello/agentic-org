@@ -111,8 +111,8 @@ impl WriterAuthority for FakeCustody {
                 if before != Some(head) {
                     return refuse("`before` is not the stored head");
                 }
-                let identical = after.ordinal == head.ordinal && after.sha256 == head.sha256;
-                if after.ordinal <= head.ordinal && !identical {
+                // Identical is the whole head, high-waters included.
+                if after.ordinal <= head.ordinal && after != head {
                     return refuse("the ordinal does not advance");
                 }
                 if !after.high_waters.none_behind(&head.high_waters) {
@@ -125,5 +125,86 @@ impl WriterAuthority for FakeCustody {
         state.stored = Some((identity.clone(), after.clone()));
         state.confirmations += 1;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{change::Sha256, sequences::HighWaters, testkit::identity};
+
+    fn head(ordinal: u64, work: u64) -> JournalHead {
+        JournalHead {
+            ordinal,
+            sha256: Sha256::of(&ordinal.to_be_bytes()),
+            high_waters: HighWaters {
+                work,
+                ..HighWaters::default()
+            },
+        }
+    }
+
+    /// A custody that holds ordinal 5 with work high-water 9.
+    fn holding() -> (FakeCustody, JournalHead) {
+        let custody = FakeCustody::new();
+        custody.confirm(&identity(), None, &head(5, 9)).unwrap();
+        (custody, head(5, 9))
+    }
+
+    fn refused(custody: &FakeCustody, result: Result<(), CustodyError>, stored: &JournalHead) {
+        assert!(result.is_err());
+        assert_eq!(custody.head().as_ref(), Some(stored));
+        assert_eq!(custody.confirmations(), 1);
+    }
+
+    #[test]
+    fn a_confirmation_from_another_incarnation_is_refused() {
+        let (custody, stored) = holding();
+        let mut other = identity();
+        other.journal_incarnation = crate::testkit::id(0xB4);
+        let result = custody.confirm(&other, Some(&stored), &head(6, 9));
+        refused(&custody, result, &stored);
+        assert!(custody.checkpoint(&other).is_err());
+    }
+
+    #[test]
+    fn a_confirmation_whose_before_is_not_the_stored_head_is_refused() {
+        let (custody, stored) = holding();
+        for before in [None, Some(head(4, 9)), Some(head(5, 8))] {
+            let result = custody.confirm(&identity(), before.as_ref(), &head(6, 9));
+            refused(&custody, result, &stored);
+        }
+        let fresh = FakeCustody::new();
+        let result = fresh.confirm(&identity(), Some(&stored), &head(6, 9));
+        assert!(result.is_err() && fresh.head().is_none());
+    }
+
+    #[test]
+    fn a_confirmation_whose_ordinal_is_behind_is_refused_and_only_the_identical_head_repeats() {
+        let (custody, stored) = holding();
+        let result = custody.confirm(&identity(), Some(&stored), &head(4, 9));
+        refused(&custody, result, &stored);
+        // The same ordinal with another hash, or with other high-waters, is not the same head.
+        let mut forked = head(5, 9);
+        forked.sha256 = Sha256::of(b"another entry");
+        let result = custody.confirm(&identity(), Some(&stored), &forked);
+        refused(&custody, result, &stored);
+        let result = custody.confirm(&identity(), Some(&stored), &head(5, 10));
+        refused(&custody, result, &stored);
+        custody
+            .confirm(&identity(), Some(&stored), &stored)
+            .unwrap();
+        assert_eq!(custody.confirmations(), 2);
+    }
+
+    #[test]
+    fn a_confirmation_that_takes_a_high_water_down_is_refused() {
+        let (custody, stored) = holding();
+        let result = custody.confirm(&identity(), Some(&stored), &head(6, 8));
+        refused(&custody, result, &stored);
+        custody
+            .confirm(&identity(), Some(&stored), &head(6, 9))
+            .unwrap();
+        assert_eq!(custody.head(), Some(head(6, 9)));
     }
 }

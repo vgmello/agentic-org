@@ -891,7 +891,7 @@ impl Journal {
     }
 
     /// Rolls segments at `bytes` instead of [`SEGMENT_BYTES`].
-    pub fn set_segment_bytes(&self, bytes: u64) {
+    pub(crate) fn set_segment_bytes(&self, bytes: u64) {
         self.segment_bytes.store(bytes, Ordering::Relaxed);
     }
 
@@ -980,7 +980,10 @@ impl Journal {
 
     /// Fully flushes the journal through the head it had when the call began, and returns
     /// that head. Appends continue meanwhile. An error is final for this process.
-    pub fn flush(&self) -> Result<JournalPoint, JournalError> {
+    ///
+    /// Only the store's flusher calls this, and the two calls after it: there is one
+    /// flusher by visibility, not by convention.
+    pub(crate) fn flush(&self) -> Result<JournalPoint, JournalError> {
         let (target, rolled, active, directory) = {
             let mut inner = self.inner();
             if let Some(broken) = &inner.broken {
@@ -1032,7 +1035,7 @@ impl Journal {
 
     /// Records that every file through `ordinal` is written and flushed, and lets go of
     /// those entries.
-    pub fn set_materialized(&self, ordinal: u64) -> Result<(), JournalError> {
+    pub(crate) fn set_materialized(&self, ordinal: u64) -> Result<(), JournalError> {
         {
             let inner = self.inner();
             if ordinal > inner.flushed {
@@ -1068,7 +1071,7 @@ impl Journal {
     /// Drops every rolled segment whose entries are all at or below `ordinal` and the
     /// materialized mark. `checkpoint.json` is written and flushed first, so the chain
     /// always has a verifiable start. Returns how many segments were dropped.
-    pub fn release_through(&self, ordinal: u64) -> Result<usize, JournalError> {
+    pub(crate) fn release_through(&self, ordinal: u64) -> Result<usize, JournalError> {
         let (drop, base) = {
             let inner = self.inner();
             let limit = ordinal.min(inner.materialized);

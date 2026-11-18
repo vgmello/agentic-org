@@ -229,7 +229,7 @@ fn a_failed_commit_after_the_append_is_replayed_from_the_journal_and_never_repor
     office.engine.fail_commits(2);
     let unknown = office.put_as(&store, 2, "y", Ack::Committed);
     assert!(
-        matches!(unknown, Err(StoreError::Stopped { .. })),
+        matches!(unknown, Err(StoreError::OutcomeUnknown { .. })),
         "{unknown:?}"
     );
     assert!(store.status().stopped.is_some());
@@ -1123,4 +1123,110 @@ fn a_subscriber_that_does_not_keep_up_is_dropped_and_subscribes_again() {
     assert_eq!(again.recv().unwrap().feed, FeedPosition(4));
     // ...and a position that fell out of the ring reads again.
     assert_eq!(store.subscribe(FeedPosition(1)).err(), Some(Resync));
+}
+
+/// A projector that panics on every file under `local/offices/<office>/bomb/`: a panic on
+/// the writer's thread outside a decision.
+struct Bomb(DurablePath);
+
+impl Projector<MemoryEngine> for Bomb {
+    fn owns(&self, path: &DurablePath) -> bool {
+        path.is_under(&self.0) && *path != self.0
+    }
+
+    fn apply(
+        &self,
+        _tx: &mut <MemoryEngine as Engine>::Tx,
+        _path: &DurablePath,
+        _bytes: Option<&[u8]>,
+    ) -> Result<(), crate::error::ProjectionError> {
+        panic!("the projector panicked (expected by this test)");
+    }
+}
+
+#[test]
+fn a_writer_that_panics_outside_a_decision_stops_the_store_and_closing_reports_it() {
+    let office = Office::new();
+    let root = format!("local/offices/{}/bomb", identity().office_id);
+    let root = DurablePath::parse(&root).unwrap();
+    let mut parts = office.parts(Opening::Create(AnchorFacts::default()));
+    parts.projectors.push(Arc::new(Bomb(root.clone())));
+    let store = Store::open(parts).unwrap();
+    office.put(&store, "a", Ack::Durable).unwrap();
+
+    let path = root.join("x").unwrap();
+    let lost = store.submit(None, false, move |_| {
+        Ok(Change::new(Ack::Committed).put(path.clone(), b"x".to_vec()))
+    });
+    assert!(matches!(lost, Err(StoreError::Stopped { .. })), "{lost:?}");
+    let status = store.wait_for(|status| status.stopped.is_some());
+    assert_eq!(
+        status.stopped,
+        Some(StoreError::Internal("the writer panicked".into()))
+    );
+    assert!(matches!(
+        office.put(&store, "b", Ack::Committed),
+        Err(StoreError::Internal(_))
+    ));
+    // Nothing of the operation was appended; what was accepted before it is readable.
+    assert!(office.hash(&store, "a").is_some());
+    assert!(matches!(store.close(), Err(StoreError::Internal(_))));
+    assert_eq!(cursor(&office.reopen()).ordinal, 1);
+}
+
+/// The store stops (the host refuses a confirmation) while a batch is being decided. The
+/// writer looked before the batch; it must look again at the append, under the lock that
+/// stopping takes, or an entry is appended to a stopped store.
+#[test]
+fn a_batch_decided_while_the_store_stops_appends_nothing() {
+    let office = Office::new();
+    let store = office.create();
+    office.put(&store, "a", Ack::Committed).unwrap();
+    office.custody.close();
+
+    let (gated, release) = gate(&office, &store);
+    // The writer is inside the decision, past its own check. Now the store stops.
+    assert!(matches!(store.sync(), Err(StoreError::Custody(_))));
+    drop(release);
+    let late = gated.join().unwrap();
+    assert!(matches!(late, Err(StoreError::Custody(_))), "{late:?}");
+    assert_eq!(office.hash(&store, "gate"), None);
+    drop(store);
+
+    office.custody.reopen();
+    let store = office.reopen();
+    assert_eq!(cursor(&store).ordinal, 1);
+    assert_eq!(office.hash(&store, "gate"), None);
+}
+
+/// The race that once hung closing, made to happen: the flusher is inside a flush that
+/// covers entries 1 and 2 when entry 3 is appended. The accounting must keep 3 as
+/// unflushed, and closing must flush, confirm and write it.
+#[test]
+fn an_entry_appended_during_a_flush_is_flushed_by_the_next_one_and_closing_returns() {
+    let office = Office::new();
+    let store = office.create();
+    office.faults.hold_flushes();
+    office.put(&store, "a", Ack::Committed).unwrap();
+    let worker = Arc::clone(&store);
+    let probe = office.probe.clone();
+    let durable =
+        thread::spawn(move || worker.submit(None, false, probe.put("b", b"b", Ack::Durable)));
+    office.faults.wait_for_held_flush();
+    office.put(&store, "c", Ack::Committed).unwrap();
+    assert_eq!(store.status().flushed, 0);
+
+    office.faults.release_flushes();
+    durable.join().unwrap().unwrap();
+    let status = store.wait_for(|status| status.confirmed >= 2);
+    assert!(
+        status.flushed >= 2 && status.stopped.is_none(),
+        "{status:?}"
+    );
+    Arc::try_unwrap(store).ok().unwrap().close().unwrap();
+    assert_eq!(office.custody.head().unwrap().ordinal, 3);
+    for name in ["a", "b", "c"] {
+        assert_eq!(office.file(name).unwrap(), name.as_bytes());
+    }
+    assert_eq!(cursor(&office.reopen()).ordinal, 3);
 }

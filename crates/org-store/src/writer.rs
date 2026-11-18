@@ -109,10 +109,15 @@ pub(crate) fn run<E: Engine>(core: Arc<Core<E>>, jobs: Receiver<Job<E>>, sequenc
         overlay: Overlay::new(),
     };
     // Set on every exit, a panic outside a decision included, so closing never waits for
-    // a writer that is gone.
+    // a writer that is gone. A panic (a projector's, say) is reported: the store stops
+    // with the reason, and closing returns it.
     struct Done<E: Engine>(Arc<Core<E>>);
     impl<E: Engine> Drop for Done<E> {
         fn drop(&mut self) {
+            if std::thread::panicking() {
+                self.0
+                    .stop(StoreError::Internal("the writer panicked".into()));
+            }
             self.0.flow().writer_done = true;
             self.0.wake.notify_all();
         }
@@ -236,12 +241,8 @@ impl<E: Engine> Writer<E> {
             return ControlFlow::Continue(());
         }
         // The commit point. One write for the whole batch.
-        if let Err(error) = core.append(&attempt.entries) {
+        if let Err(failure) = core.append(&attempt.entries) {
             drop(tx);
-            let failure = StoreError::Append(error.to_string());
-            if matches!(error, JournalError::Broken { .. }) {
-                core.stop(StoreError::Journal(error));
-            }
             fail_appended(&mut slots, start.ordinal, &failure);
             self.answer(jobs, slots);
             return ControlFlow::Continue(());
@@ -254,12 +255,14 @@ impl<E: Engine> Writer<E> {
         let cursor = attempt.point.cursor();
         if let Err(first) = core.engine.commit(tx, &cursor) {
             if let Err(second) = core.replay(&attempt.entries, &cursor) {
-                let fatal = StoreError::stopped(format!(
+                let reason = format!(
                     "recovery required: the projection did not commit ({first}) and the replay \
                      from the journal failed ({second})"
-                ));
-                core.stop(fatal.clone());
-                fail_appended(&mut slots, start.ordinal, &fatal);
+                );
+                core.stop(StoreError::stopped(reason.clone()));
+                // Appended is accepted: these are not failures, and say so.
+                let unknown = StoreError::OutcomeUnknown { reason };
+                fail_appended(&mut slots, start.ordinal, &unknown);
                 self.answer(jobs, slots);
                 return ControlFlow::Continue(());
             }
