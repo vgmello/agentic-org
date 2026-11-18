@@ -133,7 +133,7 @@ fn handoff(mut stream: UnixStream) -> io::Result<(OwnedFd, OwnedFd, TcpListener)
 /// Called only by the thin executable before any application concurrency.
 /// The immutable verified release owns `assets`; no request can pick this path.
 pub fn serve(assets: &Path) -> io::Result<()> {
-    confinement::disable_core_dumps()?;
+    org_platform::confinement::disable_core_dumps()?;
     let line = first_line(&mut io::stdin().lock())?;
     let files = crate::release::load(assets, line.release.as_ref()).map_err(|_| failure())?;
     confinement::restrict_gateway(Path::new(&line.rendezvous))?;

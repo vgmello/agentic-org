@@ -73,6 +73,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "org-host-control",
+ "org-platform",
  "org-proto",
  "org-release",
  "org-socket",

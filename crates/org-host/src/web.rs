@@ -132,7 +132,11 @@ impl Supervisor {
         // No bind, child or secret handoff for unverified TLS or a platform without a
         // web process confinement adapter.
         // Each refusal names its cause for the host log.
-        org_socket::confinement::web_confinement_supported()?;
+        org_platform::confinement::web_confinement_supported().map_err(|_| {
+            io::Error::other(
+                "the web process requires process confinement, which has no adapter on this platform",
+            )
+        })?;
         if config.listen.scheme() != ListenMode::HttpLoopback {
             return Err(io::Error::other(
                 "the web process requires a verified HTTP loopback listener",
