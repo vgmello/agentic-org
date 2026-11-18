@@ -419,13 +419,14 @@ mod credentials {
         assert_eq!(tree(&account.base), before);
 
         // The walk itself: how many directories it made, and that it follows no link.
-        let made = store_directories::make(&state.join(&id), data_fd(), &account.base).unwrap();
+        let made =
+            store_directories::make(&state.join(&id), Some(data_fd()), &account.base).unwrap();
         assert_eq!(made.count(), 2);
         assert_eq!(mode(&state.join(&id)), 0o700);
         made.remove();
         assert_eq!(tree(&account.base), before);
         assert!(
-            store_directories::make(Path::new("/elsewhere/x"), data_fd(), &account.base)
+            store_directories::make(Path::new("/elsewhere/x"), Some(data_fd()), &account.base)
                 .unwrap_err()
                 .contains("is not below")
         );

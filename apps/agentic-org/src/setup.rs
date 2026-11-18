@@ -1,6 +1,12 @@
 //! `agentic-org setup [--name <instance>] [--port <port>]`: composes the platform adapters and
 //! runs [`org_host::setup_flow`]. Satellite flags are refused before anything else.
 //!
+//! `agentic-org setup --non-interactive --config <file> [--name <instance>]` takes the whole
+//! setup input from a strict JSON file ([`setup_flow::configuration`] documents it), asks
+//! nothing, fetches nothing and prints no link. With `"service": "foreground"` in the file
+//! nothing is registered or started: `agentic-org serve --setup <file>` runs that setup
+//! when the instance is not set up yet and then serves it ([`configured`]).
+//!
 //! Development builds with the `test-support` feature compose test adapters instead of the
 //! system's service manager when `ORG_DEV_SERVICE_DIR` names a folder: the service runs as a
 //! detached child (`ChildServiceManager`), and `ORG_DEV_DISK_ENCRYPTION` (`on`, `off`, anything
@@ -16,7 +22,9 @@ use org_host::setup_flow::{self, Platform, Request};
 
 pub(crate) const HELP: &str = "Set up this Mac's instance and register its service:\n  \
 agentic-org setup [--name <instance>] [--port <port>]\nWithout --name the instance is \
-\"default\" on port 7420; a named instance takes the first free port from 7421.";
+\"default\" on port 7420; a named instance takes the first free port from 7421.\n\
+Without a terminal, from a file (service mode, data folder, credential directory, \
+address):\n  agentic-org setup --non-interactive --config <file> [--name <instance>]";
 
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     run_as(arguments, org_host::Config::refuse_root)
@@ -46,7 +54,30 @@ fn run_as(
     // above reads more than the arguments. (`admin reset` run by root for the service user
     // is another command and is not judged here.)
     may_run_the_service()?;
-    let options = crate::options(arguments, &["--name", "--port"])?;
+    let non_interactive = arguments.iter().any(|arg| arg == "--non-interactive");
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|arg| *arg != "--non-interactive")
+        .cloned()
+        .collect();
+    let options = crate::options(&arguments, &["--name", "--port", "--config"])?;
+    match (non_interactive, options.get("--config")) {
+        (true, Some(file)) => {
+            if options.contains_key("--port") {
+                return Err("--port is not used with --config: the address is in the file".into());
+            }
+            return configured(
+                std::path::Path::new(file),
+                options.get("--name").map(String::as_str),
+            )
+            .map(drop);
+        }
+        (true, None) => return Err("--non-interactive needs --config <file>".into()),
+        (false, Some(_)) => {
+            return Err("--config is read only with --non-interactive".into());
+        }
+        (false, None) => {}
+    }
     let port = options
         .get("--port")
         .map(|p| {
@@ -56,10 +87,8 @@ fn run_as(
                 .ok_or_else(|| format!("--port must be a number from 1 to 65535, not {p:?}"))
         })
         .transpose()?;
-    let platform = platform()?;
-    let program = std::env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .map_err(|e| format!("locating agentic-org: {e}"))?;
+    let platform = platform(false)?;
+    let program = own_program()?;
     let mut ask = ask_port;
     let terminal = std::io::stdout().is_terminal();
     let interactive = std::io::stdin().is_terminal() && terminal;
@@ -70,9 +99,40 @@ fn run_as(
         program,
         env: service_environment(),
         terminal,
+        configuration: None,
     };
     let mut out = std::io::stdout().lock();
     setup_flow::run(&platform, request, &mut out)
+}
+
+fn own_program() -> Result<std::path::PathBuf, String> {
+    std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .map_err(|e| format!("locating agentic-org: {e}"))
+}
+
+/// Non-interactive, offline setup of instance `name` from the configuration at `file`:
+/// nothing is asked, nothing is fetched and no link is printed. It is idempotent: a later
+/// run with the same file finds the instance set up and changes nothing, and a file that
+/// differs from what the instance was set up with is refused. Returns whether the
+/// configuration's service mode is `foreground`, in which nothing is registered or
+/// started. The caller has already refused a user who may not own the instance.
+pub(crate) fn configured(file: &std::path::Path, name: Option<&str>) -> Result<bool, String> {
+    let configuration = setup_flow::configuration(file)?;
+    let foreground = configuration.foreground();
+    let platform = platform(foreground)?;
+    let request = Request {
+        name: name.map(str::to_owned),
+        port: None,
+        prompt: None,
+        program: own_program()?,
+        env: service_environment(),
+        terminal: false,
+        configuration: Some(configuration),
+    };
+    let mut out = std::io::stdout().lock();
+    setup_flow::run(&platform, request, &mut out)?;
+    Ok(foreground)
 }
 
 fn ask_port(address: &str) -> Result<Option<u16>, String> {
@@ -111,7 +171,13 @@ fn service_environment() -> Vec<(OsString, OsString)> {
     env
 }
 
-pub(crate) fn platform() -> Result<Platform, String> {
+/// The platform adapters setup and the service commands compose. `foreground`: the
+/// service manager that registers nothing, on every system and in every build; the
+/// development stand-ins are for a registered service only.
+pub(crate) fn platform(foreground: bool) -> Result<Platform, String> {
+    if foreground {
+        return setup_flow::platform(true);
+    }
     #[cfg(all(debug_assertions, feature = "test-support"))]
     if let Some(service) = development_service()? {
         use org_platform::disk::EncryptionState;
@@ -137,7 +203,7 @@ pub(crate) fn platform() -> Result<Platform, String> {
             ));
         }
     }
-    setup_flow::platform()
+    setup_flow::platform(false)
 }
 
 /// The service is a detached child, never registered with the system (`ChildServiceManager`).

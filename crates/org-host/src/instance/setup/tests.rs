@@ -12,8 +12,11 @@ fn listen(port: u16) -> ListenConfig {
 fn input(root: PathBuf) -> Input {
     Input {
         version: 1,
+        service: Service::Registered,
         root,
+        credentials: None,
         listen: listen(7420),
+        certificate: None,
     }
 }
 fn pin() -> ReleasePin {

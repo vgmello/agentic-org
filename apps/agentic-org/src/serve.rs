@@ -6,12 +6,19 @@
 //! ```text
 //! agentic-org serve [--version]
 //! agentic-org serve --name <instance>
+//! agentic-org serve --setup <file> [--name <instance>]
 //! agentic-org serve [--home <absolute path>] [--server-bin <path>] [--app-team-id <team id>]   (debug builds)
 //! ```
 //! `--name` serves the registered instance setup reserved under that name ([`Host::start_registered`]):
 //! it creates the instance's host registry at its first start and answers the administrator
 //! link calls. It is accepted by both builds and excludes `--home`. A release build without a
 //! pinned runtime release refuses at runtime admission, before any custody is opened.
+//! `--setup` is the foreground mode, a container's command (ADR-0017 decision 10): when the
+//! instance is not set up yet it first runs the non-interactive, offline setup of that file
+//! (`agentic-org setup --non-interactive --config <file>`), which changes nothing on a later
+//! start, and then serves the instance as `--name` does. The file's service mode must be
+//! `foreground`: nothing is registered, and this process is the service. It is accepted by
+//! both builds and excludes `--home`.
 //! **A release build trusts only what it was built with** ([`Config::trusted`]): the app's
 //! bundle id and team id (`ORG_APP_TEAM_ID` at build time; without it no signed app can use
 //! `office.app_token` or `office.restart`, logged loudly), its Keychain access group
@@ -40,9 +47,9 @@ use std::path::PathBuf;
 use org_host::signals::ShutdownSignals;
 use org_host::{Config, Host};
 
-const USAGE: &str = "usage: agentic-org serve [--version] | --name <instance> | (debug builds \
-                     only) [--home <absolute path>] [--server-bin <path>] [--app-team-id <team \
-                     id>]";
+const USAGE: &str = "usage: agentic-org serve [--version] | --name <instance> | --setup <file> \
+                     [--name <instance>] | (debug builds only) [--home <absolute path>] \
+                     [--server-bin <path>] [--app-team-id <team id>]";
 
 /// Which kind of build this is: a release build refuses the arguments that change what it
 /// trusts.
@@ -68,6 +75,8 @@ struct Args {
     version: bool,
     /// The registered instance to serve.
     name: Option<String>,
+    /// The foreground mode: the setup configuration to apply first.
+    setup: Option<PathBuf>,
     home: Option<PathBuf>,
     server_bin: Option<PathBuf>,
     app_team_id: Option<String>,
@@ -94,6 +103,18 @@ fn run_as(
     may_run_the_service()?;
     // Before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
+    // The foreground mode: set the instance up from the file if it is not set up yet. A
+    // stop signal that arrives meanwhile stays pending and ends the service below.
+    if let Some(file) = &args.setup {
+        if !crate::setup::configured(file, args.name.as_deref())? {
+            return Err(format!(
+                "{} sets up a registered service, which its service manager runs; serve \
+                 --setup is the foreground mode and needs \"service\": \"foreground\"",
+                file.display()
+            ));
+        }
+    }
+    let registered = args.name.is_some() || args.setup.is_some();
     let name = args.name.clone();
     #[cfg_attr(not(debug_assertions), allow(unused_mut))]
     let mut config = config(args)?;
@@ -102,14 +123,15 @@ fn run_as(
     {
         config.dev_app_path = dev_cli_peer(
             Build::CURRENT,
-            name.is_some(),
+            registered,
             config.dev_app_path.take(),
             || std::env::current_exe().ok(),
         );
     }
-    let host = match name {
-        Some(name) => Host::start_registered(config, Some(&name)),
-        None => Host::start(config),
+    let host = if registered {
+        Host::start_registered(config, name.as_deref())
+    } else {
+        Host::start(config)
     }
     .map_err(|e| e.to_string())?;
     let waited = signals.wait();
@@ -163,6 +185,7 @@ fn config(args: Args) -> Result<Config, String> {
         None => org_host::default_server_program()
             .map_err(|e| format!("finding the office server: {e}"))?,
     };
+    let foreground = args.setup.is_some();
     let mut config = Config::new(home, server_bin);
     config.set_app_team_id(
         args.app_team_id
@@ -178,6 +201,18 @@ fn config(args: Args) -> Result<Config, String> {
         ),
         _ => None,
     };
+    // The foreground mode's first start in a development image: the development key folder
+    // is inside the mounted secrets volume, which is empty then. Only the folder itself is
+    // made, owner-only; its parent is the volume setup has just checked.
+    if let (true, Some(dir)) = (foreground, &config.dev_key_dir) {
+        use std::os::unix::fs::DirBuilderExt;
+        match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                return Err(format!("making the development key folder: {e}"));
+            }
+            _ => {}
+        }
+    }
     Ok(config)
 }
 
@@ -200,6 +235,15 @@ fn parse_args(args: impl IntoIterator<Item = String>, build: Build) -> Result<Ar
             }
             continue;
         }
+        if arg == "--setup" {
+            let value = args
+                .next()
+                .ok_or_else(|| format!("--setup needs a file\n{USAGE}"))?;
+            if parsed.setup.replace(PathBuf::from(value)).is_some() {
+                return Err(format!("--setup may be given once\n{USAGE}"));
+            }
+            continue;
+        }
         let known = ["--home", "--server-bin", "--app-team-id"];
         if !known.contains(&arg.as_str()) {
             return Err(format!("unexpected argument {arg:?}\n{USAGE}"));
@@ -219,9 +263,10 @@ fn parse_args(args: impl IntoIterator<Item = String>, build: Build) -> Result<Ar
             _ => parsed.app_team_id = Some(value),
         }
     }
-    if parsed.name.is_some() && parsed.home.is_some() {
+    if (parsed.name.is_some() || parsed.setup.is_some()) && parsed.home.is_some() {
         return Err(format!(
-            "--name and --home can't be combined: a registered instance has its own home\n{USAGE}"
+            "--name and --setup can't be combined with --home: a registered instance has its \
+             own home\n{USAGE}"
         ));
     }
     Ok(parsed)
@@ -297,6 +342,7 @@ mod tests {
             Args {
                 version: false,
                 name: None,
+                setup: None,
                 home: Some("/tmp/h".into()),
                 server_bin: Some("srv".into()),
                 app_team_id: Some("AB12CD34EF".into()),
@@ -358,6 +404,28 @@ mod tests {
         let parsed =
             parse_args(args(&["--name", "a", "--server-bin", "srv"]), Build::Debug).unwrap();
         assert_eq!(parsed.server_bin, Some("srv".into()));
+    }
+
+    #[test]
+    fn both_builds_take_one_setup_file_with_or_without_a_name_and_never_with_home() {
+        for build in [Build::Debug, Build::Release] {
+            let parsed = parse_args(args(&["--setup", "/etc/s.json"]), build).unwrap();
+            assert_eq!(parsed.setup, Some("/etc/s.json".into()));
+            assert_eq!(parsed.name, None);
+            let parsed =
+                parse_args(args(&["--name", "lab", "--setup", "/etc/s.json"]), build).unwrap();
+            assert_eq!(
+                (parsed.name.as_deref(), parsed.setup),
+                (Some("lab"), Some("/etc/s.json".into()))
+            );
+            let err = parse_args(args(&["--setup"]), build).unwrap_err();
+            assert!(err.contains("needs a file"), "{err}");
+            let err = parse_args(args(&["--setup", "a", "--setup", "b"]), build).unwrap_err();
+            assert!(err.contains("once"), "{err}");
+        }
+        let err =
+            parse_args(args(&["--setup", "/s", "--home", "/tmp/h"]), Build::Debug).unwrap_err();
+        assert!(err.contains("can't be combined"), "{err}");
     }
 
     #[test]

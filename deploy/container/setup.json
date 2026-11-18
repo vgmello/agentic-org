@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "service": "foreground",
+  "root": "/data/instance",
+  "credentials": "/secrets",
+  "listen": {
+    "address": "0.0.0.0",
+    "port": 8443,
+    "scheme": "https",
+    "origin": "https://localhost:8443",
+    "hsts": "off"
+  }
+}

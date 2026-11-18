@@ -1,5 +1,8 @@
 //! Bounded nonsecret setup continuation. No password/session/custody bytes, no account and
-//! no organization: setup asks for none (A2). The frozen input is the root and the address;
+//! no organization: setup asks for none (A2). The frozen input is the service mode, the
+//! root, the address and, where a file gave them, the credential directory and the paths
+//! of a listener certificate; the same input, as a strict JSON file, is the configuration
+//! of non-interactive setup (`setup --non-interactive --config`, `serve --setup`);
 //! progress only moves forward, in the order the setup flow takes it:
 //! instance reserved (`instance_id`), service registered, registry created by the service
 //! host at its first start (D1), initial registration link issued (at most once).
@@ -20,13 +23,43 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 const FILE: &str = "setup.v1.json";
 const LIMIT: usize = 64 * 1024;
+/// Who starts and restarts the instance (Linux host design section 3.4). It is data in the
+/// configuration: nothing detects a container.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Service {
+    /// The account's service manager (launchd, a systemd user unit).
+    Registered,
+    /// Nothing is registered: whoever runs `agentic-org serve` is the supervisor (a
+    /// container runtime). The credential directory is then a mounted volume.
+    Foreground,
+}
+
+/// Where an operator placed the listener's certificate chain and private key (PEM). Paths
+/// only: the pair itself is never in a configuration or a record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Certificate {
+    pub chain: PathBuf,
+    pub key: PathBuf,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
     pub version: u32,
+    pub service: Service,
     pub root: PathBuf,
+    /// The credential directory, where the configuration names it: required in the
+    /// foreground mode on a system that keeps a host's secrets in a directory, optional in
+    /// the registered mode (setup then makes it in the account's state folder), and
+    /// refused on a system that keeps them elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<PathBuf>,
     #[serde(deserialize_with = "strict_listen")]
     pub listen: ListenConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<Certificate>,
 }
 fn strict_listen<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ListenConfig, D::Error> {
     #[derive(Deserialize, Serialize)]
@@ -45,29 +78,101 @@ fn strict_listen<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ListenConfig,
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 impl Input {
+    /// What every input must satisfy, whoever wrote it. The rules that depend on the
+    /// system (whether it keeps secrets in a directory) are [`Input::fits`].
     pub fn validate(&self) -> Result<(), Error> {
-        if self.version != 1 || super::directory::absolute(&self.root)? != self.root {
+        // Spelled exactly as it is walked: the bytes are compared, since two spellings of
+        // one path are equal as paths.
+        let spelled = |path: &Path| {
+            super::directory::absolute(path)
+                .ok()
+                .is_some_and(|normal| normal.as_os_str() == path.as_os_str())
+        };
+        if self.version != 1 || !spelled(&self.root) {
             return Err(Error::Invalid("invalid version-1 setup configuration"));
         }
-        // The existing actual gateway composition only supports this profile.
-        if self.listen.scheme() != org_host_control::listen::ListenMode::HttpLoopback
-            || self
-                .listen
-                .origin()
-                .check(
-                    self.listen.scheme(),
-                    self.listen.address(),
-                    self.listen.port(),
-                )
-                .is_err()
+        if self
+            .credentials
+            .as_deref()
+            .is_some_and(|path| !spelled(path))
         {
             return Err(Error::Invalid(
-                "this setup adapter requires valid loopback HTTP; HTTPS setup is unavailable",
+                "the credential directory must be an absolute, normalized path",
             ));
+        }
+        // Loopback HTTP, or HTTPS on any address: the two listeners the web process has.
+        // Plain HTTP off loopback is not a listener (`ListenOrigin::check`).
+        if self
+            .listen
+            .origin()
+            .check(
+                self.listen.scheme(),
+                self.listen.address(),
+                self.listen.port(),
+            )
+            .is_err()
+        {
+            return Err(Error::Invalid(
+                "the listener must be loopback HTTP on its own address, or HTTPS, with an \
+                 origin that names its scheme and port",
+            ));
+        }
+        if let Some(certificate) = &self.certificate {
+            if self.listen.scheme() != org_host_control::listen::ListenMode::Https {
+                return Err(Error::Invalid(
+                    "a certificate is for an HTTPS listener; this one is loopback HTTP",
+                ));
+            }
+            if !spelled(&certificate.chain) || !spelled(&certificate.key) {
+                return Err(Error::Invalid(
+                    "the certificate chain and key must be absolute, normalized paths",
+                ));
+            }
         }
         Ok(())
     }
+
+    /// Whether this input fits a system whose protected store for a release build is
+    /// `store` (`None`: it has none), pure. A directory is named only where the system
+    /// keeps secrets in one, and the foreground mode needs it named there: a container has
+    /// no account state folder to derive one from.
+    pub fn fits(&self, store: Option<ProtectedStore>) -> Result<(), &'static str> {
+        match (store, self.service, self.credentials.is_some()) {
+            (Some(ProtectedStore::ReleaseDirectory), Service::Foreground, false) => Err(
+                "the foreground mode needs \"credentials\": the absolute path of the mounted \
+                 secrets volume",
+            ),
+            (Some(ProtectedStore::ReleaseDirectory), _, _) => Ok(()),
+            (_, _, true) => Err(
+                "\"credentials\" names a directory, and this system does not keep a host's \
+                 secrets in one; remove it",
+            ),
+            (_, _, false) => Ok(()),
+        }
+    }
+
+    /// The configuration of non-interactive setup: this input as one strict JSON object,
+    /// at most [`LIMIT`] bytes. Unknown and repeated properties are refused, and so is
+    /// any version but 1.
+    pub fn from_configuration(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() > LIMIT {
+            return Err(Error::Invalid("the setup configuration is too large"));
+        }
+        let input: Input =
+            serde_json::from_slice(bytes).map_err(|_| Error::Invalid(CONFIGURATION_SHAPE))?;
+        input.validate()?;
+        Ok(input)
+    }
 }
+
+/// What a configuration that does not parse is told: the whole shape, since a strict
+/// reader cannot say which property a person meant.
+pub(crate) const CONFIGURATION_SHAPE: &str = "the setup configuration is not valid: it is one \
+     JSON object with \"version\": 1, \"service\": \"registered\" or \"foreground\", \"root\": an \
+     absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"http_loopback\" or \"https\", \
+     \"origin\", \"hsts\": \"off\", \"on\" or \"clear\"}, and optionally \"credentials\": an \
+     absolute path and \"certificate\": {\"chain\", \"key\"}: two absolute paths; no other \
+     property is accepted";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Record {
@@ -104,6 +209,14 @@ impl Record {
             {
                 return Err(Error::Invalid(
                     "the credential directory must be an absolute, normalized path",
+                ));
+            }
+        }
+        // A directory the configuration names is the one that is recorded.
+        if let (Some(configured), Some(recorded)) = (&self.input.credentials, &self.credentials) {
+            if configured != recorded {
+                return Err(Error::Unsafe(
+                    "the recorded credential directory is not the configured one",
                 ));
             }
         }

@@ -51,8 +51,11 @@ impl Fixture {
         let journal = Journal::open(&self.base, None).unwrap();
         let input = Input {
             version: 1,
+            service: crate::instance::setup::Service::Registered,
             root: self.base.join("instance"),
+            credentials: None,
             listen,
+            certificate: None,
         };
         let pin = ReleasePin {
             release_id: "fixture-1".into(),

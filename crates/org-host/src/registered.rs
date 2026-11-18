@@ -127,9 +127,8 @@ impl Host {
             crate::release_store::Facts {
                 recorded: record.credentials.as_deref(),
                 data_root: instance.root_descriptor(),
-                // The setup record has no service mode yet: increment X5 adds it, and with it
-                // the foreground mode of a container, where the directory must be a mount.
-                foreground: false,
+                // In the foreground mode (a container) the directory is a mounted volume.
+                foreground: record.input.service == crate::instance::setup::Service::Foreground,
                 expect_items: crate::release_store::records_say_keys_exist(
                     &layout_paths.office_home,
                 )

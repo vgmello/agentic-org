@@ -29,6 +29,12 @@ path = "setup-tests/setup.rs"
 name = "shutdown_signals"
 harness = false
 
+# The office the LNX-2 container test's worker serves; `deploy/container/lnx2.sh` copies the
+# built program into the container (ADR-0017 LNX-2). Not a test by itself.
+[[example]]
+name = "lnx2-office"
+path = "tests/lnx2/office.rs"
+
 [dependencies]
 org-office-launch = { path = "../../crates/org-office-launch", optional = true }
 org-socket = { path = "../../crates/org-socket", optional = true }

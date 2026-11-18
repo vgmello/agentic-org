@@ -40,7 +40,7 @@ use org_proto::{Hello, HelloParams};
 
 use crate::human::Wire;
 use crate::instance::registry::Registry;
-use crate::instance::setup::{Input, Journal, Paths, Record};
+use crate::instance::setup::{Input, Journal, Paths, Record, Service};
 use crate::release::ReleasePin;
 
 #[cfg(all(feature = "test-support", debug_assertions))]
@@ -121,27 +121,68 @@ pub(crate) fn make_credential_directory(
         return Err(NO_PATH.into());
     }
     let base = crate::instance::setup::normalized(base).map_err(|_| NO_PATH.to_owned())?;
-    let path = base.join(instance_id);
-    let made = store_directories::make(&path, data_root, judged_from)
-        .map_err(|refused| format!("the credential directory cannot be used: {refused}"))?;
-    // Open it once as the host does, so that a directory the host would refuse is refused
-    // now, with the same words, and not at the service's first start. No item is expected
-    // yet. A registered service's store is a directory of the account, not a mount.
-    match enter(org_platform_host::credentials::ReleaseDirectory {
-        path: &path,
+    // A registered service's store is a directory of the account, not a mount.
+    use_credential_directory(
+        &base.join(instance_id),
+        false,
         data_root,
-        mount_point_required: false,
+        judged_from,
+        enter,
+    )
+}
+
+/// The credential directory at exactly `path` (absolute and normalized), checked as the
+/// host will check it at every start, and returned for the record.
+///
+/// In the foreground mode (`mounted`) it is a mounted volume: setup never makes it, and
+/// without a mount at the path it refuses. Otherwise the directories that are missing are
+/// made first, below ancestors that were judged, and taken away again when the check
+/// refuses. No item is expected yet.
+pub(crate) fn use_credential_directory(
+    path: &Path,
+    mounted: bool,
+    data_root: std::os::fd::BorrowedFd<'_>,
+    judged_from: &Path,
+    enter: impl FnOnce(
+        org_platform_host::credentials::ReleaseDirectory<'_>,
+    ) -> Result<
+        org_platform_host::credentials::ReleaseRoot,
+        org_platform_host::credentials::CredentialError,
+    >,
+) -> Result<PathBuf, String> {
+    let made = if mounted {
+        None
+    } else {
+        Some(
+            store_directories::make(path, Some(data_root), judged_from)
+                .map_err(|refused| format!("the credential directory cannot be used: {refused}"))?,
+        )
+    };
+    // Open it once as the host does, so that a directory the host would refuse is refused
+    // now, with the same words, and not at the service's first start.
+    match enter(org_platform_host::credentials::ReleaseDirectory {
+        path,
+        data_root,
+        mount_point_required: mounted,
         expect_items: false,
     }) {
         Ok(root) => drop(root),
         Err(refused) => {
-            made.remove();
+            if let Some(made) = made {
+                made.remove();
+            }
+            let hint = if mounted {
+                "; in the foreground mode it is a mounted volume that belongs to the service \
+                 user with mode 700, and setup does not make it"
+            } else {
+                ""
+            };
             return Err(format!(
-                "the credential directory cannot be used: {refused}"
+                "the credential directory cannot be used: {refused}{hint}"
             ));
         }
     }
-    Ok(path)
+    Ok(path.to_owned())
 }
 
 /// INTERIM, in one place (X3 review, finding S4): making the directories of a credential
@@ -235,10 +276,11 @@ mod store_directories {
 
     /// Makes the directories of `path` that are missing, below ancestors judged first (see
     /// the module). `path` is absolute and normalized, and `judged_from` is `path` or above
-    /// it. A refusal names the directory and the rule, and nothing was made.
+    /// it. `data_root`, when given, is a directory the path must not pass through. A
+    /// refusal names the directory and the rule, and nothing was made.
     pub(super) fn make(
         path: &Path,
-        data_root: BorrowedFd<'_>,
+        data_root: Option<BorrowedFd<'_>>,
         judged_from: &Path,
     ) -> Result<Made, String> {
         use std::os::fd::AsFd;
@@ -246,12 +288,15 @@ mod store_directories {
         let rest = path
             .strip_prefix(judged_from)
             .map_err(|_| format!("{}: is not below {}", path.display(), judged_from.display()))?;
-        let data = status(data_root).map_err(|e| format!("the data root: {e}"))?;
+        let data = data_root
+            .map(|root| status(root).map(|found| (found.st_dev, found.st_ino)))
+            .transpose()
+            .map_err(|e| format!("the data root: {e}"))?;
         // SAFETY: geteuid has no preconditions and cannot fail.
         let user = unsafe { libc::geteuid() };
         let judge = |at: &Path, fd: &OwnedFd| -> Result<(), String> {
             let found = status(fd.as_fd()).map_err(|e| os(at, e))?;
-            let rule = if (found.st_dev, found.st_ino) == (data.st_dev, data.st_ino) {
+            let rule = if Some((found.st_dev, found.st_ino)) == data {
                 "is inside the data root"
             } else if found.st_uid != 0 && found.st_uid != user {
                 "is owned by another user"
@@ -339,6 +384,54 @@ pub struct Request<'a> {
     pub env: Vec<(OsString, OsString)>,
     /// Whether `out` is a terminal. The one-time link is printed only to a terminal.
     pub terminal: bool,
+    /// Non-interactive setup: the whole input comes from a file, nothing is asked, `port`
+    /// and `prompt` are not used, and no link is asked for or printed (ADR-0022, UX §4a.2).
+    pub configuration: Option<Configuration>,
+}
+
+/// The configuration of non-interactive, offline setup (`setup --non-interactive --config
+/// <file>`, `serve --setup <file>`): the setup record's own input, read from a strict JSON
+/// file. See [`configuration`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Configuration(Input);
+
+impl Configuration {
+    /// Whether the instance runs in the foreground, with nothing registered.
+    pub fn foreground(&self) -> bool {
+        self.0.service == Service::Foreground
+    }
+}
+
+/// Reads the setup configuration at `path`: one JSON object, version 1, strict (an
+/// unknown or repeated property is refused), at most 64 KiB. Its properties:
+///
+/// - `version`: `1`.
+/// - `service`: `"registered"` (the account's service manager) or `"foreground"` (nothing
+///   is registered; whoever runs `agentic-org serve --setup` is the supervisor).
+/// - `root`: the instance's data folder, absolute.
+/// - `credentials`: the directory that holds the host's secrets, absolute. Required with
+///   `foreground` on a system that keeps them in a directory (Linux), where it must be a
+///   mounted volume that setup never makes; refused on a system that keeps them in the
+///   Keychain.
+/// - `listen`: `address`, `port`, `scheme` (`"http_loopback"` or `"https"`), `origin` and
+///   `hsts` (`"off"`, `"on"`, `"clear"`), as the instance stores them.
+/// - `certificate` (optional, HTTPS only): `chain` and `key`, the absolute paths of the
+///   listener's certificate chain and private key.
+///
+/// Nothing is created or changed by reading it.
+pub fn configuration(path: &Path) -> Result<Configuration, String> {
+    use std::io::Read;
+    let shown = path.display();
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(64 * 1024 + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("reading the setup configuration {shown}: {e}"))?;
+    let input = Input::from_configuration(&bytes)
+        .map_err(|e| format!("{shown}: {e}; nothing was changed"))?;
+    input
+        .fits(org_platform_host::credentials::protected_store().ok())
+        .map_err(|why| format!("{shown}: {why}; nothing was changed"))?;
+    Ok(Configuration(input))
 }
 
 fn fail(context: &str, why: impl std::fmt::Display) -> String {
@@ -545,16 +638,19 @@ fn say(out: &mut dyn Write, line: impl std::fmt::Display) -> Result<(), String> 
 }
 
 /// The platform's own adapters: the account's service manager and disk-encryption probe.
-/// Systems without them refuse here, before anything is changed.
-pub fn platform() -> Result<Platform, String> {
+/// Systems without them refuse here, before anything is changed. `foreground` composes
+/// the manager that registers nothing, which every system has.
+pub fn platform(foreground: bool) -> Result<Platform, String> {
+    use org_platform::service::ServiceMode;
     let home = crate::home::account_dir().ok_or("the account home folder is unavailable")?;
     let refused = |e: org_platform::Refused| e.to_string();
+    let mode = if foreground {
+        ServiceMode::Foreground
+    } else {
+        ServiceMode::Registered
+    };
     Ok(Platform {
-        service: org_platform::service::service(
-            org_platform::service::ServiceMode::Registered,
-            &home,
-        )
-        .map_err(refused)?,
+        service: org_platform::service::service(mode, &home).map_err(refused)?,
         disk: org_platform::disk::disk_encryption().map_err(refused)?,
         credentials: CredentialDirectory::for_host(&home)?,
     })
@@ -564,8 +660,59 @@ pub fn platform() -> Result<Platform, String> {
 pub fn run(platform: &Platform, request: Request<'_>, out: &mut dyn Write) -> Result<(), String> {
     // A release build without a pinned runtime refuses before any path is resolved or made.
     release_pin()?;
+    service_gate(platform, &request)?;
+    account_folders()?;
     let paths = crate::human::paths(request.name.as_deref())?;
     run_at(&paths, platform, request, out)
+}
+
+/// A system whose service manager does not answer (a Linux machine or container without a
+/// systemd user manager) is refused before anything is made or saved, with the way to run
+/// without one. The foreground mode never asks a service manager anything.
+fn service_gate(platform: &Platform, request: &Request<'_>) -> Result<(), String> {
+    if request
+        .configuration
+        .as_ref()
+        .is_some_and(Configuration::foreground)
+    {
+        return Ok(());
+    }
+    platform.service.available().map_err(no_service_manager)
+}
+
+/// Makes the account's own folders that the instance locations need and that a fresh
+/// account does not have: the folder the application base is in and the user temp base,
+/// where the system puts them below the account's home (on Linux `~/.local/share` and
+/// `~/.cache/agentic-org/tmp`; an account or a container's service user that never ran a
+/// desktop session has neither). Each missing folder is made with mode 700, one component
+/// at a time below the home, without following a link. A location outside the home (the
+/// system's own temp folder on macOS, an `XDG_*` variable that points elsewhere) is left
+/// to exist or not, and a development base makes its own folders.
+fn account_folders() -> Result<(), String> {
+    if std::env::var_os(crate::human::DEV_ACCOUNT_BASE).is_some_and(|base| !base.is_empty()) {
+        return Ok(());
+    }
+    let Some(home) = crate::home::account_dir() else {
+        return Ok(());
+    };
+    let Ok(home) = crate::instance::setup::normalized(&home) else {
+        return Ok(());
+    };
+    let base = org_platform::dirs::application_base(&home).ok();
+    let wanted = [
+        base.as_deref().and_then(Path::parent).map(Path::to_owned),
+        org_platform::dirs::user_temp_base(&home).ok(),
+    ];
+    for folder in wanted.into_iter().flatten() {
+        let Ok(folder) = crate::instance::setup::normalized(&folder) else {
+            continue;
+        };
+        if folder.starts_with(&home) {
+            store_directories::make(&folder, None, &home)
+                .map_err(|refused| format!("preparing this account's folders: {refused}"))?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn run_at(
@@ -578,14 +725,29 @@ pub(crate) fn run_at(
     // container without a systemd user manager) is refused here, before anything is saved,
     // with the way to run without one.
     let pin = release_pin()?;
-    platform.service.available().map_err(no_service_manager)?;
+    service_gate(platform, &request)?;
     let name = request.name.as_deref();
     let shown = name.unwrap_or("default");
     say(out, format!("Setting up instance \"{shown}\"."))?;
 
     // 2. Lock and freeze the record. The address is decided before anything is written.
     let journal = Journal::open(&paths.base, name).map_err(|e| fail("opening setup", e))?;
+    let configured = request
+        .configuration
+        .take()
+        .map(|Configuration(input)| input);
     let mut record = match journal.read().map_err(|e| fail("reading setup", e))? {
+        Some(record)
+            if configured
+                .as_ref()
+                .is_some_and(|input| *input != record.input) =>
+        {
+            return Err(format!(
+                "instance \"{shown}\" was set up with a different configuration (service \
+                 mode, data folder, credential directory, address or certificate); its \
+                 configuration does not change on a later run; nothing was changed"
+            ));
+        }
         Some(record) => {
             if request
                 .port
@@ -598,6 +760,13 @@ pub(crate) fn run_at(
                 ));
             }
             record
+        }
+        None if configured.is_some() => {
+            // Offline: nothing is asked and nothing is fetched. The address is the file's.
+            let input = configured.expect("checked above");
+            journal
+                .freeze(input, true, pin)
+                .map_err(|e| fail("saving setup", e))?
         }
         None => {
             let saved = saved_ports(paths, name);
@@ -614,8 +783,11 @@ pub(crate) fn run_at(
                 .map_err(|e| fail("preparing the instance folder", e))?;
             let input = Input {
                 version: 1,
+                service: Service::Registered,
                 root,
+                credentials: None,
                 listen: loopback(port)?,
+                certificate: None,
             };
             journal
                 .freeze(input, false, pin)
@@ -663,15 +835,25 @@ pub(crate) fn run_at(
                     .map_err(|e| fail("preparing the instance folder", e))?;
                 // While the root lock is held: the directory is checked against the root
                 // itself, and recorded together with the instance it belongs to.
-                if let CredentialDirectory::Below(base) = &platform.credentials {
-                    record.credentials = Some(make_credential_directory(
+                record.credentials = match (&record.input.credentials, &platform.credentials) {
+                    // The configuration names it. In the foreground mode it is a mounted
+                    // volume, which setup never makes.
+                    (Some(configured), _) => Some(use_credential_directory(
+                        configured,
+                        record.input.service == Service::Foreground,
+                        instance.root_descriptor(),
+                        Path::new("/"),
+                        org_platform_host::credentials::release_directory,
+                    )?),
+                    (None, CredentialDirectory::Below(base)) => Some(make_credential_directory(
                         base,
                         instance.id(),
                         instance.root_descriptor(),
                         Path::new("/"),
                         org_platform_host::credentials::release_directory,
-                    )?);
-                }
+                    )?),
+                    (None, CredentialDirectory::Unused) => None,
+                };
                 (
                     instance.id().to_owned(),
                     instance.temp_folder().join("host.sock"),
@@ -699,7 +881,20 @@ pub(crate) fn run_at(
         say(out, line)?;
     }
 
-    // 5. The service: registered, and started unless it already runs.
+    // 5. The service. In the foreground mode nothing is registered, started or waited
+    // for, and no link is asked for: whoever runs `serve` is the supervisor, and the
+    // administrator's first link comes from `admin reset`.
+    if record.input.service == Service::Foreground {
+        return say(
+            out,
+            format!(
+                "Service: none is registered (foreground mode). Instance \"{shown}\" runs \
+                 while agentic-org serve --setup <file> runs. For the administrator's \
+                 registration link, run: {}",
+                reset_hint(name)
+            ),
+        );
+    }
     let service_id = service_id(&instance_id);
     let unit = Unit {
         instance_id: service_id.clone(),
@@ -984,9 +1179,30 @@ pub fn service(
     action: ServiceAction,
     out: &mut dyn Write,
 ) -> Result<(), String> {
-    let (_, id, _) = registered(&crate::human::paths(name)?, name)?;
-    let id = service_id(&id);
+    let (record, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let shown = name.unwrap_or("default");
+    if record.input.service == Service::Foreground {
+        // Nothing is registered: the service manager is not asked. Whether the instance
+        // runs is what its own socket says.
+        return match action {
+            ServiceAction::Status => say(
+                out,
+                match connect(&socket, &id) {
+                    Ok(_) => "running in the foreground (no service is registered)",
+                    Err(_) => {
+                        "not running (foreground mode: it runs while agentic-org serve --setup \
+                         <file> runs)"
+                    }
+                },
+            ),
+            ServiceAction::Start | ServiceAction::Stop => Err(format!(
+                "instance \"{shown}\" runs in the foreground and has no registered service: \
+                 whoever runs agentic-org serve --setup <file> starts and stops it (in a \
+                 container, the container runtime)"
+            )),
+        };
+    }
+    let id = service_id(&id);
     match action {
         ServiceAction::Start => {
             manager
