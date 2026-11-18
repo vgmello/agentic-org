@@ -403,14 +403,15 @@ fn only_a_regular_file_that_the_service_user_or_root_alone_can_write_is_read() {
     };
     // Whatever the private group is: it is not asked for a file its group cannot write.
     let not_asked = || -> Option<libc::gid_t> { panic!("the private group was asked for") };
+    let no_acl_asked = || -> Option<bool> { panic!("the access ACL was asked for") };
     for mode in [0o755, 0o700, 0o555, 0o500, 0o644] {
         assert_eq!(
-            image::fit(file(regular(mode), USER), USER, not_asked),
+            image::fit(file(regular(mode), USER), USER, not_asked, no_acl_asked),
             Ok(()),
             "{mode:o}"
         );
         assert_eq!(
-            image::fit(file(regular(mode), 0), USER, not_asked),
+            image::fit(file(regular(mode), 0), USER, not_asked, no_acl_asked),
             Ok(()),
             "{mode:o} of root"
         );
@@ -419,7 +420,12 @@ fn only_a_regular_file_that_the_service_user_or_root_alone_can_write_is_read() {
     for mode in [0o757, 0o777, 0o702, 0o776, 0o722] {
         for owner in [USER, 0] {
             assert_eq!(
-                image::fit(file(regular(mode), owner), USER, || Some(GROUP)),
+                image::fit(
+                    file(regular(mode), owner),
+                    USER,
+                    || Some(GROUP),
+                    no_acl_asked
+                ),
                 Err(ImageRefusal::UnsafeFile("is writable by others")),
                 "{mode:o} of {owner}"
             );
@@ -428,14 +434,19 @@ fn only_a_regular_file_that_the_service_user_or_root_alone_can_write_is_read() {
     for owner in [1001, 65534] {
         for mode in [0o755, 0o775] {
             assert_eq!(
-                image::fit(file(regular(mode), owner), USER, || Some(GROUP)),
+                image::fit(
+                    file(regular(mode), owner),
+                    USER,
+                    || Some(GROUP),
+                    no_acl_asked
+                ),
                 Err(ImageRefusal::UnsafeFile("is owned by another user")),
                 "{owner} {mode:o}"
             );
         }
     }
     // Root as the service user trusts no other owner either.
-    assert!(image::fit(file(regular(0o755), USER), 0, not_asked).is_err());
+    assert!(image::fit(file(regular(0o755), USER), 0, not_asked, no_acl_asked).is_err());
     for kind in [
         libc::S_IFDIR,
         libc::S_IFLNK,
@@ -445,7 +456,7 @@ fn only_a_regular_file_that_the_service_user_or_root_alone_can_write_is_read() {
         libc::S_IFBLK,
     ] {
         assert_eq!(
-            image::fit(file(kind | 0o755, USER), USER, not_asked),
+            image::fit(file(kind | 0o755, USER), USER, not_asked, no_acl_asked),
             Err(ImageRefusal::UnsafeFile("is not a regular file")),
             "{kind:o}"
         );
@@ -464,6 +475,8 @@ fn a_group_writable_file_is_read_only_as_the_service_users_own_in_its_private_gr
     let refused = Err(ImageRefusal::UnsafeFile(
         "is writable by a group that is not its owner's private group",
     ));
+    // The ACL is asked for only once the private group has admitted the file.
+    let no_acl_asked = || -> Option<bool> { panic!("the access ACL was asked for") };
     let file = |mode, owner, group| image::PinnedFile {
         mode: libc::S_IFREG | mode,
         owner,
@@ -472,20 +485,25 @@ fn a_group_writable_file_is_read_only_as_the_service_users_own_in_its_private_gr
     for mode in [0o775, 0o664, 0o770, 0o720] {
         // The user's own file in the user's private group.
         assert_eq!(
-            image::fit(file(mode, USER, GROUP), USER, || Some(GROUP)),
+            image::fit(
+                file(mode, USER, GROUP),
+                USER,
+                || Some(GROUP),
+                || Some(false)
+            ),
             Ok(()),
             "{mode:o}"
         );
         // The user has no private group: its primary group has another member, is
         // shared, or has no entry.
         assert_eq!(
-            image::fit(file(mode, USER, GROUP), USER, || None),
+            image::fit(file(mode, USER, GROUP), USER, || None, no_acl_asked),
             refused,
             "{mode:o}"
         );
         // Another group than the private one.
         assert_eq!(
-            image::fit(file(mode, USER, 27), USER, || Some(GROUP)),
+            image::fit(file(mode, USER, 27), USER, || Some(GROUP), no_acl_asked),
             refused,
             "{mode:o}"
         );
@@ -493,25 +511,49 @@ fn a_group_writable_file_is_read_only_as_the_service_users_own_in_its_private_gr
         // and without asking.
         for group in [0, GROUP] {
             assert_eq!(
-                image::fit(file(mode, 0, group), USER, || -> Option<libc::gid_t> {
-                    panic!("the private group was asked for a file of root")
-                }),
+                image::fit(
+                    file(mode, 0, group),
+                    USER,
+                    || -> Option<libc::gid_t> {
+                        panic!("the private group was asked for a file of root")
+                    },
+                    no_acl_asked
+                ),
                 refused,
                 "{mode:o} of root in {group}"
             );
         }
         // Root as the service user: its own files are never group-writable.
         assert_eq!(
-            image::fit(file(mode, 0, 0), 0, || Some(0)),
+            image::fit(file(mode, 0, 0), 0, || Some(0), no_acl_asked),
             refused,
             "{mode:o}"
         );
     }
     // Others' write access is refused first, whatever the group is.
     assert_eq!(
-        image::fit(file(0o777, USER, GROUP), USER, || Some(GROUP)),
+        image::fit(file(0o777, USER, GROUP), USER, || Some(GROUP), no_acl_asked),
         Err(ImageRefusal::UnsafeFile("is writable by others"))
     );
+    // Admitted by the private group, the file carries no access ACL: with one, the
+    // group's write bit is the ACL's mask, and another user may be the writer. An ACL
+    // that could not be read is not known to be absent.
+    for mode in [0o775, 0o664] {
+        assert_eq!(
+            image::fit(file(mode, USER, GROUP), USER, || Some(GROUP), || Some(true)),
+            Err(ImageRefusal::UnsafeFile(
+                "is writable by its group and carries an access control list"
+            )),
+            "{mode:o}"
+        );
+        assert_eq!(
+            image::fit(file(mode, USER, GROUP), USER, || Some(GROUP), || None),
+            Err(ImageRefusal::UnsafeFile(
+                "is writable by its group, and its access control list could not be read"
+            )),
+            "{mode:o}"
+        );
+    }
 }
 
 #[test]
@@ -766,6 +808,31 @@ fn the_pinned_path_must_be_a_regular_file_of_this_user_or_root_that_no_one_else_
         ),
     }
     fs::set_permissions(&work.fixture, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A real access ACL on an image the private group admits: an entry for another
+    // user, with a mask that lets it write, so that the mode reads 0775. Who can write
+    // is then not what the mode says, and the image is refused. The file's owner may
+    // set the ACL, so this runs as any user; root's own group-writable file is refused
+    // for that already.
+    if !is_root() && private == Some(group) {
+        match crate::account::set_access_acl_for_test(&work.fixture, 65534, 7) {
+            Ok(()) => {
+                assert_eq!(fs::metadata(&work.fixture).unwrap().mode() & 0o777, 0o775);
+                assert_eq!(
+                    image_refusal(admission(development(&work.fixture))),
+                    ImageRefusal::UnsafeFile(
+                        "is writable by its group and carries an access control list"
+                    )
+                );
+                // With a mask that denies writing the mode reads 0755 again: the file
+                // needs no exception, and no entry of the ACL can write.
+                crate::account::set_access_acl_for_test(&work.fixture, 65534, 5).unwrap();
+                assert_eq!(fs::metadata(&work.fixture).unwrap().mode() & 0o777, 0o755);
+                assert!(admission(development(&work.fixture)).is_ok());
+            }
+            Err(error) => println!("skipped: this filesystem takes no ACL: {error}"),
+        }
+    }
 
     // A file of another user. Only root can make one: as any other user this test
     // cannot create the file, and the rule itself is tested in

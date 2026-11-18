@@ -75,17 +75,29 @@ pub(super) struct PinnedFile {
 /// It is owned by the service user or by root, and is never writable by others. It is
 /// writable by its group in one case only: the service user's own file whose group is
 /// that user's private group (`crate::account`), as everything a default Ubuntu
-/// account builds is (its file-creation mask is `0002`). Nobody else is in that group,
-/// so the file is as closed as one without the bit. A group-writable file of root is
-/// refused whatever its group is, and so is one of the service user when that user is
-/// root: root's files are not built under a user's mask.
+/// account builds is (its file-creation mask is `0002`). A group-writable file of
+/// root is refused whatever its group is, and so is one of the service user when that
+/// user is root: root's files are not built under a user's mask.
 ///
-/// `private_group` gives the service user's private group, if it has one. It is asked
-/// only when the answer decides.
+/// A file admitted by that exception carries no POSIX access ACL: with one, the
+/// group's write bit is the ACL's mask, and a user or a group the mode does not name
+/// may be the one who can write. An ACL that cannot be read is not known to be absent.
+///
+/// What "private" establishes is what `crate::account` says, and no more. The group
+/// is the user's primary group, has the user's name, and lists no other member. **An
+/// account that has the same group as its primary group is not detected** (accounts
+/// are not enumerated), and such an account can rewrite a group-writable image that a
+/// development build then runs. A release image is not subject to this: it is judged
+/// by its digest from the signed manifest, whoever could write the file.
+///
+/// `private_group` gives the service user's private group, if it has one, and
+/// `access_acl` whether the file carries an access ACL (`None`: it could not be read).
+/// Each is asked only when the answer decides.
 pub(super) fn fit(
     file: PinnedFile,
     service_user: libc::uid_t,
     private_group: impl FnOnce() -> Option<libc::gid_t>,
+    access_acl: impl FnOnce() -> Option<bool>,
 ) -> Result<(), ImageRefusal> {
     let PinnedFile { mode, owner, group } = file;
     if mode & libc::S_IFMT != libc::S_IFREG {
@@ -97,12 +109,25 @@ pub(super) fn fit(
     if mode & libc::S_IWOTH != 0 {
         return Err(ImageRefusal::UnsafeFile("is writable by others"));
     }
-    if mode & libc::S_IWGRP != 0
-        && (owner == 0 || owner != service_user || private_group() != Some(group))
-    {
-        return Err(ImageRefusal::UnsafeFile(
-            "is writable by a group that is not its owner's private group",
-        ));
+    if mode & libc::S_IWGRP != 0 {
+        if owner == 0 || owner != service_user || private_group() != Some(group) {
+            return Err(ImageRefusal::UnsafeFile(
+                "is writable by a group that is not its owner's private group",
+            ));
+        }
+        match access_acl() {
+            Some(false) => {}
+            Some(true) => {
+                return Err(ImageRefusal::UnsafeFile(
+                    "is writable by its group and carries an access control list",
+                ))
+            }
+            None => {
+                return Err(ImageRefusal::UnsafeFile(
+                    "is writable by its group, and its access control list could not be read",
+                ))
+            }
+        }
     }
     Ok(())
 }
@@ -134,6 +159,7 @@ impl SealedImage {
                     .ok()
                     .flatten()
             },
+            || crate::account::has_access_acl(source.as_fd()).ok(),
         )?;
         let file =
             sys::above_the_childs_descriptors(sys::memory_file(&name_of(&expected.program))?)?;
