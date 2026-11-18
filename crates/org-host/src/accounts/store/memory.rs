@@ -9,7 +9,7 @@ use super::{
     ThrottleKey,
 };
 use crate::accounts::identity::{AccountId, LoginKey};
-use crate::hostdb::journal::Verifier;
+use crate::accounts::verifier::Verifier;
 use crate::links::memory::MemoryLinks;
 use crate::links::{LinkDigest, LinkKind, OneTimeLinks, Token};
 

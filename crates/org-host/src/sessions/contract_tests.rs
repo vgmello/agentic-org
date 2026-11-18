@@ -48,7 +48,7 @@ pub(crate) fn sqlite() -> (tempfile::TempDir, HostDb) {
     };
     let db = HostDb::create(home.path(), &NoSecrets, &init).unwrap();
     for (id, login) in [(ALICE, "alice"), (BOB, "bob")] {
-        let verifier = crate::hostdb::journal::Verifier::new(PHC.into()).unwrap();
+        let verifier = crate::accounts::verifier::Verifier::new(PHC.into()).unwrap();
         db.seed_account(id, login, &verifier, id == ALICE, NOW)
             .unwrap();
     }

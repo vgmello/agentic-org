@@ -1,5 +1,6 @@
 use super::*;
-use crate::hostdb::tests::admin_fixture::PHC;
+/// A valid pinned-profile PHC (the same fixture as the host registry tests).
+const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 use argon2::password_hash::{Output, SaltString};
 
 thread_local! { static CLEARED: std::cell::RefCell<Vec<Vec<u8>>> = const { std::cell::RefCell::new(Vec::new()) }; }
@@ -52,7 +53,7 @@ fn only_the_pinned_argon2_profile_salt_and_tag_are_accepted() {
     let rejected = invalid.len();
     CLEARED.with(|slot| slot.borrow_mut().clear());
     for phc in invalid {
-        assert!(matches!(Verifier::new(phc), Err(Error::Unsafe)));
+        assert!(matches!(Verifier::new(phc), Err(InvalidVerifier)));
     }
     CLEARED.with(|slot| {
         let values = slot.borrow();

@@ -24,7 +24,7 @@ impl<'a> Attempt<'a> {
     }
 }
 
-pub(crate) use super::verifier::Verifier;
+pub(crate) use crate::accounts::verifier::Verifier;
 pub(crate) enum Lookup {
     Vacant,
     Replay(Stored),

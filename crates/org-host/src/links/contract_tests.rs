@@ -176,6 +176,45 @@ fn a_link_expires_after_24_hours_by_the_injected_clock() {
 }
 
 #[test]
+fn would_redeem_reports_every_state_without_changing_the_link() {
+    each(|links| {
+        let s = subject("initial-administrator");
+        let first = links.issue(REG, &s, NOW).unwrap();
+        let unknown = Token::parse(&"A".repeat(43)).unwrap();
+        assert_eq!(
+            links.redeemable(REG, &unknown, NOW).unwrap(),
+            Err(Refused::Unknown)
+        );
+        // Asking any number of times leaves the link pending and redeemable.
+        for _ in 0..3 {
+            assert_eq!(links.redeemable(REG, &first.token, NOW).unwrap(), Ok(()));
+        }
+        assert_eq!(
+            links.pending(REG, &s, NOW).unwrap().unwrap().link_id,
+            first.link_id
+        );
+        let last = NOW + REGISTRATION_TTL_MS - 1;
+        assert_eq!(
+            links.redeemable(REG, &first.token, last + 1).unwrap(),
+            Err(Refused::Expired)
+        );
+        let second = links.issue(REG, &s, NOW + 1).unwrap();
+        assert_eq!(
+            links.redeemable(REG, &first.token, NOW + 2).unwrap(),
+            Err(Refused::Cancelled)
+        );
+        assert_eq!(
+            links.consume(REG, &second.token.encode(), NOW + 3).unwrap(),
+            Ok(second.link_id)
+        );
+        assert_eq!(
+            links.redeemable(REG, &second.token, NOW + 4).unwrap(),
+            Err(Refused::Used)
+        );
+    });
+}
+
+#[test]
 fn unknown_and_malformed_tokens_are_unknown() {
     each(|links| {
         let s = subject("initial-administrator");

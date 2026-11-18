@@ -15,7 +15,6 @@ mod schema;
 pub(crate) mod sessions;
 #[cfg(test)]
 mod tests;
-mod verifier;
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -47,6 +46,11 @@ pub(crate) enum Error {
     Io(io::ErrorKind),
     Sql(rusqlite::ErrorCode),
     Secret(crate::host_secrets::Error),
+}
+impl From<crate::accounts::verifier::InvalidVerifier> for Error {
+    fn from(_: crate::accounts::verifier::InvalidVerifier) -> Self {
+        Self::Unsafe
+    }
 }
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {

@@ -15,7 +15,7 @@ use std::net::IpAddr;
 
 use super::identity::{AccountId, LoginKey};
 use super::rules::Username;
-use crate::hostdb::journal::Verifier;
+use crate::accounts::verifier::Verifier;
 use crate::links::{Refused, Token};
 
 #[cfg(test)]
@@ -92,6 +92,10 @@ pub(crate) enum Attempt {
     Failure,
     Success,
     /// An authorized reset or set-password redemption (SIGN-32).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "A3 B8: set-password redemption")
+    )]
     Reset,
 }
 
@@ -138,6 +142,7 @@ pub(crate) enum Registration {
 
 /// What a password check needs. Revoked accounts are returned so the caller
 /// runs the same password work for them as for any other account.
+#[cfg_attr(not(test), expect(dead_code, reason = "A3 B7/B8 read login and admin"))]
 pub(crate) struct Credentials {
     pub(crate) account_id: AccountId,
     pub(crate) login: String,
@@ -166,6 +171,7 @@ pub(crate) trait AccountStore {
     /// The account whose login key is `key`, revoked or not.
     fn credentials(&self, key: &LoginKey) -> Result<Option<Credentials>, StoreError>;
     /// Whether an unrevoked administrator exists.
+    #[cfg_attr(not(test), expect(dead_code, reason = "A3 B8: hand-over"))]
     fn administrator_exists(&self) -> Result<bool, StoreError>;
     /// Reads a throttle key without changing it.
     fn throttle(&self, key: &ThrottleKey<'_>, now_ms: i64) -> Result<Throttle, StoreError>;

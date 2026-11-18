@@ -38,6 +38,17 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Authentication, Arc<Connection>) 
     fixture_for(&crate::ids::uuid_v7().unwrap())
 }
 pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication, Arc<Connection>) {
+    fixture_seeded(instance, true)
+}
+/// A host database with no account at all: a setup link can still register the administrator.
+pub(crate) fn fixture_without_accounts() -> (tempfile::TempDir, Authentication) {
+    let (root, auth, _) = fixture_seeded(&crate::ids::uuid_v7().unwrap(), false);
+    (root, auth)
+}
+fn fixture_seeded(
+    instance: &str,
+    seed: bool,
+) -> (tempfile::TempDir, Authentication, Arc<Connection>) {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let custody: Arc<dyn HostSecrets> = Arc::new(TestCustody::default());
@@ -49,8 +60,10 @@ pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication,
     let db = HostDb::create(root.path(), &*custody, &init).unwrap();
     let verifier =
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
-    db.seed_account(&account, "Owner", &verifier, true, init.clock_high_ms)
-        .unwrap();
+    if seed {
+        db.seed_account(&account, "Owner", &verifier, true, init.clock_high_ms)
+            .unwrap();
+    }
     drop(db);
     let auth = Authentication::open(root.path(), custody, instance).unwrap();
     (root, auth, Connection::for_test())
@@ -338,6 +351,43 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
     auth.hashing.store(MAX_HASHES, Ordering::SeqCst);
     assert_eq!(
         auth.verify(&connection, "Owner", &wrong).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
+}
+
+/// A locked native login is refused before it takes a hash permit: with every
+/// permit held, a locked call answers `not_authorized`, not `unavailable`, and
+/// leaves the permit count unchanged.
+#[test]
+fn a_locked_native_verify_takes_no_hash_permit() {
+    let (_root, auth, connection) = fixture();
+    let key = LoginKey::new("Owner").unwrap();
+    // Failures recorded an hour ahead move the host clock there, so the lock
+    // holds however long the test runs.
+    let ahead = wall_ms().unwrap() + 3_600_000;
+    for socket in [Socket::Local, Socket::Control] {
+        for _ in 0..6 {
+            auth.db
+                .record_login(socket, key.as_str(), ahead, Outcome::Failure)
+                .unwrap();
+        }
+        assert!(auth
+            .db
+            .login_lockout(socket, key.as_str(), ahead)
+            .unwrap()
+            .is_locked());
+    }
+    auth.hashing.store(MAX_HASHES, Ordering::SeqCst);
+    let right = Password::new("synthetic test password".into()).unwrap();
+    assert_eq!(
+        auth.verify(&connection, "Owner", &right).unwrap_err().code,
+        ErrorCode::NotAuthorized
+    );
+    assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
+    // An unlocked login with the pool full still answers `unavailable`.
+    assert_eq!(
+        auth.verify(&connection, "Other", &right).unwrap_err().code,
         ErrorCode::Unavailable
     );
     assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
