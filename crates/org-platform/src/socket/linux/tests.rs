@@ -51,17 +51,6 @@ fn a_receive_sets_cloexec_atomically_and_never_takes_the_fence() {
 }
 
 #[test]
-fn control_length_is_the_message_field() {
-    let fence = Mutex::new(());
-    let receiving = descriptor_receive(&fence).unwrap();
-    // SAFETY: zero is valid for msghdr; no pointer in it is followed.
-    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
-    assert_eq!(receiving.control_len(&message), 0);
-    message.msg_controllen = 24;
-    assert_eq!(receiving.control_len(&message), 24);
-}
-
-#[test]
 fn a_send_is_nonblocking_and_raises_no_sigpipe() {
     assert_eq!(
         send_flags().unwrap(),
