@@ -2,8 +2,10 @@
 //!
 //! The macOS and GNU/Linux adapters share it; the refusing adapter never reaches it, so
 //! it is not compiled for a refusing target. It serves development builds on both
-//! systems. Values are plain files: it protects them from other users, never from a
-//! process of this user.
+//! systems, and on GNU/Linux each item store below a release directory (`release.rs`),
+//! which hands it a directory it has already opened and checked ([`Store::below`]).
+//! Values are plain files: it protects them from other users, never from a process of
+//! this user.
 //!
 //! # Layout
 //!
@@ -143,14 +145,41 @@ impl Store {
         }
         // Without a trailing `/` or `.`, so that the last component itself is the one
         // that is not followed.
-        let mut directory = OpenOptions::new()
+        let directory = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(anchor.components().collect::<PathBuf>())?;
         check(&directory, Kind::Directory)?;
-        let mut path = anchor.canonicalize()?;
-        for name in location.below {
-            directory = child(&directory, name, location.create)?;
+        let path = anchor.canonicalize()?;
+        Self::below(
+            directory,
+            path,
+            location.below,
+            location.create,
+            location.sharing,
+            location.suffix,
+        )
+    }
+
+    /// The store in the directory that the single names `below` lead to from `anchor`
+    /// (none: `anchor` itself). The caller opened `anchor` without following a link,
+    /// checked it, and names it by `path`, which holds no link. The names and the
+    /// suffix are checked here as well, for a caller that did not come through
+    /// [`Store::open`].
+    pub(super) fn below(
+        anchor: File,
+        mut path: PathBuf,
+        below: &[&str],
+        create: bool,
+        sharing: Sharing,
+        suffix: &str,
+    ) -> Result<Self, CredentialError> {
+        if !valid_suffix(suffix) || below.iter().any(|name| !super::valid_name(name)) {
+            return Err(CredentialError::InvalidName);
+        }
+        let mut directory = anchor;
+        for name in below {
+            directory = child(&directory, name, create)?;
             path.push(name);
         }
         let lock = at(
@@ -165,7 +194,7 @@ impl Store {
             Err(fs::TryLockError::Error(e)) => return Err(e.into()),
         };
         if !alone {
-            match location.sharing {
+            match sharing {
                 Sharing::Exclusive => return Err(CredentialError::InUse),
                 Sharing::Shared => share(&lock)?,
             }
@@ -173,7 +202,7 @@ impl Store {
         let mut store = Self {
             directory,
             path,
-            suffix: location.suffix.to_owned(),
+            suffix: suffix.to_owned(),
             gate: Mutex::new(lock),
         };
         if alone {
@@ -185,7 +214,7 @@ impl Store {
                     store.remove(name)?;
                 }
             }
-            if location.sharing == Sharing::Shared {
+            if sharing == Sharing::Shared {
                 share(store.gate.get_mut().unwrap_or_else(|e| e.into_inner()))?;
             }
         }

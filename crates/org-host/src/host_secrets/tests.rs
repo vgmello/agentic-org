@@ -214,9 +214,13 @@ mod development {
         let n = Name::parse("registry").unwrap();
         a.put(&n, &Value::new(vec![1; 32]).unwrap()).unwrap();
         b.put(&n, &Value::new(vec![2; 32]).unwrap()).unwrap();
-        let office = crate::keys::store_for(Some(&f.base), &f.home, Some(A), || {
-            panic!("debug never signs")
-        })
+        let office = crate::keys::store_for(
+            Some(&f.base),
+            &f.home,
+            Some(A),
+            || panic!("debug never signs"),
+            None,
+        )
         .unwrap();
         office
             .create("OFFICE", &org_proto::DbKey::from_bytes([3; 32]))
@@ -537,8 +541,8 @@ mod development {
     #[test]
     fn unknown_names_are_logged_without_echoing_untrusted_bytes() {
         const MARKER: &str = "SAGE_HOST_SECRET_LIST_CHILD";
+        const NOT_UTF8_KEPT: &str = "the filesystem kept a name that is not UTF-8";
         if std::env::var_os(MARKER).is_some() {
-            #[cfg(target_os = "linux")]
             use std::os::unix::ffi::OsStringExt;
             let f = Fixture::new();
             let s = f.open(A).unwrap();
@@ -546,11 +550,12 @@ mod development {
                 &f.dir(A).join("DO_NOT_ECHO_THIS_FILENAME"),
                 b"DO_NOT_ECHO_THIS_VALUE",
             );
-            #[cfg(target_os = "linux")]
-            write(
-                &f.dir(A).join(std::ffi::OsString::from_vec(vec![0xff])),
-                b"nonutf8",
-            );
+            // A name that is not UTF-8, where the filesystem keeps one (APFS refuses it).
+            let not_utf8 = f.dir(A).join(std::ffi::OsString::from_vec(vec![0xff]));
+            if fs::write(&not_utf8, b"nonutf8").is_ok() {
+                fs::set_permissions(&not_utf8, fs::Permissions::from_mode(0o600)).unwrap();
+                println!("{NOT_UTF8_KEPT}");
+            }
             write(&f.dir(A).join(format!(".put.{B}")), b"temporary");
             assert!(s.list().unwrap().is_empty());
             return;
@@ -560,11 +565,14 @@ mod development {
             .env(MARKER, "1"));
         assert!(output.status.success(), "{output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // One line per ignored entry: the two every filesystem keeps, and the name that is
+        // not UTF-8 where the child's filesystem kept it.
+        let not_utf8_kept = String::from_utf8_lossy(&output.stdout).contains(NOT_UTF8_KEPT);
         assert_eq!(
             stderr
                 .matches("ignored an invalid host-secret item name")
                 .count(),
-            if cfg!(target_os = "linux") { 3 } else { 2 }
+            if not_utf8_kept { 3 } else { 2 }
         );
         assert!(!stderr.contains("DO_NOT_ECHO_THIS"));
     }
@@ -603,8 +611,10 @@ mod development {
             assert_eq!(store.delete(&alias), Err(Error::CaseAlias));
             assert_eq!(store.load(&first).unwrap().unwrap().expose(), b"keep");
             assert_eq!(store.list().unwrap(), vec![first]);
-            #[cfg(target_os = "linux")]
-            {
+            // Where the filesystem keeps names apart that differ only by case (a default
+            // macOS volume does not), an alias written from outside is found and refused.
+            write(&f.base.join("case-probe"), b"");
+            if !f.base.join("CASE-PROBE").exists() {
                 write(&f.dir(A).join(alias.as_str()), b"external alias");
                 assert_eq!(store.list(), Err(Error::CaseAlias));
             }
@@ -1057,7 +1067,8 @@ fn release_selection_validates_instance_then_group_before_signing() {
                 None,
                 std::path::Path::new("/"),
                 instance,
-                || panic!("invalid identity must not inspect signing")
+                || panic!("invalid identity must not inspect signing"),
+                None,
             )),
             SelectionError::InvalidInstance
         );
@@ -1148,8 +1159,9 @@ fn release_selection_constructs_only_an_eligible_platform_backend_without_io() {
         assert_eq!(calls.get(), 1);
         match org_platform_host::credentials::protected_store() {
             // Construction does not call SecItem* or create any item.
-            Ok(()) => assert!(result.is_ok()),
-            Err(_) => assert_eq!(selection_error(result), SelectionError::Unsupported),
+            Ok(ProtectedStore::Keychain) => assert!(result.is_ok()),
+            // No Keychain: the Keychain custody is refused, whatever else the system has.
+            _ => assert_eq!(selection_error(result), SelectionError::Unsupported),
         }
     }
 }
@@ -1175,8 +1187,10 @@ fn keychain_custody_names_the_instances_service_and_refuses_an_invalid_instance_
         ));
     }
     match org_platform_host::credentials::protected_store() {
-        Ok(()) => assert!(Custody::keychain(HOST_GROUP, HOST_INSTANCE).is_ok()),
-        Err(_) => assert!(matches!(
+        Ok(ProtectedStore::Keychain) => {
+            assert!(Custody::keychain(HOST_GROUP, HOST_INSTANCE).is_ok())
+        }
+        _ => assert!(matches!(
             Custody::keychain(HOST_GROUP, HOST_INSTANCE),
             Err(SelectionError::Unsupported)
         )),
@@ -1192,6 +1206,13 @@ fn the_platforms_kinds_keep_this_views_names() {
         (Kind::Malformed, Error::Corrupt),
         (Kind::Unsafe, Error::Unsafe),
         (Kind::Exists, Error::Unsafe),
+        (
+            Kind::Root(org_platform_host::credentials::RootRefusal {
+                rule: org_platform_host::credentials::RootRule::StoreMode,
+                path: "/secrets".into(),
+            }),
+            Error::Unsafe,
+        ),
         (Kind::InUse, Error::InUse),
         (Kind::CaseAlias, Error::CaseAlias),
         (Kind::Os(-25308), Error::Os(-25308)),
@@ -1204,7 +1225,8 @@ fn the_platforms_kinds_keep_this_views_names() {
     }
     assert_eq!(format!("{:?}", Error::Os(-50)), "Os(-50)");
 }
-#[cfg(target_os = "macos")]
+/// The Keychain selection on this test binary itself, which no one signed for the host's
+/// access group: refused before any Keychain call, on every system.
 #[test]
 fn actual_unsigned_binary_fails_release_selection_before_keychain_io() {
     let signature = crate::code_signing::own_signing();
@@ -1233,9 +1255,13 @@ fn debug_factory_requires_safe_existing_base_and_never_probes_signing() {
         std::fs::create_dir(dir).unwrap();
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
-    let store = store_for(Some(&base), &home, HOST_INSTANCE, || {
-        panic!("debug must never sign")
-    })
+    let store = store_for(
+        Some(&base),
+        &home,
+        HOST_INSTANCE,
+        || panic!("debug must never sign"),
+        None,
+    )
     .unwrap();
     let n = Name::parse("registry").unwrap();
     store
@@ -1243,15 +1269,23 @@ fn debug_factory_requires_safe_existing_base_and_never_probes_signing() {
         .unwrap();
     assert_eq!(store.load(&n).unwrap().unwrap().expose(), b"dev only");
     assert_eq!(
-        selection_error(store_for(None, &home, HOST_INSTANCE, || panic!(
-            "debug must never sign"
-        ))),
+        selection_error(store_for(
+            None,
+            &home,
+            HOST_INSTANCE,
+            || panic!("debug must never sign"),
+            None,
+        )),
         SelectionError::NoDevBase
     );
     assert_eq!(
-        selection_error(store_for(Some(&home), &home, HOST_INSTANCE, || panic!(
-            "debug must never sign"
-        ))),
+        selection_error(store_for(
+            Some(&home),
+            &home,
+            HOST_INSTANCE,
+            || panic!("debug must never sign"),
+            None,
+        )),
         SelectionError::Storage(Error::Unsafe)
     );
     assert_eq!(
@@ -1259,7 +1293,8 @@ fn debug_factory_requires_safe_existing_base_and_never_probes_signing() {
             Some(&root.join("missing")),
             &home,
             HOST_INSTANCE,
-            || panic!("debug must never sign")
+            || panic!("debug must never sign"),
+            None,
         )),
         SelectionError::Storage(Error::Io(std::io::ErrorKind::NotFound))
     );
@@ -1278,7 +1313,14 @@ fn release_factory_ignores_dev_base_and_uses_only_compiled_group() {
             calls.set(calls.get() + 1);
             None
         },
+        None,
     ));
+    if org_platform_host::credentials::protected_store() == Ok(ProtectedStore::ReleaseDirectory) {
+        // The store is the credential directory, and none is open: no group, no signing.
+        assert_eq!(calls.get(), 0);
+        assert_eq!(error, SelectionError::NoCredentialDirectory);
+        return;
+    }
     assert_eq!(calls.get(), usize::from(group_present));
     assert_eq!(
         error,

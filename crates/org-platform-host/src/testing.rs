@@ -15,10 +15,11 @@ pub mod names {
 }
 
 /// The directory credential store's write hooks: a step between flush and
-/// publication, a step after a name collision, and failing directory flushes.
+/// publication, a step after a name collision, and failing directory flushes. And the
+/// release directory with its walk started at a test's own directory.
 pub mod credentials {
     pub use crate::credentials::testing::{
-        after_collision, before_publish, fail_directory_syncs, take_before_publish,
-        take_directory_sync_faults,
+        after_collision, before_publish, fail_directory_syncs, release_directory_below,
+        take_before_publish, take_directory_sync_faults,
     };
 }

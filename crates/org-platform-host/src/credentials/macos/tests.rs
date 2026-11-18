@@ -676,11 +676,34 @@ fn os_status_bridge_preserves_every_non_success_status() {
 
 #[test]
 fn the_keychain_is_this_systems_protected_store_and_opening_it_calls_nothing() {
-    assert_eq!(protected_store(), Ok(()));
+    assert_eq!(protected_store(), Ok(ProtectedStore::Keychain));
     let opened = open(CredentialLocation::Keychain(KeychainItems {
         access_group: GROUP,
         service: OFFICE_KEYS,
     }));
     // Construction does not call SecItem* or create any item.
     assert!(matches!(opened, Ok(Store::Keychain(_))));
+}
+
+/// A release build on macOS keeps its secrets in the Keychain: a release directory is
+/// refused before its location is read, and nothing is opened, locked or made.
+#[test]
+fn a_release_directory_is_refused_and_nothing_is_made() {
+    let fixture = tempfile::tempdir().unwrap();
+    let dir = fixture.path().canonicalize().unwrap();
+    let data_root = File::open(&dir).unwrap();
+    for (path, mount_point_required, expect_items) in [
+        (dir.join("store"), false, false),
+        (dir.clone(), true, true),
+        (std::path::PathBuf::from("relative/../path"), false, true),
+    ] {
+        let refused = release_directory(&ReleaseDirectory {
+            path: &path,
+            data_root: std::os::fd::AsFd::as_fd(&data_root),
+            mount_point_required,
+            expect_items,
+        });
+        assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
+    }
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
 }

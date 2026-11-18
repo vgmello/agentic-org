@@ -287,6 +287,11 @@ impl Instance {
     pub(crate) fn root(&self) -> &Path {
         self.root.path()
     }
+    /// The instance root itself, as the descriptor this reservation holds its lock on: the
+    /// data root a credential directory must stay disjoint from.
+    pub(crate) fn root_descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+        self.root.descriptor()
+    }
 
     pub(crate) fn prepare_layout(&self) -> Result<InstancePaths, Error> {
         self.config()?;

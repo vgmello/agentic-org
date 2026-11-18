@@ -17,8 +17,8 @@
 //! entitlement can use the real store, so it is checked on a signed build.
 
 use super::{
-    directory, CredentialError, CredentialLocation, ItemName, KeychainItems, Listing, Secret,
-    WriteError, MAX_ITEM_BYTES,
+    directory, refusal, CredentialError, CredentialLocation, ItemName, KeychainItems, Listing,
+    ProtectedStore, ReleaseDirectory, ReleaseItems, Secret, WriteError, MAX_ITEM_BYTES,
 };
 use core_foundation::{
     array::CFArray,
@@ -79,8 +79,34 @@ pub(super) fn open(location: CredentialLocation<'_>) -> Result<Store, Credential
     }
 }
 
-pub(super) fn protected_store() -> Result<(), Refused> {
-    Ok(())
+pub(super) fn protected_store() -> Result<ProtectedStore, Refused> {
+    Ok(ProtectedStore::Keychain)
+}
+
+/// macOS has no release directory: a release build keeps its secrets in the Keychain,
+/// and nothing falls back to a directory. No value of this type exists.
+pub(super) enum ReleaseRoot {}
+
+/// Refused before the location is read: nothing is opened, checked, locked or made.
+pub(super) fn release_directory(
+    _location: &ReleaseDirectory<'_>,
+) -> Result<ReleaseRoot, CredentialError> {
+    Err(refusal().into())
+}
+
+/// The test entry of the release directory refuses as the host's does.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn release_directory_below(
+    _base: &std::path::Path,
+    _location: &ReleaseDirectory<'_>,
+) -> Result<ReleaseRoot, CredentialError> {
+    Err(refusal().into())
+}
+
+impl ReleaseRoot {
+    pub(super) fn store(&self, _items: &ReleaseItems<'_>) -> Result<Store, CredentialError> {
+        match *self {}
+    }
 }
 
 /// Flush a published file to the device once more, after its directory was flushed.

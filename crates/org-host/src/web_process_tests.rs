@@ -181,6 +181,7 @@ fn start_registered_host(
         instance.root(),
         instance.id(),
         crate::code_signing::own_signing,
+        None,
     )
     .unwrap();
     let now = SystemTime::now()

@@ -22,6 +22,10 @@ pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     Err(UserTempError::Unsupported(refusal()))
 }
 
+pub(super) fn credential_directory_base(_home: &Path) -> Result<PathBuf, Refused> {
+    Err(refusal())
+}
+
 pub(super) fn environment_spelling(_base: &Path) -> Result<PathBuf, Refused> {
     Err(refusal())
 }
@@ -52,6 +56,7 @@ mod tests {
             user_temp_base(home),
             Err(UserTempError::Unsupported(refused)) if refused == refusal()
         ));
+        assert_eq!(credential_directory_base(home), Err(refusal()));
         assert_eq!(environment_spelling(home), Err(refusal()));
         assert_eq!(socket_path_limit(), Err(refusal()));
         assert_eq!(disk_backed_temp(), Err(refusal()));

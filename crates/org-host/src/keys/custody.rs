@@ -3,8 +3,13 @@
 //! the office id and must be a storage id, a key is only ever added, and what a stored key looks
 //! like. The platform keeps the bytes and applies the system's protection.
 //!
-//! **The Keychain store** (release builds): the item's value is the key's 32 bytes. The store is
-//! opened when it is chosen, which reads and writes nothing.
+//! **The Keychain store** (release builds on macOS): the item's value is the key's 32 bytes. The
+//! store is opened when it is chosen, which reads and writes nothing.
+//!
+//! **The release directory store** (release builds on Linux): owner-only files
+//! `<credential directory>/office-keys/<office id>.key`, each the key's 32 bytes, in the
+//! credential directory the host opened and checked at its start (`release_store`). It is the
+//! platform's directory store below that directory, held by this host alone.
 //!
 //! **The development store** (debug builds): owner-only files `<dir>/<office id>.key`, or
 //! `<dir>/<instance id>/<office id>.key` for a registered instance, each 64 hex digits, the same
@@ -25,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use org_office_launch::is_storage_id;
 use org_platform_host::credentials::{
     credentials, CredentialError, CredentialLocation, Credentials, DirectoryStore, ItemName,
-    Secret, Sharing,
+    ReleaseItems, ReleaseRoot, Secret, Sharing,
 };
 use org_proto::{DbKey, DB_KEY_BYTES};
 
@@ -39,6 +44,15 @@ const HEX_LEN: usize = DB_KEY_BYTES * 2;
 /// What follows the office id in a development key's file name.
 const DEV_SUFFIX: &str = ".key";
 
+/// The office keys' item store below a release directory. It is persisted state: another
+/// directory name or suffix is another, empty, store. One host has the release directory at
+/// a time, so the item store is held alone.
+const RELEASE_ITEMS: ReleaseItems<'static> = ReleaseItems {
+    directory: "office-keys",
+    suffix: DEV_SUFFIX,
+    sharing: Sharing::Exclusive,
+};
+
 /// What the Keychain store's predecessor (`security_framework::passwords`) reported for a reply
 /// that held no data: `errSecParam`. Such a reply is not a missing key.
 const NOT_DATA: i32 = -50;
@@ -51,8 +65,9 @@ pub(super) struct OfficeKeys {
 // A release build never chooses the development store (`keys::store_for`).
 #[cfg_attr(not(debug_assertions), allow(dead_code))]
 enum Source {
-    /// The Keychain store, open since it was chosen. A key is its 32 bytes.
-    Keychain(Credentials),
+    /// A release build's protected store (the Keychain, or an item store below a release
+    /// directory), open since it was chosen. A key is its 32 bytes.
+    Protected(Credentials),
     /// The development store, opened at its first use. A key is 64 hex digits.
     Development(Development),
 }
@@ -71,8 +86,18 @@ impl OfficeKeys {
     #[cfg_attr(debug_assertions, allow(dead_code))]
     pub(super) fn keychain(store: Credentials) -> Self {
         Self {
-            source: Source::Keychain(store),
+            source: Source::Protected(store),
         }
+    }
+
+    /// Keys as the items of the office keys' item store below the release directory `root`,
+    /// which is opened (and made, if it is missing) now.
+    // Debug builds never choose this store (`keys::store_for`); its tests still run there.
+    #[cfg_attr(debug_assertions, allow(dead_code))]
+    pub(super) fn release_directory(root: &ReleaseRoot) -> Result<Self, CredentialError> {
+        Ok(Self {
+            source: Source::Protected(root.store(RELEASE_ITEMS)?),
+        })
     }
 
     /// The development store in `dir` (absolute), or in `dir/<instance id>`.
@@ -95,7 +120,7 @@ impl OfficeKeys {
         op: impl FnOnce(&Credentials) -> Result<T, KeyStoreError>,
     ) -> Result<Option<T>, KeyStoreError> {
         match &self.source {
-            Source::Keychain(store) => op(store).map(Some),
+            Source::Protected(store) => op(store).map(Some),
             Source::Development(development) => match development.open(create)? {
                 Some(store) => op(&store).map(Some),
                 None => Ok(None),
@@ -155,7 +180,7 @@ impl KeyStore for OfficeKeys {
         // one a racing process just made.
         let added = self.with(true, |store| {
             let added = match &self.source {
-                Source::Keychain(_) => store.add(&name, key.expose_bytes()),
+                Source::Protected(_) => store.add(&name, key.expose_bytes()),
                 Source::Development(_) => {
                     let mut hex = [0u8; HEX_LEN];
                     encode_hex(key.expose_bytes(), &mut hex);
@@ -182,7 +207,7 @@ impl KeyStore for OfficeKeys {
             return Ok(None);
         };
         let key = match &self.source {
-            Source::Keychain(_) => raw_key(&secret),
+            Source::Protected(_) => raw_key(&secret),
             // The server's format allowed whitespace around the digits.
             Source::Development(_) => decode_hex(secret.expose().trim_ascii()),
         };
@@ -223,6 +248,11 @@ impl From<CredentialError> for KeyStoreError {
                 io::ErrorKind::Unsupported,
                 "this system has no such key store",
             )),
+            // Only opening a release directory answers this; no item operation does. The path
+            // is reported where the store is opened, never here.
+            CredentialError::Root(_) => {
+                refused("the credential directory or a directory above it broke a rule")
+            }
             CredentialError::TooLarge => refused("the item is too large to be a key"),
             CredentialError::Unsafe => refused(
                 "the key folder or a file in it isn't this user's alone (folder mode 0700, file \
@@ -236,7 +266,7 @@ impl From<CredentialError> for KeyStoreError {
     }
 }
 
-/// The 32 bytes of a Keychain item as a key, or `None` if it has another length.
+/// The 32 bytes of a protected store's item as a key, or `None` if it has another length.
 fn raw_key(secret: &Secret) -> Option<DbKey> {
     let mut array = *<&[u8; DB_KEY_BYTES]>::try_from(secret.expose()).ok()?;
     let key = DbKey::from_bytes(array);

@@ -28,6 +28,13 @@ pub(super) fn user_temp_base(home: &Path) -> Result<PathBuf, UserTempError> {
     ))
 }
 
+pub(super) fn credential_directory_base(home: &Path) -> Result<PathBuf, Refused> {
+    Ok(credential_directory_base_from(
+        std::env::var_os("XDG_STATE_HOME"),
+        home,
+    ))
+}
+
 pub(super) fn environment_spelling(base: &Path) -> Result<PathBuf, Refused> {
     Ok(base.to_owned())
 }
@@ -58,6 +65,14 @@ fn user_temp_base_from(cache_home: Option<OsString>, home: &Path) -> PathBuf {
     xdg_base(cache_home, home, ".cache")
         .join(PRODUCT)
         .join("tmp")
+}
+
+/// `<XDG_STATE_HOME>/agentic-org/credentials`, or
+/// `<home>/.local/state/agentic-org/credentials`.
+fn credential_directory_base_from(state_home: Option<OsString>, home: &Path) -> PathBuf {
+    xdg_base(state_home, home, ".local/state")
+        .join(PRODUCT)
+        .join("credentials")
 }
 
 /// The XDG base directory rule: the variable's value when it is an absolute path, else
@@ -121,12 +136,41 @@ mod tests {
     }
 
     #[test]
+    fn the_credential_directory_base_follows_xdg_state_home_when_it_is_absolute() {
+        let from = |value: Option<&str>| {
+            credential_directory_base_from(value.map(OsString::from), Path::new(HOME))
+        };
+        assert_eq!(
+            from(None),
+            Path::new("/home/a/.local/state/agentic-org/credentials")
+        );
+        assert_eq!(
+            from(Some("/state/xdg")),
+            Path::new("/state/xdg/agentic-org/credentials")
+        );
+        for ignored in ["", "state", "./state", "../state", "~/state"] {
+            assert_eq!(
+                from(Some(ignored)),
+                Path::new("/home/a/.local/state/agentic-org/credentials"),
+                "{ignored:?}"
+            );
+        }
+        // It is not below the application base or the temp base, whatever the three
+        // variables are when they are unset.
+        let state = from(None);
+        assert!(!state.starts_with(application_base_from(None, Path::new(HOME))));
+        assert!(!state.starts_with(user_temp_base_from(None, Path::new(HOME))));
+    }
+
+    #[test]
     fn the_public_functions_name_a_path_and_create_nothing() {
         let home = tempfile::tempdir().unwrap();
         let base = application_base(home.path()).unwrap();
         let temp = user_temp_base(home.path()).unwrap();
+        let credentials = credential_directory_base(home.path()).unwrap();
         assert!(base.is_absolute() && base.ends_with("agentic-org"));
         assert!(temp.is_absolute() && temp.ends_with("agentic-org/tmp"));
+        assert!(credentials.is_absolute() && credentials.ends_with("agentic-org/credentials"));
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
     }
 
