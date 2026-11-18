@@ -54,6 +54,9 @@ pub(crate) struct Admin {
     policy: AppPolicy,
     presence: Arc<dyn Presence>,
     resetting: AtomicBool,
+    /// The instance's service mode is `foreground`: its setup never asks for the initial
+    /// link, and its first link comes only from root (ADR-0017 decision 10).
+    foreground: AtomicBool,
 }
 
 struct Resetting<'a>(&'a AtomicBool);
@@ -120,7 +123,16 @@ impl Admin {
             policy,
             presence,
             resetting: AtomicBool::new(false),
+            foreground: AtomicBool::new(false),
         }
+    }
+
+    /// Marks the instance as one that runs in the foreground (a container): from then on
+    /// `admin.link.initial` is refused, whoever names the setup operation. Setup in that
+    /// mode never asks for it, so the only caller would be another process of the service
+    /// user, and the container's first link comes only from root's `admin reset`.
+    pub(crate) fn foreground_instance(&self) {
+        self.foreground.store(true, Ordering::SeqCst);
     }
 
     #[cfg(test)]
@@ -148,6 +160,13 @@ impl Admin {
         params: AdminLinkInitialParams,
     ) -> Result<AdminLinkResult, ApiError> {
         self.admit(c, received)?;
+        if self.foreground.load(Ordering::SeqCst) {
+            return Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "this instance runs in the foreground: its first registration link comes \
+                 from admin reset, run by root",
+            ));
+        }
         self.initial_link(&params.setup_operation, wall()?)
     }
 

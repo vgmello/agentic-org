@@ -55,7 +55,6 @@ impl Fixture {
             root: self.base.join("instance"),
             credentials: None,
             listen,
-            certificate: None,
         };
         let pin = ReleasePin {
             release_id: "fixture-1".into(),

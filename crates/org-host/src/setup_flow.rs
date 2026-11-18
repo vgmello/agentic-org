@@ -65,18 +65,40 @@ const READY_WITHIN: Duration = Duration::from_secs(60);
 /// How long a command waits for the instance locator while a starting service holds it.
 const LOCATOR_WAIT: Duration = Duration::from_secs(5);
 
-/// What a configuration that names a certificate pair is told. The host has no verifier
-/// for a supplied pair yet (the key matches the leaf, the leaf is valid now and names the
-/// origin's host, the chain parses), and a pair that was not verified is never stored.
-pub(crate) const SUPPLIED_PAIR_UNVERIFIED: &str = "\"certificate\" names a certificate pair, \
-     and this build cannot verify a supplied pair yet; remove it";
+/// The environment variables that decided this account's instance locations in this
+/// process, with their values: what a registered service must be given so that it resolves
+/// the same paths as the setup that registered it (X5 review V7). A service manager starts
+/// its units with its own environment, not the shell's that ran setup: without these, a
+/// base moved by a variable is looked for elsewhere and the service never becomes ready.
+///
+/// Only variables that are set to an absolute path are carried; anything else is ignored
+/// by the path rule itself. The names are the system's: where no variable can move the
+/// application base (macOS) there are none, and where one can (GNU/Linux, the XDG base
+/// directories) its two siblings, which place the user temp base and the default
+/// credential directory by the same rule, are carried with it.
+pub fn path_environment() -> Vec<(OsString, OsString)> {
+    path_environment_from(
+        org_platform::dirs::application_base_variables().unwrap_or(&[]),
+        |name| std::env::var_os(name),
+    )
+}
 
-/// What setup says of an HTTPS listener: the host cannot make or verify a certificate yet,
-/// and its web start serves loopback HTTP only, so nothing answers a browser at the
-/// address until it can. Said plainly at setup and never discovered at the first visit.
-pub(crate) const HTTPS_NOT_SERVED: &str = "Browser access: not available yet. This address \
-     is HTTPS, and this build cannot make or verify the listener's certificate; the service, \
-     its offices and agentic-org admin reset work without it.";
+fn path_environment_from(
+    application_base: &[&str],
+    value: impl Fn(&str) -> Option<OsString>,
+) -> Vec<(OsString, OsString)> {
+    let mut names: Vec<&str> = application_base.to_vec();
+    if names.contains(&"XDG_DATA_HOME") {
+        names.extend(["XDG_CACHE_HOME", "XDG_STATE_HOME"]);
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let value = value(name).filter(|v| Path::new(v).is_absolute())?;
+            Some((OsString::from(name), value))
+        })
+        .collect()
+}
 
 /// What setup and the host say, once each, of a listener that is plain HTTP on a published
 /// port (`http_published`): where it is safe, what happens elsewhere, and that there is no
@@ -186,6 +208,59 @@ fn open_as_the_host_will(
         location,
         &crate::release_store::ITEM_STORES,
     )
+}
+
+/// What can refuse a configuration from a file, asked before anything is saved (X5 review
+/// V1), so that a refused file leaves nothing and a corrected one works on the next run:
+///
+/// - a registered service's address must be free now (its service is started by setup);
+/// - the credential directory the file names must pass the host's own check. The check
+///   compares it with the data folder, which is made for the question when it is missing
+///   and removed again before this returns, whatever the answer.
+fn preflight(input: &Input) -> Result<(), String> {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::DirBuilderExt;
+    let listen = &input.listen;
+    if input.service == Service::Registered
+        && std::net::TcpListener::bind((listen.address(), listen.port())).is_err()
+    {
+        return Err(format!(
+            "port {} on {} is in use by another program; choose another port in the file, or \
+             stop that program; nothing was saved",
+            listen.port(),
+            listen.address()
+        ));
+    }
+    let Some(credentials) = &input.credentials else {
+        return Ok(());
+    };
+    let made = match std::fs::DirBuilder::new().mode(0o700).create(&input.root) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(e) => {
+            return Err(format!(
+                "the data folder {} cannot be made: {e}; nothing was saved",
+                input.root.display()
+            ))
+        }
+    };
+    let checked = std::fs::File::open(&input.root)
+        .map_err(|e| format!("the data folder {}: {e}", input.root.display()))
+        .and_then(|root| {
+            use_credential_directory(
+                credentials,
+                input.service == Service::Foreground,
+                root.as_fd(),
+                Path::new("/"),
+                open_as_the_host_will,
+            )
+        });
+    if made {
+        let _ = std::fs::remove_dir(&input.root);
+    }
+    checked
+        .map(drop)
+        .map_err(|refused| format!("{refused}; nothing was saved"))
 }
 
 /// The credential directory at exactly `path` (absolute and normalized), checked as the
@@ -472,13 +547,11 @@ impl Configuration {
 ///   Keychain.
 /// - `listen`: `address`, `port`, `scheme`, `origin` and `hsts` (`"off"`, `"on"`,
 ///   `"clear"`), as the instance stores them. `scheme` is `"http_loopback"` (plain HTTP on
-///   exactly `127.0.0.1` or `::1`), `"https"`, or `"http_published"`: plain HTTP on an
+///   exactly `127.0.0.1` or `::1`) or `"http_published"`: plain HTTP on an
 ///   address that is not loopback, with `localhost`, `127.0.0.1` or `[::1]` as the origin's
 ///   host, accepted only with `"service": "foreground"` (a container whose port the
 ///   runtime publishes on the Docker host's loopback). It is never implied: `http_loopback`
-///   with another address is refused.
-/// - `certificate` (optional, HTTPS only): `chain` and `key`, the absolute paths of the
-///   listener's certificate chain and private key.
+///   with another address is refused. `"https"` is refused: no build serves it yet.
 ///
 /// Nothing is created or changed by reading it.
 pub fn configuration(path: &Path) -> Result<Configuration, String> {
@@ -499,11 +572,6 @@ pub fn configuration(path: &Path) -> Result<Configuration, String> {
     input
         .fits(org_platform_host::credentials::protected_store().ok())
         .map_err(|why| format!("{shown}: {why}; nothing was changed"))?;
-    if input.certificate.is_some() {
-        return Err(format!(
-            "{shown}: {SUPPLIED_PAIR_UNVERIFIED}; nothing was changed"
-        ));
-    }
     Ok(Configuration(input))
 }
 
@@ -734,7 +802,7 @@ pub fn run(platform: &Platform, request: Request<'_>, out: &mut dyn Write) -> Re
     // A release build without a pinned runtime refuses before any path is resolved or made.
     release_pin()?;
     service_gate(platform, &request)?;
-    account_folders()?;
+    account_folders();
     let paths = crate::human::paths(request.name.as_deref())?;
     run_at(&paths, platform, request, out)
 }
@@ -757,19 +825,26 @@ fn service_gate(platform: &Platform, request: &Request<'_>) -> Result<(), String
 /// account does not have: the folder the application base is in and the user temp base,
 /// where the system puts them below the account's home (on Linux `~/.local/share` and
 /// `~/.cache/agentic-org/tmp`; an account or a container's service user that never ran a
-/// desktop session has neither). Each missing folder is made with mode 700, one component
-/// at a time below the home, without following a link. A location outside the home (the
-/// system's own temp folder on macOS, an `XDG_*` variable that points elsewhere) is left
-/// to exist or not, and a development base makes its own folders.
-fn account_folders() -> Result<(), String> {
+/// desktop session has neither; on macOS only a missing `~/Library/Application Support`).
+/// Each missing folder is made with mode 700, one component at a time below the home,
+/// without following a link below it. A location outside the home (the system's own temp
+/// folder on macOS, an `XDG_*` variable that points elsewhere) is left to exist or not,
+/// and a development base makes its own folders.
+///
+/// This step refuses nothing. The home is resolved as the system resolves it (a home that
+/// is itself a symbolic link, as network and managed homes are, is followed), and where a
+/// folder cannot be made here (a link below the home, a folder of another user) nothing is
+/// made and the instance locations are judged by their own rules right after, exactly as
+/// they were before this step existed.
+fn account_folders() {
     if std::env::var_os(crate::human::DEV_ACCOUNT_BASE).is_some_and(|base| !base.is_empty()) {
-        return Ok(());
+        return;
     }
     let Some(home) = crate::home::account_dir() else {
-        return Ok(());
+        return;
     };
-    let Ok(home) = crate::instance::setup::normalized(&home) else {
-        return Ok(());
+    let Ok(resolved) = std::fs::canonicalize(&home) else {
+        return;
     };
     let base = org_platform::dirs::application_base(&home).ok();
     let wanted = [
@@ -777,15 +852,13 @@ fn account_folders() -> Result<(), String> {
         org_platform::dirs::user_temp_base(&home).ok(),
     ];
     for folder in wanted.into_iter().flatten() {
-        let Ok(folder) = crate::instance::setup::normalized(&folder) else {
-            continue;
-        };
-        if folder.starts_with(&home) {
-            store_directories::make(&folder, None, &home)
-                .map_err(|refused| format!("preparing this account's folders: {refused}"))?;
+        let below = crate::instance::setup::normalized(&folder)
+            .ok()
+            .and_then(|folder| folder.strip_prefix(&home).ok().map(Path::to_owned));
+        if let Some(below) = below {
+            let _ = store_directories::make(&resolved.join(below), None, &resolved);
         }
     }
-    Ok(())
 }
 
 pub(crate) fn run_at(
@@ -807,7 +880,23 @@ pub(crate) fn run_at(
         .configuration
         .take()
         .map(|Configuration(input)| input);
-    let mut record = match journal.read().map_err(|e| fail("reading setup", e))? {
+    let existing = journal.read().map_err(|e| fail("reading setup", e))?;
+    // A record without a reserved instance is what an earlier run froze and could not
+    // continue. It pins nothing: a corrected file replaces it (X5 review V1). A record
+    // that names its instance is the instance's configuration and never changes.
+    let existing = match (existing, &configured) {
+        (Some(record), Some(input)) if record.instance_id.is_none() && *input != record.input => {
+            journal
+                .abandon()
+                .map_err(|e| fail("replacing an unfinished setup", e))?;
+            None
+        }
+        (existing, _) => existing,
+    };
+    // Whether this run froze the record from a file: if a later step of the reservation
+    // refuses, the record is taken away again, so that nothing this run saved remains.
+    let mut froze_from_file = false;
+    let mut record = match existing {
         Some(record)
             if configured
                 .as_ref()
@@ -815,8 +904,8 @@ pub(crate) fn run_at(
         {
             return Err(format!(
                 "instance \"{shown}\" was set up with a different configuration (service \
-                 mode, data folder, credential directory, address or certificate); its \
-                 configuration does not change on a later run; nothing was changed"
+                 mode, data folder, credential directory or address); its configuration \
+                 does not change on a later run; nothing was changed"
             ));
         }
         Some(record) => {
@@ -835,6 +924,9 @@ pub(crate) fn run_at(
         None if configured.is_some() => {
             // Offline: nothing is asked and nothing is fetched. The address is the file's.
             let input = configured.expect("checked above");
+            // Everything that can refuse this input is asked before anything is saved.
+            preflight(&input)?;
+            froze_from_file = true;
             journal
                 .freeze(input, true, pin)
                 .map_err(|e| fail("saving setup", e))?
@@ -858,7 +950,6 @@ pub(crate) fn run_at(
                 root,
                 credentials: None,
                 listen: loopback(port)?,
-                certificate: None,
             };
             journal
                 .freeze(input, false, pin)
@@ -891,65 +982,77 @@ pub(crate) fn run_at(
             (id, temp.join("host.sock"))
         }
         None => {
-            registry
-                .restore_temp_folders()
-                .map_err(|e| fail("restoring instance temp folders", e))?;
-            let reserved = {
-                let instance = registry
-                    .reserve(name, &record.input.root)
-                    .map_err(|e| fail("reserving the instance", e))?;
-                instance
-                    .set_browser(&record.input.listen)
-                    .map_err(|e| fail("recording the instance address", e))?;
-                instance
-                    .prepare_layout()
-                    .map_err(|e| fail("preparing the instance folder", e))?;
-                // While the root lock is held: the directory is checked against the root
-                // itself, and recorded together with the instance it belongs to.
-                record.credentials = match (&record.input.credentials, &platform.credentials) {
-                    // The configuration names it. In the foreground mode it is a mounted
-                    // volume, which setup never makes.
-                    (Some(configured), _) => Some(use_credential_directory(
-                        configured,
-                        record.input.service == Service::Foreground,
-                        instance.root_descriptor(),
-                        Path::new("/"),
-                        open_as_the_host_will,
-                    )?),
-                    (None, CredentialDirectory::Below(base)) => Some(make_credential_directory(
-                        base,
-                        instance.id(),
-                        instance.root_descriptor(),
-                        Path::new("/"),
-                        open_as_the_host_will,
-                    )?),
-                    (None, CredentialDirectory::Unused) => None,
+            let reserve = |record: &mut Record| -> Result<(String, PathBuf), String> {
+                registry
+                    .restore_temp_folders()
+                    .map_err(|e| fail("restoring instance temp folders", e))?;
+                let reserved = {
+                    let instance = registry
+                        .reserve(name, &record.input.root)
+                        .map_err(|e| fail("reserving the instance", e))?;
+                    instance
+                        .set_browser(&record.input.listen)
+                        .map_err(|e| fail("recording the instance address", e))?;
+                    instance
+                        .prepare_layout()
+                        .map_err(|e| fail("preparing the instance folder", e))?;
+                    // While the root lock is held: the directory is checked against the root
+                    // itself, and recorded together with the instance it belongs to.
+                    record.credentials = match (&record.input.credentials, &platform.credentials) {
+                        // The configuration names it. In the foreground mode it is a mounted
+                        // volume, which setup never makes.
+                        (Some(configured), _) => Some(use_credential_directory(
+                            configured,
+                            record.input.service == Service::Foreground,
+                            instance.root_descriptor(),
+                            Path::new("/"),
+                            open_as_the_host_will,
+                        )?),
+                        (None, CredentialDirectory::Below(base)) => {
+                            Some(make_credential_directory(
+                                base,
+                                instance.id(),
+                                instance.root_descriptor(),
+                                Path::new("/"),
+                                open_as_the_host_will,
+                            )?)
+                        }
+                        (None, CredentialDirectory::Unused) => None,
+                    };
+                    (
+                        instance.id().to_owned(),
+                        instance.temp_folder().join("host.sock"),
+                    )
                 };
-                (
-                    instance.id().to_owned(),
-                    instance.temp_folder().join("host.sock"),
-                )
+                record.instance_id = Some(reserved.0.clone());
+                journal.write(record).map_err(|e| fail("saving setup", e))?;
+                Ok(reserved)
             };
-            record.instance_id = Some(reserved.0.clone());
-            journal
-                .write(&record)
-                .map_err(|e| fail("saving setup", e))?;
-            reserved
+            match reserve(&mut record) {
+                Ok(reserved) => reserved,
+                Err(refused) => {
+                    // What this run froze from a file is not left to refuse the next,
+                    // corrected one. (A reservation that was made stays the registry's:
+                    // the same data folder is reserved again by the next run.)
+                    if froze_from_file {
+                        let _ = journal.abandon();
+                    }
+                    return Err(refused);
+                }
+            }
         }
     };
     if let Some(credentials) = &record.credentials {
         say(out, format!("Secrets: {}", credentials.display()))?;
     }
-    match record.input.listen.scheme() {
-        org_host_control::listen::ListenMode::Https => say(out, HTTPS_NOT_SERVED)?,
-        org_host_control::listen::ListenMode::HttpPublished => say(
+    if record.input.listen.scheme() == org_host_control::listen::ListenMode::HttpPublished {
+        say(
             out,
             format!(
                 "Browser access: {}",
                 published_http_notice(&record.input.listen)
             ),
-        )?,
-        org_host_control::listen::ListenMode::HttpLoopback => {}
+        )?;
     }
 
     // 4. ENC-3, with the modes read back from disk.
@@ -972,8 +1075,9 @@ pub(crate) fn run_at(
             format!(
                 "Service: none is registered (foreground mode). Instance \"{shown}\" runs \
                  while agentic-org serve --setup <file> runs. For the administrator's \
-                 registration link, run: {}",
-                reset_hint(name)
+                 registration link, run as root: {} --user {}",
+                reset_hint(name),
+                user_name()
             ),
         );
     }
@@ -1055,7 +1159,7 @@ pub(crate) fn run_at(
             .map_err(|e| fail("saving setup", e))?;
         result
     };
-    show_link(out, result, name)
+    show_link(out, result, name, record.input.listen.origin())
 }
 
 /// What setup and the service commands say when no service manager can register a service
@@ -1103,13 +1207,39 @@ fn reset_hint(name: Option<&str>) -> String {
     }
 }
 
+/// What a command says when a service answers a link call with anything but this
+/// instance's own registration link. Nothing of the answer is shown.
+pub(crate) const NOT_THIS_INSTANCES_LINK: &str = "the service answered with something that is \
+     not this instance's registration link, so nothing of its answer is shown; check that the \
+     instance's own service is the one that runs";
+
+/// `url` if it is exactly this instance's registration link: the configured `origin`, then
+/// `/register#`, then a token in the product's own form (32 bytes as unpadded base64url).
+/// On a system that cannot identify the program behind `host.sock`, the answer comes from
+/// a peer the service user controls, and it is printed to a terminal that may be root's:
+/// nothing else is ever printed from it (X5 review V4).
+pub(crate) fn this_instances_link<'a>(
+    url: &'a str,
+    origin: &org_host_control::listen::ListenOrigin,
+) -> Result<&'a str, String> {
+    let token = url
+        .strip_prefix(origin.as_str().trim_end_matches('/'))
+        .and_then(|rest| rest.strip_prefix("/register#"));
+    match token {
+        Some(token) if crate::links::Token::parse(token).is_some() => Ok(url),
+        _ => Err(NOT_THIS_INSTANCES_LINK.into()),
+    }
+}
+
 fn show_link(
     out: &mut dyn Write,
     result: AdminLinkResult,
     name: Option<&str>,
+    origin: &org_host_control::listen::ListenOrigin,
 ) -> Result<(), String> {
     match result {
         AdminLinkResult::Issued { url, expires_at_ms } => {
+            let url = this_instances_link(url.expose(), origin)?;
             say(out, "")?;
             say(
                 out,
@@ -1122,7 +1252,7 @@ fn show_link(
                     local_time(expires_at_ms)
                 ),
             )?;
-            say(out, format!("  {}", url.expose()))?;
+            say(out, format!("  {url}"))?;
             say(
                 out,
                 format!("If it expires or is lost, run: {}", reset_hint(name)),
@@ -1267,48 +1397,102 @@ pub fn admin_reset(
         account_by_name,
         account_by_id,
     )?;
+    // SIGN-33: where the system names a peer by its user alone (Linux), only root resets,
+    // and anyone else is told so before the service is asked anything.
+    if acting_for.is_none() && crate::human::host_is_named_by_user_alone() {
+        return Err(reset_needs_root(name));
+    }
     let not_running = |why: String| {
         format!(
             "{why}; the service is not running: start it with agentic-org service start{}",
             name.map(|n| format!(" --name {n}")).unwrap_or_default()
         )
     };
-    let mut wire = match acting_for {
+    let (record, wire) = match acting_for {
         Some(account) => {
-            let (_, id, socket) =
+            let (record, id, socket) =
                 as_account(account, || registered(&crate::human::paths(name)?, name))?;
-            connect_verified(&socket, &id, |stream| {
+            // The first line names the user whose instance this is, so that a reset never
+            // lands on another user's instance unnoticed (SIGN-33).
+            say(
+                out,
+                format!(
+                    "Instance {} of Linux user {}.",
+                    name.unwrap_or("default"),
+                    account_name(account.uid)
+                ),
+            )?;
+            let wire = connect_verified(&socket, &id, |stream| {
                 crate::human::verify_service_host(stream, account.uid)
             })
-            .map_err(not_running)?
+            .map_err(not_running)?;
+            (record, wire)
         }
         None => {
-            let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
-            connect(&socket, &id).map_err(not_running)?
+            let (record, id, socket) = registered(&crate::human::paths(name)?, name)?;
+            (record, connect(&socket, &id).map_err(not_running)?)
         }
     };
+    reset_over(wire, record.input.listen.origin(), name, out)
+}
+
+/// What `admin reset` answers on Linux to anyone but root (spec §4a.2, SIGN-33).
+pub(crate) fn reset_needs_root(name: Option<&str>) -> String {
+    format!(
+        "Resetting the administrator's password on Linux needs root. Run it with sudo: sudo {}",
+        reset_hint(name)
+    )
+}
+
+/// The reset itself, over a connection to the instance's service: one call, and of its
+/// answer only this instance's own link is ever shown.
+fn reset_over(
+    mut wire: Wire,
+    origin: &org_host_control::listen::ListenOrigin,
+    name: Option<&str>,
+    out: &mut dyn Write,
+) -> Result<(), String> {
     let result = wire
         .call::<AdminReset>(&AdminResetParams::default(), None)
-        .map_err(|e| {
-            let why = fail("asking for a new registration link", e);
-            if acting_for.is_none() && crate::human::host_is_named_by_user_alone() {
-                format!(
-                    "{why}; on this system the administrator is reset by root at the server \
-                     machine: run this as root (sudo agentic-org admin reset; in a container, \
-                     docker exec -it -u 0 <container> agentic-org admin reset --user <service \
-                     user>)"
-                )
-            } else {
-                why
-            }
-        })?;
+        .map_err(|e| fail("asking for a new registration link", e))?;
     if matches!(result, AdminLinkResult::AdministratorPresent) {
         return say(
             out,
             "The instance has an administrator; resetting its password is not available yet.",
         );
     }
-    show_link(out, result, name)
+    show_link(out, result, name, origin)
+}
+
+/// The account name of `uid` for a line of output: letters, digits, `_`, `-` and `.` only,
+/// or the number where the account database has no such name.
+fn account_name(uid: u32) -> String {
+    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
+    // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: an entry, buffer and result valid for the call.
+    let status = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut entry,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut found,
+        )
+    };
+    if status == 0 && !found.is_null() && !entry.pw_name.is_null() {
+        // SAFETY: on success `pw_name` is a NUL-terminated string inside `buffer`.
+        let name = unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }.to_string_lossy();
+        let plain = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'));
+        if plain {
+            return name.into_owned();
+        }
+    }
+    format!("uid {uid}")
 }
 
 /// An account of this machine: its user and primary group.

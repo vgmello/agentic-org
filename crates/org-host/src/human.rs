@@ -186,7 +186,10 @@ pub(crate) fn paths(name: Option<&str>) -> Result<Paths, String> {
         );
     }
     let account = crate::home::account_dir().ok_or("account home unavailable")?;
-    Paths::prepare(&account, user_temp(&account)?, name).map_err(|_| unavailable())
+    // The instance's own reason: which folder, and the rule it broke (a data volume on a
+    // memory filesystem, a folder of another user). Paths and fixed texts only.
+    Paths::prepare(&account, user_temp(&account)?, name)
+        .map_err(|why| format!("this account's instance folders cannot be used: {why}"))
 }
 fn user_temp(account: &std::path::Path) -> Result<PathBuf, String> {
     use org_platform::dirs::UserTempError;

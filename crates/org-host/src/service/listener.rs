@@ -393,8 +393,6 @@ fn readable(listener: &UnixListener, wait: Duration) -> bool {
     unsafe { libc::poll(&mut fd, 1, ms) > 0 }
 }
 
-/// A connection's reader: reads requests until the client goes away or the stream is out of
-/// step, runs each on its own thread, then waits for them and stops the writer.
 /// Who a peer of `host.sock` was admitted as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Admitted {
@@ -434,6 +432,8 @@ fn root_may_call(request: &Request) -> bool {
     request.is::<org_proto::Hello>() || request.is::<org_host_control::admin::AdminReset>()
 }
 
+/// A connection's reader: reads requests until the client goes away or the stream is out of
+/// step, runs each on its own thread, then waits for them and stops the writer.
 fn serve(
     stream: UnixStream,
     connection: Arc<Connection>,

@@ -240,3 +240,48 @@ fn without_a_user_manager_setup_names_the_foreground_mode_and_saves_nothing() {
         assert_eq!(service_pid(&account), None, "{case}");
     }
 }
+
+/// X5 review V7: the unit carries the variables that decided the instance's locations when
+/// setup ran (each of the three XDG base directories, when it is set to an absolute path),
+/// so that the service, which the user manager starts with its own environment, resolves
+/// the same paths. A relative value, which the path rule ignores, is not carried.
+#[test]
+fn the_unit_carries_the_variables_that_decided_the_instances_paths() {
+    for (variable, others) in [
+        ("XDG_DATA_HOME", ["XDG_CACHE_HOME", "XDG_STATE_HOME"]),
+        ("XDG_CACHE_HOME", ["XDG_DATA_HOME", "XDG_STATE_HOME"]),
+        ("XDG_STATE_HOME", ["XDG_DATA_HOME", "XDG_CACHE_HOME"]),
+    ] {
+        let Some(account) = account() else { return };
+        let place = account.base.join("xdg");
+        let mut command = account.command(&["setup", "--port", &free_port().to_string()]);
+        command
+            .env(variable, &place)
+            .env(others[0], "relative/place");
+        let ran = output(&mut command);
+        assert!(ran.status.success(), "{variable}: {:?}", text(&ran));
+        let id = account.record("default")["instance_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let unit = std::fs::read_to_string(
+            account
+                .base
+                .join(".config/systemd/user")
+                .join(format!("agentic-org-{id}.service")),
+        )
+        .unwrap();
+        assert!(
+            unit.contains(&format!("Environment=\"{variable}={}\"\n", place.display())),
+            "{variable}: {unit}"
+        );
+        for other in others {
+            assert!(
+                !unit.contains(other),
+                "{variable}: {other} was carried: {unit}"
+            );
+        }
+        let stop = account.run(&["service", "stop"]);
+        assert!(stop.status.success(), "{:?}", text(&stop));
+    }
+}

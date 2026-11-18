@@ -147,6 +147,47 @@ impl Host {
             },
         )
         .map_err(|why| refused("opening the credential directory", why))?;
+        let foreground = record.input.service == crate::instance::setup::Service::Foreground;
+        // In the foreground mode the recorded credential directory is judged at every start
+        // by the store's location rules (a mount point, its owner and mode, its filesystem,
+        // apart from the data root), whichever store this build keeps its keys in: a
+        // container started without its secrets volume, or with a memory filesystem in its
+        // place, does not start (X5 review V3). Where the release store was opened above,
+        // that was this check. No item is expected here: which keys exist is the open
+        // store's question.
+        if let (true, None, Some(directory)) = (
+            foreground,
+            &release_directory,
+            record.credentials.as_deref(),
+        ) {
+            org_platform_host::credentials::release_directory_with_stores(
+                org_platform_host::credentials::ReleaseDirectory {
+                    path: directory,
+                    data_root: instance.root_descriptor(),
+                    mount_point_required: true,
+                    expect_items: false,
+                },
+                &crate::release_store::ITEM_STORES,
+            )
+            .map(drop)
+            .map_err(|why| refused("checking the credential directory", why))?;
+        }
+        // A development build in the foreground mode keeps its development key folder
+        // inside the secrets volume, which is empty at the first start: the folder itself
+        // is made here, after the volume was judged, and never its parent.
+        #[cfg(debug_assertions)]
+        if let (true, Some(dir)) = (foreground, &dev_key_dir) {
+            use std::os::unix::fs::DirBuilderExt;
+            match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+                Err(source) if source.kind() != io::ErrorKind::AlreadyExists => {
+                    return Err(HostError::Io {
+                        context: "making the development key folder",
+                        source,
+                    });
+                }
+                _ => {}
+            }
+        }
         let custody = crate::host_secrets::store_for(
             dev_key_dir.as_deref(),
             instance.root(),
@@ -186,6 +227,9 @@ impl Host {
             policy,
             Arc::new(NativePresence),
         );
+        if foreground {
+            admin.foreground_instance();
+        }
         let installed = host.service.install_admin(Arc::new(admin));
         debug_assert!(installed, "the administrator service is installed once");
         Ok(host)

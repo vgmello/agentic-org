@@ -179,7 +179,6 @@ fn config(args: Args) -> Result<Config, String> {
         None => org_host::default_server_program()
             .map_err(|e| format!("finding the office server: {e}"))?,
     };
-    let foreground = args.setup.is_some();
     let mut config = Config::new(home, server_bin);
     config.set_app_team_id(
         args.app_team_id
@@ -195,18 +194,6 @@ fn config(args: Args) -> Result<Config, String> {
         ),
         _ => None,
     };
-    // The foreground mode's first start in a development image: the development key folder
-    // is inside the mounted secrets volume, which is empty then. Only the folder itself is
-    // made, owner-only; its parent is the volume setup has just checked.
-    if let (true, Some(dir)) = (foreground, &config.dev_key_dir) {
-        use std::os::unix::fs::DirBuilderExt;
-        match std::fs::DirBuilder::new().mode(0o700).create(dir) {
-            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
-                return Err(format!("making the development key folder: {e}"));
-            }
-            _ => {}
-        }
-    }
     Ok(config)
 }
 

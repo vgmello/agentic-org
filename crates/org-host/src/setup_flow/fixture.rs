@@ -56,7 +56,6 @@ pub fn registered_account(
         root: root.clone(),
         credentials: None,
         listen: super::loopback(port)?,
-        certificate: None,
     };
     let mut record = journal
         .freeze(input, false, super::release_pin()?)

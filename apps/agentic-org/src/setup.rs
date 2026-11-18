@@ -171,13 +171,16 @@ fn ask_port(address: &str) -> Result<Option<u16>, String> {
     }
 }
 
-/// The service's explicit environment. Development builds pass on their development settings
+/// The service's explicit environment: the home, and the variables that decided this
+/// instance's locations when setup ran, so that the service resolves the same paths
+/// (`setup_flow::path_environment`). Development builds pass on their development settings
 /// so the service finds the same instance and development key folder.
 fn service_environment() -> Vec<(OsString, OsString)> {
     let mut env = Vec::new();
     if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
         env.push(("HOME".into(), home));
     }
+    env.extend(setup_flow::path_environment());
     if cfg!(debug_assertions) {
         for key in ["ORG_DEV_ACCOUNT_BASE", "ORG_OFFICE_DEV_KEY_DIR"] {
             if let Some(value) = std::env::var_os(key).filter(|v| !v.is_empty()) {

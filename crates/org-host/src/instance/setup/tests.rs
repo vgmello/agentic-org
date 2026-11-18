@@ -16,7 +16,6 @@ fn input(root: PathBuf) -> Input {
         root,
         credentials: None,
         listen: listen(7420),
-        certificate: None,
     }
 }
 fn pin() -> ReleasePin {
@@ -160,8 +159,8 @@ fn strict_input_and_replaced_setup_lock_refuse_without_secrets() {
         serde_json::from_value::<Input>(raw).is_err(),
         "plain HTTP stays on loopback"
     );
-    // HTTPS on every address is a listener; an origin whose scheme or port is not the
-    // listener's cannot even be decoded.
+    // HTTPS decodes as a listener and is refused as an input: no build serves it yet, so
+    // no instance is set up for it (X5 review V11). The refusal names the modes that work.
     let https = |origin: &str| {
         serde_json::from_str::<ListenConfig>(&format!(
             r#"{{"address":"0.0.0.0","port":7420,"scheme":"https","origin":"{origin}","hsts":"off"}}"#
@@ -173,28 +172,20 @@ fn strict_input_and_replaced_setup_lock_refuse_without_secrets() {
     };
     let secure = https("https://office.example:7420").unwrap();
     assert!(secure.listen.address().is_unspecified());
-    assert!(secure.validate().is_ok());
+    let refused = secure.validate().unwrap_err().to_string();
+    assert!(
+        refused.contains("\"https\" is not available in this build")
+            && refused.contains("http_loopback")
+            && refused.contains("http_published"),
+        "{refused}"
+    );
     assert!(https("https://office.example:7421").is_err());
     assert!(https("http://office.example:7420").is_err());
-    // A certificate is two absolute, normalized paths, for an HTTPS listener only.
-    let pair = |chain: &str, key: &str| Certificate {
-        chain: chain.into(),
-        key: key.into(),
-    };
-    let mut with = secure.clone();
-    with.certificate = Some(pair("/secrets/tls/chain.pem", "/secrets/tls/key.pem"));
-    assert!(with.validate().is_ok());
-    for bad_pair in [
-        pair("chain.pem", "/secrets/tls/key.pem"),
-        pair("/secrets/tls/chain.pem", "/secrets/../key.pem"),
-        pair("/secrets//tls/chain.pem", "/secrets/tls/key.pem"),
-    ] {
-        with.certificate = Some(bad_pair);
-        assert!(with.validate().is_err());
-    }
-    bad = original.clone();
-    bad.certificate = Some(pair("/secrets/tls/chain.pem", "/secrets/tls/key.pem"));
-    assert!(bad.validate().is_err(), "no certificate for loopback HTTP");
+    // The half-built certificate property is gone: a file that names it has an unknown
+    // property.
+    let mut raw = serde_json::to_value(&original).unwrap();
+    raw["certificate"] = serde_json::json!({"chain": "/c.pem", "key": "/k.pem"});
+    assert!(serde_json::from_value::<Input>(raw).is_err());
     // The credential directory is spelled as it is walked.
     for (path, valid) in [
         ("/secrets", true),
@@ -373,15 +364,14 @@ fn a_configuration_file_is_the_strict_input_and_names_its_shape_when_it_is_wrong
     let text = r#"{
       "version": 1, "service": "foreground", "root": "/data/instance",
       "credentials": "/secrets",
-      "listen": {"address": "0.0.0.0", "port": 8443, "scheme": "https",
-                 "origin": "https://localhost:8443", "hsts": "off"}
+      "listen": {"address": "0.0.0.0", "port": 8443, "scheme": "http_published",
+                 "origin": "http://localhost:8443", "hsts": "off"}
     }"#;
     let input = Input::from_configuration(text.as_bytes()).unwrap();
     assert_eq!(input.service, Service::Foreground);
     assert_eq!(input.root, PathBuf::from("/data/instance"));
     assert_eq!(input.credentials, Some(PathBuf::from("/secrets")));
     assert_eq!(input.listen.port(), 8443);
-    assert_eq!(input.certificate, None);
     // It is exactly what the record stores.
     assert_eq!(
         serde_json::from_value::<Input>(serde_json::to_value(&input).unwrap()).unwrap(),

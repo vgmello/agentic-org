@@ -1,7 +1,6 @@
 //! Bounded nonsecret setup continuation. No password/session/custody bytes, no account and
 //! no organization: setup asks for none (A2). The frozen input is the service mode, the
-//! root, the address and, where a file gave them, the credential directory and the paths
-//! of a listener certificate; the same input, as a strict JSON file, is the configuration
+//! root, the address and, where a file gave it, the credential directory; the same input, as a strict JSON file, is the configuration
 //! of non-interactive setup (`setup --non-interactive --config`, `serve --setup`);
 //! progress only moves forward, in the order the setup flow takes it:
 //! instance reserved (`instance_id`), service registered, registry created by the service
@@ -35,15 +34,6 @@ pub(crate) enum Service {
     Foreground,
 }
 
-/// Where an operator placed the listener's certificate chain and private key (PEM). Paths
-/// only: the pair itself is never in a configuration or a record.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Certificate {
-    pub chain: PathBuf,
-    pub key: PathBuf,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
@@ -58,8 +48,6 @@ pub(crate) struct Input {
     pub credentials: Option<PathBuf>,
     #[serde(deserialize_with = "strict_listen")]
     pub listen: ListenConfig,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub certificate: Option<Certificate>,
 }
 fn strict_listen<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ListenConfig, D::Error> {
     #[derive(Deserialize, Serialize)]
@@ -134,17 +122,11 @@ impl Input {
         {
             return Err(Error::Invalid(PUBLISHED_NEEDS_FOREGROUND));
         }
-        if let Some(certificate) = &self.certificate {
-            if self.listen.scheme() != org_host_control::listen::ListenMode::Https {
-                return Err(Error::Invalid(
-                    "a certificate is for an HTTPS listener; this one is loopback HTTP",
-                ));
-            }
-            if !spelled(&certificate.chain) || !spelled(&certificate.key) {
-                return Err(Error::Invalid(
-                    "the certificate chain and key must be absolute, normalized paths",
-                ));
-            }
+        // No build serves HTTPS yet (no host can make or verify the listener's
+        // certificate), so no instance is set up for it: refused when the input is read,
+        // before anything is made, and not half-recorded for a later build to find.
+        if self.listen.scheme() == org_host_control::listen::ListenMode::Https {
+            return Err(Error::Invalid(HTTPS_NOT_AVAILABLE));
         }
         Ok(())
     }
@@ -190,14 +172,19 @@ pub(crate) const PUBLISHED_NEEDS_FOREGROUND: &str = "\"scheme\": \"http_publishe
      on a published port) is only for \"service\": \"foreground\", the main process of a \
      container; a registered service listens with http_loopback";
 
+/// What an input whose listener is HTTPS is told.
+pub(crate) const HTTPS_NOT_AVAILABLE: &str = "\"scheme\": \"https\" is not available in this \
+     build: nothing can make or verify the listener's certificate yet. On a machine use \
+     \"http_loopback\"; in a container (\"service\": \"foreground\") use \"http_published\" and \
+     publish the port on the Docker host's 127.0.0.1";
+
 /// What a configuration that does not parse is told: the whole shape, since a strict
 /// reader cannot say which property a person meant.
 pub(crate) const CONFIGURATION_SHAPE: &str = "the setup configuration is not valid: it is one \
      JSON object with \"version\": 1, \"service\": \"registered\" or \"foreground\", \"root\": an \
-     absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"http_loopback\", \"http_published\" or \"https\", \
+     absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"http_loopback\" or \"http_published\", \
      \"origin\", \"hsts\": \"off\", \"on\" or \"clear\"}, and optionally \"credentials\": an \
-     absolute path and \"certificate\": {\"chain\", \"key\"}: two absolute paths; no other \
-     property is accepted";
+     absolute path; no other property is accepted";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Record {
@@ -434,6 +421,22 @@ impl Journal {
         };
         self.write(&r)?;
         Ok(r)
+    }
+    /// Takes away a record that pins nothing yet: one without a reserved instance, which a
+    /// setup run froze and then could not continue. A record that names its instance is
+    /// never removed: its configuration is the instance's. Returns whether one was removed.
+    pub fn abandon(&self) -> Result<bool, Error> {
+        match self.read()? {
+            None => Ok(false),
+            Some(record) if record.instance_id.is_some() => Err(Error::Conflict(
+                "setup reserved an instance for this record; it is not removed",
+            )),
+            Some(_) => {
+                std::fs::remove_file(self.directory.path().join(FILE))?;
+                self.verify()?;
+                Ok(true)
+            }
+        }
     }
     pub fn write(&self, next: &Record) -> Result<(), Error> {
         self.verify()?;

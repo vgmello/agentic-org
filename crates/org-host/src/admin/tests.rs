@@ -371,3 +371,48 @@ fn where_a_peer_is_named_by_its_user_alone_only_root_resets_the_administrator() 
     }
     drop(home);
 }
+
+/// X5 review V5: an instance that runs in the foreground never gives the initial link,
+/// whoever names its setup operation: its first link comes only from root's reset. A
+/// registered instance's setup takes it as before.
+#[test]
+fn a_foreground_instance_never_gives_the_initial_link() {
+    use std::os::unix::net::UnixStream;
+    let received = Received {
+        sent_at: 0,
+        buffered_after: 0,
+    };
+    let (host, _peer) = UnixStream::pair().unwrap();
+    let connection = Connection::accepted_for_tests(&host);
+    let params = || AdminLinkInitialParams {
+        setup_operation: OPERATION.into(),
+    };
+    let (_home, admin) = self::admin();
+    // Whether this system's policy admits this test process as a caller at all decides
+    // the registered answer; the foreground refusal must not depend on it.
+    let registered = admin.initial(&connection, received, params());
+    admin.foreground_instance();
+    let refused = admin.initial(&connection, received, params()).unwrap_err();
+    assert_eq!(refused.code, ErrorCode::NotAuthorized);
+    if registered.is_ok() {
+        assert!(
+            refused.message.contains("foreground"),
+            "{}",
+            refused.message
+        );
+        // Nothing more was issued for the refused call.
+        assert!(matches!(
+            admin.initial_link(OPERATION, wall().unwrap()).unwrap(),
+            AdminLinkResult::AlreadyIssued
+        ));
+    }
+    // Root's reset is unaffected.
+    let (_home, fresh) = self::admin();
+    fresh.foreground_instance();
+    let root = Connection::accepted_for_tests(&host);
+    root.mark_root_authority();
+    assert!(matches!(
+        fresh.reset(&root, received).unwrap(),
+        AdminLinkResult::Issued { .. }
+    ));
+}
