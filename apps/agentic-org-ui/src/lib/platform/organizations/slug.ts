@@ -20,8 +20,9 @@ export const validSlug = (slug: string): boolean =>
 	slug.length <= SLUG_MAX_CHARS && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
 
 /**
- * The slug field follows the name until the person edits it. Clearing the slug field
- * hands it back to the name.
+ * The slug field follows the name until the person edits it. The field can be emptied and
+ * stays empty while it is being typed in; an empty slug is handed back to the name when the
+ * field is left or at the next edit of the name, never during the keystroke.
  */
 export function createSlugField() {
 	let edited = false;
@@ -37,9 +38,17 @@ export function createSlugField() {
 			if (!edited) value = slugFromName(name);
 			return value;
 		},
-		slugEdited(slug: string, name: string): string {
+		slugEdited(slug: string): string {
 			edited = slug !== '';
-			value = edited ? slug : slugFromName(name);
+			value = slug;
+			return value;
+		},
+		/** The slug field lost focus: an empty one follows the name again. */
+		slugLeft(name: string): string {
+			if (value === '') {
+				edited = false;
+				value = slugFromName(name);
+			}
 			return value;
 		}
 	};

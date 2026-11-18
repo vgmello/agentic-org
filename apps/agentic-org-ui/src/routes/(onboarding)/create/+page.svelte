@@ -137,8 +137,15 @@
 		flow.edited('slug');
 	}
 	function slugTyped() {
-		slug = slugField.slugEdited(slug, name);
+		slug = slugField.slugEdited(slug);
 		flow.edited('slug');
+	}
+	function slugLeft() {
+		// An emptied slug follows the name again once the field is left, not while typing in it.
+		// Leaving the field without changing it keeps any error it shows.
+		const before = slug;
+		slug = slugField.slugLeft(name);
+		if (slug !== before) flow.edited('slug');
 	}
 	async function copy(what: 'details' | 'command') {
 		const text =
@@ -242,6 +249,7 @@
 				readonly={locked}
 				bind:value={slug}
 				oninput={slugTyped}
+				onblur={slugLeft}
 				aria-invalid={errors.slug ? true : undefined}
 				aria-describedby={describedBy('slug', 'slug-rule')}
 			/>

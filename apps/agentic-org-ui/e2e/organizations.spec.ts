@@ -96,6 +96,42 @@ test('the slug follows the name until it is edited, and is sent as typed', async
 	]);
 });
 
+test('the slug can be emptied and typed again; left empty, it follows the name again', async ({
+	page
+}) => {
+	await open(page);
+	const name = page.getByLabel('Name', { exact: true });
+	const slug = page.getByLabel('Slug', { exact: true });
+	await name.fill('Side Project');
+	await expect(slug).toHaveValue('side-project');
+	await slug.focus();
+	await slug.press('ControlOrMeta+a');
+	await slug.press('Backspace');
+	await expect(slug).toHaveValue('');
+	await expect(slug).toBeFocused();
+	await slug.pressSequentially('sp');
+	await expect(slug).toHaveValue('sp');
+	await slug.press('ControlOrMeta+a');
+	await slug.press('Backspace');
+	await expect(slug).toHaveValue('');
+	await name.focus();
+	await expect(slug).toHaveValue('side-project');
+	await name.fill('Other');
+	await expect(slug).toHaveValue('other');
+	// Leaving a slug the form refused, without changing it, keeps its message.
+	await slug.fill('Not Kebab');
+	await create(page).click();
+	const rule = page.getByText(
+		'Use lowercase letters, numbers and single hyphens, for example side-project.'
+	);
+	await expect(rule).toBeVisible();
+	await expect(slug).toBeFocused();
+	await slug.press('Tab');
+	await expect(slug).not.toBeFocused();
+	await expect(rule).toBeVisible();
+	await expect(slug).toHaveValue('Not Kebab');
+});
+
 test("a name HQ refuses as invalid shows the inline message for HQ's rule", async ({ page }) => {
 	const server = await open(page);
 	await fill(page);

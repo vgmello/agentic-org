@@ -34,18 +34,36 @@ describe('slug field', () => {
 	it('follows the name until the person edits the slug', () => {
 		const field = createSlugField();
 		expect(field.nameChanged('Side Project')).toBe('side-project');
-		expect(field.slugEdited('sp', 'Side Project')).toBe('sp');
+		expect(field.slugEdited('sp')).toBe('sp');
 		expect(field.nameChanged('Side Project Two')).toBe('sp');
 		expect(field.edited).toBe(true);
 	});
 	it('keeps what the person typed, valid or not: the form reports it', () => {
 		const field = createSlugField();
-		expect(field.slugEdited('Not Kebab', 'Name')).toBe('Not Kebab');
+		expect(field.slugEdited('Not Kebab')).toBe('Not Kebab');
 	});
-	it('a cleared slug follows the name again', () => {
+	it('can be emptied: it stays empty during the keystroke and is typed in again', () => {
 		const field = createSlugField();
-		field.slugEdited('sp', 'Side Project');
-		expect(field.slugEdited('', 'Side Project')).toBe('side-project');
+		field.nameChanged('Side Project');
+		field.slugEdited('sp');
+		expect(field.slugEdited('')).toBe('');
+		expect(field.value).toBe('');
+		expect(field.slugEdited('x')).toBe('x');
+		expect(field.slugLeft('Side Project')).toBe('x');
+		expect(field.nameChanged('Other')).toBe('x');
+	});
+	it('an emptied slug follows the name again when the field is left', () => {
+		const field = createSlugField();
+		field.slugEdited('sp');
+		field.slugEdited('');
+		expect(field.slugLeft('Side Project')).toBe('side-project');
+		expect(field.edited).toBe(false);
+		expect(field.nameChanged('Other')).toBe('other');
+	});
+	it('an emptied slug follows the name again at the next edit of the name', () => {
+		const field = createSlugField();
+		field.slugEdited('sp');
+		field.slugEdited('');
 		expect(field.nameChanged('Other')).toBe('other');
 	});
 });
