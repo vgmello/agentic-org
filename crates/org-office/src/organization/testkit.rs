@@ -800,7 +800,8 @@ mod suite {
     }
 
     /// An archived parent is a recorded rejection that takes no generation and no number;
-    /// an unknown parent, a used ID and an unknown actor record nothing.
+    /// an unknown parent, a used ID and an unknown actor record nothing; an operation ID
+    /// used again with another command conflicts.
     pub fn team_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         assert_eq!(bench.created_team(2, 0x21, TEAM).number, 2);
@@ -817,6 +818,25 @@ mod suite {
         unrecorded(4, bench.create_team(4, 0x22, 0x99));
         unrecorded(5, bench.create_team(5, 0x21, TEAM));
         unrecorded(6, bench.create_team(6, TEAM, TEAM));
+        // An ID that is another record's: the organization, the office, an employee, the
+        // repository.
+        let here = identity();
+        for (op, taken) in [
+            (11, here.organization_id),
+            (12, here.office_id),
+            (13, id(CREATOR)),
+            (14, id(HR)),
+            (15, id(REPOSITORY)),
+        ] {
+            let command = CreateTeam {
+                id: taken,
+                ..team_command(0x22, TEAM)
+            };
+            let actor = Actor::Employee(id(CREATOR));
+            let decide = bench.decisions.create_team(&actor, &command);
+            let operation = command.operation(id(op), &actor);
+            unrecorded(op, bench.store.submit(Some(operation), false, decide));
+        }
         let by = |actor: Actor, command: CreateTeam| {
             let decide = bench.decisions.create_team(&actor, &command);
             let operation = command.operation(id(7), &actor);
@@ -840,8 +860,28 @@ mod suite {
         assert_eq!(bench.create_team(8, 0x22, 0x21), Ok(rejected));
         assert_eq!(bench.decisions.count(), decided);
 
+        // The ID of a completed creation with another command conflicts: nothing is
+        // decided, and the generation and the original answer stand.
+        let decided = bench.decisions.count();
+        for (team, parent) in [(0x24, TEAM), (0x21, 0x21)] {
+            let other = bench.create_team(2, team, parent);
+            assert_eq!(other, Err(StoreError::Conflict), "{team:x} {parent:x}");
+        }
+        let command = team_command(0x21, TEAM);
+        let decide = bench.decisions.create_team(&Actor::System, &command);
+        let operation = command.operation(id(2), &Actor::System);
+        let other_actor = bench.store.submit(Some(operation), false, decide);
+        assert_eq!(other_actor, Err(StoreError::Conflict));
+        // So does the ID of a recorded rejection.
+        assert_eq!(bench.create_team(8, 0x24, TEAM), Err(StoreError::Conflict));
+        assert_eq!(bench.decisions.count(), decided);
+        assert_eq!(bench.generation(), generation);
+        assert_eq!(bench.created_team(2, 0x21, TEAM).number, 2);
+        assert_eq!(bench.decisions.count(), decided);
+
         assert_eq!(text(&bench.state_files()), text(&files));
         bench.read(|snapshot| {
+            assert_eq!(snapshot.team(&id(0x24))?, None);
             assert_eq!(snapshot.team_counter()?.map(|c| c.last_number), Some(2));
             assert_eq!(snapshot.team(&id(0x22))?, None);
             Ok(())
@@ -857,6 +897,92 @@ mod suite {
         assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
         let team = bench.read(|snapshot| snapshot.team(&id(0x23)));
         assert_eq!(team.expect("the team").meta.created_by, records::By::System);
+    }
+
+    /// Every row of the family and its generation, to compare across a rebuild.
+    fn rows<E: OrganizationEngine, G>(bench: &Bench<E, G>) -> impl PartialEq + std::fmt::Debug {
+        bench.read(|snapshot| {
+            Ok((
+                snapshot.generation()?,
+                snapshot.organization()?,
+                snapshot.repositories()?,
+                snapshot.offices()?,
+                snapshot.office_codes()?,
+                snapshot.teams()?,
+                snapshot.employees()?,
+                snapshot.team_counter()?,
+                snapshot.team_allocations()?,
+                snapshot.record_refs()?,
+            ))
+        })
+    }
+
+    /// Creations submitted at once are numbered one after another: no number and no
+    /// generation is given twice or skipped, whatever order the store took them in.
+    pub fn concurrent_team_numbers<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        const TEAMS: u64 = 8;
+        let bench = Bench::created(open);
+        let by = Actor::Employee(id(CREATOR));
+        let (store, decisions, by) = (&bench.store, &bench.decisions, &by);
+        let created: Vec<TeamCreated> = std::thread::scope(|scope| {
+            let submit = |n: u64| {
+                move || {
+                    let command = team_command(0x20 + n, TEAM);
+                    let decide = decisions.create_team(by, &command);
+                    let operation = command.operation(id(100 + n), by);
+                    let reply = store.submit(Some(operation), false, decide);
+                    let reply = reply.expect("a created team");
+                    assert_eq!(reply.outcome, Outcome::Completed);
+                    let created: TeamCreated =
+                        serde_json::from_slice(&reply.bytes).expect("a reply");
+                    assert_eq!(created.id, id(0x20 + n));
+                    created
+                }
+            };
+            let threads: Vec<_> = (1..=TEAMS).map(|n| scope.spawn(submit(n))).collect();
+            let joined = threads.into_iter().map(|thread| thread.join());
+            joined.map(|created| created.expect("no panic")).collect()
+        });
+
+        let expected: Vec<u64> = (2..=TEAMS + 1).collect();
+        let mut numbers: Vec<u64> = created.iter().map(|c| c.number).collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, expected);
+        let mut generations: Vec<u64> = created.iter().map(|c| c.generation).collect();
+        generations.sort_unstable();
+        assert_eq!(generations, expected);
+        assert_eq!(bench.generation(), TEAMS + 1);
+
+        // One allocation per number, each to the team that was told the number.
+        let mut issued: Vec<(u64, Id)> = created.iter().map(|c| (c.number, c.id.clone())).collect();
+        issued.push((1, id(TEAM)));
+        issued.sort();
+        bench.read(|snapshot| {
+            let counter = snapshot.team_counter()?.expect("the counter");
+            assert_eq!(counter.last_number, TEAMS + 1);
+            let allocations = snapshot.team_allocations()?;
+            let allocated: Vec<_> = allocations
+                .iter()
+                .map(|a| (a.number, a.team_id.clone()))
+                .collect();
+            assert_eq!(allocated, issued);
+            for (number, team) in &issued {
+                let numbered = snapshot.team_by_number(*number)?.expect("the team");
+                assert_eq!(&numbered.id, team);
+                assert_eq!(snapshot.team(team)?.map(|team| team.number), Some(*number));
+            }
+            assert_eq!(snapshot.teams()?.len(), issued.len());
+            Ok(())
+        });
+        let files = bench.state_files();
+        assert_eq!(files.len(), 9 + 2 * TEAMS as usize);
+
+        let before = rows(&bench);
+        let bench = bench.rebuilt(open).expect("a rebuild");
+        assert!(rows(&bench) == before, "{:?}\n{before:?}", rows(&bench));
+        assert_eq!(text(&bench.state_files()), text(&files));
+        let next = bench.created_team(200, 0x40, TEAM);
+        assert_eq!((next.number, next.generation), (TEAMS + 2, TEAMS + 2));
     }
 
     /// A team's file is nested in its parent's folder, at every depth, until the tree is
@@ -912,26 +1038,10 @@ mod suite {
         bench.created_team(6, 0x22, TEAM);
         assert_eq!(bench.generation(), 4);
 
-        let rows = |bench: &Bench<E, G>| {
-            bench.read(|snapshot| {
-                Ok((
-                    snapshot.generation()?,
-                    snapshot.organization()?,
-                    snapshot.repositories()?,
-                    snapshot.offices()?,
-                    snapshot.office_codes()?,
-                    snapshot.teams()?,
-                    snapshot.employees()?,
-                    snapshot.team_counter()?,
-                    snapshot.team_allocations()?,
-                    snapshot.record_refs()?,
-                ))
-            })
-        };
         let before = rows(&bench);
         let files = bench.state_files();
         let bench = bench.rebuilt(open).expect("a rebuild");
-        assert_eq!(rows(&bench), before);
+        assert!(rows(&bench) == before, "{:?}\n{before:?}", rows(&bench));
         assert_eq!(bench.generation(), 4);
         assert_eq!(text(&bench.state_files()), text(&files));
         // The rejection is still the answer, and the next creation is generation 5.
@@ -1113,6 +1223,10 @@ macro_rules! organization_conformance_tests {
         #[test]
         fn organization_team_numbers() {
             $crate::organization_family::testkit::team_numbers(&$open);
+        }
+        #[test]
+        fn organization_concurrent_team_numbers() {
+            $crate::organization_family::testkit::concurrent_team_numbers(&$open);
         }
         #[test]
         fn organization_team_refusals() {

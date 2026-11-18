@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{invalid, operation, reply, require, Op};
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, MAX_TEAM_DEPTH},
     records::{self, By, Meta, OfficeRole, Team, TeamAllocation, TeamStatus},
 };
 
@@ -89,9 +89,13 @@ where
     let Some(parent) = view.team(&command.parent)? else {
         return invalid("no such parent team");
     };
-    if view.team(&command.id)?.is_some() {
-        return invalid("the team's ID is in use");
-    }
+    // An ID names one record of the organization, whatever its kind.
+    let in_use = view.team(&command.id)?.is_some()
+        || command.id == organization.id
+        || view.office(&command.id)?.is_some()
+        || view.employee(&command.id)?.is_some()
+        || view.repositories()?.iter().any(|r| r.id == command.id);
+    require(!in_use, "the team's ID is in use")?;
     if !parent.is_active() {
         let rejected = TeamRejected {
             rejected: TeamRejection::ParentArchived,
@@ -102,6 +106,7 @@ where
         return invalid("the parent team has no chain of parents to a top-level team");
     };
     chain.push(command.id.clone());
+    require(chain.len() <= MAX_TEAM_DEPTH, "the team tree is too deep")?;
     let Some(counter) = view.team_counter()? else {
         return invalid("the organization has no team counter");
     };
@@ -131,7 +136,7 @@ where
         number,
         generation,
     };
-    // A tree too deep for a path is refused here.
+    // A tree within the depth limit but too deep for a path is refused here.
     Ok(Change::new(Op::CreateTeam.ack())
         .put(records::team_path(&chain)?, records::encode_team(&team))
         .put(
