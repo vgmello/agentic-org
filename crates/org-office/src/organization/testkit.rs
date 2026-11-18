@@ -522,11 +522,6 @@ mod suite {
             assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
         }
 
-        fn write(&self, change: Change) {
-            let reply = self.store.submit(None, false, self.decisions.write(change));
-            assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
-        }
-
         fn read<R>(&self, query: impl FnOnce(&E::Snapshot) -> Result<R, EngineError>) -> R {
             let read = self.store.read(|snapshot| Ok(query(snapshot)?));
             read.expect("a read").0
@@ -1051,17 +1046,28 @@ mod suite {
     }
 
     /// A rebuild refuses files that break a rule spanning files: here a missing
-    /// organization record, and a team led from outside it.
+    /// organization record, and a team led from outside it. An engine with constraints
+    /// of its own does not let such files in at all: its backstop fails the write with
+    /// an internal error, never a refusal, and nothing is accepted.
     pub fn rebuild_validation<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
-        let refused = |bench: Bench<E, G>, reason: &str| {
+        let refused = |bench: Bench<E, G>, faulty: Change, reason: &str| {
+            let generation = bench.generation();
+            let decide = bench.decisions.write(faulty);
+            match bench.store.submit(None, false, decide) {
+                Err(StoreError::Internal(_)) => {
+                    assert_eq!(bench.generation(), generation);
+                    return;
+                }
+                reply => assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed)),
+            }
             let error = bench.rebuilt(open).err().expect("the rebuild is refused");
             let text = error.to_string();
             assert!(text.contains(reason), "{text}");
         };
 
         let bench = Bench::created(open);
-        bench.write(Change::new(Op::CreateTeam.ack()).remove(records::organization_path()));
-        refused(bench, "the organization record is missing");
+        let faulty = Change::new(Op::CreateTeam.ack()).remove(records::organization_path());
+        refused(bench, faulty, "the organization record is missing");
 
         // The creator's home is the top-level team; a child team cannot be led by them.
         let bench = Bench::created(open);
@@ -1072,8 +1078,8 @@ mod suite {
             .expect("the team");
         team.lead_employee_id = Some(id(CREATOR));
         let path = records::team_path(&chain).expect("a path");
-        bench.write(Change::new(Op::CreateTeam.ack()).put(path, records::encode_team(&team)));
-        refused(bench, "its lead is not an employee of the team");
+        let faulty = Change::new(Op::CreateTeam.ack()).put(path, records::encode_team(&team));
+        refused(bench, faulty, "its lead is not an employee of the team");
 
         // Without the fault, the same files rebuild.
         let bench = Bench::created(open);

@@ -12,6 +12,9 @@
 //!
 //! This module and its children are the only office code that names `rusqlite`.
 
+#[cfg(any(test, feature = "testkit"))]
+mod dump;
+mod organization;
 mod receipts;
 mod schema;
 #[cfg(test)]
@@ -193,6 +196,8 @@ struct Readers {
 pub struct SqliteEngine {
     path: PathBuf,
     schema: Schema,
+    /// The organization whose rows the organization family's ports read and write.
+    organization: Option<Id>,
     writer: Home,
     readers: Arc<Readers>,
     /// The connection [`SqliteEngine::checkpoint`] uses: its own, so a checkpoint never
@@ -203,6 +208,7 @@ pub struct SqliteEngine {
 /// The writer's open transaction. Dropped without `commit`, it rolls back.
 pub struct SqliteTx {
     db: Option<Connection>,
+    organization: Option<Id>,
     home: Home,
     /// The open savepoint, if the last mark has not been undone to.
     mark: Option<u64>,
@@ -212,6 +218,7 @@ pub struct SqliteTx {
 /// One read transaction on a pooled connection.
 pub struct SqliteSnapshot {
     db: Option<Connection>,
+    organization: Option<Id>,
     readers: Arc<Readers>,
 }
 
@@ -241,10 +248,18 @@ impl SqliteEngine {
         Ok(Self {
             path: path.to_owned(),
             schema,
+            organization: None,
             writer: Arc::new(Mutex::new(Some(writer))),
             readers: Arc::default(),
             checkpointer: Mutex::new(None),
         })
+    }
+
+    /// This projection as the one of `organization`: the organization family's ports are
+    /// scoped to it. Without it they refuse.
+    pub fn for_organization(mut self, organization: &Id) -> Self {
+        self.organization = Some(organization.clone());
+        self
     }
 
     /// The write connection of the file at `path`, when it is a projection of `schema`.
@@ -278,11 +293,12 @@ impl SqliteEngine {
         done.map_err(|error| refused("checkpointing", error))
     }
 
-    fn transaction(db: Connection, home: Home) -> Result<SqliteTx, EngineError> {
+    fn transaction(&self, db: Connection, home: Home) -> Result<SqliteTx, EngineError> {
         // Deferring is issued after BEGIN and ends with the transaction.
         match db.execute_batch("BEGIN IMMEDIATE; PRAGMA defer_foreign_keys = ON;") {
             Ok(()) => Ok(SqliteTx {
                 db: Some(db),
+                organization: self.organization.clone(),
                 home,
                 mark: None,
                 marks: 0,
@@ -312,7 +328,7 @@ impl SqliteEngine {
         )
         .map_err(|error| refused("configuring the replacement", error))?;
         self.schema.create(&db)?;
-        let mut tx = Self::transaction(db, Home::default())?;
+        let mut tx = self.transaction(db, Home::default())?;
         let cursor = build(&mut tx)?;
         let db = tx.finish(&cursor)?;
         db.close()
@@ -369,7 +385,7 @@ impl Engine for SqliteEngine {
         let Some(db) = lock(&self.writer).take() else {
             return Err(EngineError::new("a transaction is already open"));
         };
-        Self::transaction(db, Arc::clone(&self.writer))
+        self.transaction(db, Arc::clone(&self.writer))
     }
 
     fn commit(&self, tx: SqliteTx, cursor: &Cursor) -> Result<(), EngineError> {
@@ -387,6 +403,7 @@ impl Engine for SqliteEngine {
         // From here the snapshot's drop gives the count back, with or without a connection.
         let mut snapshot = SqliteSnapshot {
             db: None,
+            organization: self.organization.clone(),
             readers: Arc::clone(&self.readers),
         };
         let db = match pooled {
