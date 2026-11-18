@@ -18,7 +18,7 @@ docker build -f deploy/container/Dockerfile -t agentic-org .
 docker run -d --name agentic-org -p 127.0.0.1:8443:8443 agentic-org
 ```
 
-Then open **`http://localhost:8443`** in a browser on the Docker host.
+Then open **`http://127.0.0.1:8443`** in a browser on the Docker host.
 
 **The container serves plain HTTP. Publish it on `127.0.0.1` only**, as the command above
 does. Published on another interface (`-p 8443:8443`, `-p 0.0.0.0:8443:8443`), sign-in and
@@ -26,9 +26,11 @@ every session travel unencrypted on that network. HTTPS is not available yet. Se
 the host say the same in the log at every start ("serving plain HTTP on a published
 port").
 
-The address is exactly `http://localhost:8443`: keep the port 8443 on both sides of `-p`.
-The web process answers only requests for that origin; `http://127.0.0.1:8443`, another
-port or the machine's name in the address bar get `400`. That is the same check as on a
+The address is exactly `http://127.0.0.1:8443`: keep the port 8443 on both sides of `-p`.
+The web process answers only requests for that origin; `http://localhost:8443`, another
+port or the machine's name in the address bar get `400`. It is the address and not the
+name `localhost` on purpose: a name can resolve to `::1`, where the port is not published
+and another program of the machine could listen. That is the same check as on a
 Mac, not a loosening: the listener is on every address of the container only because a
 published port arrives on the container's network interface, never on its loopback.
 
@@ -40,9 +42,7 @@ after 5 seconds, so the service always ends inside the runtime's default grace o
 
 **State of this build.** The host, the web process (confined as on a Linux machine: its
 seccomp filter, and Landlock where the kernel has it), the offices and `agent-os` work in
-the container. The web process starts once the instance has an active HQ office; before
-that nothing listens on the port. The page the registration link opens (`/register`) is
-not built yet: the UI's index and the API answer, the link itself answers `404`.
+the container. The port answers from the first start, before any office exists.
 
 ## Keep the instance: two named volumes
 
@@ -166,8 +166,7 @@ JSON object (an unknown property is refused):
 | `service` | `"foreground"`: nothing is registered; the container runtime is the supervisor. (`"registered"` is the account's service manager, on a machine.) |
 | `root` | The instance's data folder, absolute. |
 | `credentials` | The secrets directory, absolute: a mounted volume that setup never makes. |
-| `listen` | `address`, `port`, `scheme`, `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). The image's scheme is `"http_published"`: plain HTTP on an address that is not loopback, accepted only with `"service": "foreground"` and only with `localhost`, `127.0.0.1` or `[::1]` as the origin's host. The others are `"http_loopback"` (exactly `127.0.0.1` or `::1`) and `"https"` (not served by this build). |
-| `certificate` | Optional, HTTPS only: `chain` and `key`, absolute paths. Refused by this build. |
+| `listen` | `address`, `port`, `scheme`, `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). The image's scheme is `"http_published"`: plain HTTP on an address that is not loopback, accepted only with `"service": "foreground"` and only with `127.0.0.1`, `[::1]` or `localhost` as the origin's host. The other is `"http_loopback"` (exactly `127.0.0.1` or `::1`). `"https"` is refused: no build serves it yet. |
 
 The instance's configuration does not change after its first start: a container whose
 file differs from what its volumes were set up with refuses to start.
@@ -193,6 +192,17 @@ is made in place of a lost one, and each office whose key is gone is reported in
   verifying a supplied pair) and the host's web start for an HTTPS listener. Until then
   the container serves plain HTTP for a port published on the Docker host's loopback.
 - `ORG_OFFICE_DEV_KEY_DIR` removed: a release build keeps its keys in `/secrets` itself.
+
+## Known limits
+
+- A first start that is refused before the instance is reserved leaves nothing. A
+  registered-mode setup (on a machine, not this image) that fails later, when its service
+  is registered, keeps its record: correct the cause and run the same file again; another
+  file is refused until the instance is removed.
+- The image is a development image (above): a lost secrets volume is not refused at
+  start, and the keys are in the development store.
+- HTTPS is not available; the container serves plain HTTP for a port published on the
+  Docker host's `127.0.0.1`.
 
 ## The test (LNX-2)
 

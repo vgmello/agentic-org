@@ -76,6 +76,10 @@ const LOCATOR_WAIT: Duration = Duration::from_secs(5);
 /// application base (macOS) there are none, and where one can (GNU/Linux, the XDG base
 /// directories) its two siblings, which place the user temp base and the default
 /// credential directory by the same rule, are carried with it.
+///
+/// Known limit: the platform names only the application base's variable
+/// (`dirs::application_base_variables`); the two siblings are written here by name until
+/// `org_platform::dirs` names the variables of the temp base and the credential base too.
 pub fn path_environment() -> Vec<(OsString, OsString)> {
     path_environment_from(
         org_platform::dirs::application_base_variables().unwrap_or(&[]),
@@ -1034,6 +1038,9 @@ pub(crate) fn run_at(
                     // What this run froze from a file is not left to refuse the next,
                     // corrected one. (A reservation that was made stays the registry's:
                     // the same data folder is reserved again by the next run.)
+                    // Known limit: the registry has no way to undo a reservation, so a
+                    // registered setup that fails after this point (when its service is
+                    // registered) keeps its record, and only the same file continues it.
                     if froze_from_file {
                         let _ = journal.abandon();
                     }
