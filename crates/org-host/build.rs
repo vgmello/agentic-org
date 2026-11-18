@@ -15,7 +15,8 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "macos") {
         println!("cargo::rerun-if-changed=src/recovery/presence.m");
         // Complete reviewed byte pin before the compiler reads this fixed input.
-        // Source-fence tests independently check its SHA256 and confinement.
+        // The build refuses any other bytes below; `tests/recovery_presence.rs` runs the
+        // unmodified bridge against an SDK-reply fixture.
         const BRIDGE: &[u8] = br####"// REC-DEL-1 fixed SDK adapter. No Rust pointer is retained by an SDK callback.
 #import <Foundation/Foundation.h>
 #import <LocalAuthentication/LocalAuthentication.h>

@@ -49,10 +49,7 @@ mod tests {
         ];
         for refusal in refusals {
             assert!(matches!(refusal, KeyStoreError::Unsupported), "{refusal:?}");
-            assert!(
-                !refusal.means_key_missing(),
-                "a refusal is not a missing key"
-            );
+            assert!(!refusal.means_no_key(), "a refusal is not a missing key");
             assert_eq!(
                 refusal.to_string(),
                 "this operating system has no office secrets key store (only macOS is implemented)"

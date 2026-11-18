@@ -14,7 +14,7 @@
 //! pinned runtime release refuses at runtime admission, before any custody is opened.
 //! **A release build trusts only what it was built with** ([`Config::trusted`]): the app's
 //! bundle id and team id (`ORG_APP_TEAM_ID` at build time; without it no signed app can use
-//! `office.app_token` or `office.restart`, logged loudly), its Keychain access group
+//! `office.restart`, logged loudly), its Keychain access group
 //! (`ORG_HOST_KEYCHAIN_GROUP` at build time; without it the host doesn't start), and the office
 //! server next to its own executable. It refuses `--home`, `--server-bin` and `--app-team-id`.
 //!

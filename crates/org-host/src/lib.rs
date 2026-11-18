@@ -11,7 +11,7 @@
 //! Organization content stays in office databases: the catalog is the folders under `<home>/offices/` that hold
 //! a valid `office.json` (`catalog`). It talks to its servers only through
 //! `org-office-launch`, and never depends on `org-office`. The private `hostdb` stores the
-//! host's registry in SQLCipher; organization databases remain in office servers.
+//! host's registry in plain SQLite; organization databases remain in office servers.
 //!
 //! It holds every office's secrets key (`keys`): it creates each one, keeps it in its key store
 //! (the Data Protection keychain in release builds, a development folder in debug builds) and
@@ -64,6 +64,10 @@ mod ids;
 mod links;
 pub mod release;
 mod web;
+
+// Real-process tests (debug builds only).
+#[cfg(all(test, debug_assertions))]
+mod enc1_process_tests;
 #[cfg(all(test, debug_assertions))]
 mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.

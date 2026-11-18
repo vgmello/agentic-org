@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "2bb8b7c66b1f6d86e04ebbc65a46f5f32cbf1eac34206dd99bb90c4facb1f47a"
+      "sha256": "6c73aeeb56f77763040df08af66fba0573436e82cb9be778ebe010d5713503f6"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "bb0a72fddd749bfd7547d0261b62888c1e882df72ebfd02ab1c6fad7b008a817"
+      "sha256": "94a705308d20dd016d8abd1b54d9ea06da409eb81ac237401fe532a128e7d802"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "7acdfe9d7de32c7475ecdedb33c250b38daa2a9aface14007712c509c8bd0b04"
+      "sha256": "221c90230efe184e091e74b9e67a1dbe669d1b9881ac2b3cb041fd964db22e14"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -106,7 +106,7 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "3158f539fbd4addf0bab993d4764b6ba357fa881f8cf887f750e8714290128f8"
+      "sha256": "0fd3ca79b38b73e0f64a6d5066fe713f0cb56e62c05f07b93ec7b72c53bf3cdf"
     },
     {
       "path": "crates/org-release/Cargo.toml",
@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "258d322d6ed3188b904f1cdd4aaea1adc2b72f3c08f68ea85fa9138f85c6e99d"
+      "sha256": "0d42d32783b63202ed7d76c058a6b8df95705d479fbb190338df57c20adc62bf"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
@@ -182,7 +182,7 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "80cdd91a8c60b276458f2b6420f8fb96a45da21019851c8b1af969e8e097d9eb"
+      "sha256": "e8ff2b2a058a832b211e924bb15e9cd4f7d4d2cb2565f447cd7e9328dc21328f"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",

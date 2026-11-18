@@ -665,11 +665,6 @@ mod tests {
             .unwrap();
         install_capture(&db).unwrap();
         mode(&db, 1).unwrap();
-        let cipher: String = db
-            .query_row("PRAGMA cipher_version", [], |r| r.get(0))
-            .unwrap();
-        assert!(!cipher.is_empty());
-        println!("SQLCIPHER_TYPED_CAPTURE cipher_version={cipher}");
         db
     }
 
@@ -689,7 +684,7 @@ mod tests {
         let raw: String = db
             .query_row("SELECT data FROM temp.acceptance_capture", [], |r| r.get(0))
             .unwrap();
-        println!("SQLCIPHER_CAPTURE expression={expression} payload={raw}");
+        println!("SQLITE_CAPTURE expression={expression} payload={raw}");
         let mutations = captured(db).unwrap();
         assert_eq!(mutations.len(), 1);
         assert_eq!(mutations[0].before, None);

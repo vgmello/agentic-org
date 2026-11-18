@@ -147,7 +147,7 @@ fn office_secrets_key() -> OfficeSecretsKey {
 }
 
 /// The key as the handoff carries it, to look for in logs.
-const DB_KEY_HEX: &str = "b3b3b3b3";
+const SECRETS_KEY_HEX: &str = "b3b3b3b3";
 
 fn socket(world: &World) -> PathBuf {
     office_socket_path(&world.home, OFFICE).unwrap()
@@ -503,7 +503,7 @@ fn a_start_without_the_office_secrets_key_serves_the_office() {
     assert_eq!(hello(&world).office.id, OFFICE);
     assert!(session.host_goes_away().success());
     assert!(
-        !session.run.stderr().contains(DB_KEY_HEX),
+        !session.run.stderr().contains(SECRETS_KEY_HEX),
         "the key reached the log"
     );
 
@@ -529,7 +529,7 @@ fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
     assert_eq!(session.event()["event"], "ready");
     assert!(session.host_goes_away().success());
     let log = session.run.stderr();
-    assert!(!log.contains(DB_KEY_HEX), "the key reached the log");
+    assert!(!log.contains(SECRETS_KEY_HEX), "the key reached the log");
     assert!(!log.contains("c4c4c4c4"), "the wrong key reached the log");
 
     let mut again = started(&world);
@@ -701,7 +701,7 @@ fn the_keys_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     // The handoff's grant key is [7; 32] (`activation::handshake`).
     assert!(!log.contains("07070707"), "the grant key reached the log");
     assert!(
-        !log.contains(DB_KEY_HEX),
+        !log.contains(SECRETS_KEY_HEX),
         "the office secrets key reached the log"
     );
 }
