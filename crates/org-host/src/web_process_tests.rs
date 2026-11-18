@@ -4,8 +4,8 @@
 //! HTTP. A protected session route without the browser pair is 401 before any
 //! host call; routes not yet built are JSON 404.
 //! The administrator is seeded directly (A2 D1: the reverse bootstrap is gone and
-//! A3 creates administrators through a one-time link); HQ is provisioned over
-//! `host.sock` exactly as before.
+//! A3 creates administrators through a one-time link). The web process starts
+//! once the instance is registered and authenticated, before any organization.
 //! Only disposable `/private/tmp` roots and debug development custody are used;
 //! debug `ServerCheck::Skip` establishes no release-signing evidence.
 use crate::{
@@ -339,32 +339,12 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
         program,
         host,
         socket: _,
-        mut wire,
-        session,
+        wire,
+        session: _,
     } = start_signed_in();
-    // Authenticated but no HQ yet: the web process is not serving.
-    assert!(!web_ready(&host));
-    // The wired start-eligibility gate holds the supervisor before any spawn or bind:
-    // across several supervisor polls no agentic-org-web child runs and the browser
-    // port accepts nothing.
-    let window = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < window {
-        let pids = web_pids(&program);
-        assert!(
-            pids.is_empty(),
-            "web process spawned before HQ is Active: {pids:?}"
-        );
-        assert!(
-            TcpStream::connect(address).is_err(),
-            "browser port accepted before HQ is Active"
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
-    assert!(!web_ready(&host));
-    let mut id = 3;
-    provision_hq(&mut wire, &mut id, session);
-
-    // 1. Admission after HQ: the supervisor spawns and admits the real web image.
+    // 1. Registered with authentication, no organization or office at all: the
+    //    supervisor spawns and admits the real web image (lead ruling, A3 B5).
+    assert!(host.offices.offices().is_empty(), "no office");
     wait_until("web_ready", || web_ready(&host));
     wait_until("HTTP readiness", || http_ready(address));
     let version = http(address, "GET", "/api/v1/version", "", "");
@@ -397,7 +377,6 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     assert_eq!(http(address, "GET", "/api/v1/version", "", "").status, 200);
     assert_no_sign_in(address);
 
-    let _ = id;
     drop(wire);
     drop(host);
     // Host shutdown drops the web process first: no web process survives.

@@ -235,8 +235,11 @@ The instance configuration has an optional `browser` listener snapshot, written 
 protected setup under the instance lock and never taken from HTTP. A bind uses one
 validated snapshot. Loopback HTTP is admitted; HTTPS is unavailable until the host
 verifies its certificate pair, and it is never downgraded. The browser service starts
-only for a registered, protected HQ instance, restarts with bounded backoff and is
-killed and reaped at host shutdown. Its failure leaves native control available.
+once the instance is registered and its host authentication (registry) is present; no
+organization or Active HQ is required, because the person registers from setup's link and
+creates the organization in the browser, and routes that need an organization or office
+answer their own "not yet" state (for example `organizations: []`). It restarts with
+bounded backoff and is killed and reaped at host shutdown. Its failure leaves native control available.
 
 ### `failed` codes
 

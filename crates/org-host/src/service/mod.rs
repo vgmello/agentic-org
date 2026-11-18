@@ -223,10 +223,13 @@ impl Service {
         self.gateway = state;
         self
     }
-    /// Whether the host may start its web process: host authentication is
-    /// present and HQ is Active. Persisted listener configuration alone never qualifies.
+    /// Whether the host may start its web process: the instance is registered and its
+    /// host authentication is present. No organization or office is required: the person
+    /// registers from setup's link and creates the organization in the browser, so routes
+    /// that need one answer their own "not yet" state. Persisted listener configuration
+    /// alone never qualifies.
     pub(crate) fn web_eligible(&self) -> bool {
-        web_start_eligible(self.authentication.is_some(), self.hq_active())
+        web_start_eligible(self.authentication.is_some(), self.registered())
     }
     /// The start-eligibility predicate the host wires into its web process supervisor:
     /// [`Service::web_eligible`], evaluated live on each supervisor poll.
@@ -239,15 +242,12 @@ impl Service {
     pub(crate) fn web_ready(&self) -> bool {
         web_serving(
             self.authentication.is_some(),
-            self.hq_active(),
+            self.registered(),
             *crate::sync::lock(&self.gateway),
         )
     }
-    fn hq_active(&self) -> bool {
-        self.offices.offices().iter().any(|office| {
-            office.role == org_proto::OfficeRole::Hq
-                && office.status == org_proto::OfficeStatus::Active
-        })
+    fn registered(&self) -> bool {
+        self.instance_id.is_some()
     }
     #[cfg(test)]
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
@@ -807,50 +807,61 @@ pub(crate) fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
     })
 }
 
-/// The start-eligibility rule: host authentication is present and HQ is Active.
-/// Persisted listener configuration alone never qualifies.
-pub(crate) fn web_start_eligible(authenticated: bool, hq_active: bool) -> bool {
-    authenticated && hq_active
+/// The start-eligibility rule: the instance is registered and host authentication is
+/// present. HQ being Active is not required. Persisted listener configuration alone never
+/// qualifies.
+pub(crate) fn web_start_eligible(authenticated: bool, registered: bool) -> bool {
+    authenticated && registered
 }
 
 /// The readiness rule: all three conditions, never persisted state alone.
-pub(crate) fn web_serving(authenticated: bool, hq_active: bool, state: GatewayState) -> bool {
-    web_start_eligible(authenticated, hq_active) && state == GatewayState::Running
+pub(crate) fn web_serving(authenticated: bool, registered: bool, state: GatewayState) -> bool {
+    web_start_eligible(authenticated, registered) && state == GatewayState::Running
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     #[test]
-    fn web_start_needs_authentication_and_an_active_hq() {
+    fn web_start_needs_authentication_and_a_registered_instance() {
         use super::web_start_eligible;
         assert!(web_start_eligible(true, true));
         assert!(!web_start_eligible(false, true), "no authentication");
-        assert!(!web_start_eligible(true, false), "no Active HQ");
+        assert!(!web_start_eligible(true, false), "not registered");
         assert!(!web_start_eligible(false, false));
     }
 
     /// The service fixture, and the predicate the host wires into its web process
-    /// supervisor, refuse to start the web process without authentication and without an
-    /// Active HQ. An Active HQ needs a real office worker: the ignored real-process
-    /// test covers the eligible case and the authenticated, not-yet-Active window.
+    /// supervisor, refuse to start the web process without authentication or without a
+    /// registered instance, and allow it once both hold, before any organization or
+    /// office exists (lead ruling: the person registers and creates the organization
+    /// in the browser).
     #[test]
-    fn the_wired_web_eligibility_refuses_without_authentication_or_an_active_hq() {
+    fn the_wired_web_eligibility_needs_authentication_and_registration_but_no_office() {
         let home = tempfile::tempdir().unwrap();
         let bare = Arc::new(service(home.path()));
         assert!(!bare.web_eligible(), "no authentication");
         assert!(!(bare.web_eligibility())(), "wired: no authentication");
         let (_root, authentication, _connection) = crate::service::authentication::tests::fixture();
-        let authenticated =
-            Arc::new(service(home.path()).with_authentication(Some(Arc::new(authentication))));
-        assert!(authenticated.offices.offices().is_empty());
-        assert!(!authenticated.web_eligible(), "no Active HQ");
-        assert!(!(authenticated.web_eligibility())(), "wired: no Active HQ");
+        let authentication = Arc::new(authentication);
+        let unregistered =
+            Arc::new(service(home.path()).with_authentication(Some(Arc::clone(&authentication))));
+        assert!(unregistered.instance_id.is_none());
+        assert!(!unregistered.web_eligible(), "not registered");
+        assert!(!(unregistered.web_eligibility())(), "wired: not registered");
+        let mut registered = service(home.path()).with_authentication(Some(authentication));
+        registered.instance_id = Some(crate::ids::uuid_v7().unwrap());
+        let registered = Arc::new(registered);
+        assert!(registered.offices.offices().is_empty(), "no office at all");
+        assert!(registered.web_eligible(), "registered, no organization yet");
+        assert!((registered.web_eligibility())(), "wired: registered");
+        assert!(!registered.web_ready(), "eligible is not serving");
         bare.offices.shutdown();
-        authenticated.offices.shutdown();
+        unregistered.offices.shutdown();
+        registered.offices.shutdown();
     }
 
     #[test]
-    fn web_ready_needs_authentication_active_hq_and_a_serving_web() {
+    fn web_ready_needs_authentication_registration_and_a_serving_web() {
         use super::web_serving;
         assert!(web_serving(true, true, GatewayState::Running));
         for state in [
