@@ -42,6 +42,18 @@ pub(super) fn registered(placement: Placement) -> Result<Box<dyn ServiceManager>
     Ok(Box::new(Launchd::new(placement, uid, Box::new(System))))
 }
 
+/// The launchd adapter runs one fixed program; it has no stand-in form.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn registered_with_programs(
+    _placement: Placement,
+    _programs: &Path,
+    _runtime_dir: Option<PathBuf>,
+) -> Result<Box<dyn ServiceManager>, Refused> {
+    Err(Refused::unsupported(
+        "service registration through stand-in programs",
+    ))
+}
+
 /// The outcome of one `launchctl` run.
 pub(super) struct Outcome {
     pub code: i32,
