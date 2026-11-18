@@ -1,0 +1,149 @@
+# v1 UI screens: build plan
+
+Branch `v1-ui`, started from `v1-integration`. Owner direction, 2026-11-18: build every
+screen and interaction the specs call for that is not already built, with mock data, and
+leave review for one final pass before the branch is merged. This page is the list of
+screens and the order they are built in. Each row's Status is updated as it lands.
+
+## Rules for this branch
+
+- **Code layout stays as it is.** Routes are thin entry points in `src/routes`. Each domain
+  lives in `src/lib/modules/<module>` with its types, state and `features/<feature>/`
+  folders ([project structure](../design/project-structure.md) section 4). Shared visual
+  primitives live in `src/lib/components/ui`.
+- **Mock data is JSON, and stays out of production builds.** Each module has an `api.ts`
+  that declares the calls a screen needs; its production export refuses every call, as
+  today. The mock for it is `e2e/fakes/modules/<module>.ts`, which answers from JSON files
+  in `e2e/fakes/data/<module>/`. The dev server swaps it in by name. Replacing a mock with
+  the real web API later means writing the production `api.ts`; no screen changes.
+- **To see the screens:** in `apps/agentic-org-ui`, run `bun run dev:mock`, open
+  `/welcome` and choose **Open**.
+- **Design.** Builders work as the principal designer
+  (`.agent-kit/project-skills/principal-designer/`). Product specs outrank it, above all
+  `docs/specs/app-shell-ux.md` section 6a.
+- **Checks kept green on every commit:** type check, unit tests, lint and build. Existing
+  browser tests that pin the old routes and the old look are brought in line in the last
+  step, not screen by screen.
+- **Not built here:** Create organization and Sign in / Register / session handling (built
+  or being built elsewhere), and everything a spec marks "not in v1" (project status
+  reports, retrospectives and routines, run modes and schedules, tech-debt register,
+  goals, private delegates, Following, planning backlog).
+
+## Step 0 · Foundation
+
+| Screen or part | Route | Status |
+| --- | --- | --- |
+| Mock composition found by module name, `dev:mock` script | | Done |
+| Navigation in the spec's order: Home, Inbox, Projects (first five), Work, Chat, Activity, Teams (first five), Organization settings; rail and drawer | | To do |
+| Footer account menu (Your preferences, Switch organization, About, Sign out) and office line | | To do |
+| Top bar: Search field and New menu, `N` and `/` shortcuts | | To do |
+| Redirects that keep the query string: `/agents`, `/org-chart`, `/offices`, `/processes`, `/sessions` | | To do |
+| Organization settings frame with its section navigation | `/settings/*` | To do |
+| Existing pages moved: Members, Org chart, Offices, Processes | `/teams/members`, `/teams/org-chart`, `/settings/offices`, `/settings/processes` | To do |
+| Shared page parts: page header, tabs, empty / loading / error states, description list, field rows | | To do |
+| Honest placeholders ("isn't built yet", "Not in this release"); no "Coming soon" | | To do |
+
+## Step 1 · Home, Inbox, Activity, Search, Preferences
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| Home: Needs you, Projects, Happening now, Recent activity, month line | `/home` | To do |
+| Inbox: All, Approvals, Questions, Decisions, Problems, Handled; list and detail; reply, approve, deny | `/inbox` | To do |
+| Activity: feed, filters, search, run rows, thread panel, "n new" | `/activity` | To do |
+| Search results, grouped | `/search?q=` | To do |
+| Your preferences: Keyboard, Time zone | `/preferences` | To do |
+| About | account menu | To do |
+
+## Step 2 · Teams and people
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| Teams index: tree of teams, lead, counts, projects | `/teams` | To do |
+| Members directory: people and agents, filter, Can sign in | `/teams/members` | To do |
+| Org chart: one reporting tree, owner bar, Hand over ownership | `/teams/org-chart` | To do |
+| Team page: header, members; tabs Work, Projects, Activity, Conversations, Processes | `/teams/[teamId]` | To do |
+| Member profile: header and actions; tabs Overview, Work, Conversations, Activity, Runs, Processes, Role, Cost, Notes and memory | `/members/[memberId]` | To do |
+| Supervision and execution view, attempt history, Run now | member profile | To do |
+| Session log viewer (messages, tool calls, files, usage) | `/members/[memberId]/runs/[runId]` | To do |
+| Sign-in access dialogs for a person: Invite, New link, Remove access | member profile | To do |
+| Hire: refused view, requests list, Allow hiring switch | Teams | To do |
+
+## Step 3 · Organization settings
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| General: name, workspace, runtime, recovery code row, administrator | `/settings` | To do |
+| Offices: Add office, invitation, Approve a join, Remove, Rename, unplaced agents, outbox | `/settings/offices` | To do |
+| Agent setup: list and one agent's setup, health | `/settings/agents`, `/settings/agents/[memberId]` | To do |
+| Roles: list, role page, editor, New role | `/settings/roles`, `/settings/roles/[roleId]` | To do |
+| Processes: Standards tab, editor, development processes | `/settings/processes` | To do |
+| Members and access | `/settings/access` | To do |
+| Costs: prices, organization cost | `/settings/costs` | To do |
+| Updates | `/settings/updates` | To do |
+
+## Step 4 · Projects
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| Projects list: teams, counts, investment; New project | `/projects` | To do |
+| Project frame: header, counts, tabs in the URL | `/projects/[id]/*` | To do |
+| Overview: brief, counts, features tile, latest activity | `/projects/[id]` | To do |
+| Work: board and list, type filter, grouping | `/projects/[id]/work` | To do |
+| Team, Activity, Conversations | `/projects/[id]/team` and so on | To do |
+| Settings: name, teams, repositories, development process | `/projects/[id]/settings` | To do |
+
+## Step 5 · Work items
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| Task page: fields, checklist, activity, comments, output, private notes, Why, cost and time | `/work/[ref]` | To do |
+| Bug page: triage, fix tasks, Mark as fixed, Verify, Close as, Reopen | `/work/[ref]` | To do |
+| Request page: conversation, outcome, draft tasks, Approve and create, Decline, Merge | `/work/[ref]` | To do |
+| Work: filters, saved filters, Show menu, board and list, Needs me | `/work` | To do |
+| New task, Report bug, New request brought to the current fields | dialogs | To do |
+| Budget: set or raise, budget reached actions, chips | dialogs | To do |
+
+## Step 6 · Docs, features and releases
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| Docs tab: list by kind and by section, filters, search | `/projects/[id]/docs` | To do |
+| Document page: reader, editor, details, history, compare, issue a version | `/projects/[id]/docs/[docId]` | To do |
+| New document: Brief, Decision, Design, Report | menu and editor | To do |
+| Features tab and feature page; New feature, Retire, Break into tasks | `/projects/[id]/features`, `/projects/[id]/features/[featureId]` | To do |
+| Releases tab and release page | `/projects/[id]/releases` | To do |
+| Knowledge search ("Why is…") | `/search` | To do |
+
+## Step 7 · Costs and insights
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| Project Insights: tiles, breakdowns, trend, table, export | `/projects/[id]/insights` | To do |
+| Organization Insights: projects table | `/insights` | To do |
+| Member Cost tab: spend, budgets | member profile | To do |
+
+## Step 8 · Access and chat gaps
+
+| Screen | Route | Status |
+| --- | --- | --- |
+| Set a new password, Approve a terminal sign-in, invited registration | `/set-password`, `/approve`, `/register` | To do |
+| Change password, recovery code banner, organization switcher | shell | To do |
+| Chat: browse channels, pins, mute, system notices, Inbox link | `/chat` | To do |
+
+## Step 9 · Closing
+
+Bring the existing browser tests in line with the moved routes, capture a screenshot of
+every screen at wide and narrow widths, and update `docs/FEATURES.md` rows with what the
+UI now shows against mock data.
+
+## Decisions made while building
+
+- Member profile is `/members/[memberId]` (our-org-in-the-app section 5) and marks Teams
+  current. The run's session log is a page under it.
+- Tasks, bugs and requests are full pages at `/work/[ref]`, as work-items-ux section 2 asks;
+  the existing slide-overs stay as quick views.
+- Organization Insights has no place in the navigation list of app-shell section 0. It is a
+  page at `/insights`, reached from Home and from a project's Insights tab.
+- New screens use the current data contract (accountable team, assignment pair, `T-`
+  references). The older board and list code that still uses Areas is not rewritten here;
+  it is listed as follow-up where a screen depends on it.
