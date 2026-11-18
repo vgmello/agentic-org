@@ -414,6 +414,16 @@ of that batch (none was acknowledged), and truncates the segment back to the end
 last good entry, flushing that truncation, before it takes another batch. If the
 truncation fails, the office stops as for a failed flush.
 
+**Back-pressure.** Two tails are bounded in bytes. The unflushed tail (appended, not
+yet flushed) is at most 8 MiB; the flushed-but-unmaterialized tail (flushed, files not
+yet written) is at most 64 MiB. The second is also the **pending overlay** that
+`UnitOfWork::source` reads: an in-memory map, owned by the writer, from path to the
+latest bytes in a retained entry. An entry leaves the overlay only after the
+materialized mark has advanced past it; at opening the overlay is rebuilt from the
+entries after the mark. When either bound is reached, or the projection's log reaches
+its bound (section 8), the writer takes no new batch until the flusher catches up, and
+the office reports that it is holding writes back. Reads continue.
+
 **Why the projection comes before the files.** Reads and the next decision need the
 change at once; files need a flush each and are wanted only by rebuild, Git and backup.
 Both are derived from the same entry, and the projection is a function of the files'
@@ -465,7 +475,7 @@ engine and one projection schema).
 | Projected | The projection cursor has passed it; readable |
 | Flushed | The segment is fully flushed through it; survives a power cut; may leave the office |
 | Materialized | Its files are written and flushed under `durable/` |
-| Released | Every consumer (materializer, and from S1 the replication outbox) has passed it; its segment may be dropped after `checkpoint.json` records the head and high-waters |
+| Released | Every consumer (materializer, and from S1 the replication outbox) has passed it; it has left the pending overlay; its segment may be dropped after `checkpoint.json` records the head and high-waters |
 
 **Crashes.**
 
