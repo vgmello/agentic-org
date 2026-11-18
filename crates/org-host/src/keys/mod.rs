@@ -6,11 +6,14 @@
 //! A key is in the host's memory only from its creation or load until that first line is written.
 //!
 //! [`KeyStore`] is the host's own abstraction: the supervisor depends on it, never on a
-//! particular store. The stores:
-//! - **Release builds:** the Data Protection keychain, in the host's access group
-//!   (`keychain`), so other code gets `errSecItemNotFound`, never a prompt.
-//! - **Debug builds:** plain files in a development folder (`dev`), so a debug host and the tests
-//!   never write a real Keychain item. A debug host without that folder refuses to start.
+//! particular store. It is a typed view (`custody`) over one credential store of the platform
+//! (`org_platform_host::credentials`): the view keeps the name rule, the add-only rule and what a
+//! key looks like; the platform keeps the bytes. Which store a build uses is decided here:
+//! - **Release builds:** the Data Protection keychain, in the host's access group, so other code
+//!   gets `errSecItemNotFound`, never a prompt. A system without such a store has none.
+//! - **Debug builds:** plain files in a development folder (the platform's directory store), so
+//!   a debug host and the tests never write a real Keychain item. A debug host without that
+//!   folder refuses to start.
 //! - **Unit tests:** an in-memory store with fault injection (`memory`).
 //!
 //! The rules every store follows, and the host relies on:
@@ -23,10 +26,7 @@
 //!   left nothing in the home, still so at a start 7 days or more after it was first found so.
 //! - No error ever shows key bytes: [`KeyStoreError`] holds only codes and kinds.
 
-#[cfg(debug_assertions)]
-mod dev;
-#[cfg(target_os = "macos")]
-mod keychain;
+mod custody;
 #[cfg(test)]
 pub(crate) mod memory;
 mod sweep;
@@ -38,9 +38,25 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
+use org_platform_host::credentials::{credentials, CredentialLocation, KeychainItems};
 use org_proto::DbKey;
 
 use crate::code_signing::{hardened_and_clean, Signing};
+
+/// The Keychain service every office key is filed under (ADR-0002); the account is the office
+/// id. It is persisted state: changing it later orphans every office's key. (The server's former
+/// items used `org.agentic.office`; this store never reads them.) A registered instance's keys
+/// are filed under [`keychain_service`] of its id instead.
+pub(crate) const SERVICE: &str = "org.agentic.office-key";
+
+/// The Keychain service of the office keys of instance `instance_id`, or of the host that
+/// serves no registered instance.
+fn keychain_service(instance_id: Option<&str>) -> String {
+    match instance_id {
+        Some(id) => format!("{SERVICE}.instance.{id}"),
+        None => SERVICE.to_owned(),
+    }
+}
 
 /// Where the host keeps every office's database key (see the module docs). Office ids are plain
 /// ids ([`org_office_launch::is_plain_id`]); a store refuses any other
@@ -67,44 +83,30 @@ pub(crate) trait KeyStore: Send + Sync {
 #[derive(Debug)]
 pub(crate) enum KeyStoreError {
     /// `create`: the store already has an item for that office (it was left as it is).
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Exists,
     /// `load`: the item isn't a key.
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Corrupt,
     /// The office id isn't a plain id.
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     NotPlainId,
     /// The Keychain failed with this `OSStatus`.
-    #[cfg(any(target_os = "macos", test))]
     Os(i32),
-    /// The development store's file I/O failed.
+    /// The development store's file I/O failed, or one of its checks refused. The error holds a
+    /// kind and a fixed text, never a path.
     Io(io::Error),
 }
 
 impl KeyStoreError {
     pub(crate) fn means_key_missing(&self) -> bool {
-        #[cfg(any(target_os = "macos", debug_assertions, test))]
-        {
-            matches!(self, Self::Corrupt)
-        }
-        #[cfg(not(any(target_os = "macos", debug_assertions, test)))]
-        {
-            false
-        }
+        matches!(self, Self::Corrupt)
     }
 }
 
 impl fmt::Display for KeyStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Corrupt => f.write_str("the stored item isn't a database key"),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
-            #[cfg(any(target_os = "macos", test))]
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
         }
@@ -115,7 +117,6 @@ impl std::error::Error for KeyStoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             KeyStoreError::Io(e) => Some(e),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             _ => None,
         }
     }
@@ -163,11 +164,7 @@ pub(crate) fn store_for(
     #[cfg(debug_assertions)]
     {
         let _ = own_signing;
-        let scoped = dev_key_dir.map(|dir| match instance_id {
-            Some(id) => dir.join(id),
-            None => dir.to_owned(),
-        });
-        dev_store(scoped.as_deref(), home)
+        dev_store(dev_key_dir, home, instance_id)
     }
     #[cfg(not(debug_assertions))]
     {
@@ -180,11 +177,17 @@ pub(crate) fn store_for(
     }
 }
 
-/// The development store in `dir`, which must be absolute and outside the office `home`: inside
-/// `offices/` it would look like an unfinished office (and be discarded with every key in it),
-/// and anywhere in the home it would put plain-text keys there.
+/// The development store in `dir`, or for a registered instance in `dir/<instance id>`. That
+/// folder must be absolute and outside the office `home`: inside `offices/` it would look like an
+/// unfinished office (and be discarded with every key in it), and anywhere in the home it would
+/// put plain-text keys there. Nothing is opened or made here: the store opens its folder at
+/// its first use.
 #[cfg(debug_assertions)]
-fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, StoreError> {
+fn dev_store(
+    dir: Option<&Path>,
+    home: &Path,
+    instance_id: Option<&str>,
+) -> Result<Arc<dyn KeyStore>, StoreError> {
     let inside = |dir: &Path| {
         let lexical = dir.starts_with(home);
         let canonical = match (dir.canonicalize(), home.canonicalize()) {
@@ -193,11 +196,17 @@ fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, Store
         };
         lexical || canonical
     };
-    match dir {
-        Some(dir) if dir.is_absolute() && !inside(dir) => {
-            Ok(Arc::new(dev::DevKeys::new(dir.to_path_buf())))
-        }
-        _ => Err(StoreError::NoDevKeyDir),
+    let Some(dir) = dir else {
+        return Err(StoreError::NoDevKeyDir);
+    };
+    let scoped = match instance_id {
+        Some(id) => dir.join(id),
+        None => dir.to_owned(),
+    };
+    if scoped.is_absolute() && !inside(&scoped) {
+        Ok(Arc::new(custody::OfficeKeys::development(dir, instance_id)))
+    } else {
+        Err(StoreError::NoDevKeyDir)
     }
 }
 
@@ -228,17 +237,14 @@ fn release_store_scoped(
         _ => return Err(StoreError::NoKeychainGroup),
     };
     self_trusted(group, own_signing().as_ref())?;
-    #[cfg(target_os = "macos")]
-    {
-        Ok(Arc::new(match instance_id {
-            Some(id) => keychain::Keychain::scoped(group, id),
-            None => keychain::Keychain::new(group),
-        }))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = instance_id;
-        Err(StoreError::NoKeychainGroup)
+    // Opening the Keychain store reads and writes nothing.
+    match credentials(CredentialLocation::Keychain(KeychainItems {
+        access_group: group,
+        service: &keychain_service(instance_id),
+    })) {
+        Ok(store) => Ok(Arc::new(custody::OfficeKeys::keychain(store))),
+        // A system without a protected store has no access group to keep keys in.
+        Err(_) => Err(StoreError::NoKeychainGroup),
     }
 }
 
@@ -380,7 +386,6 @@ mod tests {
         assert!(!asked, "the signing information was read without a group");
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_release_build_needs_its_access_group_in_its_own_entitlement() {
         for groups in [
@@ -405,8 +410,47 @@ mod tests {
         assert_eq!(self_trusted(GROUP, None), Err(StoreError::NotHardened));
         let entitled = signing(Some(HARDENED), &["TEAMID1234.other", GROUP], &[]);
         assert_eq!(self_trusted(GROUP, Some(&entitled)), Ok(()));
-        // Choosing the store touches no Keychain item.
-        assert!(release_store(Some(GROUP), || Some(entitled)).is_ok());
+        // Choosing the store touches no Keychain item. A system without a protected store has
+        // none to choose.
+        let chosen = release_store(Some(GROUP), || Some(entitled));
+        match org_platform_host::credentials::protected_store() {
+            Ok(()) => assert!(chosen.is_ok()),
+            Err(_) => assert!(matches!(chosen, Err(StoreError::NoKeychainGroup))),
+        }
+    }
+
+    #[test]
+    fn the_service_is_the_one_the_adr_fixes_and_an_instance_has_its_own() {
+        // Persisted state: changing it orphans every office's key (ADR-0002).
+        assert_eq!(SERVICE, "org.agentic.office-key");
+        assert_eq!(keychain_service(None), "org.agentic.office-key");
+        assert_eq!(
+            keychain_service(Some("INSTANCEA")),
+            "org.agentic.office-key.instance.INSTANCEA"
+        );
+        assert_ne!(
+            keychain_service(Some("INSTANCEA")),
+            keychain_service(Some("INSTANCEB"))
+        );
+    }
+
+    #[test]
+    fn ids_that_arent_plain_are_refused_before_the_keychain() {
+        let entitled = signing(Some(HARDENED), &[GROUP], &[]);
+        // Where there is no protected store there is no Keychain to keep them from.
+        let Ok(store) = release_store(Some(GROUP), || Some(entitled)) else {
+            assert!(org_platform_host::credentials::protected_store().is_err());
+            return;
+        };
+        let key = DbKey::from_bytes([1; 32]);
+        for id in ["", "../x", "a b"] {
+            assert!(matches!(
+                store.create(id, &key),
+                Err(KeyStoreError::NotPlainId)
+            ));
+            assert!(matches!(store.load(id), Err(KeyStoreError::NotPlainId)));
+            assert!(matches!(store.delete(id), Err(KeyStoreError::NotPlainId)));
+        }
     }
 
     /// M1: an entitled host that isn't hardened, or lets other code in, could give every key
@@ -463,10 +507,22 @@ mod tests {
             Some(Path::new("/tmp/org-home-never-made/offices/keys")),
         ] {
             assert!(
-                matches!(dev_store(dir, home), Err(StoreError::NoDevKeyDir)),
+                matches!(dev_store(dir, home, None), Err(StoreError::NoDevKeyDir)),
                 "{dir:?}"
             );
         }
-        assert!(dev_store(Some(Path::new("/tmp/org-keys-never-made")), home).is_ok());
+        // Choosing the store makes and opens nothing.
+        assert!(dev_store(Some(Path::new("/tmp/org-keys-never-made")), home, None).is_ok());
+        assert!(!Path::new("/tmp/org-keys-never-made").exists());
+        // A registered instance's folder is checked, not the folder it is in.
+        assert!(dev_store(Some(Path::new("/tmp")), Path::new("/tmp/INSTANCE"), None).is_ok());
+        assert!(matches!(
+            dev_store(
+                Some(Path::new("/tmp")),
+                Path::new("/tmp/INSTANCE"),
+                Some("INSTANCE")
+            ),
+            Err(StoreError::NoDevKeyDir)
+        ));
     }
 }

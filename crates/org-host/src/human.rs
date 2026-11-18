@@ -171,7 +171,9 @@ fn password() -> Result<Password, String> {
     terminal::password()
 }
 pub(super) fn paths(name: Option<&str>) -> Result<Paths, String> {
-    if !cfg!(target_os = "macos") {
+    // Protected setup keeps its custody in the system's protected store; a system without one
+    // provisions nothing.
+    if org_platform_host::credentials::protected_store().is_err() {
         return Err(
             "protected platform setup/custody is unavailable on this target; no HQ was provisioned"
                 .into(),
