@@ -108,7 +108,7 @@ impl RuntimeRelease {
 /// which that system's admission requires: an entry without it pins nothing there and is
 /// refused here, whatever the manifest's own validation allowed. A release for Linux has no
 /// such hash.
-fn pin_of(manifest: &VerifiedManifest, name: &str) -> Result<Pin, Error> {
+pub(super) fn pin_of(manifest: &VerifiedManifest, name: &str) -> Result<Pin, Error> {
     let entry = manifest
         .file(name)
         .filter(|entry| entry.role() == org_release::Role::Executable)

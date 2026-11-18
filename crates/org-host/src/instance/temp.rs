@@ -154,10 +154,13 @@ mod tests {
         assert!(parent.is_empty().unwrap());
     }
 
-    #[cfg(target_os = "linux")]
+    /// Where the system has a memory filesystem to try it on (the platform names it).
     #[test]
     fn a_private_memory_backed_temp_base_is_refused() {
-        let temporary = tempfile::tempdir_in("/dev/shm").unwrap();
+        let Some(memory) = org_platform::dirs::testing::memory_backed_temp().unwrap() else {
+            return;
+        };
+        let temporary = tempfile::tempdir_in(memory).unwrap();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let directory = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         assert!(matches!(

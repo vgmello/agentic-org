@@ -54,6 +54,12 @@ pub(super) fn disk_backed_temp() -> Result<PathBuf, Refused> {
     Ok(PathBuf::from("/private/tmp"))
 }
 
+/// macOS mounts no memory filesystem by default.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn memory_backed_temp() -> Result<Option<PathBuf>, Refused> {
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

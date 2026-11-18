@@ -35,6 +35,11 @@ pub(super) fn disk_backed_temp() -> Result<PathBuf, Refused> {
     Err(refusal())
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn memory_backed_temp() -> Result<Option<PathBuf>, Refused> {
+    Err(refusal())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +55,6 @@ mod tests {
         assert_eq!(environment_spelling(home), Err(refusal()));
         assert_eq!(socket_path_limit(), Err(refusal()));
         assert_eq!(disk_backed_temp(), Err(refusal()));
+        assert_eq!(memory_backed_temp(), Err(refusal()));
     }
 }
