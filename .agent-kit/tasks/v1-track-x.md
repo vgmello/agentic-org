@@ -49,7 +49,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X2 first worker on Linux (LNX-1) | Built, reviewed and repaired; LNX-1 passes on Linux and in a default Docker container; a fresh final review of the repairs is owed | See below |
 | X3 host secrets on Linux (LNX-4) | Built, reviewed and repaired (`ce7dd5a1`); a fresh final review of the repairs is owed | See below |
 | X4 web process confined on Linux (LNX-3) | Adapter reviewed and repaired; Landlock optional; host slice integrated (`4823b23a`); the real-host LNX-3 test and the last web tests are in work; a fresh review of the host work is owed | See below |
-| X5 service and container (LNX-2) | In work (one worker, worktree `x/x5-service`) | |
+| X5 service and container (LNX-2) | Built on branch `x/x5-service` (`a31873e8`), not integrated; under fresh review; the browser is not served from the container | See below |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
 
 ## X1a · The platform crate and the check
@@ -853,6 +853,47 @@ development store, to the environment, or to no store; macOS is unchanged in
 substance. Not verified: macOS at run time, a release-profile host, XFS/Btrfs/F2FS
 and network filesystems live, directory services, an actual race, and whether a lost
 host-secrets directory alone is noticed (asked of the author).
+
+## X5 · The service on Linux and the container (built, not integrated)
+
+One worker, branch `x/x5-service`, six commits on `82fbc3d1` ending at `a31873e8`.
+It is not merged: it needs the newer `v1-integration` under it (the merge is in work
+on `x/merge-a`), its fresh review (in progress on `a31873e8`), and the decisions
+below.
+
+What it built: the systemd user-unit adapter of `org_platform::service` and the
+foreground mode (nothing registered); a Linux disk-encryption probe
+(`org_platform::disk`: on only when the device is a `dm-crypt` target, otherwise off
+or not known); non-interactive setup from a strict file and `serve --setup <file>`;
+the record's service mode and the mount-point rule from it; root's
+`admin reset --user` (`host.sock` admits UID 0 for `hello` and `admin.reset` only;
+a same-user peer is refused for it on Linux); the X3 review's S4 (setup creates the
+credential directory below judged ancestors and removes what it made on a refusal);
+`deploy/container/` (Dockerfile on a Debian base, `setup.json`, optional
+`seccomp.json` and AppArmor profile, README, the LNX-2 script).
+
+What the worker measured in Docker (29.10, kernel 6.18, default profiles), 3 of 3
+runs of `deploy/container/lnx2.sh`: a plain `docker run -d -p 127.0.0.1:8443:8443
+<image>` sets the instance up, starts a worker, `agent-os` sends and reads, root gets
+the registration link, `docker stop` returns in under half a second with exit code 0,
+and a replaced container on the same two volumes is the same instance. Image 191 MB.
+`/data` and `/secrets` are ext4 with named and with anonymous volumes and pass the
+mount-point rule; an overlay directory, a plain directory, a root-owned or `0750`
+store are each refused by their rule.
+
+**What does not work, from the worker's receipt (not yet verified by the lead):**
+
+| Gap | What it needs |
+| --- | --- |
+| The browser is not served from the container. The web process serves plain HTTP on loopback only (`web.rs` requires a verified HTTP loopback listener; `tls.fetch` answers only that profile; the `tls_pair` custody is unused), a published port is not loopback, and no workspace dependency can make a certificate | Either HTTPS serving in the host and the web process (a product feature that exists on no system yet: FC-017, Track A's area) with a certificate made at first start, or plain HTTP allowed on the container's interface. The owner's decision |
+| The container uses the development key store (`/secrets/dev-keys`), because the image holds a debug build; a release directory is used only by a release-profile host | A release image needs the release pipeline (a signed manifest and pinned runtime); until then the release store runs in no host anywhere |
+| A new, empty secrets volume does not stop the start in that image: the host serves and reports the office as having no usable key; no key is made | Follows from the development store |
+| `-v D:/data -v D/secrets:/secrets` is not refused: the store is beside the instance root (`/data/instance`), not inside it | The store must be compared with the data volume, not only with the instance root: X3's author, after the merge |
+| Real systemd never ran (no user bus in the sandbox) | A CI runner or a machine with a user manager; an opt-in test exists |
+
+Lead's decisions so far: `root` at `/data/instance` with the service user's home at
+`/data` is accepted (the host refuses overlapping instance and locator roots);
+`hello` for root is accepted as the handshake of `admin.reset`, subject to the review.
 
 ## Merges with v1-integration
 
