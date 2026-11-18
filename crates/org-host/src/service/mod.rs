@@ -866,7 +866,18 @@ pub(crate) mod tests {
         std::io::BufReader<std::os::unix::net::UnixStream>,
         Arc<Offices>,
     ) {
-        let mut service = service(home);
+        web_peer_for(service(home), listen)
+    }
+
+    /// [`web_peer_on`] over a service the caller prepared.
+    fn web_peer_for(
+        mut service: Service,
+        listen: &str,
+    ) -> (
+        listener::WebConnection,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+        Arc<Offices>,
+    ) {
         service.instance_id = Some(crate::ids::generate().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1034,6 +1045,85 @@ pub(crate) mod tests {
         ));
         assert!(local.live());
         drop(local);
+        offices.shutdown();
+    }
+
+    /// Before the registered start installs the administrator service, both admin calls
+    /// answer `unavailable` on the local channel rather than reaching any registry.
+    #[test]
+    fn admin_calls_are_unavailable_before_install_admin() {
+        use org_host_control::admin::{AdminLinkInitial, AdminLinkInitialParams, AdminReset};
+        let home = tempfile::tempdir().unwrap();
+        let mut service = service(home.path());
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        assert!(service.admin().is_none());
+        let offices = service.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let params = AdminLinkInitialParams {
+            setup_operation: crate::admin::tests::OPERATION.into(),
+        };
+        assert!(refused(
+            exchange::<AdminLinkInitial>(&mut peer, 2, &params),
+            ErrorCode::Unavailable
+        ));
+        assert!(refused(
+            exchange::<AdminReset>(&mut peer, 3, &Default::default()),
+            ErrorCode::Unavailable
+        ));
+        assert!(local.live());
+        drop(local);
+        offices.shutdown();
+    }
+
+    /// An installed administrator service refuses both calls off a non-local channel (here
+    /// the web process's) before any registry read, and issues no link.
+    #[test]
+    fn admin_calls_off_a_non_local_channel_are_refused_and_issue_nothing() {
+        use crate::links::{LinkKind, OneTimeLinks, Subject};
+        use org_host_control::admin::{AdminLinkInitial, AdminLinkInitialParams, AdminReset};
+        let home = tempfile::tempdir().unwrap();
+        let (_registry, admin) = crate::admin::tests::admin();
+        let admin = Arc::new(admin);
+        let service = service(home.path());
+        assert!(service.install_admin(admin.clone()));
+        assert!(!service.install_admin(admin.clone()), "installed once");
+        let (web, mut peer, offices) = web_peer_for(
+            service,
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let params = AdminLinkInitialParams {
+            setup_operation: crate::admin::tests::OPERATION.into(),
+        };
+        assert!(refused(
+            exchange::<AdminLinkInitial>(&mut peer, 2, &params),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(refused(
+            exchange::<AdminReset>(&mut peer, 3, &Default::default()),
+            ErrorCode::NotAuthorized
+        ));
+        // Nothing was issued: the first link for the registration subject is still available.
+        assert!(crate::admin::tests::registry(&admin)
+            .pending(
+                LinkKind::Registration,
+                &Subject::new("administrator").unwrap(),
+                1
+            )
+            .unwrap()
+            .is_none());
+        drop(web);
         offices.shutdown();
     }
 

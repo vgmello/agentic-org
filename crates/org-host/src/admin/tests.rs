@@ -7,7 +7,7 @@ use super::*;
 use crate::hostdb::HostDbInit;
 
 const INSTANCE: &str = "01J00000000000000000000000";
-const OPERATION: &str = "01890a5d-ac96-774b-bcce-b302099a8057";
+pub(crate) const OPERATION: &str = "01890a5d-ac96-774b-bcce-b302099a8057";
 const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 struct NoSecrets;
@@ -43,7 +43,9 @@ impl Presence for Refusing {
     }
 }
 
-fn admin() -> (tempfile::TempDir, Admin) {
+/// An administrator service over a fresh temp registry, bound to [`OPERATION`]; its presence
+/// check refuses.
+pub(crate) fn admin() -> (tempfile::TempDir, Admin) {
     let home = tempfile::tempdir().unwrap();
     std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let init = HostDbInit {
@@ -57,7 +59,12 @@ fn admin() -> (tempfile::TempDir, Admin) {
     (home, admin)
 }
 
-fn seed_administrator(admin: &Admin) {
+/// The registry behind `admin`, for tests outside this module.
+pub(crate) fn registry(admin: &Admin) -> &Arc<HostDb> {
+    &admin.db
+}
+
+pub(crate) fn seed_administrator(admin: &Admin) {
     admin
         .db
         .seed_account(

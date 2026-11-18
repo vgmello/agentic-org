@@ -242,4 +242,4 @@ fn set_password_unavailable() -> ApiError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
