@@ -15,6 +15,10 @@ dist/
 .playwright/
 
 # Generated Claude skill links; canonical skills live in .agents/skills.
-/.claude/skills/
+# The Svelte links point at the UI app's tracked copies and are committed.
+/.claude/skills/*
+!/.claude/skills/svelte-code-writer
+!/.claude/skills/svelte-core-bestpractices
+/.claude/settings.local.json
 /.repowise/
 /.agent-kit/tools/

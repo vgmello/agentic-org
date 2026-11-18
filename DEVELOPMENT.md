@@ -82,8 +82,11 @@ regenerate `scripts/format-baseline.json` to make a failing check pass.
 ## AI tools
 
 Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte
-and Microsoft's Playwright CLI. `skills-lock.json` records their sources. The existing
-Svelte plugin supplies Svelte skills and MCP tools; the Rust LSP MCP supplies
+and Microsoft's Playwright CLI. `skills-lock.json` records their sources. Claude Code
+starts at the repository root: the root `.mcp.json` runs the pinned Svelte MCP server,
+linked Svelte skills and agent come from the UI app, and `CLAUDE.md` lists the tools
+agents need, which a session-start hook checks. For Codex, the Svelte plugin supplies
+Svelte skills and MCP tools; the Rust LSP MCP supplies
 rust-analyzer navigation, types, references and rename edits. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.
 
@@ -126,7 +129,7 @@ and runs a measured consistency audit before handing over. Product specs outrank
 lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
 
 The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
-checkout (`.claude/skills/`, ignored by Git). It is optional and nothing depends on it.
+checkout (`.claude/skills/`, which Git ignores apart from the committed Svelte skill links). It is optional and nothing depends on it.
 Installing it is a lead's decision: the installer adds six other, uninspected skills that
 must be removed, and whatever is left is offered to every Claude session in that checkout.
 The persona file gives the pinned command and the limits.
