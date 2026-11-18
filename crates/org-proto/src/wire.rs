@@ -109,7 +109,7 @@ impl Request {
 /// A line with both, or neither, is rejected. A `null` result or a `null` error counts as
 /// missing, so results must not serialize to `null` ([`Response::ok`] refuses them).
 ///
-/// Its `result` can carry a secret in raw JSON (e.g. `office.app_token`'s), so don't log a
+/// Its `result` can carry a secret in raw JSON, so don't log a
 /// response or keep it longer than handling it takes. Its `Debug` shows only the id and the
 /// error, if any, and elides the result (`<elided N bytes>`); `Clone` copies the secret along
 /// with it.

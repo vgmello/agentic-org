@@ -1,40 +1,33 @@
-//! The app token: the per-office secret that lets the desktop app act for people (ADR-0003 §2.1),
-//! [`OfficeSecretsKey`], an office's secrets key, and the grant secrets of X-02 §4.1 ([`GrantMac`] and
-//! [`GrantKey`]), which share the same guards.
+//! The fixed-size secrets of the contract: [`OfficeSecretsKey`], an office's secrets key, and the
+//! grant secrets of X-02 §4.1 ([`GrantMac`] and [`GrantKey`]). They share one implementation of
+//! their guards.
 //!
-//! The host makes a fresh token for each office every time it starts and keeps it only in
-//! memory. It passes it to the office's server over the startup pipe and gives it to the app over
-//! `host.sock` after checking the app's code signature. It never reaches a file, argv, the
-//! environment or a log.
-//!
-//! On the wire it is 64 lowercase hex digits. This type keeps it from leaking by accident:
-//! - `Debug` and `Display` print `<redacted>`.
+//! On the wire each is 64 lowercase hex digits. The types keep a secret from leaking by accident:
+//! - `Debug` prints `<redacted>`, and there is no `Display`.
 //! - Decode errors never echo the input.
 //! - Equality is constant-time.
-//! - The bytes are zeroed when it's dropped. It isn't `Clone`: share it by reference or `Arc`.
+//! - The bytes are zeroed when it's dropped. None is `Clone`: share it by reference or `Arc`.
 //!
-//! Compare tokens with `==`, never through their strings: every token displays the same.
+//! Compare secrets with `==`, never through their strings: every one prints the same.
 //!
-//! It decodes from JSON only (it uses `deserialize_any`, which needs a self-describing format).
+//! They decode from JSON only (they use `deserialize_any`, which needs a self-describing format).
 //!
-//! [`OfficeSecretsKey`], an office's secrets key, gets the same treatment (see its docs). It travels only
-//! on the launch pipe from the host to the office's server (`org-office-launch`), never on a
-//! socket. It lives here, next to the app token, so the two share one implementation of their
-//! guards (`org-office-launch` re-exports it).
+//! [`OfficeSecretsKey`] travels only on the launch pipe from the host to the office's server
+//! (`org-office-launch`, which re-exports it), never on a socket.
 //!
-//! Zeroing is defence in depth, not a guarantee that no copy of the token is left in memory. The
+//! Zeroing is defence in depth, not a guarantee that no copy of a secret is left in memory. The
 //! typed envelopes ([`Request`](crate::Request), [`Response`](crate::Response) and
-//! [`ServerMessage`](crate::ServerMessage)) carry the token's hex through `serde_json::Value` and
+//! [`ServerMessage`](crate::ServerMessage)) carry a secret's hex through `serde_json::Value` and
 //! frame buffers, and leave freed copies of it behind that nothing can zero. Reading those copies
 //! needs local memory access as the same user.
 //!
-//! Other copies outside this type survive zeroing too: the array passed to
-//! [`AppToken::from_bytes`] (zero it yourself), the raw line a token was read from, the encoded
-//! output of a serialization and any reader or writer buffer it passed through, serde_json's
-//! scratch buffer (escaped strings, `from_reader`), serde's buffering for `flatten` and tagged or
-//! untagged enums, and any other `serde_json::Value` hop. The bytes themselves live on the heap
-//! (a `Box`), and decoding fills them in place, so moving a token or a key moves only a pointer
-//! and leaves no copy of the bytes behind. To keep copies few, decode it with `serde_json::from_slice` from a line buffer you zero
+//! Other copies outside these types survive zeroing too: the array passed to `from_bytes` (zero
+//! it yourself), the raw line a secret was read from, the encoded output of a serialization and
+//! any reader or writer buffer it passed through, serde_json's scratch buffer (escaped strings,
+//! `from_reader`), serde's buffering for `flatten` and tagged or untagged enums, and any other
+//! `serde_json::Value` hop. The bytes themselves live on the heap (a `Box`), and decoding fills
+//! them in place, so moving a secret moves only a pointer and leaves no copy of the bytes behind.
+//! To keep copies few, decode it with `serde_json::from_slice` from a line buffer you zero
 //! afterwards, into a plain struct field.
 //! Never log or `Debug`-print anything that holds it in raw form (an envelope, a `Value`, a line),
 //! and never use it as a map key or an enum tag (serde echoes those in errors).
@@ -45,109 +38,11 @@ use std::marker::PhantomData;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
-/// The length in bytes of every secret here: an [`AppToken`] or an [`OfficeSecretsKey`].
+/// The length in bytes of every secret here.
 const SECRET_BYTES: usize = 32;
-
-/// An app token's length in bytes (64 hex digits on the wire).
-pub const APP_TOKEN_BYTES: usize = SECRET_BYTES;
 
 /// An office secrets key's length in bytes (64 hex digits on the wire).
 pub const OFFICE_SECRETS_KEY_BYTES: usize = SECRET_BYTES;
-
-/// A per-office app token. See the module docs.
-///
-/// Zeroing on drop is defence in depth: it covers this token's own bytes only. The copies the
-/// typed envelopes make of its hex (through `serde_json::Value` and frame buffers) can't be
-/// zeroed. Reading them needs local memory access as the same user.
-///
-/// It isn't `Clone`:
-///
-/// ```compile_fail,E0599
-/// let token = org_proto::AppToken::from_bytes([0; org_proto::APP_TOKEN_BYTES]);
-/// let _copy = token.clone();
-/// ```
-pub struct AppToken(Box<[u8; APP_TOKEN_BYTES]>);
-
-impl AppToken {
-    /// Wrap 32 random bytes. The caller makes them with a secure random source (e.g.
-    /// `/dev/urandom`) and zeroes its own array afterwards: this only zeroes its own copy. This
-    /// crate does no I/O.
-    pub fn from_bytes(bytes: [u8; APP_TOKEN_BYTES]) -> Self {
-        AppToken(Box::new(bytes))
-    }
-
-    #[cfg(test)]
-    fn expose_bytes(&self) -> &[u8; APP_TOKEN_BYTES] {
-        &self.0
-    }
-}
-
-impl PartialEq for AppToken {
-    /// Constant-time: how long a comparison takes doesn't depend on where the tokens differ.
-    fn eq(&self, other: &Self) -> bool {
-        constant_time_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for AppToken {}
-
-impl AppToken {
-    /// Zero the bytes in place (what `Drop` does; tests call it to check the bytes).
-    fn wipe(&mut self) {
-        #[cfg(test)]
-        tests::WIPES.with(|wipes| wipes.set(wipes.get() + 1));
-        zero(&mut *self.0);
-    }
-}
-
-impl Drop for AppToken {
-    fn drop(&mut self) {
-        self.wipe();
-    }
-}
-
-impl fmt::Debug for AppToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("AppToken(<redacted>)")
-    }
-}
-
-impl fmt::Display for AppToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<redacted>")
-    }
-}
-
-impl Serialize for AppToken {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        serialize_hex(&self.0, s)
-    }
-}
-
-impl<'de> Deserialize<'de> for AppToken {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        // `deserialize_any`, so a value of another type reaches the visitor and fails with
-        // BAD_TOKEN. `deserialize_str` would let serde_json build its own "invalid type" error,
-        // which prints a number it parsed (e.g. an unquoted token's leading digits). This needs
-        // a self-describing format, which JSON is.
-        d.deserialize_any(SecretVisitor::<AppToken>(PhantomData))
-    }
-}
-
-/// The one decode error. It never contains the input.
-const BAD_TOKEN: &str = "an app token must be 64 lowercase hex digits";
-
-impl Secret for AppToken {
-    const EXPECTING: &'static str = "an app token";
-    const BAD: &'static str = BAD_TOKEN;
-
-    fn zeroed() -> Self {
-        AppToken(Box::new([0u8; SECRET_BYTES]))
-    }
-    fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES] {
-        &mut self.0
-    }
-}
 
 /// An office's secrets key: 32 random bytes that wrap the office's private keys
 /// (`org_pki::wrap`). It never encrypts a database (ADR-0016).
@@ -157,7 +52,7 @@ impl Secret for AppToken {
 /// create and start (a discard carries none). The server never creates, stores or deletes one.
 /// It never reaches argv, the environment, a log or the office's folder.
 ///
-/// It has the same guards as [`AppToken`]:
+/// Its guards:
 /// - On the wire it is 64 lowercase hex digits; decode errors never echo the input, and it
 ///   decodes from JSON only.
 /// - `Debug` prints `OfficeSecretsKey(<redacted>)`. There is no `Display`.
@@ -165,7 +60,7 @@ impl Secret for AppToken {
 /// - The bytes are zeroed when it's dropped. Share it by reference.
 ///
 /// Zeroing is defence in depth: it covers this key's own bytes only. The copies listed in the
-/// module docs for the app token (the array passed to [`OfficeSecretsKey::from_bytes`], line, reader and
+/// module docs (the array passed to [`OfficeSecretsKey::from_bytes`], line, reader and
 /// writer buffers, serde's buffering) survive it, and so does any copy made from
 /// [`OfficeSecretsKey::expose_bytes`]. Serializing it zeroes its own hex buffer.
 ///
@@ -232,7 +127,10 @@ impl Serialize for OfficeSecretsKey {
 
 impl<'de> Deserialize<'de> for OfficeSecretsKey {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        // `deserialize_any`, for the reason given on `AppToken`'s decoder.
+        // `deserialize_any`, so a value of another type reaches the visitor and fails with
+        // BAD_SECRETS_KEY. `deserialize_str` would let serde_json build its own "invalid type"
+        // error, which prints a number it parsed (e.g. an unquoted key's leading digits). This
+        // needs a self-describing format, which JSON is.
         d.deserialize_any(SecretVisitor::<OfficeSecretsKey>(PhantomData))
     }
 }
@@ -349,7 +247,7 @@ macro_rules! hex_secret {
 
         impl<'de> Deserialize<'de> for $ty {
             fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                // `deserialize_any`, for the reason given on `AppToken`'s decoder.
+                // `deserialize_any`, for the reason given on `OfficeSecretsKey`'s decoder.
                 d.deserialize_any(SecretVisitor::<$ty>(PhantomData))
             }
         }
@@ -379,7 +277,7 @@ hex_secret!(
     "a grant key must be 64 lowercase hex digits"
 );
 
-/// What every fixed-size secret here ([`AppToken`], [`OfficeSecretsKey`], [`GrantMac`], [`GrantKey`]) shares,
+/// What every fixed-size secret here ([`OfficeSecretsKey`], [`GrantMac`], [`GrantKey`]) shares,
 /// so they decode through one visitor. Each type zeroes itself on drop.
 trait Secret: Sized {
     /// What the visitor expects, for serde's messages.
@@ -477,7 +375,7 @@ fn nibble(c: u8) -> Option<u8> {
     }
 }
 
-/// Overwrite with zeros in a way the optimizer can't remove. Used for [`AppToken`] and [`OfficeSecretsKey`],
+/// Overwrite with zeros in a way the optimizer can't remove. Used for [`OfficeSecretsKey`] and the grant secrets,
 /// and re-exported as [`crate::zero_bytes`] for other crates' secret buffers.
 // The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes
 // that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
@@ -500,23 +398,21 @@ mod tests {
         pub(super) static WIPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
-    /// L3c: dropping a token or a key runs `wipe`, once each.
+    /// L3c: dropping a key runs `wipe`, once.
     #[test]
-    fn dropping_a_token_or_a_key_wipes_it() {
+    fn dropping_a_key_wipes_it() {
         let wipes = || WIPES.with(std::cell::Cell::get);
         let before = wipes();
-        drop(AppToken::from_bytes([0xa5; APP_TOKEN_BYTES]));
-        assert_eq!(wipes(), before + 1);
         drop(OfficeSecretsKey::from_bytes(
             [0x5a; OFFICE_SECRETS_KEY_BYTES],
         ));
-        assert_eq!(wipes(), before + 2);
+        assert_eq!(wipes(), before + 1);
         // Moved, not copied: one wipe, when the one value is dropped.
         let key = OfficeSecretsKey::from_bytes([1; OFFICE_SECRETS_KEY_BYTES]);
         let moved = key;
-        assert_eq!(wipes(), before + 2);
+        assert_eq!(wipes(), before + 1);
         drop(moved);
-        assert_eq!(wipes(), before + 3);
+        assert_eq!(wipes(), before + 2);
     }
 
     /// The grant secrets wipe like the others, once each, and moving them copies nothing.
@@ -536,111 +432,45 @@ mod tests {
         assert_eq!(wipes(), before + 3);
     }
 
-    fn token() -> AppToken {
-        let mut bytes = [0u8; APP_TOKEN_BYTES];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = (i as u8).wrapping_mul(37).wrapping_add(0xa5);
-        }
-        AppToken::from_bytes(bytes)
-    }
-
-    fn hex_of(t: &AppToken) -> String {
-        t.expose_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
-    }
-
-    #[test]
-    fn wire_form_is_64_lowercase_hex_and_round_trips() {
-        let t = token();
-        let json = serde_json::to_string(&t).unwrap();
-        assert_eq!(json, format!("\"{}\"", hex_of(&t)));
-        assert_eq!(json.len(), 66);
-        assert!(json[1..65]
-            .bytes()
-            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
-        assert_eq!(serde_json::from_str::<AppToken>(&json).unwrap(), t);
-    }
-
-    #[test]
-    fn debug_and_display_are_redacted() {
-        let t = token();
-        let secret = hex_of(&t);
-        for shown in [format!("{t:?}"), format!("{t}"), format!("{:?}", Some(&t))] {
-            assert!(!shown.contains(&secret[..8]), "{shown}");
-            assert!(shown.contains("redacted"), "{shown}");
-        }
-    }
-
-    #[test]
-    fn decode_errors_never_echo_the_input() {
-        let secret = hex_of(&token());
-        let cases = [
-            secret.to_uppercase(),         // uppercase isn't accepted
-            format!("{}g", &secret[..63]), // a non-hex digit
-            secret[..62].to_string(),      // too short
-            format!("{secret}00"),         // too long
-            format!("{}é", &secret[..62]), // non-ASCII
-        ];
-        for bad in cases {
-            let err = serde_json::from_str::<AppToken>(&serde_json::to_string(&bad).unwrap())
-                .unwrap_err()
-                .to_string();
-            assert!(!err.contains(&bad[..20]), "echoed: {err}");
-            assert!(err.contains("64 lowercase hex digits"), "{err}");
-        }
-        for other in ["5", "-5", "1.5", "true", "null", "[1]", "{\"a\":1}"] {
-            assert!(serde_json::from_str::<AppToken>(other).is_err(), "{other}");
-        }
-    }
-
     #[test]
     fn decode_errors_inside_a_struct_never_echo_it() {
         #[derive(Debug, Deserialize)]
         #[allow(dead_code)]
         struct Start {
-            app_token: AppToken,
+            office_secrets_key: OfficeSecretsKey,
         }
-        let bad = format!("{}Z", &hex_of(&token())[..63]);
-        let err = serde_json::from_str::<Start>(&format!("{{\"app_token\":\"{bad}\"}}"))
+        let bad = format!("{}Z", &key_hex(&office_secrets_key())[..63]);
+        let err = serde_json::from_str::<Start>(&format!("{{\"office_secrets_key\":\"{bad}\"}}"))
             .unwrap_err()
             .to_string();
         assert!(!err.contains(&bad[..20]), "echoed: {err}");
     }
 
     #[test]
-    fn equality_compares_every_byte() {
-        let a = token();
-        assert_eq!(a, token());
-        for i in [0, 15, 31] {
-            let mut bytes = *a.expose_bytes();
-            bytes[i] ^= 1;
-            assert_ne!(a, AppToken::from_bytes(bytes), "byte {i}");
-        }
-    }
-
-    #[test]
     fn decodes_in_every_shape_without_echoing() {
         use std::collections::HashMap;
 
-        let t = token();
-        let hex = hex_of(&t);
+        let t = office_secrets_key();
+        let hex = key_hex(&t);
         // Escaped digits decode the same.
         let escaped = format!("\"\\u00{:x}{}\"", hex.as_bytes()[0], &hex[1..]);
-        assert_eq!(serde_json::from_str::<AppToken>(&escaped).unwrap(), t);
         assert_eq!(
-            serde_json::from_value::<AppToken>(serde_json::Value::String(hex.clone())).unwrap(),
+            serde_json::from_str::<OfficeSecretsKey>(&escaped).unwrap(),
             t
         );
         assert_eq!(
-            serde_json::from_str::<Option<AppToken>>("null").unwrap(),
+            serde_json::from_value::<OfficeSecretsKey>(serde_json::Value::String(hex.clone()))
+                .unwrap(),
+            t
+        );
+        assert_eq!(
+            serde_json::from_str::<Option<OfficeSecretsKey>>("null").unwrap(),
             None
         );
 
         #[derive(Debug, Deserialize)]
         struct Inner {
-            app_token: AppToken,
+            office_secrets_key: OfficeSecretsKey,
         }
         #[derive(Debug, Deserialize)]
         struct Outer {
@@ -650,32 +480,37 @@ mod tests {
         #[derive(Debug, Deserialize)]
         #[serde(tag = "op")]
         enum Tagged {
-            Start { app_token: AppToken },
+            Start {
+                office_secrets_key: OfficeSecretsKey,
+            },
         }
         #[derive(Debug, Deserialize)]
         #[serde(untagged)]
         enum Untagged {
-            Start { app_token: AppToken },
+            Start {
+                office_secrets_key: OfficeSecretsKey,
+            },
         }
 
-        let good = format!("{{\"op\":\"Start\",\"app_token\":\"{hex}\"}}");
+        let good = format!("{{\"op\":\"Start\",\"office_secrets_key\":\"{hex}\"}}");
         assert_eq!(
             serde_json::from_str::<Outer>(&good)
                 .unwrap()
                 .inner
-                .app_token,
+                .office_secrets_key,
             t
         );
-        let Tagged::Start { app_token } = serde_json::from_str::<Tagged>(&good).unwrap();
-        assert_eq!(app_token, t);
-        let Untagged::Start { app_token } = serde_json::from_str::<Untagged>(&good).unwrap();
-        assert_eq!(app_token, t);
-        let map: HashMap<String, AppToken> =
+        let Tagged::Start { office_secrets_key } = serde_json::from_str::<Tagged>(&good).unwrap();
+        assert_eq!(office_secrets_key, t);
+        let Untagged::Start { office_secrets_key } =
+            serde_json::from_str::<Untagged>(&good).unwrap();
+        assert_eq!(office_secrets_key, t);
+        let map: HashMap<String, OfficeSecretsKey> =
             serde_json::from_str(&format!("{{\"a\":\"{hex}\"}}")).unwrap();
         assert_eq!(map["a"], t);
 
         let bad = format!("{}G", &hex[..63]);
-        let bad_line = format!("{{\"op\":\"Start\",\"app_token\":\"{bad}\"}}");
+        let bad_line = format!("{{\"op\":\"Start\",\"office_secrets_key\":\"{bad}\"}}");
         let errors = [
             serde_json::from_str::<Outer>(&bad_line)
                 .unwrap_err()
@@ -700,7 +535,7 @@ mod tests {
         #[derive(Debug, Deserialize)]
         #[allow(dead_code)]
         struct Start {
-            app_token: AppToken,
+            office_secrets_key: OfficeSecretsKey,
         }
         for digits in [
             "31415926535897932384",
@@ -708,16 +543,19 @@ mod tests {
             "27182818",
             "-27182818",
         ] {
-            let err = serde_json::from_str::<Start>(&format!("{{\"app_token\":{digits}}}"))
-                .unwrap_err()
-                .to_string();
+            let err =
+                serde_json::from_str::<Start>(&format!("{{\"office_secrets_key\":{digits}}}"))
+                    .unwrap_err()
+                    .to_string();
             assert!(!err.contains(&digits[..6]), "echoed: {err}");
             let value: serde_json::Value = serde_json::from_str(digits).unwrap();
-            let err = serde_json::from_value::<AppToken>(value.clone())
+            let err = serde_json::from_value::<OfficeSecretsKey>(value.clone())
                 .unwrap_err()
                 .to_string();
             assert!(!err.contains(&digits[..6]), "echoed: {err}");
-            let err = AppToken::deserialize(&value).unwrap_err().to_string();
+            let err = OfficeSecretsKey::deserialize(&value)
+                .unwrap_err()
+                .to_string();
             assert!(!err.contains(&digits[..6]), "echoed: {err}");
         }
         // Every scalar fails with this module's own message, never serde's default one (which
@@ -730,37 +568,36 @@ mod tests {
             "2718281.8",
             "31415926535897932384",
         ] {
-            let err = serde_json::from_str::<AppToken>(scalar)
+            let err = serde_json::from_str::<OfficeSecretsKey>(scalar)
                 .unwrap_err()
                 .to_string();
-            assert!(err.contains(BAD_TOKEN), "{scalar}: {err}");
+            assert!(err.contains(BAD_SECRETS_KEY), "{scalar}: {err}");
             let value: serde_json::Value = serde_json::from_str(scalar).unwrap();
-            let err = AppToken::deserialize(&value).unwrap_err().to_string();
-            assert!(err.contains(BAD_TOKEN), "{scalar}: {err}");
+            let err = OfficeSecretsKey::deserialize(&value)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(BAD_SECRETS_KEY), "{scalar}: {err}");
         }
         // 128-bit integers (what serde_json's `arbitrary_precision` produces for huge numbers).
         use serde::de::value::{Error as ValueError, I128Deserializer, U128Deserializer};
-        let err = AppToken::deserialize(U128Deserializer::<ValueError>::new(
+        let err = OfficeSecretsKey::deserialize(U128Deserializer::<ValueError>::new(
             31415926535897932384u128,
         ))
         .unwrap_err()
         .to_string();
-        assert!(err.contains(BAD_TOKEN) && !err.contains("314159"), "{err}");
-        let err = AppToken::deserialize(I128Deserializer::<ValueError>::new(
+        assert!(
+            err.contains(BAD_SECRETS_KEY) && !err.contains("314159"),
+            "{err}"
+        );
+        let err = OfficeSecretsKey::deserialize(I128Deserializer::<ValueError>::new(
             -31415926535897932384i128,
         ))
         .unwrap_err()
         .to_string();
-        assert!(err.contains(BAD_TOKEN) && !err.contains("314159"), "{err}");
-    }
-
-    /// `Drop` calls `wipe` (the bytes are on the heap and freed after it, so they can't be read
-    /// after a real drop).
-    #[test]
-    fn drop_zeroes_the_token() {
-        let mut t = AppToken::from_bytes([0xa5; APP_TOKEN_BYTES]);
-        t.wipe();
-        assert_eq!(*t.0, [0u8; APP_TOKEN_BYTES]);
+        assert!(
+            err.contains(BAD_SECRETS_KEY) && !err.contains("314159"),
+            "{err}"
+        );
     }
 
     fn office_secrets_key() -> OfficeSecretsKey {
@@ -853,7 +690,7 @@ mod tests {
         }
     }
 
-    /// As for the app token: `Drop` calls `wipe`.
+    /// `Drop` calls `wipe`.
     #[test]
     fn drop_zeroes_the_office_secrets_key() {
         let mut k = OfficeSecretsKey::from_bytes([0x5a; OFFICE_SECRETS_KEY_BYTES]);

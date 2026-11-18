@@ -2,7 +2,7 @@
 //! (`office`), plus the short runs around them: `--create` makes a new office, `--discard`
 //! removes an unfinished one.
 //!
-//! The host hands a server no app token: a launch handoff carries only the office's
+//! A launch handoff carries only the office's
 //! secrets key (and, for the HQ create, its recovery code) over the instance's rendezvous.
 //!
 //! Each office's secrets key lives in the host's key store ([`OfficeSecretsKeys`], the host's own

@@ -635,10 +635,7 @@ fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_surv
     // The agent binds with no token; the owner acts through its grant.
     let agent = Client::connect(socket(&world)).unwrap();
     let bound = agent
-        .call::<MsgBind>(&MsgBindParams {
-            member: Some("pixel".into()),
-            app_token: None,
-        })
+        .call::<MsgBind>(&MsgBindParams::member("pixel"))
         .unwrap();
     assert_eq!(bound.member_id.as_deref(), Some(agent_id));
 

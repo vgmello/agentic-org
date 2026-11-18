@@ -523,7 +523,7 @@ offices/
     <li>SQLite through <code>rusqlite</code>. WAL, <code>synchronous=FULL</code>, full fsync. No application-level encryption (ADR-0016): since A1 the build bundles plain SQLite and sets no database key.</li>
     <li>One write connection on one thread per database, batching with savepoints. Readers use a small pool.</li>
     <li>Schemas are versioned in code by <code>user_version</code>. There are no SQL migration files.</li>
-    <li>The host creates each office key once and never recreates it. A missing key is an error, <code>key_missing</code>.</li>
+    <li>The host creates each office key once and never recreates it. An office whose key is missing still starts and serves its data; only its CA is unavailable.</li>
     <li>The draft target schema is 77 tables and 10 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
   </ul>
 </section>
@@ -904,7 +904,7 @@ offices/
       <tr><td>IDs and task numbers</td><td>UUIDv7 everywhere. Task references minted by the creating office, <code>T-B37</code>.</td><td>ULIDs in most of the code; per-project task counters at HQ.</td><td class="k">ADR-0019</td></tr>
       <tr><td>Storage engine</td><td>Only store adapters know the database; PostgreSQL must be possible.</td><td>One concrete store; two files use SQL outside it. Messaging and replication already have engine-independent tests.</td><td class="k">ADR-0018</td></tr>
       <tr><td>Launch contract</td><td>One contract, the verified rendezvous; no older form.</td><td>The host launches every worker through the rendezvous; the worker refuses the older form.</td><td class="k">host boundary design</td></tr>
-      <tr><td>Authorization of people</td><td>Principal plus a host-issued grant, verified by the worker.</td><td>The launch hands the worker its grant key and no app token, and the worker verifies grants. Until A1.8 the worker still accepts an app-token binding (<code>msg.bind</code>).</td><td class="k">Data contract</td></tr>
+      <tr><td>Authorization of people</td><td>Principal plus a host-issued grant, verified by the worker.</td><td>The launch hands the worker its grant key and no app token, and the worker verifies grants. <code>msg.bind</code> binds agents only and refuses the retired <code>app_token</code> field.</td><td class="k">Data contract</td></tr>
       <tr><td>Work reads for the browser</td><td>Served through the host and office channel.</td><td>The host socket answers two calls.</td><td class="k">Data contract</td></tr>
       <tr><td>Platforms</td><td>macOS and Linux, including a container.</td><td>Workers start on macOS only.</td><td class="k">ADR-0017</td></tr>
       <tr><td>Membership, task shape, areas</td><td>One home team; one typed task; no areas.</td><td>Many-to-many membership; separate task and bug families; <code>area.*</code> served.</td><td class="k">Data contract</td></tr>

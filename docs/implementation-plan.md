@@ -290,8 +290,9 @@ Three things to know about the order:
   "Person-started commands", [ADR-0013](adr/0013-stored-browser-sessions.md) (SES-8),
   [host boundary design](design/office-host-boundary.md),
   [`apps/agent-os/README.md`](../apps/agent-os/README.md). Row FC-014.
-- **Code today:** a person or the owner binds to the office with `app_token`
-  (`apps/agentic-org-office/src/serve.rs`), which A1 removes; `agent-os` talks to an
+- **Code today:** a person or the owner acts only through a host-issued grant; the
+  application token is deleted (A1.8) and `msg.bind` binds agents only
+  (`apps/agentic-org-office/src/serve.rs`); `agent-os` talks to an
   office only when one is named and otherwise writes to a file queue, which B6 deletes.
 - **Done when:** SES-8 passes; a signed-in person runs a read command and a write
   command against the office from a terminal; the same commands are refused without a

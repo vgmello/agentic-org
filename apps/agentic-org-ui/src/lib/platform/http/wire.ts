@@ -291,7 +291,7 @@ export const readInstance = checked(object({
 export const readOffice = checked(object({
 	id: text, organization_id: text, name: text, role: word(['hq', 'satellite'] as const), host: text,
 	status: word(['active', 'starting', 'pending', 'offline', 'unavailable', 'update_needed'] as const),
-	status_reason: optional(word(['key_missing', 'in_use', 'storage_error', 'invalid_request', 'unsupported_version', 'crashed', 'start_timeout', 'restarts_exhausted', 'stopped_by_owner'] as const)),
+	status_reason: optional(word(['in_use', 'storage_error', 'invalid_request', 'unsupported_version', 'crashed', 'start_timeout', 'restarts_exhausted', 'stopped_by_owner'] as const)),
 	next_restart_at: optional(text)
 }));
 export const readOrganizationList = checked(object({ organizations: array(readOrganization) }));

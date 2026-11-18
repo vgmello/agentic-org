@@ -18,7 +18,7 @@ mod test_teardown;
 use joined_client::Client;
 use org_office_launch::{office_dir, OfficeFile};
 use org_proto::location::office_socket_path;
-use org_proto::{frame, AppToken, OfficeRole, OfficeSecretsKey};
+use org_proto::{frame, OfficeRole, OfficeSecretsKey};
 use tempfile::TempDir;
 
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
@@ -134,11 +134,6 @@ impl Drop for Run {
             });
         }
     }
-}
-
-/// An app token: launch has none, so a person's bind carrying one is refused like any other.
-fn token() -> AppToken {
-    AppToken::from_bytes([0xA7; 32])
 }
 
 /// The office secrets key the host would hold for the office.
