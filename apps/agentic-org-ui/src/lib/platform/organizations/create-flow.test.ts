@@ -6,6 +6,7 @@ import {
 	failureDetails,
 	isWorking,
 	NOT_ADMINISTRATOR,
+	refusedNameMessage,
 	type Phase
 } from './create-flow';
 import {
@@ -286,7 +287,26 @@ describe('refusals', () => {
 			'remote_required',
 			"Org Git must be a remote repository: an https:// or ssh:// address. A folder on a machine can't be used."
 		],
-		['state_branch', 'invalid_request', 'format', 'Enter a branch name, for example main.']
+		['state_branch', 'invalid_request', 'format', 'Enter a branch name, for example main.'],
+		['name', 'invalid_request', 'empty', 'Give the organization a name.'],
+		['name', 'invalid_request', 'too_long', 'Use 64 characters or fewer.'],
+		['name', 'invalid_request', 'control_char', "The name can't contain control characters."],
+		['name', 'invalid_request', 'control', "The name can't contain control characters."],
+		[
+			'name',
+			'invalid_request',
+			'invisible',
+			"The name can't contain invisible or direction-changing characters."
+		],
+		[
+			'name',
+			'invalid_request',
+			'invisible_char',
+			"The name can't contain invisible or direction-changing characters."
+		],
+		['name', 'invalid_request', 'format', "HQ didn't accept this name. Change it and try again."],
+		['name', 'invalid_request', undefined, "HQ didn't accept this name. Change it and try again."],
+		['name', 'invalid_request', 'toString', "HQ didn't accept this name. Change it and try again."]
 	] as const)(
 		'a refusal naming %s (%s) shows by that field and the next attempt is new',
 		async (field, code, rule, message) => {
@@ -307,6 +327,22 @@ describe('refusals', () => {
 			expect(s.sent()).toEqual([OP, OP2]);
 		}
 	);
+	it('a refused name with no named fault shows the fault the page finds in it, else the general text', async () => {
+		expect(refusedNameMessage('format', 'x'.repeat(65))).toBe('Use 64 characters or fewer.');
+		expect(refusedNameMessage(undefined, 'a\u0007b')).toBe(
+			"The name can't contain control characters."
+		);
+		expect(refusedNameMessage('format', 'Side Project')).toBe(
+			"HQ didn't accept this name. Change it and try again."
+		);
+		const s = setup();
+		s.submit.mockResolvedValueOnce(rejected(400, { code: 'invalid_name', rule: 'too_long' }));
+		await s.flow.submit(fields);
+		expect(s.last()).toEqual({
+			kind: 'editing',
+			errors: { name: 'Use 64 characters or fewer.' }
+		});
+	});
 	it('already_exists without a field is the name (OFC-17)', async () => {
 		const s = setup();
 		s.submit.mockResolvedValueOnce(rejected(409, { code: 'already_exists' }));

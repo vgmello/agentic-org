@@ -5,6 +5,7 @@
  * minted only after a confirmed refusal or when the person changes what is being created.
  */
 import { trimWhiteSpace, validateName } from '$lib/name';
+import { ORGANIZATION_NAME_MAX_CHARS } from '$lib/proto';
 import type { OrganizationsApi, CreateParams, CreateReply } from './api';
 import type { CreateField, CreateRefusal, OrganizationView } from './readers';
 import { validSlug } from './slug';
@@ -49,6 +50,35 @@ const taken = (name: string) =>
 	`There's already an organization called ${name} on this HQ. Choose another name.`;
 const notCreated = (name: string) => `${name} wasn't created. Try again.`;
 
+/** The page's own message for a name with this fault, so HQ's refusal reads the same (OFC-16). */
+const nameFault = (sample: string): string => {
+	const checked = validateName(sample);
+	return checked.ok ? '' : checked.message;
+};
+/**
+ * HQ's rule for a refused name, by the four faults a name can have: the names of org-proto's
+ * name vectors (`empty`, `too_long`, `control`, `invisible`), with the `NameError` spellings
+ * (`control_char`, `invisible_char`) accepted too.
+ */
+const NAME_RULES: Readonly<Record<string, string>> = {
+	empty: nameFault(''),
+	too_long: nameFault('x'.repeat(ORGANIZATION_NAME_MAX_CHARS + 1)),
+	control: nameFault('\u0007'),
+	control_char: nameFault('\u0007'),
+	invisible: nameFault('\u202e'),
+	invisible_char: nameFault('\u202e')
+};
+/**
+ * The inline message for a name HQ refused as invalid. HQ names the fault in `rule`; when it
+ * says only `format` (or nothing), the fault this page's own check finds in the name that was
+ * sent is shown, and a name the page finds nothing wrong with gets the general text.
+ */
+export function refusedNameMessage(rule: string | undefined, name: string): string {
+	if (rule !== undefined && Object.hasOwn(NAME_RULES, rule)) return NAME_RULES[rule];
+	const checked = validateName(name);
+	return checked.ok ? "HQ didn't accept this name. Change it and try again." : checked.message;
+}
+
 /** The inline message for a field the server refused, from its machine fields only. */
 export function fieldMessage(
 	field: CreateField,
@@ -58,7 +88,7 @@ export function fieldMessage(
 	const exists = error.code === 'already_exists';
 	switch (field) {
 		case 'name':
-			return exists ? taken(params.name) : "HQ didn't accept this name. Change it and try again.";
+			return exists ? taken(params.name) : refusedNameMessage(error.rule, params.name);
 		case 'slug':
 			return exists
 				? `There's already an organization with the slug ${params.slug} on this HQ. Choose another slug.`
@@ -148,7 +178,7 @@ export function createOrganizationFlow({
 		else if (error.code === 'invalid_name')
 			show({
 				kind: 'editing',
-				errors: { name: "HQ didn't accept this name. Change it and try again." }
+				errors: { name: refusedNameMessage(error.rule, name) }
 			});
 		else if (error.code === 'storage_error')
 			fail(

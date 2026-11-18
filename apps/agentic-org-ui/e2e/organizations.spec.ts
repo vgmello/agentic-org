@@ -96,6 +96,23 @@ test('the slug follows the name until it is edited, and is sent as typed', async
 	]);
 });
 
+test("a name HQ refuses as invalid shows the inline message for HQ's rule", async ({ page }) => {
+	const server = await open(page);
+	await fill(page);
+	await server.script('createScript', [
+		{ refused: { field: 'name', rule: 'too_long' } },
+		{ refused: { field: 'name', rule: 'format' } }
+	]);
+	await create(page).click();
+	await expect(page.getByText('Use 64 characters or fewer.')).toBeVisible();
+	await expect(page.getByLabel('Name', { exact: true })).toBeFocused();
+	await create(page).click();
+	await expect(
+		page.getByText("HQ didn't accept this name. Change it and try again.")
+	).toBeVisible();
+	expect((await server.stats()).creates).toEqual([]);
+});
+
 test('an invalid name or an empty field shows its message, sends nothing, and clears on typing (OFC-16, FC-018 (6))', { tag: '@webkit' }, async ({
 	page
 }) => {
