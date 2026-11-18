@@ -87,14 +87,18 @@ mod adapter_tests;
 // The release directory's contract: its types and its entry, on every target.
 mod release;
 pub use release::{
-    release_directory, FilesystemClass, ReleaseDirectory, ReleaseItems, ReleaseRoot, RootRefusal,
-    RootRule,
+    release_directory, release_directory_with_stores, FilesystemClass, ItemStore, MountDoubt,
+    ReleaseDirectory, ReleaseItems, ReleaseRoot, RootRefusal, RootRule,
 };
 
 // The release directory's rules, pure. Only the GNU/Linux adapter calls them; every
 // target tests them.
 #[cfg(any(all(target_os = "linux", target_env = "gnu"), test))]
 mod rules;
+
+// Where a directory is inside its filesystem, from the mount table, pure. As above.
+#[cfg(any(all(target_os = "linux", target_env = "gnu"), test))]
+mod mounts;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod testing;

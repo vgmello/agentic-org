@@ -2,10 +2,10 @@
 //! Keychain (GNU/Linux; Linux host design section 3.2, ADR-0017 decision 8).
 //!
 //! The host's secrets are owner-only files in one directory outside its data root, at
-//! a path setup recorded. [`release_directory`] opens that directory once, checks it
-//! and takes the lock that admits one host; the host then opens its item stores below
-//! it ([`ReleaseRoot::store`]) with the directory store's engine, so every rule of an
-//! item is that engine's (`directory.rs`).
+//! a path setup recorded. [`release_directory_with_stores`] opens that directory once,
+//! checks it and takes the lock that admits one host; the host then opens its item
+//! stores below it ([`ReleaseRoot::store`]) with the directory store's engine, so
+//! every rule of an item is that engine's (`directory.rs`).
 //!
 //! # Layout
 //!
@@ -15,8 +15,11 @@
 //!     <item store>/                  one directory per item store, mode 0700 (a directory store)
 //! ```
 //!
-//! Anything else in the release directory is left alone and never opened (a volume's
-//! `lost+found`, for one).
+//! The host names its item stores when it opens the directory ([`ItemStore`]): only
+//! those are looked into, and only those can be opened. Anything else in the release
+//! directory is not the store's: it is never opened, changed or counted, whatever it
+//! is. A volume's root has a `lost+found` that root owns, and it is left alone like
+//! every other unknown entry.
 //!
 //! # Checks when the directory opens
 //!
@@ -32,34 +35,65 @@
 //!    and is not writable by its group, with two exceptions: a root-owned directory
 //!    with the sticky bit, and a directory of the service user whose group is that
 //!    user's private group (its primary group, named as the user, with no other
-//!    member in its member list). Each is judged before anything below it is opened.
+//!    member in its member list). A directory admitted by either exception carries no
+//!    POSIX access ACL. Each is judged before anything below it is opened.
 //! 4. The release directory is owned by the service user and its mode is exactly
 //!    `0700`.
 //! 5. Its filesystem is ext4 (ext2 and ext3 share ext4's type number), XFS, Btrfs or
 //!    F2FS. Network, user-space and memory filesystems are refused, and so is every
 //!    other one (an overlay, for one): a key that is lost or shared loses or exposes
 //!    an office's private keys.
-//! 6. It is disjoint from the data root, by the device and inode numbers of held
-//!    descriptors, walking `..` from each up to `/`: it is not the data root, not
-//!    inside it, and does not contain it.
-//! 7. When a mount point is required, it is the root of a mount (`statx`,
+//! 6. It is disjoint from the data root as this process sees the two, by the device
+//!    and inode numbers of held descriptors, walking `..` from each up to `/`: it is
+//!    not the data root, not inside it, and does not contain it.
+//! 7. It is disjoint from the data root inside the filesystem as well. A bind mount
+//!    shows a directory somewhere else, and the walk of check 6 then leaves through
+//!    the mount point, not through the directory's own parent. So each of the two is
+//!    placed in its filesystem from the mount table (`/proc/self/mountinfo`: the root
+//!    its mount shows, then its path below the mount point), and two places in one
+//!    filesystem must not be equal or inside each other. Where a place cannot be had,
+//!    the directory is refused ([`RootRule::Undetermined`]), never accepted on doubt.
+//! 8. When a mount point is required, it is the root of a mount (`statx`,
 //!    `STATX_ATTR_MOUNT_ROOT`). A kernel that cannot say refuses.
-//! 8. When items are expected, the directory holds at least one
-//!    ([`RootRule::CredentialsMissing`] otherwise; see below).
-//! 9. `.lock` is created if missing, must be a regular file of the service user with
-//!    mode `0600` and one link, and is locked exclusively (`flock`) until the
-//!    [`ReleaseRoot`] and every store opened from it are dropped. A second host is
-//!    [`RootRule::InUse`].
+//! 9. Each of the host's item stores that exists is a directory of the service user
+//!    with mode exactly `0700`, not followed if it is a link
+//!    ([`RootRule::ItemStoreOwner`], [`RootRule::ItemStoreMode`],
+//!    [`RootRule::ItemStoreNotADirectory`], each naming the item store). One that does
+//!    not exist yet is made when it is opened.
+//! 10. When items are expected, the item stores hold at least one item
+//!     ([`RootRule::CredentialsMissing`] otherwise; see below).
+//! 11. `.lock` must be a regular file of the service user with mode `0600` and one
+//!     link, and is locked exclusively (`flock`) until the [`ReleaseRoot`] and every
+//!     store opened from it are dropped. A second host is [`RootRule::InUse`]. A
+//!     missing lock is made, and its mode is set on the descriptor that made it,
+//!     whatever the process's file-creation mask is; an existing one is never
+//!     changed.
+//!
+//! # What the private-group exception does not establish
+//!
+//! "Private" is what two entries of the account database say: the group is the
+//! service user's primary group, has the user's name, and lists no other member. An
+//! account that has the same group as its *primary* group is in no member list and is
+//! not detected; it could rename a group-writable directory above the store and put an
+//! older copy of the store in its place. Accounts are not enumerated to find one
+//! (`crate::account` says why). A deployment that needs this closed keeps the store
+//! below directories its group cannot write.
 //!
 //! # A store found empty
 //!
 //! `expect_items` is the host saying that its records name keys. It is checked here,
-//! in [`release_directory`], over the whole release directory and before any item
-//! store can be opened: no caller can open one view of an empty store and create a
-//! fresh key in it. An item, for this check, is a regular file whose name does not
-//! start with `.` (the lock and the temporary files do) in a directory directly below
-//! the release directory that the service user owns with mode `0700`. A directory
-//! that is not such a one cannot be an item store and is not looked into.
+//! when the directory opens, over all of the host's item stores and before any of them
+//! can be opened: no caller can open one view of an empty store and create a fresh key
+//! in it.
+//!
+//! An item, for this check, is exactly what the directory store's engine would give
+//! the host: a file in one of the item stores whose name is an item name followed by
+//! that store's suffix, which the host's own name rule for that store accepts
+//! ([`ItemStore::is_item`]), and which is a regular file of the service user with mode
+//! `0600` and one link. A file with such a name that is not such a file is not counted
+//! as missing: it refuses by its own rule ([`RootRule::ItemUnsafe`], naming the item
+//! store), so that a store restored without its modes is reported as that. Other files
+//! in an item store, and everything outside the item stores, are not items.
 //!
 //! The check is about the store as a whole: it notices a release directory that was
 //! lost and replaced by an empty one. It does not say that each item a record names
@@ -68,11 +102,11 @@
 //! # Where a path may appear
 //!
 //! Errors of this capability carry kinds, never bytes, names or paths, with one
-//! exception: [`RootRefusal`], which only [`release_directory`] returns, carries the
-//! path of the directory that broke a rule. That path is configuration (a directory
-//! setup recorded, or one above it), never a secret or an item's name, and the host
-//! must be able to say which directory to fix. Item operations and the `Debug` output
-//! of every location still show no path.
+//! exception: [`RootRefusal`], which only the entries of this module return, carries
+//! the path of the directory that broke a rule. That path is configuration (a
+//! directory setup recorded, one above it, or one of the host's item stores), never a
+//! secret or an item's name, and the host must be able to say which directory to fix.
+//! Item operations and the `Debug` output of every location still show no path.
 
 use std::fmt;
 use std::io;
@@ -120,14 +154,40 @@ pub struct ReleaseItems<'a> {
     pub sharing: Sharing,
 }
 
-/// The release directory at `location`, opened, checked and locked (the module
-/// documentation lists the checks). Nothing below it is opened yet.
+/// One of the host's item stores, as the host declares it when it opens the release
+/// directory.
+#[derive(Clone, Copy, Debug)]
+pub struct ItemStore<'a> {
+    /// The store's directory: one name directly below the release directory, with the
+    /// syntax of an item name.
+    pub directory: &'a str,
+    /// What follows an item's name in its file name; may be empty.
+    pub suffix: &'a str,
+    /// The host's own name rule for this store's items, as it gives it to
+    /// [`Credentials::list`]: asked only about names that are an item name.
+    pub is_item: fn(&str) -> bool,
+}
+
+/// The release directory at `location`, opened, checked and locked, for a host whose
+/// item stores are `item_stores` (the module documentation lists the checks). Only
+/// those stores can be opened from the result, and none is opened yet.
 ///
 /// GNU/Linux only. Every other system refuses with
 /// [`CredentialError::Refused`] before anything is read: a release build on macOS
 /// keeps its secrets in the Keychain, and nothing falls back to a directory.
+pub fn release_directory_with_stores(
+    location: ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+) -> Result<ReleaseRoot, CredentialError> {
+    native::release_directory(&location, item_stores).map(|root| ReleaseRoot { root })
+}
+
+/// [`release_directory_with_stores`] for a caller that opens no item store: the
+/// directory is opened, checked and locked, and nothing can be opened from the result.
+/// Setup checks a directory it has just made this way. With `expect_items` it always
+/// refuses: no item store is declared, so none holds an item.
 pub fn release_directory(location: ReleaseDirectory<'_>) -> Result<ReleaseRoot, CredentialError> {
-    native::release_directory(&location).map(|root| ReleaseRoot { root })
+    release_directory_with_stores(location, &[])
 }
 
 /// One open release directory. It holds the directory's lock, and so does every store
@@ -139,7 +199,9 @@ pub struct ReleaseRoot {
 
 impl ReleaseRoot {
     /// The item store `items` names below this release directory: a directory store,
-    /// with every check that store makes when it opens and on every operation.
+    /// with every check that store makes when it opens and on every operation. It must
+    /// be one of the stores the directory was opened for, by its directory and its
+    /// suffix; any other is [`CredentialError::InvalidName`], and nothing is made.
     pub fn store(&self, items: ReleaseItems<'_>) -> Result<Credentials, CredentialError> {
         self.root.store(&items).map(|store| Credentials { store })
     }
@@ -200,6 +262,10 @@ pub enum RootRule {
     /// neither a root-owned sticky directory nor a directory of the service user
     /// whose group is that user's private group.
     AncestorWritableByGroup,
+    /// A directory above the release directory is writable by its group under one of
+    /// the two exceptions, and carries a POSIX access ACL: who can write to it is then
+    /// not what its mode says.
+    AncestorAcl,
     /// The release directory is not owned by the service user.
     StoreOwner,
     /// The release directory's mode is not exactly `0700`.
@@ -219,6 +285,10 @@ pub enum RootRule {
     ContainsDataRoot,
     /// The data root's descriptor could not be examined, with this kind of error.
     DataRoot(io::ErrorKind),
+    /// Whether the release directory and the data root share a directory inside one
+    /// filesystem could not be determined from the mount table, for this reason. It
+    /// is refused, never assumed.
+    Undetermined(MountDoubt),
     /// A mount point is required and the release directory is not the root of a mount.
     NotAMountPoint,
     /// A mount point is required and this kernel does not say whether a directory is
@@ -226,9 +296,25 @@ pub enum RootRule {
     MountPointUnknown,
     /// The host's records say keys exist, and the release directory holds no item.
     CredentialsMissing,
+    /// One of the host's item stores is not owned by the service user. The path is
+    /// the item store's.
+    ItemStoreOwner,
+    /// The mode of one of the host's item stores is not exactly `0700`. The path is
+    /// the item store's.
+    ItemStoreMode,
+    /// What stands where one of the host's item stores goes is not a directory (a
+    /// link is not followed). The path is the item store's.
+    ItemStoreNotADirectory,
+    /// Items are expected, and a file named like an item is not a regular file of the
+    /// service user with mode `0600` and one link. The path is its item store's; the
+    /// item is not named.
+    ItemUnsafe,
     /// The lock file is not a regular file of the service user with mode `0600` and
     /// one link.
     LockFile,
+    /// The lock file could not be opened or made, with this kind of error, and
+    /// nothing shows that it breaks [`RootRule::LockFile`].
+    LockUnavailable(io::ErrorKind),
     /// Another host has the release directory open.
     InUse,
 }
@@ -262,6 +348,11 @@ impl fmt::Display for RootRule {
                  a root-owned sticky directory may be, or a directory of the service user whose \
                  group is that user's private group)",
             ),
+            Self::AncestorAcl => f.write_str(
+                "this directory, above the credential directory, is writable by its group and \
+                 carries an access control list, so its mode does not say who can write to it; \
+                 remove the list (setfacl -b) or the group's write access",
+            ),
             Self::StoreOwner => {
                 f.write_str("the credential directory is not owned by the service user")
             }
@@ -281,6 +372,11 @@ impl fmt::Display for RootRule {
                 f,
                 "the data root could not be compared with the credential directory: {kind}"
             ),
+            Self::Undetermined(doubt) => write!(
+                f,
+                "whether the credential directory and the data root share a directory could \
+                 not be determined from the mount table ({doubt}); it is refused, not assumed"
+            ),
             Self::NotAMountPoint => f.write_str(
                 "the credential directory must be a mount point (a mounted secrets volume) and \
                  is not one",
@@ -293,11 +389,72 @@ impl fmt::Display for RootRule {
                 "credentials missing: the host's records say keys exist, and the credential \
                  directory holds none; restore the directory, nothing was created",
             ),
+            Self::ItemStoreOwner => f.write_str(
+                "this item store of the credential directory is not owned by the service user",
+            ),
+            Self::ItemStoreMode => f.write_str(
+                "the mode of this item store of the credential directory is not 0700 (a \
+                 restore that lost the modes leaves this; set it back, nothing is repaired here)",
+            ),
+            Self::ItemStoreNotADirectory => f.write_str(
+                "this item store of the credential directory is not a directory (a symbolic \
+                 link is never followed)",
+            ),
+            Self::ItemUnsafe => f.write_str(
+                "an item in this item store of the credential directory is not a regular file \
+                 of the service user with mode 0600 and one link (a restore that lost the modes \
+                 leaves this; set them back, nothing is repaired here)",
+            ),
             Self::LockFile => f.write_str(
-                "the credential directory's lock file is not a regular file of the service user \
-                 with mode 0600 and one link",
+                "the credential directory's lock file (.lock) is not a regular file of the \
+                 service user with mode 0600 and one link",
+            ),
+            Self::LockUnavailable(kind) => write!(
+                f,
+                "the credential directory's lock file (.lock) could not be opened: {kind}"
             ),
             Self::InUse => f.write_str("the credential directory is in use by another host"),
+        }
+    }
+}
+
+/// Why the mount table could not say where a directory is inside its filesystem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MountDoubt {
+    /// The kernel names no mount for a directory (before Linux 5.8).
+    NoMountId,
+    /// The mount table, or a directory's own path, could not be read, with this kind
+    /// of error (no `/proc`, for one).
+    Unreadable(io::ErrorKind),
+    /// The mount table is not what the kernel writes.
+    Malformed,
+    /// The mount a directory is in is not in the mount table.
+    NotListed,
+    /// The mount a directory is in is in the mount table more than once.
+    Ambiguous,
+    /// The mount a directory is in shows a directory that was deleted.
+    DeletedRoot,
+    /// A directory's path is not below the mount point of its mount: this process
+    /// cannot reach it by a path, or it was moved or deleted while it was examined.
+    PathOutsideMount,
+}
+
+impl fmt::Display for MountDoubt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoMountId => f.write_str("this kernel names no mount for a directory"),
+            Self::Unreadable(kind) => write!(f, "the mount table could not be read: {kind}"),
+            Self::Malformed => f.write_str("the mount table is not what the kernel writes"),
+            Self::NotListed => f.write_str("a directory's mount is not in the mount table"),
+            Self::Ambiguous => {
+                f.write_str("a directory's mount is in the mount table more than once")
+            }
+            Self::DeletedRoot => {
+                f.write_str("a directory's mount shows a directory that was deleted")
+            }
+            Self::PathOutsideMount => f.write_str(
+                "a directory has no path below its mount (unreachable, moved or deleted)",
+            ),
         }
     }
 }

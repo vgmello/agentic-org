@@ -56,8 +56,12 @@ pub(super) struct Ancestor {
     pub(super) mode: u32,
     /// The service user.
     pub(super) service_user: u32,
-    /// The service user's private group, if it has one.
+    /// The service user's private group, if it has one (`crate::account` says what
+    /// "private" does and does not establish).
     pub(super) private_group: Option<u32>,
+    /// Whether the directory carries a POSIX access ACL. Asked for, and read, only
+    /// for a directory its group can write ([`needs_access_acl`]).
+    pub(super) access_acl: bool,
 }
 
 /// Whether judging a directory of this `owner` and `mode` needs the service user's
@@ -67,10 +71,22 @@ pub(super) fn needs_private_group(owner: u32, mode: u32, service_user: u32) -> b
     owner == service_user && mode & GROUP_WRITE != 0
 }
 
+/// Whether judging a directory with this `mode` needs to know of its access ACL: only
+/// a directory its group can write does. Without that bit the ACL's mask denies
+/// writing to every entry of an ACL, so none can add a writer.
+pub(super) fn needs_access_acl(mode: u32) -> bool {
+    mode & GROUP_WRITE != 0
+}
+
 /// The rule of a directory above the release directory: owned by root or the service
 /// user, never writable by others, and writable by its group only if it is a
 /// root-owned sticky directory or a directory of the service user whose group is that
-/// user's private group.
+/// user's private group. A directory admitted by one of those two exceptions carries
+/// no access ACL: with one, the group's write bit is the ACL's mask, and a user or a
+/// group the mode does not name may be the one who can write.
+///
+/// The private group is the account database's answer and no more: an account that
+/// has that group as its primary group is not seen (`crate::account`).
 pub(super) fn ancestor(facts: &Ancestor) -> Result<(), RootRule> {
     let Ancestor {
         owner,
@@ -78,6 +94,7 @@ pub(super) fn ancestor(facts: &Ancestor) -> Result<(), RootRule> {
         mode,
         service_user,
         private_group,
+        access_acl,
     } = *facts;
     if owner != 0 && owner != service_user {
         return Err(RootRule::AncestorOwner);
@@ -93,6 +110,9 @@ pub(super) fn ancestor(facts: &Ancestor) -> Result<(), RootRule> {
         if !root_sticky && !private {
             return Err(RootRule::AncestorWritableByGroup);
         }
+        if access_acl {
+            return Err(RootRule::AncestorAcl);
+        }
     }
     Ok(())
 }
@@ -107,6 +127,17 @@ pub(super) fn store(owner: u32, mode: u32, service_user: u32) -> Result<(), Root
         return Err(RootRule::StoreMode);
     }
     Ok(())
+}
+
+/// The rule of an item store's directory, found below the release directory when it
+/// opens: the service user's, with mode exactly `0700`, as the store itself. The
+/// directory store's engine makes the same check when the item store is opened; this
+/// one names the rule and the directory.
+pub(super) fn item_store(owner: u32, mode: u32, service_user: u32) -> Result<(), RootRule> {
+    store(owner, mode, service_user).map_err(|rule| match rule {
+        RootRule::StoreOwner => RootRule::ItemStoreOwner,
+        _ => RootRule::ItemStoreMode,
+    })
 }
 
 /// The rule of the lock file: a regular file (`regular`) of the service user with mode
@@ -239,16 +270,10 @@ pub(super) fn items_present(expected: bool, items: usize) -> Result<(), RootRule
     }
 }
 
-/// Whether the directory entry `name` counts as an item for the empty-store rule: any
-/// name that does not start with `.` (the lock and temporary files do). The caller
-/// has established that the entry is a regular file in an item store's directory.
-pub(super) fn counts_as_item(name: &[u8]) -> bool {
-    !name.is_empty() && name[0] != b'.'
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credentials::MountDoubt;
     use std::io::ErrorKind;
     use std::os::unix::ffi::OsStrExt;
 
@@ -316,6 +341,7 @@ mod tests {
             mode,
             service_user: USER,
             private_group,
+            access_acl: false,
         })
     }
 
@@ -389,6 +415,7 @@ mod tests {
                 mode,
                 service_user: 0,
                 private_group,
+                access_acl: false,
             })
         };
         assert_eq!(as_root(0, 0o775, Some(0)), Ok(()));
@@ -597,11 +624,84 @@ mod tests {
         assert_eq!(items_present(true, 1), Ok(()));
         assert_eq!(items_present(false, 0), Ok(()));
         assert_eq!(items_present(false, 7), Ok(()));
-        for item in ["01AAAA.key", "registry", "writer-device", "a"] {
-            assert!(counts_as_item(item.as_bytes()), "{item}");
+    }
+
+    #[test]
+    fn a_directory_admitted_by_a_group_exception_carries_no_access_acl() {
+        let with_acl = |owner, group, mode, service_user, private_group| {
+            ancestor(&Ancestor {
+                owner,
+                group,
+                mode,
+                service_user,
+                private_group,
+                access_acl: true,
+            })
+        };
+        // Both exceptions: the private group, and root's sticky directory.
+        for mode in [0o775, 0o770, 0o2775] {
+            assert_eq!(judge(USER, GROUP, mode, Some(GROUP)), Ok(()), "{mode:o}");
+            assert_eq!(
+                with_acl(USER, GROUP, mode, USER, Some(GROUP)),
+                Err(RootRule::AncestorAcl),
+                "{mode:o}"
+            );
         }
-        for other in ["", ".lock", ".put.0123456789abcdef", ".", ".."] {
-            assert!(!counts_as_item(other.as_bytes()), "{other}");
+        assert_eq!(judge(0, 4, 0o1775, None), Ok(()));
+        assert_eq!(
+            with_acl(0, 4, 0o1775, USER, None),
+            Err(RootRule::AncestorAcl)
+        );
+        assert_eq!(
+            with_acl(0, 0, 0o775, 0, Some(0)),
+            Err(RootRule::AncestorAcl)
+        );
+        // A directory that no exception admits is refused for its own rule first.
+        assert_eq!(
+            with_acl(USER, 27, 0o775, USER, Some(GROUP)),
+            Err(RootRule::AncestorWritableByGroup)
+        );
+        assert_eq!(
+            with_acl(USER, GROUP, 0o777, USER, Some(GROUP)),
+            Err(RootRule::AncestorWritableByOthers)
+        );
+        assert_eq!(
+            with_acl(1001, GROUP, 0o775, USER, Some(GROUP)),
+            Err(RootRule::AncestorOwner)
+        );
+        // Without the group's write bit an ACL adds no writer: it is not asked for,
+        // and whatever was said of it does not matter.
+        for mode in [0o755, 0o750, 0o700, 0o711, 0o1755] {
+            assert!(!needs_access_acl(mode), "{mode:o}");
+            assert_eq!(with_acl(USER, GROUP, mode, USER, Some(GROUP)), Ok(()));
+            assert_eq!(with_acl(0, 0, mode, USER, None), Ok(()), "{mode:o}");
+        }
+        for mode in [0o775, 0o770, 0o720, 0o1775, 0o2775] {
+            assert!(needs_access_acl(mode), "{mode:o}");
+        }
+    }
+
+    #[test]
+    fn an_item_store_is_the_service_users_with_mode_0700_exactly_under_its_own_rules() {
+        assert_eq!(item_store(USER, 0o700, USER), Ok(()));
+        assert_eq!(item_store(USER, 0o040_700, USER), Ok(()));
+        for mode in [0o750, 0o755, 0o777, 0o600, 0o500, 0o1700, 0o2700] {
+            assert_eq!(
+                item_store(USER, mode, USER),
+                Err(RootRule::ItemStoreMode),
+                "{mode:o}"
+            );
+        }
+        for owner in [0, 1001, 65534] {
+            assert_eq!(
+                item_store(owner, 0o700, USER),
+                Err(RootRule::ItemStoreOwner)
+            );
+            // The owner is judged first.
+            assert_eq!(
+                item_store(owner, 0o755, USER),
+                Err(RootRule::ItemStoreOwner)
+            );
         }
     }
 
@@ -631,6 +731,19 @@ mod tests {
             RootRule::CredentialsMissing,
             RootRule::LockFile,
             RootRule::InUse,
+            RootRule::AncestorAcl,
+            RootRule::Undetermined(MountDoubt::NoMountId),
+            RootRule::Undetermined(MountDoubt::Unreadable(ErrorKind::NotFound)),
+            RootRule::Undetermined(MountDoubt::Malformed),
+            RootRule::Undetermined(MountDoubt::NotListed),
+            RootRule::Undetermined(MountDoubt::Ambiguous),
+            RootRule::Undetermined(MountDoubt::DeletedRoot),
+            RootRule::Undetermined(MountDoubt::PathOutsideMount),
+            RootRule::ItemStoreOwner,
+            RootRule::ItemStoreMode,
+            RootRule::ItemStoreNotADirectory,
+            RootRule::ItemUnsafe,
+            RootRule::LockUnavailable(ErrorKind::PermissionDenied),
         ];
         let texts: Vec<String> = rules.iter().map(ToString::to_string).collect();
         for (i, text) in texts.iter().enumerate() {
