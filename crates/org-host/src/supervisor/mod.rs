@@ -2,9 +2,8 @@
 //! (`office`), plus the short runs around them: `--create` makes a new office, `--discard`
 //! removes an unfinished one.
 //!
-//! Each office has an app token for this host run, made when supervision of it starts (or when
-//! it is created) and kept, in memory only, by its supervision: every start of its server within
-//! the run gets the same token in its first line. The next host run makes new ones.
+//! The host hands a server no app token: a v3 launch handoff carries only the office's
+//! database key (and, for the HQ create, its recovery code) over the instance's rendezvous.
 //!
 //! Each office's database key lives in the host's key store ([`KeyStore`], the host's own
 //! abstraction: the supervisor never knows which store it is). A create stores the new key
@@ -34,13 +33,12 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use org_office_launch::{CreateOffice, FailCode, OfficeFile, ServerEvent};
-use org_proto::{AppToken, OfficeStatus, OfficeStatusReason};
+use org_proto::{AppToken, OfficeStatus, OfficeStatusReason, APP_TOKEN_BYTES};
 
 use crate::host_log;
 use crate::ids::handle_of;
 use crate::keys::KeyStore;
 use crate::logs::RotatingLog;
-use crate::secrets;
 use crate::server_check::ServerCheck;
 use crate::sync::lock;
 use crate::timings::Timings;
@@ -93,8 +91,6 @@ struct State {
 /// What the supervisor keeps per office for this host run (in memory only).
 struct Slot {
     state: Arc<SharedState>,
-    /// The office's app token for this host run: shared with its supervision thread.
-    token: Arc<AppToken>,
     signals: Sender<Signal>,
     thread: Option<JoinHandle<()>>,
 }
@@ -150,8 +146,6 @@ impl std::fmt::Display for CreateStartError {
 /// A `--create` run in flight.
 pub(crate) struct PendingCreate<'a> {
     registration: Registration<'a>,
-    /// The create line the server got, kept for the token it holds (its key is already zeroed).
-    line: CreateLine,
     child: RunningChild,
     signals: Receiver<Signal>,
     sender: Sender<Signal>,
@@ -163,8 +157,6 @@ pub(crate) struct PendingCreate<'a> {
 pub(crate) struct Adoptable<'a> {
     pub(crate) office: OfficeFile,
     registration: Registration<'a>,
-    /// The office's app token, the one it was created with.
-    token: Arc<AppToken>,
     child: RunningChild,
     signals: Receiver<Signal>,
     sender: Sender<Signal>,
@@ -296,7 +288,7 @@ impl Supervisor {
         }
     }
 
-    /// Starts supervising an existing office (`--office <id>`), with a fresh app token.
+    /// Starts supervising an existing office (`--office <id>`).
     pub(crate) fn start_office(&self, office_id: &str) -> io::Result<()> {
         let mut state = lock(&self.state);
         if state.stopping {
@@ -305,10 +297,9 @@ impl Supervisor {
         if state.offices.contains_key(office_id) {
             return Ok(());
         }
-        let token = Arc::new(secrets::generate_app_token()?);
         let (sender, signals) = mpsc::channel();
         let log = self.log_for(office_id);
-        let slot = self.spawn_runner(office_id, token, sender, signals, log, None)?;
+        let slot = self.spawn_runner(office_id, sender, signals, log, None)?;
         state.offices.insert(office_id.to_owned(), slot);
         Ok(())
     }
@@ -317,20 +308,6 @@ impl Supervisor {
     pub(crate) fn state(&self, office_id: &str) -> Option<OfficeState> {
         let state = lock(&self.state);
         state.offices.get(office_id).map(|slot| slot.state.get())
-    }
-
-    /// Runs `f` with a supervised office's app token, without copying it. `None` if the office
-    /// isn't supervised.
-    pub(crate) fn with_app_token<R>(
-        &self,
-        office_id: &str,
-        f: impl FnOnce(&AppToken) -> R,
-    ) -> Option<R> {
-        let token = lock(&self.state)
-            .offices
-            .get(office_id)
-            .map(|slot| Arc::clone(&slot.token))?;
-        Some(f(&token))
     }
 
     /// `office.restart`: starts an `offline` or `unavailable` office again now, with its
@@ -377,21 +354,24 @@ impl Supervisor {
             org_id: first.org_id.clone(),
             org_name: first.org_name.clone(),
             role: first.role,
-            app_token: secrets::generate_app_token()
-                .map_err(|e| CreateStartError::NotStarted(e.to_string()))?,
+            // The v2 `CreateOffice` carrier still has this field, but the v3 handoff never sends
+            // it and the host keeps no app token: a zero placeholder until A1.5 removes the
+            // v2 carrier.
+            app_token: AppToken::from_bytes([0; APP_TOKEN_BYTES]),
             db_key,
         };
-        let mut line = CreateLine::hq(create, child::HqCreate { first, recovery });
+        let line = CreateLine::hq(create, child::HqCreate { first, recovery });
         let log = self.log_for(line.office_id());
         let spawned = self
             .spawner()
             .map_err(|e| CreateStartError::NotStarted(e.to_string()))?
             .spawn(Mode::Create(&line), 0, sender.clone(), Arc::clone(&log));
-        line.drop_key();
+        // The handoff is done (or can't be): dropping the line zeroes its key copy and drops the
+        // recovery code; only the key store holds the key from here on.
+        drop(line);
         let child = spawned.map_err(|e| CreateStartError::KeyStored(e.into()))?;
         Ok(PendingCreate {
             registration,
-            line,
             child,
             signals,
             sender,
@@ -486,7 +466,6 @@ impl Supervisor {
         let Adoptable {
             office,
             mut registration,
-            token,
             mut child,
             signals,
             sender,
@@ -520,14 +499,7 @@ impl Supervisor {
         } else {
             OfficeState::starting()
         };
-        match self.spawn_runner(
-            &office.office_id,
-            token,
-            sender,
-            signals,
-            log,
-            Some(adopted),
-        ) {
+        match self.spawn_runner(&office.office_id, sender, signals, log, Some(adopted)) {
             Ok(slot) => {
                 state.offices.insert(office.office_id.clone(), slot);
                 status
@@ -602,12 +574,10 @@ impl Supervisor {
         log
     }
 
-    /// Starts an office's supervision thread, which shares the office's app token for the rest
-    /// of this host run.
+    /// Starts an office's supervision thread.
     fn spawn_runner(
         &self,
         office_id: &str,
-        token: Arc<AppToken>,
         sender: Sender<Signal>,
         signals: Receiver<Signal>,
         log: Arc<Mutex<RotatingLog>>,
@@ -637,7 +607,6 @@ impl Supervisor {
             .spawn(move || runner.run(adopted))?;
         Ok(Slot {
             state,
-            token,
             signals: sender,
             thread: Some(thread),
         })
@@ -717,7 +686,6 @@ impl<'a> PendingCreate<'a> {
         Adoptable {
             office,
             registration: self.registration,
-            token: self.line.into_token(),
             child: self.child,
             signals: self.signals,
             sender: self.sender,

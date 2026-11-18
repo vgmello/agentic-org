@@ -8,8 +8,7 @@
 //!
 //! The unfinished folders found at startup are discarded in the background, a few at a time,
 //! so the host answers at once; only the calls that need a settled catalog wait for them
-//! (`organization.create`, `office.restart`, and `office.app_token` for an office still being
-//! discarded).
+//! (`organization.create` and `office.restart`).
 //!
 //! Every change of an office's state is announced as `office.status_changed` through the
 //! [`Broadcast`], in order with the list answers.
@@ -22,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use org_office_launch::{FailCode, OfficeFile};
 use org_proto::{
-    ApiError, AppToken, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged,
-    OfficeStatusChangedData, OfficeStatusReason, Organization, OrganizationCreated,
+    ApiError, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged, OfficeStatusChangedData,
+    OfficeStatusReason, Organization, OrganizationCreated,
 };
 
 use crate::broadcast::Broadcast;
@@ -203,43 +202,6 @@ impl Offices {
         }
         *creates += 1;
         Ok(CreateSlot(self))
-    }
-
-    /// `office.app_token`: runs `use_token` with a running office's app token (it's written
-    /// straight into the response, never copied). Errors: `not_found` (no such office here),
-    /// `not_ready` (the office is still being created, or still being discarded at startup
-    /// after waiting [`Timings::create_wait`]), `unavailable` (the office isn't running). The
-    /// caller's code signature is checked before this.
-    #[cfg_attr(
-        not(all(feature = "test-support", debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.3 CLI")
-    )]
-    pub(crate) fn app_token<R>(
-        &self,
-        office_id: &str,
-        use_token: impl FnOnce(&AppToken) -> R,
-    ) -> Result<R, ApiError> {
-        if lock(&self.discarding).contains(office_id) {
-            self.wait_for_startup(Instant::now() + self.create_wait)?;
-        }
-        self.settled_office(office_id)?;
-        let running = self.supervisor.state(office_id).is_some_and(|state| {
-            matches!(state.status, OfficeStatus::Starting | OfficeStatus::Active)
-        });
-        if !running {
-            return Err(ApiError::new(
-                ErrorCode::Unavailable,
-                "the office isn't running, so it has no app token",
-            ));
-        }
-        self.supervisor
-            .with_app_token(office_id, use_token)
-            .ok_or_else(|| {
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "the office isn't running, so it has no app token",
-                )
-            })
     }
 
     /// `office.restart`: starts an `offline` or `unavailable` office again now (see

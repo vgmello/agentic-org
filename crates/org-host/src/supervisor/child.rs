@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use org_office_launch::{CreateOffice, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
 use org_proto::location::{self, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
-use org_proto::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
+use org_proto::DbKey;
 
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
@@ -109,13 +109,14 @@ pub(crate) enum Mode<'a> {
     Discard(&'a str),
 }
 
-/// The `--create` first line: the new office's create message, holding its app token for this
-/// host run and its database key.
+/// The HQ create: the new office's details and database key, carried in the v2 `CreateOffice`
+/// message (its `app_token` is a zero placeholder the v3 handoff never sends; A1.5 removes the
+/// carrier), plus the v3 first line and recovery code the rendezvous handoff delivers.
 ///
-/// It is kept as the message itself, built once, because the message owns its secrets and
-/// neither [`AppToken`] nor [`DbKey`] is `Clone`: writing it never copies them, and dropping it
-/// zeroes them. It lives on the heap (a `Box`), so moving it moves a pointer, not the secrets.
-/// Building it still leaves the usual stack copies behind (see `AppToken`'s docs).
+/// It is kept as one value, built once, because the message owns its key and [`DbKey`] isn't
+/// `Clone`: the handoff borrows it, and dropping it zeroes it. It lives on the heap (a `Box`), so
+/// moving it moves a pointer, not the secrets. Building it still leaves the usual stack copies
+/// behind (see `DbKey`'s docs).
 pub(crate) struct CreateLine(Box<CreateOffice>, Option<HqCreate>);
 pub(crate) struct HqCreate {
     pub first: org_office_launch::v3::CreateLine,
@@ -135,27 +136,6 @@ impl CreateLine {
     /// The new office's database key, for the key store. Never copy it.
     pub(crate) fn db_key(&self) -> &DbKey {
         &self.0.db_key
-    }
-
-    /// Zeroes the database key in place, once the first line is written (or can't be): from then
-    /// on only the key store holds it.
-    pub(crate) fn drop_key(&mut self) {
-        self.1.take(); // the delivered recovery-code copy is no longer needed
-                       // Replaced in place, leaving zeros; the old key is zeroed as it drops.
-        drop(std::mem::replace(
-            &mut self.0.db_key,
-            DbKey::from_bytes([0; DB_KEY_BYTES]),
-        ));
-    }
-
-    /// The created office's app token, so its restarts get the token it was created with.
-    pub(crate) fn into_token(mut self) -> Arc<AppToken> {
-        self.drop_key();
-        // Taken out in place, leaving zeros: the box's memory never keeps a copy.
-        Arc::new(std::mem::replace(
-            &mut self.0.app_token,
-            AppToken::from_bytes([0; APP_TOKEN_BYTES]),
-        ))
     }
 }
 
