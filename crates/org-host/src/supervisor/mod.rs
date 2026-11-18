@@ -213,11 +213,8 @@ impl Supervisor {
             home: config.home.clone(),
             runtime_dir: config.runtime_dir.clone(),
             check: Arc::clone(&config.server_check),
-            // Built here, once for this host's lifetime: every server starts from it.
-            images: Arc::new(child::Images::new(
-                Arc::clone(&config.server_check),
-                config.program.clone(),
-            )),
+            // Built from here on, once for this host's lifetime: every server starts from it.
+            images: child::Images::new(Arc::clone(&config.server_check), config.program.clone()),
             broker: Arc::new(channels::Broker::new(instance.into(), runtime)),
             #[cfg(test)]
             extra_env: Vec::new(),

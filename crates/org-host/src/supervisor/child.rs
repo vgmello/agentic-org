@@ -80,6 +80,10 @@ fn server_env(
 /// bytes read at that moment, whatever the program's path names later. Where the loaded image
 /// is checked instead, building reads nothing and this changes nothing.
 ///
+/// Reading and hashing a whole program takes time, so the host does it beside its start, not
+/// in it: the build begins at once on its own thread, `host.sock` is served meanwhile, and a
+/// start that comes first waits for it.
+///
 /// A host whose admission cannot be built starts no server and still serves `host.sock`:
 /// the reason is logged, each start fails with it as a refused server does, and the next
 /// start asks again, so the host's give-up rule ends the retries. An admission, once built,
@@ -100,26 +104,39 @@ impl std::fmt::Debug for Images {
 }
 
 impl Images {
-    /// Builds the admission of `check`'s servers started from `program` now, and says in the
-    /// host log why there is none. A check that may start no server has already said so
-    /// ([`ServerCheck::describe`]).
-    pub(crate) fn new(check: Arc<ServerCheck>, program: PathBuf) -> Self {
-        let images = Self {
+    /// Begins building the admission of `check`'s servers started from `program`, and says in
+    /// the host log why there is none. A check that may start no server has already said so
+    /// ([`ServerCheck::describe`]) and builds nothing.
+    pub(crate) fn new(check: Arc<ServerCheck>, program: PathBuf) -> Arc<Self> {
+        let images = Arc::new(Self {
             check,
             program,
             built: Mutex::new(None),
-        };
+        });
         if images.check.may_spawn().is_ok() {
-            if let Err(none) = images.admission() {
-                host_log::log(&format!(
-                    "no office server can be started: {none}; each start asks again"
-                ));
+            let building = Arc::clone(&images);
+            let begun = thread::Builder::new()
+                .name("office-images".into())
+                .spawn(move || building.build_at_start());
+            if begun.is_err() {
+                // No thread to build it on: build it here, as a start would.
+                images.build_at_start();
             }
         }
         images
     }
 
-    /// The host's admission, built now if no earlier attempt succeeded.
+    /// The build a host makes at its start, with the reason logged when there is none.
+    fn build_at_start(&self) {
+        if let Err(none) = self.admission() {
+            host_log::log(&format!(
+                "no office server can be started: {none}; each start asks again"
+            ));
+        }
+    }
+
+    /// The host's admission, built now if no earlier attempt succeeded. A caller waits for
+    /// a build that is under way: there is never more than one.
     pub(crate) fn admission(&self) -> Result<Arc<Admission>, NoAdmission> {
         let mut built = lock(&self.built);
         if let Some(admission) = built.as_ref() {
