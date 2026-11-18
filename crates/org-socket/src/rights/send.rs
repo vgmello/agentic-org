@@ -7,6 +7,7 @@
 //! The caller owns `SIGPIPE`: on macOS a send to a closed stream raises it unless it is ignored
 //! (Rust binaries ignore it) or the socket has `SO_NOSIGPIPE`. Linux sends with `MSG_NOSIGNAL`.
 
+use org_platform::socket::send_flags;
 use std::fmt;
 use std::io;
 use std::mem;
@@ -152,10 +153,7 @@ fn time_left(deadline: Instant, now: Instant) -> Result<Duration, SendError> {
 }
 
 fn system_send(socket: RawFd, message: &libc::msghdr) -> io::Result<usize> {
-    #[cfg(target_os = "linux")]
-    let flags = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
-    #[cfg(not(target_os = "linux"))]
-    let flags = libc::MSG_DONTWAIT;
+    let flags = send_flags()?;
     // SAFETY: the message's buffers are live for the call, which only reads them.
     let sent = unsafe { libc::sendmsg(socket, message, flags) };
     if sent < 0 {

@@ -8,3 +8,4 @@ publish = false
 
 [dependencies]
 libc.workspace = true
+org-platform = { path = "../org-platform" }

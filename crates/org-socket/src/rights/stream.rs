@@ -1,16 +1,17 @@
 //! Validate owned socket shape and flags before typed adoption.
-#[cfg(target_os = "macos")]
-mod macos;
 use super::invalid;
 #[cfg(not(test))]
 use libc::{fcntl, getsockname, getsockopt};
+#[cfg(not(test))]
+use org_platform::socket::listening;
+use org_platform::socket::peer_closed;
 use std::io;
 use std::mem;
 use std::net::TcpListener;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::net::{SocketAddr, UnixDatagram, UnixStream};
 #[cfg(test)]
-use tests::{fcntl, getsockname, getsockopt, peer_address};
+use tests::{fcntl, getsockname, getsockopt, listening, peer_address};
 
 /// Adopt an owned UNIX stream that was connected and is already close-on-exec.
 /// A peer that has since closed is adopted normally; the reader observes EOF.
@@ -26,14 +27,15 @@ pub fn connected_unix_stream(descriptor: OwnedFd) -> io::Result<UnixStream> {
         return Err(invalid("channel descriptor is not a stream"));
     }
     require_unix(socket_family(fd)?)?;
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if listening(fd)? {
         return Err(invalid("channel descriptor is a listener"));
     }
     require_cloexec(fd)?;
     let stream = UnixStream::from(descriptor);
+    // Listeners are rejected above, including macOS sockets that were connected
+    // before listening. Only then may the platform's peer-gone error be adopted.
     if let Err(error) = peer_address(&stream) {
-        if !peer_closed(&error, cfg!(target_os = "macos")) {
+        if !peer_closed(&error) {
             return Err(error);
         }
     }
@@ -57,12 +59,6 @@ fn socket_option(fd: RawFd, option: libc::c_int) -> io::Result<libc::c_int> {
 #[cfg(not(test))]
 fn peer_address(stream: &UnixStream) -> io::Result<SocketAddr> {
     stream.peer_addr()
-}
-// Both platforms reject listeners above, including macOS sockets that were
-// connected before listening. Only then may macOS peer-gone EINVAL be adopted.
-// Linux never accepts peer-query errors.
-fn peer_closed(error: &io::Error, macos: bool) -> bool {
-    macos && error.raw_os_error() == Some(libc::EINVAL)
 }
 // Directly test family policy before std's peer guard can mask a missing check.
 fn require_unix(family: libc::c_int) -> io::Result<()> {
@@ -139,17 +135,6 @@ fn require_cloexec(fd: RawFd) -> io::Result<()> {
         return Err(invalid("channel descriptor is not close-on-exec"));
     }
     Ok(())
-}
-
-fn listening(fd: RawFd) -> io::Result<bool> {
-    #[cfg(target_os = "macos")]
-    {
-        macos::listening(fd)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(socket_option(fd, libc::SO_ACCEPTCONN)? != 0)
-    }
 }
 
 fn require_inet(family: libc::c_int) -> io::Result<()> {

@@ -777,6 +777,7 @@ name = "org-socket"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "org-platform",
 ]
 
 [[package]]

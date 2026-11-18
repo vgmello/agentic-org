@@ -1,5 +1,5 @@
 //! macOS listener state, including sockets that were connected before listening.
-use super::super::invalid;
+use super::invalid;
 #[cfg(test)]
 use super::tests::proc_pidfdinfo;
 #[cfg(not(test))]

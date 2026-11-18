@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "9ea56b86673a4760a52a0775fafaf8e2af85acfb1d183357cbc15b7f2b99ef0a"
+      "sha256": "ce972fdf901a513314a697997bd6ac0843552ddf45f0c7d9a4d3eee33fdd3b92"
     },
     {
       "path": "Cargo.toml",
@@ -114,7 +114,7 @@
     },
     {
       "path": "crates/org-socket/Cargo.toml",
-      "sha256": "4818938dc204365e6240f6d202d134327d9283486fe1d2e135c1f7d6dcebbbc2"
+      "sha256": "8903e238421390660cf3badf1dfcc6b950e6841d8ada0ed9d279e56422544e3c"
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
