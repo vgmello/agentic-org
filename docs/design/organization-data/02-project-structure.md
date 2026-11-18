@@ -1,6 +1,6 @@
 # Project structure
 
-Status: **selected** data contract, revision 2.10. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md). A project's process package, its documentation tree and issued document versions are defined in [document 18](18-process-packages-and-project-documentation.md).
+Status: **selected** data contract, revision 2.11. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md). A project's process package, its documentation tree and issued document versions are defined in [document 18](18-process-packages-and-project-documentation.md).
 
 ## Relationships
 
@@ -127,6 +127,8 @@ HQ creates projects, releases and milestones. Other offices can request their cr
 ### Creating a project
 
 A project brings its own team (owner, 2026-11-17). By default, creating a project also creates its owning team, in the same accepted transaction: a new team named after the project, placed under the organization's top-level team ([document 01](01-organization-structure.md#creating-an-organization)). The request may instead name an existing active team as the owner, and then no team is created. Either way `owner_team_id` is set when the project is created; there is no project without an owning team. People and agents join the project team by being moved there or added there, like any team.
+
+The dependency runs one way (owner, 2026-11-18). Teams are created on their own, nested to any depth, before any project exists, and a team needs no project: it may be accountable for none, one or several, and its own work is team tasks ([document 03](03-features-and-work.md)). An organization can therefore be fully structured and staffed, with hires approved and agents working on team tasks, before its first project is created, and a project created later names one of those teams as its owner.
 
 A project may follow one process package, named by optional `process_package_id` and chosen when the project is created or later ([document 18](18-process-packages-and-project-documentation.md#a-projects-process)). Null means no package.
 

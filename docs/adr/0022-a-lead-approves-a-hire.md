@@ -4,7 +4,9 @@ Status: **decided by the owner 2026-11-18**, in answer to the hiring point of
 [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md): "Not a
 person, a lead approves every hire. If I'm the first lead in the team because I'm a
 person, I have to approve. If an agent is the lead of the team, it's a flag in the
-agent to enable it to hire someone else." Implementation pending.
+agent to enable it to hire someone else." And: "Allow hiring should be a flag, because a
+team lead of an engineering team may not, but a team lead of a director team could."
+Implementation pending.
 
 ## Context
 
@@ -24,6 +26,10 @@ an agent the owner trusted to staff its team.
 3. **A lead who is an agent may approve only when its `may_hire` is on.** `may_hire` is
    a field of the agent's profile, off by default
    ([document 04](../design/organization-data/04-agent-structure.md#who-approves-a-hire)).
+   The permission belongs to the lead, not to the position: the agent leading an
+   engineering team can have it off while the agent leading the director team above
+   it has it on. A hire into the engineering team then goes up to the director team's
+   lead. Hiring is into a team; no project is involved.
 4. **Only the owner, or a person above the agent, turns `may_hire` on or off.** The
    change is attributed and kept in history. No agent sets it, for itself or for
    another, and the built-in HR lead never has it.
@@ -61,6 +67,7 @@ APPR-1 to APPR-4, APPR-8 and APPR-9 in the
 | HIRE-4 | An agent's call to set `may_hire`, on itself or another agent, is refused. A person not above the agent is refused. |
 | HIRE-5 | Turning `may_hire` off moves the proposals waiting on that agent to the next approver. |
 | HIRE-6 | A request above a hiring limit goes to the owner whoever the lead is. |
+| HIRE-7 | With an agent leading an engineering team (`may_hire` off) under a director team led by an agent with `may_hire` on, a hire into the engineering team waits for the director team's lead, and that lead approves it. No project exists in the organization during the test. |
 
 ## Consequences
 

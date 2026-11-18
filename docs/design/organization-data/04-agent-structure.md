@@ -1,6 +1,6 @@
 # Agents and employees
 
-Status: **selected** data contract, revision 2.11. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
+Status: **selected** data contract, revision 2.12. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
 
 ## Confirmed relationships
 
@@ -103,6 +103,8 @@ A lead approves every hire (owner, 2026-11-18). The approver is the nearest lead
 - a lead who is a person may approve;
 - a lead who is an agent may approve only when its `may_hire` is on;
 - above the top team, and at any time, the organization's owner.
+
+The permission is given lead by lead, not by position. In a director team with engineering teams under it, the agent leading an engineering team can have it off while the agent leading the director team has it on: a hire into an engineering team then goes up to the director team's lead, and a hire that lead asks for is its own to approve. Hiring is into a team and needs no project.
 
 `may_hire` is a field of an agent's profile, off by default. Only the owner, or a person above the agent in the hierarchy, turns it on or off; the change is attributed and kept in history like any profile change, and an agent can never set it, for itself or for another. It has no effect on an agent that leads no team, and the built-in HR lead never has it. A lead who may approve hires for a team hires into it without a second approval: its request is recorded as requested and approved by that lead. HR still drafts the proposal, product code still provisions, and the hiring limits a person sets in Settings apply to every lead, person or agent.
 
