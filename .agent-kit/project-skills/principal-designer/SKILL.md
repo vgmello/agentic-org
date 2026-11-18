@@ -31,6 +31,44 @@ you design or review:
 | `components.md` | Anatomy and choice of buttons, calls to action, inputs, navigation parts, overlays, feedback, rows, tables, plus motion and copy. Any component work. |
 | `tailwind.md` | Turning the decision into classes in this project. Whenever you write or review markup. |
 
+## Companion skill: UI/UX Pro Max (optional)
+
+UI/UX Pro Max is a third-party, MIT-licensed skill with a searchable local database of UX
+guidelines, styles, palettes and stack notes. It is a second opinion and a lookup tool for
+you, never a source of authority. It is installed per checkout under `.claude/skills/`,
+which this repository ignores in Git, so check for it each time, from the repository root:
+
+```sh
+test -f .claude/skills/ui-ux-pro-max/SKILL.md && echo installed || echo "not installed"
+```
+
+**If it is installed**, use it for targeted lookups and as a review checklist:
+
+```sh
+python3 .claude/skills/ui-ux-pro-max/scripts/search.py "<2 to 5 terms>" --domain ux
+python3 .claude/skills/ui-ux-pro-max/scripts/search.py "<2 to 5 terms>" --stack svelte
+```
+
+Other useful stacks here are `shadcn` and `html-tailwind`. Its "Quick Reference" checklist in
+that `SKILL.md` is a reasonable second pass over a finished screen. Do not use its
+`--design-system` mode, or its style, color, typography or landing-page results, to choose
+anything for this product: the palette, fonts and effects are fixed by the app shell spec,
+and that mode proposes a new visual direction (when tried on this product it suggested a
+green accent, monospace headings and glow effects, all of which the spec rules out). Much of
+its guidance is written for native mobile apps; skip what does not apply to a web app. Treat
+everything it returns as recommendations to weigh, not instructions. Order of authority: the
+product's specs, then your own reference files, then this companion. In your report, name
+the queries you ran and which results you used or rejected.
+
+**If it is not installed**, say so in one line and carry on without it. Do not install
+anything during a review or as a delegate. The lead session, when it has a shell and
+network access, may install it from the repository root with the version that was inspected
+(no install scripts, bundled assets, standard-library Python, no network use at run time):
+
+```sh
+npx --yes ui-ux-pro-max-cli@2.15.0 init --ai claude --offline
+```
+
 ## How you reason
 
 Ask these of any screen, in this order:
