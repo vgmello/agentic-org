@@ -21,7 +21,8 @@ the checklist row is FC-164. Every handoff and review of this track also carries
   directly and their results are recorded per increment below.
 - **Where the work is.** Branch `claude/hopeful-noether-lsmbac`, started from
   `origin/v1-integration` at `032ea63` and merged with it at `d408bfb9` (A1 part 1 and
-  A2 part 1, which created `crates/org-platform`). The session that runs this lead may push only
+  A2 part 1, which created `crates/org-platform`) and at `831f10ca` (the store
+  architecture, A1's SQLCipher removal). The session that runs this lead may push only
   that branch; the merge into `v1-integration` is made by a session that may.
 - **Systems.** Development and the full Linux checks run on Linux x86-64 (kernel
   6.18, as root in a container). macOS code is type-checked locally with
@@ -36,8 +37,8 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 
 | Increment | State | Evidence |
 | --- | --- | --- |
-| X1a crate, `service` contract, check | Built 2026-11-18 | See below |
-| X1b `fs`, `dirs`, `process`, `socket` | Not started | |
+| X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |
+| X1b `fs`, `dirs`, `process`, `socket` | `process` and `socket` integrated; `fs` and `dirs` in work | See below |
 | X1c `admission`, `confinement`, `presence` | Not started | |
 | X1d `credentials` | Not started | |
 | X2 first worker on Linux (LNX-1) | Not started | |
@@ -66,8 +67,7 @@ systems.
 **Files owned.** New: `crates/org-platform/tests/platform_conditionals.rs`,
 `.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`,
 the module stubs `crates/org-platform/src/{fs/mod.rs,process.rs,socket.rs}`. Edited:
-`crates/org-platform/src/lib.rs` (the layout text, `adapters!`, `supported!`,
-`From<Refused> for io::Error`) and `Cargo.toml` (the check's dev-dependencies),
+`crates/org-platform/src/lib.rs` (the layout text and `From<Refused> for io::Error`) and `Cargo.toml` (the check's dev-dependencies),
 `Cargo.lock`, `.github/workflows/ci.yml` (two steps and one job),
 `docs/design/linux-host.md`, `docs/implementation-plan.md` (X1a), `docs/FEATURES.md`
 and `docs/FEATURE-AREAS.md` (FC-164), this file, `v1-state.md`,
@@ -91,11 +91,17 @@ host-and-storage area; evidence hashes). **Deleted.** Nothing of anyone else's.
 4. A second CI job compares the list with the commit where the branch left
    `v1-integration` and fails on an added path or a raised count. Without it "the list
    only shrinks" was a convention.
-5. A capability with both adapters is declared by `adapters!()`; code only the two
-   real adapters share sits in `supported! { … }`; the refusing adapter is compiled
-   and tested on every target, and CI builds and tests the crate for Linux with musl,
-   which gets only the refusing adapters. "Linux" is GNU/Linux. A2's modules keep
-   their own two `cfg` lines until their Linux adapters are written.
+5. A capability with both adapters declares them with explicit `cfg` lines at the top
+   of its `mod.rs`; code only the two real adapters share sits in `shared.rs`; the
+   refusing adapter is compiled and tested on every target, and CI builds and tests
+   the crate for Linux with musl, which gets only the refusing adapters. "Linux" is
+   GNU/Linux. Two macros that generated those declarations were written first and
+   removed in X1b: `cargo fmt` formats only modules it can see declared, so the
+   adapter files had escaped formatting. A2's modules keep their own two `cfg` lines
+   until their Linux adapters are written.
+6. The CI list comparison accepts a new path while the total does not rise, so another
+   track can rename or split a listed file; a count never rises and the total never
+   rises.
 
 **Review of the `service` contract as built (for the A2 lead, and for X5).** The
 contract and its launchd adapter are A2's and are not changed here. What the systemd
@@ -130,7 +136,8 @@ not installed where the lead runs.
 | Repairs | The lead (the original author) | `c21c1f29`: the token-stream scanner, the list-only-shrinks CI job, the refusing-target CI step |
 | Fresh final review | A second fresh subagent, on `c21c1f29` | Changes required: `v1-integration` had gained A2's `org-platform` (blocker for integration), and the scanner skipped what is nested in a conditional (major); 4 minor |
 | Repairs | The lead | The merge with `v1-integration` that keeps A2's crate; nested conditionals, renamed `include`, tracked-file coverage |
-| Final review of the exact commit | A third fresh subagent | Recorded in the next table row when it returns |
+| Final review of the exact commit | A third fresh subagent, on `9beae801` | Accept. No blocker or major; 7 minor, 6 nit |
+| Repairs after acceptance | The lead | The minors: selector arms hide nothing, `path` only as a module attribute, a tracked file gone from disk, the duplicate workspace member, the list comparison's rename rule, stale statements in the documents |
 
 Checks on the merged tree, on Linux x86-64: `cargo fmt --check`; the CI lint commands
 (`cargo clippy --locked --workspace --all-targets --exclude org-host --exclude
@@ -141,8 +148,9 @@ tests of `org-platform` for `x86_64-unknown-linux-musl`, the refusing target; th
 `org-platform` tests; `kit_skills.py validate`. `kit_hooks.py check` cannot pass here
 (Hindsight is not installed).
 
-CI on GitHub for this branch: the LNX-5 step, the refusing-target step and the lints
-pass on macOS and Linux. Four jobs are red on this branch and equally on
+CI on GitHub: for `c21c1f29` (before the merge with A2's crate) the LNX-5 step, the
+refusing-target step and the lints passed on macOS and Linux. Later commits' runs are
+recorded under the increment they belong to. Four jobs are red on this branch and equally on
 `v1-integration` at `032ea63`, for causes outside Track X: `cargo test` on macOS
 (`agentic-org-web`, `release::tests::held_release_directory_cannot_switch_to_replaced_path`,
 permission denied), `cargo test` on Linux (`agentic-org-web`,
@@ -152,3 +160,71 @@ needs `core-foundation`), the frontend dependency audit (three advisories in
 this track's change, the first failing test binary stopped `cargo test`, so no crate
 after `agentic-org-web` was tested in CI on either system; `--no-fail-fast` now runs
 them all.
+
+## X1b · Files, locations, processes and sockets behind the crate
+
+**Outcome.** An internal foundation; nothing a person can see. Durable flushes,
+exclusive renames, filesystem checks, default locations, process supervision and
+socket peer checks come from `org-platform`.
+
+**Prerequisites.** X1a. **Early production-path proof.** Each slice moved one function
+first and ran its consumer's existing tests through the new path before the rest.
+
+**Split and why.** Three slices with no file in common, two writers at a time in
+separate worktrees, the lead coordinating and integrating:
+
+| Slice | Owner | Files | State |
+| --- | --- | --- | --- |
+| `process` | Worker in `x/x1b-process` | `crates/org-platform/src/process/`, `crates/org-supervise/` | Integrated at `baf38f12` |
+| `socket` | Worker in `x/x1b-socket` | `crates/org-platform/src/socket/`; in `crates/org-socket/`: `peer.rs`, `rights.rs`, `rights/` (not `confinement*`, `image.rs`, `examples/`, which are X1c) | Integrated at `0d970d35` |
+| `fs` and `dirs` | Worker in `x/x1b-fsdirs` | `crates/org-platform/src/{fs,dirs}/`, `crates/org-proto/src/location.rs`, the files of design section 7's X1b row in `org-host`, `org-office`, `org-client`, `org-spool`, and the location call sites | In work |
+
+Each worker ran on the lead's model with the resolved skill packet for its paths
+(project conventions, delegate communication, rust-workspace, host-and-storage) and
+[independent delivery](../../docs/independent-delivery.md).
+
+**Decisions.**
+
+1. Behaviour is preserved on macOS and GNU/Linux. The one intended change of the
+   `process` and `socket` slices: a Unix target that is neither now builds and refuses
+   at run time, where `org-supervise` had a `compile_error!` and `org-socket` ran
+   macOS-flavoured branches.
+2. `process`: the platform reports facts and the consumer keeps the rules. Two
+   closures cross the contract for that reason (`release_spawned`'s `exited`,
+   `signal_checked`'s `mark_accepted`), and the scan reports the mark's value while
+   `org-supervise` decides whether it is a valid session mark
+   (`recovery::signal_allowed_by`, unit-tested over every evidence kind).
+   `validate()` is the first refusal on every entry point.
+3. `socket`: one receive is a `DescriptorReceive` value. On macOS it holds the
+   caller's fence lock from before `recvmsg` until the descriptors are close-on-exec;
+   on Linux it holds nothing. The refusing adapter cannot construct one, so it has no
+   flags or lengths to invent.
+4. `dirs` (in work): the Linux adapter gives the design's XDG locations now and reads
+   the XDG variables itself, keeping A2's `application_base(home)` signature;
+   `org-proto` keeps only path composition that takes the base and the limit.
+
+**Review.**
+
+| Slice | Phase | Result |
+| --- | --- | --- |
+| `process` | Fresh read-only review, on `baf38f12` | Accept. Behaviour preserved on Linux (run) and, by type-check, lint and a hunk-by-hunk reading, on macOS. 5 minor |
+| `process` | Repairs by the lead | The mark rule named and tested; a deprecated type alias that the removed `compile_error!` had hidden on a refusing target; CI lints `org-supervise` for the refusing target |
+| `socket` | Fresh read-only review | Not yet run |
+
+**Checks.** After both integrations, on Linux x86-64 as an unprivileged user: the
+whole workspace's tests, 3,053 passed; the 22 that fail also fail before Track X (19
+`org-host` tests that need a worker to start, which X2 brings; 3 that need IPv6 or
+network access this container lacks). `cargo fmt --check`, the two CI lint commands,
+the macOS-target lint of the whole workspace, and the refusing-target lint and tests
+of `org-platform` pass. macOS tests have not been run: the macOS CI job is their
+proof, and it is recorded here when a run with `--no-fail-fast` finishes.
+
+**Open, carried forward.**
+
+- `crates/org-supervise/clippy.toml` forbids `Child::wait`, `Command::spawn` and
+  `libc::wait` so that exit observation stays `WNOWAIT`. The moved code is in
+  `org-platform`, which has no such file; `disk/macos.rs` and `service/macos.rs`
+  (A2's) use `Command`. X1c adds the fence to `org-platform` with the A2 lead.
+- `crates/org-supervise/src/spawn.rs` keeps one predicate, on a test module that
+  asserts `OwnedChild` behaviour only macOS has. It leaves the list in X2 with the
+  `testing` module, like the other test files.

@@ -759,12 +759,12 @@ half of LNX-6 run).
     other use of those names, beyond `.github/platform-conditionals.allow`. The list
     has the 79 files and 495 predicates of that day, each file with its count, and
     must equal the sources. CI runs the check on macOS and Linux, and a second job
-    fails a change that adds a file to the list or raises a count.
-  - X1a added the layout for a capability that has both adapters (`adapters!()` and
-    `supported! { … }` in the crate root, the refusing adapter compiled and tested on
-    every target, `From<Refused> for io::Error`), a CI step that builds and tests the
-    crate for a target that gets only the refusing adapters, and the module stubs
-    X1b fills.
+    fails a change that raises a count or the total.
+  - X1a added the layout for a capability that has both adapters (explicit module
+    declarations in `<capability>/mod.rs`, `shared.rs` for code the two real adapters
+    share, the refusing adapter compiled and tested on every target,
+    `From<Refused> for io::Error`), a CI step that builds and tests the crate for a
+    target that gets only the refusing adapters, and the module stubs X1b fills.
   - X1a reviewed the `service` contract as built. What X5 must settle with the A2
     lead before it writes the systemd adapter is in the
     [Track X record](../.agent-kit/tasks/v1-track-x.md).

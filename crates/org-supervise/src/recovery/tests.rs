@@ -46,6 +46,24 @@ fn native_guards_recheck_the_exact_mark_before_direct_signals() {
         for changed in [MarkEvidence::Absent, MarkEvidence::Present("other".into())] {
             assert_eq!(signal_mark_matches(&target, &changed), !direct);
         }
+
+        // The same rule as the platform scan asks it, on the evidence the scan reports:
+        // a value that is not a valid session mark counts as unreadable.
+        use org_platform::process::MarkEvidence as Native;
+        let checkpoint = matches!(target.evidence(), TargetEvidence::Checkpoint(_));
+        assert!(signal_allowed_by(&target, &Native::Present(MARK.into())));
+        assert_eq!(signal_allowed_by(&target, &Native::Unreadable), checkpoint);
+        assert_eq!(
+            signal_allowed_by(&target, &Native::Present("not a mark\n".into())),
+            checkpoint
+        );
+        assert_eq!(
+            signal_allowed_by(&target, &Native::Present(String::new())),
+            checkpoint
+        );
+        for changed in [Native::Absent, Native::Present("other".into())] {
+            assert_eq!(signal_allowed_by(&target, &changed), !direct);
+        }
     }
 }
 

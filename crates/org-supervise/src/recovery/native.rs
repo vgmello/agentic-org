@@ -121,7 +121,7 @@ impl RecoveryProcesses for NativeRecovery {
     ) -> io::Result<SignalOutcome> {
         let outcome = self.0.signal_checked(
             &to_platform(target.identity()),
-            &|mark| super::signal_mark_matches(target, &native_mark(mark.clone())),
+            &|mark| super::signal_allowed_by(target, mark),
             match signal {
                 RecoverySignal::Terminate => platform::RecoverySignal::Terminate,
                 RecoverySignal::Kill => platform::RecoverySignal::Kill,

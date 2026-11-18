@@ -2,8 +2,9 @@
 """The platform-conditionals list only shrinks (ADR-0017 LNX-5).
 
 Compares .github/platform-conditionals.allow at a base commit with the working tree's
-and fails when the working tree's has a path the base's lacks, or a higher count for a
-path. The check in crates/org-platform/tests/platform_conditionals.rs keeps the list
+and fails when a listed path's count is higher than at the base, or when the total is
+higher. A new path is accepted only while the total does not rise: that is a listed
+file renamed or split, its predicates moved and none added. The check in crates/org-platform/tests/platform_conditionals.rs keeps the list
 equal to the sources; this keeps a change from adding a platform predicate outside
 crates/org-platform by adding it to the list as well.
 
@@ -50,11 +51,19 @@ def main():
     with open(LIST, encoding="utf-8") as current:
         after = entries(current.read())
     problems = []
+    added = []
     for path, count in sorted(after.items()):
         if path not in before:
-            problems.append(f"{path}: added to the list ({count})")
+            added.append(f"{path}: added to the list ({count})")
         elif count > before[path]:
             problems.append(f"{path}: count raised from {before[path]} to {count}")
+    # A listed file that is renamed or split appears as new paths. That is accepted
+    # only while the total does not rise: predicates moved, none were added.
+    if sum(after.values()) > sum(before.values()):
+        problems.extend(added)
+        problems.append(
+            f"total raised from {sum(before.values())} to {sum(after.values())} predicates"
+        )
     if problems:
         print(f"{LIST} only shrinks. Compared with {base}:")
         for problem in problems:

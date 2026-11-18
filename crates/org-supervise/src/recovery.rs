@@ -499,7 +499,7 @@ mod tests;
 fn native_wait_until(deadline: Instant) -> io::Result<()> {
     wait_until_with(deadline, Instant::now, |remaining| {
         let timeout = libc::timespec {
-            tv_sec: remaining.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
+            tv_sec: remaining.as_secs().min(i64::MAX as u64) as _,
             tv_nsec: remaining.subsec_nanos() as _,
         };
         // SAFETY: a valid finite interval. An interrupted call is retried only
@@ -540,6 +540,12 @@ fn signal_mark_matches(target: &VerifiedTarget, mark: &MarkEvidence) -> bool {
     } else {
         !direct || *mark == MarkEvidence::Present(target.mark().into())
     }
+}
+
+/// What the platform scan asks before it signals: whether the mark it just read from
+/// the process still supports signalling `target`.
+fn signal_allowed_by(target: &VerifiedTarget, mark: &org_platform::process::MarkEvidence) -> bool {
+    signal_mark_matches(target, &native_mark(mark.clone()))
 }
 
 /// The consumer's half of mark evidence: the platform scan reports the value of

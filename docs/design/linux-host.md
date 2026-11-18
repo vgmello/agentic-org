@@ -23,8 +23,9 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   [adapter rule](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one),
   with its macOS, Linux and refusing adapters, and is added to section 2. Each module
   is `<capability>/mod.rs` with `macos.rs`, `linux.rs` and `refused.rs` beside it
-  (`adapters!()` declares the three and binds the build target's; code only the two
-  real adapters share sits in `supported! { … }`), and exports one non-conditional
+  (declared by explicit `cfg` lines at the top of `mod.rs`, which bind `native` to the
+  build target's adapter, so that `cargo fmt` sees every file; code only the two real
+  adapters share sits in `shared.rs`), and exports one non-conditional
   constructor that returns the build target's implementation or the refusing one. The
   refusing adapter returns `Refused::Unsupported { capability, os }` and never falls
   back to another system's behaviour. It is compiled and unit-tested on every target,
@@ -69,12 +70,11 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   systems against the real adapter or a test adapter built from the contract.
 - **The check (LNX-5).** `crates/org-platform/tests/platform_conditionals.rs` reads
   every `.rs` file outside `crates/org-platform/`, requires that `syn` parses it,
-  and counts in its tokens each `cfg` or `cfg_attr` attribute and each `cfg!`,
-  `cfg_select!` or `cfg_match!` call that names `target_os`, `target_vendor`,
-  `target_env` or `target_family`, wherever it is written (macro calls and
-  definitions, attribute arguments, `extern` blocks, raw identifiers), and each other
-  use of one of those four names as an identifier: the names are reserved for
-  `org-platform`. It is a test of the workspace, so `cargo test --workspace` runs it
+  and counts in its tokens each `cfg` or `cfg_attr` attribute and each `cfg!` call that
+  names `target_os`, `target_vendor`, `target_env` or `target_family`, wherever it is
+  written (macro calls and definitions, attribute arguments, `extern` blocks, raw
+  identifiers), and each other use of one of those four names as an identifier, such
+  as a key of a `cfg_select!` arm: the names are reserved for `org-platform`. It is a test of the workspace, so `cargo test --workspace` runs it
   on every system, and CI also runs it as its own step on macOS and Linux. String
   literals and fixtures (for example the TOML and `syn` fixtures in
   `org-office/src/store/tests/opener_policy.rs`) are not predicates and do not
@@ -91,15 +91,18 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   than its count, and on a listed file with fewer than its count or none, so the
   list always equals the sources. A second CI job
   (`.github/scripts/platform_allowlist_shrinks.py`) compares the list with the commit
-  where the branch left `v1-integration` and fails on an added path or a raised count,
-  so the list only shrinks. X1b to X1d remove the source files, X2 and the `testing`
+  where the branch left `v1-integration` and fails on a raised count or a raised
+  total, so the list only shrinks (a renamed or split file may appear under new paths
+  while the total does not rise). X1b to X1d remove the source files, X2 and the `testing`
   module remove the test files, and the list is empty at X6.
   Outside the check: `cfg(unix)`, harmless because a non-Unix target cannot build
   `org-platform` at all, so such a branch never selects between supported systems;
   and what this scan does not see, which review covers: a `--cfg` flag, a comparison
   with `std::env::consts::OS` at run time, code in a documentation test, a Cargo
-  target whose `path` is not a `.rs` file, and a build script that emits its own
-  `cfg` after reading `CARGO_CFG_TARGET_OS`. Only `org-host/build.rs` reads that
+  target whose `path` is not a `.rs` file, a `[target.'cfg(..)']` table in a manifest,
+  `cfg(windows)` and `cfg(target_feature = "crt-static")`, an `include!` or `path`
+  attribute that a macro assembles from its arguments, and a build script that emits
+  its own `cfg` after reading `CARGO_CFG_TARGET_OS`. Only `org-host/build.rs` reads that
   variable today, to compile the presence bridge, which moves with the bridge into
   `org-platform/build.rs` in X1c.
 
@@ -486,7 +489,7 @@ pub trait ServiceManager {
     fn register(&self, unit: &Unit) -> Result<Registration, ServiceError>; // Unchanged | Loaded; idempotent, never takes over another unit
     fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
     fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
-    fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>; // includes login and linger requirements
+    fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>; // the login and linger requirement is added in X5
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
 }
 pub enum Registration { Unchanged, Loaded }
@@ -746,7 +749,7 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |
-| X1a crate and check | new `crates/org-platform/` (skeleton, `service` contract); the workspace `Cargo.toml`; `.github/workflows/ci.yml`, the check script and its allowlist | A2 writes the launchd adapter in `org-platform/src/service/macos.rs` |
+| X1a check and layout | `crates/org-platform/tests/platform_conditionals.rs`, `.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`, `.github/workflows/ci.yml`; the layout text and `From<Refused> for io::Error` in `crates/org-platform/src/lib.rs` | A2 B0 created the crate, the `service` contract and its launchd adapter in `org-platform/src/service/` |
 | X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (or `org-store/src/files.rs`, where B1a carries its flush); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
 | X1c `admission`, `confinement`, `presence` | `org-platform/src/{admission,confinement,presence}/`, `org-platform/build.rs`; `org-socket/src/{confinement.rs, confinement/, image.rs}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, bootstrap.rs, human.rs (verify_host), recovery.rs, recovery/presence.rs, release.rs, release/platform.rs, release/runtime.rs, supervisor/child.rs, supervisor/channels.rs, supervisor/mod.rs, offices.rs, lib.rs}`, `org-host/build.rs`, `org-host/Cargo.toml` | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `supervisor/mod.rs`. A2 and A3: `org-host/src/lib.rs`, `bootstrap.rs`. A3: the web process's start and its confinement call. A4: `offices.rs` |
 | X1d `credentials` | `org-platform/src/credentials/`; `org-host/src/{keys/, host_secrets.rs, host_secrets/}` | A1 (`keys/`, the office secrets key) |
@@ -758,7 +761,7 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 
 How the tracks avoid each other:
 
-- **Land the crate and the check on the first day.** X1a creates `org-platform`, the
+- **Land the crate and the check on the first day.** A2 B0 created `org-platform`; X1a adds the
   CI check with today's files as a shrinking allowlist; the A2 lead wrote the crate's
   first modules and the `service` contract with its launchd adapter.
   From then on the check refuses any new platform predicate outside `org-platform`.

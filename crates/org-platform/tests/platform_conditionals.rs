@@ -4,16 +4,15 @@
 //! every other `.rs` file of the repository, requires that `syn` parses it, and
 //! counts in its tokens:
 //!
-//! - each `cfg` or `cfg_attr` attribute and each `cfg!`, `cfg_select!` or
-//!   `cfg_match!` call that names `target_os`, `target_vendor`, `target_env` or
-//!   `target_family`, wherever it is written, including inside macro calls and
-//!   definitions;
-//! - each other use of one of those four names as an identifier (for example a key
-//!   handed to a macro that builds the `cfg`). The names are reserved for
-//!   `org-platform`.
+//! - each `cfg` or `cfg_attr` attribute and each `cfg!` call that names `target_os`,
+//!   `target_vendor`, `target_env` or `target_family`, wherever it is written,
+//!   including inside macro calls and definitions;
+//! - each other use of one of those four names as an identifier: a key of a
+//!   `cfg_select!` or `cfg_match!` arm, or a key handed to a macro that builds the
+//!   `cfg`. The names are reserved for `org-platform`.
 //!
-//! The files that had such predicates when the crate was created are listed, each
-//! with its count, in `.github/platform-conditionals.allow`. The test fails when:
+//! The files that had such predicates when the check was written (increment X1a) are
+//! listed, each with its count, in `.github/platform-conditionals.allow`. The test fails when:
 //!
 //! - a file that is not listed has a predicate;
 //! - a listed file has more predicates than its entry (a listed file gains none);
@@ -22,9 +21,9 @@
 //! - a file includes source this test cannot follow: `include!` of anything but a
 //!   literal `.rs` path, `include` imported under another name, or a `path`
 //!   attribute that does not end in `.rs`;
-//! - git tracks a `.rs` file outside `crates/org-platform` that the walk did not read
-//!   (a hidden directory, `node_modules`, a directory holding `CACHEDIR.TAG`, a linked
-//!   directory).
+//! - git tracks a `.rs` file outside `crates/org-platform` that exists and the walk
+//!   did not read (a hidden directory, `node_modules`, a directory holding
+//!   `CACHEDIR.TAG`).
 //!
 //! The list is empty when Track X is complete. CI also checks that a change never
 //! adds a line to it or raises a count (`.github/scripts/platform_allowlist_shrinks.py`).
@@ -33,8 +32,10 @@
 //! because a non-Unix target cannot build `org-platform` at all; and what this scan
 //! does not see, which review covers: a build script that emits its own `cfg`, a
 //! `--cfg` flag, `std::env::consts::OS` compared at run time, code in a
-//! documentation test (it is a string literal here), and a Cargo target whose `path`
-//! is not a `.rs` file. If a later `syn`
+//! documentation test (it is a string literal here), a Cargo target whose `path`
+//! is not a `.rs` file, a `[target.'cfg(..)']` table in a manifest, `cfg(windows)`
+//! and `cfg(target_feature = "crt-static")`, and an `include!` or `path` attribute
+//! that a macro assembles from its arguments. If a later `syn`
 //! cannot parse valid new syntax, the check fails and the `syn` pin is raised.
 //!
 //! To see what the check finds, in the allowlist's format:
@@ -51,7 +52,10 @@ const ALLOWLIST: &str = ".github/platform-conditionals.allow";
 const EXEMPT: &str = "crates/org-platform";
 const TARGET_KEYS: [&str; 4] = ["target_os", "target_vendor", "target_env", "target_family"];
 /// The attributes and macros whose arguments are configuration predicates.
-const CONDITIONALS: [&str; 4] = ["cfg", "cfg_attr", "cfg_select", "cfg_match"];
+const CONDITIONALS: [&str; 2] = ["cfg", "cfg_attr"];
+/// Macros whose arms pair a predicate with ordinary code. Their bodies are walked
+/// like any other code, so each target key in an arm's predicate counts by itself.
+const SELECTORS: [&str; 2] = ["cfg_select", "cfg_match"];
 /// A build output directory, wherever it is and whatever it is called, has this file.
 const BUILD_OUTPUT_MARKER: &str = "CACHEDIR.TAG";
 
@@ -107,6 +111,15 @@ fn walk(tokens: TokenStream, inside: bool, findings: &mut Findings) {
                     continue;
                 }
             }
+            TokenTree::Ident(ident) if named(ident, &SELECTORS) => {
+                if let (true, Some(TokenTree::Group(arms))) =
+                    (punct(tokens.get(index + 1), '!'), tokens.get(index + 2))
+                {
+                    walk(arms.stream(), false, findings);
+                    index += 3;
+                    continue;
+                }
+            }
             TokenTree::Ident(ident) if named(ident, &TARGET_KEYS) => {
                 if !inside {
                     findings.predicates.push(ident.span().start().line);
@@ -147,31 +160,30 @@ fn punct_before(tokens: &[TokenTree], index: usize) -> bool {
     punct(before(1), '#') || (punct(before(1), '!') && punct(before(2), '#'))
 }
 
-/// `path = "…"` in an attribute names a module file, directly (`#[path = "…"]`) or
-/// through `cfg_attr`, at any depth. The check follows it only as a `.rs` file.
+/// `#[path = "…"]` names a module file, directly or through `cfg_attr` at any depth.
+/// The check follows it only as a `.rs` file. `path = …` among the arguments of any
+/// other attribute is that attribute's own business.
 fn path_attribute(attribute: TokenStream, findings: &mut Findings) {
     let tokens: Vec<TokenTree> = attribute.into_iter().collect();
-    for (index, token) in tokens.iter().enumerate() {
-        match token {
-            TokenTree::Ident(name)
-                if named(name, &["path"]) && punct(tokens.get(index + 1), '=') =>
-            {
-                // The value runs to the next comma or the end of the list.
-                let value: TokenStream = tokens[index + 2..]
-                    .iter()
-                    .take_while(|token| !punct(Some(token), ','))
-                    .cloned()
-                    .collect();
-                if !rust_path_literal(value) {
-                    findings.unfollowed.push((
-                        name.span().start().line,
-                        "path attribute that is not a literal .rs path",
-                    ));
-                }
+    match tokens.as_slice() {
+        [TokenTree::Ident(name), TokenTree::Group(arguments)] if named(name, &["cfg_attr"]) => {
+            // Each comma-separated argument after the predicate is an attribute.
+            let arguments: Vec<TokenTree> = arguments.stream().into_iter().collect();
+            for argument in arguments.split(|token| punct(Some(token), ',')) {
+                path_attribute(argument.iter().cloned().collect(), findings);
             }
-            TokenTree::Group(group) => path_attribute(group.stream(), findings),
-            _ => {}
         }
+        [TokenTree::Ident(name), equals, value @ ..]
+            if named(name, &["path"])
+                && punct(Some(equals), '=')
+                && !rust_path_literal(value.iter().cloned().collect()) =>
+        {
+            findings.unfollowed.push((
+                name.span().start().line,
+                "path attribute that is not a literal .rs path",
+            ));
+        }
+        _ => {}
     }
 }
 
@@ -266,7 +278,9 @@ fn tracked(root: &Path) -> Option<Vec<String>> {
     Some(
         String::from_utf8_lossy(&listed.stdout)
             .split('\0')
+            // A file renamed or deleted without staging is still listed.
             .filter(|path| !path.is_empty() && !path.starts_with(&exempt))
+            .filter(|path| root.join(path).is_file())
             .map(str::to_owned)
             .collect(),
     )
@@ -280,7 +294,7 @@ fn unread(tracked: &[String], read: &[String]) -> Vec<String> {
         .map(|path| {
             format!(
                 "{path}: tracked, but in a directory the check does not read (hidden, \
-                 node_modules, build output or a link). Move it."
+                 node_modules or build output). Move it."
             )
         })
         .collect()
@@ -457,7 +471,7 @@ cfg_select! {
     _ => { fn os() -> u8 { 0 } }
 }
 "#;
-        assert_eq!(lines(source), [2, 3, 5, 6, 7, 9]);
+        assert_eq!(lines(source), [2, 3, 5, 6, 7, 10, 11]);
     }
 
     #[test]
@@ -598,7 +612,32 @@ fn d() {}
 #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
 fn e() {}
 "#;
-        assert_eq!(lines(source), [2, 4, 6, 8, 12, 14, 14, 16]);
+        assert_eq!(lines(source), [3, 4, 6, 8, 12, 14, 14, 16]);
+    }
+
+    #[test]
+    fn a_selector_arm_hides_nothing() {
+        let source = r#"
+macro_rules! when { ([$($p:tt)*] $i:item) => { #[cfg($($p)*)] $i }; }
+cfg_select! {
+    target_os = "linux" => {
+        when!([target_env = "gnu"] fn libc() -> u8 { 1 });
+        when!([target_env = "musl"] fn libc() -> u8 { 2 });
+    }
+    _ => { fn libc() -> u8 { 0 } }
+}
+"#;
+        assert_eq!(lines(source), [4, 5, 6]);
+    }
+
+    #[test]
+    fn path_among_another_attributes_arguments_is_not_a_module_path() {
+        let source = r#"
+#[instrument(fields(path = %p.display()))]
+#[route(get, path = "/pets/{id}")]
+fn handler() {}
+"#;
+        assert_eq!(scan(source).unwrap(), super::Findings::default());
     }
 
     #[test]
@@ -696,6 +735,26 @@ mod coverage {
         let problems = unread(&tracked, &read);
         assert_eq!(problems.len(), 1);
         assert!(problems[0].starts_with("crates/a/.os/imp.rs: tracked, but in a directory"));
+    }
+
+    #[test]
+    fn a_tracked_source_that_is_gone_from_disk_is_not_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let git = |arguments: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(arguments)
+                .output()
+                .is_ok_and(|output| output.status.success())
+        };
+        std::fs::write(root.path().join("kept.rs"), "").unwrap();
+        std::fs::write(root.path().join("renamed.rs"), "").unwrap();
+        if !(git(&["init", "-q"]) && git(&["add", "kept.rs", "renamed.rs"])) {
+            return; // no usable git here; the rule is then skipped altogether
+        }
+        std::fs::rename(root.path().join("renamed.rs"), root.path().join("new.rs")).unwrap();
+        assert_eq!(tracked(root.path()), Some(vec!["kept.rs".to_owned()]));
     }
 
     #[test]
