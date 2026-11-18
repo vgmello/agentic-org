@@ -191,8 +191,12 @@ resolution back is process guidance, not a coded routing decision.
 Opening a DM is permitted under the same recipient rules as direct sends.
 Anything an agent's own subprocesses post is attributed to that agent.
 
-Ordinary channel activity goes to the inbox. Membership never causes a channel post
-to start anyone's work.
+For a person, ordinary channel activity shows as unread. An agent's inbox holds only
+what is addressed to it: a direct message, an ask or a hand-off, a mention by name, a
+reply in a thread it started or replied in, and a message judged to answer its own
+channel question ([ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md)).
+An agent reads the rest of a channel only when it chooses to. Membership never causes
+a channel post to start anyone's work.
 
 ### 4.2 System notices and delivery
 

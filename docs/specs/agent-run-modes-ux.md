@@ -26,8 +26,9 @@ follows [COST](costs-and-insights-ux.md) and document 17.
 
 v1 runs agents by explicit turns, and suspends and resumes an agent waiting on a
 required answer ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)). One
-thing besides a person starts a turn: an ask or a hand-off from another agent, when the
-recipient is idle ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)).
+thing besides a person's Run starts a turn for an idle agent: being addressed by another
+agent (an ask, a hand-off or a mention by name), or receiving an answer to a question it
+asked ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)).
 Automatic run modes (On call, Scheduled, Always on) and one-off agents are
 [not in v1](#5-not-in-v1) for ordinary agents. The built-in HR lead is never kept
 running: it runs only when called (a message to it, an `@hr` mention or a hire
@@ -46,8 +47,9 @@ request starts one turn), and it stops when the turn ends
    configuration and placement revisions and an approved task or workspace key.
    Messages and assignments do not start model work by themselves, with two stated
    exceptions: the answer to a required ask resumes a suspended agent (ADR-0020), and
-   an ask or a hand-off from another agent starts one turn for an idle agent, under an
-   hourly limit (ADR-0023).
+   an ask, a hand-off or a mention by name from another agent, or an answer to the
+   agent's own question, starts one turn for an idle agent, under an hourly limit
+   (ADR-0023).
 3. **One open turn and one main process per agent.** A compatible verified-idle
    process can be reused. The UI distinguishes the logical turn, its routed
    attempts and the process lifetime.
@@ -118,7 +120,7 @@ model turn.
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · A message from a person, an assignment or a mention starts no model work. A turn starts from an explicit Run, from the answer to a required ask, or from an ask or a hand-off sent by another agent to an idle agent (ADR-0023, WAKE-1 to WAKE-6).
+- RUN-3 · A message, an ask or a mention from a person, and an assignment, start no model work. A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024).
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.
