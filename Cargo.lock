@@ -653,6 +653,7 @@ dependencies = [
  "org-host-control",
  "org-office-launch",
  "org-platform",
+ "org-platform-host",
  "org-proto",
  "org-release",
  "org-socket",
@@ -733,10 +734,19 @@ dependencies = [
 name = "org-platform"
 version = "0.0.0"
 dependencies = [
- "core-foundation",
  "libc",
  "proc-macro2",
  "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
+name = "org-platform-host"
+version = "0.0.0"
+dependencies = [
+ "core-foundation",
+ "libc",
+ "org-platform",
  "tempfile",
 ]
 

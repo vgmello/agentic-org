@@ -614,7 +614,7 @@ fn an_unavailable_root_reserves_unicode_normalization_aliases() {
 }
 
 /// The spellings a system may take for the same names are the platform's rule
-/// (`org_platform::fs::paths_may_alias`, tested there); a new claim against an unavailable
+/// (`org_platform_host::names::paths_may_alias`, tested there); a new claim against an unavailable
 /// root applies it, a claim against an available one compares plain prefixes only.
 #[test]
 fn unavailable_path_comparison_adds_the_platforms_aliases_to_plain_prefixes() {
@@ -626,7 +626,7 @@ fn unavailable_path_comparison_adds_the_platforms_aliases_to_plain_prefixes() {
         let (a, b) = (Path::new(a), Path::new(b));
         assert_eq!(
             paths_overlap(a, b, true),
-            org_platform::fs::paths_may_alias(a, b).unwrap()
+            org_platform_host::names::paths_may_alias(a, b).unwrap()
         );
         assert!(!paths_overlap(a, b, false));
     }

@@ -67,7 +67,8 @@ jobs:
       - name: Platform conditionals (LNX-5)
         run: cargo test --locked -p org-platform --test platform_conditionals
 
-      # A Unix target that is neither macOS nor GNU/Linux gets org-platform's refusing adapters.
+      # A Unix target that is neither macOS nor GNU/Linux gets the refusing adapters of org-platform
+      # and org-platform-host.
       # Linux with musl is such a target, and its test binaries run on this runner. Consumers
       # whose system code has moved into org-platform must build there too; the list grows as
       # Track X moves the rest (crates that compile C cannot be built for musl on this runner).
@@ -75,9 +76,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           rustup target add x86_64-unknown-linux-musl
-          cargo clippy --locked -p org-platform --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
-          cargo clippy --locked -p org-supervise --lib --target x86_64-unknown-linux-musl -- -D warnings
-          cargo test --locked -p org-platform --all-features --target x86_64-unknown-linux-musl
+          cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
+          cargo clippy --locked -p org-supervise -p org-spool --lib --target x86_64-unknown-linux-musl -- -D warnings
+          cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
 
       - name: cargo clippy
         run: cargo clippy --locked --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings

@@ -56,10 +56,6 @@ pub(super) fn require_disk(_dir: &File, _path: &Path) -> Result<(), FilesystemRe
     Err(FilesystemRefusal::Unsupported(refusal()))
 }
 
-pub(super) fn paths_may_alias(_a: &Path, _b: &Path) -> Result<bool, Refused> {
-    Err(refusal())
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};
@@ -120,9 +116,5 @@ mod tests {
             unsupported(super::check_instance_root(&directory, Path::new("/"), root));
         }
         unsupported(super::require_disk(&directory, Path::new("/")));
-        assert_eq!(
-            super::paths_may_alias(Path::new("/a"), Path::new("/a")),
-            Err(Refused::unsupported("fs"))
-        );
     }
 }

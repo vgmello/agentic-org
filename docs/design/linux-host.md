@@ -45,11 +45,22 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   which secret names exist, when a check is skipped in a development build. The crate
   takes that policy as plain data (paths, digests, signing identifiers) and decides
   nothing about the domain.
-- **Dependencies.** `libc` and `sha2`; on macOS also `security-framework`,
-  `security-framework-sys`, `core-foundation` and the `cc` build of the recovery
-  presence bridge, all moved from `org-host`. It depends on no workspace crate.
-  `org-socket`, `org-supervise`, `org-client`, `org-office`, `org-host` and the
-  applications depend on it; there is no cycle. `org-proto` does not depend on it:
+- **Two crates.** `org-platform` is linked by all four executables and depends on
+  `libc` only and on no workspace crate. `org-socket`, `org-supervise`, `org-client`,
+  `org-office`, `org-spool`, `org-host` and the applications depend on it; there is
+  no cycle. `crates/org-platform-host` holds the capabilities that only the host
+  consumes and whose macOS adapter needs an Apple framework (`admission`,
+  `credentials`, `presence`, and `names`, the comparison of file names): its macOS
+  dependencies are `security-framework`, `security-framework-sys`, `core-foundation`
+  and the `cc` build of the recovery presence bridge, all moved from `org-host`. It
+  depends on `org-platform`, and only `org-host` depends on it. The reason is the
+  link line: a crate's link directives reach every executable that links it, and the
+  web process must load nothing but the C library before it confines itself
+  (ADR-0008); `crates/org-platform/tests/libc_only.rs` holds both rules. Wherever
+  this document says `org-platform` for `admission`, `credentials` or `presence`,
+  the code is in `org-platform-host`; the running image's identity and the release
+  platform, which the web process also needs and which are libc-only, are
+  `org_platform::image`. The LNX-5 check exempts both crates. `org-proto` does not depend on it:
   the macOS values in `org-proto/src/location.rs` move into `org_platform::dirs`, and
   `org-proto` keeps only path composition that takes the base and the limit as
   arguments.
