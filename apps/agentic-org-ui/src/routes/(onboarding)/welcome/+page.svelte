@@ -1,140 +1,77 @@
 <script lang="ts">
-	import { goto, invalidate } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import BuildingOffice from '@lucide/svelte/icons/building-2';
-	import CircleAlert from '@lucide/svelte/icons/circle-alert';
-	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Plus from '@lucide/svelte/icons/plus';
-	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
-	import { Badge } from '$lib/components/ui/badge';
-	import { Button } from '$lib/components/ui/button';
-	import { describeFailure } from '$lib/create-flow';
-	import { officeApi } from '$lib/office/api';
-	import { formatDate, loadOrganizations, localOffice, openOrganization, openable, type Listing } from '$lib/open-flow';
-	import { initialsOf } from '$lib/format';
-	import type { AppError } from '$lib/proto';
+	import AccountMenu from '$lib/platform/auth/AccountMenu.svelte';
+	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import { signOutFlow } from '$lib/platform/auth/sign-out-flow.svelte';
+	import { signInHref } from '$lib/platform/auth/return-target';
+	import { readOrganizationList, readResponse } from '$lib/platform/http/wire';
 
+	type Listing = { kind: 'loading' } | { kind: 'ready'; names: string[] } | { kind: 'failed' };
 	let listing = $state<Listing>({ kind: 'loading' });
-	// The organization being opened, so every Open button is disabled meanwhile.
-	let opening = $state<string | null>(null);
-	let openError = $state<AppError | null>(null);
+	const session = $derived(appSession.state.kind === 'signed-in' ? appSession.state.session : undefined);
 
-	async function load(retry = false) {
-		if (retry) openError = null;
+	async function load() {
 		listing = { kind: 'loading' };
-		listing = await loadOrganizations(officeApi);
+		try {
+			const response = await appSession.controller().read('/api/v1/organizations');
+			const body = readResponse(response.body, readOrganizationList);
+			listing = 'result' in body ? { kind: 'ready', names: body.result.organizations.map((o) => o.name) } : { kind: 'failed' };
+		} catch {
+			listing = { kind: 'failed' };
+		}
 	}
 
-	async function open(id: string) {
-		if (opening) return;
-		opening = id;
-		openError = null;
-		const result = await openOrganization(officeApi, id);
-		if (!result.ok) {
-			openError = result.error;
-			opening = null;
-			// Whatever went wrong (it's gone, its office went down, the office stopped), look again so
-			// the list shows how things are now.
-			await load();
+	onMount(async () => {
+		await appSession.boot();
+		if (appSession.state.kind !== 'signed-in') {
+			await goto(signInHref('/welcome', location.origin), { replaceState: true });
 			return;
 		}
-		try {
-			await invalidate('app:connections');
-			await goto('/agents', { replaceState: true });
-		} catch {
-			window.location.assign('/agents');
-		}
-	}
+		await load();
+	});
 
-	onMount(load);
+	// Another tab signed out, or this one did: every tab shows the sign-in page (SIGN-20).
+	$effect(() => {
+		const state = appSession.state;
+		if (state.kind === 'signed-out' && state.reason === 'signed-out') void goto('/sign-in?note=signed-out', { replaceState: true });
+		// SIGN-31: another account signed in from another tab; this tab keeps none of the previous account's data.
+		else if (state.kind === 'signed-out' && state.reason === 'changed-account') void goto('/sign-in', { replaceState: true });
+		else if (state.kind === 'signed-out' && state.reason === 'ended') void goto(signInHref('/welcome', location.origin, 'ended'), { replaceState: true });
+	});
 
-	const organizations = $derived(listing.kind === 'ready' ? listing.organizations : []);
-	const failure = $derived(listing.kind === 'failed' ? describeFailure(listing.error, 'list') : undefined);
+	const signOut = () => signOutFlow.request();
 </script>
 
-<svelte:head><title>Welcome · Agentic Org</title></svelte:head>
+<svelte:head><title>Organizations · Agentic Org</title></svelte:head>
 
-<h1 class="text-3xl/9 font-semibold tracking-tight text-white">Welcome to Agentic Org</h1>
-<p class="mt-2 text-base/7 text-gray-400">Run an organization of AI agents. Open one you already have, or start a new one.</p>
-
-<section class="mt-10" aria-labelledby="existing">
-	<h2 id="existing" class="text-sm/6 font-semibold text-white">Organizations on this Mac</h2>
-
-	<div aria-live="polite">
-		{#if listing.kind === 'loading'}
-			<p class="mt-3 flex items-center gap-x-2 text-sm/6 text-gray-400">
-				<LoaderCircle class="size-4 animate-spin text-indigo-400" aria-hidden="true" />
-				Looking for organizations on this Mac…
-			</p>
-		{:else if failure}
-			<Alert variant="destructive" class="mt-3">
-				<CircleAlert aria-hidden="true" />
-				<AlertTitle>{failure.title}</AlertTitle>
-				<AlertDescription>
-					<p>{failure.hint}</p>
-					<div class="mt-3 flex gap-x-2">
-						<Button variant="outline" size="sm" onclick={() => load(true)}>Try again</Button>
-					</div>
-				</AlertDescription>
-			</Alert>
-		{:else if organizations.length === 0}
-			<p class="mt-3 text-sm/6 text-gray-400">No organizations on this Mac yet.</p>
-		{:else}
-			<ul class="mt-3 divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10">
-				{#each organizations as organization (organization.id)}
-					{@const office = localOffice(organization)}
-					{@const available = openable(organization)}
-					<li data-testid="organization-row" data-organization={organization.id} class="flex items-center gap-x-4 px-4 py-3 {available ? '' : 'opacity-60'}">
-						<span class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-indigo-500/20 text-sm font-semibold text-indigo-300" aria-hidden="true">
-							{initialsOf(organization.name)}
-						</span>
-						<span class="min-w-0 flex-1">
-							<span class="flex items-center gap-x-2">
-								<span class="truncate text-sm/6 font-semibold text-white">{organization.name}</span>
-								{#if listing.kind === 'ready' && listing.current === organization.id}
-									<Badge variant="secondary">Open now</Badge>
-								{/if}
-								{#if !available}<Badge variant="secondary">Unavailable</Badge>{/if}
-							</span>
-							<span class="block truncate text-xs/5 text-gray-400">
-								{office ? `${office.name} · ${office.host}` : 'No office on this Mac'} · created {formatDate(organization.created_at)}
-							</span>
-						</span>
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!available || opening !== null}
-							aria-label="Open {organization.name}"
-							onclick={() => open(organization.id)}
-						>
-							{#if opening === organization.id}<LoaderCircle class="animate-spin" aria-hidden="true" />{/if}
-							Open
-						</Button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-
-		{#if openError}
-			<Alert variant="destructive" class="mt-3">
-				<CircleAlert aria-hidden="true" />
-				<AlertTitle>Couldn't open it</AlertTitle>
-				<AlertDescription>{openError.message}</AlertDescription>
-			</Alert>
-		{/if}
-	</div>
-</section>
-
-<a
-	href="/create"
-	class="group mt-8 flex items-center gap-x-4 rounded-xl bg-white/5 p-4 outline-1 -outline-offset-1 outline-white/10 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-indigo-500"
->
-	<span class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white">
-		<Plus class="size-5" aria-hidden="true" />
-	</span>
-	<span>
-		<span class="block text-sm/6 font-semibold text-white">Create organization</span>
-		<span class="block text-xs/5 text-gray-400">Set up a new organization. Its first office, HQ, runs on this Mac.</span>
-	</span>
-	<BuildingOffice class="ml-auto size-5 text-gray-500 group-hover:text-gray-300" aria-hidden="true" />
-</a>
+{#if !session || listing.kind === 'loading'}
+	<p class="text-sm/6 text-gray-400" aria-live="polite">Loading…</p>
+{:else}
+	<div class="mb-8 flex justify-end"><AccountMenu {session} /></div>
+	{#if listing.kind === 'failed'}
+		<div role="alert" class="rounded-md bg-red-500/10 p-3 text-sm/6 text-red-300">
+			Can't reach HQ. Check that the instance is running on the HQ machine, then try again.
+			<button type="button" class="ml-2 font-semibold underline" onclick={load}>Try again</button>
+		</div>
+	{:else if listing.names.length > 0}
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">Organizations</h1>
+		<ul class="mt-4 space-y-2">
+			{#each listing.names as name (name)}<li class="text-sm/6 text-white">{name}</li>{/each}
+		</ul>
+	{:else if session.admin}
+		<!-- SIGN-9, administrator: what the administrator sees right after registering. -->
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">No organizations yet. Create one to get started.</h1>
+		<div class="mt-6 flex items-center gap-x-4">
+			<a href="/create" class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">
+				<Plus class="size-4" aria-hidden="true" />Create organization
+			</a>
+			<button type="button" disabled={signOutFlow.signingOut} onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button>
+		</div>
+	{:else}
+		<!-- SIGN-9, any other account. -->
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">This account can't open any organization on this HQ. Ask the owner of your organization to invite you again.</h1>
+		<div class="mt-6"><button type="button" disabled={signOutFlow.signingOut} onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button></div>
+	{/if}
+{/if}

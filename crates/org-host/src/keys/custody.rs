@@ -1,4 +1,4 @@
-//! The key store the host uses: office keys as the items of one credential store
+//! The key store the host uses: office secrets keys as the items of one credential store
 //! (`org_platform_host::credentials`). This view keeps what is the host's own: an item's name is
 //! the office id and must be a storage id, a key is only ever added, and what a stored key looks
 //! like. The platform keeps the bytes and applies the system's protection.
@@ -20,6 +20,11 @@
 //! and nothing repairs either. The folder may serve several homes at once, so the store is
 //! opened shared. It is opened at its first use: the first `create` makes the folder if it's
 //! missing; until then a missing folder holds no key.
+//!
+//! **No store** (release builds on a system with no protected store): [`UnsupportedKeys`] has
+//! nothing to open. It never falls back to another system's store or to plain files: every call
+//! is [`KeyStoreError::Unsupported`], so the host creates no office, starts none with a key it
+//! cannot keep, and deletes nothing.
 
 use std::fs;
 use std::io;
@@ -32,14 +37,14 @@ use org_platform_host::credentials::{
     credentials, CredentialError, CredentialLocation, Credentials, DirectoryStore, ItemName,
     ItemStore, ReleaseItems, ReleaseRoot, Secret, Sharing,
 };
-use org_proto::{DbKey, DB_KEY_BYTES};
+use org_proto::{OfficeSecretsKey, OFFICE_SECRETS_KEY_BYTES};
 
-use super::{KeyStore, KeyStoreError};
+use super::{KeyStoreError, OfficeSecretsKeys};
 use crate::secrets::zero;
 use crate::sync::lock;
 
 /// A development key's file: 64 hex digits.
-const HEX_LEN: usize = DB_KEY_BYTES * 2;
+const HEX_LEN: usize = OFFICE_SECRETS_KEY_BYTES * 2;
 
 /// What follows the office id in a development key's file name.
 const DEV_SUFFIX: &str = ".key";
@@ -182,8 +187,8 @@ fn item(office_id: &str) -> Result<ItemName, KeyStoreError> {
     ItemName::new(office_id).map_err(|_| KeyStoreError::NotPlainId)
 }
 
-impl KeyStore for OfficeKeys {
-    fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError> {
+impl OfficeSecretsKeys for OfficeKeys {
+    fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
         let name = item(office_id)?;
         // An add, never a replace: an existing item is refused, so a key is never replaced, even
         // one a racing process just made.
@@ -209,7 +214,7 @@ impl KeyStore for OfficeKeys {
         Ok(())
     }
 
-    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError> {
+    fn load(&self, office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError> {
         let name = item(office_id)?;
         let loaded = self.with(false, |store| Ok(store.load(&name)?))?;
         let Some(Some(secret)) = loaded else {
@@ -242,6 +247,30 @@ impl KeyStore for OfficeKeys {
     }
 }
 
+/// The office secrets keys of a system with no protected store: refuses every call (see the
+/// module docs).
+// Debug builds never choose it (`keys::store_for`); its tests still run there.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+pub(super) struct UnsupportedKeys;
+
+impl OfficeSecretsKeys for UnsupportedKeys {
+    fn create(&self, _office_id: &str, _key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
+        Err(KeyStoreError::Unsupported)
+    }
+
+    fn load(&self, _office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError> {
+        Err(KeyStoreError::Unsupported)
+    }
+
+    fn delete(&self, _office_id: &str) -> Result<(), KeyStoreError> {
+        Err(KeyStoreError::Unsupported)
+    }
+
+    fn list(&self) -> Result<Vec<String>, KeyStoreError> {
+        Err(KeyStoreError::Unsupported)
+    }
+}
+
 impl From<CredentialError> for KeyStoreError {
     /// Kinds and codes only, as the platform gives them: never an item's bytes or a path.
     fn from(error: CredentialError) -> Self {
@@ -253,10 +282,7 @@ impl From<CredentialError> for KeyStoreError {
             CredentialError::Os(status) => KeyStoreError::Os(status),
             CredentialError::Malformed => KeyStoreError::Os(NOT_DATA),
             CredentialError::Io(kind) => KeyStoreError::Io(io::Error::from(kind)),
-            CredentialError::Refused(_) => KeyStoreError::Io(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "this system has no such key store",
-            )),
+            CredentialError::Refused(_) => KeyStoreError::Unsupported,
             // Only opening a release directory answers this; no item operation does. The path
             // is reported where the store is opened, never here.
             CredentialError::Root(_) => {
@@ -276,16 +302,16 @@ impl From<CredentialError> for KeyStoreError {
 }
 
 /// The 32 bytes of a protected store's item as a key, or `None` if it has another length.
-fn raw_key(secret: &Secret) -> Option<DbKey> {
-    let mut array = *<&[u8; DB_KEY_BYTES]>::try_from(secret.expose()).ok()?;
-    let key = DbKey::from_bytes(array);
+fn raw_key(secret: &Secret) -> Option<OfficeSecretsKey> {
+    let mut array = *<&[u8; OFFICE_SECRETS_KEY_BYTES]>::try_from(secret.expose()).ok()?;
+    let key = OfficeSecretsKey::from_bytes(array);
     zero(&mut array);
     Some(key)
 }
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-fn encode_hex(bytes: &[u8; DB_KEY_BYTES], out: &mut [u8; HEX_LEN]) {
+fn encode_hex(bytes: &[u8; OFFICE_SECRETS_KEY_BYTES], out: &mut [u8; HEX_LEN]) {
     for (i, byte) in bytes.iter().enumerate() {
         out[2 * i] = HEX[usize::from(byte >> 4)];
         out[2 * i + 1] = HEX[usize::from(byte & 0x0f)];
@@ -293,11 +319,11 @@ fn encode_hex(bytes: &[u8; DB_KEY_BYTES], out: &mut [u8; HEX_LEN]) {
 }
 
 /// 64 hex digits (either case, as the server's store read them) as a key, or `None`.
-fn decode_hex(text: &[u8]) -> Option<DbKey> {
+fn decode_hex(text: &[u8]) -> Option<OfficeSecretsKey> {
     if text.len() != HEX_LEN {
         return None;
     }
-    let mut bytes = [0u8; DB_KEY_BYTES];
+    let mut bytes = [0u8; OFFICE_SECRETS_KEY_BYTES];
     let mut ok = true;
     for (i, pair) in text.as_chunks::<2>().0.iter().enumerate() {
         match (nibble(pair[0]), nibble(pair[1])) {
@@ -306,7 +332,7 @@ fn decode_hex(text: &[u8]) -> Option<DbKey> {
         }
     }
     // `from_bytes` takes a copy; the local array is zeroed either way.
-    let key = ok.then(|| DbKey::from_bytes(bytes));
+    let key = ok.then(|| OfficeSecretsKey::from_bytes(bytes));
     zero(&mut bytes);
     key
 }

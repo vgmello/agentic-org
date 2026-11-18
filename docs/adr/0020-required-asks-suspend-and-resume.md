@@ -81,7 +81,11 @@ The lead's design for the rule:
 14. **A default value never answers a required ask.** For an ask that is not required and
     carries a default, the timeout result includes the default, so the agent can
     continue with it; the card then shows that nobody answered and what the agent
-    continued with. A person's later answer still arrives as a message.
+    continued with. A person's later answer still arrives as a message. An ask may carry
+    several questions, answered together
+    ([messaging](../design/organization-data/15-messaging-and-chat.md)); each question
+    has its own default, and the timeout result carries the default of each question
+    that has one.
 
 ## Rules that follow
 
@@ -93,7 +97,7 @@ The lead's design for the rule:
 - One held call on an agent's connection is capped at 60 seconds. The wait spans as
   many held calls as it needs; `agent-os` renews the hold and the office keeps one
   timer for the whole wait.
-- The answer to a required ask is one of the things that may start a turn (session
+- An ask addressed to an agent starts it, as anything addressed to it does ([ADR-0028](0028-an-agent-is-always-available.md)), and the answer to a required ask is one of the things that may start a turn (session
   design).
 
 ## Acceptance criteria

@@ -80,7 +80,7 @@ impl std::error::Error for ClientError {
 
 impl ClientError {
     /// A server message that didn't decode. serde's own text can quote the offending value,
-    /// which may be a secret (an app token), and an error is easily logged, so it is dropped
+    /// which may be a secret, and an error is easily logged, so it is dropped
     /// (the position it reports is not meaningful here either): `what` names, from the
     /// client's own knowledge, the message that failed.
     pub(crate) fn undecodable(what: &str) -> Self {

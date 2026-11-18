@@ -30,7 +30,7 @@ single office on macOS. Its steps, in order:
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 and K1 alongside |
 | 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1a to B1c, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
-| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asks another agent and gets it running | B6, B7, C6, C8 |
+| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asks another agent and gets it running; an agent asks a channel and gets its answer without reading the channel; an agent that a person messages, or that is assigned a task, starts by itself | B6, B7, C6, C8, C9, C10 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
 
 **Milestone two: Linux, in parallel (Track X).** The same server runs on Linux, including inside a
@@ -42,7 +42,8 @@ change may add a platform branch.
 enrolment of the office, replication between offices, and messages relayed between
 them (S1).
 
-**Later:** costs and budgets, features and releases, updates. All of it is v1 scope.
+**Later:** costs and budgets, features and releases, project documentation, process
+development processes and the desired state development process, updates. All of it is v1 scope.
 
 Most of step 2 and the hire flow are create, read, update and delete on records the
 data contract already defines. The parts that are not: the web process and sessions
@@ -93,11 +94,11 @@ Three things to know about the order:
 - **Read:** [host boundary design](design/office-host-boundary.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [ADR-0012](adr/0012-office-channel-lifecycle.md). Checklist rows FC-017, FC-162.
-- **Code today:** `crates/org-host/src/supervisor/child.rs` implements both launch forms;
-  `crates/org-office-launch/src/v3.rs` is the rendezvous form;
-  `apps/agentic-org-office/src/launch.rs` receives a grant key and does not use it; the
-  CA key sits in the encrypted `office.db` (`crates/org-office/src/store/hq_creation.rs`);
-  `crates/org-pki` seals with the recovery code; SQLCipher is a workspace dependency
+- **Code before A1:** `crates/org-host/src/supervisor/child.rs` implemented both launch forms;
+  `crates/org-office-launch/src/contract.rs` was the rendezvous form;
+  `apps/agentic-org-office/src/launch.rs` received a grant key and did not use it; the
+  CA key sat in the encrypted `office.db` (`crates/org-office/src/store/hq_creation.rs`);
+  `crates/org-pki` sealed with the recovery code; SQLCipher was a workspace dependency
   used by `crates/org-office/src/store` and `crates/org-host/src/hostdb`.
 - **Done when:** the host starts and restarts an office with one launch form; the
   workspace has no SQLCipher dependency; ENC-1, ENC-5 and ENC-6 pass. ENC-3 is
@@ -186,7 +187,7 @@ Three things to know about the order:
     `hello` and `instance.status`.
   - The web process has its own rendezvous lines (`GatewayFirstLine`,
     `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from
-    the office worker's in `crates/org-office-launch/src/v3.rs`.
+    the office worker's in `crates/org-office-launch/src/contract.rs`.
   - To delete with the stored sessions of ADR-0013: the absolute session lifetime
     (`ABSOLUTE` in `crates/org-host/src/service/authentication.rs`) and the per-account
     session cap. The wire no longer carries it: A3 B2 removed `absolute_expires_at` from
@@ -290,8 +291,9 @@ Three things to know about the order:
   "Person-started commands", [ADR-0013](adr/0013-stored-browser-sessions.md) (SES-8),
   [host boundary design](design/office-host-boundary.md),
   [`apps/agent-os/README.md`](../apps/agent-os/README.md). Row FC-014.
-- **Code today:** a person or the owner binds to the office with `app_token`
-  (`apps/agentic-org-office/src/serve.rs`), which A1 removes; `agent-os` talks to an
+- **Code today:** a person or the owner acts only through a host-issued grant; the
+  application token is deleted (A1.8) and `msg.bind` binds agents only
+  (`apps/agentic-org-office/src/serve.rs`); `agent-os` talks to an
   office only when one is named and otherwise writes to a file queue, which B6 deletes.
 - **Done when:** SES-8 passes; a signed-in person runs a read command and a write
   command against the office from a terminal; the same commands are refused without a
@@ -350,7 +352,7 @@ onto it and deletes the old store; B1c measures and guards it.
   the batching rules and their tests; `crates/org-docs` the front-matter parser and
   source-preserving editor; `organization/bootstrap.rs` and `organization/admission.rs`
   today's creation path; `org_mailbox::mailbox_conformance_tests!` the suite pattern.
-  The workspace `rusqlite` is built with SQLCipher until A1; the new engine never sets a
+  Since A1 the workspace `rusqlite` is plain bundled SQLite; the new engine never sets a
   key.
 - **Done when:** the organization suite passes against SQLite and memory (ENG-3 for
   organization records); the rebuild-equivalence harness passes for the organization
@@ -572,7 +574,10 @@ on the offers of design section 10.
 ### C1 · The sign-in spike
 
 - **Outcome:** a written result: for each vendor tool, how it is pointed at a private
-  home, where its sign-in is stored, and whether it resumes a session from there.
+  home, where its sign-in is stored, whether it resumes a session from there, and how
+  it starts sub-agents under the isolation switches: that they inherit the sandbox, the
+  tools and the environment, and where their conversation is kept
+  ([ADR-0025](adr/0025-agents-start-sub-agents.md) decision 10).
 - **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
   [agent runtimes research](research/agent-runtimes-control.md).
 - **Done when:** the result is recorded and the first adapter to build is chosen.
@@ -619,6 +624,15 @@ on the offers of design section 10.
   sections 2.5, 2.8, 2.10 and 3.1; CLI-9, 10 and 12). The check that the caller
   descends from the started process uses `org-platform` and passes on Linux in the same
   change.
+- **Sub-agents:** the adapter enables the runtime's own sub-agent tool, inside the
+  parent's sandbox, tools and policy; the office writes the sub-agent definition; a
+  sub-agent's commands and cost are the employee's; nothing outlives the turn
+  ([ADR-0025](adr/0025-agents-start-sub-agents.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
+  the sub-agent's conversation in the session view, is finished with C4. Row FC-172.
+- **Instructions:** the built-in agent instructions are the first part of what an
+  agent receives, with the sections for what this build has, and their scenarios run
+  ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
+  FC-171.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
@@ -641,6 +655,8 @@ on the offers of design section 10.
 - **Build:** first a proof of concept in the UI against sample Claude and Codex
   conversation files; then the parsing and redaction in the office, served to authorized
   people.
+- **Sub-agents:** a sub-agent's conversation is shown under the turn that started it
+  (SUB-6).
 - **Read:** [REQ-05](specs/req-05-virtual-console-conversation-log-viewer.md). Row FC-150.
 - **The proof of concept needs nothing else and can start at any time.** The rest
   needs C3.
@@ -658,6 +674,8 @@ on the offers of design section 10.
 - **Code today:** `crates/org-process` resolves several chains, which the design
   replaces with one, and has no caller.
 - **Needs:** C3.
+- **Not part of it:** a project's development process. Its skills are delivered as a
+  separate section and never enter `resolve` (L12).
 
 ---
 
@@ -674,8 +692,10 @@ on the offers of design section 10.
   - A send is acknowledged at the local commit and relayed afterwards.
   - `agent-os` talks to the office for every call and gains the long-running mode. The
     file queue, `crates/org-spool` and the route through it are deleted.
-- **Commands:** `msg send`, `reply`, `accept`, `inbox`, `read`, `done`, `defer` and
-  `wait`, keeping today's names in the new grammar; `channel list`, `join` and `leave`;
+- **Commands:** `msg send` (mentions are read from `@handle` in the text), `reply`, `accept`, `inbox`, `read`, `list`,
+  `done`, `defer` and `wait`, keeping today's names in the new grammar. An agent's inbox
+  holds only what is addressed to it, and each entry says why it is there (ADR-0024
+  decisions 5 to 7; WATCH-1, 2 and 9); `channel list`, `join` and `leave`;
   `status set` and `clear`; `session attach`, which is the long-running mode. The file
   queue goes, and every `msg` command goes to the office
   ([command line design](design/agent-os-command-line.md), sections 2.9, 2.11, 3.3 and 3.7; CLI-13, and CLI-15 for the
@@ -697,16 +717,19 @@ on the offers of design section 10.
 - **Outcome:** an agent or person asks a question with choices, a yes/no or free text;
   the other answers in chat; the asker gets the answer, or a timeout after the wait.
 - **Build:**
-  - An ask carries the question schema, an optional default, `required`, and how long
-    the asker waits (10 minutes unless stated).
+  - An ask carries one to eight questions in the question schema, each with an optional
+    default, plus `required` and how long the asker waits (10 minutes unless stated).
+    All its questions are answered together, by a person in one form or by an agent in
+    one `msg reply` that names each question by its ID.
   - The answer is the answerer's own record; the asker's office records the one close
     outcome.
   - The question components in the product's chat, built from shadcn-svelte and Bits UI:
     single choice, multiple choice, yes/no, free text. A default is preselected.
   - A required ask that is not answered in time returns "required answer pending". The
     suspension that follows is increment C6.
-- **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel;
-  answering with `msg reply`; `msg withdraw`; and the `timed_out` and `withdrawn`
+- **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel, with
+  one question in flags or several in a file (`--input-format yaml`); answering with
+  `msg reply --answer`; `msg withdraw`; and the `timed_out` and `withdrawn`
   outcomes ([command line design](design/agent-os-command-line.md), sections 2.3 and 3.3; CLI-14).
 - **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
   [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
@@ -733,14 +756,57 @@ on the offers of design section 10.
 - **Outcome:** an agent asks another agent a question, or hands work to it, and the
   second agent runs and answers without a person starting it.
 - **Build:** the office starts one ordinary turn for an idle recipient when another
-  agent sends it an ask or a hand-off; the same admission as a person's Run; the hourly
+  agent sends it an ask, a hand-off or a mention by name, and when an answer to its own
+  question arrives; the same admission as a person's Run; the hourly
   limit (a system setting, 12 unless changed); the record of what started the turn. No
   new command: the answer's `meta` says whether a turn was started.
-- **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-6),
+- **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-7),
   [how agents run](specs/agent-run-modes-ux.md) (RUN-3),
   [command line design](design/agent-os-command-line.md) section 3.3. Row FC-169.
-- **Done when:** WAKE-1 to WAKE-6 pass.
+- **Done when:** WAKE-1 to WAKE-7 pass.
 - **Needs:** B7, C3.
+
+### C9 · A channel's watcher feeds responses back to the agents who asked
+
+- **Outcome:** an agent asks a question in a channel, somebody answers in the channel
+  without replying in the thread, and the agent receives that response in its inbox.
+  It never reads the rest of the channel. An agent that needs something from a channel
+  asks for a summary instead of loading it.
+- **Build:** first the measurement of ADR-0024 decision 17, on labelled channel
+  excerpts with the chosen watching model. Then: the watch a channel question
+  opens; the pass, one tool-less model run for all the open questions of a channel,
+  through the copilot's runtime port and a registry entry of its own; the
+  organization's watching model profile, with the feature off when none is set; the
+  bounds; each pass recorded as one product-made usage record; the `answer_candidate`
+  inbox entry linked to its question or questions; `channel summarize`.
+- **Commands:** `channel summarize` ([command line design](design/agent-os-command-line.md), section 3.3).
+- **Read:** [ADR-0024](adr/0024-a-channel-question-is-watched-for-its-answer.md)
+  (WATCH-1 to WATCH-11), [smart features](design/smart-features.md) (how a tool-less
+  run is made and validated), [messaging](design/organization-data/15-messaging-and-chat.md).
+  Row FC-170.
+- **Code today:** `crates/org-copilot` has the registry, rendering and validation for
+  tool-less runs, wired to no model.
+- **Done when:** WATCH-3 to WATCH-8, WATCH-10 and WATCH-11 pass. WATCH-1, 2 and 9
+  pass with B6.
+- **Needs:** B7, C8, and C3 for the runtime adapter that a tool-less run goes through.
+  With several offices it also needs S1, so that each office receives every message of
+  its agents' channels.
+
+### C10 · An agent is always available
+
+- **Outcome:** a person messages or mentions an agent, or anyone assigns it a task, and
+  it starts and answers with nobody pressing Run. An idle agent shows as Available, and
+  whoever sends sees whether the recipient is there.
+- **Build:** the starts that
+  [ADR-0028](adr/0028-an-agent-is-always-available.md) adds to C8: a direct message or a
+  mention from a person, and a task assigned to the agent, under the same admission and
+  the same hourly limit. An agent that is not working shows as Available whatever its
+  process is doing. The recipient's presence in the answer to a send and an ask.
+- **Read:** ADR-0028 (AVAIL-1 to AVAIL-6), [how agents run](specs/agent-run-modes-ux.md)
+  (RUN-3), [agent sessions](design/agent-sessions.md). Row FC-186.
+- **Code today:** nothing starts an agent.
+- **Done when:** AVAIL-1 to AVAIL-6 pass.
+- **Needs:** C8 and, for assignments, B4.
 
 ---
 
@@ -1098,6 +1164,10 @@ product without it.
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
 | L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
+| L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
+| L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
+| L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
+| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8 and L7's feature records |
 | L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |
@@ -1126,6 +1196,9 @@ each is finished.
 
 ## For every increment
 
+- An increment that gives agents a command adds or changes the section of the
+  [built-in agent instructions](design/agent-instructions.md) that tells them when to use
+  it, and makes its scenario pass.
 - Branch from `origin/v1-integration`. One writer per file at a time.
 - Before code, write the short plan for the increment: what a person can do at the end,
   the files you will own, what you will delete, and the decisions you are taking where

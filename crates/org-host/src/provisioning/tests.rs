@@ -38,7 +38,7 @@ fn account(db: &HostDb) -> Account {
 }
 fn offices(
     root: &Path,
-    keys: Arc<dyn KeyStore>,
+    keys: Arc<dyn OfficeSecretsKeys>,
     writers: Arc<Writers>,
     instance: &str,
     check: ServerCheck,

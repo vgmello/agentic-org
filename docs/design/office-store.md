@@ -751,7 +751,7 @@ guarantee, do not depend on it, so a second engine changes neither.
 
 1. A test reads every `Cargo.toml` in the workspace and fails if `rusqlite` is a
    dependency of anything but `org-office` and `org-host`.
-2. A test in `org-office`, built like today's `store/tests/opener_policy.rs` with `syn`,
+2. A test in `org-office`, built with `syn` like the former `store/tests/opener_policy.rs`,
    parses every `.rs` file of the crate, tests included, and fails on a path that starts
    with `rusqlite` or a string literal that starts with an SQL keyword (`SELECT`,
    `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `PRAGMA`, `BEGIN`, `WITH`, `REPLACE`)
@@ -796,7 +796,7 @@ three adds an operation kind and a consumer, not another store.
 ## 11. What is deleted and what is kept
 
 Today's store is `crates/org-office/src/store.rs` and `store/`: 14,694 lines outside
-test files and 33,948 with them, over two SQLCipher databases (`org.db` and `office.db`
+test files and 33,948 with them, over two SQLite databases (`org.db` and `office.db`
 under the host home's `offices/<office-id>/`, `crates/org-office/src/office.rs`), with the
 old tables as the source of truth. **B1b deletes all of it**, rather than family by
 family, so that the office has one writer, one database and one place for SQL. Calls
@@ -806,7 +806,7 @@ uses them yet.
 
 | Deleted in B1b | Replaced by |
 | --- | --- |
-| `store.rs` (writer, `Schema` upgrades, `Opening`, key pragma) | `org-store` writer; the SQLite engine |
+| `store.rs` (writer, `Schema` upgrades, `Opening`) | `org-store` writer; the SQLite engine |
 | `store/org.rs`, `store/org/` (activity, operation, snapshot, work view, replication and its tests) | The organization family; replication in S1 (section 10) |
 | `store/acceptance.rs`, `store/acceptance/` (`rows.rs` capture triggers, `schema.rs`, `crash.rs`, `durable.rs`, tests) | `org-store` journal, flusher, files and crash points |
 | `store/origin.rs` | `org-store` sequences |
@@ -815,8 +815,10 @@ uses them yet.
 | `store/messages.rs`, `store/status.rs`, `crates/org-office/src/messaging.rs` | The messaging family (B6) |
 | `store/owned_processes.rs` | Process cleanup records as files under `recovery/offices/<office-id>/cleanup/` (C3, document 16) |
 | `store/sync.rs` | Nothing: the old sync attempt runner goes with the old writer |
-| `store/tests/` (opener policy, SQLCipher initialization) | The ENG-1 check reuses the opener policy's `syn` approach |
 | SQL in `organization/bootstrap.rs`, `organization/admission.rs`, `office.rs` (`put_meta`, `meta`) and `office/hq_creation.rs` | Organization family decisions; office identity in the journal anchor and `offices/<office-id>.yaml` |
+
+A1 already removed the key pragma and deleted `store/tests/` (the opener-policy and
+SQLCipher-initialization tests) with SQLCipher (ADR-0016).
 
 **Kept, and how it changes.**
 

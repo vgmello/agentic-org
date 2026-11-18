@@ -1,13 +1,18 @@
-//! Bounded business-request bodies, before decoding or native admission.
+//! Bounded `/api/v1` request bodies, before decoding or native admission.
 //!
-//! Credential routes need B1-06's zeroed ingress buffers and direct secret-field
-//! decoding; this business-data collector must not be used for those routes.
+//! This is also the credential ingress (sign-in, registration, later password
+//! changes): every body is copied frame by frame into one zeroizing buffer, grown
+//! only by moving into a larger zeroizing buffer, and a frame this process owns
+//! outright is zeroed after its copy. Secret fields decode from that buffer into
+//! their zeroizing newtypes. Hyper's shared connection read buffer is outside this
+//! process's control and is overwritten by later reads.
 
 use std::fmt;
 use std::time::Duration;
 
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::body::{Body, Bytes};
+use zeroize::{Zeroize, Zeroizing};
 
 pub const MAX_BUSINESS_BODY_BYTES: usize = 1024 * 1024;
 pub const BODY_READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -20,8 +25,9 @@ pub enum BodyError {
     InvalidLimits,
 }
 
-/// No diagnostic or serialization path exposes the request payload.
-pub struct BusinessBody(Bytes);
+/// No diagnostic or serialization path exposes the request payload, and the
+/// payload is zeroed when the body drops.
+pub struct BusinessBody(Zeroizing<Vec<u8>>);
 
 impl BusinessBody {
     pub fn as_bytes(&self) -> &[u8] {
@@ -58,17 +64,58 @@ where
     if body.size_hint().lower() > max_bytes as u64 {
         return Err(BodyError::TooLarge);
     }
-    let collected = tokio::time::timeout(deadline, Limited::new(body, max_bytes).collect())
-        .await
-        .map_err(|_| BodyError::TimedOut)?
-        .map_err(|error| {
-            if error.is::<LengthLimitError>() {
-                BodyError::TooLarge
-            } else {
-                BodyError::Malformed
+    // A declared length (bounded above) sizes the buffer once; otherwise it starts small.
+    let initial = body
+        .size_hint()
+        .upper()
+        .map_or(INITIAL_UNKNOWN_BYTES, |n| n.min(max_bytes as u64) as usize)
+        .min(max_bytes);
+    let read = async move {
+        let mut body = std::pin::pin!(Limited::new(body, max_bytes));
+        let mut buffer = Zeroizing::new(Vec::with_capacity(initial));
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|error| {
+                if error.is::<LengthLimitError>() {
+                    BodyError::TooLarge
+                } else {
+                    BodyError::Malformed
+                }
+            })?;
+            if let Ok(data) = frame.into_data() {
+                append_zeroizing(&mut buffer, data);
             }
-        })?;
-    Ok(BusinessBody(collected.to_bytes()))
+        }
+        Ok(buffer)
+    };
+    let buffer = tokio::time::timeout(deadline, read)
+        .await
+        .map_err(|_| BodyError::TimedOut)??;
+    Ok(BusinessBody(buffer))
+}
+
+const INITIAL_UNKNOWN_BYTES: usize = 1024;
+
+/// Appends without leaving a stale copy: growth moves the bytes into a fresh
+/// zeroizing buffer and the old one is zeroed on drop (a plain `Vec` reallocation
+/// would free it unzeroed). A frame this process owns outright is zeroed too.
+fn append_zeroizing(buffer: &mut Zeroizing<Vec<u8>>, data: Bytes) {
+    let needed = buffer.len() + data.len();
+    if needed > buffer.capacity() {
+        let mut grown = Zeroizing::new(Vec::with_capacity(needed.max(buffer.capacity() * 2)));
+        grown.extend_from_slice(buffer);
+        *buffer = grown;
+    }
+    buffer.extend_from_slice(&data);
+    if let Ok(mut owned) = data.try_into_mut() {
+        owned.as_mut().zeroize();
+    }
+}
+
+#[cfg(test)]
+impl BusinessBody {
+    fn buffer(&self) -> &Zeroizing<Vec<u8>> {
+        &self.0
+    }
 }
 
 #[cfg(test)]
@@ -185,6 +232,34 @@ mod tests {
             assert_eq!(error, BodyError::Malformed);
             assert!(!format!("{error:?}").contains("PRIVATE_STREAM_ERROR"));
         });
+    }
+
+    #[test]
+    fn chunked_bodies_collect_into_one_zeroizing_buffer_across_growth() {
+        run(async {
+            let chunk = Bytes::from(vec![b'p'; 700]);
+            let chunks = (0..5).map(|_| Ok(chunk.clone())).collect();
+            let body = Chunks {
+                chunks,
+                polls: Arc::new(AtomicUsize::new(0)),
+                declared: None,
+            };
+            let body = read_business_body(body, 4096, BODY_READ_TIMEOUT)
+                .await
+                .unwrap();
+            let buffer: &Zeroizing<Vec<u8>> = body.buffer();
+            assert_eq!(buffer.len(), 3500);
+            assert!(buffer.iter().all(|b| *b == b'p'));
+            assert!(buffer.capacity() >= 3500);
+        });
+    }
+
+    #[test]
+    fn appending_past_capacity_moves_into_a_larger_zeroizing_buffer() {
+        let mut buffer = Zeroizing::new(Vec::with_capacity(1));
+        append_zeroizing(&mut buffer, Bytes::from(b"secret".to_vec()));
+        assert_eq!(buffer.as_slice(), b"secret");
+        assert!(buffer.capacity() >= 6);
     }
 
     struct Drip {

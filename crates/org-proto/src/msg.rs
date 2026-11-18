@@ -5,16 +5,16 @@
 //! §2.1.
 //!
 //! ## Binding
-//! - A connection binds with [`MsgBind`]: as a member (**member-bound**), or app-wide with
-//!   the office's [`AppToken`] and no member. A connection whose binding presented the token
-//!   (a person, the owner, or app-wide) is **app-bound**. An agent binds by handle or id
-//!   without a token; a person or the owner needs the token.
+//! - A connection binds with [`MsgBind`] as a member (**member-bound**): an agent, by handle
+//!   or id, with no credential. A person or the owner never binds here: they act through an
+//!   owner grant on a host channel (X-02 §4.1), and a connection acting under a grant is
+//!   **app-bound**. There is no app-wide binding and no app token: the retired `app_token`
+//!   field is refused on presence ([`crate::retired`]).
 //! - Binding fails closed (ADR-0003 §2.1.4, as amended by the agent-sessions design): an
-//!   unknown member, an agent not placed in this office, an offboarded agent or one whose
-//!   status this office can't read, a lookup that fails, and a missing or wrong token are all
-//!   `not_authorized`. Only a malformed call, or an agent that may bind sending `app_token`,
-//!   is `invalid_request` (see [`MsgBind`] for the order). A paused agent may still bind: it
-//!   keeps reading and answering its messages.
+//!   unknown member, a person or the owner, an agent not placed in this office, an offboarded
+//!   agent or one whose status this office can't read, and a lookup that fails are all
+//!   `not_authorized`. Only a malformed call is `invalid_request` (see [`MsgBind`] for the
+//!   order). A paused agent may still bind: it keeps reading and answering its messages.
 //! - Each `msg.bind` replaces the connection's previous binding and is checked only on its
 //!   own params: an earlier binding grants nothing. A failed `msg.bind` leaves the connection
 //!   unbound. Any re-bind, failed or not, ends the previous binding's held `msg.wait` and
@@ -25,12 +25,8 @@
 //!   member was since moved out of this office or removed (ADR-0003 §3.1); it must bind again.
 //! - A member-bound connection acts as its member. An agent sees only the messages it sent or
 //!   received; an app-bound connection sees every message in the office.
-//! - Of the messaging calls here and the directory calls ([`crate::directory`]), an app-wide
-//!   binding may call only `who`, `msg.list`, `msg.get`, `msg.threads` and
-//!   `msg.human_needs_you`. Those that act as a member (`msg.send`, `msg.inbox`,
-//!   `status.set`, ...) fail on it with `not_bound`. Calls of other modules follow their own
-//!   rules: the organization commands ([`crate::org`]) need an app-bound connection, one
-//!   bound with `app_token`, such as the app-wide binding (`org.snapshot`, a read, needs any
+//! - Calls of other modules follow their own rules: the organization commands
+//!   ([`crate::org`]) need an app-bound connection (`org.snapshot`, a read, needs any
 //!   binding).
 //!
 //! ## Events
@@ -114,7 +110,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::calls::Call;
 use crate::events::EventKind;
-use crate::token::AppToken;
 
 /// A plain message (`msg.send`'s usual kind).
 pub const KIND_MSG: &str = "msg";
@@ -409,42 +404,33 @@ impl fmt::Debug for MetaSize<'_> {
     }
 }
 
-/// `msg.bind`: bind this connection, as a member or app-wide (see
-/// [Binding](self#binding)). Every other `msg.*` call (and `who`, `status.set`) needs it
-/// first.
+/// `msg.bind`: bind this connection as a member (see [Binding](self#binding)). Every other
+/// `msg.*` call (and `who`, `status.set`) needs it first.
 ///
-/// Any local client may call it. An agent binds without a token (an accepted risk until the
-/// office runner spawns every agent, ADR-0003 M-A). A person or the owner needs `app_token`.
-/// The desktop app may bind app-wide, with `app_token` and no `member`. Of the messaging and
-/// directory calls, that binding may call only `who`, `msg.list`, `msg.get`, `msg.threads` and
-/// `msg.human_needs_you`. The organization commands ([`crate::org`]) need a binding with
-/// `app_token`, such as this one.
+/// Any local client may call it. An agent binds without a credential (an accepted risk until
+/// the office runner spawns every agent, ADR-0003 M-A). A person or the owner never binds
+/// here: they act through an owner grant on a host channel.
 ///
 /// It fails closed, checking in this order:
-/// 1. The input alone: params that don't decode (including a malformed `app_token`, or both
-///    `member` and `agent`), `office` as `member`, or neither `member` nor `app_token`, are
+/// 1. The input alone: params that don't decode (including a present `app_token`, which is
+///    retired, or both `member` and `agent`), `office` as `member`, or no `member`, are
 ///    `invalid_request`; a `member` over [`MAX_HANDLE_BYTES`] is `too_large`. None of this
 ///    depends on who the member is.
-/// 2. The member: one that isn't found, an agent not placed in this office, an
-///    [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, one whose status is
-///    [`Unknown`](crate::org::AgentStatus::Unknown), or a lookup that fails, is
+/// 2. The member: one that isn't found, a person or the owner, an agent not placed in this
+///    office, an [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, one whose status
+///    is [`Unknown`](crate::org::AgentStatus::Unknown), or a lookup that fails, is
 ///    `not_authorized`, whatever else the call sends. A
 ///    [`Paused`](crate::org::AgentStatus::Paused) agent may still bind.
-/// 3. The credentials: a missing or wrong `app_token` for a person or the owner, or a wrong
-///    one for an app-wide binding, is `not_authorized`. An agent (one that passed step 2)
-///    with an `app_token` is `invalid_request`: an agent binds without one.
 ///
 /// Each call replaces the previous binding and is checked only on its own params. A failed
 /// call leaves the connection unbound. Any re-bind, failed or not, ends the previous
 /// binding's held `msg.wait` and `msg.ask` calls with `not_bound`, and ends the connection's
 /// `subscribe`: no event follows the bind's answer.
 ///
-/// Errors: `not_authorized` (step 2, and a missing or wrong token in step 3),
-/// `invalid_request` (step 1, and an active or paused agent with `app_token` in step 3),
-/// `too_large` (step 1).
+/// Errors: `not_authorized` (step 2), `invalid_request` (step 1), `too_large` (step 1).
 pub struct MsgBind;
 
-/// `msg.bind`'s params. Its `Debug` shows no token (see [`AppToken`]), and it isn't `Clone`.
+/// `msg.bind`'s params.
 ///
 /// Office-run agents will also send a session token here (a later additive field, per the
 /// agent-sessions design).
@@ -455,17 +441,32 @@ pub struct MsgBindParams {
     /// (`invalid_request`).
     #[serde(default, alias = "agent", skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
-    /// Required to bind a person or the owner (`not_authorized` without it), or to bind
-    /// app-wide. Refused with an active or paused agent (`invalid_request`); see [`MsgBind`]
-    /// for the order.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub app_token: Option<AppToken>,
+    /// Retired: the app token no longer exists. Any present value, `null` included, makes the
+    /// params fail to decode ([`crate::retired::app_token`]), so a server answers
+    /// `invalid_request`. It is never written. Build params with [`MsgBindParams::member`].
+    #[serde(
+        default,
+        rename = "app_token",
+        skip_serializing,
+        deserialize_with = "crate::retired::app_token"
+    )]
+    pub retired_token: Option<crate::retired::Retired>,
+}
+
+impl MsgBindParams {
+    /// Params to bind as `member` (a handle or member id).
+    pub fn member(member: impl Into<String>) -> Self {
+        MsgBindParams {
+            member: Some(member.into()),
+            retired_token: None,
+        }
+    }
 }
 
 /// `msg.bind`'s result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MsgBindResult {
-    /// The bound member; absent for an app-wide binding.
+    /// The bound member.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_id: Option<String>,
     pub office_id: String,
@@ -1451,21 +1452,21 @@ mod tests {
 
     #[test]
     fn bind_wire_shape() {
-        let params = MsgBindParams {
-            member: Some("owner".into()),
-            app_token: Some(AppToken::from_bytes(token_bytes())),
-        };
         check(
-            &params,
-            json!({"member": "owner", "app_token": token_hex()}),
-        );
-        check(
-            &MsgBindParams {
-                member: Some("ac-software-engineer-remy".into()),
-                app_token: None,
-            },
+            &MsgBindParams::member("ac-software-engineer-remy"),
             json!({"member": "ac-software-engineer-remy"}),
         );
+        // The retired `app_token` is refused on presence, whatever its value, and the error
+        // never quotes it.
+        for value in [json!(token_hex()), json!(null), json!("not hex"), json!(7)] {
+            let err = serde_json::from_value::<MsgBindParams>(
+                json!({"member": "owner", "app_token": value}),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains(crate::retired::APP_TOKEN_RETIRED), "{err}");
+            assert!(!err.contains(&token_hex()[..8]), "{err}");
+        }
         empty_decodes::<MsgBindParams>();
         // Both names at once don't decode (a server answers `invalid_request`).
         assert!(
@@ -1474,10 +1475,7 @@ mod tests {
         // `agent` (the ADR's name) is read as `member`; `member` is what's written.
         assert_eq!(
             serde_json::from_value::<MsgBindParams>(json!({"agent": "x"})).unwrap(),
-            MsgBindParams {
-                member: Some("x".into()),
-                app_token: None,
-            }
+            MsgBindParams::member("x")
         );
         check(
             &MsgBindResult {
@@ -2213,10 +2211,7 @@ mod tests {
 
     #[test]
     fn debug_never_prints_bodies_meta_or_tokens() {
-        let bind = MsgBindParams {
-            member: Some("owner".into()),
-            app_token: Some(AppToken::from_bytes(token_bytes())),
-        };
+        let bind = MsgBindParams::member("owner");
         let shown = [
             format!("{:?}", message()),
             format!(
@@ -2247,7 +2242,8 @@ mod tests {
             assert!(s.contains(&format!("<{} bytes>", BODY.len())), "{s}");
             assert!(s.contains("<1 keys>"), "{s}");
         }
-        assert!(shown[6].contains("redacted"), "{}", shown[6]);
+        // A bind carries no secret: the retired token field has no values.
+        assert!(shown[6].contains("retired_token: None"), "{}", shown[6]);
     }
 
     #[test]

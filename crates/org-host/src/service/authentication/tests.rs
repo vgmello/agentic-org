@@ -125,7 +125,7 @@ fn inspected_session_uses_current_protected_facts_and_monotonic_absolute_limit()
 #[test]
 fn issued_grant_absolute_expiry_and_idle_or_eof_revoke_without_another_signin() {
     use hmac::{Hmac, Mac};
-    use org_office_launch::v3::{self, TransferRecord};
+    use org_office_launch::TransferRecord;
     for ending in ["absolute", "idle", "eof"] {
         let (_root, auth, connection) = fixture();
         let result = login(&auth, &connection);
@@ -180,10 +180,10 @@ fn issued_grant_absolute_expiry_and_idle_or_eof_revoke_without_another_signin() 
         }
         let auth = Arc::new(auth);
         let _lifecycle = Lifecycle::start(&auth).unwrap();
-        let mut bytes = [0; v3::TRANSFER_HEADER_MAX_BYTES];
+        let mut bytes = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
         let n = worker.recv(&mut bytes).unwrap();
         assert!(
-            matches!(v3::decode_transfer_record(&bytes[..n]).unwrap(),TransferRecord::Revoked {session_ids} if session_ids==[session_id])
+            matches!(org_office_launch::decode_transfer_record(&bytes[..n]).unwrap(),TransferRecord::Revoked {session_ids} if session_ids==[session_id])
         );
         assert!(auth.sessions.lock().unwrap().is_empty());
         assert!(auth
@@ -199,7 +199,7 @@ fn issued_grant_absolute_expiry_and_idle_or_eof_revoke_without_another_signin() 
 #[test]
 fn protected_account_changes_revoke_both_independently_issued_session_grants() {
     use hmac::{Hmac, Mac};
-    use org_office_launch::v3::{self, TransferRecord};
+    use org_office_launch::TransferRecord;
     for revoke in [false, true] {
         let (_root, auth, first_connection) = fixture();
         let second_connection = Connection::for_test();
@@ -256,10 +256,10 @@ fn protected_account_changes_revoke_both_independently_issued_session_grants() {
         let auth = Arc::new(auth);
         let _lifecycle = Lifecycle::start(&auth).unwrap();
         for (endpoint, worker, _control, session_id) in issued {
-            let mut bytes = [0; v3::TRANSFER_HEADER_MAX_BYTES];
+            let mut bytes = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
             let n = worker.recv(&mut bytes).unwrap();
             assert!(matches!(
-                v3::decode_transfer_record(&bytes[..n]).unwrap(),
+                org_office_launch::decode_transfer_record(&bytes[..n]).unwrap(),
                 TransferRecord::Revoked { session_ids } if session_ids == [session_id]
             ));
             assert!(endpoint.is_live(), "revocation leaves accepted work intact");
@@ -665,7 +665,7 @@ fn session_64_cross_office_permissions_prune_physical_closure_before_limit_65() 
 #[test]
 fn actual_close_denies_grants_and_logout_revokes_without_freeing_a_held_descriptor() {
     use crate::supervisor::channels::tests::{await_closed, worker_fixture};
-    use org_office_launch::v3::ChannelKind;
+    use org_office_launch::ChannelKind;
     let (_root, auth, connection) = fixture();
     let signed_in = login(&auth, &connection);
     link_owner(&auth, &connection, &signed_in.session);
@@ -709,7 +709,7 @@ fn actual_close_denies_grants_and_logout_revokes_without_freeing_a_held_descript
         "logout ends permission, not physical peer ownership"
     );
     let _held: Vec<_> = (0..7)
-        .map(|_| worker.endpoint.open(ChannelKind::Gateway).unwrap())
+        .map(|_| worker.endpoint.open(ChannelKind::Web).unwrap())
         .collect();
     assert!(worker.endpoint.open(ChannelKind::Local).is_err());
     drop(stream);

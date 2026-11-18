@@ -1,6 +1,6 @@
 //! What a code signature must show before the host trusts a program with a secret: the desktop
-//! app (`app_auth`, an app token), its office servers (`server_check`, a database key), and the
-//! host itself (`keys`, its Keychain access group).
+//! app (`app_auth`, its `admin` and `recovery` calls), its office servers (`server_check`, an
+//! office secrets key), and the host itself (`keys`, its Keychain access group).
 //!
 //! This is the policy: the Developer ID requirement text, the hardened-runtime flag and the
 //! rejected entitlements. Signatures are read and checked by the platform's admission adapter
@@ -80,7 +80,7 @@ pub(crate) const HARDENED: SigningRule = SigningRule {
     absent_entitlements: &[],
 };
 
-/// Whether signed code may get a secret (an app token, a database key): it runs with the hardened runtime and has none of
+/// Whether signed code may get a secret (an office secrets key): it runs with the hardened runtime and has none of
 /// the [`REJECTED_ENTITLEMENTS`] (one that's present with any value but `false` counts). Missing
 /// flags fail closed.
 pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {

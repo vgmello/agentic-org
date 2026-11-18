@@ -409,3 +409,34 @@ fn line_breaks_and_hidden_text_are_flagged_but_joiners_and_marks_are_not() {
         assert!(!is_invisible_or_break(c), "{:04x}", c as u32);
     }
 }
+
+#[test]
+fn a_bare_mapping_is_read_with_the_front_matter_rules() {
+    let read = |yaml: &str| parse_mapping(yaml).map(Value::Object);
+    let reason = |yaml: &str| parse_mapping(yaml).expect_err(yaml).reason;
+    assert_eq!(
+        read("a: 1\nb:\n  - x\n  - \"no\"\n"),
+        Ok(json!({"a": 1, "b": ["x", "no"]}))
+    );
+    // A byte-order mark, a document marker, Windows line ends and an end marker are read.
+    assert_eq!(
+        read("\u{feff}---\r\na: no\r\n...\r\n"),
+        Ok(json!({"a": "no"}))
+    );
+    // A `---` line is a document marker here, not a fence: a second one is a second document.
+    assert_eq!(reason("a: 1\n---\nb: 2\n"), Reason::MultipleDocuments);
+    assert_eq!(read(""), Ok(json!({})));
+    assert_eq!(read("\n# only a comment\n"), Ok(json!({})));
+    assert_eq!(reason("- a\n- b\n"), Reason::NotAMapping);
+    assert_eq!(reason("just text\n"), Reason::NotAMapping);
+    assert_eq!(reason("a: 1\na: 2\n"), Reason::DuplicateKey);
+    assert_eq!(reason("a: &x 1\n"), Reason::Anchor);
+    assert_eq!(reason("a: !!str 1\n"), Reason::Tag);
+    let error = parse_mapping("a:\n  b: !x 1\n").expect_err("a tag");
+    assert_eq!((error.field.as_str(), error.reason), ("a.b", Reason::Tag));
+    // The size bound is the front matter's, counted on the text after the byte-order mark.
+    let at_bound = format!("a: \"{}\"", "x".repeat(MAX_FRONT_MATTER_BYTES - 5));
+    assert_eq!(at_bound.len(), MAX_FRONT_MATTER_BYTES);
+    assert!(parse_mapping(&format!("\u{feff}{at_bound}")).is_ok());
+    assert_eq!(reason(&format!("{at_bound} ")), Reason::TooLarge);
+}

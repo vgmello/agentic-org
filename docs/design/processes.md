@@ -8,6 +8,20 @@ inherited, and what an agent receives. The records are owned by
 [record contracts](organization-data/08-record-contracts.md). The screens are in the
 [processes UX](../specs/processes-ux.md).
 
+The owner's definitions (2026-11-18), which the product keeps visibly apart:
+
+- An **organization process** says how the organization handles something, whatever is
+  being built: the PCI process, the PII process, "before you commit, run these checks".
+- A **standard** says what the organization uses and how it builds and runs things:
+  which technologies and tools, the deployment pattern, how we deploy.
+
+Both are the organization's, both use the envelope and inheritance below, and this
+design is the specification for both. A project's
+[development process](development-processes.md) is a different primitive (owner,
+2026-11-18): it says how a project builds software, with roles, stages, skills,
+document kinds and tabs. The two are stored, edited and delivered separately, and
+neither inherits from or replaces the other (decision 9).
+
 ## Decisions
 
 1. **Storage.** Process and standard documents live in the remote organization
@@ -50,7 +64,9 @@ inherited, and what an agent receives. The records are owned by
    - **How to use the tools.** Guidance for the product's own commands ships with
      the product as built-in skills, not as organization documents. An agent reads
      them with `agent-os skill list` and `skill read`. None of it is served as an
-     MCP tool ([agent command line](agent-os-command-line.md), section 2.10).
+     MCP tool ([agent command line](agent-os-command-line.md), section 2.10). How
+     an agent is to behave in the product is one built-in text, the
+     [agent instructions](agent-instructions.md), which every agent receives first.
    - **Field name.** The record field is `overridable`, default `true`.
 5. **Code branch bases.** Every project-repository association has a required
    `integration_branch`. A task targets zero or more repositories, so branch, base
@@ -64,6 +80,23 @@ inherited, and what an agent receives. The records are owned by
    rule), approval workflows, private processes, timers, moments, checklist
    composition from processes, and a process execution engine. The product tells the
    agent what binds it; it does not block an action for breaking a process.
+8. **Agents of a project's team add to its documents.** An agent whose home team is
+   the project's owning team, or a team beneath it, may create and change process and
+   standard documents at that project's scope, so that decisions taken while building
+   become standards
+   ([desired state design](desired-state-specifications.md#4-standards-as-a-byproduct)).
+   It adds documents with new keys and changes the project's own. It cannot replace a
+   document inherited from the organization or a team, cannot mark a document not
+   overridable, and cannot write at team or organization scope. Those stay with
+   people. An agent from another team that holds a task in the project cannot write
+   them.
+9. **Organization processes and a development process are two primitives.** A
+   development process's skills do not enter this resolution: they have no level, no
+   key to override and no override lock. An agent working in a project receives both,
+   in separate sections of its instructions. Organization processes say how agents
+   interact and work in general; a development process may adjust that overridable
+   guidance for its project. A non-overridable document is must-follow as always and
+   no skill changes it.
 
 ## 1. Where each thing lives
 
@@ -257,9 +290,18 @@ write names the expected revision, and a change that lost a race is `conflict`.
 Authority comes from the authenticated caller, never from an owner or status field
 in the document.
 
+People write at every scope. An agent writes only at the scope of a project whose
+owning team is its home team or an ancestor of it (decision 8). This is narrower than
+the boundary for reading a project's documentation: holding a task in a project, or
+belonging to a contributing team, is not enough to change what every agent on the
+project is told. A write from an agent is refused with `not_authorized` when it names
+a team or the organization, sets `overridable: false`, or uses the key of a document
+inherited from the organization or a team.
+
 ## 6. The contract
 
-Reads, for any employee bound to the organization:
+The four reads are for any employee bound to the organization; the write follows
+section 5:
 
 | Call | Params | Result | Errors |
 | --- | --- | --- | --- |
@@ -267,11 +309,13 @@ Reads, for any employee bound to the organization:
 | `process.why` | `key`, `employee_id?`, `for?` | `{ key, chain: Vec<Layer>, winner? }` | as above |
 | `process.show` | `key`, `employee_id?`, `for?`; or `document_id`, `revision?`; `offset?` | `{ path, commit, blob, revision, content (≤ 512 KiB), total_bytes, next_offset? }` | as above |
 | `process.view` | `scope: organization \| team { team_id } \| project { project_id }` | `{ rows, indexed_commit, stale_since? }` (PROC-9, PROC-10) | as above |
+| `process.write` | `document_id?`, `kind`, `scope`, front matter and body, `expected_revision?` | `{ document_id, revision }` | `invalid_request` (`sealed`), `already_exists`, `conflict`, `not_authorized` |
 
 `for` is `current` (default), `project { project_id }` or `task { task_id }`. The
-`agent-os` commands `process list` and `process inspect` (with `--why`) call these, for
+`agent-os` commands `process list` and `process inspect` (with `--why`) call the reads, for
 processes and standards alike ([agent command line](agent-os-command-line.md), section
-3.5). The
+3.5); `process create` and `process update` call the write for a project of the
+agent's own team (decision 8). The
 local API version is 1 and these calls change in place until v1 ships.
 
 The result of `task.set_status` names a branch left with unmerged work at a close
@@ -291,7 +335,8 @@ share the rule as `org_proto::has_reserved_branch_prefix`.
 - **`org-office`:** the index, caches, branch records, the calls and the checks
   inside the work write.
 - **`org-git`:** repository reads, branch creation at a commit and cleanup.
-- **`agent-os`:** the `process` and `skill` read commands.
+- **`agent-os`:** the `process` and `skill` read commands, and `process create` and
+  `process update` for a project of the agent's own team.
 - **`apps/agentic-org-ui`:** the Processes views and the profile tab.
 
 ## 8. Tests that prove the rules
@@ -301,7 +346,13 @@ Each test fails without its rule.
 - **Resolution:** matching by key, never by ID; level order; the nearer team wins;
   a non-overridable organization or team document refuses lower replacements; a
   clashed or unreadable non-overridable key stays non-overridable; contributing teams
-  add nothing; drafts and deprecated documents never apply.
+  add nothing; drafts and deprecated documents never apply; a development process's
+  skills never appear in an effective set.
+- **Writes by agents:** a project-scope write that adds a key or changes a project
+  document is accepted from an agent of the project's team; it is refused from an
+  agent that only holds a task there or belongs to a contributing team, for another
+  project, a team or the organization, with `overridable: false`, and for a key
+  inherited from above.
 - **Delivery:** every non-overridable document is delivered in full whatever its
   size; a non-overridable set over the budget refuses the launch and names the
   documents; the overridable cap and order hold; a fresh context gets the manifest
@@ -325,4 +376,5 @@ Each test fails without its rule.
 `checklist`), resolves several team chains with conflict rules, renders a section
 and implements one-open-branch checks for a single repository. Nothing calls it. It is
 simplified to the one-chain rule and the envelope above when the agent launch path is
-built (implementation plan C5). The UI's Processes screens run on sample data.
+built (implementation plan C5). The write call for agents comes with L12. The UI's
+Processes screens run on sample data.

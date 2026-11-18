@@ -27,7 +27,7 @@ contradict it.
   required project, at most one same-project feature, release or deployment scope,
   stable UUIDv7 ID, schema and revision, title, `kind: report`,
   `status: draft | current | deprecated`, owner and attribution. A project report is
-  at `projects/<project-id>/reports/<document-id>.md`. Dates belong in metadata, not
+  a document in the project's documentation tree, by default under `docs/reports/`. Dates belong in metadata, not
   identity.
 - A shared report file has no cost amounts or budget figures. It may say "Budget
   reached", show tokens and link to the app, where document 17 and COST-7 decide who

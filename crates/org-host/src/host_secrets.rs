@@ -1,4 +1,4 @@
-//! Host registry/TLS/recovery custody, separate from office database keys and their sweep.
+//! Host registry/TLS/recovery custody, separate from office secrets keys and their sweep.
 //!
 //! [`HostSecrets`] is a typed view ([`Custody`]) over one credential store of the platform
 //! (`org_platform_host::credentials`). The view keeps what is the host's own: which names exist

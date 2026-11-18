@@ -199,8 +199,8 @@ test('OFC-11: a stopped office says why, in its row and in its details, with Cop
 });
 
 test('OFC-11: other reasons have their words; no reason reads "It isn’t running"', async ({ page }) => {
-	await openOffices(page, 'key_missing');
-	await expect(rows(page).first()).toContainText("This office's key isn't available on this Mac");
+	await openOffices(page, 'stopped_by_owner');
+	await expect(rows(page).first()).toContainText('You stopped it');
 	const other = await page.context().newPage();
 	await visit(other, '/create?office=unknown');
 	await other.getByLabel('Organization name').fill('Beta');
@@ -236,10 +236,10 @@ test('OFC-11: Restart office brings a crashed office back, and the row reads Onl
 	await expect(sheet.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
 });
 
-test('OFC-11: a missing key says Try again', async ({ page }) => {
-	await openOffices(page, 'key_missing');
+test('OFC-11: an office the owner stopped says Start office', async ({ page }) => {
+	await openOffices(page, 'stopped_by_owner');
 	await rows(page).first().getByRole('button').first().click();
-	await expect(page.getByRole('dialog').getByTestId('restart-office')).toHaveText('Try again');
+	await expect(page.getByRole('dialog').getByTestId('restart-office')).toHaveText('Start office');
 });
 
 test('OFC-11: a host that is still starting says so and the button comes back', async ({ page }) => {

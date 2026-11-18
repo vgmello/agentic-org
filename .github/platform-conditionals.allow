@@ -15,7 +15,7 @@
 # The list is empty when Track X is complete (increment X6).
 apps/agentic-org-office/src/startup/tests.rs 8
 apps/agentic-org-office/src/transfer/tests.rs 4
-apps/agentic-org-office/tests/launch/v3_activation/transfer.rs 3
+apps/agentic-org-office/tests/launch/activation/transfer.rs 3
 apps/agentic-org-web/src/transport/server/tests.rs 2
 crates/org-host/src/server_check.rs 2
 crates/org-office/src/store/acceptance/tests.rs 2

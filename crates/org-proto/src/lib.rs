@@ -4,7 +4,7 @@
 //! through `org-client`, and the agent CLI `agent-os`). There are two kinds of server:
 //! - **The host** (`org-host`), the one login service on a machine. It supervises the
 //!   office servers and answers `hello`, `organization.create`, `organization.list`,
-//!   `office.list`, `office.app_token`, `office.restart` and `subscribe` (it emits
+//!   `office.list`, `office.restart` and `subscribe` (it emits
 //!   `organization.created` and `office.status_changed`).
 //!   Its `hello` lists in `capabilities` the optional calls and events it implements
 //!   ([`capability`]), so a client checks before relying on one.
@@ -18,7 +18,7 @@
 //! in on. **App-only** calls are refused on any other connection with `not_authorized`: every
 //! organization command ([`org`]) and `work.delete` ([`work`]). Every work call needs a bound
 //! connection (`not_bound` otherwise), and acts as the member it is bound as.
-//! On the host, for an app-only call (`office.app_token`, `office.restart`), the client rule: a
+//! On the host, for an app-only call (`office.restart`), the client rule: a
 //! client reads `hello`'s answer before sending an app-only call, and sends nothing else on that
 //! connection until its answer arrives. First thing in the app's main, before any output or
 //! threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket; the app never reads or
@@ -110,9 +110,8 @@ mod wire;
 
 pub use calls::{
     capability, ApiRange, Call, Empty, Hello, HelloParams, HelloResult, ListOfficesResult,
-    ListOrganizationsResult, OfficeAppToken, OfficeAppTokenParams, OfficeAppTokenResult,
-    OfficeHello, OfficeList, OfficeRestart, OfficeRestartParams, OrganizationCreate,
-    OrganizationCreateParams, OrganizationList, Subscribe, SubscribeParams,
+    ListOrganizationsResult, OfficeHello, OfficeList, OfficeRestart, OfficeRestartParams,
+    OrganizationCreate, OrganizationCreateParams, OrganizationList, Subscribe, SubscribeParams,
 };
 pub use directory::ManagedHome;
 pub use error::{ApiError, CallError, ErrorCode};
@@ -138,8 +137,8 @@ pub use recovery::RecoveryCode;
 pub use retired::Retired;
 pub use token::zero as zero_bytes;
 pub use token::{
-    AppToken, DbKey, GrantKey, GrantMac, APP_TOKEN_BYTES, DB_KEY_BYTES, GRANT_KEY_BYTES,
-    GRANT_MAC_BYTES,
+    GrantKey, GrantMac, OfficeSecretsKey, GRANT_KEY_BYTES, GRANT_MAC_BYTES,
+    OFFICE_SECRETS_KEY_BYTES,
 };
 pub use types::{
     OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization,

@@ -14,8 +14,8 @@ mod stream;
 mod views;
 
 pub use outcome::{
-    CommandEnvelope, CreateState, GatewayError, GatewayErrorCode, MutationOutcome, OperationId,
-    OperationLookup, ReadResponse, ResourceAccess,
+    CommandEnvelope, CreateState, CredentialField, CredentialRule, GatewayError, GatewayErrorCode,
+    MutationOutcome, OperationId, OperationLookup, ReadResponse, ResourceAccess,
 };
 pub use session::{
     AccountView, OrganizationLink, SecretText, SessionEstablished, SessionProof, SessionView,

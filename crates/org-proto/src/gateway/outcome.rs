@@ -178,6 +178,33 @@ pub struct GatewayError {
     pub operation_id: Option<OperationId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<super::CancelState>,
+    /// With `invalid_request` for a credential rule: the input that failed. Always paired with `rule`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<CredentialField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<CredentialRule>,
+}
+
+/// The credential input a rule refusal names. Unknown names decode to `unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialField {
+    Login,
+    Password,
+    #[serde(other)]
+    Unknown,
+}
+
+/// The host's credential rule that refused the input. Unknown names decode to `unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialRule {
+    Format,
+    Taken,
+    TooShort,
+    TooLong,
+    #[serde(other)]
+    Unknown,
 }
 
 impl<'de> Deserialize<'de> for GatewayError {
@@ -194,10 +221,17 @@ impl<'de> Deserialize<'de> for GatewayError {
             operation_id: Option<OperationId>,
             #[serde(default)]
             state: Option<super::CancelState>,
+            #[serde(default)]
+            field: Option<CredentialField>,
+            #[serde(default)]
+            rule: Option<CredentialRule>,
         }
         let raw = Object::<Raw>::deserialize(d)?.0;
         if raw.code == GatewayErrorCode::RateLimited && raw.retry_after_ms.is_none() {
             return Err(D::Error::custom("rate_limited requires retry_after_ms"));
+        }
+        if raw.field.is_some() != raw.rule.is_some() {
+            return Err(D::Error::custom("field and rule come together"));
         }
         Ok(Self {
             code: raw.code,
@@ -206,6 +240,8 @@ impl<'de> Deserialize<'de> for GatewayError {
             session_reason: raw.session_reason,
             operation_id: raw.operation_id,
             state: raw.state,
+            field: raw.field,
+            rule: raw.rule,
         })
     }
 }
@@ -230,6 +266,8 @@ impl GatewayError {
             session_reason: None,
             operation_id: None,
             state: None,
+            field: None,
+            rule: None,
         }
     }
 
@@ -287,7 +325,23 @@ impl From<crate::ApiError> for GatewayError {
         let code = serde_json::to_value(error.code)
             .and_then(serde_json::from_value)
             .unwrap_or(GatewayErrorCode::Unknown);
-        Self::new(code, error.message)
+        let mut out = Self::new(code.clone(), error.message);
+        // Only a rate limit carries a delay; only an input refusal names a rule.
+        // A pair either side cannot name is dropped whole rather than half-sent.
+        if code == GatewayErrorCode::RateLimited {
+            out.retry_after_ms =
+                super::Milliseconds::new(error.retry_after_ms.unwrap_or(0).min((1 << 53) - 1)).ok();
+        }
+        if code == GatewayErrorCode::InvalidRequest {
+            fn named<T: DeserializeOwned>(text: Option<String>) -> Option<T> {
+                text.and_then(|t| serde_json::from_value(Value::String(t)).ok())
+            }
+            if let (Some(field), Some(rule)) = (named(error.field), named(error.rule)) {
+                out.field = Some(field);
+                out.rule = Some(rule);
+            }
+        }
+        out
     }
 }
 

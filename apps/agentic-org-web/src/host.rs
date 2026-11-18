@@ -2,7 +2,13 @@
 //! web process transfer descriptor from the reviewed handoff is held for the
 //! connection's lifetime; the web process opens no office channel on it and
 //! sends no office channel request. No host.sock/path fallback, office key or
-//! registry access. Browser sessions are not served here until FC-159.
+//! registry access.
+//!
+//! The actor is the connection's one ordered reader (A3 B5): host replies and
+//! host events (`session.ended`) are applied in arrival order on its thread,
+//! also while idle. A call may carry a hook that runs on that thread with its
+//! reply before the next frame is read, so a cache insert from a validate reply
+//! is always followed by any `session.ended` the host wrote after it.
 use org_host_control::ops;
 use org_proto::Call;
 use org_socket::rights::{ReceiveError, StreamReceiver};
@@ -36,12 +42,22 @@ const MAX_CONTROL_BYTES: usize = org_proto::MAX_FRAME_BYTES;
 static SPAWN_FENCE: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 mod tests;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failure {
     Denied,
     NotFound,
     Unavailable,
+    /// A host refusal the browser may see as is: an input rule
+    /// (`invalid_request` with `field`/`rule`) or a rate limit with its delay.
+    Refused(Box<org_proto::ApiError>),
 }
+/// Applies a host event (`name`, `data`) on the reader thread, in arrival order.
+pub type EventSink = Arc<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
+/// Runs on the reader thread with a call's successful reply bytes and id.
+type Hook = Box<dyn FnOnce(u64, &[u8]) + Send>;
+/// Each admitted connection gets a new generation; a cache entry is valid only
+/// for the generation whose reader inserted it.
+static GENERATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 struct Reply {
     bytes: Zeroizing<Vec<u8>>,
 }
@@ -71,12 +87,15 @@ struct Job {
     line: Zeroizing<Vec<u8>>,
     until: Instant,
     answer: SyncSender<Result<Reply, Failure>>,
+    id: u64,
+    hook: Option<Hook>,
     /// Claimed once, by the actor taking the job or by the caller abandoning
     /// it. An abandoned job is never written, so the stream stays in step.
     claimed: Arc<AtomicBool>,
 }
 pub struct HostControl {
     instance: String,
+    generation: u64,
     live: Arc<AtomicBool>,
     socket: UnixStream,
     jobs: SyncSender<Job>,
@@ -106,6 +125,14 @@ fn decode<T: DeserializeOwned>(bytes: &[u8], id: u64, desync: &dyn Fn()) -> Resu
         (Some(result), None) => Ok(result),
         (None, Some(e)) if e.code == org_proto::ErrorCode::NotAuthorized => Err(Failure::Denied),
         (None, Some(e)) if e.code == org_proto::ErrorCode::NotFound => Err(Failure::NotFound),
+        (None, Some(e))
+            if matches!(
+                e.code,
+                org_proto::ErrorCode::InvalidRequest | org_proto::ErrorCode::RateLimited
+            ) =>
+        {
+            Err(Failure::Refused(Box::new(e)))
+        }
         _ => Err(Failure::Unavailable),
     }
 }
@@ -157,6 +184,7 @@ impl HostControl {
         transfer: OwnedFd,
         instance: String,
         fatal: Arc<dyn Fn() + Send + Sync>,
+        events: EventSink,
     ) -> io::Result<Arc<Self>> {
         let socket = org_socket::rights::connected_unix_stream(control)?;
         let transfer = org_socket::rights::unix_datagram(transfer)?;
@@ -170,11 +198,12 @@ impl HostControl {
         thread::Builder::new()
             .name("web-host-control".into())
             .spawn(move || {
-                actor(writer, receiver, pending, &alive, &*fatal);
+                actor(writer, receiver, pending, &alive, &*fatal, &*events);
                 alive.store(false, Ordering::SeqCst);
             })?;
         let control = Arc::new(Self {
             instance,
+            generation: GENERATIONS.fetch_add(1, Ordering::SeqCst),
             live,
             socket,
             jobs,
@@ -193,6 +222,25 @@ impl HostControl {
     }
     pub fn instance(&self) -> &str {
         &self.instance
+    }
+    /// This connection's generation (see [`GENERATIONS`]).
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    /// A host call; `C` must be an op the host serves on the web connection.
+    pub fn request<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
+        self.call::<C>(params)
+    }
+    /// Like [`request`](Self::request), and `hook` runs on the reader thread
+    /// with the decoded reply before the next host frame is applied. It does
+    /// not run when the call is refused unwritten or the connection fails.
+    pub fn request_then<C: Call>(
+        &self,
+        params: &C::Params,
+        hook: impl FnOnce(&Result<C::Result, Failure>) + Send + 'static,
+    ) -> Result<C::Result, Failure> {
+        let hook: Hook = Box::new(move |id, bytes| hook(&decode::<C::Result>(bytes, id, &|| {})));
+        self.hooked::<C, C::Params>(params, Instant::now() + DEADLINE, Some(hook))
     }
     /// Configuration for the listener received on this admitted connection only.
     pub fn fetch_listener(&self) -> Result<ops::TlsFetchResult, Failure> {
@@ -229,6 +277,14 @@ impl HostControl {
         params: &T,
         until: Instant,
     ) -> Result<C::Result, Failure> {
+        self.hooked::<C, T>(params, until, None)
+    }
+    fn hooked<C: Call, T: Serialize>(
+        &self,
+        params: &T,
+        until: Instant,
+        hook: Option<Hook>,
+    ) -> Result<C::Result, Failure> {
         #[derive(Serialize)]
         struct Request<'a, T> {
             id: u64,
@@ -255,6 +311,8 @@ impl HostControl {
                 })?,
                 until,
                 answer,
+                id,
+                hook,
                 claimed: Arc::clone(&claimed),
             })
             .map_err(|_| Failure::Unavailable)?;
@@ -299,26 +357,68 @@ impl Drop for HostControl {
         self.close();
     }
 }
+/// Reads one frame (up to `\n`) by `until`.
+fn read_frame(
+    receiver: &mut StreamReceiver,
+    until: Instant,
+    fatal: &dyn Fn(),
+) -> Result<Reply, Failure> {
+    let mut reply = Reply::new();
+    loop {
+        readable(receiver.fd().ok_or(Failure::Unavailable)?, until)?;
+        let (b, _) = receiver
+            .receive_byte(0, &SPAWN_FENCE)
+            .map_err(|e| receive_error(e, fatal))?;
+        if b == b'\n' {
+            return Ok(reply);
+        }
+        reply.push(b)?;
+    }
+}
+/// A host event frame: `{"event", "seq", "data"}` with no `id`.
+fn event(bytes: &[u8]) -> Option<(String, serde_json::Value)> {
+    #[derive(Deserialize)]
+    struct Frame {
+        event: String,
+        #[allow(dead_code)]
+        seq: u64,
+        #[serde(default)]
+        data: serde_json::Value,
+    }
+    let frame: Frame = serde_json::from_slice(bytes).ok()?;
+    Some((frame.event, frame.data))
+}
 fn actor(
     mut writer: UnixStream,
     mut receiver: StreamReceiver,
     pending: mpsc::Receiver<Job>,
     live: &AtomicBool,
     fatal: &dyn Fn(),
+    events: &dyn Fn(&str, &serde_json::Value),
 ) {
     while live.load(Ordering::SeqCst) {
         let job = match pending.recv_timeout(Duration::from_millis(100)) {
             Ok(job) => job,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Readable while idle means EOF or an unsolicited frame: either
-                // ends this connection.
-                if receiver.fd().is_none_or(|fd| {
+                // Readable while idle: a host event is applied now; EOF or
+                // any other frame ends this connection.
+                let ready = receiver.fd().is_none_or(|fd| {
                     org_socket::poll_readable(fd.as_raw_fd(), Duration::ZERO).unwrap_or(true)
-                }) {
-                    break;
+                });
+                if !ready {
+                    continue;
                 }
-                continue;
+                match read_frame(&mut receiver, Instant::now() + DEADLINE, fatal)
+                    .ok()
+                    .and_then(|frame| event(&frame.bytes))
+                {
+                    Some((name, data)) => {
+                        events(&name, &data);
+                        continue;
+                    }
+                    None => break,
+                }
             }
         };
         // Expired or nearly expired jobs stay unclaimed and unwritten: a caller
@@ -333,20 +433,19 @@ fn actor(
             writer
                 .write_all(&job.line)
                 .map_err(|_| Failure::Unavailable)?;
-            let mut reply = Reply::new();
             loop {
-                readable(receiver.fd().ok_or(Failure::Unavailable)?, job.until)?;
-                let (b, _) = receiver
-                    .receive_byte(0, &SPAWN_FENCE)
-                    .map_err(|e| receive_error(e, fatal))?;
-                if b == b'\n' {
-                    break;
+                let frame = read_frame(&mut receiver, job.until, fatal)?;
+                // Events written before this reply are applied first, in order.
+                match event(&frame.bytes) {
+                    Some((name, data)) => events(&name, &data),
+                    None => return Ok(frame),
                 }
-                reply.push(b)?;
             }
-            Ok(reply)
         })();
         let failed = result.is_err();
+        if let (Ok(reply), Some(hook)) = (&result, job.hook) {
+            hook(job.id, &reply.bytes);
+        }
         let _ = job.answer.send(result);
         if failed {
             break;
