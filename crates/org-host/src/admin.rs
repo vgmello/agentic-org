@@ -198,15 +198,16 @@ impl Admin {
             return Err(set_password_unavailable());
         }
         confirm().map_err(|()| denied())?;
-        // Re-checked after the dialog: an administrator may have registered meanwhile.
-        if self.db.administrator_exists().map_err(unavailable)? {
-            return Err(set_password_unavailable());
-        }
-        let issued = self
+        // Re-checked after the dialog, in the transaction that issues the link: an
+        // administrator may have registered meanwhile.
+        match self
             .db
-            .issue(LinkKind::Registration, &subject()?, wall()?)
-            .map_err(unavailable)?;
-        self.issued(issued)
+            .issue_unless_administrator(LinkKind::Registration, &subject()?, wall()?)
+            .map_err(unavailable)?
+        {
+            Some(issued) => self.issued(issued),
+            None => Err(set_password_unavailable()),
+        }
     }
 
     /// The link URL is built from the instance's own configured origin; the token goes after

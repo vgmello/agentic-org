@@ -204,3 +204,57 @@ fn a_dialog_that_sees_a_new_administrator_issues_nothing() {
         None
     );
 }
+
+#[test]
+fn a_reset_refused_for_an_administrator_keeps_the_pending_link() {
+    let (_home, admin) = admin();
+    let (_, _) = token(admin.reset_with(true, || Ok(())).unwrap());
+    let before = admin
+        .db
+        .pending(LinkKind::Registration, &subject(), 1)
+        .unwrap()
+        .expect("pending link");
+    let error = admin
+        .reset_with(true, || {
+            seed_administrator(&admin);
+            Ok(())
+        })
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Unavailable);
+    // The administrator check and the replacement share one transaction: a refused reset
+    // neither cancels the pending link nor writes a new one.
+    let after = admin
+        .db
+        .pending(LinkKind::Registration, &subject(), 1)
+        .unwrap()
+        .expect("still pending");
+    assert_eq!(after.link_id, before.link_id);
+}
+
+#[test]
+fn issue_unless_administrator_checks_and_writes_together() {
+    let (_home, admin) = admin();
+    let first = admin
+        .db
+        .issue_unless_administrator(LinkKind::Registration, &subject(), 10)
+        .unwrap()
+        .expect("issued with no administrator");
+    let second = admin
+        .db
+        .issue_unless_administrator(LinkKind::Registration, &subject(), 20)
+        .unwrap()
+        .expect("replaces the pending link");
+    assert_ne!(first.link_id, second.link_id);
+    seed_administrator(&admin);
+    assert!(admin
+        .db
+        .issue_unless_administrator(LinkKind::Registration, &subject(), 30)
+        .unwrap()
+        .is_none());
+    let pending = admin
+        .db
+        .pending(LinkKind::Registration, &subject(), 31)
+        .unwrap()
+        .expect("unchanged");
+    assert_eq!(pending.link_id, second.link_id);
+}

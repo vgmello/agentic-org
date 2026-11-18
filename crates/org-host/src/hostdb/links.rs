@@ -3,8 +3,8 @@ use rusqlite::{ErrorCode, OptionalExtension, TransactionBehavior};
 
 use super::HostDb;
 use crate::links::{
-    redeem_rule, Error, LinkDigest, LinkKind, NewLink, OneTimeLinks, Pending, Refused, StoreFault,
-    Subject,
+    redeem_rule, Error, Issued, LinkDigest, LinkKind, NewLink, OneTimeLinks, Pending, Refused,
+    StoreFault, Subject,
 };
 
 pub(super) const DDL: &str = r#"
@@ -39,6 +39,53 @@ fn poisoned<T>(_: T) -> Error {
     Error::Store(StoreFault::Poisoned)
 }
 
+/// Cancels the pending link of the same kind and subject and inserts `link`, inside `tx`.
+fn replace(tx: &rusqlite::Transaction<'_>, link: &NewLink<'_>) -> Result<(), Error> {
+    tx.execute(
+        "UPDATE one_time_links SET state='cancelled', ended_at_ms=?3 WHERE kind=?1 AND subject=?2 AND state='pending'",
+        (link.kind.as_str(), link.subject.as_str(), link.issued_at_ms),
+    )
+    .map_err(store)?;
+    tx.execute(
+        "INSERT INTO one_time_links VALUES (?1,?2,?3,?4,?5,?6,'pending',NULL)",
+        (
+            link.link_id,
+            link.kind.as_str(),
+            link.subject.as_str(),
+            &link.digest.0[..],
+            link.issued_at_ms,
+            link.expires_at_ms,
+        ),
+    )
+    .map_err(store)?;
+    Ok(())
+}
+
+impl HostDb {
+    /// Issues a link that replaces the pending one only while no administrator exists. The
+    /// check and the write share one IMMEDIATE transaction, so an administrator registered
+    /// concurrently either precedes the check (nothing issued) or follows the link.
+    pub(crate) fn issue_unless_administrator(
+        &self,
+        kind: LinkKind,
+        subject: &Subject,
+        now_ms: i64,
+    ) -> Result<Option<Issued>, Error> {
+        crate::links::issue_with(&self.instance_id, kind, subject, now_ms, |link| {
+            let mut db = self.connection.lock().map_err(poisoned)?;
+            let tx = db
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(store)?;
+            if super::administrator::exists(&tx).map_err(store)? {
+                return Ok(false);
+            }
+            replace(&tx, &link)?;
+            tx.commit().map_err(store)?;
+            Ok(true)
+        })
+    }
+}
+
 impl OneTimeLinks for HostDb {
     fn instance_id(&self) -> &str {
         &self.instance_id
@@ -48,23 +95,7 @@ impl OneTimeLinks for HostDb {
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store)?;
-        tx.execute(
-            "UPDATE one_time_links SET state='cancelled', ended_at_ms=?3 WHERE kind=?1 AND subject=?2 AND state='pending'",
-            (link.kind.as_str(), link.subject.as_str(), link.issued_at_ms),
-        )
-        .map_err(store)?;
-        tx.execute(
-            "INSERT INTO one_time_links VALUES (?1,?2,?3,?4,?5,?6,'pending',NULL)",
-            (
-                link.link_id,
-                link.kind.as_str(),
-                link.subject.as_str(),
-                &link.digest.0[..],
-                link.issued_at_ms,
-                link.expires_at_ms,
-            ),
-        )
-        .map_err(store)?;
+        replace(&tx, &link)?;
         tx.commit().map_err(store)
     }
     fn insert_first(&self, link: NewLink<'_>) -> Result<bool, Error> {
