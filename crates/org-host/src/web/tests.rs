@@ -1,7 +1,11 @@
-//! Supervisor and handoff unit tests. The real-process test (the host spawning the
-//! real `agentic-org-web`) needs the built web binary and is added separately.
+//! Supervisor and handoff unit tests. A test that must start a child starts a compiled
+//! one through the system's real admission: the fake web process of
+//! `examples/fake_web.rs`, or the real `agentic-org-web` built beside these tests. The
+//! tests of a whole host starting the real web process are in `web_process_tests.rs`.
 use super::*;
 use crate::service::listener::Connection;
+use crate::test_programs::{fake_web, image_identity, sibling_program};
+use org_platform_host::admission::ImageIdentity;
 use std::os::fd::OwnedFd;
 
 struct NoOps;
@@ -16,6 +20,22 @@ fn loopback() -> ListenConfig {
     .unwrap()
 }
 
+/// Starts the web process of `config` through an admission of its own, as the first start
+/// of a host does.
+fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Running> {
+    Running::start(config, &Image::new(&config.check, &config.program), handler)
+}
+
+/// This user's own copy of the fake web process (`examples/fake_web.rs`) in `dir`, named as
+/// the web process is, which takes `steps` when it is started.
+fn fake_program(dir: &Path, steps: &str) -> PathBuf {
+    let program = dir.join("agentic-org-web");
+    fs::copy(fake_web(), &program).unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(dir.join("agentic-org-web.steps"), steps).unwrap();
+    program
+}
+
 /// A supervisor log sink for tests that do not read the log.
 fn quiet(_: &str) {}
 
@@ -27,28 +47,31 @@ fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
-/// A child of `program` that a debug build's check admitted and that has not been let run:
-/// it stays alive (on macOS suspended) without running anything, until it is dropped.
-fn held_child(program: &str, args: &[&str]) -> org_platform_host::admission::Started {
-    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+/// A child that a debug build's check admitted and that has not been let run: the fake web
+/// process, from a copy in `dir`. It stays alive until it is dropped: on macOS suspended,
+/// without running anything; where a child runs from its start, its one step is to stay.
+fn held_child(dir: &Path) -> org_platform_host::admission::Started {
     let held = ServerCheck::Skip
-        .admission(Path::new(program))
+        .admission(&fake_program(dir, "stay\n"))
         .unwrap()
-        .start(&args, &ChildEnv::new(), &SPAWN_LOCK)
+        .start(&[], &ChildEnv::new(), &SPAWN_LOCK)
         .unwrap();
     org_platform_host::testing::admission::unreleased(held)
 }
 
+/// A release build without a team id: exactly one outcome per system, the one the
+/// platform's fact names.
 #[test]
 fn refused_web_start_never_becomes_ready() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let started = Supervisor::start(
         Configuration {
-            program: dir.path().join("agentic-org-web"),
+            // Never run: its first step would end it.
+            program: fake_program(dir.path(), "exit 1\n"),
             instance: "instance".into(),
             runtime: dir.path().to_owned(),
-            listen: loopback(),
+            listen: loopback_on(free_port()),
             check: ServerCheck::gateway_for_build(false, None).unwrap(),
             critical_paths: vec![],
             release: None,
@@ -57,13 +80,29 @@ fn refused_web_start_never_becomes_ready() {
         Arc::clone(&state),
         Arc::new(|| true),
     );
-    let Err(error) = started else {
-        panic!("a release build without a team never spawns")
+    let _supervisor = match image_identity() {
+        // No signature can be checked without a team: there is no supervisor at all.
+        ImageIdentity::CodeSignature => {
+            let Err(error) = started else {
+                panic!("a release build without a team never spawns")
+            };
+            // The log names the real cause and that it is the web process's check.
+            let message = error.to_string();
+            assert!(message.contains("web process"), "{message}");
+            assert!(message.contains("no app team id"), "{message}");
+            None
+        }
+        // Where the bytes are checked no team names anything: the supervisor starts, and
+        // each start is refused because no selected release names the image (the cause is
+        // asserted in the next test, on the start itself).
+        ImageIdentity::VerifiedBytes => {
+            let supervisor = started.expect("the check may spawn; the image is refused");
+            wait_for("the first refused start", || {
+                *lock(&state) == GatewayState::Failed
+            });
+            Some(supervisor)
+        }
     };
-    // The log names the real cause and that it is the web process's check.
-    let message = error.to_string();
-    assert!(message.contains("web process"), "{message}");
-    assert!(message.contains("no app team id"), "{message}");
     let observed = *lock(&state);
     assert_ne!(observed, GatewayState::Running);
     assert!(!crate::service::web_serving(true, true, observed));
@@ -73,24 +112,34 @@ fn refused_web_start_never_becomes_ready() {
 fn an_admission_refusal_inside_start_keeps_its_cause() {
     let dir = tempfile::tempdir().unwrap();
     let config = Configuration {
-        program: dir.path().join("agentic-org-web"),
+        program: fake_program(dir.path(), "exit 1\n"),
         instance: "instance".into(),
         runtime: dir.path().to_owned(),
-        listen: loopback(),
+        listen: loopback_on(free_port()),
         check: ServerCheck::gateway_for_build(false, None).unwrap(),
         critical_paths: vec![],
         release: None,
     };
-    let Err(error) = Running::start(&config, Arc::new(NoOps)) else {
-        panic!("a release build without a team never spawns")
+    let Err(error) = start(&config, Arc::new(NoOps)) else {
+        panic!("a release build without a team or a selected release never spawns")
     };
     // The supervisor logs this text, so the refusal cause must survive.
     let message = error.to_string();
-    assert!(
-        message.contains("web process admission refused"),
-        "{message}"
-    );
-    assert!(message.contains("no app team id"), "{message}");
+    match image_identity() {
+        ImageIdentity::CodeSignature => {
+            assert!(
+                message.contains("web process admission refused"),
+                "{message}"
+            );
+            assert!(message.contains("no app team id"), "{message}");
+        }
+        ImageIdentity::VerifiedBytes => assert_eq!(
+            message,
+            "web process admission refused at admission: this release build has no selected \
+             release, so nothing names the image it may start (a release image is checked \
+             against the digest in the signed release manifest)"
+        ),
+    }
 }
 
 /// A started web process: `live` is the child/control state, `reported` its `web.serving`.
@@ -630,43 +679,41 @@ fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
     );
 }
 
-/// A child script that reads the first line, connects to the rendezvous and
-/// sends `ready` as its ready line, then waits.
-#[cfg(target_os = "macos")]
-fn connecting_script(ready: &str) -> String {
-    format!(
-        "#!/bin/zsh -f\n\
-         IFS= read -r first || exit 1\n\
-         p=${{first#*\\\"rendezvous\\\":\\\"}}\n\
-         p=${{p%%\\\"*}}\n\
-         zmodload zsh/net/socket || exit 1\n\
-         zsocket \"$p\" || exit 1\n\
-         print -r -u $REPLY '{ready}'\n\
-         read -r -t 20 -u $REPLY _\n"
-    )
+/// The steps of a fake web process (`examples/fake_web.rs`) that reads the first line,
+/// connects to the rendezvous and sends `ready` as its ready line, then waits.
+fn connecting_steps(ready: &str) -> String {
+    format!("first-line\nconnect\nsend {ready}\nstay\n")
 }
 
-/// The ready line a well-behaved web process sends.
-#[cfg(target_os = "macos")]
+/// The ready line a well-behaved web process sends where it reports no Landlock domain.
 const READY: &str = r#"{"v":1,"event":"ready_for_secrets"}"#;
 
-/// Starts a web process whose child runs `script`. The scripted admission answers
-/// `answer(step, nth, pid)`, with `nth` counting calls of that step (1-based).
-#[cfg(target_os = "macos")]
+/// The identity a scripted admission answers for the child `pid`: the system's own for
+/// that child, as far as a scripted check can carry it. Where the system has no audit
+/// token this is the zero token: one fixed identity, which is all these tests compare.
+fn child_token(pid: u32) -> Result<Option<crate::peer::AuditToken>, String> {
+    org_platform_host::testing::admission::child_peer(pid)
+        .map(|peer| Some(peer.macos_audit_token))
+        .map_err(|e| e.to_string())
+}
+
+/// Starts a web process whose child is the fake web process taking `steps`. The scripted
+/// admission answers `answer(step, nth, pid)`, with `nth` counting calls of that step
+/// (1-based).
 fn start_scripted(
-    script: &str,
+    steps: &str,
     answer: impl Fn(crate::server_check::Step, usize, u32) -> Result<Option<crate::peer::AuditToken>, String>
         + Send
         + Sync
         + 'static,
 ) -> io::Error {
-    let (_dir, config) = scripted_config(script, answer);
+    let (_dir, config) = scripted_config(steps, answer);
     start_error(&config)
 }
 
 /// Starts `config`, which must be refused, and returns the refusal.
 fn start_error(config: &Configuration) -> io::Error {
-    match Running::start(config, Arc::new(NoOps)) {
+    match start(config, Arc::new(NoOps)) {
         Err(error) => error,
         Ok(_) => panic!("this start must be refused"),
     }
@@ -681,22 +728,20 @@ fn loopback_on(port: u16) -> ListenConfig {
 }
 
 /// The configuration [`start_scripted`] starts, on a free loopback port, with its
-/// temporary directory (program and runtime) kept alive by the caller. The program
-/// is `script`, which only a system that starts a child by its path can run.
+/// temporary directory (program and runtime) kept alive by the caller. The program is the
+/// fake web process, started through the system's real admission with a scripted image
+/// check, and takes `steps`.
 fn scripted_config(
-    script: &str,
+    steps: &str,
     answer: impl Fn(crate::server_check::Step, usize, u32) -> Result<Option<crate::peer::AuditToken>, String>
         + Send
         + Sync
         + 'static,
 ) -> (tempfile::TempDir, Configuration) {
     use crate::server_check::{Scripted, Step};
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::AtomicUsize;
     let dir = tempfile::tempdir().unwrap();
-    let program = dir.path().join("agentic-org-web");
-    fs::write(&program, script).unwrap();
-    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    let program = fake_program(dir.path(), steps);
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -724,36 +769,30 @@ fn scripted_config(
 /// `tokens` (no token otherwise, so the child passes the peer-pid check and
 /// reaches the post-ready re-admission), except that the `nth` call (1-based)
 /// of `refuse` fails with `cause`.
-#[cfg(target_os = "macos")]
 fn start_refusing(
     refuse: crate::server_check::Step,
     nth: usize,
     tokens: bool,
     cause: &'static str,
 ) -> io::Error {
-    start_scripted(&connecting_script(READY), move |step, n, pid| {
+    start_scripted(&connecting_steps(READY), move |step, n, pid| {
         if step == refuse && n == nth {
             return Err(cause.to_owned());
         }
         if !tokens {
             return Ok(None);
         }
-        org_platform_host::testing::admission::child_peer(pid)
-            .map(|peer| Some(peer.macos_audit_token))
-            .map_err(|e| e.to_string())
+        child_token(pid)
     })
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_changed_identity_at_re_admission_names_that_cause() {
     use crate::server_check::Step;
     // Admitted with no token; re-admission after the ready line returns one.
-    let error = start_scripted(&connecting_script(READY), |step, n, pid| {
+    let error = start_scripted(&connecting_steps(READY), |step, n, pid| {
         if step == Step::Admit && n == 2 {
-            org_platform_host::testing::admission::child_peer(pid)
-                .map(|peer| Some(peer.macos_audit_token))
-                .map_err(|e| e.to_string())
+            child_token(pid)
         } else {
             Ok(None)
         }
@@ -765,11 +804,10 @@ fn a_changed_identity_at_re_admission_names_that_cause() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_mismatched_ready_line_names_that_cause() {
     let error = start_scripted(
-        &connecting_script(r#"{"v":1,"event":"other"}"#),
+        &connecting_steps(r#"{"v":1,"event":"other"}"#),
         |_, _, _| Ok(None),
     );
     let message = error.to_string();
@@ -779,20 +817,41 @@ fn a_mismatched_ready_line_names_that_cause() {
     );
 }
 
-#[cfg(target_os = "macos")]
+/// A ready line that reports a Landlock domain, from a child that confined nothing. What
+/// the system's confinement adapter says of that report decides the one outcome: an adapter
+/// without Landlock refuses the report itself, and the start fails with its words; an
+/// adapter with Landlock takes the report and then finds the child unconfined.
 #[test]
-fn a_ready_line_reporting_landlock_on_macos_names_that_cause() {
+fn a_ready_line_reporting_landlock_is_refused_by_the_report_or_by_the_missing_sandbox() {
     let error = start_scripted(
-        &connecting_script(
+        &connecting_steps(
             r#"{"v":1,"event":"ready_for_secrets","landlock":{"abi":4,"enforcement":"fully_enforced"}}"#,
         ),
         |_, _, _| Ok(None),
     );
     let message = error.to_string();
-    assert!(
-        message.contains("web process start failed: the ready line reports landlock on macOS"),
-        "{message}"
-    );
+    let reported = org_platform::confinement::Enforcement {
+        landlock_abi: Some(4),
+        seccomp: false,
+    };
+    match org_platform::confinement::verify_ready_report(&reported) {
+        Err(refusal) => {
+            // The one adapter without Landlock, in its own words.
+            assert_eq!(
+                refusal.to_string(),
+                "the ready line reports landlock on macOS"
+            );
+            assert!(
+                message
+                    .contains("web process start failed: the ready line reports landlock on macOS"),
+                "{message}"
+            );
+        }
+        Ok(()) => assert!(
+            message.starts_with("web process start failed: verify the web process sandbox: "),
+            "{message}"
+        ),
+    }
 }
 
 #[test]
@@ -835,12 +894,9 @@ fn a_fatal_receive_logs_its_step_and_error_kind_escaped() {
     assert!(!forged.contains('\n'), "{forged}");
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_child_that_exits_before_connecting_names_its_status() {
-    let error = start_scripted("#!/bin/zsh -f\nIFS= read -r first\nexit 3\n", |_, _, _| {
-        Ok(None)
-    });
+    let error = start_scripted("first-line\nexit 3\n", |_, _, _| Ok(None));
     let message = error.to_string();
     assert!(
         message.contains("the child exited before connecting (exit code 3)"),
@@ -951,11 +1007,10 @@ fn every_failed_start_is_logged_escaped_with_its_restart_until_the_limit() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn every_admission_refusal_inside_start_keeps_its_cause() {
     use crate::server_check::Step;
-    // With real tokens the zsh child itself is the rendezvous peer, so the
+    // With real tokens the child itself is the rendezvous peer, so the
     // second `still` call is the post-ready re-check after the peer check.
     for (step, nth, tokens, cause) in [
         (Step::Admit, 1, true, "admission refused by the test"),
@@ -1264,6 +1319,31 @@ fn a_control_line_that_does_not_arrive_before_the_deadline_is_refused() {
     drop(peer);
 }
 
+/// A child that closes its end, or dies, with bytes of the host's it has not read. Linux
+/// reports that to the host as a reset of the connection, macOS as its end. Either way it is
+/// a child that went away: the start is refused, and the host does not treat it as broken
+/// descriptor framing, which would end the host itself.
+#[test]
+fn a_peer_that_closes_with_unread_bytes_is_a_control_eof() {
+    let (ours, mut theirs) = UnixStream::pair().unwrap();
+    // The handoff the child never reads, and the start of an acknowledgement it sent.
+    (&ours)
+        .write_all(b"{\"v\":1,\"event\":\"handoff\"}\n")
+        .unwrap();
+    theirs.write_all(b"partial").unwrap();
+    drop(theirs);
+    let mut receiver = org_socket::rights::StreamReceiver::new(ours);
+    let until = Instant::now() + Duration::from_secs(5);
+    let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "web process start failed: control EOF before the handoff ACK"
+    );
+    assert!(error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<ControlEof>()));
+}
+
 #[test]
 fn control_eof_before_a_line_is_refused() {
     let (mut receiver, mut peer) = control_pair();
@@ -1316,7 +1396,7 @@ fn a_rendezvous_folder_that_is_a_symlink_is_refused_before_binding() {
 fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let rendezvous = Rendezvous::bind(dir.path()).unwrap();
-    let mut spawned = held_child("/bin/sleep", &["30"]);
+    let mut spawned = held_child(dir.path());
     // The deadline has passed: no connection is accepted, and the child still runs.
     let error = rendezvous
         .accept(&mut spawned.child, Instant::now())
@@ -1327,22 +1407,12 @@ fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_rendezvous_peer_other_than_the_admitted_child_is_refused() {
-    // A forked subshell, not the spawned child, connects and sends the ready line.
-    let script = connecting_script(READY)
-        .replacen("zsocket", "( zsocket", 1)
-        .replace(
-            "read -r -t 20 -u $REPLY _\n",
-            // A trailing command keeps zsh from exec-ing the subshell in place.
-            "read -r -t 20 -u $REPLY _ )\nexit 0\n",
-        );
-    assert!(
-        script.contains("( zsocket") && script.contains("_ )"),
-        "{script}"
-    );
-    let error = start_scripted(&script, |_, _, _| Ok(None));
+    // A forked process, not the spawned child, connects and sends the ready line; the
+    // spawned child waits for it and so is still alive.
+    let steps = format!("first-line\nfork\nconnect\nsend {READY}\nstay\n");
+    let error = start_scripted(&steps, |_, _, _| Ok(None));
     let message = error.to_string();
     assert!(
         message.contains("web process start failed: the rendezvous peer is not the admitted child"),
@@ -1350,17 +1420,12 @@ fn a_rendezvous_peer_other_than_the_admitted_child_is_refused() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn an_unconfined_child_fails_the_sandbox_verification() {
     // Admitted with its real token; every check passes until the sandbox check. A
     // non-empty critical path, so the refusal is the child's missing confinement,
     // not the empty path list.
-    let (dir, mut config) = scripted_config(&connecting_script(READY), |_, _, pid| {
-        org_platform_host::testing::admission::child_peer(pid)
-            .map(|peer| Some(peer.macos_audit_token))
-            .map_err(|e| e.to_string())
-    });
+    let (dir, mut config) = scripted_config(&connecting_steps(READY), |_, _, pid| child_token(pid));
     config.critical_paths = vec![fs::canonicalize(dir.path()).unwrap()];
     let error = start_error(&config);
     let message = error.to_string();
@@ -1372,8 +1437,8 @@ fn an_unconfined_child_fails_the_sandbox_verification() {
 
 #[test]
 fn each_failed_start_step_before_the_child_starts_names_its_cause() {
-    // None of these starts reaches the program, so its content does not matter.
-    let script = "#!/bin/sh\nexit 1\n";
+    // None of these starts reaches the program, so its steps do not matter.
+    let script = "exit 1\n";
     // The browser port is taken.
     let (_dir, mut config) = scripted_config(script, |_, _, _| Ok(None));
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1421,13 +1486,11 @@ fn each_failed_start_step_before_the_child_starts_names_its_cause() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_first_line_that_does_not_fit_names_its_cause() {
     // The first line would not fit in 1023 bytes. The child is started first, so
-    // this needs a program the system starts by its path.
-    let script = connecting_script(READY);
-    let (_dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    // this needs a program the system starts.
+    let (_dir, mut config) = scripted_config(&connecting_steps(READY), |_, _, _| Ok(None));
     config.instance = "i".repeat(1024);
     assert_eq!(
         start_error(&config).to_string(),
@@ -1444,20 +1507,24 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     use org_proto::frame;
     let home = tempfile::tempdir().unwrap();
     let (handler, offices) = crate::service::tests::web_handler(home.path());
-    let running = |program: &str, args: &[&str], resume: bool| {
+    // Each child is the fake web process in a folder of its own: one that stays (held, not
+    // let run, where the system starts a child suspended), or one that is let run and
+    // takes `steps`.
+    let children = tempfile::tempdir().unwrap();
+    let running = |steps: Option<&str>| {
+        let dir = tempfile::tempdir_in(children.path()).unwrap().keep();
         let (host, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
         let (transfer, _child) = UnixDatagram::pair().unwrap();
         let control = WebConnection::start(host, transfer, loopback(), handler.clone()).unwrap();
-        let spawned = if resume {
-            ServerCheck::Skip
-                .admission(Path::new(program))
+        let spawned = match steps {
+            Some(steps) => ServerCheck::Skip
+                .admission(&fake_program(&dir, steps))
                 .unwrap()
                 .spawn(&[], &ChildEnv::new(), &SPAWN_LOCK)
-                .unwrap()
-        } else {
-            held_child(program, args)
+                .unwrap(),
+            None => held_child(&dir),
         };
         let running = Running {
             control,
@@ -1479,7 +1546,7 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     };
 
     // A refused web.serving wins over the EOF it causes; the child still runs.
-    let (mut refused, mut peer) = running("/bin/sleep", &["30"], false);
+    let (mut refused, mut peer) = running(None);
     let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
     call(&mut peer, hello.unwrap()).expect("hello answered");
     let early = org_proto::Request::new::<WebServing>(2, &Default::default()).unwrap();
@@ -1492,14 +1559,14 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     );
 
     // A reaped child's status, while the control connection is still open.
-    let (mut exited, _peer) = running("/usr/bin/false", &[], true);
+    let (mut exited, _peer) = running(Some("exit 1\n"));
     wait_for("the child exits", || !exited.serving());
     assert!(exited.control.live());
     assert_eq!(exited.ended(), "the child exited (exit code 1)");
 
     // Control EOF while the child still runs (on macOS it is suspended, elsewhere
-    // it sleeps).
-    let (mut closed, peer) = running("/bin/sleep", &["30"], false);
+    // it stays).
+    let (mut closed, peer) = running(None);
     assert!(closed.serving());
     drop(peer);
     wait_for("control EOF", || !closed.serving());
@@ -1530,12 +1597,16 @@ fn a_release_build_web_admission_pins_the_selected_image_and_binds_its_release()
     const TEAM: &str = "AB12CD34EF";
     let hash = pin([7u8; 20]);
     let web = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
-    assert!(matches!(web, ServerCheck::Gateway(_)));
+    match image_identity() {
+        ImageIdentity::CodeSignature => assert!(matches!(web, ServerCheck::Gateway(_))),
+        // The team names nothing where the bytes are checked.
+        ImageIdentity::VerifiedBytes => assert_eq!(web, ServerCheck::Published),
+    }
     // A selected release pins its exact web process image and binds its identity.
     let (check, release) = admission::<()>(false, Some(TEAM), Some((Ok(hash), binding())));
     assert_eq!(check, web.clone().pinned(hash));
     assert_eq!(release, Some(binding()));
-    // No release: the Developer ID web process check alone, no binding.
+    // No release: this system's web process check alone, no binding.
     let (check, release) = admission::<()>(false, Some(TEAM), None);
     assert_eq!(check, web);
     assert_eq!(release, None);
@@ -1566,10 +1637,22 @@ fn a_release_build_web_admission_refuses_a_missing_image_hash_a_malformed_or_mis
             check.describe()
         );
     }
-    // No team id in a release build refuses.
+    // No team id in a release build: refused where a code signature is checked; where the
+    // bytes are checked, the image a selected release pins and nothing else (without a
+    // release the platform refuses the image, as the admission refusal test shows).
     let (check, release) = admission::<()>(false, None, None);
-    assert!(matches!(check, ServerCheck::WebRefused(_)), "{check:?}");
-    assert!(check.may_spawn().is_err());
+    match image_identity() {
+        ImageIdentity::CodeSignature => {
+            assert!(matches!(check, ServerCheck::WebRefused(_)), "{check:?}");
+            assert!(check.may_spawn().is_err());
+        }
+        ImageIdentity::VerifiedBytes => {
+            assert_eq!(check, ServerCheck::Published);
+            assert!(check.may_spawn().is_ok());
+            let (pinned, _) = admission::<()>(false, None, Some((Ok(pin([7u8; 20])), binding())));
+            assert_eq!(pinned, ServerCheck::Published.pinned(pin([7u8; 20])));
+        }
+    }
     assert_eq!(release, None);
 }
 
@@ -1597,134 +1680,236 @@ fn a_debug_build_web_admission_skips_the_signature_check_but_still_pins_a_releas
     );
 }
 
-/// A child confined by `sandbox-exec` with a profile that denies reading and writing
-/// one critical folder, so it passes the real `verify_gateway`; after its ready line
-/// it runs `after_ready` on the control connection (`$REPLY`).
-#[cfg(target_os = "macos")]
+/// A configuration that starts `program` unchecked, as a debug build's web process is.
+fn unchecked(dir: &Path, program: PathBuf) -> Configuration {
+    Configuration {
+        program,
+        instance: "instance".into(),
+        runtime: dir.to_owned(),
+        listen: loopback_on(free_port()),
+        check: ServerCheck::Skip,
+        critical_paths: vec![],
+        release: None,
+    }
+}
+
+/// The host builds the admission of its web process once: every start goes through that
+/// one, and what the program's path names later is never read.
+#[test]
+fn one_web_admission_serves_every_start_and_is_never_built_again() {
+    const EXITED: &str =
+        "web process start failed: the child exited before connecting (exit code 3)";
+    let dir = tempfile::tempdir().unwrap();
+    let config = unchecked(dir.path(), fake_program(dir.path(), "first-line\nexit 3\n"));
+    let image = Image::new(&config.check, &config.program);
+    let built = image.admission().unwrap();
+    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps)) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("the fake web process exits before it connects"),
+    };
+    for _ in 0..2 {
+        assert_eq!(failed_start(), EXITED);
+        assert!(Arc::ptr_eq(&built, &image.admission().unwrap()));
+    }
+    // Where the image's bytes were read when the admission was built (it then knows their
+    // digest), a start runs those bytes whatever the path names by now: the program is
+    // replaced by something that is no program, and the next start is the same child.
+    if let Some(digest) = built.image_sha256() {
+        fs::remove_file(&config.program).unwrap();
+        fs::write(&config.program, b"no program").unwrap();
+        assert_eq!(failed_start(), EXITED);
+        let still = image.admission().unwrap();
+        assert!(Arc::ptr_eq(&built, &still));
+        assert_eq!(still.image_sha256(), Some(digest));
+    }
+    // A build asked for at a host's start finds it built, and logs nothing.
+    let ((), logged) = crate::host_log::capture(|| image.build_at_start());
+    assert_eq!(logged, Vec::<String>::new());
+}
+
+/// A web admission that cannot be built yet (the program is not there) says why in the host
+/// log, fails that start, and is asked for again by the next start; once built it is kept.
+/// Where nothing of the image is read until a child is started, the admission exists at
+/// once and the missing program fails each start instead.
+#[test]
+fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
+    use crate::server_check::NoAdmission;
+    let dir = tempfile::tempdir().unwrap();
+    let config = unchecked(dir.path(), dir.path().join("agentic-org-web"));
+    let image = Image::new(&config.check, &config.program);
+    let ((), logged) = crate::host_log::capture(|| image.build_at_start());
+    let before = match (image_identity(), image.admission()) {
+        // Nothing is read until a child is started: the admission exists at once.
+        (ImageIdentity::CodeSignature, Ok(admission)) => {
+            assert_eq!(logged, Vec::<String>::new());
+            Some(admission)
+        }
+        // The image is read when the admission is built: there is none yet, and the host
+        // log says why.
+        (ImageIdentity::VerifiedBytes, Err(NoAdmission::Unavailable(error))) => {
+            assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error:?}");
+            let [line] = &logged[..] else {
+                panic!("one line for the failed build: {logged:?}")
+            };
+            assert!(
+                line.starts_with("the web process cannot be started: ")
+                    && line.ends_with("; each start asks again"),
+                "{line}"
+            );
+            None
+        }
+        (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
+    };
+    // No web process starts, whichever step notices.
+    let message = match Running::start(&config, &image, Arc::new(NoOps)) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a missing program was started"),
+    };
+    assert!(
+        message.starts_with("web process start failed: spawn the web process suspended ("),
+        "{message}"
+    );
+    // The program appears: the next start builds the admission, or finds the one it has.
+    fake_program(dir.path(), "first-line\nexit 3\n");
+    let message = match Running::start(&config, &image, Arc::new(NoOps)) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("the fake web process exits before it connects"),
+    };
+    assert_eq!(
+        message,
+        "web process start failed: the child exited before connecting (exit code 3)"
+    );
+    let built = image.admission().expect("the program is there now");
+    if let Some(before) = before {
+        assert!(Arc::ptr_eq(&before, &built), "an admission was built twice");
+    }
+    assert!(Arc::ptr_eq(&built, &image.admission().unwrap()));
+}
+
+/// Starts that come together wait for the one build: every one of them gets the same
+/// admission.
+#[test]
+fn web_starts_that_come_together_share_the_one_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = fake_program(dir.path(), "exit 1\n");
+    let image = Image::new(&ServerCheck::Skip, &program);
+    let go = std::sync::Barrier::new(8);
+    let built: Vec<_> = thread::scope(|scope| {
+        let asking: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    go.wait();
+                    image.admission().unwrap()
+                })
+            })
+            .collect();
+        asking
+            .into_iter()
+            .map(|asked| asked.join().unwrap())
+            .collect()
+    });
+    assert!(built.iter().all(|one| Arc::ptr_eq(one, &built[0])));
+}
+
+/// A child that confines itself as the real web process does (the fake web process's
+/// `confine` step is the platform's own `confine_web`), so it passes the host's real
+/// sandbox verification; after its ready line it takes `after_ready`.
 fn confined_start(after_ready: &str) -> io::Error {
     let (_dir, config) = confined_config(after_ready);
     start_error(&config)
 }
 
-/// The configuration [`confined_start`] starts, with its temporary directory.
-#[cfg(target_os = "macos")]
+/// The configuration [`confined_start`] starts, with its temporary directory. One critical
+/// folder is named, for a system whose host verifies the sandbox by asking about paths.
 fn confined_config(after_ready: &str) -> (tempfile::TempDir, Configuration) {
-    let (dir, mut config) = scripted_config("", |_, _, _| Ok(None));
+    let steps = format!("first-line\nconfine\nready\n{after_ready}");
+    let (dir, mut config) = scripted_config(&steps, |_, _, _| Ok(None));
     let root = fs::canonicalize(dir.path()).unwrap();
     let critical = root.join("critical");
     fs::create_dir(&critical).unwrap();
-    let profile = root.join("profile.sb");
-    fs::write(
-        &profile,
-        format!(
-            "(version 1)\n(allow default)\n(deny file-read-data file-write-data (subpath \"{}\"))\n",
-            critical.display()
-        ),
-    )
-    .unwrap();
-    let inner = root.join("inner.zsh");
-    let script = connecting_script(READY).replace("read -r -t 20 -u $REPLY _\n", after_ready);
-    fs::write(&inner, script).unwrap();
-    fs::write(
-        &config.program,
-        format!(
-            "#!/bin/zsh -f\nexec /usr/bin/sandbox-exec -f '{}' /bin/zsh -f '{}'\n",
-            profile.display(),
-            inner.display()
-        ),
-    )
-    .unwrap();
     config.critical_paths = vec![critical];
     (dir, config)
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_confined_child_with_a_wrong_handoff_ack_is_refused() {
-    let message = confined_start(
-        "print -r -u $REPLY '{\"v\":1,\"event\":\"fds.received\",\"of\":\"hello\"}'\n\
-         read -r -t 20 -u $REPLY _\n",
-    )
-    .to_string();
+    let message =
+        confined_start("send {\"v\":1,\"event\":\"fds.received\",\"of\":\"hello\"}\nstay\n")
+            .to_string();
     assert_eq!(
         message, "web process start failed: the handoff ACK does not acknowledge the handoff",
         "the child passed the sandbox verification and reached the ACK check"
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_confined_child_that_closes_control_before_its_handoff_ack_is_refused() {
     // Wait for the handoff to arrive, then close the control connection and stay alive.
-    let message =
-        confined_start("read -r -t 20 -k 1 -u $REPLY _\nsleep 0.5\nexec {REPLY}>&-\nsleep 20\n")
-            .to_string();
+    let message = confined_start("await-handoff\npause 500\nclose\nstay\n").to_string();
     assert_eq!(
         message,
         "web process start failed: control EOF before the handoff ACK"
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn the_rendezvous_is_owner_only_when_the_child_connects() {
     // The child refuses (exit 7) unless the rendezvous socket is 0600 in a 0700
-    // folder, then sends a mismatched ready line so the start stops right after.
-    let script = connecting_script(r#"{"v":1,"event":"other"}"#).replace(
-        "zmodload zsh/net/socket || exit 1\n",
-        "[[ $(/usr/bin/stat -f %Lp \"$p\") == 600 ]] || exit 7\n\
-         [[ $(/usr/bin/stat -f %Lp \"${p:h}\") == 700 ]] || exit 8\n\
-         zmodload zsh/net/socket || exit 1\n",
-    );
-    let message = start_scripted(&script, |_, _, _| Ok(None)).to_string();
+    // folder (exit 8), then sends a mismatched ready line so the start stops right after.
+    let steps = "first-line\nowner-only\nconnect\nsend {\"v\":1,\"event\":\"other\"}\nstay\n";
+    let message = start_scripted(steps, |_, _, _| Ok(None)).to_string();
     assert!(
         message.contains("the ready line does not match ready_for_secrets"),
         "{message}"
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_started_web_serves_but_is_not_reported_before_web_serving() {
     // Confined, acknowledged: the start succeeds, but nothing reported serving yet.
-    let (_dir, config) = confined_config(
-        "print -r -u $REPLY '{\"v\":1,\"event\":\"fds.received\",\"of\":\"handoff\"}'\nsleep 20\n",
-    );
-    let mut running = Running::start(&config, Arc::new(NoOps)).unwrap();
+    let (_dir, config) = confined_config("ack\nstay\n");
+    let mut running = start(&config, Arc::new(NoOps)).unwrap();
     assert!(running.serving());
     assert!(
         !running.reported(),
         "running is reported only after web.serving"
     );
+    // It stays: confined, the child waits without anything that would end it.
+    thread::sleep(Duration::from_millis(300));
+    assert!(running.serving());
 }
 
-#[cfg(target_os = "macos")]
+/// A child that replaces its image after it connected (a new image, the same process id)
+/// and before its ready line. The scripted re-checks answer the admitted identity, so only
+/// the system's own check of the ready line's peer can see the change. What identifies an
+/// image here decides the one outcome.
 #[test]
-fn a_child_that_exec_ed_after_connecting_is_refused_at_the_ready_line() {
-    // Admitted with its real token; it connects, then execs (a new image, same pid)
-    // before its ready line. The scripted re-checks answer the admitted token, so
-    // only the ready-line peer check can see the change.
-    let script = connecting_script(READY).replace(
-        "print -r -u $REPLY",
-        "exec 3<&$REPLY\nsleep 0.5\nready='{\"v\":1,\"event\":\"ready_for_secrets\"}'\n\
-         exec /bin/zsh -f -c 'print -r -u 3 -- \"$0\"; sleep 20' \"$ready\"\nprint -r -u $REPLY",
-    );
+fn a_child_that_exec_ed_after_connecting_is_refused_at_the_ready_line_or_as_unconfined() {
+    let steps = format!("first-line\nconnect\npause 500\nexec\nsend {READY}\nstay\n");
     let admitted = Arc::new(Mutex::new(None));
-    let error = start_scripted(&script, move |step, n, pid| {
+    let error = start_scripted(&steps, move |step, n, pid| {
         let mut admitted = lock(&admitted);
         if step == crate::server_check::Step::Admit && n == 1 {
-            *admitted = Some(
-                org_platform_host::testing::admission::child_peer(pid)
-                    .map_err(|e| e.to_string())?
-                    .macos_audit_token,
-            );
+            *admitted = child_token(pid)?;
         }
         Ok(*admitted)
     });
-    assert_eq!(
-        error.to_string(),
-        "web process start failed: the ready-line peer is not the admitted child"
-    );
+    let message = error.to_string();
+    match image_identity() {
+        // The peer is identified by its image: the new image is not the admitted child.
+        ImageIdentity::CodeSignature => assert_eq!(
+            message,
+            "web process start failed: the ready-line peer is not the admitted child"
+        ),
+        // The peer is identified by its user and process id, which an `exec` keeps (the
+        // admission's own limit: it rests on the verified image never calling `exec`).
+        // The new image is refused all the same, because it confined nothing; the real
+        // web process cannot `exec` once it is confined.
+        ImageIdentity::VerifiedBytes => assert!(
+            message.starts_with("web process start failed: verify the web process sandbox: "),
+            "{message}"
+        ),
+    }
 }
 
 #[test]
@@ -1863,8 +2048,8 @@ fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standar
     let line = format!("{LANDLOCK_NOT_APPLIED_PREFIX}landlock_restrict_self failed with EPERM");
     // The child stays alive, as a web process that serves does: the line is found
     // as soon as it is read, long before the wait ends.
-    let (mut child, captured, _stdin) = shell(&format!(
-        "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; sleep 30"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "stderr agentic-org-web: some other notice\nstderr {line}\nstay\n"
     ));
     let asked = Instant::now();
     assert_eq!(
@@ -1874,7 +2059,7 @@ fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standar
     assert!(asked.elapsed() < WAIT);
     assert!(matches!(child.try_wait(), Ok(false)));
     // A child that says nothing: the wait passes, and no longer.
-    let (mut silent, captured, _stdin) = shell("sleep 30");
+    let (mut silent, captured, _stdin) = stepping("stay\n");
     let asked = Instant::now();
     assert_eq!(captured.landlock_not_applied(STDERR_GRACE), None);
     assert!(asked.elapsed() >= STDERR_GRACE);
@@ -1923,28 +2108,24 @@ fn the_start_line_names_the_layers_and_why_landlock_is_missing() {
     );
 }
 
-/// A real child of `/bin/sh` that runs `script`, with its captured standard error.
-fn shell(script: &str) -> (Child, Arc<Stderr>, fs::File) {
-    // The shell's own file: an admission does not follow a link to its program.
-    let shell = fs::canonicalize("/bin/sh").unwrap();
+/// A real child, the fake web process taking `steps`, started and let run as the web
+/// process is, with its captured standard error. The last value keeps its folder.
+fn stepping(steps: &str) -> (Child, Arc<Stderr>, (fs::File, tempfile::TempDir)) {
+    let dir = tempfile::tempdir().unwrap();
     let spawned = ServerCheck::Skip
-        .admission(&shell)
+        .admission(&fake_program(dir.path(), steps))
         .unwrap()
-        .spawn(
-            &[OsStr::new("-c"), OsStr::new(script)],
-            &web_env(),
-            &SPAWN_LOCK,
-        )
+        .spawn(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
         .unwrap();
     let captured = Stderr::capture(spawned.stderr).unwrap();
-    (spawned.child, captured, spawned.stdin)
+    (spawned.child, captured, (spawned.stdin, dir))
 }
 
 #[test]
 fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
     let line = format!("{REFUSAL_PREFIX}seccomp failed with ENOMEM");
-    let (mut child, captured, _stdin) = shell(&format!(
-        "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; exit 1"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "stderr agentic-org-web: some other notice\nstderr {line}\nexit 1\n"
     ));
     wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
     let error = with_refusal(
@@ -1962,14 +2143,14 @@ fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
 #[test]
 fn a_child_that_exited_without_a_refusal_line_leaves_the_cause_as_it_is() {
     for script in [
-        "exit 1",
-        "echo 'agentic-org-web: authenticated startup unavailable' >&2; exit 1",
+        "exit 1\n",
+        "stderr agentic-org-web: authenticated startup unavailable\nexit 1\n",
         // Not printable: a tab in the reason.
-        "printf 'agentic-org-web: startup refused: confinement: a\\tb\\n' >&2; exit 1",
+        "stderr agentic-org-web: startup refused: confinement: a\tb\nexit 1\n",
         // No line feed.
-        "printf 'agentic-org-web: startup refused: confinement: cut' >&2; exit 1",
+        "stderr-raw agentic-org-web: startup refused: confinement: cut\nexit 1\n",
     ] {
-        let (mut child, captured, _stdin) = shell(script);
+        let (mut child, captured, _stdin) = stepping(script);
         wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
         let error = with_refusal(failed("the cause"), &captured, &mut child);
         assert_eq!(
@@ -1984,8 +2165,8 @@ fn a_child_that_exited_without_a_refusal_line_leaves_the_cause_as_it_is() {
 fn a_child_whose_control_stream_ended_gets_a_moment_to_exit_and_any_other_none() {
     let eof = || io::Error::other(ControlEof("web process start failed: control EOF".into()));
     // It closes its stream, writes its line and exits a moment later.
-    let (mut child, captured, _stdin) = shell(&format!(
-        "sleep 0.1; echo '{REFUSAL_PREFIX}seccomp failed with EPERM' >&2; exit 1"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "pause 100\nstderr {REFUSAL_PREFIX}seccomp failed with EPERM\nexit 1\n"
     ));
     let error = with_refusal(eof(), &captured, &mut child);
     assert_eq!(
@@ -1995,8 +2176,8 @@ fn a_child_whose_control_stream_ended_gets_a_moment_to_exit_and_any_other_none()
     );
     // It stays alive: the cause is unchanged after the grace, and the child still
     // runs for its owner to kill.
-    let (mut child, captured, _stdin) = shell(&format!(
-        "echo '{REFUSAL_PREFIX}written by a child that stays' >&2; sleep 30"
+    let (mut child, captured, _stdin) = stepping(&format!(
+        "stderr {REFUSAL_PREFIX}written by a child that stays\nstay\n"
     ));
     let asked = Instant::now();
     let error = with_refusal(eof(), &captured, &mut child);
@@ -2014,11 +2195,12 @@ fn a_child_whose_control_stream_ended_gets_a_moment_to_exit_and_any_other_none()
 #[test]
 fn a_child_that_exited_after_its_sandbox_was_verified_is_refused() {
     // Still running: the check passes and reaps nothing.
-    let mut sleeping = held_child("/bin/sleep", &["30"]);
+    let dir = tempfile::tempdir().unwrap();
+    let mut sleeping = held_child(dir.path());
     still_running(&mut sleeping.child).unwrap();
     still_running(&mut sleeping.child).unwrap();
     // Exited: the status that was read may be another process's by now.
-    let (mut child, _captured, _stdin) = shell("exit 4");
+    let (mut child, _captured, _stdin) = stepping("exit 4\n");
     wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
     assert_eq!(
         still_running(&mut child).unwrap_err().to_string(),
@@ -2032,22 +2214,25 @@ fn the_web_process_gets_nothing_of_the_hosts_environment() {
     // A real child started with it sees no variable, whatever this process has
     // (this test process has at least a PATH).
     assert!(std::env::var_os("PATH").is_some());
+    let dir = tempfile::tempdir().unwrap();
     let mut spawned = ServerCheck::Skip
-        .admission(Path::new("/usr/bin/env"))
+        .admission(&fake_program(dir.path(), "env\n"))
         .unwrap()
-        .spawn(&[], &web_env(), &SPAWN_LOCK)
+        .spawn(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
         .unwrap();
     let mut printed = String::new();
     spawned.stdout.read_to_string(&mut printed).unwrap();
-    assert_eq!(printed, "");
+    // It ran, and printed its whole environment: nothing.
+    assert_eq!(printed, "environment:\n");
     wait_for("the child exits", || {
         matches!(spawned.child.try_wait(), Ok(true))
     });
 }
 
-/// The real web process for the two tests below: the built `agentic-org-web` that
-/// `ORG_TEST_WEB_BIN` names, copied beside a one-file `ui` build, with a handler that
-/// answers its control calls, on a free loopback port.
+/// The real web process for the two tests below: the `agentic-org-web` cargo built beside
+/// this crate's tests (`cargo test --workspace` builds it before any test runs), copied
+/// beside a one-file `ui` build, with a handler that answers its control calls, on a free
+/// loopback port.
 struct RealWeb {
     config: Configuration,
     handler: Arc<crate::service::Service>,
@@ -2058,8 +2243,7 @@ struct RealWeb {
 fn real_web() -> RealWeb {
     use org_proto::frame;
     use std::os::unix::fs::PermissionsExt;
-    let built = std::env::var_os("ORG_TEST_WEB_BIN")
-        .expect("ORG_TEST_WEB_BIN must name the built agentic-org-web");
+    let built = sibling_program("agentic-org-web");
     let dir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(dir.path()).unwrap();
     for name in ["bin", "bin/ui", "runtime", "critical", "home"] {
@@ -2110,13 +2294,12 @@ fn real_web() -> RealWeb {
 /// of its three calls: the web process is confined by its filter alone, serves the
 /// same way, and the host's log line for the start says so with the reason.
 #[test]
-#[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
 fn the_real_web_process_is_started_only_confined_and_then_serves() {
     use org_platform::confinement::testing::RefusedCall;
     const NAME: &str = "web::tests::the_real_web_process_is_started_only_confined_and_then_serves";
     const STARTED: &str = "authenticated browser web process started, ";
     let web = real_web();
-    let mut running = Running::start(&web.config, web.handler.clone()).unwrap();
+    let mut running = start(&web.config, web.handler.clone()).unwrap();
     // What the host verified it is confined by, as its log line says it.
     let confined = running.confined();
     assert!(confined.starts_with("confined by "), "{confined}");
@@ -2215,6 +2398,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
     let stopping = AtomicBool::new(false);
     let state = Mutex::new(GatewayState::NotConfigured);
     let (lines, log) = recording();
+    let image = Image::new(&web.config.check, &web.config.program);
     thread::scope(|scope| {
         let supervisor = scope.spawn(|| {
             supervise(
@@ -2223,7 +2407,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
                 &|| true,
                 Timing::PRODUCTION,
                 &log,
-                || Running::start(&web.config, web.handler.clone()),
+                || Running::start(&web.config, &image, web.handler.clone()),
             )
         });
         wait_for("the supervised web process serves", || {
@@ -2302,7 +2486,6 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
 /// before it reports ready, and every failed start is logged with the call and the
 /// error it named. Nothing is handed to it.
 #[test]
-#[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
 fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reason() {
     use org_platform::confinement::testing::RefusedCall;
     const NAME: &str =
@@ -2332,13 +2515,14 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
             stable: Duration::from_secs(60),
             backoff: Duration::from_millis(1),
         };
+        let image = Image::new(&web.config.check, &web.config.program);
         supervise(
             &AtomicBool::new(false),
             &state,
             &|| true,
             timing,
             &log,
-            || Running::start(&web.config, web.handler.clone()),
+            || Running::start(&web.config, &image, web.handler.clone()),
         );
         assert_eq!(*lock(&state), GatewayState::Failed);
         for line in lock(&lines).iter() {

@@ -38,10 +38,38 @@ fn path(path: &Path) -> io::Result<CString> {
     }
     CString::new(path.to_str().ok_or_else(refused)?).map_err(|_| refused())
 }
+/// A refused entry precondition: the contract's fixed text, then which one failed, as the
+/// Linux adapter's refusals read. The process that starts a confining process reads this
+/// (the host logs it), and the precondition is that process's to meet.
+fn refuse(reason: impl std::fmt::Display) -> io::Error {
+    io::Error::other(format!("{}: {reason}", super::REFUSAL))
+}
+
+/// What the entry check says of the descriptors it listed: at most the first four.
+fn descriptors_refusal(fds: &[libc::proc_fdinfo; 4], listed: libc::c_int) -> io::Error {
+    let unit = mem::size_of::<libc::proc_fdinfo>() as libc::c_int;
+    if listed <= 0 {
+        return refuse("the process's descriptors cannot be listed");
+    }
+    let held = ((listed / unit) as usize).min(fds.len());
+    let numbers: Vec<i32> = fds[..held].iter().map(|fd| fd.proc_fd).collect();
+    // The list has four slots: enough to see a fourth descriptor, not to count them.
+    let more = if held == fds.len() { " or more" } else { "" };
+    refuse(format_args!(
+        "the process must hold exactly descriptors 0, 1 and 2; it holds {numbers:?}{more}"
+    ))
+}
+
 fn entry() -> io::Result<()> {
     // SAFETY: these pthread queries have no arguments or mutable process effects.
-    if unsafe { libc::pthread_main_np() } != 1 || unsafe { pthread_is_threaded_np() } != 0 {
-        return Err(refused());
+    if unsafe { libc::pthread_main_np() } != 1 {
+        return Err(refuse("the process must confine itself on its main thread"));
+    }
+    // SAFETY: as above.
+    if unsafe { pthread_is_threaded_np() } != 0 {
+        return Err(refuse(
+            "the process has started a thread; it must confine itself before it starts any",
+        ));
     }
     // SAFETY: initialized output struct and exact size from the pinned libc SDK binding.
     let mut task: libc::proc_taskinfo = unsafe { mem::zeroed() };
@@ -56,9 +84,14 @@ fn entry() -> io::Result<()> {
             size,
         )
     } != size
-        || task.pti_threadnum != 1
     {
-        return Err(refused());
+        return Err(refuse("the process's thread count cannot be read"));
+    }
+    if task.pti_threadnum != 1 {
+        return Err(refuse(format_args!(
+            "the process has {} threads; it must confine itself before it starts any",
+            task.pti_threadnum
+        )));
     }
     // The parent uses POSIX_SPAWN_CLOEXEC_DEFAULT and explicit dup2 of 0/1/2.
     // Four slots suffice to detect any additional descriptor without unbounded
@@ -76,16 +109,16 @@ fn entry() -> io::Result<()> {
     };
     let unit = mem::size_of::<libc::proc_fdinfo>() as libc::c_int;
     if count != 3 * unit {
-        return Err(refused());
+        return Err(descriptors_refusal(&fds, count));
     }
     let mut seen = [false; 3];
     for fd in &fds[..3] {
         let index = usize::try_from(fd.proc_fd)
             .ok()
             .filter(|n| *n < 3)
-            .ok_or_else(refused)?;
+            .ok_or_else(|| descriptors_refusal(&fds, count))?;
         if std::mem::replace(&mut seen[index], true) {
-            return Err(refused());
+            return Err(descriptors_refusal(&fds, count));
         }
     }
     Ok(())
@@ -231,6 +264,33 @@ mod tests {
             error.to_string(),
             "the ready line reports landlock on macOS"
         );
+    }
+
+    #[test]
+    fn a_refused_entry_names_the_descriptors_it_found() {
+        // SAFETY: every bit pattern is a valid list of descriptor records.
+        let mut fds: [libc::proc_fdinfo; 4] = unsafe { mem::zeroed() };
+        for (slot, number) in fds.iter_mut().zip([0, 1, 2, 142]) {
+            slot.proc_fd = number;
+        }
+        let unit = mem::size_of::<libc::proc_fdinfo>() as libc::c_int;
+        assert_eq!(
+            descriptors_refusal(&fds, 4 * unit).to_string(),
+            "gateway confinement unavailable: the process must hold exactly descriptors 0, \
+             1 and 2; it holds [0, 1, 2, 142] or more"
+        );
+        assert_eq!(
+            descriptors_refusal(&fds, 2 * unit).to_string(),
+            "gateway confinement unavailable: the process must hold exactly descriptors 0, \
+             1 and 2; it holds [0, 1]"
+        );
+        let error = descriptors_refusal(&fds, -1);
+        assert_eq!(
+            error.to_string(),
+            "gateway confinement unavailable: the process's descriptors cannot be listed"
+        );
+        // An adapter's own refusal: no OS error number.
+        assert_eq!(error.raw_os_error(), None);
     }
 
     #[test]

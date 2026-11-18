@@ -190,19 +190,31 @@ impl ServerCheck {
     pub(crate) fn pinned(self, pin: Pin) -> Self {
         Self::Pinned(Box::new(self), pin)
     }
-    /// The web process's check for a build (`debug`) whose app team id is `team_id`.
-    ///
-    /// It still applies the code-signature rule on every system: the web process's start and
-    /// its tests (`web`, `web/tests.rs`) state that a release build without a team id starts
-    /// no web process, and they change together with this. The rule for a system that checks
-    /// the executed bytes instead is [`Self::gateway_for_system`], ready for that change.
+    /// The web process's check for a build (`debug`) whose app team id is `team_id`, on this
+    /// system: what identifies an image here is the platform admission's own fact
+    /// ([`org_platform_host::admission::image_identity`]), as for [`Self::for_build`]. A
+    /// team id that isn't well formed is an error, never a weaker check.
     pub(crate) fn gateway_for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
-        Self::gateway_for_system(debug, team_id, Some(ImageIdentity::CodeSignature))
+        Self::gateway_for_system(
+            debug,
+            team_id,
+            org_platform_host::admission::image_identity().ok(),
+        )
     }
 
     /// The web process's check for a build (`debug`) whose app team id is `team_id`, on a
-    /// system whose admission identifies an image by `identity` (`None`: no adapter).
-    /// The same decision as [`Self::for_system`], with the web process's own requirement.
+    /// system whose admission identifies an image by `identity` (`None`: no adapter, where
+    /// nothing starts whatever this answers). The same decision as [`Self::for_system`],
+    /// with the web process's own requirement.
+    ///
+    /// - Where a code signature is checked, a release build needs the team its web process
+    ///   is signed by; without one the web process is never started
+    ///   ([`Self::WebRefused`]).
+    /// - Where the executed bytes are checked, there is no signature and no team: a release
+    ///   build's web process is the image the selected release names ([`Self::Published`],
+    ///   which the host pins), with or without a team id. Without a selected release
+    ///   nothing names the image and the platform refuses it
+    ///   ([`ImageRefusal::Unpinned`]).
     pub(crate) fn gateway_for_system(
         debug: bool,
         team_id: Option<&str>,
@@ -625,8 +637,8 @@ mod tests {
         assert!(!pinned_line.contains("kernel"), "{pinned_line}");
     }
 
-    /// The web process's check as the same pure decision. The host's constructor still
-    /// applies the code-signature rule on every system (see `gateway_for_build`).
+    /// The web process's check as the same pure decision, and the host's constructor as that
+    /// decision for what this system identifies an image by.
     #[test]
     fn the_web_check_follows_the_build_and_what_the_system_identifies_an_image_by() {
         let signed = Some(ImageIdentity::CodeSignature);
@@ -654,50 +666,91 @@ mod tests {
                 Ok(ServerCheck::Published)
             );
         }
-        for (debug, team) in [(true, None), (false, None), (false, Some(TEAM))] {
+        for (debug, team) in [
+            (true, None),
+            (false, None),
+            (false, Some(TEAM)),
+            (false, Some("bad")),
+        ] {
             assert_eq!(
                 ServerCheck::gateway_for_build(debug, team),
-                ServerCheck::gateway_for_system(debug, team, signed)
+                ServerCheck::gateway_for_system(debug, team, Some(identity()))
             );
         }
     }
 
+    /// A release build without a team id, on this system: exactly one of the two outcomes,
+    /// the one the platform's fact names.
     #[test]
-    fn release_web_without_a_team_may_not_spawn() {
+    fn release_web_without_a_team_is_refused_or_checked_by_its_pin_alone() {
         let check = ServerCheck::gateway_for_build(false, None).unwrap();
-        assert!(matches!(check, ServerCheck::WebRefused(_)));
-        assert!(check.may_spawn().is_err());
-        assert!(check.describe().contains("web process"));
-        assert!(check.describe().contains("no app team id"));
+        match identity() {
+            // No signature can be checked without a team: no web process, and the log
+            // says so in the web process's words.
+            ImageIdentity::CodeSignature => {
+                assert_eq!(
+                    check,
+                    ServerCheck::WebRefused("no app team id (ORG_APP_TEAM_ID at build time)")
+                );
+                assert!(check.may_spawn().is_err());
+                assert_eq!(
+                    check.describe(),
+                    "WARNING: the web process will not be started: no app team id \
+                     (ORG_APP_TEAM_ID at build time)"
+                );
+            }
+            // No team names anything here: the image is the one a selected release pins,
+            // and without a release the platform refuses it.
+            ImageIdentity::VerifiedBytes => {
+                assert_eq!(check, ServerCheck::Published);
+                assert!(check.may_spawn().is_ok());
+                let expected = check.expected(PROGRAM.as_ref()).unwrap();
+                assert!(!expected.development);
+                assert_eq!(expected.sha256, None);
+                assert_eq!(expected.macos_requirement, None);
+                assert!(
+                    check
+                        .why(&ImageRefusal::Unpinned)
+                        .contains("no selected release"),
+                    "{}",
+                    check.why(&ImageRefusal::Unpinned)
+                );
+                let pinned = check.pinned(pin(7)).expected(PROGRAM.as_ref()).unwrap();
+                assert_eq!(pinned.sha256, Some([7; 32]));
+                assert!(!pinned.development);
+            }
+        }
         assert!(ServerCheck::gateway_for_build(true, None)
             .unwrap()
             .may_spawn()
             .is_ok());
     }
 
+    /// The code-signature rule of the web process's check, as the pure decision: it holds
+    /// on a system that checks a code signature, whatever system this test runs on.
     #[test]
     fn gateway_requires_its_distinct_identity_and_never_a_missing_team() {
+        let signed = Some(ImageIdentity::CodeSignature);
         let ServerCheck::Gateway(requirement) =
-            ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap()
+            ServerCheck::gateway_for_system(false, Some(TEAM), signed).unwrap()
         else {
             panic!("release gateway policy")
         };
         assert!(requirement.contains(WEB_SIGNING_ID));
         assert!(!requirement.contains(OFFICE_SIGNING_ID));
-        assert!(matches!(
-            ServerCheck::gateway_for_build(false, None).unwrap(),
-            ServerCheck::WebRefused(_)
-        ));
+        let no_team = ServerCheck::gateway_for_system(false, None, signed).unwrap();
+        assert!(matches!(no_team, ServerCheck::WebRefused(_)));
+        assert!(no_team.may_spawn().is_err());
+        assert!(no_team.describe().contains("web process"));
+        assert!(no_team.describe().contains("no app team id"));
+        assert!(ServerCheck::gateway_for_system(false, Some("bad"), signed).is_err());
         assert!(ServerCheck::gateway_for_build(false, Some("bad")).is_err());
         assert_eq!(
-            ServerCheck::gateway_for_build(true, None).unwrap(),
+            ServerCheck::gateway_for_system(true, None, signed).unwrap(),
             ServerCheck::Skip
         );
         // A missing team names no image, so no admission exists to ask anything of.
-        for refused in [
-            ServerCheck::Refuse,
-            ServerCheck::gateway_for_build(false, None).unwrap(),
-        ] {
+        for refused in [ServerCheck::Refuse, no_team] {
             assert!(refused.expected(PROGRAM.as_ref()).is_err(), "{refused:?}");
             assert!(refused.admission(PROGRAM.as_ref()).is_err(), "{refused:?}");
             // A pin on top of it changes nothing.
@@ -787,8 +840,10 @@ mod tests {
 
     #[test]
     fn the_web_is_admitted_only_without_a_keychain_entitlement() {
+        // The rule of a system that checks a code signature, as the pure decision.
         let ServerCheck::Gateway(requirement) =
-            ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap()
+            ServerCheck::gateway_for_system(false, Some(TEAM), Some(ImageIdentity::CodeSignature))
+                .unwrap()
         else {
             panic!("release gateway policy")
         };
