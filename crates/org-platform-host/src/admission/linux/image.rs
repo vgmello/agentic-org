@@ -58,23 +58,50 @@ pub(super) fn judge(expected: &ExpectedImage, read: &[u8; 32]) -> Result<(), Ima
     }
 }
 
-/// Whether a file with this `mode` and `owner` is one the host, running as
-/// `service_user`, may copy an image from: a regular file that only the service user
-/// or root can have written.
+/// What is known of the file at the pinned path.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PinnedFile {
+    /// The file's mode, with its type bits.
+    pub(super) mode: libc::mode_t,
+    /// The file's owner.
+    pub(super) owner: libc::uid_t,
+    /// The file's group.
+    pub(super) group: libc::gid_t,
+}
+
+/// Whether `file` is one the host, running as `service_user`, may copy an image from:
+/// a regular file that only the service user or root can have written.
+///
+/// It is owned by the service user or by root, and is never writable by others. It is
+/// writable by its group in one case only: the service user's own file whose group is
+/// that user's private group (`crate::account`), as everything a default Ubuntu
+/// account builds is (its file-creation mask is `0002`). Nobody else is in that group,
+/// so the file is as closed as one without the bit. A group-writable file of root is
+/// refused whatever its group is, and so is one of the service user when that user is
+/// root: root's files are not built under a user's mask.
+///
+/// `private_group` gives the service user's private group, if it has one. It is asked
+/// only when the answer decides.
 pub(super) fn fit(
-    mode: libc::mode_t,
-    owner: libc::uid_t,
+    file: PinnedFile,
     service_user: libc::uid_t,
+    private_group: impl FnOnce() -> Option<libc::gid_t>,
 ) -> Result<(), ImageRefusal> {
+    let PinnedFile { mode, owner, group } = file;
     if mode & libc::S_IFMT != libc::S_IFREG {
         return Err(ImageRefusal::UnsafeFile("is not a regular file"));
     }
     if owner != service_user && owner != 0 {
         return Err(ImageRefusal::UnsafeFile("is owned by another user"));
     }
-    if mode & (libc::S_IWGRP | libc::S_IWOTH) != 0 {
+    if mode & libc::S_IWOTH != 0 {
+        return Err(ImageRefusal::UnsafeFile("is writable by others"));
+    }
+    if mode & libc::S_IWGRP != 0
+        && (owner == 0 || owner != service_user || private_group() != Some(group))
+    {
         return Err(ImageRefusal::UnsafeFile(
-            "is writable by its group or by others",
+            "is writable by a group that is not its owner's private group",
         ));
     }
     Ok(())
@@ -93,7 +120,21 @@ impl SealedImage {
         sys::close_to_other_processes()?;
         let source = open_pinned(&expected.program)?;
         let stat = sys::status(source.as_fd())?;
-        fit(stat.st_mode, stat.st_uid, sys::effective_uid())?;
+        let service_user = sys::effective_uid();
+        fit(
+            PinnedFile {
+                mode: stat.st_mode,
+                owner: stat.st_uid,
+                group: stat.st_gid,
+            },
+            service_user,
+            // An account database that cannot be read vouches for no group.
+            || {
+                crate::account::private_group_of(service_user)
+                    .ok()
+                    .flatten()
+            },
+        )?;
         let file =
             sys::above_the_childs_descriptors(sys::memory_file(&name_of(&expected.program))?)?;
         let (read, length) = copy(source, file.as_fd())?;

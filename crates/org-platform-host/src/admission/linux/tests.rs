@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd};
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -394,33 +394,48 @@ fn bytes_are_started_only_with_the_expected_digest_or_as_a_development_image() {
 #[test]
 fn only_a_regular_file_that_the_service_user_or_root_alone_can_write_is_read() {
     const USER: libc::uid_t = 1000;
+    const GROUP: libc::gid_t = 1000;
     let regular = |mode: libc::mode_t| libc::S_IFREG | mode;
+    let file = |mode, owner| image::PinnedFile {
+        mode,
+        owner,
+        group: GROUP,
+    };
+    // Whatever the private group is: it is not asked for a file its group cannot write.
+    let not_asked = || -> Option<libc::gid_t> { panic!("the private group was asked for") };
     for mode in [0o755, 0o700, 0o555, 0o500, 0o644] {
-        assert_eq!(image::fit(regular(mode), USER, USER), Ok(()), "{mode:o}");
         assert_eq!(
-            image::fit(regular(mode), 0, USER),
+            image::fit(file(regular(mode), USER), USER, not_asked),
+            Ok(()),
+            "{mode:o}"
+        );
+        assert_eq!(
+            image::fit(file(regular(mode), 0), USER, not_asked),
             Ok(()),
             "{mode:o} of root"
         );
     }
-    for mode in [0o775, 0o757, 0o777, 0o720, 0o702] {
-        assert_eq!(
-            image::fit(regular(mode), USER, USER),
-            Err(ImageRefusal::UnsafeFile(
-                "is writable by its group or by others"
-            )),
-            "{mode:o}"
-        );
+    // Writable by others: never, private group or not.
+    for mode in [0o757, 0o777, 0o702, 0o776, 0o722] {
+        for owner in [USER, 0] {
+            assert_eq!(
+                image::fit(file(regular(mode), owner), USER, || Some(GROUP)),
+                Err(ImageRefusal::UnsafeFile("is writable by others")),
+                "{mode:o} of {owner}"
+            );
+        }
     }
     for owner in [1001, 65534] {
-        assert_eq!(
-            image::fit(regular(0o755), owner, USER),
-            Err(ImageRefusal::UnsafeFile("is owned by another user")),
-            "{owner}"
-        );
+        for mode in [0o755, 0o775] {
+            assert_eq!(
+                image::fit(file(regular(mode), owner), USER, || Some(GROUP)),
+                Err(ImageRefusal::UnsafeFile("is owned by another user")),
+                "{owner} {mode:o}"
+            );
+        }
     }
     // Root as the service user trusts no other owner either.
-    assert!(image::fit(regular(0o755), USER, 0).is_err());
+    assert!(image::fit(file(regular(0o755), USER), 0, not_asked).is_err());
     for kind in [
         libc::S_IFDIR,
         libc::S_IFLNK,
@@ -430,11 +445,73 @@ fn only_a_regular_file_that_the_service_user_or_root_alone_can_write_is_read() {
         libc::S_IFBLK,
     ] {
         assert_eq!(
-            image::fit(kind | 0o755, USER, USER),
+            image::fit(file(kind | 0o755, USER), USER, not_asked),
             Err(ImageRefusal::UnsafeFile("is not a regular file")),
             "{kind:o}"
         );
     }
+}
+
+/// A file its group can write is read in one case: the service user's own file in
+/// that user's private group, as a default Ubuntu account builds every file (its mask
+/// is `0002`). The second half of this rule, a group with another member, is tested
+/// here on the decision alone: making such a group takes root and a change of the
+/// machine's account database, which no test makes.
+#[test]
+fn a_group_writable_file_is_read_only_as_the_service_users_own_in_its_private_group() {
+    const USER: libc::uid_t = 1000;
+    const GROUP: libc::gid_t = 1000;
+    let refused = Err(ImageRefusal::UnsafeFile(
+        "is writable by a group that is not its owner's private group",
+    ));
+    let file = |mode, owner, group| image::PinnedFile {
+        mode: libc::S_IFREG | mode,
+        owner,
+        group,
+    };
+    for mode in [0o775, 0o664, 0o770, 0o720] {
+        // The user's own file in the user's private group.
+        assert_eq!(
+            image::fit(file(mode, USER, GROUP), USER, || Some(GROUP)),
+            Ok(()),
+            "{mode:o}"
+        );
+        // The user has no private group: its primary group has another member, is
+        // shared, or has no entry.
+        assert_eq!(
+            image::fit(file(mode, USER, GROUP), USER, || None),
+            refused,
+            "{mode:o}"
+        );
+        // Another group than the private one.
+        assert_eq!(
+            image::fit(file(mode, USER, 27), USER, || Some(GROUP)),
+            refused,
+            "{mode:o}"
+        );
+        // Root's file: refused in every group, the service user's private one too,
+        // and without asking.
+        for group in [0, GROUP] {
+            assert_eq!(
+                image::fit(file(mode, 0, group), USER, || -> Option<libc::gid_t> {
+                    panic!("the private group was asked for a file of root")
+                }),
+                refused,
+                "{mode:o} of root in {group}"
+            );
+        }
+        // Root as the service user: its own files are never group-writable.
+        assert_eq!(
+            image::fit(file(mode, 0, 0), 0, || Some(0)),
+            refused,
+            "{mode:o}"
+        );
+    }
+    // Others' write access is refused first, whatever the group is.
+    assert_eq!(
+        image::fit(file(0o777, USER, GROUP), USER, || Some(GROUP)),
+        Err(ImageRefusal::UnsafeFile("is writable by others"))
+    );
 }
 
 #[test]
@@ -614,8 +691,8 @@ fn the_pinned_path_must_be_a_regular_file_of_this_user_or_root_that_no_one_else_
     assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
     assert_eq!(image_refusal(admission(development(&fifo))), not_regular);
 
-    let writable = ImageRefusal::UnsafeFile("is writable by its group or by others");
-    for mode in [0o775, 0o757, 0o777] {
+    let writable = ImageRefusal::UnsafeFile("is writable by others");
+    for mode in [0o757, 0o777, 0o776] {
         fs::set_permissions(&work.fixture, fs::Permissions::from_mode(mode)).unwrap();
         assert_eq!(
             image_refusal(admission(development(&work.fixture))),
@@ -625,6 +702,70 @@ fn the_pinned_path_must_be_a_regular_file_of_this_user_or_root_that_no_one_else_
     }
     fs::set_permissions(&work.fixture, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(admission(development(&work.fixture)).is_ok());
+
+    // A real file its group can write, as a default Ubuntu account's cargo builds one
+    // (mode 0664 or 0775 under the mask 0002). It is admitted exactly when it is this
+    // user's own, this user is not root, and its group is this user's private group,
+    // which the account database of the machine decides. The file was made by this
+    // process, so its group is this process's.
+    let user = sys::effective_uid();
+    let group = fs::metadata(&work.fixture).unwrap().gid();
+    let private = crate::account::private_group_of(user).unwrap();
+    let group_writable =
+        ImageRefusal::UnsafeFile("is writable by a group that is not its owner's private group");
+    for mode in [0o775, 0o664] {
+        fs::set_permissions(&work.fixture, fs::Permissions::from_mode(mode)).unwrap();
+        let admitted = admission(development(&work.fixture));
+        if !is_root() && private == Some(group) {
+            assert!(
+                admitted.is_ok(),
+                "{mode:o}: a file in the user's private group was refused"
+            );
+        } else {
+            assert_eq!(image_refusal(admitted), group_writable, "{mode:o}");
+        }
+    }
+    println!(
+        "uid {user}: private group {private:?}; the image's group is {group}; a \
+         group-writable image is {}",
+        if !is_root() && private == Some(group) {
+            "admitted"
+        } else {
+            "refused"
+        }
+    );
+    // In a group that is not the private one it is refused, where this user can give
+    // the file such a group (root can give any; another user one of its own groups).
+    let other_group = if is_root() {
+        Some(1)
+    } else {
+        let mut groups = vec![0 as libc::gid_t; 256];
+        // SAFETY: a buffer of the length passed; the call writes at most that many ids.
+        let count = unsafe { libc::getgroups(groups.len() as libc::c_int, groups.as_mut_ptr()) };
+        groups.truncate(usize::try_from(count).unwrap_or(0));
+        groups
+            .into_iter()
+            .find(|other| *other != group && Some(*other) != private)
+    };
+    match other_group {
+        Some(other) => {
+            std::os::unix::fs::chown(&work.fixture, None, Some(other)).unwrap();
+            fs::set_permissions(&work.fixture, fs::Permissions::from_mode(0o775)).unwrap();
+            assert_eq!(
+                image_refusal(admission(development(&work.fixture))),
+                group_writable
+            );
+            // Without the group's write bit the group does not matter.
+            fs::set_permissions(&work.fixture, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(admission(development(&work.fixture)).is_ok());
+            std::os::unix::fs::chown(&work.fixture, None, Some(group)).unwrap();
+        }
+        None => println!(
+            "skipped: this user has no second group to give the image; the decision covers \
+             the refusal"
+        ),
+    }
+    fs::set_permissions(&work.fixture, fs::Permissions::from_mode(0o755)).unwrap();
 
     // A file of another user. Only root can make one: as any other user this test
     // cannot create the file, and the rule itself is tested in
