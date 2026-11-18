@@ -708,6 +708,7 @@ dependencies = [
  "org-docs",
  "org-mailbox",
  "org-proto",
+ "org-store",
  "org-sync",
  "org-sync-proto",
  "org-work",

@@ -16,6 +16,11 @@ pub mod hq_creation;
 mod organization;
 pub use organization::admission::{OwnerAccount, OwnerAuthority};
 pub use organization::{activity, directory};
+/// The organization family on the office store (`docs/design/office-store.md`): its
+/// records and codec.
+pub mod organization_family {
+    pub use crate::organization::records;
+}
 mod error;
 mod key;
 mod messaging;

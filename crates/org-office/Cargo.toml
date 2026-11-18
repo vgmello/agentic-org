@@ -7,10 +7,12 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-testkit = []
+# `testkit`: the memory ports of the families on the office store and their conformance suites.
+testkit = ["org-store/testkit"]
 
 [dependencies]
 org-docs = { path = "../org-docs" }
+org-store = { path = "../org-store" }
 zeroize = "=1.9.1"
 org-work = { path = "../org-work" }
 org-proto = { path = "../org-proto" }
@@ -27,5 +29,6 @@ libc.workspace = true
 org-work = { path = "../org-work", features = ["testkit"] }
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
 org-sync = { path = "../org-sync", features = ["testkit"] }
+org-store = { path = "../org-store", features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true

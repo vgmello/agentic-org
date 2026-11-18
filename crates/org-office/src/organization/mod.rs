@@ -8,6 +8,7 @@ mod canonical_directory;
 pub mod directory;
 mod people;
 mod policy;
+pub mod records;
 mod status;
 mod structure;
 mod view;
