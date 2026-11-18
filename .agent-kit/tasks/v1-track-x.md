@@ -944,6 +944,37 @@ scaffolding (an office planted by an example program and the linked socket), bec
 no product command creates an office in the container. Not verified by anyone: real
 systemd, AppArmor, Docker Desktop on a Mac, a release-build host.
 
+**Plain HTTP and the review's repairs: built on the branch (`7e52887f`), not
+integrated.** The author confirmed all eleven findings and rejected none.
+
+- A listener mode of its own, `http_published`: the listen address is not loopback,
+  the origin's host is exactly `localhost`, `127.0.0.1` or `[::1]`, and only an
+  instance whose service mode is `foreground` may have it; never implied by another
+  mode; a record edited by hand does not start a host. It crosses one contract, the
+  `tls.fetch` reply between host and web process (a new variant with no pair; the
+  vectors gained rows). The web process serves it as it serves loopback HTTP.
+- In the container (Debian 13, default profiles): `GET /api/v1/version` answers 200,
+  `GET /` serves the UI's index, another `Host` is refused with 400, and the host log
+  says `web process started, confined by the seccomp filter and Landlock ABI 7`, with
+  no killed system call: the first run of the web process's confinement inside a
+  container.
+- What the product itself lacks there: `GET /register` is 404 (the registration page
+  is not built), so the link root's command prints cannot be used yet.
+- V1: everything that can refuse is asked before the record is frozen, and a record
+  this run froze is removed when the reservation refuses. V2: the stop grace is 5 s
+  (a worker that ignores the stop is killed; exit 0 in about 5.4 s). V3: a foreground
+  host judges the recorded directory at every start. V4: only this instance's own
+  link is printed. V5: no initial link for a foreground instance. V6 to V11 as the
+  review asked; `https` is refused at setup until X7.
+- Lead's decisions: the image's origin is `http://127.0.0.1:8443`, not `localhost`
+  (a name may resolve to `::1`, where another local process can listen); the limits
+  the author names (a registered setup that fails after the registry reserved keeps
+  its record; no Docker case for V4 and V5; two XDG names hard-coded beside the
+  platform's list) are written down as known limits.
+- Next: the branch takes the Track X tip (`daa46cdf`: the other team's changes, the
+  mount-table fix, X4's last slice), its checks and the container script run on that,
+  then a fresh review of what the first X5 review has not read.
+
 Lead's decisions so far: `root` at `/data/instance` with the service user's home at
 `/data` is accepted (the host refuses overlapping instance and locator roots);
 `hello` for root is accepted as the handshake of `admin.reset`, subject to the review.
