@@ -440,7 +440,7 @@ on the offers of design section 10.
 - **Build:** the organization, teams, employees and roles of the data contract. One home
   team per employee. One status field. A team lead who is a direct member. HQ gives
   teams their numbers. The many-to-many membership model is deleted.
-- **Commands:** `org inspect`, `team list`, `team inspect`, `agent inspect`, and the owner's commands
+- **Commands:** `org inspect`, `team list`, `team inspect`, `agent inspect`, `person inspect`, and the owner's commands
   for teams and people, which this increment names under the grammar. With the first
   write on the new store: `--dry-run`, `--idempotency-key`, `--if-match` and `--durable`
   ([command line design](design/agent-os-command-line.md), sections 2.6, 2.7 and 3.2; CLI-4, 5 and 6).
@@ -591,7 +591,7 @@ on the offers of design section 10.
   - The built-in HR lead drafts the proposal once agents can run (C3). Until then, and
     whenever HR cannot run, the same flow works with the form.
   - Edit, move, pause, resume and offboard an agent.
-- **Commands:** `hr list-roles`, `hr inspect-role` and `hr hire`, which answers
+- **Commands:** `role list`, `role inspect` and `hr hire`, which answers
   `gate_required` with the request and, once it is known, who approves ([command line design](design/agent-os-command-line.md), section 3.2;
   CLI-14).
 - **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
@@ -651,8 +651,8 @@ on the offers of design section 10.
   its work, with the non-overridable ones marked as must-follow.
 - **Build:** the one-chain resolution (organization, the accountable team's chain, the
   project) and its delivery at launch.
-- **Commands:** `process list`, `process inspect`, `policy list`, `policy inspect`,
-  `skill list` and `skill read` ([command line design](design/agent-os-command-line.md), section 3.5).
+- **Commands:** `process list` and `process inspect`, for processes and standards alike,
+  and `skill list` and `skill read` ([command line design](design/agent-os-command-line.md), section 3.5).
 - **Read:** [processes design](design/processes.md), [processes UX](specs/processes-ux.md).
   Rows FC-110, FC-112.
 - **Code today:** `crates/org-process` resolves several chains, which the design

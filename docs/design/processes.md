@@ -269,9 +269,9 @@ Reads, for any employee bound to the organization:
 | `process.view` | `scope: organization \| team { team_id } \| project { project_id }` | `{ rows, indexed_commit, stale_since? }` (PROC-9, PROC-10) | as above |
 
 `for` is `current` (default), `project { project_id }` or `task { task_id }`. The
-`agent-os` commands `process list` and `process inspect` (with `--why`) call these,
-and `policy list` and `policy inspect` call them for documents of kind `standard`
-([agent command line](agent-os-command-line.md), section 3.5). The
+`agent-os` commands `process list` and `process inspect` (with `--why`) call these, for
+processes and standards alike ([agent command line](agent-os-command-line.md), section
+3.5). The
 local API version is 1 and these calls change in place until v1 ships.
 
 The result of `task.set_status` names a branch left with unmerged work at a close
@@ -291,7 +291,7 @@ share the rule as `org_proto::has_reserved_branch_prefix`.
 - **`org-office`:** the index, caches, branch records, the calls and the checks
   inside the work write.
 - **`org-git`:** repository reads, branch creation at a commit and cleanup.
-- **`agent-os`:** the `process`, `policy` and `skill` read commands.
+- **`agent-os`:** the `process` and `skill` read commands.
 - **`apps/agentic-org-ui`:** the Processes views and the profile tab.
 
 ## 8. Tests that prove the rules
