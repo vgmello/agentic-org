@@ -140,10 +140,6 @@ impl Service {
         })
     }
     #[cfg(test)]
-    #[expect(
-        dead_code,
-        reason = "bootstrap recovery-custody proof is being ported onto the registered-host fixture (A2 run 6)"
-    )]
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
     }

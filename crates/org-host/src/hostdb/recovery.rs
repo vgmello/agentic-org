@@ -256,10 +256,6 @@ pub(super) fn verify_all(db: &Connection) -> Result<(), Error> {
 }
 impl HostDb {
     #[cfg(test)]
-    #[expect(
-        dead_code,
-        reason = "bootstrap recovery-custody proof is being ported onto the registered-host fixture (A2 run 6)"
-    )]
     pub(crate) fn recovery_db_unlocked_for_test(&self) -> bool {
         self.connection.try_lock().is_ok()
     }

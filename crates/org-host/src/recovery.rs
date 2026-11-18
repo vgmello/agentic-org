@@ -124,10 +124,6 @@ impl Recovery {
     /// Private disposable test seam. No request/environment/build-release option
     /// can select it; production always calls the actual SDK functions above.
     #[cfg(test)]
-    #[expect(
-        dead_code,
-        reason = "the real-process recovery-custody proof awaits porting onto the registered-host fixture (A2 remaining)"
-    )]
     pub(crate) fn with_test_presence<T>(
         &self,
         adapter: Arc<dyn TestPresence>,

@@ -17,8 +17,8 @@ use crate::{
 };
 use org_host_control::{
     ops::{AccountVerify, AccountVerifyParams},
-    provision::{OrganizationProvision, Params},
-    HostOpResult, Password,
+    provision::{OrganizationProvision, Params, Provisioned},
+    HostOpResult, Password, SessionHandle,
 };
 use org_proto::{frame, selected_bootstrap::PlanV1, ApiError, Call, HelloParams, Request};
 use std::{
@@ -32,6 +32,8 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+mod recovery_custody;
 
 const WAIT: Duration = Duration::from_secs(60);
 const PASSWORD: &str = "synthetic first password";
@@ -205,9 +207,22 @@ fn start_registered_host(
     (host, socket)
 }
 
-#[test]
-#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
-fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
+/// A started registered host running copies of the real worker and web images,
+/// with `wire` signed in as the seeded administrator `session` over `host.sock`.
+/// `temp` is last so the disposable root outlives the host when dropped in order.
+pub(super) struct Started {
+    pub(super) address: SocketAddr,
+    pub(super) program: PathBuf,
+    pub(super) host: Host,
+    pub(super) socket: PathBuf,
+    pub(super) wire: BufReader<UnixStream>,
+    pub(super) session: SessionHandle,
+    pub(super) temp: tempfile::TempDir,
+}
+
+/// Starts [`Started`] from `ORG_TEST_OFFICE_BIN` and `ORG_TEST_WEB_BIN` under a
+/// disposable `/private/tmp` root. Uses request IDs 1 and 2.
+pub(super) fn start_signed_in() -> Started {
     let office = std::env::var_os("ORG_TEST_OFFICE_BIN")
         .expect("ORG_TEST_OFFICE_BIN must name the built agentic-org-office");
     let web = std::env::var_os("ORG_TEST_WEB_BIN")
@@ -259,6 +274,63 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     )
     .unwrap();
     assert!(first.admin);
+    Started {
+        address,
+        program,
+        host,
+        socket,
+        wire,
+        session: first.session,
+        temp,
+    }
+}
+
+/// Provisions HQ over `wire` as `session`, polling until it completes, and
+/// returns the request and its result. `id` is the next request ID.
+pub(super) fn provision_hq(
+    wire: &mut BufReader<UnixStream>,
+    id: &mut u64,
+    session: SessionHandle,
+) -> (Params, Provisioned) {
+    let prepared = Params {
+        session,
+        operation_id: crate::ids::generate().unwrap(),
+        plan: PlanV1 {
+            version: 1,
+            name: "Example".into(),
+            slug: "example".into(),
+            repository_remote_url: "https://example.test/organization.git".into(),
+            state_branch: "org/state".into(),
+            home_team_name: "Core".into(),
+        },
+    };
+    let until = Instant::now() + WAIT;
+    loop {
+        let result = answer::<OrganizationProvision>(wire, *id, &prepared).unwrap();
+        *id += 1;
+        match result {
+            HostOpResult::Completed { result } => return (prepared, result),
+            HostOpResult::Accepted => {
+                assert!(Instant::now() < until, "HQ provisioning deadline");
+                thread::sleep(Duration::from_millis(50));
+            }
+            _ => panic!("unexpected provisioning result"),
+        }
+    }
+}
+
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
+    let Started {
+        address,
+        program,
+        host,
+        socket: _,
+        mut wire,
+        session,
+        temp: _temp,
+    } = start_signed_in();
     // Authenticated but no HQ yet: the web process is not serving.
     assert!(!web_ready(&host));
     // The wired start-eligibility gate holds the supervisor before any spawn or bind:
@@ -278,32 +350,8 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(!web_ready(&host));
-    let prepared = Params {
-        session: first.session,
-        operation_id: crate::ids::generate().unwrap(),
-        plan: PlanV1 {
-            version: 1,
-            name: "Example".into(),
-            slug: "example".into(),
-            repository_remote_url: "https://example.test/organization.git".into(),
-            state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
-        },
-    };
     let mut id = 3;
-    let until = Instant::now() + WAIT;
-    loop {
-        let result = answer::<OrganizationProvision>(&mut wire, id, &prepared).unwrap();
-        id += 1;
-        match result {
-            HostOpResult::Completed { .. } => break,
-            HostOpResult::Accepted => {
-                assert!(Instant::now() < until, "HQ provisioning deadline");
-                thread::sleep(Duration::from_millis(50));
-            }
-            _ => panic!("unexpected provisioning result"),
-        }
-    }
+    provision_hq(&mut wire, &mut id, session);
 
     // 1. Admission after HQ: the supervisor spawns and admits the real web image.
     wait_until("web_ready", || web_ready(&host));
