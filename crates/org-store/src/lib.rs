@@ -7,9 +7,13 @@
 #![deny(unsafe_code)]
 
 mod change;
+mod disk;
 mod engine;
 mod error;
+mod files;
 mod sequences;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 
 pub use change::{
     Ack, Actor, Bytes, Change, Clock, DurablePath, FileChange, Id, Operation, Outcome, Receipt,
@@ -17,4 +21,5 @@ pub use change::{
 };
 pub use engine::{CorePort, CoreRead, Cursor, Engine, Mark, Projector};
 pub use error::{EngineError, ProjectionError, StoreError};
+pub use files::{FileOp, FileVersion, Files, FilesError, MAX_FILE_BYTES};
 pub use sequences::{FeedPosition, HighWaters, Sequences, Stream, MAX_POSITION};
