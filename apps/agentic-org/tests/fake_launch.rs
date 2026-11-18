@@ -204,7 +204,7 @@ fn create(home: &Home) {
         format!("grant create {pid} "),
         format!("recovery create {pid} present"),
         format!("transfer create {pid} received"),
-        format!("dbkey create {pid} "),
+        format!("secrets-key create {pid} "),
     ] {
         assert!(log_has(&log, &line), "no `{line}` in:\n{log}");
     }

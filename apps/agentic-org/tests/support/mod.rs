@@ -322,7 +322,7 @@ impl TestHome {
     /// The fingerprints of the office secrets keys the fake's runs for `key` ("create" or an office
     /// id) got, in order (`null` for none).
     pub fn office_secrets_key_fingerprints(&self, key: &str) -> Vec<String> {
-        self.log_fields("dbkey", key)
+        self.log_fields("secrets-key", key)
             .iter()
             .map(|f| f[3].clone())
             .collect()

@@ -13,8 +13,6 @@ pub(super) fn connection_for_test(
     path: impl AsRef<Path>,
     flags: OpenFlags,
 ) -> Result<Connection, Error> {
-    sqlite_ready()?;
-    #[allow(clippy::disallowed_methods)] // Raw fixtures cross initialization completion.
     let db = Connection::open_with_flags(path, flags).map_err(Error::from)?;
     Ok(db)
 }

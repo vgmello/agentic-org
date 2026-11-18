@@ -184,11 +184,11 @@ impl OfficeSecretsKey {
         OfficeSecretsKey(Box::new(bytes))
     }
 
-    /// The raw key, only for storing it in the host's key store and for keying SQLCipher,
-    /// nothing else. Don't copy the bytes beyond their immediate use: borrow them for the one
-    /// call that needs them.
-    /// `*key.expose_bytes()` copies the array, and any copy (or a hex form made for SQLCipher's
-    /// `x'…'` key syntax) is the caller's to zero. Never log or format it.
+    /// The raw key, only for storing it in the host's key store and for wrapping or unwrapping
+    /// an office's private keys (`org_pki::wrap`), nothing else. Don't copy the bytes beyond
+    /// their immediate use: borrow them for the one call that needs them.
+    /// `*key.expose_bytes()` copies the array, and any copy is the caller's to zero. Never log
+    /// or format it.
     pub fn expose_bytes(&self) -> &[u8; OFFICE_SECRETS_KEY_BYTES] {
         &self.0
     }
@@ -238,11 +238,11 @@ impl<'de> Deserialize<'de> for OfficeSecretsKey {
 }
 
 /// The one decode error. It never contains the input.
-const BAD_DB_KEY: &str = "an office secrets key must be 64 lowercase hex digits";
+const BAD_SECRETS_KEY: &str = "an office secrets key must be 64 lowercase hex digits";
 
 impl Secret for OfficeSecretsKey {
     const EXPECTING: &'static str = "an office secrets key";
-    const BAD: &'static str = BAD_DB_KEY;
+    const BAD: &'static str = BAD_SECRETS_KEY;
 
     fn zeroed() -> Self {
         OfficeSecretsKey(Box::new([0u8; SECRET_BYTES]))
@@ -812,13 +812,13 @@ mod tests {
                     .unwrap_err()
                     .to_string();
             assert!(!err.contains(&bad[..20]), "echoed: {err}");
-            assert!(err.contains(BAD_DB_KEY), "{err}");
+            assert!(err.contains(BAD_SECRETS_KEY), "{err}");
         }
         for other in ["5", "-5", "1.5", "true", "31415926535897932384"] {
             let err = serde_json::from_str::<OfficeSecretsKey>(other)
                 .unwrap_err()
                 .to_string();
-            assert!(err.contains(BAD_DB_KEY), "{other}: {err}");
+            assert!(err.contains(BAD_SECRETS_KEY), "{other}: {err}");
         }
         for other in ["null", "[1]", "{\"a\":1}", "\"\""] {
             assert!(

@@ -1,9 +1,10 @@
 # ADR-0016 · No application-level encryption of organization data
 
 Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
-plan entry E-01). Implementation in progress: the office databases are plain SQLite, the CA
-private key is stored wrapped and the replication snapshot is a plain file checked by its SHA-256
-digest (implementation plan A1.3); the host registry key and the launch rename remain. The owner chose the key storage of decision 3 on 2026-11-17
+plan entry E-01). Implemented (implementation plan A1.1 to A1.7): the office databases and the host registry
+are plain bundled SQLite and the workspace no longer builds SQLCipher, the CA private key is
+stored wrapped, the replication snapshot is a plain file checked by its SHA-256 digest, and the
+one launch contract carries the office secrets key. The owner chose the key storage of decision 3 on 2026-11-17
 (option 2 in the options table below). Supersedes the SQLCipher requirement of
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 1 and narrows the
 key custody of its decision 2 to wrapping an office's private keys. ADR-0002's choice of SQLite, its single writer

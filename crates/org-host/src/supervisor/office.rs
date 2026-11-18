@@ -165,7 +165,7 @@ impl OfficeRunner {
     fn start(&self, generation: &mut u64) -> Ending {
         let key = match self.keys.load(&self.office_id) {
             Ok(key) => key,
-            Err(e) if e.means_key_missing() => None,
+            Err(e) if e.means_no_key() => None,
             Err(e) => {
                 host_log::log(&format!(
                     "couldn't load the key of office {}: {e}",

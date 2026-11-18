@@ -16,7 +16,8 @@ the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
   ([non-negotiables](../architecture-non-negotiables.md) 1 and 2). ADR-0014 decision 6
   makes a journal under `durable/` the commit point and lets files follow.
 - Today's store (`crates/org-office/src/store.rs` and `store/`, 14,694 lines outside
-  tests) keeps the old tables as the source in two SQLCipher databases. Its acceptance
+  tests) keeps the old tables as the source in two plain SQLite databases (SQLCipher
+  until A1, ADR-0016). Its acceptance
   journal records SQL row images with a projection-schema digest, writes one file per
   transaction, asks the host for its custody checkpoint before every write and every
   read, confirms after every write, and re-reads every materialized file on every read.

@@ -47,8 +47,8 @@ pub(crate) enum Signal {
 
 /// The environment a server gets, besides `ORG_OFFICE_HOME`: only these of the host's own, so
 /// nothing else in the login session reaches it (the development key folder included: servers
-/// never touch a key store, they get their key on the first line). SQLCipher needs only the
-/// user's identity and home; `TMPDIR` is the user's temporary folder.
+/// never touch a key store, they get their key in the launch handoff). A worker needs only
+/// the user's identity and home; `TMPDIR` is the user's temporary folder.
 const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"];
 
 /// A server's whole environment: the [`PASSED_ENV`] names the host has (read through `host_var`),

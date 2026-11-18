@@ -180,7 +180,7 @@ fn launch_receives_keys_and_acknowledges_handoff_before_ready() {
     assert!(!socket(&world).exists());
     assert!(host_end.send(b"after shutdown").is_err());
     let logs = run.stderr();
-    for secret in ["0707070707070707", "0001-0203-0405", DB_KEY_HEX] {
+    for secret in ["0707070707070707", "0001-0203-0405", SECRETS_KEY_HEX] {
         assert!(!logs.contains(secret));
     }
 }
