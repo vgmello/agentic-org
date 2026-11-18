@@ -15,6 +15,10 @@ struct State {
     read: Option<Vec<u8>>,
     /// A load state other than `loaded` for a file the manager cannot use.
     load: Option<&'static str>,
+    /// What the manager lists as the unit's drop-in files.
+    drop_ins: String,
+    /// `enable` fails, as when the unit's program cannot be started.
+    enable_fails: bool,
     /// `Some`: what `loginctl show-user` prints for `Linger`; `None`: it fails.
     linger: Option<&'static str>,
     /// No user manager answers: `systemctl` fails as it does without a user bus.
@@ -89,7 +93,7 @@ impl State {
         };
         format!(
             "LoadState={load}\nActiveState={}\nMainPID={}\nFragmentPath={fragment}\n\
-             UnitFileState={}\nNeedDaemonReload={}\n",
+             UnitFileState={}\nNeedDaemonReload={}\nDropInPaths={}\n",
             if self.pid.is_some() {
                 "active"
             } else {
@@ -106,6 +110,7 @@ impl State {
             } else {
                 "no"
             },
+            self.drop_ins,
         )
     }
 }
@@ -179,6 +184,9 @@ impl Commands for Fake {
                 assert_eq!(call[3], "--now");
                 if s.fragment.is_none() {
                     return done(1, String::new(), &format!("Unit {unit} does not exist\n"));
+                }
+                if s.enable_fails {
+                    return done(1, String::new(), "Job failed. See journalctl.\n");
                 }
                 s.enabled = true;
                 s.pid.get_or_insert(42);
@@ -685,7 +693,12 @@ fn a_definition_that_is_not_enabled_or_changed_on_disk_is_loaded_again_only_by_r
         "{error}"
     );
     assert!(!fake.verbs().contains(&"enable".to_string()));
-    assert_eq!(elsewhere.status(ID).unwrap(), ServiceStatus::Unloaded);
+    // The definition this call wrote is not left behind for a manager that never read it.
+    assert_eq!(elsewhere.status(ID).unwrap(), ServiceStatus::NotRegistered);
+    assert!(!temp
+        .path()
+        .join(format!("other/systemd/user/{NAME}"))
+        .exists());
 
     // A file systemd read but cannot use is reported with its load state.
     let (broken, fake) = self::systemd(&temp.path().join("broken"));
@@ -1030,4 +1043,69 @@ fn real_systemd() {
         .directory
         .join(format!("agentic-org-test-{id}.service"))
         .exists());
+}
+
+/// X5 review V8: a drop-in of the unit's own can replace `ExecStart` or add to the
+/// environment, so a unit with one is not ours to act on, on any operation; a drop-in that
+/// systemd applies to every service is not the unit's own.
+#[test]
+fn a_unit_with_a_drop_in_of_its_own_is_a_conflict_for_every_operation() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    fake.set(|s| s.drop_ins = "/usr/lib/systemd/user/service.d/10-timeout.conf".into());
+    assert_eq!(systemd.register(&unit()).unwrap(), Registration::Unchanged);
+    for drop_ins in [
+        format!("/home/a/.config/systemd/user/{NAME}.d/override.conf"),
+        format!(
+            "/usr/lib/systemd/user/service.d/10-timeout.conf /run/user/1000/systemd/user.control/{NAME}.d/50-x.conf"
+        ),
+    ] {
+        fake.set(|s| s.drop_ins = drop_ins.clone());
+        fake.clear();
+        for call in [
+            systemd.register(&unit()).map(drop),
+            systemd.start(ID),
+            systemd.stop(ID),
+            systemd.status(ID).map(drop),
+            systemd.unregister(ID),
+        ] {
+            let error = call.unwrap_err();
+            assert!(
+                matches!(&error, ServiceError::Conflict(why) if why.contains("drop-in")),
+                "{error}"
+            );
+        }
+        assert_eq!(fake.verbs(), ["show"; 5], "{drop_ins}");
+        assert_eq!(fs::read(&file).unwrap(), render(NAME, &unit()));
+    }
+}
+
+/// A registration whose load fails leaves no definition behind: the file this call wrote is
+/// removed again, so the next call starts from nothing and not from a conflict.
+#[test]
+fn a_definition_whose_load_fails_is_not_left_behind() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    fake.set(|s| s.enable_fails = true);
+    let error = systemd.register(&unit()).unwrap_err();
+    assert!(
+        matches!(&error, ServiceError::System(why) if why.contains("enable")),
+        "{error}"
+    );
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    assert!(!file.exists(), "the definition was left behind");
+    assert_eq!(
+        fake.verbs(),
+        ["show", "daemon-reload", "show", "enable", "daemon-reload"]
+    );
+    // The next registration writes and loads it as the first would have.
+    fake.set(|s| {
+        s.enable_fails = false;
+        s.fragment = None;
+        s.read = None;
+    });
+    assert_eq!(systemd.register(&unit()).unwrap(), Registration::Loaded);
+    assert!(file.exists());
 }

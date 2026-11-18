@@ -11,7 +11,9 @@
 //! - **Nothing under the name that is someone else's is ever taken over.** A unit systemd
 //!   holds under the name from any file other than our definition (its `FragmentPath`: a
 //!   unit in another directory, a transient or a masked one) is a conflict for register,
-//!   start, stop, status and unregister. A definition file with different bytes than the
+//!   start, stop, status and unregister. So is a unit of ours with a drop-in of its own
+//!   (`<name>.d/*.conf`, in any unit directory): a drop-in can replace `ExecStart` or add
+//!   to the environment, so what systemd would run is no longer the definition. A definition file with different bytes than the
 //!   rendered unit is a conflict for register, which never replaces, reloads or enables it.
 //! - **An identical, settled registration is left alone**: the file has the rendered bytes,
 //!   systemd loaded it from that file, nothing changed on disk since, and it is enabled.
@@ -57,7 +59,7 @@ const UNLOAD_WAIT: Duration = Duration::from_secs(20);
 pub(super) const USER_PREFIX: &str = "agentic-org-";
 /// What the adapter reads of a unit, in one `systemctl show`.
 const PROPERTIES: &str =
-    "--property=LoadState,ActiveState,MainPID,FragmentPath,UnitFileState,NeedDaemonReload";
+    "--property=LoadState,ActiveState,MainPID,FragmentPath,UnitFileState,NeedDaemonReload,DropInPaths";
 
 pub(super) fn user_placement(home: &Path) -> Result<Placement, Refused> {
     Ok(Placement {
@@ -193,6 +195,8 @@ struct Shown {
     fragment: String,
     file_state: String,
     needs_reload: bool,
+    /// The drop-in files systemd applies to the unit, as it lists them.
+    drop_ins: String,
 }
 
 impl Shown {
@@ -304,6 +308,19 @@ impl Systemd {
                 shown.active.escape_default()
             )));
         }
+        // A drop-in of this unit's own changes what systemd runs under our name.
+        let own_drop_ins = format!("/{name}.d/");
+        if let Some(drop_in) = shown
+            .drop_ins
+            .split_whitespace()
+            .find(|path| path.contains(&own_drop_ins))
+        {
+            return Err(ServiceError::Conflict(format!(
+                "systemd applies a drop-in to {name} ({}); the definition is not the only \
+                 thing it would run",
+                drop_in.escape_default()
+            )));
+        }
         let file = self.file(name);
         let loaded = Path::new(&shown.fragment);
         let ours = loaded == file
@@ -372,7 +389,12 @@ impl Systemd {
             .map_err(system)
             .and_then(|()| fs::hard_link(&temporary, file).map_err(conflict));
         let _ = fs::remove_file(&temporary);
-        published
+        published?;
+        // The new name is in the directory: flush the directory, so the definition is
+        // still there after a power loss.
+        fs::File::open(&self.placement.directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(system)
     }
 
     /// Makes systemd read the definition at `file`, whose bytes the caller compared with
@@ -420,7 +442,16 @@ impl ServiceManager for Systemd {
             ))),
             None => {
                 self.write_definition(&file, &bytes)?;
-                self.load(&name, &file).map(|()| Registration::Loaded)
+                match self.load(&name, &file) {
+                    Ok(()) => Ok(Registration::Loaded),
+                    Err(refused) => {
+                        // What this call wrote is not left behind for the next one to
+                        // find: the file goes, and systemd is told so.
+                        let _ = fs::remove_file(&file);
+                        let _ = self.systemctl(&["daemon-reload".as_ref()]);
+                        Err(refused)
+                    }
+                }
             }
         }
     }
@@ -588,6 +619,7 @@ fn parse_show(output: &str) -> Option<Shown> {
         fragment: property(output, "FragmentPath").unwrap_or("").to_owned(),
         file_state: property(output, "UnitFileState").unwrap_or("").to_owned(),
         needs_reload: property(output, "NeedDaemonReload") == Some("yes"),
+        drop_ins: property(output, "DropInPaths").unwrap_or("").to_owned(),
     })
 }
 

@@ -80,7 +80,7 @@ show)
         active=inactive
         pid=0
     fi
-    printf 'LoadState=%s\nActiveState=%s\nMainPID=%s\nFragmentPath=%s\nUnitFileState=%s\nNeedDaemonReload=no\n' \
+    printf 'LoadState=%s\nActiveState=%s\nMainPID=%s\nFragmentPath=%s\nUnitFileState=%s\nNeedDaemonReload=no\nDropInPaths=\n' \
         "$load" "$active" "$pid" "$fragment" "$enabled"
     ;;
 daemon-reload) ;;
