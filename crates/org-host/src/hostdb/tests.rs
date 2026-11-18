@@ -339,6 +339,38 @@ fn refusals_preserve_existing_database_and_wal_bytes() {
     }
 }
 #[test]
+fn garbage_main_file_beside_a_live_wal_is_refused_before_sqlite_reads_either() {
+    let (home, secrets, db) = fixture();
+    {
+        // A committed change to page 1 that stays in the WAL (no checkpoint yet).
+        let conn = db.connection.lock().unwrap();
+        conn.pragma_update(None, "user_version", 3).unwrap();
+        conn.execute("INSERT INTO meta(key,value) VALUES ('probe','1')", [])
+            .unwrap();
+    }
+    let wal = home.path().join("host-registry.db-wal");
+    let wal_bytes = fs::read(&wal).unwrap();
+    assert!(
+        !wal_bytes.is_empty(),
+        "the fixture must leave frames in the WAL"
+    );
+    let main_len = fs::metadata(home.path().join(DB)).unwrap().len() as usize;
+    drop(db);
+    // The main file is no longer a database, but the WAL beside it still holds page 1.
+    let garbage = vec![0x5a_u8; main_len.max(4096)];
+    fs::write(home.path().join(DB), &garbage).unwrap();
+    fs::write(&wal, &wal_bytes).unwrap();
+    let _ = fs::remove_file(home.path().join("host-registry.db-shm"));
+    assert!(matches!(
+        HostDb::open(home.path(), &secrets),
+        Err(Error::Sql(rusqlite::ErrorCode::NotADatabase))
+    ));
+    // Nothing was read into or checkpointed over either file.
+    assert_eq!(fs::read(home.path().join(DB)).unwrap(), garbage);
+    assert_eq!(fs::read(&wal).unwrap(), wal_bytes);
+    assert!(!home.path().join("host-registry.db-shm").exists());
+}
+#[test]
 fn missing_empty_nonregular_symlink_plaintext_and_sidecar_aliases_refuse() {
     let home = home();
     let secrets = Secrets::default();
