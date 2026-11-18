@@ -150,7 +150,7 @@ pub(crate) struct Job<E: Engine> {
     pub(crate) to: SyncSender<Result<Reply, StoreError>>,
 }
 
-/// A durable reply waiting for the flush that covers its ordinal.
+/// A durable reply waiting for the flush and the host confirmation that cover its ordinal.
 pub(crate) type Waiter = (u64, SyncSender<Result<Reply, StoreError>>, Reply);
 
 /// What the three threads share, under one lock.
@@ -167,8 +167,10 @@ pub(crate) struct Flow {
     pub(crate) queued: usize,
     pub(crate) flushed: u64,
     pub(crate) materialized: u64,
+    /// The flushed head the host last confirmed. A durable reply is sent only for an
+    /// ordinal at or below it.
     pub(crate) confirmed: Option<JournalHead>,
-    /// Durable replies waiting for the flush that covers their ordinal.
+    /// Durable replies waiting for the flush and the confirmation that cover their ordinal.
     pub(crate) waiters: Vec<Waiter>,
     /// Ordinal and size of each appended entry not yet flushed.
     pub(crate) unflushed: VecDeque<(u64, u64)>,
@@ -179,7 +181,8 @@ pub(crate) struct Flow {
 }
 
 impl Flow {
-    /// The journal is flushed through `ordinal`: answer every durable waiter it covers.
+    /// The journal is flushed through `ordinal`. Nobody is answered yet: a durable reply
+    /// also needs the host's confirmation.
     pub(crate) fn flushed_through(&mut self, ordinal: u64) {
         self.flushed = self.flushed.max(ordinal);
         while self.unflushed.front().is_some_and(|(o, _)| *o <= ordinal) {
@@ -188,6 +191,18 @@ impl Flow {
             self.unmaterialized_bytes += entry.1;
             self.unmaterialized.push_back(entry);
         }
+    }
+
+    /// Whether a durable reply for `ordinal` may be sent: flushed, and confirmed by the host.
+    pub(crate) fn durable_at(&self, ordinal: u64) -> bool {
+        let confirmed = self.confirmed.as_ref();
+        ordinal <= self.flushed && confirmed.is_some_and(|head| ordinal <= head.ordinal)
+    }
+
+    /// The host confirmed the flushed `head`: answer every durable waiter it covers.
+    pub(crate) fn confirmed_through(&mut self, head: JournalHead) {
+        let ordinal = head.ordinal.min(self.flushed);
+        self.confirmed = Some(head);
         let waiters = std::mem::take(&mut self.waiters);
         for (waiting, to, reply) in waiters {
             if waiting <= ordinal {
@@ -285,9 +300,11 @@ pub struct Status {
     pub holding_back: bool,
     /// Operations submitted and not yet taken into a batch.
     pub queued: usize,
-    /// Durable replies waiting for their flush.
+    /// Durable replies waiting for their flush and its confirmation by the host.
     pub waiting_durable: usize,
     pub flushed: u64,
+    /// The ordinal of the flushed head the host last confirmed.
+    pub confirmed: u64,
     pub materialized: u64,
 }
 
@@ -569,6 +586,7 @@ fn status(flow: &Flow) -> Status {
         queued: flow.queued,
         waiting_durable: flow.waiters.len(),
         flushed: flow.flushed,
+        confirmed: flow.confirmed.as_ref().map_or(0, |head| head.ordinal),
         materialized: flow.materialized,
     }
 }

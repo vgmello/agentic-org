@@ -855,3 +855,272 @@ fn closing_returns_after_many_small_batches_raced_against_the_flusher() {
     assert_eq!((status.flushed, status.materialized), (200, 200));
     Arc::try_unwrap(store).ok().unwrap().close().unwrap();
 }
+
+/// A segment is rolled without a flush, so a power cut right after two committed writes
+/// leaves an empty segment before a later one. Nothing in that gap was durable.
+#[test]
+fn a_power_cut_in_a_segment_roll_window_reopens_to_the_last_flushed_entry() {
+    let mut office = Office::new();
+    office.limits.segment_bytes = 1;
+    let store = office.create();
+    office.put_as(&store, 1, "a", Ack::Committed).unwrap();
+    office.put_as(&store, 2, "b", Ack::Committed).unwrap();
+    office.faults.kill();
+    drop(store);
+    office.faults.power_cut().unwrap();
+
+    let store = office.reopen();
+    assert_eq!(cursor(&store).ordinal, 0);
+    assert_eq!(office.hash(&store, "a"), None);
+    let again = office.put_as(&store, 1, "a", Ack::Durable).unwrap();
+    assert_eq!(&*again.bytes, b"put a at work 1");
+}
+
+/// A durable answer says the host holds the flushed head. With the host gone the entry
+/// is still flushed, but nobody is told it is durable; committed answers do not wait.
+#[test]
+fn a_durable_request_is_not_answered_when_the_host_cannot_confirm_its_flush() {
+    let office = Office::new();
+    let store = office.create();
+    office.custody.close();
+    office.put(&store, "c", Ack::Committed).unwrap();
+    let durable = office.put_as(&store, 7, "d", Ack::Durable);
+    assert!(
+        matches!(durable, Err(StoreError::Custody(_))),
+        "{durable:?}"
+    );
+    let status = store.status();
+    assert!(matches!(status.stopped, Some(StoreError::Custody(_))));
+    assert_eq!((status.flushed, status.confirmed), (2, 0));
+    assert_eq!(status.waiting_durable, 0);
+    assert_eq!(office.custody.head().unwrap().ordinal, 0);
+    drop(store);
+
+    // The entry was appended and flushed: the retry is answered once the host confirms.
+    office.custody.reopen();
+    let store = office.reopen();
+    let decisions = office.probe.decisions();
+    let again = office.put_as(&store, 7, "d", Ack::Durable).unwrap();
+    assert_eq!(&*again.bytes, b"put d at work 2");
+    assert_eq!(office.probe.decisions(), decisions);
+    assert_eq!(office.custody.head().unwrap().ordinal, 2);
+}
+
+/// The order, held open: flushed, then confirmed, then answered. A confirmation that
+/// fails gives the waiting durable request the error, never a success.
+#[test]
+fn a_durable_request_waits_for_the_confirmation_and_gets_its_error_when_it_fails() {
+    for fails in [false, true] {
+        let office = Office::new();
+        let store = office.create();
+        office.custody.hold_confirmations();
+        let (answered, answer) = mpsc::channel();
+        let worker = Arc::clone(&store);
+        let probe = office.probe.clone();
+        let durable = thread::spawn(move || {
+            let result = worker.submit(None, false, probe.put("d", b"d", Ack::Durable));
+            let _ = answered.send(());
+            result
+        });
+        office.custody.wait_for_held_confirmation();
+        // The flush is done and the host has not answered: the request still waits.
+        let status = store.status();
+        assert_eq!((status.flushed, status.confirmed), (1, 0), "fails {fails}");
+        assert_eq!(status.waiting_durable, 1, "fails {fails}");
+        assert!(answer.try_recv().is_err(), "fails {fails}");
+        // A committed request is answered meanwhile.
+        office.put(&store, "c", Ack::Committed).unwrap();
+        assert!(answer.try_recv().is_err(), "fails {fails}");
+
+        if fails {
+            office.custody.close();
+        }
+        office.custody.release_confirmations();
+        let result = durable.join().unwrap();
+        if fails {
+            assert!(matches!(result, Err(StoreError::Custody(_))), "{result:?}");
+            assert!(matches!(
+                store.status().stopped,
+                Some(StoreError::Custody(_))
+            ));
+            let closed = Arc::try_unwrap(store).ok().unwrap().close();
+            assert!(matches!(closed, Err(StoreError::Custody(_))), "{closed:?}");
+        } else {
+            assert_eq!(&*result.unwrap().bytes, b"put d at work 1");
+            store.sync().unwrap();
+            assert_eq!(store.status().confirmed, 2);
+            Arc::try_unwrap(store).ok().unwrap().close().unwrap();
+        }
+    }
+}
+
+/// A custody whose confirmation panics once armed: the only way into the flusher's thread
+/// from outside the crate.
+struct PanickingCustody {
+    inner: Arc<FakeCustody>,
+    armed: std::sync::atomic::AtomicBool,
+}
+
+impl WriterAuthority for PanickingCustody {
+    fn checkpoint(
+        &self,
+        identity: &OfficeIdentity,
+    ) -> Result<Option<JournalHead>, crate::custody::CustodyError> {
+        self.inner.checkpoint(identity)
+    }
+
+    fn confirm(
+        &self,
+        identity: &OfficeIdentity,
+        before: Option<&JournalHead>,
+        after: &JournalHead,
+    ) -> Result<(), crate::custody::CustodyError> {
+        if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
+            panic!("the custody panicked (expected by this test)");
+        }
+        self.inner.confirm(identity, before, after)
+    }
+}
+
+#[test]
+fn a_flusher_that_panics_stops_the_store_and_answers_everyone_waiting() {
+    let office = Office::new();
+    let custody = Arc::new(PanickingCustody {
+        inner: Arc::clone(&office.custody),
+        armed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let mut parts = office.parts(Opening::Create(AnchorFacts::default()));
+    parts.custody = Arc::clone(&custody) as Arc<dyn WriterAuthority>;
+    let store = Store::open(parts).unwrap();
+    office.put(&store, "a", Ack::Durable).unwrap();
+
+    custody
+        .armed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let durable = office.put(&store, "d", Ack::Durable);
+    assert!(
+        matches!(durable, Err(StoreError::Internal(_))),
+        "{durable:?}"
+    );
+    assert!(matches!(
+        store.status().stopped,
+        Some(StoreError::Internal(_))
+    ));
+    assert!(matches!(store.sync(), Err(StoreError::Internal(_))));
+    assert!(office.put(&store, "e", Ack::Committed).is_err());
+    assert!(matches!(store.close(), Err(StoreError::Internal(_))));
+}
+
+/// Every accepted entry can be written: a file is never a directory, in the projection,
+/// in one operation, in one batch, in the entries not yet written, or on the disk.
+#[test]
+fn a_path_that_is_or_lies_below_a_file_or_a_directory_is_refused_before_it_is_accepted() {
+    let office = Office::new();
+    let store = office.create();
+    let at = |text: &str| {
+        let root = office.probe.path("t");
+        DurablePath::parse(&format!("{root}/{text}")).unwrap()
+    };
+    let put = |paths: &[&str]| {
+        let paths: Vec<DurablePath> = paths.iter().map(|p| at(p)).collect();
+        store.submit(None, false, move |_| {
+            let change = Change::new(Ack::Committed);
+            Ok(paths
+                .iter()
+                .fold(change, |c, path| c.put(path.clone(), b"x".to_vec())))
+        })
+    };
+    let remove = |path: &str| {
+        let path = at(path);
+        store.submit(None, false, move |_| {
+            Ok(Change::new(Ack::Committed).remove(path.clone()))
+        })
+    };
+    let refused = |answer: Answer, what: &str| {
+        assert!(
+            matches!(answer, Err(StoreError::Invalid(_))),
+            "{what}: {answer:?}"
+        );
+    };
+
+    // In the projection.
+    put(&["file"]).unwrap();
+    put(&["dir/leaf"]).unwrap();
+    refused(put(&["file/below"]), "below a file");
+    refused(put(&["file/far/below"]), "far below a file");
+    refused(put(&["dir"]), "a directory of a source");
+    // A name that only extends another is neither.
+    put(&["file-2", "dir-2", "dir.x/leaf"]).unwrap();
+    // In one operation, in either order.
+    refused(put(&["one/leaf", "one"]), "one operation, the file last");
+    refused(put(&["two", "two/leaf"]), "one operation, the file first");
+    // In one batch: the first is accepted, the second sees it.
+    let (gated, release) = gate(&office, &store);
+    let first = {
+        let path = at("batch/leaf");
+        office.queue(&store, 0, move |store| {
+            store.submit(None, false, move |_| {
+                Ok(Change::new(Ack::Committed).put(path.clone(), b"x".to_vec()))
+            })
+        })
+    };
+    let second = {
+        let path = at("batch");
+        office.queue(&store, 1, move |store| {
+            store.submit(None, false, move |_| {
+                Ok(Change::new(Ack::Committed).put(path.clone(), b"x".to_vec()))
+            })
+        })
+    };
+    drop(release);
+    gated.join().unwrap().unwrap();
+    first.join().unwrap().unwrap();
+    refused(second.join().unwrap(), "one batch");
+
+    // A removed file leaves no directory: something may now lie below its path.
+    remove("file").unwrap();
+    put(&["file/below"]).unwrap();
+    // A removed leaf leaves its directory, which is never removed: before the files are
+    // written (the entry is still held) and after (the directory is on the disk).
+    remove("dir/leaf").unwrap();
+    refused(put(&["dir"]), "a directory not yet written");
+    store.sync().unwrap();
+    refused(put(&["dir"]), "a directory on the disk");
+
+    // Nothing that was accepted failed to be written.
+    store.sync().unwrap();
+    assert_eq!(store.status().stopped, None);
+    assert!(office.root.join(at("file/below").as_str()).is_file());
+    assert!(office.root.join(at("dir").as_str()).is_dir());
+    Arc::try_unwrap(store).ok().unwrap().close().unwrap();
+    // And a rebuild from those files agrees with the write path.
+    let written = office.engine.dump();
+    office.engine.wipe();
+    drop(office.reopen());
+    assert_eq!(office.engine.dump(), written);
+}
+
+/// A subscriber's queue is as long as the ring. One that stops reading is dropped when
+/// it is full; the writer never waits for it and nothing accumulates.
+#[test]
+fn a_subscriber_that_does_not_keep_up_is_dropped_and_subscribes_again() {
+    let mut office = Office::new();
+    office.limits.change_ring = 2;
+    let store = office.create();
+    let mut slow = store.subscribe(FeedPosition(0)).unwrap();
+    let mut reading = store.subscribe(FeedPosition(0)).unwrap();
+    for (n, name) in ["a", "b", "c", "d"].into_iter().enumerate() {
+        office.put(&store, name, Ack::Committed).unwrap();
+        assert_eq!(reading.recv().unwrap().feed, FeedPosition(n as u64 + 1));
+    }
+    // The slow one holds the two changes its queue took, then its stream ends.
+    assert_eq!(slow.recv().unwrap().feed, FeedPosition(1));
+    assert_eq!(slow.recv().unwrap().feed, FeedPosition(2));
+    assert!(slow.recv().is_none());
+    // It subscribes again after the last change it saw: still inside the ring here...
+    let mut again = store.subscribe(FeedPosition(2)).unwrap();
+    assert_eq!(again.recv().unwrap().feed, FeedPosition(3));
+    assert_eq!(again.recv().unwrap().feed, FeedPosition(4));
+    // ...and a position that fell out of the ring reads again.
+    assert_eq!(store.subscribe(FeedPosition(1)).err(), Some(Resync));
+}

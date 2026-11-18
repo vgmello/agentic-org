@@ -421,6 +421,7 @@ impl<E: Engine> Writer<E> {
                 )));
             }
             self.core.projectors.owned(path)?;
+            self.placeable(tx, attempt, &files, path)?;
             let previous_sha256 = tx.source_hash(path)?;
             let (op, bytes) = match file {
                 FileChange::Create(_, bytes) => {
@@ -502,8 +503,65 @@ impl<E: Engine> Writer<E> {
         Ok((entry, reply, durable))
     }
 
-    /// Sends every answer the batch has. A durable one whose entry is not yet flushed goes
-    /// to the flusher instead.
+    /// An accepted entry must always be materializable, so a path is refused when it
+    /// could not stand as a file beside the others: a file is not a directory.
+    ///
+    /// - No ancestor of it is a source (in the projection at head, which holds the
+    ///   earlier operations of this batch, or in this operation).
+    /// - It is not an ancestor of a source, in the same places.
+    /// - It is not a directory already: publication creates the directories above every
+    ///   path it writes or removes and never removes one, so a path that ever had a file
+    ///   below it stays a directory. Those are the paths below it in the entries not yet
+    ///   written (this batch and the overlay) and what stands on the disk.
+    fn placeable(
+        &self,
+        tx: &E::Tx,
+        attempt: &Attempt,
+        drafts: &[FileDraft],
+        path: &DurablePath,
+    ) -> Result<(), StoreError> {
+        let below = |other: &DurablePath| other != path && other.is_under(path);
+        let refuse_above = |file: &DurablePath| {
+            StoreError::invalid(format!("{path} lies below {file}, which is a file"))
+        };
+        let refuse_below =
+            || StoreError::invalid(format!("{path} is a directory: files lie below it"));
+        for draft in drafts {
+            if path.is_under(&draft.path) {
+                return Err(refuse_above(&draft.path));
+            }
+            if below(&draft.path) {
+                return Err(refuse_below());
+            }
+        }
+        let mut ancestor = path.parent();
+        while let Some(above) = ancestor.filter(|above| above.names_a_file()) {
+            if tx.source_hash(&above)?.is_some() {
+                return Err(refuse_above(&above));
+            }
+            ancestor = above.parent();
+        }
+        // Keys below `path` follow it in byte order, after only the keys that extend its
+        // last component (`a/b-c` sorts between `a/b` and `a/b/c`).
+        fn any_below<V>(map: &BTreeMap<DurablePath, V>, path: &DurablePath) -> bool {
+            let after = (std::ops::Bound::Excluded(path), std::ops::Bound::Unbounded);
+            map.range::<DurablePath, _>(after)
+                .map(|(other, _)| other)
+                .take_while(|other| other.as_str().starts_with(path.as_str()))
+                .any(|other| other.is_under(path))
+        }
+        if tx.sources_under(path)?.iter().any(below)
+            || any_below(&attempt.files, path)
+            || any_below(&self.overlay, path)
+            || self.core.files.is_directory(path)?
+        {
+            return Err(refuse_below());
+        }
+        Ok(())
+    }
+
+    /// Sends every answer the batch has. A durable one whose entry is not yet flushed and
+    /// confirmed by the host goes to the flusher instead.
     fn answer(&self, jobs: Vec<Job<E>>, slots: Vec<Option<Slot>>) {
         let mut flow = self.core.flow();
         for (job, slot) in jobs.into_iter().zip(slots) {
@@ -520,7 +578,7 @@ impl<E: Engine> Writer<E> {
                     reply,
                     durable,
                 }) => {
-                    if !durable || ordinal <= flow.flushed {
+                    if !durable || flow.durable_at(ordinal) {
                         let _ = job.to.send(Ok(reply));
                     } else if let Some(fatal) = &flow.fatal {
                         let _ = job.to.send(Err(fatal.clone()));

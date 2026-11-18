@@ -1,5 +1,6 @@
-//! The flusher: group flush, durable replies, the host confirmation, and the files.
-//! A committed operation never waits for anything here.
+//! The flusher: group flush, the host confirmation, durable replies, and the files.
+//! A committed operation never waits for anything here. A durable one is answered only
+//! after the flush that covers it and the host's confirmation of that flushed head.
 
 use std::{sync::Arc, time::Instant};
 
@@ -13,6 +14,18 @@ use crate::{
 };
 
 pub(crate) fn run<E: Engine>(core: Arc<Core<E>>) {
+    // A flusher that panics would leave every durable request, a sync and a close waiting
+    // for good: the store stops instead, and they are answered with the reason.
+    struct Panicked<'a, E: Engine>(&'a Core<E>);
+    impl<E: Engine> Drop for Panicked<'_, E> {
+        fn drop(&mut self) {
+            if std::thread::panicking() {
+                self.0
+                    .stop(StoreError::Internal("the flusher panicked".into()));
+            }
+        }
+    }
+    let _panicked = Panicked(&core);
     let mut deadline: Option<Instant> = None;
     loop {
         {
@@ -67,8 +80,9 @@ fn stopped_at(path: String, reason: String) -> StoreError {
     }
 }
 
-/// One round: flush, answer, confirm, write files, mark, release. Any error is fatal: a
-/// failed flush is never retried in this process.
+/// One round: flush, confirm, answer, write files, mark, release. Any error is fatal: a
+/// failed flush is never retried in this process, and a head the host did not confirm
+/// answers no durable request (the caller stops the store, which fails them).
 fn cycle<E: Engine>(core: &Core<E>) -> Result<(), StoreError> {
     if core.flow().dead {
         return Ok(());
@@ -94,8 +108,13 @@ fn cycle<E: Engine>(core: &Core<E>) -> Result<(), StoreError> {
             core.custody
                 .confirm(core.journal.identity(), confirmed.as_ref(), &head)
                 .map_err(|e| StoreError::Custody(e.0))?;
-            core.flow().confirmed = Some(head);
         }
+        let mut flow = core.flow();
+        if flow.dead {
+            return Ok(());
+        }
+        flow.confirmed_through(head);
+        core.wake.notify_all();
     }
     if core.flow().dead {
         return Ok(());

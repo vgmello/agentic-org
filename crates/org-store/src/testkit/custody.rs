@@ -1,6 +1,6 @@
 //! A writer custody that keeps its head in memory and applies exactly the host's rule.
 
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 use crate::custody::{CustodyError, JournalHead, OfficeIdentity, WriterAuthority};
 
@@ -9,10 +9,15 @@ struct State {
     stored: Option<(OfficeIdentity, JournalHead)>,
     closed: bool,
     confirmations: usize,
+    hold_confirmations: bool,
+    held_confirmations: usize,
 }
 
 #[derive(Default)]
-pub struct FakeCustody(Mutex<State>);
+pub struct FakeCustody {
+    state: Mutex<State>,
+    changed: Condvar,
+}
 
 impl FakeCustody {
     pub fn new() -> Self {
@@ -20,7 +25,26 @@ impl FakeCustody {
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Confirmations block until [`FakeCustody::release_confirmations`]: the host is slow.
+    pub fn hold_confirmations(&self) {
+        self.state().hold_confirmations = true;
+    }
+
+    /// Returns once a confirmation is waiting behind the hold.
+    pub fn wait_for_held_confirmation(&self) {
+        let mut state = self.state();
+        while state.held_confirmations == 0 {
+            assert!(state.hold_confirmations, "no hold is set");
+            state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    pub fn release_confirmations(&self) {
+        self.state().hold_confirmations = false;
+        self.changed.notify_all();
     }
 
     /// The host channel is gone: every call fails.
@@ -69,6 +93,14 @@ impl WriterAuthority for FakeCustody {
         after: &JournalHead,
     ) -> Result<(), CustodyError> {
         let mut state = self.state();
+        if state.hold_confirmations {
+            state.held_confirmations += 1;
+            self.changed.notify_all();
+            while state.hold_confirmations {
+                state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+            }
+            state.held_confirmations -= 1;
+        }
         if state.closed {
             return Err(CustodyError("the host channel is closed".into()));
         }

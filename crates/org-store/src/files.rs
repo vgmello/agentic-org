@@ -350,6 +350,24 @@ impl Files {
         Ok(read_file(&full)?.map(Bytes::from))
     }
 
+    /// Whether a directory stands at `path`: something lies, or once lay, below it, and
+    /// no file can be published there. Directories are never removed.
+    pub fn is_directory(&self, path: &DurablePath) -> Result<bool, FilesError> {
+        let full = self.root.join(path.as_str());
+        match fs::symlink_metadata(&full) {
+            Ok(meta) => Ok(meta.is_dir()),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(FilesError::io(&full, "open", &e)),
+        }
+    }
+
     /// Every file at or under `prefix`, sorted by path bytes. Temporary files of an
     /// unfinished publication are skipped; anything that is not a file or a directory is
     /// an error.

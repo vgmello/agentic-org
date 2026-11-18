@@ -200,6 +200,10 @@ impl<E: Engine> FamilyScript<E> for Probe {
         }
     }
 
+    fn decisions(&self) -> usize {
+        Probe::decisions(self)
+    }
+
     fn command(&self, spec: &ProbeSpec) -> Command<E> {
         let (kind, decide) = match spec.kind {
             ProbeKind::Put(ack) => ("probe.put", self.put(&spec.name, &spec.bytes, ack)),

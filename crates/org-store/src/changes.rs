@@ -1,10 +1,12 @@
 //! The change stream: what committed, in feed order, from a bounded ring. Nothing polls
 //! the projection; a client that falls out of the ring reads again and resubscribes.
+//! A subscriber's queue is bounded too: one that does not keep up is dropped, never
+//! waited for, and subscribes again.
 
 use std::{
     collections::VecDeque,
     sync::{
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Receiver, SyncSender},
         Arc, Mutex,
     },
     time::Duration,
@@ -29,6 +31,9 @@ pub struct Committed {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Resync;
 
+/// A stream ends (`None` from [`ChangeStream::recv`]) when the store is gone or when this
+/// subscriber fell a whole ring behind and was dropped. Either way: subscribe again after
+/// the last position received, and read again if that answers [`Resync`].
 pub struct ChangeStream {
     backlog: VecDeque<Arc<Committed>>,
     live: Receiver<Arc<Committed>>,
@@ -42,7 +47,7 @@ impl ChangeStream {
             .or_else(|| self.live.try_recv().ok())
     }
 
-    /// Waits for the next change. `None` once the store is gone.
+    /// Waits for the next change. `None` once the stream has ended.
     pub fn recv(&mut self) -> Option<Arc<Committed>> {
         self.backlog.pop_front().or_else(|| self.live.recv().ok())
     }
@@ -59,7 +64,7 @@ struct Ring {
     floor: u64,
     last: u64,
     entries: VecDeque<Arc<Committed>>,
-    subscribers: Vec<Sender<Arc<Committed>>>,
+    subscribers: Vec<SyncSender<Arc<Committed>>>,
 }
 
 pub(crate) struct Changes {
@@ -95,8 +100,9 @@ impl Changes {
                 ring.floor = dropped.feed.0;
             }
         }
+        // Never waits for a subscriber: a full queue, like a gone one, is dropped.
         ring.subscribers
-            .retain(|subscriber| subscriber.send(Arc::clone(&change)).is_ok());
+            .retain(|subscriber| subscriber.try_send(Arc::clone(&change)).is_ok());
     }
 
     pub(crate) fn subscribe(&self, after: FeedPosition) -> Result<ChangeStream, Resync> {
@@ -106,7 +112,7 @@ impl Changes {
         }
         let backlog = ring.entries.iter().filter(|c| c.feed > after);
         let backlog = backlog.cloned().collect();
-        let (sender, live) = mpsc::channel();
+        let (sender, live) = mpsc::sync_channel(self.capacity);
         ring.subscribers.push(sender);
         Ok(ChangeStream { backlog, live })
     }

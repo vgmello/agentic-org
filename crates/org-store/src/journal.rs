@@ -67,7 +67,8 @@ pub enum JournalError {
     Fork {
         ordinal: u64,
     },
-    /// The entries before this ordinal are neither present nor covered by the checkpoint.
+    /// The entries before this ordinal are neither present nor covered by the checkpoint,
+    /// or the entry at this ordinal, which the host confirmed, is no longer held.
     MissingPredecessor {
         ordinal: u64,
     },
@@ -717,11 +718,6 @@ impl Journal {
             disk.unlink(&path)
                 .map_err(|e| io_error(&path, "remove", &e))?;
         }
-        if let Some(first) = firsts.first() {
-            if *first != base.ordinal + 1 {
-                return Err(JournalError::MissingPredecessor { ordinal: *first });
-            }
-        }
 
         let mut point = base.clone();
         let mut entries: Vec<Arc<Entry>> = Vec::new();
@@ -738,7 +734,22 @@ impl Journal {
                 continue;
             }
             if first != point.ordinal + 1 {
-                return Err(JournalError::MissingPredecessor { ordinal: first });
+                // A gap before this segment. A power cut leaves one when it takes the
+                // unflushed end of the segment before, or all of it: a segment is rolled
+                // without a flush. Every entry in such a gap is above the confirmed head,
+                // so this segment and the later ones are a torn tail. A gap that reaches
+                // down to the confirmed head, or a segment that starts at an ordinal the
+                // chain already holds, is never a cut.
+                let above_confirmed = confirmed
+                    .as_ref()
+                    .is_none_or(|confirmed| point.ordinal >= confirmed.ordinal);
+                if first <= point.ordinal || !above_confirmed {
+                    return Err(JournalError::MissingPredecessor { ordinal: first });
+                }
+                truncated = Some(point.ordinal + 1);
+                disk.unlink(&path)
+                    .map_err(|e| io_error(&path, "remove", &e))?;
+                continue;
             }
             let bytes = fs::read(&path).map_err(|e| io_error(&path, "read", &e))?;
             let good =
@@ -784,13 +795,19 @@ impl Journal {
                     custody: confirmed.ordinal,
                 });
             }
+            // The confirmed entry must be here to be compared: one the journal no longer
+            // holds (released before a head the host has since lost) is never a pass.
             let held = if confirmed.ordinal == base.ordinal {
-                Some(base.sha256)
+                base.sha256
             } else {
                 let found = entries.iter().find(|e| e.ordinal() == confirmed.ordinal);
-                found.map(|e| e.sha256)
+                found
+                    .map(|e| e.sha256)
+                    .ok_or(JournalError::MissingPredecessor {
+                        ordinal: confirmed.ordinal,
+                    })?
             };
-            if held.is_some_and(|sha256| sha256 != confirmed.sha256) {
+            if held != confirmed.sha256 {
                 return Err(JournalError::Fork {
                     ordinal: confirmed.ordinal,
                 });

@@ -244,9 +244,11 @@ fn a_missing_predecessor_segment_refuses_to_open() {
         let f = fixture();
         let journal = f.create();
         journal.set_segment_bytes(1);
-        f.fill(&journal, 3);
+        let entries = f.fill(&journal, 3);
         assert_eq!(journal.segment_firsts(), [1, 2, 3]);
         drop(journal);
+        // The host confirmed all three: nothing below that head is a torn tail.
+        f.custody.hold(&f.identity, head_of(&entries[2]));
         fs::remove_file(f.segment(missing)).unwrap();
         assert_eq!(
             f.open().err(),
@@ -255,6 +257,140 @@ fn a_missing_predecessor_segment_refuses_to_open() {
             })
         );
     }
+}
+
+/// A segment is rolled without a flush, so a power cut can empty a segment that later
+/// ones follow. Everything in the gap is above the confirmed head: it is a torn tail.
+#[test]
+fn a_power_cut_in_a_roll_window_is_a_torn_tail_and_not_a_missing_predecessor() {
+    let f = fixture();
+    let journal = f.create();
+    journal.set_segment_bytes(1);
+    for _ in 0..2 {
+        let entry = next(&journal.head(), &f.identity);
+        journal.append(std::slice::from_ref(&entry)).unwrap();
+    }
+    assert_eq!(journal.segment_firsts(), [1, 2]);
+    drop(journal);
+    f.faults.power_cut().unwrap();
+    assert_eq!(fs::metadata(f.segment(1)).unwrap().len(), 0);
+
+    f.faults.revive();
+    let (journal, recovered) = f.open().unwrap();
+    assert_eq!(recovered.truncated, Some(1));
+    assert!(recovered.entries.is_empty());
+    assert_eq!(journal.head().ordinal, 0);
+    assert_eq!(journal.segment_firsts(), [1]);
+    assert!(!f.segment(2).exists());
+    // The journal goes on from what it kept.
+    journal.set_segment_bytes(1);
+    f.fill(&journal, 2);
+    drop(journal);
+    let (journal, recovered) = f.open().unwrap();
+    assert_eq!((journal.head().ordinal, recovered.truncated), (2, None));
+}
+
+/// Four one-entry segments. Segment 2 is cut to nothing, in the middle and one byte
+/// short; an empty one is found by the gap it leaves before segment 3.
+#[test]
+fn a_torn_cut_in_a_segment_that_is_not_the_last_drops_the_later_segments() {
+    for case in 0..3 {
+        let f = fixture();
+        let journal = f.create();
+        journal.set_segment_bytes(1);
+        let entries = f.fill(&journal, 4);
+        drop(journal);
+        f.custody.hold(&f.identity, head_of(&entries[0]));
+        let whole = entries[1].stored().len() as u64;
+        let cut = [0, whole / 2, whole - 1][case];
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(f.segment(2))
+            .unwrap();
+        file.set_len(cut).unwrap();
+        // The torn tail may span segments: segment 3 is cut as well.
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(f.segment(3))
+            .unwrap();
+        file.set_len(5).unwrap();
+
+        let (journal, recovered) = f.open().unwrap_or_else(|e| panic!("cut {cut}: {e}"));
+        assert_eq!(recovered.entries, entries[..1], "cut {cut}");
+        assert_eq!(recovered.truncated, Some(2), "cut {cut}");
+        assert_eq!(journal.head().ordinal, 1, "cut {cut}");
+        assert_eq!(fs::metadata(f.segment(2)).unwrap().len(), 0, "cut {cut}");
+        assert!(!f.segment(3).exists() && !f.segment(4).exists());
+        assert_eq!(journal.segment_firsts(), [1, 2], "cut {cut}");
+        f.fill(&journal, 2);
+        drop(journal);
+        let (journal, recovered) = f.open().unwrap();
+        assert_eq!((journal.head().ordinal, recovered.truncated), (3, None));
+    }
+}
+
+/// Two segments of two entries each; the first loses its second entry at a clean
+/// boundary. Above the confirmed head that is a torn tail spanning both segments; at
+/// or below it, the journal refuses.
+#[test]
+fn a_gap_between_segments_is_a_torn_tail_only_above_the_confirmed_head() {
+    for confirmed in [1, 2] {
+        let f = fixture();
+        let journal = f.create();
+        let mut entries = f.fill(&journal, 2);
+        journal.set_segment_bytes(1);
+        entries.extend(f.fill(&journal, 1));
+        journal.set_segment_bytes(SEGMENT_BYTES);
+        entries.extend(f.fill(&journal, 1));
+        assert_eq!(journal.segment_firsts(), [1, 3]);
+        drop(journal);
+        f.custody
+            .hold(&f.identity, head_of(&entries[confirmed - 1]));
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(f.segment(1))
+            .unwrap();
+        file.set_len(ends(&entries)[0] as u64).unwrap();
+
+        let opened = f.open();
+        if confirmed == 2 {
+            assert_eq!(
+                opened.err(),
+                Some(JournalError::MissingPredecessor { ordinal: 3 })
+            );
+            assert!(f.segment(3).exists());
+            continue;
+        }
+        let (journal, recovered) = opened.unwrap();
+        assert_eq!(recovered.entries, entries[..1]);
+        assert_eq!(recovered.truncated, Some(2));
+        assert_eq!(journal.segment_firsts(), [1]);
+        assert!(!f.segment(3).exists());
+        f.fill(&journal, 1);
+        drop(journal);
+        assert_eq!(f.open().unwrap().0.head().ordinal, 2);
+    }
+}
+
+/// The host confirmed an entry the journal released: there is nothing to compare, and
+/// that is a refusal, not a pass.
+#[test]
+fn a_confirmed_head_the_journal_no_longer_holds_refuses_to_open() {
+    let f = fixture();
+    let journal = f.create();
+    journal.set_segment_bytes(1);
+    let entries = f.fill(&journal, 4);
+    journal.set_materialized(4).unwrap();
+    assert_eq!(journal.release_through(4).unwrap(), 3);
+    drop(journal);
+    f.custody.hold(&f.identity, head_of(&entries[1]));
+    assert_eq!(
+        f.open().err(),
+        Some(JournalError::MissingPredecessor { ordinal: 2 })
+    );
+    // The checkpoint itself still compares.
+    f.custody.hold(&f.identity, head_of(&entries[2]));
+    assert!(f.open().is_ok());
 }
 
 #[test]

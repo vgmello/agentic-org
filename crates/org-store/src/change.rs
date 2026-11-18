@@ -89,16 +89,20 @@ impl<'de> Deserialize<'de> for Sha256 {
 /// Temporary files of publication start with this, so no record may.
 pub(crate) const TEMP_PREFIX: &str = ".store-tmp-";
 
-/// One safe path component: what a file name and an ID must both be.
+/// One safe path component: what a file name and an ID must both be. Only the portable
+/// set `[a-z0-9._-]`: no file system folds, normalizes or refuses any of it, so two
+/// accepted paths never name one file and every accepted path can be written. (No
+/// uppercase: a case-insensitive volume would make `A` and `a` one file. UUIDv7 text and
+/// every file name of the data contract fit.)
 fn component_ok(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 255
         && text != "."
         && text != ".."
         && !text.starts_with(TEMP_PREFIX)
-        && !text
-            .chars()
-            .any(|c| c == '/' || c == '\\' || c.is_control())
+        && text
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'))
 }
 
 /// An identifier a caller supplies. The store mints none and checks only that it is one
@@ -238,6 +242,12 @@ impl DurablePath {
             ));
         }
         Ok(Self(format!("{}/{component}", self.0).into()))
+    }
+
+    /// The path one component up; `None` for a tree.
+    pub fn parent(&self) -> Option<Self> {
+        let (above, _) = self.0.rsplit_once('/')?;
+        Some(Self(above.into()))
     }
 
     /// `self` is `prefix` or lies under it, by whole components.
@@ -461,7 +471,7 @@ mod tests {
             "state/organization.yaml",
             "recovery/commands/01900000-0000-7000-8000-000000000001.json",
             "local/offices/a/probe/x",
-            "state/teams/ünïcode/team.yaml",
+            "state/teams/a_b-c.d/0.yaml",
         ] {
             assert_eq!(path(good).as_str(), good);
         }
@@ -475,6 +485,12 @@ mod tests {
             "state/a/",
             "runtime/a",
             "State/a",
+            // Only the portable set: nothing a file system folds, normalizes or refuses.
+            "state/Teams/a",
+            "state/teams/ünïcode/team.yaml",
+            "state/a b",
+            "state/a:b",
+            "state/a*",
             "state/a\nb",
             "state/a\0b",
             "state/a\\b",
@@ -485,6 +501,19 @@ mod tests {
             assert!(DurablePath::parse(bad).is_err(), "accepted {bad:?}");
         }
         assert!(DurablePath::parse(&format!("state/{}", "a".repeat(255))).is_ok());
+        for bad in [
+            "",
+            "A",
+            "01900000-0000-7000-8000-00000000000A",
+            "a/b",
+            "é",
+            "a b",
+        ] {
+            assert!(Id::parse(bad).is_err(), "accepted the ID {bad:?}");
+        }
+        assert!(Id::parse("01900000-0000-7000-8000-00000000000a").is_ok());
+        assert_eq!(path("state/a/b").parent(), Some(path("state/a")));
+        assert_eq!(path("state").parent(), None);
         let deep = format!("state/{}", "abcdefg/".repeat(64));
         assert!(DurablePath::parse(&deep[..512]).is_ok());
         assert!(DurablePath::parse(&format!("{}x", &deep[..512])).is_err());

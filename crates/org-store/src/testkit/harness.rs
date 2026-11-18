@@ -10,6 +10,10 @@
 //!     assert dump(reopened) == dump(rebuild into a fresh engine)
 //!     assert every operation acknowledged before a process kill is present,
 //!        and every durable one after a power cut
+//! and after every reopening, for every operation ID that was ever submitted, answered or not:
+//!     submit it again
+//!     assert an operation whose entry is in the journal is not decided again,
+//!        and answers what it answered the first time
 //! ```
 //!
 //! Every assertion prints the seed; a failure is repeated by running that seed alone.
@@ -42,7 +46,14 @@ pub trait FamilyScript<E: Engine>: Sync {
     /// The `step`th command of a sequence: valid or not, as the generator pleases.
     fn generate(&self, rng: &mut Rng, step: u64) -> Self::Spec;
     fn command(&self, spec: &Self::Spec) -> Command<E>;
+    /// How many times any decision of any command this script built has run. The
+    /// harness reads it around a retry: an appended operation never decides again.
+    fn decisions(&self) -> usize;
 }
+
+/// One submission the harness made: what was asked, what it answered (an error when the
+/// answer never came), and whether the caller asked for a durable answer.
+type Submitted<S> = (S, Result<Reply, crate::StoreError>, bool);
 
 struct Run<'a, E: Engine, S: FamilyScript<E>> {
     seed: u64,
@@ -89,6 +100,56 @@ impl<E: Engine + Dump, S: FamilyScript<E>> Run<'_, E, S> {
     fn close(&self, store: Store<E>) {
         let closed = store.close();
         closed.unwrap_or_else(|e| panic!("seed {}: closing failed: {e}", self.seed));
+    }
+
+    /// Submits again every operation ID in `submitted`, on a store reopened after them.
+    /// An operation with a receipt has its entry in the journal: it is not decided again,
+    /// and where its first submission was answered it gets that answer. `lost` says
+    /// whether an acknowledged operation may be missing (only an answer that was not
+    /// durable, after a power cut).
+    fn resubmit_all(
+        &self,
+        store: &Store<E>,
+        submitted: &[Submitted<S::Spec>],
+        lost: impl Fn(bool) -> bool,
+        context: &str,
+    ) {
+        use crate::engine::CoreRead;
+        for (spec, first, durable) in submitted {
+            let Some(op) = self.script.command(spec).op else {
+                continue;
+            };
+            let receipt = store.read(|snapshot| Ok(snapshot.receipt(&op.id)?));
+            let appended = receipt
+                .unwrap_or_else(|e| panic!("{context}: reading a receipt failed: {e}"))
+                .0
+                .is_some();
+            if first.is_ok() && !lost(*durable) {
+                assert!(appended, "{context}: acknowledged {spec:?} is gone");
+            }
+            let before = self.script.decisions();
+            let again = self.submit(store, spec, false);
+            if !appended {
+                continue;
+            }
+            assert_eq!(
+                self.script.decisions(),
+                before,
+                "{context}: the appended {spec:?} was decided again"
+            );
+            match first {
+                Ok(first) => assert_eq!(
+                    again.as_ref(),
+                    Ok(first),
+                    "{context}: a retry of {spec:?} differs"
+                ),
+                // Appended, never answered: the retry is the first answer.
+                Err(_) => assert!(
+                    again.is_ok(),
+                    "{context}: the appended {spec:?} answers {again:?}"
+                ),
+            }
+        }
     }
 
     /// The dump of a rebuild from what is on disk, into a fresh engine.
@@ -151,10 +212,10 @@ where
     let store = store.unwrap_or_else(|e| panic!("seed {seed}: creating failed: {e}"));
 
     // Sequential commands, with retries of earlier ones.
-    let mut done: Vec<(S::Spec, Result<Reply, crate::StoreError>)> = Vec::new();
+    let mut done: Vec<Submitted<S::Spec>> = Vec::new();
     for step in 0..32 {
         if !done.is_empty() && rng.chance(4) {
-            let (spec, first) = rng.pick(&done).clone();
+            let (spec, first, _) = rng.pick(&done).clone();
             let again = run.submit(&store, &spec, rng.chance(2));
             let has_id = script.command(&spec).op.is_some();
             if let (true, Ok(first)) = (has_id, &first) {
@@ -167,8 +228,9 @@ where
             continue;
         }
         let spec = script.generate(&mut rng, step);
-        let reply = run.submit(&store, &spec, rng.chance(3));
-        done.push((spec, reply));
+        let durable = rng.chance(3);
+        let reply = run.submit(&store, &spec, durable);
+        done.push((spec, reply, durable));
     }
     // Interleaved commands from three threads.
     let bursts: Vec<Vec<S::Spec>> = (0..3u64)
@@ -177,16 +239,26 @@ where
             steps.map(|step| script.generate(&mut rng, step)).collect()
         })
         .collect();
-    std::thread::scope(|scope| {
-        for burst in &bursts {
-            let (run, store) = (&run, &store);
-            scope.spawn(move || {
-                for spec in burst {
-                    let _ = run.submit(store, spec, false);
-                }
-            });
-        }
+    let interleaved: Vec<Submitted<S::Spec>> = std::thread::scope(|scope| {
+        let threads: Vec<_> = bursts
+            .iter()
+            .map(|burst| {
+                let (run, store) = (&run, &store);
+                let submit = move |spec: &S::Spec| {
+                    let reply = run.submit(store, spec, false);
+                    (spec.clone(), reply, false)
+                };
+                scope.spawn(move || burst.iter().map(submit).collect::<Vec<_>>())
+            })
+            .collect();
+        let replies = threads.into_iter().flat_map(|thread| {
+            thread
+                .join()
+                .unwrap_or_else(|_| panic!("seed {seed}: a submitting thread panicked"))
+        });
+        replies.collect()
     });
+    done.extend(interleaved);
     run.close(store);
     let written = engine.dump();
 
@@ -206,11 +278,21 @@ where
         "seed {seed}: rebuild differs from the write path"
     );
     // Reopening the original changes nothing.
-    run.close(run.existing(&engine));
+    let store = run.existing(&engine);
     assert_eq!(
         engine.dump(),
         written,
         "seed {seed}: reopening changed the projection"
+    );
+    // Every operation ID, again: nothing appended decides twice. (One that was refused
+    // unrecorded decides afresh and may now be accepted, so the projection may move on.)
+    run.resubmit_all(&store, &done, |_| false, &format!("seed {seed}"));
+    run.close(store);
+    let (again, _again_guard) = open_engine();
+    assert_eq!(
+        run.rebuilt(&again),
+        engine.dump(),
+        "seed {seed}: rebuild differs after the retries"
     );
 }
 
@@ -239,19 +321,18 @@ where
         format!("seed {seed}: {point:?}, power cut {power_cut}, fresh {fresh_projection}");
     run.faults.arm(point, rng.between(1, 4) as usize);
 
-    // (spec, reply, asked durable): what was acknowledged before the crash.
-    let mut acknowledged: Vec<(S::Spec, Reply, bool)> = Vec::new();
+    // Everything submitted before the crash, answered or not. A failed append or a
+    // stopped store is not the end of the run: later submissions are refused or decided,
+    // and each is checked after the reopening like the others.
+    let mut submitted: Vec<Submitted<S::Spec>> = Vec::new();
     for step in 0..24 {
-        if run.faults.dead() || store.status().stopped.is_some() {
+        if run.faults.dead() {
             break;
         }
         let spec = script.generate(&mut rng, step);
         let durable = rng.chance(2);
-        if let Ok(reply) = run.submit(&store, &spec, durable) {
-            if script.command(&spec).op.is_some() {
-                acknowledged.push((spec, reply, durable));
-            }
-        }
+        let reply = run.submit(&store, &spec, durable);
+        submitted.push((spec, reply, durable));
     }
     let fired = run.faults.fired();
     // The process dies here at the latest. Both threads are joined before the next one.
@@ -269,18 +350,13 @@ where
     }
 
     let store = run.existing(&engine);
-    for (spec, reply, durable) in &acknowledged {
-        if power_cut && !durable {
-            // A committed-class acknowledgement may be taken back by a power cut.
-            continue;
-        }
-        let again = run.submit(&store, spec, false);
-        assert_eq!(
-            again.as_ref(),
-            Ok(reply),
-            "{context}: acknowledged {spec:?} is gone"
-        );
-    }
+    // A committed-class acknowledgement may be taken back by a power cut; no other may.
+    run.resubmit_all(
+        &store,
+        &submitted,
+        |durable| power_cut && !durable,
+        &context,
+    );
     run.close(store);
     let reopened = engine.dump();
     let (fresh, _fresh_guard) = open_engine();
