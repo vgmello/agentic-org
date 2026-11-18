@@ -82,7 +82,7 @@
     },
     {
       "path": "apps/agentic-org-ui/package.json",
-      "sha256": "a5f4697b3d032b26acaf83fde679694345e853f104f4adfbdc324572314450aa"
+      "sha256": "a6a47bf87e5801b67f8b15a3f2c1d4f2a42bff5de1e7d538de9723d2d4ec1210"
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
