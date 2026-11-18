@@ -59,8 +59,10 @@ fn mount_point(path: &Path) -> std::io::Result<PathBuf> {
     if unsafe { libc::statfs(c.as_ptr(), &mut fs) } != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    // SAFETY: the kernel NUL-terminates f_mntonname within its fixed size.
-    let name = unsafe { std::ffi::CStr::from_ptr(fs.f_mntonname.as_ptr()) };
+    // f_mntonname is a fixed-size c_char array; read it as bytes up to its NUL.
+    let bytes: Vec<u8> = fs.f_mntonname.iter().map(|&c| c as u8).collect();
+    let name = std::ffi::CStr::from_bytes_until_nul(&bytes)
+        .map_err(|_| std::io::Error::other("statfs mount point is not NUL-terminated"))?;
     Ok(PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes())))
 }
 

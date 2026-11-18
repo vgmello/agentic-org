@@ -380,13 +380,18 @@ fn real_launchd() {
     })
     .unwrap();
     let _guard = Guard(manager.as_ref(), id.clone());
-    // Exits 0 on SIGTERM, as the host does, so launchd does not restart it.
+    // Exits 0 on SIGTERM, as the host does, so launchd does not restart it. It creates
+    // `ready` (outside the agents directory) once the trap is installed; a SIGTERM before
+    // then would kill it with a signal, which launchd rightly restarts.
+    let marker = tempfile::tempdir().unwrap();
+    let ready = marker.path().join("ready");
     let unit = Unit {
         instance_id: id.clone(),
         program: "/bin/sh".into(),
         args: vec![
             "-c".into(),
-            "trap 'exit 0' TERM; while :; do /bin/sleep 1; done".into(),
+            "trap 'exit 0' TERM; : > \"$0\"; while :; do /bin/sleep 1; done".into(),
+            ready.clone().into(),
         ],
         env: vec![],
     };
@@ -394,15 +399,53 @@ fn real_launchd() {
     println!("registered: {:?}", wait_for(manager.as_ref(), &id, true));
     // The real `print` names our file, so an identical registration is left alone.
     assert_eq!(manager.register(&unit).unwrap(), Registration::Unchanged);
+    // The top-level (one-tab) `key = value` lines of the raw `launchctl print`.
+    let target = format!(
+        "gui/{}/com.ellosoft.agentic-org.test.{id}",
+        // SAFETY: getuid has no preconditions and cannot fail.
+        unsafe { libc::getuid() }
+    );
+    let top_level = |key: &str| -> Option<String> {
+        let out = Command::new(LAUNCHCTL)
+            .args(["print", &target])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "print {target}: {out:?}");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|line| {
+                let rest = line.strip_prefix('\t').filter(|r| !r.starts_with('\t'))?;
+                let (k, v) = rest.split_once(" = ")?;
+                (k == key).then(|| v.to_owned())
+            })
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the job never became ready"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     manager.stop(&id).unwrap();
     println!("stopped: {:?}", wait_for(manager.as_ref(), &id, false));
-    for _ in 0..30 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    // launchd throttles a respawn to 10 s after the last spawn and reports it as
+    // "spawn scheduled", which `status` reads as Stopped. The last spawn was before
+    // `stop`, so 12 s from here covers the whole throttle window.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+    while std::time::Instant::now() < deadline {
         assert_eq!(
             manager.status(&id).unwrap(),
             ServiceStatus::Stopped,
             "a clean exit is not restarted"
         );
+        assert_eq!(
+            top_level("state").as_deref(),
+            Some("not running"),
+            "a clean exit is not restarted or scheduled"
+        );
+        assert_eq!(top_level("last exit code").as_deref(), Some("0"));
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
     manager.start(&id).unwrap();
     println!("started: {:?}", wait_for(manager.as_ref(), &id, true));

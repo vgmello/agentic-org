@@ -2,9 +2,11 @@
 //!
 //! The job runs `KeepAlive { SuccessfulExit = false }` and `RunAtLoad`: launchd restarts
 //! the host after a crash and starts it at login, and an explicit stop (`SIGTERM`, a clean
-//! exit) stays stopped. A definition with the same label but different bytes, or a job
-//! loaded under the label from any file other than our definition, is someone else's and is
-//! never taken over: register, start, stop and unregister refuse it as a conflict.
+//! exit) stays stopped. Nothing under the label that is someone else's is ever taken over.
+//! A job loaded under the label from any file other than our definition (the top-level
+//! `path` of `launchctl print`) is a conflict for register, start, stop, status and
+//! unregister. A definition file with the same label but different bytes than the rendered
+//! unit is a conflict for register, which never replaces or loads it.
 use super::{
     valid_instance_id, validate, Placement, Registration, ServiceError, ServiceManager,
     ServiceStatus, Unit,
