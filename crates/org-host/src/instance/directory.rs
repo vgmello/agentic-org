@@ -564,7 +564,7 @@ pub(super) fn paths_overlap(a: &Path, b: &Path, unavailable: bool) -> bool {
     // system's filesystems may take for the same names (`org_platform::fs`; none on
     // Linux). Existing registered targets retain their proven distinct inode ownership.
     // A system that cannot say is taken to overlap.
-    unavailable && org_platform::fs::paths_may_alias(a, b).unwrap_or(true)
+    unavailable && org_platform_host::names::paths_may_alias(a, b).unwrap_or(true)
 }
 
 #[cfg(test)]

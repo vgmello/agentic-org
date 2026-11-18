@@ -17,6 +17,7 @@ org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 org-platform = { path = "../org-platform" }
+org-platform-host = { path = "../org-platform-host" }
 org-release = { path = "../org-release" }
 serde.workspace = true
 serde_json.workspace = true

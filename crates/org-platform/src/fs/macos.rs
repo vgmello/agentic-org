@@ -4,10 +4,9 @@ use std::ffi::CStr;
 use std::fs::File;
 use std::io;
 use std::os::fd::AsRawFd;
-use std::path::{Component, Path};
+use std::path::Path;
 
 use super::FilesystemRefusal;
-use crate::Refused;
 
 pub(super) fn full_sync(file: &File) -> io::Result<()> {
     file.sync_all()?;
@@ -90,50 +89,9 @@ pub(super) fn require_disk(_dir: &File, _path: &Path) -> Result<(), FilesystemRe
     Ok(())
 }
 
-pub(super) fn paths_may_alias(a: &Path, b: &Path) -> Result<bool, Refused> {
-    // Compare components, not string prefixes: APFS/HFS+ also equate canonical
-    // Unicode spellings. No localized, diacritic-ignoring or width-ignoring flags.
-    // Existing registered targets retain their proven distinct inode ownership
-    // on case-sensitive volumes; this conservative comparison is for new claims.
-    Ok(a.components()
-        .zip(b.components())
-        .all(|(left, right)| match (left, right) {
-            (Component::Normal(left), Component::Normal(right)) => {
-                use core_foundation::base::{CFComparisonResult, TCFType};
-                use core_foundation::string::{
-                    kCFCompareCaseInsensitive, kCFCompareNonliteral, CFString, CFStringCompare,
-                };
-                let left = CFString::new(&left.to_string_lossy());
-                let right = CFString::new(&right.to_string_lossy());
-                // SAFETY: both owned strings remain live throughout this comparison.
-                unsafe {
-                    CFStringCompare(
-                        left.as_concrete_TypeRef(),
-                        right.as_concrete_TypeRef(),
-                        kCFCompareCaseInsensitive | kCFCompareNonliteral,
-                    ) == CFComparisonResult::EqualTo
-                }
-            }
-            (left, right) => left == right,
-        }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unavailable_path_comparison_preserves_component_and_accent_boundaries() {
-        assert!(paths_may_alias(
-            Path::new("/data/CAF\u{c9}"),
-            Path::new("/data/cafe\u{301}/child"),
-        )
-        .unwrap());
-        assert!(!paths_may_alias(Path::new("/data/caf\u{e9}"), Path::new("/data/cafe")).unwrap());
-        assert!(
-            !paths_may_alias(Path::new("/data/caf\u{e9}"), Path::new("/data/caf\u{e9}2"),).unwrap()
-        );
-    }
 
     #[test]
     fn an_instance_root_and_a_temp_base_have_no_filesystem_rule() {

@@ -10,7 +10,7 @@ use std::io;
 use std::marker::PhantomData;
 use std::mem;
 use std::os::fd::{OwnedFd, RawFd};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 #[cfg(test)]
 use tests::getsockopt;
 
@@ -37,9 +37,10 @@ pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
 }
 
 /// Nothing is held: `MSG_CMSG_CLOEXEC` sets close-on-exec atomically with the
-/// receive, so the fence is neither locked nor inspected.
+/// receive, so the fence is neither locked nor inspected. The marker is a guard, as
+/// the macOS adapter holds one, so the type is `!Send` on every system alike.
 pub(super) struct DescriptorReceive<'fence> {
-    _fence: PhantomData<&'fence Mutex<()>>,
+    _fence: PhantomData<MutexGuard<'fence, ()>>,
 }
 
 pub(super) fn descriptor_receive(_fence: &Mutex<()>) -> io::Result<DescriptorReceive<'_>> {
@@ -51,11 +52,6 @@ pub(super) fn descriptor_receive(_fence: &Mutex<()>) -> io::Result<DescriptorRec
 impl DescriptorReceive<'_> {
     pub(super) fn flags(&self) -> libc::c_int {
         libc::MSG_DONTWAIT | libc::MSG_CMSG_CLOEXEC
-    }
-
-    // libc uses size_t on Linux.
-    pub(super) fn control_len(&self, message: &libc::msghdr) -> usize {
-        message.msg_controllen
     }
 
     pub(super) fn close_on_exec(
@@ -74,7 +70,8 @@ pub(super) fn send_flags() -> io::Result<libc::c_int> {
 pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
     let mut value: libc::c_int = 0;
     let mut length = mem::size_of_val(&value) as libc::socklen_t;
-    // SAFETY: the live fd and initialized output/length cover this integer socket option.
+    // SAFETY: the initialized output and its length cover this integer socket option;
+    // the kernel rejects a number that is not an open socket.
     let result = unsafe {
         getsockopt(
             fd,

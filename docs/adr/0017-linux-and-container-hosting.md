@@ -70,14 +70,26 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
 These settle what the decisions above left open. The detail is in the
 [Linux host design](../design/linux-host.md).
 
-6. **One crate holds every platform difference.** `crates/org-platform` owns the five
-   contracts and the five further capabilities, with macOS, Linux and refusing adapters
-   and one non-conditional constructor each. It depends on no workspace crate.
+6. **Platform differences live in two crates and nowhere else.** `crates/org-platform`
+   owns the contracts and capabilities that the four executables share, with macOS,
+   Linux and refusing adapters and one non-conditional constructor each. It depends on
+   the C library only and on no workspace crate.
    Consumers keep their policy (which image, which secret names) and pass it as data.
    This is a deliberate exception to the rule that a consumer owns its contract
    ([architecture rules](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)):
    these capabilities are consumed by four executables and six libraries, so no one
    consumer can own them.
+   `crates/org-platform-host` (amended 2026-11-18, during X1b) holds, under the same
+   rules, the capabilities that only the host consumes and whose macOS adapter needs
+   an Apple framework: admission's code-identity checks, credentials, presence and the
+   comparison of file names. A crate's link directives reach every executable that
+   links it, so one crate for everything would have made the web process, the office
+   worker and `agent-os` load Security, CoreFoundation and LocalAuthentication on
+   macOS, and the web process must load nothing but the C library before it confines
+   itself (ADR-0008). Only `org-host` depends on `org-platform-host`; a test keeps
+   `org-platform` libc-only and the other executables' crates free of it. Rejected: a
+   Cargo feature on one crate, because features unify across a workspace build, so
+   what the web process links would depend on how it was built.
 7. **Linux process admission executes verified bytes.** The host copies the pinned
    executable into a sealed, execute-only memory file (with `MFD_EXEC` from Linux 6.3,
    without it before), compares its SHA-256 with the signed release manifest (in a

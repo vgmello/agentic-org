@@ -33,8 +33,8 @@ pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
         options: 0,
         suffix: [0; 602],
     };
-    // SAFETY: fd is borrowed from an owned descriptor; the exact, aligned SDK
-    // layout is initialized, writable for its full size, and lives through this call.
+    // SAFETY: the kernel rejects a number that is not an open descriptor of this
+    // process; the exact, aligned SDK layout is initialized, writable for its full size, and lives through this call.
     let count = unsafe {
         proc_pidfdinfo(
             libc::getpid(),

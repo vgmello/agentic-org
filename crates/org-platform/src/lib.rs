@@ -6,7 +6,9 @@
 //! implementation, or the refusing adapter, which reports [`Refused::Unsupported`] and
 //! never falls back to another system's behaviour. Platform conditionals stay inside this
 //! crate. Consumers keep their policy (which program, which label prefix) and pass it as
-//! data. The crate depends on no workspace crate.
+//! data. The crate depends on no workspace crate and, because every executable links
+//! it, on nothing but the C library (`tests/libc_only.rs`): a capability that only the
+//! host consumes and that needs an Apple framework lives in `org-platform-host`.
 //!
 //! macOS adapters exist for every capability. Linux adapters arrive with Track X, one
 //! capability at a time (`process` and `socket` have theirs); until then the others

@@ -171,7 +171,8 @@ impl std::error::Error for FilesystemRefusal {
 /// (`FS_IOC_GETFLAGS`), and for the root a filesystem other than ext4, XFS, Btrfs, F2FS
 /// or overlayfs (`fstatfs`) and an XFS with case-insensitive names
 /// (`XFS_IOC_FSGEOMETRY`); a probe that fails refuses. macOS has no rule here: its
-/// volumes may fold case, and the consumer compares names with [`paths_may_alias`].
+/// volumes may fold case, and the consumer compares names with
+/// `org_platform_host::names::paths_may_alias`.
 pub fn check_instance_root(dir: &File, path: &Path, root: bool) -> Result<(), FilesystemRefusal> {
     native::check_instance_root(dir, path, root)
 }
@@ -180,18 +181,4 @@ pub fn check_instance_root(dir: &File, path: &Path, root: bool) -> Result<(), Fi
 /// `ramfs` and `hugetlbfs`. macOS has no such check and accepts every directory.
 pub fn require_disk(dir: &File, path: &Path) -> Result<(), FilesystemRefusal> {
     native::require_disk(dir, path)
-}
-
-/// Whether this system's filesystems may take `a` and `b`, compared component by
-/// component up to the shorter one, for the same names although they are spelled
-/// differently. A consumer that cannot open either path uses it to keep a new claim
-/// away from a path that may be the other one under another spelling.
-///
-/// macOS compares names without regard to case and with canonically equivalent Unicode
-/// spellings equal, as APFS and HFS+ may. GNU/Linux answers `false`: names are bytes,
-/// and an instance root is never on a case-folding directory
-/// ([`check_instance_root`]). Paths of which one is a plain prefix of the other are the
-/// consumer's own comparison; this function adds only the system's folding.
-pub fn paths_may_alias(a: &Path, b: &Path) -> Result<bool, Refused> {
-    native::paths_may_alias(a, b)
 }

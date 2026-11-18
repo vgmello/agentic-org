@@ -69,17 +69,6 @@ fn a_poisoned_fence_refuses_the_receive() {
 }
 
 #[test]
-fn control_length_is_the_message_field() {
-    let fence = Mutex::new(());
-    let receiving = descriptor_receive(&fence).unwrap();
-    // SAFETY: zero is valid for msghdr; no pointer in it is followed.
-    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
-    assert_eq!(receiving.control_len(&message), 0);
-    message.msg_controllen = 24;
-    assert_eq!(receiving.control_len(&message), 24);
-}
-
-#[test]
 fn a_send_is_nonblocking_and_has_no_sigpipe_flag() {
     assert_eq!(send_flags().unwrap(), libc::MSG_DONTWAIT);
 }

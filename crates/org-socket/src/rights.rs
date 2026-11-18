@@ -247,7 +247,7 @@ impl Receiver {
             // SAFETY: successful recvmsg reports headers within control (a truncated
             // header's cmsg_len can exceed that storage on macOS; take_rights bounds it).
             // SCM_RIGHTS entries are unique newly installed descriptors owned by us.
-            let descriptors = unsafe { take_rights(&message, receiving.control_len(&message)) };
+            let descriptors = unsafe { take_rights(&message) };
             if message.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
                 drop(descriptors);
                 return self.fatal(invalid("truncated descriptor message"));
@@ -331,8 +331,9 @@ fn close_on_exec_with(fd: RawFd, mut call: impl FnMut(RawFd, i32, i32) -> i32) -
     ))
 }
 
-/// `control_len` is `message.msg_controllen` in bytes, as the platform reads that field.
-unsafe fn take_rights(message: &libc::msghdr, control_len: usize) -> Vec<OwnedFd> {
+unsafe fn take_rights(message: &libc::msghdr) -> Vec<OwnedFd> {
+    // `libc` declares the field as `size_t` on Linux and as `socklen_t` on macOS.
+    let control_len: usize = message.msg_controllen as _;
     let mut descriptors = Vec::new();
     // SAFETY: caller supplies successful recvmsg output with live control storage.
     let mut header = unsafe { libc::CMSG_FIRSTHDR(message) };

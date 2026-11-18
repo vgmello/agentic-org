@@ -54,7 +54,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "39370ed62bef7f5db5dd969ad90daf91d66036fbff2933324da120272c0d6a23"
+      "sha256": "4558884a29455191eb6bbd69d3b4c5263777144f12603c31a30f1c58dd8ad62b"
     },
     {
       "path": "AGENTS.md",
@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "b9fa4a354b55655d4fe8728aef30eb2d72b877adfc11da682fc201180b071611"
+      "sha256": "af8218aa04db26f826016274fd09b049c818a8ccfc9197ca25e16c952b23311a"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "7acdfe9d7de32c7475ecdedb33c250b38daa2a9aface14007712c509c8bd0b04"
+      "sha256": "7e07b46ca5eddefb8ffad3688f978c7eae992b98f56b1072cb5fb79fd9f0bbbc"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "2a3969c2407014015d0a23992350e9cdb3eef743acf7bc5301d2c02b63749904"
+      "sha256": "73842e85ba2cd9a398ed6ce9eb7e6ee5e0cf31dc9fdabfce640c6c71e9007b03"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
@@ -289,7 +289,8 @@
         "crates/org-pki",
         "crates/org-socket",
         "crates/org-release",
-        "crates/org-platform"
+        "crates/org-platform",
+        "crates/org-platform-host"
       ],
       "risks": [],
       "implementation": [
