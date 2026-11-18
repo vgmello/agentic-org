@@ -96,7 +96,9 @@ mod tests {
         let mut builder = Request::builder().method(method.clone()).uri(target);
         builder = builder.header("host", HOST);
         if method != Method::GET {
-            builder = builder.header("origin", ORIGIN);
+            builder = builder
+                .header("origin", ORIGIN)
+                .header("content-type", "application/json");
         }
         let request = builder
             .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
