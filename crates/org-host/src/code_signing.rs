@@ -4,8 +4,8 @@
 //!
 //! Everything here fails closed: an error is "no".
 
-#[cfg(target_os = "macos")]
 use crate::peer::AuditToken;
+use org_platform_host::admission::{Peer, SigningRule};
 
 /// The requirement for code signed as `identifier` with the Developer ID of team `team_id`
 /// ([`DEVELOPER_ID`]). The identifier must be a reverse-DNS name (ASCII letters, digits, `.`
@@ -64,18 +64,17 @@ pub(crate) const REJECTED_ENTITLEMENTS: [&str; 3] = [
     "com.apple.security.cs.disable-library-validation",
 ];
 
-/// What the host reads from a program's signing information.
-#[derive(Debug, Default)]
-pub(crate) struct Signing {
-    /// The code-signature flags (`kSecCodeInfoFlags`), if present.
-    pub(crate) flags: Option<u32>,
-    /// The entitlements (`kSecCodeInfoEntitlementsDict`): each key with its value when it's a
-    /// boolean (`None` for any other kind of value). `None` when the code has no entitlements.
-    pub(crate) entitlements: Option<Vec<(String, Option<bool>)>>,
-    /// The `keychain-access-groups` entitlement: its groups, when it's an array of strings.
-    /// `None` when it's missing or anything else.
-    pub(crate) keychain_access_groups: Option<Vec<String>>,
-}
+/// What the host reads from a program's signing information: its code-signature flags, its
+/// entitlements and its Keychain access groups, as the platform reports them.
+pub(crate) use org_platform_host::admission::Signing;
+
+/// The rule every program trusted with a secret must meet, as the platform applies it: the
+/// hardened runtime and none of the [`REJECTED_ENTITLEMENTS`].
+pub(crate) const HARDENED: SigningRule = SigningRule {
+    required_flags: HARDENED_RUNTIME,
+    rejected_entitlements: &REJECTED_ENTITLEMENTS,
+    absent_entitlements: &[],
+};
 
 /// The entitlement that lists the Keychain access groups a signed program may use.
 #[cfg(target_os = "macos")]
@@ -85,26 +84,16 @@ pub(crate) const KEYCHAIN_ACCESS_GROUPS: &str = "keychain-access-groups";
 /// the [`REJECTED_ENTITLEMENTS`] (one that's present with any value but `false` counts). Missing
 /// flags fail closed.
 pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {
-    let Some(flags) = signing.flags else {
-        return false;
-    };
-    if flags & HARDENED_RUNTIME == 0 {
-        return false;
-    }
-    !signing
-        .entitlements
-        .iter()
-        .flatten()
-        .any(|(key, value)| REJECTED_ENTITLEMENTS.contains(&key.as_str()) && *value != Some(false))
+    HARDENED.flags_and_rejections_pass(signing)
 }
 
 /// Whether the process `token` names satisfies `requirement` and runs hardened code without the
 /// [`REJECTED_ENTITLEMENTS`], all checked on one code object. Fails closed.
-#[cfg(target_os = "macos")]
 pub(crate) fn satisfies_hardened(token: &AuditToken, requirement: &str) -> bool {
-    code_for_audit_token(token).is_some_and(|code| {
-        meets(&code, requirement) && signing(&code).is_some_and(|s| hardened_and_clean(&s))
-    })
+    Peer {
+        macos_audit_token: *token,
+    }
+    .satisfies(requirement, &HARDENED)
 }
 
 /// The code object of the process `token` names. `None` on any error, including a token whose
@@ -124,7 +113,7 @@ pub(crate) fn code_for_audit_token(
 }
 
 /// Whether `code` is valid and satisfies `requirement`. Fails closed.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", test))]
 pub(crate) fn meets(
     code: &security_framework::os::macos::code_signing::SecCode,
     requirement: &str,
@@ -134,13 +123,6 @@ pub(crate) fn meets(
 
     SecRequirement::from_str(requirement)
         .is_ok_and(|requirement| code.check_validity(Flags::NONE, &requirement).is_ok())
-}
-
-/// Whether the process `token` names satisfies `requirement` (no hardening check: what the
-/// plumbing test can show on an unsigned-by-Developer-ID test binary).
-#[cfg(all(target_os = "macos", test))]
-pub(crate) fn code_satisfies(token: &AuditToken, requirement: &str) -> bool {
-    code_for_audit_token(token).is_some_and(|code| meets(&code, requirement))
 }
 
 #[cfg(target_os = "macos")]
@@ -292,15 +274,8 @@ fn parse_signing(
 /// hardened runtime) and its entitlements (`keychain-access-groups` among them). `None` when it
 /// can't be read. An unsigned test binary has no hardened runtime and no access groups, so the
 /// live answer a release host needs can only be seen on a signed build.
-#[cfg(target_os = "macos")]
 pub(crate) fn own_signing() -> Option<Signing> {
-    use security_framework::os::macos::code_signing::{Flags, SecCode};
-    signing(&SecCode::for_self(Flags::NONE).ok()?)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn own_signing() -> Option<Signing> {
-    None
+    org_platform_host::admission::own_signing()
 }
 
 /// A field of `codesign -dv`'s report on this test binary (`None` if unsigned).

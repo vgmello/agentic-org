@@ -147,23 +147,23 @@ fn verify_host(stream: &UnixStream) -> Result<(), String> {
     if !org_socket::peer_allowed(stream, org_socket::effective_uid()) {
         return Err("host peer refused".into());
     }
-    #[cfg(target_os = "macos")]
-    {
-        let token = crate::peer::audit_token(stream).map_err(|_| "host identity unavailable")?;
-        if let Some(team) = crate::APP_TEAM_ID {
-            let req = crate::code_signing::developer_id_requirement(crate::HOST_SIGNING_ID, team)?;
-            if crate::code_signing::satisfies_hardened(&token, &req) {
-                return Ok(());
-            }
+    let token = match crate::peer::audit_token(stream) {
+        Ok(token) => token,
+        // A system that cannot identify the host's image has no identity to accept.
+        Err(error) if crate::peer::unidentifiable(&error) => {
+            return Err("host signing identity refused".into())
         }
-        #[cfg(debug_assertions)]
-        if crate::peer::pid(stream)
-            .and_then(crate::peer::executable)
-            .ok()
-            == std::env::current_exe().ok()
-        {
+        Err(_) => return Err("host identity unavailable".into()),
+    };
+    if let Some(team) = crate::APP_TEAM_ID {
+        let req = crate::code_signing::developer_id_requirement(crate::HOST_SIGNING_ID, team)?;
+        if crate::code_signing::satisfies_hardened(&token, &req) {
             return Ok(());
         }
+    }
+    #[cfg(debug_assertions)]
+    if crate::peer::executable(stream).ok() == std::env::current_exe().ok() {
+        return Ok(());
     }
     Err("host signing identity refused".into())
 }

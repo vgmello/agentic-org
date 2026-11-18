@@ -77,7 +77,8 @@ impl BootstrapHost {
         root: &Path,
         listen: ListenConfig,
     ) -> Result<Arc<BootstrapService>, HostError> {
-        if !cfg!(target_os = "macos") {
+        // Protected setup admits its peer only by the image the system identifies.
+        if org_platform_host::admission::native_peers().is_err() {
             return Err(host_error(
                 "protected setup peer admission is unavailable on this platform",
             ));
@@ -192,19 +193,11 @@ fn refuse(refusal: BootstrapRefusal) -> BootstrapOutcome {
 
 impl BootstrapService {
     fn admitted(&self, connection: &Connection, received: Received) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            self.policy.allows(&crate::app_auth::SocketPeer {
-                stream: connection.socket(),
-                accepted: connection.accepted(),
-                received,
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (connection, received);
-            false
-        }
+        self.policy.allows(&crate::app_auth::SocketPeer {
+            stream: connection.socket(),
+            accepted: connection.accepted(),
+            received,
+        })
     }
     fn database(&self, state: &State) -> Result<Option<Arc<HostDb>>, ApiError> {
         if let Some(host) = &state.host {

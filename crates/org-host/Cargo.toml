@@ -40,6 +40,8 @@ core-foundation.workspace = true
 [dev-dependencies]
 # Test locations and the flush steps the platform counted (`dirs::testing`, `fs::testing`).
 org-platform = { path = "../org-platform", features = ["test-support"] }
+# The scripted image check and the children a test names itself (`testing::admission`).
+org-platform-host = { path = "../org-platform-host", features = ["test-support"] }
 tempfile.workspace = true
 ring = "=0.17.14"
 syn = { version = "=2.0.119", features = ["full", "visit"] }
