@@ -567,6 +567,11 @@
 	],
 	"allowedCoupling": [
 		{
+			"from": "src/lib/modules/members/features/profile/ProfileFrame.svelte",
+			"to": "src/lib/{components/{EditPersonDialog,MoveMemberDialog}.svelte,modules/employees/index.ts}",
+			"why": "The member profile reuses the org chart's Edit and Move home team dialogs (and the agent Edit dialog from the employees module's public entry) without owning them; org-chart specs cover them. They move into the members module when the org chart slice is rebuilt."
+		},
+		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",
 			"to": "src/lib/{components/{NewRequestDialog,AddPersonSheet}.svelte,modules/employees/index.ts,modules/messaging/{index,model,legacy-api}.ts}",
 			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
