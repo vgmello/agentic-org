@@ -3,7 +3,7 @@
 use crate::{
     cloexec::SPAWN_LOCK,
     home,
-    server_check::ServerCheck,
+    server_check::{NoAdmission, ServerCheck},
     service::listener::{Handler, WebConnection},
     sync::lock,
 };
@@ -14,7 +14,7 @@ use org_host_control::{
     listen::{ListenConfig, ListenMode},
     GatewayState,
 };
-use org_platform_host::admission::{Child, ChildEnv, ImageRefusal, SpawnRefused};
+use org_platform_host::admission::{Admission, Child, ChildEnv, ImageRefusal, SpawnRefused};
 use std::{
     ffi::OsStr,
     fs,
@@ -346,6 +346,73 @@ pub(crate) fn admission<E>(
     }
 }
 
+/// The web process's admission, built once in a host's lifetime.
+///
+/// A system that executes verified bytes reads, checks and seals the web process's image
+/// when the admission is built: every web process this host starts, each restart included,
+/// then runs exactly the bytes read at that moment, and no restart reads or hashes the
+/// program again. Where the loaded image is checked instead, building reads nothing and
+/// this changes nothing.
+///
+/// It has the properties of the office servers' admission (`supervisor::child::Images`),
+/// with its own state and its own words:
+///
+/// - the build begins with the supervisor, on its own thread, beside the host's start;
+/// - a start waits for a build that is under way: there is never more than one;
+/// - a build that fails is logged, fails that start with its reason, and is asked for again
+///   by the next start, so the supervisor's limit of consecutive failed starts ends the
+///   retries;
+/// - an admission, once built, is never built again.
+pub(crate) struct Image {
+    check: ServerCheck,
+    program: PathBuf,
+    built: Mutex<Option<Arc<Admission>>>,
+}
+impl Image {
+    /// The admission of `check`'s web process started from `program`, not built yet.
+    fn new(check: &ServerCheck, program: &Path) -> Arc<Self> {
+        Arc::new(Self {
+            check: check.clone(),
+            program: program.to_owned(),
+            built: Mutex::new(None),
+        })
+    }
+
+    /// Begins the build on its own thread. Without a thread to build it on, the first
+    /// start builds it.
+    fn begin(self: &Arc<Self>) {
+        let building = Arc::clone(self);
+        let _ = thread::Builder::new()
+            .name("web-image".into())
+            .spawn(move || building.build_at_start());
+    }
+
+    /// The build a host makes at its start, with the reason logged when there is none.
+    fn build_at_start(&self) {
+        if let Err(none) = self.admission() {
+            crate::host_log::log(&format!(
+                "the web process cannot be started: {}; each start asks again",
+                crate::host_log::untrusted(&none.to_string())
+            ));
+        }
+    }
+
+    /// The host's admission of its web process, built now if no earlier attempt
+    /// succeeded. A caller waits for a build that is under way.
+    fn admission(&self) -> Result<Arc<Admission>, NoAdmission> {
+        let mut built = lock(&self.built);
+        if let Some(admission) = built.as_ref() {
+            return Ok(Arc::clone(admission));
+        }
+        let admission = Arc::new(self.check.admission(&self.program)?);
+        if let Some(line) = self.check.describe_admitted(&self.program, &admission) {
+            crate::host_log::log(&line);
+        }
+        *built = Some(Arc::clone(&admission));
+        Ok(admission)
+    }
+}
+
 /// The refusal of a system on which the web process cannot be confined: fixed
 /// wording, then the adapter's reason (which call failed with which error, or that
 /// the system has no adapter).
@@ -381,6 +448,10 @@ impl Supervisor {
             .check
             .may_spawn()
             .map_err(|_| io::Error::other(config.check.describe()))?;
+        // One admission for every start of this host's web process, built beside the
+        // host's start.
+        let image = Image::new(&config.check, &config.program);
+        image.begin();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let observing = Arc::clone(&state);
@@ -393,7 +464,7 @@ impl Supervisor {
                     &*eligible,
                     Timing::PRODUCTION,
                     &|line| crate::host_log::log(line),
-                    || Running::start(&config, Arc::clone(&handler)),
+                    || Running::start(&config, &image, Arc::clone(&handler)),
                 )
             })
             .map_err(os_failed("start the supervisor thread"))?;
@@ -643,7 +714,8 @@ fn ended_cause(serving_refused: bool, exit: Option<String>, live: bool) -> Strin
     }
 }
 impl Running {
-    fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Self> {
+    /// Starts the web process of `config` through `image`, the host's one admission of it.
+    fn start(config: &Configuration, image: &Image, handler: Arc<dyn Handler>) -> io::Result<Self> {
         config
             .check
             .may_spawn()
@@ -665,12 +737,12 @@ impl Running {
         // The platform's admission starts the child with only its three pipes (holding
         // `SPAWN_LOCK` while it makes them and the process), checks its image before any
         // of it has run, and holds it until it is released. A system without an admission
-        // adapter starts nothing.
-        let checked = config
-            .check
-            .admission(&config.program)
-            .map_err(io::Error::from)
-            .map_err(os_failed("spawn the web process suspended"))?;
+        // adapter starts nothing. The admission is the host's one: built at its start, or
+        // now if that build failed. A refused image keeps the check's words for the log.
+        let checked = image.admission().map_err(|none| match none {
+            NoAdmission::Refused(why) => refused("admission")(why),
+            NoAdmission::Unavailable(error) => os_failed("spawn the web process suspended")(error),
+        })?;
         let held = checked
             .start(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
             .map_err(|error| match SpawnRefused::of(&error) {

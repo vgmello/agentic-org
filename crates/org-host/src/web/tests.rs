@@ -18,9 +18,10 @@ fn loopback() -> ListenConfig {
     .unwrap()
 }
 
-/// Starts the web process of `config`.
+/// Starts the web process of `config` through an admission of its own, as the first start
+/// of a host does.
 fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Running> {
-    Running::start(config, handler)
+    Running::start(config, &Image::new(&config.check, &config.program), handler)
 }
 
 /// This user's own copy of the fake web process (`examples/fake_web.rs`) in `dir`, named as
@@ -98,7 +99,7 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         critical_paths: vec![],
         release: None,
     };
-    let Err(error) = Running::start(&config, Arc::new(NoOps)) else {
+    let Err(error) = start(&config, Arc::new(NoOps)) else {
         panic!("a release build without a team never spawns")
     };
     // The supervisor logs this text, so the refusal cause must survive.
@@ -1628,6 +1629,137 @@ fn a_debug_build_web_admission_skips_the_signature_check_but_still_pins_a_releas
     );
 }
 
+/// A configuration that starts `program` unchecked, as a debug build's web process is.
+fn unchecked(dir: &Path, program: PathBuf) -> Configuration {
+    Configuration {
+        program,
+        instance: "instance".into(),
+        runtime: dir.to_owned(),
+        listen: loopback_on(free_port()),
+        check: ServerCheck::Skip,
+        critical_paths: vec![],
+        release: None,
+    }
+}
+
+/// The host builds the admission of its web process once: every start goes through that
+/// one, and what the program's path names later is never read.
+#[test]
+fn one_web_admission_serves_every_start_and_is_never_built_again() {
+    const EXITED: &str =
+        "web process start failed: the child exited before connecting (exit code 3)";
+    let dir = tempfile::tempdir().unwrap();
+    let config = unchecked(dir.path(), fake_program(dir.path(), "first-line\nexit 3\n"));
+    let image = Image::new(&config.check, &config.program);
+    let built = image.admission().unwrap();
+    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps)) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("the fake web process exits before it connects"),
+    };
+    for _ in 0..2 {
+        assert_eq!(failed_start(), EXITED);
+        assert!(Arc::ptr_eq(&built, &image.admission().unwrap()));
+    }
+    // Where the image's bytes were read when the admission was built (it then knows their
+    // digest), a start runs those bytes whatever the path names by now: the program is
+    // replaced by something that is no program, and the next start is the same child.
+    if let Some(digest) = built.image_sha256() {
+        fs::remove_file(&config.program).unwrap();
+        fs::write(&config.program, b"no program").unwrap();
+        assert_eq!(failed_start(), EXITED);
+        let still = image.admission().unwrap();
+        assert!(Arc::ptr_eq(&built, &still));
+        assert_eq!(still.image_sha256(), Some(digest));
+    }
+    // A build asked for at a host's start finds it built, and logs nothing.
+    let ((), logged) = crate::host_log::capture(|| image.build_at_start());
+    assert_eq!(logged, Vec::<String>::new());
+}
+
+/// A web admission that cannot be built yet (the program is not there) says why in the host
+/// log, fails that start, and is asked for again by the next start; once built it is kept.
+/// Where nothing of the image is read until a child is started, the admission exists at
+/// once and the missing program fails each start instead.
+#[test]
+fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
+    use crate::server_check::NoAdmission;
+    let dir = tempfile::tempdir().unwrap();
+    let config = unchecked(dir.path(), dir.path().join("agentic-org-web"));
+    let image = Image::new(&config.check, &config.program);
+    let ((), logged) = crate::host_log::capture(|| image.build_at_start());
+    let before = match (image_identity(), image.admission()) {
+        // Nothing is read until a child is started: the admission exists at once.
+        (ImageIdentity::CodeSignature, Ok(admission)) => {
+            assert_eq!(logged, Vec::<String>::new());
+            Some(admission)
+        }
+        // The image is read when the admission is built: there is none yet, and the host
+        // log says why.
+        (ImageIdentity::VerifiedBytes, Err(NoAdmission::Unavailable(error))) => {
+            assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error:?}");
+            let [line] = &logged[..] else {
+                panic!("one line for the failed build: {logged:?}")
+            };
+            assert!(
+                line.starts_with("the web process cannot be started: ")
+                    && line.ends_with("; each start asks again"),
+                "{line}"
+            );
+            None
+        }
+        (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
+    };
+    // No web process starts, whichever step notices.
+    let message = match Running::start(&config, &image, Arc::new(NoOps)) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a missing program was started"),
+    };
+    assert!(
+        message.starts_with("web process start failed: spawn the web process suspended ("),
+        "{message}"
+    );
+    // The program appears: the next start builds the admission, or finds the one it has.
+    fake_program(dir.path(), "first-line\nexit 3\n");
+    let message = match Running::start(&config, &image, Arc::new(NoOps)) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("the fake web process exits before it connects"),
+    };
+    assert_eq!(
+        message,
+        "web process start failed: the child exited before connecting (exit code 3)"
+    );
+    let built = image.admission().expect("the program is there now");
+    if let Some(before) = before {
+        assert!(Arc::ptr_eq(&before, &built), "an admission was built twice");
+    }
+    assert!(Arc::ptr_eq(&built, &image.admission().unwrap()));
+}
+
+/// Starts that come together wait for the one build: every one of them gets the same
+/// admission.
+#[test]
+fn web_starts_that_come_together_share_the_one_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = fake_program(dir.path(), "exit 1\n");
+    let image = Image::new(&ServerCheck::Skip, &program);
+    let go = std::sync::Barrier::new(8);
+    let built: Vec<_> = thread::scope(|scope| {
+        let asking: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    go.wait();
+                    image.admission().unwrap()
+                })
+            })
+            .collect();
+        asking
+            .into_iter()
+            .map(|asked| asked.join().unwrap())
+            .collect()
+    });
+    assert!(built.iter().all(|one| Arc::ptr_eq(one, &built[0])));
+}
+
 /// A child that confines itself as the real web process does (the fake web process's
 /// `confine` step is the platform's own `confine_web`), so it passes the host's real
 /// sandbox verification; after its ready line it takes `after_ready`.
@@ -2217,6 +2349,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
     let stopping = AtomicBool::new(false);
     let state = Mutex::new(GatewayState::NotConfigured);
     let (lines, log) = recording();
+    let image = Image::new(&web.config.check, &web.config.program);
     thread::scope(|scope| {
         let supervisor = scope.spawn(|| {
             supervise(
@@ -2225,7 +2358,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
                 &|| true,
                 Timing::PRODUCTION,
                 &log,
-                || Running::start(&web.config, web.handler.clone()),
+                || Running::start(&web.config, &image, web.handler.clone()),
             )
         });
         wait_for("the supervised web process serves", || {
@@ -2334,13 +2467,14 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
             stable: Duration::from_secs(60),
             backoff: Duration::from_millis(1),
         };
+        let image = Image::new(&web.config.check, &web.config.program);
         supervise(
             &AtomicBool::new(false),
             &state,
             &|| true,
             timing,
             &log,
-            || Running::start(&web.config, web.handler.clone()),
+            || Running::start(&web.config, &image, web.handler.clone()),
         );
         assert_eq!(*lock(&state), GatewayState::Failed);
         for line in lock(&lines).iter() {
