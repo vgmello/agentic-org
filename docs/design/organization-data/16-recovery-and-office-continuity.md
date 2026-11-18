@@ -155,7 +155,10 @@ Only protected provisioning may establish its initial unanchored binding.
 Missing custody, a different root identity, changed epoch/incarnation or a journal
 behind its protected checkpoint requires explicit recovery, never automatic
 promotion or a reset of either allocator. Recreating a missing host registry must
-not sweep existing writer authority.
+not sweep existing writer authority. The host never recreates a registry it once
+created: after the first creation it records a marker in the instance root, and a
+later start that finds the marker without the registry refuses until the registry
+is restored or the instance is reset through setup (ADR-0022).
 The protected initial binding records its canonical provisioning
 operation ID. An exact authenticated replay may finish marker publication while
 retaining its original incarnation, epoch, device and acknowledged checkpoint.

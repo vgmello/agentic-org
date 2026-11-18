@@ -3,7 +3,8 @@
 //! The host reads the frozen setup record without taking setup's writer lock, reopens the
 //! instance setup reserved (its ID must be the record's), admits the runtime release before
 //! any custody is opened, takes `host.lock`, creates the host registry if it is absent (the
-//! first start after setup), and hands the lock and custody to the ordinary composition. Only
+//! first start after setup; a registry the host once created and that is now missing is
+//! refused, never recreated), and hands the lock and custody to the ordinary composition. Only
 //! then is the administrator link service installed: until it is, the admin calls answer
 //! `unavailable`. The host never writes the setup record; setup observes the registry itself.
 use std::io;
@@ -93,6 +94,9 @@ impl Host {
         layout.check_socket_paths()?;
         layout.prepare()?;
         let lock = HostLock::acquire(&layout)?;
+        // Before any custody is opened: a registry the host once created and that is now
+        // missing is refused, never recreated empty (ADR-0022).
+        let registry_state = registry_state(&instance, &layout_paths.office_home)?;
         #[cfg(debug_assertions)]
         let dev_key_dir = config.dev_key_dir.clone();
         #[cfg(not(debug_assertions))]
@@ -103,8 +107,15 @@ impl Host {
             instance.id(),
             crate::code_signing::own_signing,
         )
-        .map_err(|_| refused("opening protected account custody", "custody unavailable"))?;
-        create_registry_once(&layout_paths.office_home, &*custody, instance.id())?;
+        .map_err(|e| refused("opening protected account custody", format!("{e:?}")))?;
+        if registry_state == RegistryState::Absent {
+            create_registry(&layout_paths.office_home, &*custody, instance.id())?;
+        }
+        // Written after the registry is published, and repaired here if a start died between
+        // the two: from now on a missing registry is refused.
+        instance
+            .record_registry_created()
+            .map_err(|e| refused("recording the host registry", e))?;
 
         let host = Self::start_prepared(config, Some(instance), Some((lock, custody)))?;
         let db = match &host.service.authentication {
@@ -129,23 +140,55 @@ impl Host {
     }
 }
 
-/// Creates the host registry at the instance's first start. The caller holds `host.lock`, so
-/// no other host can race the existence check. An existing registry is opened later as usual.
-fn create_registry_once(
+/// The message a start refuses with when the registry it once created is gone.
+pub(crate) const REGISTRY_MISSING: &str =
+    "host registry missing; restore it or reset this instance through setup";
+
+#[derive(Debug, PartialEq, Eq)]
+enum RegistryState {
+    /// The first start: neither the registry nor the host's marker exists.
+    Absent,
+    /// The registry exists (its marker may still need writing).
+    Present,
+}
+
+/// Decides whether this start creates the registry. The caller holds the instance root lock
+/// and `host.lock`, so no other host can race these checks. A registry recorded as created
+/// but now missing is refused with an explicit recovery message: recreating it empty would
+/// reopen the initial administrator link and drop the accounts and custody bound to it.
+fn registry_state(
+    instance: &crate::instance::registry::Instance,
     office_home: &Path,
-    custody: &dyn crate::host_secrets::HostSecrets,
-    instance_id: &str,
-) -> Result<bool, HostError> {
-    match std::fs::symlink_metadata(office_home.join("host-registry.db")) {
-        Ok(_) => return Ok(false),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+) -> Result<RegistryState, HostError> {
+    let exists = match std::fs::symlink_metadata(office_home.join("host-registry.db")) {
+        Ok(_) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
         Err(source) => {
             return Err(HostError::Io {
                 context: "checking the host registry",
                 source,
             })
         }
+    };
+    let created = instance
+        .registry_created()
+        .map_err(|e| refused("checking the host registry", e))?;
+    match (exists, created) {
+        (true, _) => Ok(RegistryState::Present),
+        (false, false) => Ok(RegistryState::Absent),
+        (false, true) => {
+            host_log::log(REGISTRY_MISSING);
+            Err(refused("opening the host registry", REGISTRY_MISSING))
+        }
     }
+}
+
+/// Creates the host registry at the instance's first start, under the same locks.
+fn create_registry(
+    office_home: &Path,
+    custody: &dyn crate::host_secrets::HostSecrets,
+    instance_id: &str,
+) -> Result<(), HostError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -155,10 +198,11 @@ fn create_registry_once(
         instance_id: instance_id.to_owned(),
         clock_high_ms: now,
     };
+    // The error names only a kind (an I/O kind, SQLite code or custody class), never bytes.
     HostDb::create(office_home, custody, &init)
-        .map_err(|_| refused("creating the host registry", "registry creation failed"))?;
+        .map_err(|e| refused("creating the host registry", format!("{e:?}")))?;
     host_log::log("created the host registry at the instance's first start");
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(test)]

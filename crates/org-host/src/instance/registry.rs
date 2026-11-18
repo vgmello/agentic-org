@@ -11,6 +11,8 @@ use super::{Error, Name};
 const REGISTRY: &str = "instances.json";
 const CONFIG: &str = "instance.json";
 const LOCK: &str = "registry.lock";
+/// The host's durable record that it created this instance's host registry (ADR-0022).
+const REGISTRY_CREATED: &str = "host-registry.created";
 const MAX_BYTES: usize = 64 * 1024;
 const MAX_INSTANCES: usize = 256;
 
@@ -312,6 +314,29 @@ impl Instance {
     pub(crate) fn verify(&self) -> Result<(), Error> {
         self.config()?;
         self.instance_temp()?.verify()?;
+        Ok(())
+    }
+
+    /// Whether the host recorded that it created this instance's host registry. The marker
+    /// holds the instance ID; any other content is refused rather than trusted.
+    pub(crate) fn registry_created(&self) -> Result<bool, Error> {
+        self.root.verify()?;
+        match self.root.read(REGISTRY_CREATED, MAX_BYTES)? {
+            None => Ok(false),
+            Some(bytes) if *bytes == *self.binding.id.as_bytes() => Ok(true),
+            Some(_) => Err(Error::Unsafe("host registry marker names another instance")),
+        }
+    }
+
+    /// Records, durably and once, that the host registry exists. The caller holds this
+    /// instance's root lock and `host.lock`, and calls it only after the registry is
+    /// published. A later start that finds the marker without the registry refuses.
+    pub(crate) fn record_registry_created(&self) -> Result<(), Error> {
+        if self.registry_created()? {
+            return Ok(());
+        }
+        self.root
+            .publish(REGISTRY_CREATED, self.binding.id.as_bytes(), None)?;
         Ok(())
     }
 
