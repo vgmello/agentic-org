@@ -87,6 +87,23 @@ Svelte plugin supplies Svelte skills and MCP tools; the Rust LSP MCP supplies
 rust-analyzer navigation, types, references and rename edits. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.
 
+### The principal designer agent
+
+For any new or changed screen, component or flow in `apps/agentic-org-ui`, and for UX
+reviews, dispatch the `principal-designer` agent. It is defined for both tools:
+`.claude/agents/principal-designer.md` for Claude Code and
+`.codex/agents/principal-designer.toml` for Codex. Both are thin: they point at one persona,
+`.agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
+place. The assignment names the job: design (propose), implement (build) or review
+(read-only). The agent sorts what a screen shows by what the data is worth to the person,
+weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect while building,
+and runs a measured consistency audit before handing over. Product specs outrank it. The
+lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
+
+The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
+checkout (`.claude/skills/`, ignored by Git); the persona file gives the pinned install
+command. It is optional and nothing depends on it.
+
 The project pins `@sveltejs/mcp`; `bun run mcp:svelte` starts that installed version.
 For a manually configured Codex server, match the project's version:
 
