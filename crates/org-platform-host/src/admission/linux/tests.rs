@@ -10,7 +10,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -34,6 +34,23 @@ const RULE: SigningRule = SigningRule {
 };
 
 const PATIENCE: Duration = Duration::from_secs(20);
+
+/// The fence of this test binary: held while it writes a file that is later executed
+/// by its path, and by every start of a process.
+///
+/// A process copied while another thread holds such a file open for writing keeps
+/// that descriptor until its own `exec`, and until then the kernel refuses to execute
+/// the file by path (`ETXTBSY`). The sealed image is never executed by path, so only
+/// the tests that start a program by path (the path adapter, the fixture as an
+/// admitting process) could meet that; they did, about once in thirty runs, before
+/// every writer and every start shared this lock.
+static FENCE: Mutex<()> = Mutex::new(());
+
+fn fenced() -> MutexGuard<'static, ()> {
+    FENCE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn development(program: &Path) -> ExpectedImage {
     ExpectedImage {
@@ -90,6 +107,7 @@ impl Workspace {
         // Another user (the root variant of the non-dumpable test) must reach the copy.
         fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
         let fixture = dir.path().join("admission_fixture");
+        let _no_process_is_started = fenced();
         fs::copy(built_fixture(), &fixture).unwrap();
         fs::set_permissions(&fixture, fs::Permissions::from_mode(0o755)).unwrap();
         Self { dir, fixture }
@@ -107,6 +125,7 @@ impl Workspace {
     /// An executable file `name` with `contents`.
     fn executable(&self, name: &str, contents: &[u8]) -> PathBuf {
         let path = self.path(name);
+        let _no_process_is_started = fenced();
         fs::write(&path, contents).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         path
@@ -119,7 +138,7 @@ fn spawn_with(
     env: &ChildEnv,
 ) -> std::io::Result<Started> {
     let commands: Vec<&OsStr> = commands.iter().map(OsStr::new).collect();
-    admission.spawn(&commands, env, &Mutex::new(()))
+    admission.spawn(&commands, env, &FENCE)
 }
 
 fn start(admission: &Admission, commands: &[&str]) -> Started {
@@ -711,9 +730,12 @@ fn a_child_gets_its_pipes_its_environment_and_nothing_else() {
     })
     .join();
     assert!(fence.is_poisoned());
-    let mut bare = admission
-        .spawn(&[OsStr::new("report")], &ChildEnv::new(), &fence)
-        .unwrap();
+    let mut bare = {
+        let _no_file_is_written = fenced();
+        admission
+            .spawn(&[OsStr::new("report")], &ChildEnv::new(), &fence)
+            .unwrap()
+    };
     let report = report_of(&mut bare);
     assert_eq!(report.env, [] as [&str; 0]);
     assert_eq!(report.args.len(), 2);
@@ -738,7 +760,15 @@ fn the_child_of_an_unprivileged_user_is_not_dumpable() {
     if is_root() {
         admitter.uid(65534).gid(65534);
     }
-    let output = admitter.output().unwrap();
+    admitter
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let running = {
+        let _no_file_is_written = fenced();
+        admitter.spawn().unwrap()
+    };
+    let output = running.wait_with_output().unwrap();
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(
         output.status.success(),
@@ -859,7 +889,7 @@ fn dropping_a_child_kills_and_reaps_it() {
 
     // The same for a child that is held and never released.
     let held = admission
-        .start(&[OsStr::new("hold")], &ChildEnv::new(), &Mutex::new(()))
+        .start(&[OsStr::new("hold")], &ChildEnv::new(), &FENCE)
         .unwrap();
     let pid = held.child().id();
     assert!(exists(pid));
@@ -875,7 +905,7 @@ fn a_held_child_already_runs_the_verified_image() {
     let admission = work.admission();
     let commands = [OsStr::new("report"), OsStr::new("hold")];
     let held = admission
-        .start(&commands, &ChildEnv::new(), &Mutex::new(()))
+        .start(&commands, &ChildEnv::new(), &FENCE)
         .unwrap();
     admission.recheck(held.child()).unwrap();
     // Not released, and it has reported all the same.
@@ -883,7 +913,7 @@ fn a_held_child_already_runs_the_verified_image() {
     assert_eq!(report_of(&mut running).args.len(), 3);
 
     let held = admission
-        .start(&commands, &ChildEnv::new(), &Mutex::new(()))
+        .start(&commands, &ChildEnv::new(), &FENCE)
         .unwrap();
     let pid = held.child().id();
     let mut released = held.release().unwrap();
