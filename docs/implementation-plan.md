@@ -353,7 +353,7 @@ onto it and deletes the old store; B1c measures and guards it.
   committed organization write survives killing the office right after its answer; the
   organization's files are at the contract's paths under `durable/state/`; `rusqlite` and
   SQL appear in `org-office` only under `src/store/sqlite/` (ENG-1 for the office); the
-  office's tests pass on the memory engine through `open_store` (ENG-2).
+  office's tests pass on the memory engine through `open_store` (ENG-2); STORE-6 passes.
 - **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
   it moves).
 
