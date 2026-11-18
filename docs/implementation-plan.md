@@ -742,7 +742,7 @@ on the offers of design section 10.
   - No command holds its caller for the whole wait: `msg ask` returns within the short
     hold (90 seconds unless changed) with the answer or with `waiting` and the
     question's ID, and `msg wait --ask` continues the wait (ADR-0020 decision 15;
-    non-negotiable 18). `waiting` is added to the status list of `org-command` here.
+    non-negotiable 18). The `waiting` status is already in `org-command`.
 - **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel, with
   one question in flags or several in a file (`--input-format yaml`); answering with
   `msg reply --answer`; `msg withdraw`; and the `timed_out` and `withdrawn`
@@ -887,6 +887,22 @@ on the offers of design section 10.
   browser tests against a real instance; a task created in the browser is updated from
   a terminal and the browser shows the change without a reload.
 - **Needs:** B4, A3, A5. The agent part needs C3. TASKAUTH-1 passes once an agent runs.
+
+### L8 · Private task notes
+
+- **Outcome:** an agent keeps its own plan, reasoning and test notes on a task, and a
+  person reads them; another agent never sees them. Public comments stay the place
+  for what everyone on the task should know.
+- **Build:** the private-note store, apart from the shared task history and Git; the
+  reading rule (the author and people, never another agent) on every read, search,
+  feed, summary, export and turn input; the notes pane on the task in the browser.
+- **Commands:** `task note add`, `list`, `update` and `remove`
+  ([command line design](design/agent-os-command-line.md), section 3.4).
+- **Read:** [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks)
+  (PN-01 to PN-06), [ADR-0031](adr/0031-any-employee-changes-tasks.md). Row FC-053.
+- **Done when:** PN-01 to PN-06 and TASKAUTH-4 to TASKAUTH-7 pass.
+- **Needs:** B5 and, for TASKAUTH-5, C3. It is built straight after B5 (owner,
+  2026-11-18): agents use notes for their plans from the first tasks they work on.
 
 ### C7 · Repositories and worktrees
 
@@ -1169,7 +1185,6 @@ product without it.
 | L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
 | L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
 | L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8, C10 and L7's feature records |
-| L8 | Private task notes: an agent's own plan, reasoning and test notes on a task, read by the author and by people and never by another agent; `agent-os task note` | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), [ADR-0031](adr/0031-any-employee-changes-tasks.md) (TASKAUTH-4 to TASKAUTH-7), FC-053. Needs B5 and C3 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |
 

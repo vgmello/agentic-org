@@ -169,8 +169,7 @@ plain text, and `--format compact` prints `data` on success, without the envelop
   | `waiting` | A question is still open and the short hold of this command has ended ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 15). `data` names the question and the time left of its wait | Continue with other work, or call `msg wait --ask <id>` |
   | `gate_required` | The change needs an approval before it takes effect. No command returns it in milestones one and two: a hire has no approval ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). It stays in the contract for a later approval | Continue with other work; the outcome arrives as a message |
 
-  `waiting` is added to the status list of `org-command` when `msg ask` is built
-  (B7); the library merged with K1 has the other five.
+  `org-command` has the six.
 
   These are the requirement's `SUSPENDED` and `GATE_REQUIRED`, and the four results of
   an ask in ADR-0020.

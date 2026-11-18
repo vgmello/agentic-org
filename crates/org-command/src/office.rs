@@ -34,15 +34,18 @@ pub enum Status {
     TimedOut,
     Withdrawn,
     Suspended,
+    /// A question is still open and this command's short hold has ended.
+    Waiting,
     GateRequired,
 }
 
 impl Status {
-    pub const ALL: [Status; 5] = [
+    pub const ALL: [Status; 6] = [
         Status::Completed,
         Status::TimedOut,
         Status::Withdrawn,
         Status::Suspended,
+        Status::Waiting,
         Status::GateRequired,
     ];
 
@@ -52,6 +55,7 @@ impl Status {
             Status::TimedOut => "timed_out",
             Status::Withdrawn => "withdrawn",
             Status::Suspended => "suspended",
+            Status::Waiting => "waiting",
             Status::GateRequired => "gate_required",
         }
     }

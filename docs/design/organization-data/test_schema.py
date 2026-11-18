@@ -602,6 +602,19 @@ class DraftSchemaTests(unittest.TestCase):
             self.db, "agent_placements", organization_id="org", employee_id="reporter", office_id="hq"))
         assert_refused(self, self.db, "only an agent is placed in an office",
                        "UPDATE agent_placements SET employee_id='reporter'")
+
+    def test_a_placed_employee_stays_an_agent_and_a_team_has_a_member_limit(self):
+        self.seed_execution()
+        insert(self.db, "employees", organization_id="org", id="placed", handle="placed", kind="agent",
+               name="Placed", home_team_id="payments", schema_version=1, revision=1)
+        insert(self.db, "agent_placements", organization_id="org", employee_id="placed", office_id="hq")
+        self.db.commit()
+        assert_refused(self, self.db, "placed employee must remain an agent",
+                       "UPDATE employees SET kind='person' WHERE id='placed'")
+        self.assertEqual(self.db.execute("SELECT max_members FROM teams WHERE id='payments'").fetchone()[0], 6)
+        self.db.execute("UPDATE teams SET max_members=12 WHERE id='payments'")
+        assert_refused(self, self.db, "CHECK constraint failed",
+                       "UPDATE teams SET max_members=0 WHERE id='payments'")
         insert(self.db, "employees", organization_id="org", id="bo", handle="bo", schema_version=1,
                revision=1, kind="agent", name="Bo", home_team_id="payments")
         self.db.execute("UPDATE agent_execution_configs SET employee_id='bo'")

@@ -80,6 +80,7 @@ name TEXT NOT NULL,
   parent_team_id TEXT,
   lead_employee_id TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  max_members INTEGER NOT NULL DEFAULT 6 CHECK (max_members >= 1),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -2587,3 +2588,7 @@ CREATE TRIGGER task_project_keeps_affected_feature BEFORE UPDATE OF project_id O
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
  WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;
+CREATE TRIGGER placed_employee_stays_agent BEFORE UPDATE OF kind ON employees
+WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM agent_placements p WHERE p.organization_id=OLD.organization_id AND p.employee_id=OLD.id)
+ AND NOT EXISTS (SELECT 1 FROM agent_execution_configs c WHERE c.organization_id=OLD.organization_id AND c.employee_id=OLD.id)
+BEGIN SELECT RAISE(ABORT,'placed employee must remain an agent'); END;

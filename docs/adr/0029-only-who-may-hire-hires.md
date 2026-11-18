@@ -61,8 +61,12 @@ approver and had no command to approve with.
    person's record is created with it on and an agent's with it off. Only the owner,
    or a person above the employee, turns it on or off. Nobody sets their own, and the
    built-in HR lead never has it.
-8. **Hiring limits refuse.** Where a limit is set in Settings, a hire above it is
-   refused with the limit named, and only the owner can make it.
+8. **A team has a member limit** (owner, 2026-11-18). Every team has `max_members`,
+   6 unless changed. It counts the active employees, people and agents, whose home
+   team it is. A hire into a full team is refused with the limit named, for every
+   hirer; so is moving an employee into a full team. The limit is changed on the
+   team by the owner, or by a person who leads that team or a team above it; an
+   agent never changes it. This replaces the weekly and cost limits in Settings.
 9. **An agent that may hire hires without a person.** That is what turning Allow
    hiring on for an agent means. It is off until a person turns it on.
 
@@ -84,7 +88,7 @@ APPR-1 to APPR-7 in the [hire flow](../specs/our-org-in-the-app.md), and:
 | HIRE-3 | A lead holding `may_hire`, person or agent, hires into its own team and into a team under it; no other employee is asked. The hire records that lead. |
 | HIRE-4 | That lead's hire into a team it does not lead, directly or through a parent team, is refused. The owner's is not. |
 | HIRE-5 | An employee's call to set its own `may_hire` is refused, and so is an agent's call to set anyone's. A new person record has it on and a new agent has it off. |
-| HIRE-6 | With a weekly limit set and reached, a lead's hire is refused with the limit named, and the owner's succeeds. |
+| HIRE-6 | A new team has a limit of 6 members. A hire into a team that has 6 active members is refused with the limit named, for a lead and for the owner; after a person raises the team's limit the hire succeeds. An agent's call to change the limit is refused. |
 | HIRE-7 | With agents leading both an engineering team (`may_hire` off) and the director team above it (`may_hire` on), the engineering lead's hire is refused, and after it asks the director team's lead, that lead hires into the engineering team. No person acts and no project exists during the test. |
 | HIRE-8 | A drafted proposal creates nothing until the hirer confirms it; a hire that stops partway shows the step that failed and finishes with Try again. |
 
@@ -96,4 +100,4 @@ APPR-1 to APPR-7 in the [hire flow](../specs/our-org-in-the-app.md), and:
   in the answer contract for a later approval.
 - An agent lead with the permission adds employees, and so cost, with no person
   seeing each hire first. The permission is off for agents by default, every hire
-  shows on the owner's Home, and budgets and hiring limits are the bounds.
+  shows on the owner's Home, and budgets and each team's member limit are the bounds.

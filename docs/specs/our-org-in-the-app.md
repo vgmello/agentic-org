@@ -212,7 +212,7 @@ The permission is on for a person and off for an agent unless changed. Only the 
 - **Loading:** skeleton rows.
 - **Error:** "Can't load hire requests" with **Retry**.
 
-**Optional limit** (Settings › Hiring): "Hires by leads: no limit" (default), or "at most [n] per week", or "only up to ≈ $[amount] per month each". A hire above the limit is refused with the limit named ("This is above the limit of 2 hires per week. Only the owner can make it."). Only the owner can make it.
+**Team member limit**: every team has a limit on its members, 6 unless changed, shown on the team's page ("Members: 4 of 6"). It counts the active people and agents whose home team it is. A hire into a full team is refused with the limit named ("App already has 6 members, its limit. Raise the limit on the team's page first."), for every hirer. The owner, or a person who leads the team or a team above it, changes the limit; an agent cannot.
 
 ## 8. Flow 5 · Assign and change teams
 
@@ -295,7 +295,7 @@ The IDs keep their old prefix because [ADR-0029](../adr/0029-only-who-may-hire-h
 - APPR-4 · The hirer's confirmation is enough: the office provisions the hire at once, whether or not the HR lead can run. A drafted proposal creates nothing until the hirer confirms it.
 - APPR-5 · Every hire records who hired, on the new agent's profile ("hired by") and in Activity, and the owner sees it on Home.
 - APPR-6 · The Requests tab shows each hire with who hired and its state: Drafting, Hiring…, Not finished: <step that failed>, Hired or Withdrawn. A hirer sees its own; the owner sees all.
-- APPR-7 · With the optional weekly or cost limit set and reached, a hire by a lead is refused with the limit named, and the owner's succeeds.
+- APPR-7 · A new team has a member limit of 6. A hire into a full team is refused with the limit named, for a lead and for the owner, and succeeds after a person raises the limit. An agent cannot change a team's limit.
 - APPR-8 · `agent-os hr hire` works with the same words as the app. With every required field given, the call is its own confirmation and the office provisions the agent. With words only, the HR lead drafts, and the hirer confirms the draft. When the HR lead can't run and only words were given, it creates nothing and answers `unavailable` with a hint to fill in the fields ([agent command line](../design/agent-os-command-line.md)). It never answers `gate_required`.
 - APPR-9 · Retired, ADR-0029 (it described a proposal waiting on a lead).
 - APPR-10 · After the hirer confirms, a request shows Hiring…, then Hired. If hiring stops partway, it shows "Not finished: <failed step>" with Try again for the hirer and the owner, they get a Needs you item, the steps already done are named, finishing needs no new confirmation, and the agent is shown in no chart, roster or picker until the hire completes.
