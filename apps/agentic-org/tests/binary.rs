@@ -313,7 +313,10 @@ fn a_second_host_binary_on_the_same_home_exits_at_once() {
     // refused there, before `host.lock`, custody or the registry.
     let stderr = instance.stderr("second.err");
     assert!(
-        stderr.contains("reopening the reserved instance: instance state is already locked"),
+        stderr.contains(
+            "reopening the reserved instance: instance default is in use by another agentic-org \
+             process (a running service, setup or admin reset); stop it first"
+        ),
         "{stderr}"
     );
     // The second host started nothing, and the first still serves.
