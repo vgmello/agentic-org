@@ -29,11 +29,11 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | --- | ---: |
 | Done | 9 |
 | In progress | 62 |
-| Planned | 54 |
+| Planned | 55 |
 | Blocked | 1 |
 | Deferred | 42 |
 | Needs verification | 0 |
-| **Total** | **168** |
+| **Total** | **169** |
 
 ## Feature tables
 
@@ -232,6 +232,7 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 | [ ] | FC-107 | [Private specialists and child delegation engines](specs/employee-supervision-ux.md) | Deferred | Native delegate/replica orchestration requires separate selection and execution/accounting boundaries. |
 | [ ] | FC-161 | [Selectable agent isolation with a dedicated OS user](adr/0015-agent-isolation-modes.md) | Planned | The launch contract has no isolation setting and agents share the service user; the macOS spike of decision 7 and criteria ISO-1 to ISO-9 are unmet. Includes the private agent home and the sign-in from the subscription pool (decisions 10 to 12). |
 | [ ] | FC-168 | [The agent command line: one grammar, one answer envelope, one table of commands](design/agent-os-command-line.md) | Planned | Owner requirement [REQ-08](specs/req-08-agent-os-cli-and-kernel-primitives.md), 2026-11-18. `apps/agent-os/src/main.rs` parses by hand with positional arguments, prints text unless `--json` is given and has no schema, dry run or structured error hint. Remaining: the shared command library and its contract tests (K1, CLI-1 to CLI-14; `gate`, `worktree create` and `cleanup`, and `grant check` are not commands, for the reasons in the design), then each domain's commands with the increment that builds the domain, on macOS and Linux. Process packages, the information architecture index, artifacts and the event bus wait for the owner's baseline requirements. |
+| [ ] | FC-169 | [An agent's ask or hand-off starts a turn for an idle agent](adr/0023-an-agents-ask-starts-a-turn.md) | Planned | Owner decision 2026-11-18. No agent can be launched today, and a message starts no turn. Remaining: the office starts one ordinary turn for an idle recipient of another agent's ask or hand-off, under the hourly limit, with what started it recorded (C8, WAKE-1 to WAKE-6). Scheduled and always-on modes stay deferred (FC-104). |
 
 ### Roles, processes and retrospectives
 

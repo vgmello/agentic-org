@@ -344,8 +344,10 @@ such if shown.
 
 ## How a turn runs
 
-A turn starts only from an explicit instruction, the answer to a required ask, or a
-recovery. Messages, assignments and schedules never create model work by themselves.
+A turn starts only from an explicit instruction, the answer to a required ask, an ask
+or a hand-off from another agent to an idle agent
+([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), or a recovery. Other
+messages, assignments and schedules never create model work by themselves.
 A second open turn returns `BUSY`.
 
 1. **Admit.** Authenticate the caller and scope, validate placement and configuration
@@ -459,7 +461,8 @@ again on hand-back, and the command warns about this when it starts.
   the office.
 - **Delivery** follows ADR-0003: a message is kept for the agent's next turn boundary,
   never interrupts a busy turn, and never wakes a paused agent. A reply that satisfies
-  a wait creates no second turn.
+  a wait creates no second turn. An ask or a hand-off from another agent starts one
+  turn for an idle recipient, under an hourly limit (ADR-0023).
 - **Presence:** `busy`, `idle`, `needs_you`, `with_you`, `waiting` (on a required
   answer, naming whom), `asleep` and `offline`. An agent holding an `agent-os` wait
   counts as idle. Presence is not stored durably.
