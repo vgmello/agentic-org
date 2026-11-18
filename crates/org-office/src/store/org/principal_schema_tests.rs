@@ -1,5 +1,4 @@
 use super::*;
-use crate::key::Key;
 use crate::store::{Opening, Store};
 use org_sync::error::{Refusal, SyncError};
 use org_sync::organization::{self as sync_org, OrgOutput, PeerIdentity, PeerRole, VerifiedPeer};
@@ -27,12 +26,8 @@ const LEGACY_V2: Schema = Schema {
 
 type LegacyRows = Vec<(String, i64, i64, String, Option<String>)>;
 
-fn key() -> Key {
-    Key::from_bytes([23; 32])
-}
-
 fn open(path: &Path, opening: Opening, schema: &Schema) -> Store {
-    Store::open(path, &key(), opening, schema).unwrap()
+    Store::open(path, opening, schema).unwrap()
 }
 
 fn version(store: &Store) -> i64 {
@@ -168,7 +163,7 @@ fn fresh_v3_has_nullable_principal_columns() {
 }
 
 #[test]
-fn encrypted_v1_and_v2_upgrade_preserves_rows_and_reopens() {
+fn plain_v1_and_v2_upgrade_preserves_rows_and_reopens() {
     for legacy in [&LEGACY_V1, &LEGACY_V2] {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("org.db");
@@ -177,7 +172,7 @@ fn encrypted_v1_and_v2_upgrade_preserves_rows_and_reopens() {
         let before = legacy_rows(&store);
         assert_eq!(columns(&store).len(), 5);
         drop(store);
-        assert_ne!(&std::fs::read(&path).unwrap()[..16], b"SQLite format 3\0");
+        assert_eq!(&std::fs::read(&path).unwrap()[..16], b"SQLite format 3\0");
 
         let store = open(&path, Opening::Existing, &SCHEMA);
         assert_eq!(version(&store), 3, "upgrade from v{}", legacy.version);
@@ -208,7 +203,7 @@ fn failed_legacy_upgrade_rolls_back_partial_ddl() {
         let before_schema = schema_image(&store);
         drop(store);
 
-        match Store::open(&path, &key(), Opening::Existing, &SCHEMA) {
+        match Store::open(&path, Opening::Existing, &SCHEMA) {
             Err(OfficeError::Storage(cause)) => {
                 assert!(cause
                     .to_string()
@@ -248,7 +243,7 @@ fn older_v2_reader_refuses_v3() {
     seed_legacy(&store, &fingerprint_vectors()["org"][0]);
     let before = legacy_rows(&store);
     drop(store);
-    match Store::open(&path, &key(), Opening::Existing, &LEGACY_V2) {
+    match Store::open(&path, Opening::Existing, &LEGACY_V2) {
         Err(OfficeError::Storage(cause)) => {
             assert!(cause.to_string().contains("database schema 3 is newer"));
         }
@@ -448,8 +443,8 @@ fn exported_body(dir: &TempDir, exported: &OrganizationSnapshotExport) -> Vec<u8
     );
     assert_eq!(exported.manifest.protocol_level, 1);
     let artifact = dir.path().join("artifact.db");
-    std::fs::write(&artifact, &exported.ciphertext).unwrap();
-    let db = crate::store::connect(&artifact, &Key::from_bytes([24; 32]), false, false).unwrap();
+    std::fs::write(&artifact, &exported.artifact).unwrap();
+    let db = crate::store::connect(&artifact, false, false).unwrap();
     let body: Vec<u8> = db
         .query_row("SELECT body FROM snapshot", [], |row| row.get(0))
         .unwrap();
@@ -489,9 +484,8 @@ fn snapshot_roundtrip_keeps_projection_two_and_null_columns() {
     assert_eq!(version(&current), 3);
     seed_legacy(&current, &fingerprint_vectors()["org"][0]);
     bind(&current, "HQ");
-    let transport = Key::from_bytes([24; 32]);
-    let old_export = export_replication_snapshot(&legacy, &transport, SNAPSHOT_LIMIT).unwrap();
-    let new_export = export_replication_snapshot(&current, &transport, SNAPSHOT_LIMIT).unwrap();
+    let old_export = export_replication_snapshot(&legacy, SNAPSHOT_LIMIT).unwrap();
+    let new_export = export_replication_snapshot(&current, SNAPSHOT_LIMIT).unwrap();
     let golden = include_bytes!("fixtures/snapshot-projection-v2.json")
         .strip_suffix(b"\n")
         .unwrap();
@@ -521,7 +515,6 @@ fn snapshot_roundtrip_keeps_projection_two_and_null_columns() {
                 &replica,
                 Hq.identity(),
                 &wrong,
-                &transport,
                 UnreadSnapshot,
                 SNAPSHOT_LIMIT,
                 SnapshotStageMode::Normal,
@@ -537,7 +530,6 @@ fn snapshot_roundtrip_keeps_projection_two_and_null_columns() {
             &replica,
             Hq.identity(),
             &wrong_protocol,
-            &transport,
             UnreadSnapshot,
             SNAPSHOT_LIMIT,
             SnapshotStageMode::Normal,
@@ -549,8 +541,7 @@ fn snapshot_roundtrip_keeps_projection_two_and_null_columns() {
         &replica,
         Hq.identity(),
         &old_export.manifest,
-        &transport,
-        old_export.ciphertext.as_slice(),
+        old_export.artifact.as_slice(),
         SNAPSHOT_LIMIT,
         SnapshotStageMode::Normal,
     )

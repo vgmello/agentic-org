@@ -190,6 +190,7 @@ fn unread_created_and_ready_host_close_has_normal_cleanup_including_linux_reset(
         stream,
         reader,
         transfer: _transfer,
+        ..
     } = session;
     // Last host descriptor close with unread worker events induces Linux ECONNRESET.
     // Do not shutdown first or consume the events; stdin and transfer stay open.
@@ -555,6 +556,7 @@ fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db(
         stream,
         reader,
         transfer,
+        ..
     } = session;
     // This models a whole host exit. On macOS, transfer ECONNRESET can win
     // the race with clean rendezvous EOF, so either exact status 0 or 1 is valid.

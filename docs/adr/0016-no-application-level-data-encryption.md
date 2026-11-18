@@ -1,7 +1,9 @@
 # ADR-0016 · No application-level encryption of organization data
 
 Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
-plan entry E-01). Implementation pending. The owner chose the key storage of decision 3 on 2026-11-17
+plan entry E-01). Implementation in progress: the office databases are plain SQLite, the CA
+private key is stored wrapped and the replication snapshot is a plain file checked by its SHA-256
+digest (implementation plan A1.3); the host registry key and the launch rename remain. The owner chose the key storage of decision 3 on 2026-11-17
 (option 2 in the options table below). Supersedes the SQLCipher requirement of
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 1 and narrows the
 key custody of its decision 2 to wrapping an office's private keys. ADR-0002's choice of SQLite, its single writer
@@ -59,7 +61,8 @@ and WAL stand, and its durability rule stands as amended by
      stand. The HQ-creation commit stays one record in one transaction; only how the
      private key bytes are protected inside that record changes.
    - If the office secrets key is missing, the office still opens and serves its data.
-     Only functions that need a private key are unavailable, and each key is
+     Only functions that need a private key are unavailable (the worker reports the CA
+     as unavailable; an HQ creation retry without the key is recovery-required), and each key is
      recoverable: the CA from the escrow package and the recovery code, a TLS identity
      by re-enrollment, an invitation by reissue.
    The recovery escrow envelope of ADR-0007 is unaffected: it remains encrypted under
@@ -72,7 +75,8 @@ and WAL stand, and its durability rule stands as amended by
    (its `registry` secret and the `NoCipher` check), and the one-time transport key
    that encrypts the replication snapshot file. That snapshot becomes a plain SQLite
    file that travels only over the office TLS connection and is verified by its
-   content digest; this is to be confirmed when the federation transport is built.
+   SHA-256 content digest (implemented in the office store); the transport is to be
+   confirmed when the federation transport is built.
    Also removed: the rule that a missing key prevents an office from opening
    its data. Staying, with a narrower purpose: generation and custody of one key per
    office, now the office secrets key of decision 3, and its delivery in the launch

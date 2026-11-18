@@ -134,14 +134,11 @@ fn preflight_database(path: &std::path::Path) -> Result<bool, OfficeError> {
 
 /// Admission only follows completed creation. Inspect its retained cursor before
 /// preparation can recreate missing organization storage or the Created marker.
-pub(crate) fn has_selected_history(
-    path: &std::path::Path,
-    key: &crate::Key,
-) -> Result<bool, OfficeError> {
+pub(crate) fn has_selected_history(path: &std::path::Path) -> Result<bool, OfficeError> {
     if !preflight_database(path)? {
         return Ok(false);
     }
-    Store::inspect(path, key, |db| {
+    Store::inspect(path, |db| {
         let has_cursor: bool = db
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='selected_journal_cursor')",
@@ -166,14 +163,13 @@ pub(crate) fn has_selected_history(
 /// empty version-0 database is finishable; any foreign schema is retained/refused.
 fn open_preparing_store(
     path: &std::path::Path,
-    key: &crate::Key,
     schema: &super::Schema,
     instance: Option<&str>,
     office: &str,
     org: Option<&str>,
 ) -> Result<Store, OfficeError> {
     if preflight_database(path)? {
-        Store::inspect(path, key, |db| {
+        Store::inspect(path, |db| {
             let version: i64 = db
                 .pragma_query_value(None, "user_version", |r| r.get(0))
                 .map_err(OfficeError::storage)?;
@@ -208,11 +204,10 @@ fn open_preparing_store(
             Ok(())
         })?;
     }
-    Store::open_bound(path, key, super::Opening::New, schema, instance)
+    Store::open_bound(path, super::Opening::New, schema, instance)
 }
 pub(crate) fn open_preparing(
     folder: &std::path::Path,
-    key: &crate::Key,
     instance: &str,
     office: &str,
     org: &str,
@@ -220,7 +215,6 @@ pub(crate) fn open_preparing(
     // The initial local CA transaction happens before organization genesis.
     let local = open_preparing_store(
         &folder.join("office.db"),
-        key,
         &crate::office::OFFICE_SCHEMA,
         Some(instance),
         office,
@@ -228,7 +222,6 @@ pub(crate) fn open_preparing(
     )?;
     let organization = open_preparing_store(
         &folder.join("org.db"),
-        key,
         &super::org::SCHEMA,
         None,
         office,
@@ -333,10 +326,8 @@ mod owner_tests {
     #[test]
     fn original_owner_binding_is_readonly_at_max_and_live_account_checks_survive() {
         let root = tempfile::tempdir().unwrap();
-        let key = crate::Key::from_bytes([19; 32]);
         let store = Store::open(
             &root.path().join("office.db"),
-            &key,
             super::super::Opening::New,
             &crate::office::OFFICE_SCHEMA,
         )

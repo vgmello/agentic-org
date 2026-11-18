@@ -20,7 +20,6 @@ use sha2::{Digest as _, Sha256};
 use super::command_expiry_ms;
 use super::replication::{int, NativeAnswer, OrganizationTxn, PROTOCOL};
 use crate::error::OfficeError;
-use crate::key::Key;
 use crate::organization::{is_offboarded, valid_owner};
 use crate::private_fs::private_file;
 use crate::store::{connect, sync::storage_error, Store};
@@ -43,14 +42,15 @@ pub struct OrganizationSnapshotManifest {
     pub digest: Digest,
     pub protocol_level: u32,
     pub schema: i64,
-    pub ciphertext_bytes: u64,
-    pub ciphertext_digest: Digest,
+    pub artifact_bytes: u64,
+    pub artifact_digest: Digest,
 }
 
-/// The one-time key is supplied by the trusted transport. The artifact contains only ciphertext.
+/// A plain SQLite artifact (ADR-0016 decision 5): the manifest's SHA-256 digest of its bytes is
+/// checked at import before SQLite reads it; the transport authenticates the peer.
 pub struct OrganizationSnapshotExport {
     pub manifest: OrganizationSnapshotManifest,
-    pub ciphertext: Vec<u8>,
+    pub artifact: Vec<u8>,
 }
 
 /// Local staging authorization supplied by the worker, never decoded from the peer.
@@ -251,14 +251,8 @@ pub(super) fn legacy_anchor(
 
 pub(crate) fn export_replication_snapshot(
     store: &Store,
-    transport_key: &Key,
     max_bytes: u64,
 ) -> Result<OrganizationSnapshotExport, OfficeError> {
-    if *transport_key == store.key {
-        return Err(OfficeError::Invalid(
-            "snapshot transport requires a one-time key",
-        ));
-    }
     let (mut manifest, projection) = store.read(|db| {
         let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
         let checkpoint = OrganizationTxn(&tx).checkpoint().map_err(as_office)?;
@@ -274,8 +268,8 @@ pub(crate) fn export_replication_snapshot(
             digest: checkpoint.digest,
             protocol_level: checkpoint.protocol_level,
             schema: SNAPSHOT_PROJECTION_SCHEMA,
-            ciphertext_bytes: 0,
-            ciphertext_digest: Digest::ZERO,
+            artifact_bytes: 0,
+            artifact_digest: Digest::ZERO,
         };
         let projection = bounded_rows(&tx, Header::from(&manifest), max_bytes)?;
         Ok((manifest, projection))
@@ -290,7 +284,7 @@ pub(crate) fn export_replication_snapshot(
     let scratch = Scratch::new(store).map_err(OfficeError::storage)?;
     let path = scratch.database();
     drop(private_file(&path).map_err(OfficeError::storage)?);
-    let mut db = connect(&path, transport_key, true, false)?;
+    let mut db = connect(&path, true, false)?;
     let tx = db.transaction().map_err(OfficeError::storage)?;
     tx.execute_batch(ARTIFACT_SCHEMA)
         .map_err(OfficeError::storage)?;
@@ -305,20 +299,16 @@ pub(crate) fn export_replication_snapshot(
             "organization snapshot exceeds its byte limit",
         ));
     }
-    let ciphertext = fs::read(&path).map_err(OfficeError::storage)?;
-    manifest.ciphertext_bytes = length;
-    manifest.ciphertext_digest = Digest::from_bytes(Sha256::digest(&ciphertext).into());
-    Ok(OrganizationSnapshotExport {
-        manifest,
-        ciphertext,
-    })
+    let artifact = fs::read(&path).map_err(OfficeError::storage)?;
+    manifest.artifact_bytes = length;
+    manifest.artifact_digest = Digest::from_bytes(Sha256::digest(&artifact).into());
+    Ok(OrganizationSnapshotExport { manifest, artifact })
 }
 
 pub(crate) fn stage_replication_snapshot(
     store: &Store,
     peer: PeerIdentity,
     manifest: &OrganizationSnapshotManifest,
-    transport_key: &Key,
     input: impl Read,
     max_bytes: u64,
     mode: SnapshotStageMode,
@@ -342,16 +332,13 @@ pub(crate) fn stage_replication_snapshot(
     if manifest.schema != SNAPSHOT_PROJECTION_SCHEMA || manifest.protocol_level != PROTOCOL {
         return Err(Refusal::UnsupportedVersion.into());
     }
-    if manifest.ciphertext_bytes == 0 || manifest.ciphertext_bytes > max_bytes {
+    if manifest.artifact_bytes == 0 || manifest.artifact_bytes > max_bytes {
         return Err(Refusal::QuotaExceeded.into());
-    }
-    if *transport_key == store.key {
-        return Err(Refusal::InvalidInput.into());
     }
     let scratch = Scratch::new(store).map_err(storage_error)?;
     let path = scratch.database();
     let mut file = private_file(&path).map_err(storage_error)?;
-    let mut input = input.take(manifest.ciphertext_bytes.saturating_add(1));
+    let mut input = input.take(manifest.artifact_bytes.saturating_add(1));
     let mut checksum = Sha256::new();
     let mut bytes = 0;
     let mut buffer = [0u8; 64 * 1024];
@@ -361,21 +348,21 @@ pub(crate) fn stage_replication_snapshot(
             break;
         }
         bytes += read as u64;
-        if bytes > manifest.ciphertext_bytes {
+        if bytes > manifest.artifact_bytes {
             return Err(Refusal::IntegrityFailure.into());
         }
         checksum.update(&buffer[..read]);
         file.write_all(&buffer[..read]).map_err(storage_error)?;
     }
     drop(file);
-    if bytes != manifest.ciphertext_bytes
-        || Digest::from_bytes(checksum.finalize().into()) != manifest.ciphertext_digest
+    if bytes != manifest.artifact_bytes
+        || Digest::from_bytes(checksum.finalize().into()) != manifest.artifact_digest
     {
         return Err(Refusal::IntegrityFailure.into());
     }
 
-    let db = connect(&path, transport_key, false, false).map_err(|error| match error {
-        OfficeError::KeyMissing => SyncError::from(Refusal::IntegrityFailure),
+    let db = connect(&path, false, false).map_err(|error| match error {
+        OfficeError::Invalid(_) => SyncError::from(Refusal::IntegrityFailure),
         error => storage_error(error).into(),
     })?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)

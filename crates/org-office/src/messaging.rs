@@ -379,7 +379,6 @@ mod tests {
         let folder = office.folder().to_owned();
         drop(office);
         // Put office.db back as version 1 made it: identity only, no message tables.
-        let key = test_key();
         std::fs::remove_file(folder.join("office.db")).unwrap();
         for sidecar in ["office.db-wal", "office.db-shm"] {
             let _ = std::fs::remove_file(folder.join(sidecar));
@@ -394,7 +393,7 @@ mod tests {
             },
             upgrade: |_, _| Ok(()),
         };
-        let store = Store::open(&folder.join("office.db"), &key, Opening::New, &old).unwrap();
+        let store = Store::open(&folder.join("office.db"), Opening::New, &old).unwrap();
         store
             .write(|db| {
                 db.execute(

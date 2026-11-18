@@ -432,8 +432,31 @@ fn checked_file(path: &Path, empty_ok: bool) -> Result<Option<File>, Error> {
     }
     Ok(Some(file))
 }
+/// The first 16 bytes of every SQLite database file.
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+/// Refuses a main file that is not empty and not a SQLite database before SQLite opens it.
+/// With a WAL beside it, SQLite reads page 1 from the log and would accept a main file that
+/// is not a database; a later checkpoint would then write the log into that file. An empty
+/// file passes: only `create` connects to one (its fresh temporary file), and `open` refuses
+/// an empty registry through `checked_file` first.
+fn check_database_header(path: &Path) -> Result<(), Error> {
+    use std::io::Read;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)?;
+    let mut header = Vec::with_capacity(SQLITE_HEADER.len());
+    file.take(SQLITE_HEADER.len() as u64)
+        .read_to_end(&mut header)?;
+    if header.is_empty() || header == SQLITE_HEADER {
+        Ok(())
+    } else {
+        Err(Error::Sql(rusqlite::ErrorCode::NotADatabase))
+    }
+}
 fn connect(path: &Path) -> Result<Connection, Error> {
     sqlite_ready()?;
+    check_database_header(path)?;
     #[allow(clippy::disallowed_methods)] // The sole durable opener crosses the fence.
     let db = Connection::open_with_flags(
         path,

@@ -128,5 +128,7 @@ pub(super) fn install(
         .and_then(|()| office.install_selected_acceptance(config))
         .and_then(|()| office.bind_selected_owner(authority.clone()))
         .and_then(|()| office.finish_selected_bootstrap(authority))
-        .map_err(|_| io::Error::other("selected writer recovery required"))
+        // Keep the office error (its text has no path, SQL or secret) so the caller can log why
+        // admission failed; the host still sees only the fixed failure code.
+        .map_err(io::Error::other)
 }

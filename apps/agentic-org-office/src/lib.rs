@@ -107,15 +107,14 @@ pub fn run(args: &[String], control: ControlPipe) -> i32 {
     }
 }
 
-/// `--discard`: the first line carries the office's key, or null when the host holds none. The
-/// key is the host's and is never made, stored or deleted here.
+/// `--discard`: needs no key, because the databases are plain SQLite (ADR-0016); a key the old
+/// launch form still sends is dropped when the first line is parsed.
 fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
     let (message, _from_host) = match first_line(&mut control, FirstLine::Discard, Some(id)) {
         Ok(first) => first,
         Err(code) => return code,
     };
     let Launch::Discard {
-        key,
         office: _office_identity,
     } = message
     else {
@@ -141,18 +140,11 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
             "selected writer custody is required",
         );
     }
-    match Office::discard(folder, id, key.as_ref()) {
+    match Office::discard(folder, id) {
         Ok(()) => {
             emit(&mut control, &ServerEvent::Discarded);
             0
         }
-        // The contract: a discard that cannot check the databases reports `storage_error`, not
-        // `key_missing` (a person looks; the host never retries it on its own).
-        Err(OfficeError::KeyMissing) => fail(
-            &mut control,
-            FailCode::StorageError,
-            "the key given does not open the databases",
-        ),
         Err(e) => fail_with(&mut control, &e),
     }
 }
@@ -223,7 +215,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             hq_creation::prepare(
                 &folder,
                 &create.office,
-                create.key,
+                Some(create.key),
                 instance,
                 &binding,
                 _code,
@@ -327,8 +319,16 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    if let Err(error) = hq_creation::verify_existing(&office, &key) {
-        return fail_with(&mut control, &error);
+    match hq_creation::verify_existing(&office) {
+        Ok(hq_creation::CaStatus::Unavailable) => {
+            // No key material, path or SQL in the log: the office keeps serving its data.
+            eprintln!(
+                "agentic-org-office: organization CA unavailable: the office secrets key is \
+                 absent or does not unwrap it"
+            );
+        }
+        Ok(hq_creation::CaStatus::NotHq | hq_creation::CaStatus::Available) => {}
+        Err(error) => return fail_with(&mut control, &error),
     }
     serve_office(control, from_host, runtime, office, auth, instance)
 }
@@ -382,7 +382,10 @@ fn serve_office(
     let office = Arc::new(office);
     let mut transfer = control.transfer();
     let admitted = initial_writer_admission(&mut transfer, &office, instance.as_deref(), &control);
-    if admitted.is_err() {
+    if let Err(error) = &admitted {
+        // The log (stderr) is the only place the cause goes; the host gets a fixed text.
+        eprintln!("agentic-org-office: protected writer admission failed: {error}");
+        log_causes(error);
         return fail(
             &mut control,
             FailCode::StorageError,
@@ -746,7 +749,6 @@ fn fail_code(error: &OfficeError) -> FailCode {
     match error {
         OfficeError::InvalidName(_) => FailCode::InvalidName,
         OfficeError::OfficeExists | OfficeError::AlreadyExists => FailCode::AlreadyExists,
-        OfficeError::KeyMissing => FailCode::KeyMissing,
         OfficeError::InUse => FailCode::InUse,
         // `NotFound` on `--office`: serving an office that does not exist is a bad argument.
         OfficeError::NotFound => FailCode::InvalidRequest,
@@ -873,7 +875,6 @@ mod tests {
             ),
             (OfficeError::OfficeExists, FailCode::AlreadyExists),
             (OfficeError::AlreadyExists, FailCode::AlreadyExists),
-            (OfficeError::KeyMissing, FailCode::KeyMissing),
             (OfficeError::InUse, FailCode::InUse),
             (OfficeError::Invalid("x"), FailCode::StorageError),
             (OfficeError::NotFound, FailCode::InvalidRequest),

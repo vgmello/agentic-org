@@ -37,14 +37,20 @@ fn unwrap_ca(
     Ok(ca)
 }
 
+/// Creates the HQ, or retries its creation. Without the office secrets key the CA key can be
+/// neither wrapped nor recovered from the retained record: recovery-required, nothing touched
+/// (ADR-0016 decision 3).
 pub(crate) fn prepare(
     folder: &Path,
     new: &NewOffice,
-    key: Key,
+    key: Option<Key>,
     instance: &str,
     binding: &Binding,
     recovery: RecoveryCode,
 ) -> Result<Office, OfficeError> {
+    let Some(key) = key else {
+        return Err(invalid());
+    };
     let code = org_pki::Code::parse(recovery.expose()).map_err(|_| invalid())?;
     // The original wrapper and parsed KDF bytes both drop before serving.
     drop(recovery);
@@ -80,20 +86,47 @@ pub(crate) fn prepare(
     })
 }
 
-/// Acknowledged healthy HQ starts without a pending delivery code. A retained
-/// creation binding with absent/inconsistent material is recovery-required.
-pub(crate) fn verify_existing(office: &Office, key: &Key) -> Result<(), OfficeError> {
+/// Whether this run can sign with the organization CA.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CaStatus {
+    /// The office keeps no HQ creation record: it has no CA of its own.
+    NotHq,
+    /// The wrapped CA key unwraps with the office secrets key to the recorded public key.
+    Available,
+    /// The office secrets key is absent or does not unwrap the CA key. The office keeps serving
+    /// its data; only CA signing is unavailable (ADR-0016 decision 3, ENC-1).
+    Unavailable,
+}
+
+/// Acknowledged healthy HQ starts without a pending delivery code. A retained creation binding
+/// whose material is inconsistent (the package or the unwrapped key does not match the
+/// recorded public key) is recovery-required. A missing or unusable secrets key is not: the
+/// CA is only [`CaStatus::Unavailable`].
+pub(crate) fn verify_existing(office: &Office) -> Result<CaStatus, OfficeError> {
     let Some(record) = office.hq_creation_record()? else {
-        return Ok(());
+        return Ok(CaStatus::NotHq);
     };
     let info = office.info();
-    unwrap_ca(key, &record, &info.office_id)?;
     let envelope =
         org_pki::Envelope::parse(&record.package, &info.org_id).map_err(|_| invalid())?;
     if envelope.public_key() != &record.public_key {
         return Err(invalid());
     }
-    Ok(())
+    let Some(key) = office.secrets_key() else {
+        return Ok(CaStatus::Unavailable);
+    };
+    let Ok(der) = org_pki::wrap::unwrap(
+        key.expose_bytes(),
+        &ca_binding(&record.organization_id, &info.office_id),
+        record.wrapped_ca_key(),
+    ) else {
+        return Ok(CaStatus::Unavailable);
+    };
+    let ca = org_pki::SigningKey::from_local_der(&der).map_err(|_| invalid())?;
+    if ca.public_key() != record.public_key {
+        return Err(invalid());
+    }
+    Ok(CaStatus::Available)
 }
 #[cfg(test)]
 mod tests;
