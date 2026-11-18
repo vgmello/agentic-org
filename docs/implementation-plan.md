@@ -88,6 +88,8 @@ Three things to know about the order:
   - The host holds one office secrets key per office and passes it over the rendezvous.
     The office wraps its private keys (the CA key today) with it; no private key is ever
     stored in the clear.
+  - Its change to the old office store is deliberately minimal (no encryption key, the CA
+    key wrapped), because B1b deletes that code.
 - **Read:** [host boundary design](design/office-host-boundary.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [ADR-0012](adr/0012-office-channel-lifecycle.md). Checklist rows FC-017, FC-162.
@@ -347,6 +349,10 @@ onto it and deletes the old store; B1c measures and guards it.
     only the old tables served answer `unsupported` until their family is rebuilt: work
     in B4, messaging and status in B6, process ownership in C3.
   - The ENG-1 check is narrowed to `src/store/sqlite/`.
+  - Features that go dark are recorded: every checklist row whose evidence stops being
+    true is updated (for example FC-072, the agent messaging command line, which is Done
+    today), and the tests of the removed calls are deleted or rewritten against the new
+    store, never disabled.
 - **Read:** [office store design](design/office-store.md) sections 4, 5 and 11;
   [recovery contract](design/organization-data/16-recovery-and-office-continuity.md)
   (opening, loss boundaries); [ADR-0007](adr/0007-hq-creation-escrow.md),
