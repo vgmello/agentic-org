@@ -4,12 +4,13 @@
 
 #![allow(dead_code)] // each test file uses a different part
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,9 +19,65 @@ use org_office_launch::OfficeFile;
 use org_proto::{ApiError, Call, Event, OfficeRole, Request, Response, ServerMessage};
 use serde_json::Value;
 
-/// The fake office server, built for the tests only.
+/// The fake office server, built for the tests only: this user's private copy of it (see
+/// [`private_program`]).
 pub fn fake_server() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_fake-office-server"))
+    private_program(Path::new(env!("CARGO_BIN_EXE_fake-office-server")))
+}
+
+/// A program cargo built for another package of the workspace, found in the folder cargo
+/// built `agentic-org` into. Cargo names no path for another package's program: `cargo test
+/// --workspace` builds them all, and a narrower run must build `name`'s package first.
+pub fn sibling_program(name: &str) -> PathBuf {
+    let built = Path::new(env!("CARGO_BIN_EXE_agentic-org"))
+        .parent()
+        .unwrap()
+        .join(name);
+    assert!(
+        built.is_file(),
+        "{} is not built: run `cargo test --workspace`, or build the package of {name} first",
+        built.display()
+    );
+    built
+}
+
+/// A copy of the program `built` that only this user can write (mode 0700), in cargo's
+/// temporary folder for this package's tests, replacing any earlier copy in one step.
+///
+/// A host starts only a worker image that nobody else could have written (the admission's
+/// rule on a system that executes the bytes it read). What cargo builds has the mode the
+/// account's umask gives it, which may be writable by a group, and may belong to another
+/// user than the one the tests run as. The copy is this user's own on every system, so the
+/// same tests run wherever the workspace was built.
+pub fn private_program(built: &Path) -> PathBuf {
+    // Copied once by each test process, whatever number of tests ask.
+    static COPIES: Mutex<BTreeMap<PathBuf, PathBuf>> = Mutex::new(BTreeMap::new());
+    let mut copies = COPIES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(private) = copies.get(built) {
+        return private.clone();
+    }
+    let folder = Path::new(env!("CARGO_TARGET_TMPDIR")).join("private-programs");
+    fs::create_dir_all(&folder).unwrap();
+    let name = built.file_name().unwrap().to_str().unwrap();
+    let staged = folder.join(format!(".{name}.{}", std::process::id()));
+    let _ = fs::remove_file(&staged);
+    fs::copy(built, &staged).unwrap();
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o700)).unwrap();
+    let private = folder.join(name);
+    fs::rename(&staged, &private).unwrap();
+    copies.insert(built.to_owned(), private.clone());
+    private
+}
+
+/// A short temporary directory on a disk (an instance root is refused on a memory
+/// filesystem, and socket paths under it must fit this system's limit).
+pub fn short_tempdir(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())
+        .unwrap()
 }
 
 /// Timings short enough for tests, long enough not to be flaky.
