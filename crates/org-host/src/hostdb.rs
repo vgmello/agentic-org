@@ -37,6 +37,8 @@ pub(crate) enum Error {
     ClockSkew,
     OperationReused,
     Conflict,
+    /// The account is not a live instance administrator.
+    NotAdministrator,
     Unsafe,
     Exists,
     Empty,

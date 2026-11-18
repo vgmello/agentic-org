@@ -14,12 +14,24 @@ use org_proto::frame;
 use org_proto::msg::{MsgBind, MsgBindResult};
 use org_proto::{
     ApiError, Call, Empty, ErrorCode, Event, Hello, HelloParams, HelloResult, ListOfficesResult,
-    ListOrganizationsResult, OfficeInfo, OfficeList, OfficeRole, OfficeStatus, Organization,
-    OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Outcome,
-    Position, Request, Response, API_VERSION, MAX_FRAME_BYTES,
+    ListOrganizationsResult, OfficeInfo, OfficeList, OfficeRestartParams, OfficeRole, OfficeStatus,
+    Organization, OrganizationCreated, OrganizationList, Outcome, Position, Request, Response,
+    API_VERSION, MAX_FRAME_BYTES,
 };
 use serde_json::{json, Value};
 use tempfile::TempDir;
+
+/// A call of this test file's own: one string in (`office_id`, the
+/// contract's one-string params), an organization out. What is tested here is the
+/// connection (framing, queueing, timeouts), not a method the host serves.
+struct Named;
+type NamedParams = OfficeRestartParams;
+
+impl Call for Named {
+    const METHOD: &'static str = "test.named";
+    type Params = NamedParams;
+    type Result = Organization;
+}
 
 #[path = "client/negotiation.rs"]
 mod negotiation;
@@ -189,15 +201,15 @@ fn a_server_of_another_protocol_version_is_refused() {
 fn typed_params_and_results_round_trip() {
     let server = fake(|mut peer| {
         let request = peer.next_request().unwrap();
-        let params = request.params::<OrganizationCreate>().unwrap();
-        assert_eq!(params.name, "Acme");
-        peer.reply::<OrganizationCreate>(request.id, &organization(&params.name));
+        let params = request.params::<Named>().unwrap();
+        assert_eq!(params.office_id, "Acme");
+        peer.reply::<Named>(request.id, &organization(&params.office_id));
     });
     let client = server.client();
 
     let created = client
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Acme".into(),
+        .call::<Named>(&NamedParams {
+            office_id: "Acme".into(),
         })
         .unwrap();
 
@@ -228,8 +240,8 @@ fn answers_arriving_out_of_order_reach_the_right_callers() {
         let requests: Vec<Request> = (0..3).map(|_| peer.next_request().unwrap()).collect();
         // Answer last-first.
         for request in requests.iter().rev() {
-            let params = request.params::<OrganizationCreate>().unwrap();
-            peer.reply::<OrganizationCreate>(request.id, &organization(&params.name));
+            let params = request.params::<Named>().unwrap();
+            peer.reply::<Named>(request.id, &organization(&params.office_id));
         }
     });
     let client = std::sync::Arc::new(server.client());
@@ -240,7 +252,9 @@ fn answers_arriving_out_of_order_reach_the_right_callers() {
             let client = std::sync::Arc::clone(&client);
             std::thread::spawn(move || {
                 let created = client
-                    .call::<OrganizationCreate>(&OrganizationCreateParams { name: name.into() })
+                    .call::<Named>(&NamedParams {
+                        office_id: name.into(),
+                    })
                     .unwrap();
                 assert_eq!(created.name, name);
             })
@@ -363,10 +377,10 @@ fn an_oversized_request_is_refused_without_breaking_the_connection() {
     });
     let client = server.client();
 
-    let huge = OrganizationCreateParams {
-        name: "x".repeat(MAX_FRAME_BYTES + 1),
+    let huge = NamedParams {
+        office_id: "x".repeat(MAX_FRAME_BYTES + 1),
     };
-    let result = client.call::<OrganizationCreate>(&huge);
+    let result = client.call::<Named>(&huge);
     assert!(
         matches!(result, Err(ClientError::RequestTooLarge)),
         "{result:?}"
@@ -498,11 +512,6 @@ fn bind_member_sends_the_member_alone_and_a_refusal_is_the_servers_code() {
 #[test]
 fn the_host_methods_are_typed_wrappers_over_the_wire_calls() {
     let server = fake(|mut peer| {
-        let create = peer.next_request().unwrap();
-        assert_eq!(create.method, "organization.create");
-        assert_eq!(create.params["name"], "Acme");
-        peer.reply::<OrganizationCreate>(create.id, &organization("Acme"));
-
         let list = peer.next_request().unwrap();
         assert_eq!(list.method, "organization.list");
         peer.reply::<OrganizationList>(
@@ -523,9 +532,6 @@ fn the_host_methods_are_typed_wrappers_over_the_wire_calls() {
     });
     let client = server.client();
 
-    let created = client.create_organization("Acme").unwrap();
-    assert_eq!(created.offices.len(), 1);
-    assert_eq!(created.offices[0].role, OfficeRole::Hq);
     let names: Vec<_> = client
         .list_organizations()
         .unwrap()
@@ -627,11 +633,11 @@ fn a_server_that_stops_reading_cannot_hang_a_caller_or_the_others() {
         let big = {
             let client = std::sync::Arc::clone(&client);
             timed(Box::new(move || {
-                let huge = OrganizationCreateParams {
-                    name: "x".repeat(MAX_FRAME_BYTES - 200),
+                let huge = NamedParams {
+                    office_id: "x".repeat(MAX_FRAME_BYTES - 200),
                 };
                 client
-                    .call_with_timeout::<OrganizationCreate>(&huge, Duration::from_secs(2))
+                    .call_with_timeout::<Named>(&huge, Duration::from_secs(2))
                     .map(|_| ())
             }))
         };
@@ -924,13 +930,12 @@ fn a_server_that_reads_a_few_bytes_at_a_time_cannot_stretch_the_timeout() {
         let client = server.client();
 
         let started = Instant::now();
-        let huge = OrganizationCreateParams {
-            name: "x".repeat(MAX_FRAME_BYTES - 200),
+        let huge = NamedParams {
+            office_id: "x".repeat(MAX_FRAME_BYTES - 200),
         };
         // Long enough that the request reaches the writer well before its deadline even when a
         // slow debug build, on a busy machine, takes most of a second to encode 1 MiB.
-        let result =
-            client.call_with_timeout::<OrganizationCreate>(&huge, Duration::from_millis(1500));
+        let result = client.call_with_timeout::<Named>(&huge, Duration::from_millis(1500));
 
         assert!(matches!(result, Err(ClientError::Timeout)), "{result:?}");
         // 1.5 s plus the short grace before the call closes the stuck connection itself.
@@ -1001,11 +1006,10 @@ fn a_server_that_half_closes_while_a_request_is_being_written_wakes_the_caller_a
             let (finished, result) = mpsc::channel();
             let caller = &client;
             let call = scope.spawn(move || {
-                let huge = OrganizationCreateParams {
-                    name: "x".repeat(MAX_FRAME_BYTES - 200),
+                let huge = NamedParams {
+                    office_id: "x".repeat(MAX_FRAME_BYTES - 200),
                 };
-                let result =
-                    caller.call_with_timeout::<OrganizationCreate>(&huge, Duration::from_secs(30));
+                let result = caller.call_with_timeout::<Named>(&huge, Duration::from_secs(30));
                 finished.send(result).unwrap();
             });
             first_seen.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -1193,10 +1197,8 @@ fn a_burst_of_large_requests_to_a_healthy_server_all_succeed() {
     watchdog(Duration::from_secs(120), || {
         let server = fake(|mut peer| {
             while let Ok(Some(request)) = frame::read_message::<Request>(&mut peer.reader) {
-                let name = request.params::<OrganizationCreate>().unwrap().name;
-                let answer =
-                    Response::ok::<OrganizationCreate>(request.id, &organization(&name[..4]))
-                        .unwrap();
+                let name = request.params::<Named>().unwrap().office_id;
+                let answer = Response::ok::<Named>(request.id, &organization(&name[..4])).unwrap();
                 if frame::write_message(&mut peer.stream, &answer).is_err() {
                     return;
                 }
@@ -1210,10 +1212,10 @@ fn a_burst_of_large_requests_to_a_healthy_server_all_succeed() {
             .map(|_| {
                 let client = std::sync::Arc::clone(&client);
                 std::thread::spawn(move || {
-                    let big = OrganizationCreateParams {
-                        name: "x".repeat(MAX_FRAME_BYTES - 300),
+                    let big = NamedParams {
+                        office_id: "x".repeat(MAX_FRAME_BYTES - 300),
                     };
-                    client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_secs(60))
+                    client.call_with_timeout::<Named>(&big, Duration::from_secs(60))
                 })
             })
             .collect();
@@ -1223,7 +1225,9 @@ fn a_burst_of_large_requests_to_a_healthy_server_all_succeed() {
         }
         // The connection is still there.
         client
-            .create_organization("Acme")
+            .call::<Named>(&NamedParams {
+                office_id: "Acme".into(),
+            })
             .expect("the connection did not survive");
         drop(client);
         server.finish();
@@ -1337,10 +1341,10 @@ fn a_subscribe_that_gets_no_answer_closes_the_connection_but_one_that_was_never_
         let stuck = {
             let client = std::sync::Arc::clone(&client);
             std::thread::spawn(move || {
-                let big = OrganizationCreateParams {
-                    name: "x".repeat(MAX_FRAME_BYTES - 200),
+                let big = NamedParams {
+                    office_id: "x".repeat(MAX_FRAME_BYTES - 200),
                 };
-                client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_secs(3))
+                client.call_with_timeout::<Named>(&big, Duration::from_secs(3))
             })
         };
         started
@@ -1381,10 +1385,10 @@ fn more_callers_than_the_queue_holds_wait_for_room_and_time_out_without_closing_
         let stuck = {
             let client = std::sync::Arc::clone(&client);
             std::thread::spawn(move || {
-                let big = OrganizationCreateParams {
-                    name: "x".repeat(MAX_FRAME_BYTES - 200),
+                let big = NamedParams {
+                    office_id: "x".repeat(MAX_FRAME_BYTES - 200),
                 };
-                client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_secs(4))
+                client.call_with_timeout::<Named>(&big, Duration::from_secs(4))
             })
         };
         started
@@ -1433,27 +1437,6 @@ fn more_callers_than_the_queue_holds_wait_for_room_and_time_out_without_closing_
 }
 
 #[test]
-fn creating_an_organization_waits_longer_than_the_short_default() {
-    // The host may hold a create for a while at startup: an answer that arrives after the
-    // short default (10 s) but well inside the create timeout is still an answer.
-    let server = fake(|mut peer| {
-        let request = peer.next_request().unwrap();
-        std::thread::sleep(Duration::from_millis(10_500));
-        peer.reply::<OrganizationCreate>(request.id, &organization("Acme"));
-    });
-    let client = server.client();
-
-    let created = watchdog(Duration::from_secs(40), move || {
-        let created = client.create_organization("Acme");
-        drop(client);
-        created
-    });
-
-    assert_eq!(created.unwrap().name, "Acme");
-    server.finish();
-}
-
-#[test]
 fn a_server_that_answers_before_it_has_read_the_whole_request_cannot_wedge_the_connection() {
     // The call is answered (ids are sequential, so a server can predict them) while the rest of
     // its request is still being written. The writer itself must give the stuck write up, so
@@ -1465,17 +1448,16 @@ fn a_server_that_answers_before_it_has_read_the_whole_request_cannot_wedge_the_c
         let mut first = [0u8; 1];
         peer.stream.read_exact(&mut first).unwrap();
         // Answer id 1 now, then never read the request's rest.
-        peer.reply::<OrganizationCreate>(1, &organization("Acme"));
+        peer.reply::<Named>(1, &organization("Acme"));
         hold.recv().ok();
         drop(peer);
     });
     let client = server.client();
 
-    let big = OrganizationCreateParams {
-        name: "x".repeat(256 * 1024),
+    let big = NamedParams {
+        office_id: "x".repeat(256 * 1024),
     };
-    let answered =
-        client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_millis(1500));
+    let answered = client.call_with_timeout::<Named>(&big, Duration::from_millis(1500));
     assert!(answered.is_ok(), "{answered:?}");
 
     let started = Instant::now();

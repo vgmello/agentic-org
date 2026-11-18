@@ -3,7 +3,7 @@
 //! The wire contract between this machine's servers and their clients (the desktop app
 //! through `org-client`, and the agent CLI `agent-os`). There are two kinds of server:
 //! - **The host** (`org-host`), the one login service on a machine. It supervises the
-//!   office servers and answers `hello`, `organization.create`, `organization.list`,
+//!   office servers and answers `hello`, `organization.list`,
 //!   `office.list`, `office.restart` and `subscribe` (it emits
 //!   `organization.created` and `office.status_changed`).
 //!   Its `hello` lists in `capabilities` the optional calls and events it implements
@@ -111,7 +111,7 @@ mod wire;
 pub use calls::{
     capability, ApiRange, Call, Empty, Hello, HelloParams, HelloResult, ListOfficesResult,
     ListOrganizationsResult, OfficeHello, OfficeList, OfficeRestart, OfficeRestartParams,
-    OrganizationCreate, OrganizationCreateParams, OrganizationList, Subscribe, SubscribeParams,
+    OrganizationList, Subscribe, SubscribeParams,
 };
 pub use directory::ManagedHome;
 pub use error::{ApiError, CallError, ErrorCode};

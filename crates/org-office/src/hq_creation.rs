@@ -11,7 +11,11 @@ pub struct Binding {
 }
 impl Binding {
     pub(crate) fn validate(&self) -> Result<(), OfficeError> {
-        if self.bootstrap.as_ref().is_some_and(|b| !b.valid())
+        // The creator's person record and the protected owner principal are one id.
+        if self
+            .bootstrap
+            .as_ref()
+            .is_some_and(|b| !b.valid() || b.creator.employee_id != self.owner_member_id)
             || org_proto::ulid_time_ms(&self.operation_id).is_none()
             || !org_proto::is_valid_member_id(&self.owner_member_id)
             || !self.public_root.is_absolute()

@@ -8,7 +8,7 @@ use super::*;
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1";
 const OFFICE: &str = "01M72N8MG00000000000000F01";
 const ORG: &str = "01M72N8MG00000000000000G01";
-const OWNER: &str = "01M72N8MG00000000000000M01";
+const OWNER: &str = "01900000-0000-7000-8000-0000000000ee";
 const RENDEZVOUS: &str = "/run/user/501/agentic-org/r/0123456789abcdef";
 
 fn office() -> OfficeLine {
@@ -61,13 +61,13 @@ fn selected_create() -> CreateLine {
             slug: "acme".into(),
             repository_remote_url: "https://example.test/org.git".into(),
             state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
         },
         organization_id: id(1),
         office_id: id(2),
         repository_id: id(3),
         home_team_id: id(4),
         hr_employee_id: id(5),
+        creator: org_proto::selected_bootstrap::CreatorV1::from_login(OWNER.into(), "Ana"),
     };
     CreateLine {
         office: OfficeLine {
@@ -81,7 +81,7 @@ fn selected_create() -> CreateLine {
         org_name: prepared.plan.name.clone(),
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
-        owner_member_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
+        owner_member_id: OWNER.into(),
         hq_creation: Some(HqCreationV1 {
             version: 1,
             operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
@@ -175,6 +175,12 @@ fn selected_create_rejects_missing_false_duplicate_unknown_and_mismatched_scope(
         1,
     );
     assert!(read_first_line(&mut duplicated.as_bytes(), FirstLine::Create).is_err());
+    // The creator's person is the bound owner member, never another id.
+    let mut other_owner = selected_create();
+    other_owner.owner_member_id = "01900000-0000-7000-8000-0000000000ef".into();
+    let mut wire = Vec::new();
+    assert!(write_first_line(&mut wire, &HostFirstLine::Create(other_owner)).is_err());
+    assert!(wire.is_empty());
     // Invalid in-memory preparation must also fail before emitting any bytes.
     let mut invalid = selected_create();
     invalid.office.selected_writer_required = false;
