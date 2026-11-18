@@ -33,8 +33,8 @@ use crate::{Hsts, StaticUi};
 mod admission_tests;
 
 /// Routing and preparation perform no native I/O. Routing must authorize before
-/// returning a business route. Credential routes use
-/// their own zeroed ingress in B1-06 and must not enter this business-body path.
+/// returning a business route. Every body arrives in a zeroizing buffer
+/// ([`BusinessBody`]), so credential routes decode secrets straight from it.
 pub trait ApiBackend: Send + Sync + 'static {
     type Route: Send;
     type Call: Send + 'static;
