@@ -102,13 +102,15 @@ mod vector {
             }
         }
     }
-    fn denied<T>(result: std::io::Result<T>) {
+    /// `operation`, run by a confined process, was refused by the confinement itself.
+    fn denied<T>(operation: &str, result: std::io::Result<T>) {
         let Err(error) = result else {
-            panic!("ambient operation unexpectedly allowed");
+            panic!("{operation}: ambient operation unexpectedly allowed");
         };
         assert!(
             matches!(error.raw_os_error(), Some(1 | 13)),
-            "must be enforcement, not an absent fixture: {error}"
+            "{operation}: must be enforcement, not an absent fixture: {error} (errno {:?})",
+            error.raw_os_error()
         );
     }
     fn line(reader: &mut BufReader<impl Read + AsRawFd>) -> String {
@@ -359,14 +361,20 @@ mod vector {
             assert!(started.elapsed() < WAIT);
             assert!(SystemTime::now().duration_since(UNIX_EPOCH).is_ok());
         } else {
-            denied(fs::read(root.join("fixture")));
-            denied(fs::write(root.join("fixture"), b"changed"));
-            denied(UnixStream::connect(root.join("unrelated")));
-            denied(TcpStream::connect(&args[3]));
-            denied(TcpListener::bind("127.0.0.1:0"));
-            denied(Command::new(own_program()).arg(NOOP).status());
+            denied("read a file", fs::read(root.join("fixture")));
+            denied("write a file", fs::write(root.join("fixture"), b"changed"));
+            denied(
+                "connect to another Unix socket",
+                UnixStream::connect(root.join("unrelated")),
+            );
+            denied("connect over TCP", TcpStream::connect(&args[3]));
+            denied("bind a TCP listener", TcpListener::bind("127.0.0.1:0"));
+            denied(
+                "start a program",
+                Command::new(own_program()).arg(NOOP).status(),
+            );
             let fixture = root.join("fixture");
-            std::thread::spawn(move || denied(fs::read(fixture)))
+            std::thread::spawn(move || denied("read a file on another thread", fs::read(fixture)))
                 .join()
                 .unwrap();
         }
