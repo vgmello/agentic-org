@@ -145,7 +145,7 @@ mixed:
 | --- | --- |
 | The web process, before any host call (a malformed envelope or operation ID, a payload rule) | HTTP 400 `{error:{code:"invalid_request", message, field?, rule?}}`. `field` and `rule` are present only when one named input is at fault; a malformed envelope, a body that is not JSON or a scope that does not match the path carries neither. Nothing is stored and no host call is made |
 | The host | `{outcome:"rejected", operation_id, error}` with the HTTP class of the error's code: 400 (`invalid_request`, `clock_skew`), 403 (`not_authorized`: the account is not the administrator) or 409 (`already_exists`, `operation_reused`) |
-| The host, for an operation ID it has never seen that is older than 30 days | HTTP 410 `{error:{code:"expired"}}`: an error, not an outcome. An ID the host already knows replays its stored state at any age |
+| The host, for an operation ID it has never seen that is older than 29 days (the admission window, section 5) | HTTP 410 `{error:{code:"expired"}}`: an error, not an outcome. An ID the host already knows replays its stored state at any age |
 
 A name or a slug that is already taken, by an organization or by a create still in
 flight, is 409 `already_exists` whose `field` is `name` or `slug`. The remaining

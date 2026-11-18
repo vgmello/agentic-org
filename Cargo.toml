@@ -89,6 +89,15 @@ security-framework-sys = { version = "=2.17.0", features = ["OSX_10_15"] }
 # security-framework's code-signing API takes Core Foundation types (the peer's audit token).
 core-foundation = "=0.10.1"
 
+# Password hashing is Argon2id at 64 MiB: unoptimized it takes seconds per hash, more under
+# load, and a sign-in then overruns the web process's 5 s host-call deadline (a 503). Only
+# these two crates are optimized in debug builds; release is unaffected.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

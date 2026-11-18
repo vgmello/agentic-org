@@ -66,7 +66,7 @@
     },
     {
       "path": "Cargo.toml",
-      "sha256": "221c90230efe184e091e74b9e67a1dbe669d1b9881ac2b3cb041fd964db22e14"
+      "sha256": "bfbcfa44220114e5da94f0b811e693865e48b8e64f5af7e0db356a2d20f0f180"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",

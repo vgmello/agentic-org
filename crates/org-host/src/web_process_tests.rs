@@ -53,10 +53,13 @@ fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str
         ),
     )
 }
-/// A sign-in or registration `POST`, tried again while the answer is 503. Under machine
-/// load the product may answer `unavailable` (correctly) to a call that needs an Argon2
-/// hash; the tests that use this prove what follows a successful call, not its first-try
-/// timing. This is a bound on tries (20, 250 ms apart), not a wait for another event; the
+/// A sign-in or registration `POST`, tried again while the answer is 503. Cause, as far as it
+/// was diagnosed: the hash-permit pool is per host, so tests do not contend for it; a debug
+/// build's unoptimized Argon2 took seconds per hash on a loaded machine (one sign-in-bearing
+/// unit test ran 9.8 s at load 9), past the web process's 5 s host-call deadline, which
+/// answers `unavailable`. The workspace now optimizes the hash crates in debug builds
+/// (root `Cargo.toml`), so this should no longer trigger; the bound stays as a guard. The
+/// tests that use this prove what follows a successful call, not its first-try timing. This is a bound on tries (20, 250 ms apart), not a wait for another event; the
 /// last reply is returned whatever it is, so a persistent 503 still fails the caller.
 fn post_until_available(address: SocketAddr, path: &str, body: &str) -> Reply {
     const TRIES: usize = 20;
