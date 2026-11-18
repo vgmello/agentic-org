@@ -37,7 +37,8 @@ export function toAppError(e: unknown): AppError {
 		const error = e as AppError;
 		// A newer office may send a code this build doesn't know: treat it as `unknown`.
 		if (error.source === 'api' && !API_ERROR_CODES.includes(error.code as ApiErrorCode))
-			return { ...error, code: 'unknown' };
+			// `message` is spelled out: on an Error it is not enumerable, so the spread alone would drop it.
+			return { ...error, message: error.message, code: 'unknown' };
 		return error;
 	}
 	return { source: 'app', code: 'internal', message: e instanceof Error ? e.message : String(e) };

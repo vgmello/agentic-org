@@ -4,8 +4,8 @@
   the line that says it is shown only now. The product sends no email.
 -->
 <script lang="ts">
-	import CopyButton from './CopyButton.svelte';
-	import type { IssuedLink } from '../types';
+	import CopyButton from '$lib/components/CopyButton.svelte';
+	import type { IssuedLink } from '../../types';
 
 	let { link, who }: { link: IssuedLink; who: string } = $props();
 	const expires = $derived(

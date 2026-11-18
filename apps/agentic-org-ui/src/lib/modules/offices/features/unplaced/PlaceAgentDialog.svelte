@@ -12,7 +12,7 @@
 		DialogTitle
 	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
-	import { errorClass, mobileButton, selectClass } from '$lib/modules/settings/components/classes';
+	import { errorClass, mobileButton, selectClass } from '$lib/components/classes';
 	import type { Member } from '$lib/proto';
 	import { officesApi } from '../../api';
 

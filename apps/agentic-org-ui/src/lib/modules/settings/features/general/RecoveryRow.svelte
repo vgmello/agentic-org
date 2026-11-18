@@ -4,7 +4,7 @@
   command to run. It shows only the state: the code never reaches the browser.
 -->
 <script lang="ts">
-	import CopyButton from '../../components/CopyButton.svelte';
+	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { NOT_SUPPORTED, recoveryMessage } from '../../recovery';
 	import type { GeneralSettings } from '../../types';
 

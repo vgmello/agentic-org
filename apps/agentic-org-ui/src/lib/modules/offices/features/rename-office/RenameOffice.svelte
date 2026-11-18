@@ -10,7 +10,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { errorClass, inputClass } from '$lib/modules/settings/components/classes';
+	import { errorClass, inputClass } from '$lib/components/classes';
 
 	let { name, onsave }: { name: string; onsave: (name: string) => Promise<void> } = $props();
 	let editing = $state(false);

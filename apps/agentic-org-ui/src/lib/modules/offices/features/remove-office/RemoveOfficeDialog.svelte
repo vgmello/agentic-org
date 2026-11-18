@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ConfirmDialog from '$lib/modules/settings/components/ConfirmDialog.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { officesApi } from '../../api';
 	import { removeOfficeText } from '../../copy';
 

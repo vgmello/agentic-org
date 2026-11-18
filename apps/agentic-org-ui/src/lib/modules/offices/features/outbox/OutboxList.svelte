@@ -7,7 +7,7 @@
 	import DividedRow from '$lib/components/DividedRow.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { tone } from '$lib/modules/settings/components/pills';
+	import { tone } from '$lib/components/pills';
 	import { agoText } from '../../time';
 	import type { OutboxItem } from '../../types';
 
