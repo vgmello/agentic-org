@@ -882,7 +882,10 @@ Each needs a decision during B1; the recommendation is what this design assumes.
 5. **Where the DDL comes from.** Recommendation: the SQLite engine loads the contract's
    `docs/design/organization-data/schema.sql` verbatim (`include_str!`) plus its own
    tables and indexes, so there is one DDL source and `test_schema.py` keeps testing it.
-   The alternative, a copy per family, drifts.
+   The alternative, a copy per family, drifts. Taking this makes a file under `docs/` a
+   build input, deliberately: moving or renaming it breaks the build; the draft schema
+   becomes the real projection schema, so a change to it is a code change that rebuilds
+   every office's projection; and the tables of families not yet built exist, empty.
 6. **Receipt file count.** One file per operation (document 16) is many small files over
    30 days. Recommendation: keep the contract's layout in v1 and count files in B1c; if
    it hurts, propose daily receipt segments to the contract owner.
