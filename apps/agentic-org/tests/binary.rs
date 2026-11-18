@@ -257,13 +257,13 @@ fn sigterm_stops_the_servers_cleanly_and_exits_0() {
 
 /// X5 review V2: the stop is bounded whatever a worker does. A worker that ignores the
 /// end of its input (as one that is stopped or hung does) is killed when the grace ends,
-/// and the service still exits 0 inside the 3 s of Docker Desktop's default grace (Linux
-/// host design, section 3.4).
+/// and the service still exits 0 within the design's 2.5 s (Linux host design, section
+/// 3.4), inside the 3 s of Docker Desktop's default grace.
 #[cfg(debug_assertions)]
 #[test]
-fn a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_3_seconds() {
+fn a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_its_bound() {
     const NAME: &str =
-        "a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_3_seconds";
+        "a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_its_bound";
     if !may_run_the_service(NAME) {
         return;
     }
@@ -289,7 +289,7 @@ fn a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_3_sec
         "{status}: {}",
         instance.stderr("host.err")
     );
-    assert!(took < Duration::from_secs(3), "{took:?}");
+    assert!(took < Duration::from_millis(2500), "{took:?}");
     // It was given the grace first: the stop did not simply kill at once.
     assert!(took >= Duration::from_millis(1400), "{took:?}");
     assert!(

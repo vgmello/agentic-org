@@ -2,19 +2,23 @@
 # ADR-0017 LNX-2: the whole instance in a container built from this repository's container
 # file, with a plain `docker run`, and again after the container is replaced.
 #
-# Usage, from anywhere, with Docker running (Engine 26 or later, for volume subpaths), cargo
-# on the PATH and the UI built:
+# Usage, from anywhere, with Docker running (Engine 28 or later: 26 for volume subpaths, and
+# 28 so that a port published on 127.0.0.1 is reachable from this machine only) and the UI
+# built:
 #
 #   (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 #   deploy/container/lnx2.sh
 #
-# It builds the four executables and its own office program itself, immediately before
-# the image, so that the image never holds what an earlier `cargo test` left in the build
-# folder (a build with the test adapters), and it checks the packed `agentic-org` for that.
+# It builds the four executables and its own office program itself, for Linux, with
+# deploy/container/build.sh (in the Rust toolchain's Debian image, on a Mac as on a Linux
+# Docker host), immediately before the image, so that the image never holds what an
+# earlier build left in the build folder, and it checks the packed `agentic-org` for test
+# adapters.
 #
-# Environment: LNX2_BIN (where the executables are, default target/debug), LNX2_IMAGE (the
-# tag to build, default agentic-org:lnx2-<pid>; kept when given, removed otherwise),
-# LNX2_PORT (the host port to publish 8443 on, default 18443).
+# Environment: LNX2_BIN (where the executables are, default target/linux/debug, or
+# target/linux/release), LNX2_IMAGE (the tag to build, default agentic-org:lnx2-<pid>; kept
+# when given, removed otherwise), LNX2_PORT (the host port to publish 8443 on, default
+# 18443).
 #
 # It builds the image, then checks, in order:
 #   1. a plain `docker run` on two named volumes sets the instance up and serves;
@@ -27,13 +31,15 @@
 #      test's own program: no command creates one yet);
 #   4. LNX-4: everything under /secrets is the service user's, files 600 and folders 700,
 #      and no key is under /data; nothing was written outside the two volumes;
-#   5. `docker stop` ends the service inside the runtime's grace, with exit code 0;
+#   5. `docker stop` ends the service within 2.5 s (inside the runtime's grace), with exit code 0;
 #   6. a new container on the same volumes is the same instance with the same keys and
 #      reads a message sent before the replacement;
 #   7. a new container with the data volume and a new, empty secrets volume does not serve;
 #   8. a plain `docker run` with no volume named (anonymous volumes) works too;
 #   9. what the credential store refuses: a path that is not a mount, a volume root that
-#      is not the service user's, and a secrets directory inside the data directory.
+#      is not the service user's, a development key folder outside the secrets volume, and
+#      a secrets directory inside the data directory; and root's reset for an instance
+#      whose data folder is gone is refused with its words escaped.
 # Every container and volume it makes is removed at the end, pass or fail.
 #
 # Known limits of this test: two rules have no case here because they need a client
@@ -46,7 +52,7 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-bin=${LNX2_BIN:-target/debug}
+bin=${LNX2_BIN:-target/linux/debug}
 image=${LNX2_IMAGE:-agentic-org:lnx2-$$}
 port=${LNX2_PORT:-18443}
 tag=lnx2-$$
@@ -155,23 +161,26 @@ secrets_listing() {
         printf "%s %s %s\n" "$(stat -c "%u:%g %a" "$f")" "$(sha256sum < "$f" | cut -d" " -f1)" "$f"; done'
 }
 
-say "build the executables (never what a test run left in $bin)"
+docker version >/dev/null 2>&1 || fail "no Docker daemon answers"
+engine=$(docker version -f '{{.Server.Version}}')
+[ "${engine%%.*}" -ge 28 ] 2>/dev/null ||
+    fail "Docker Engine $engine: 28 or later is needed (a port published on 127.0.0.1 is reachable from the local network before 28)"
+
+say "build the executables for Linux (never what an earlier build left in $bin)"
 profile=()
 case "$bin" in
-target/debug) ;;
-target/release) profile=(--release) ;;
-*) fail "LNX2_BIN is target/debug or target/release" ;;
+target/linux/debug) ;;
+target/linux/release) profile=(--release) ;;
+*) fail "LNX2_BIN is target/linux/debug or target/linux/release" ;;
 esac
-(cd "$repo" &&
-    cargo build --locked "${profile[@]}" -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os &&
-    cargo build --locked "${profile[@]}" -p agentic-org --example lnx2-office) >"$scratch/cargo.log" 2>&1 ||
-    fail "cargo build failed: $(tail -n 5 "$scratch/cargo.log")"
+{ "$here/build.sh" ${profile[@]+"${profile[@]}"} &&
+    "$here/build.sh" ${profile[@]+"${profile[@]}"} -p agentic-org --example lnx2-office; } >"$scratch/cargo.log" 2>&1 ||
+    fail "the Linux build failed: $(tail -n 5 "$scratch/cargo.log")"
 for program in agentic-org agentic-org-office agentic-org-web agent-os examples/lnx2-office; do
     [ -x "$repo/$bin/$program" ] || fail "$bin/$program is not built"
 done
 [ -f "$repo/apps/agentic-org-ui/build/index.html" ] || fail "the UI is not built (see the head of this script)"
 command -v curl >/dev/null || fail "curl is needed on the Docker host"
-docker version >/dev/null 2>&1 || fail "no Docker daemon answers"
 
 say "build the image from deploy/container/Dockerfile"
 started=$(now)
@@ -302,7 +311,7 @@ took=$(since "$started")
 code=$(docker inspect -f '{{.State.ExitCode}}' "$tag-a")
 echo "docker stop: $took s, exit code $code"
 [ "$code" = 0 ] || fail "the service ended with $code (137 is the runtime's kill after its grace)"
-awk -v t="$took" 'BEGIN { exit !(t < 3) }' || fail "the service took $took s to stop"
+awk -v t="$took" 'BEGIN { exit !(t < 2.5) }' || fail "the service took $took s to stop (its bound is 2.5 s)"
 
 say "5b. docker stop with a worker that does not act on the stop (X5 review V2)"
 docker start "$tag-a" >/dev/null
@@ -320,7 +329,7 @@ took=$(since "$started")
 code=$(docker inspect -f '{{.State.ExitCode}}' "$tag-a")
 echo "docker stop with the worker stopped (SIGSTOP): $took s, exit code $code"
 [ "$code" = 0 ] || fail "the service ended with $code: the runtime had to kill it"
-awk -v t="$took" 'BEGIN { exit !(t < 3) }' || fail "the service took $took s to stop"
+awk -v t="$took" 'BEGIN { exit !(t < 2.5) }' || fail "the service took $took s to stop (its bound is 2.5 s)"
 
 say "6. a new container on the same volumes"
 docker rm "$tag-a" >/dev/null
@@ -450,6 +459,34 @@ docker run --rm -u 0 -v "$scratch/binds:/b" --entrypoint /bin/sh "$image" -c \
     'mkdir -m 750 /b/open && chown 61000:61000 /b/open' >/dev/null
 refused "$tag-f2" 'mode' -v "$scratch/binds/open:/secrets" ||
     fail "the refusal does not name the mode"
+echo "a development key folder outside the secrets volume (ORG_OFFICE_DEV_KEY_DIR=/data/keys):"
+volumes+=("$tag-dk")
+docker volume create "$tag-dk" >/dev/null
+refused "$tag-k" 'is not a folder directly in the credential directory /secrets' \
+    -e ORG_OFFICE_DEV_KEY_DIR=/data/keys -v "$tag-dk:/data" ||
+    fail "the refusal does not name the development key folder's rule"
+docker run --rm -v "$tag-dk:/data" --entrypoint /bin/sh "$image" -c '! test -e /data/keys' ||
+    fail "the refused start made /data/keys"
+echo "  and /data/keys was not made"
+echo "root's reset for an instance whose data folder is gone: refused, its words escaped:"
+volumes+=("$tag-rd" "$tag-rs")
+docker volume create "$tag-rd" >/dev/null
+docker volume create "$tag-rs" >/dev/null
+run "$tag-r" -v "$tag-rd:/data" -v "$tag-rs:/secrets"
+wait_until "the instance to serve" serving "$tag-r"
+docker stop "$tag-r" >/dev/null
+docker rm -v "$tag-r" >/dev/null
+# The lookup fails: the record names a data folder that is no longer there.
+if out=$(docker run --rm -t -u 0 -v "$tag-rd:/data" -v "$tag-rs:/secrets" --entrypoint /bin/sh "$image" \
+    -c 'rm -rf /data/instance && exec agentic-org admin reset --user agentic' 2>&1); then
+    fail "a reset for an instance without its data folder succeeded: $out"
+fi
+[ -n "$out" ] || fail "the refused reset said nothing"
+# The terminal's line ends (CR LF) and tabs aside, no control character reaches it raw.
+if LC_ALL=C grep -q '[[:cntrl:]]' <<<"$(tr -d '\r\n\t' <<<"$out")"; then
+    fail "the refused reset printed a raw control character: $(LC_ALL=C cat -v <<<"$out")"
+fi
+echo "  $(tr -d '\r' <<<"$out" | tail -n 1)"
 echo "a lost+found in the volume's root is tolerated:"
 volumes+=("$tag-lf")
 docker volume create "$tag-lf" >/dev/null

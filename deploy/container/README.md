@@ -6,17 +6,28 @@ decisions 4 and 10; [Linux host design](../../docs/design/linux-host.md), sectio
 
 ## Run it
 
-Build the four executables, the UI and the image from the repository root, then run it.
-Nothing else is needed: no option, no file to write, no certificate to make.
+Build the four executables for Linux, the UI and the image from the repository root, then
+run it. Nothing else is needed: no option, no file to write, no certificate to make.
 
 ```sh
-# Always build the four executables right before the image: a `cargo test` leaves a
-# build with test adapters under the same names.
-cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+# The four executables, for Linux, into target/linux/debug. Always right before the image.
+deploy/container/build.sh
 (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 docker build -f deploy/container/Dockerfile -t agentic-org .
 docker run -d --name agentic-org -p 127.0.0.1:8443:8443 agentic-org
 ```
+
+`deploy/container/build.sh` runs `cargo build` in the Rust toolchain's own Debian 13 image
+(pinned, like the image's base), on a Mac as on a Linux machine: a `cargo build` on a Mac
+makes macOS programs, which the container cannot run, and one on another Linux
+distribution may need a newer C library than the image has. Docker is all it needs; its
+output and its crate downloads are in `target/linux`. `--release` builds into
+`target/linux/release` (then `docker build --build-arg BIN=target/linux/release …`).
+
+**Docker Engine 28 or later.** Before Engine 28, a port published on `127.0.0.1` of a
+Linux Docker host could be reached by other machines of the same local network (Docker's
+own advisory), so the `127.0.0.1` below would not keep the plain-HTTP port to this
+machine. Docker Desktop on a Mac has a current engine.
 
 Then open **`http://127.0.0.1:8443`** in a browser on the Docker host.
 
@@ -174,7 +185,7 @@ file differs from what its volumes were set up with refuses to start.
 
 ## A development image
 
-The image holds the workspace's own build output (`--build-arg BIN=target/debug`, the
+The image holds the workspace's own Linux build (`--build-arg BIN=target/linux/debug`, the
 default). The host logs that the office worker has no publisher check, and it keeps its
 keys in its development key store, `/secrets/dev-keys`, not in the release store.
 
@@ -212,5 +223,6 @@ containers: the plain run, the link, a worker with an `agent-os` send and read, 
 browser address over plain HTTP from the Docker host (the API, the UI's index, `400` for
 any other Host, the web process's confinement in the host log), the modes in `/secrets`,
 that nothing is written outside the volumes, the stop, the replaced container, the empty
-secrets volume, anonymous volumes, and the store's refusals. It needs the workspace and
-the UI built, including `cargo build -p agentic-org --example lnx2-office`, and `curl`.
+secrets volume, anonymous volumes, and the store's refusals. It builds the executables and
+its own office program for Linux itself (`build.sh`); it needs the UI built, Docker
+Engine 28 or later and `curl`.

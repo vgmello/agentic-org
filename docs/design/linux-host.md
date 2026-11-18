@@ -732,7 +732,11 @@ path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
 process and the workers (`SIGTERM`, then `SIGKILL` after 1.5 s), flushes its logs and
 exits 0 within 2.5 s, inside the shortest default grace of a container runtime (Docker
 Desktop's 3 s, `default-stop-timeout`; Docker Engine's is 10 s). A worker killed at the
-deadline loses nothing: the office store recovers from a kill at any point.
+deadline loses nothing: the office store recovers from a kill at any point. Every wait of
+the stop ends by one deadline fixed when the signal is taken: a web process start and a
+worker's launch handshake under way end at once (that child is killed), and a thread still
+waiting 0.5 s after the workers' grace (a request or a create waiting for a lock of the
+registry) is logged and left to end with the process.
 
 **macOS adapter.** A per-user launchd agent (written by A2 behind this contract):
 `~/Library/LaunchAgents/com.ellosoft.agentic-org.instance.<instance-id>.plist` with

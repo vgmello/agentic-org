@@ -20,6 +20,9 @@ fn loopback() -> ListenConfig {
     .unwrap()
 }
 
+/// The stop flag of a start that the host never stops.
+static GOING: AtomicBool = AtomicBool::new(false);
+
 /// The rendezvous-through-ACK bound for tests that start a real child. Production
 /// uses `WAIT` (5 s); a parallel workspace test run can delay a child's start past
 /// that, so tests allow far longer. Tests of the deadline itself pass their own.
@@ -33,6 +36,7 @@ fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Runnin
         &Image::new(&config.check, &config.program),
         handler,
         START_WAIT,
+        &GOING,
     )
 }
 
@@ -1334,7 +1338,10 @@ fn a_control_line_is_read_through_its_newline_up_to_1023_bytes() {
     peer.write_all(&full).unwrap();
     peer.write_all(b"\nnext").unwrap();
     let until = Instant::now() + Duration::from_secs(5);
-    assert_eq!(line(&mut receiver, until, "ready line").unwrap(), full);
+    assert_eq!(
+        line(&mut receiver, until, &GOING, "ready line").unwrap(),
+        full
+    );
 }
 
 #[test]
@@ -1342,7 +1349,7 @@ fn a_control_line_longer_than_1023_bytes_is_refused() {
     let (mut receiver, mut peer) = control_pair();
     peer.write_all(&[b'a'; 1024]).unwrap();
     let until = Instant::now() + Duration::from_secs(5);
-    let error = line(&mut receiver, until, "ready line").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "ready line").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: the ready line exceeds 1023 bytes"
@@ -1355,7 +1362,7 @@ fn a_control_line_that_does_not_arrive_before_the_deadline_is_refused() {
     peer.write_all(b"partial").unwrap();
     let started = Instant::now();
     let until = started + Duration::from_millis(100);
-    let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "handoff ACK").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: the handoff ACK did not arrive before the deadline"
@@ -1379,7 +1386,7 @@ fn a_peer_that_closes_with_unread_bytes_is_a_control_eof() {
     drop(theirs);
     let mut receiver = org_socket::rights::StreamReceiver::new(ours);
     let until = Instant::now() + Duration::from_secs(5);
-    let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "handoff ACK").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: control EOF before the handoff ACK"
@@ -1395,7 +1402,7 @@ fn control_eof_before_a_line_is_refused() {
     peer.write_all(b"partial").unwrap();
     drop(peer);
     let until = Instant::now() + Duration::from_secs(5);
-    let error = line(&mut receiver, until, "ready line").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "ready line").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: control EOF before the ready line"
@@ -1408,7 +1415,7 @@ fn control_eof_before_a_line_is_refused() {
     };
     assert!(went_away(&error));
     let (mut receiver, _peer) = control_pair();
-    let late = line(&mut receiver, Instant::now(), "ready line").unwrap_err();
+    let late = line(&mut receiver, Instant::now(), &GOING, "ready line").unwrap_err();
     assert!(!went_away(&late), "{late}");
 }
 
@@ -1437,6 +1444,55 @@ fn a_rendezvous_folder_that_is_a_symlink_is_refused_before_binding() {
     );
 }
 
+/// X5 review V2: a host that stops while its web process's start waits for the child, to
+/// connect or then to send its ready line, does not wait for the start's deadline (60 s
+/// here): the supervision ends at once, as after a failed start, with nothing logged of it,
+/// the state `failed` and the child killed (its standard error ends).
+#[test]
+fn a_stop_ends_a_start_that_waits_for_the_web_process_at_once() {
+    for (n, steps) in [
+        "first-line\nstderr waiting\nstay\n",
+        "first-line\nconnect\nstderr waiting\nstay\n",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (_dir, mut config) = scripted_config(steps, |_, _, _| Ok(None));
+        let instance = format!("stalled-start-{}-{n}", std::process::id());
+        config.instance = instance.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+        let (lines, log) = recording();
+        let thread = {
+            let (stop, state) = (Arc::clone(&stop), Arc::clone(&state));
+            thread::spawn(move || {
+                let image = Image::new(&config.check, &config.program);
+                supervise(&stop, &state, &|| true, Timing::PRODUCTION, &log, || {
+                    Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &stop)
+                })
+            })
+        };
+        let supervisor = Supervisor {
+            stop,
+            state: Arc::clone(&state),
+            thread: Some(thread),
+        };
+        wait_for("the web process to wait for the host", || {
+            lock(&CAPTURED_STDERR)
+                .get(&instance)
+                .is_some_and(|captured| captured.bytes.ends_with(b"waiting\n"))
+        });
+        let asked = Instant::now();
+        assert!(supervisor.join_by(asked + START_WAIT), "{steps}");
+        let took = asked.elapsed();
+        assert!(took < Duration::from_secs(1), "{steps}: {took:?}");
+        assert_eq!(*lock(&state), GatewayState::Failed);
+        assert!(lock(&lines).is_empty(), "{:?}", lock(&lines));
+        // Its standard error ended: the child is gone.
+        assert_eq!(captured_stderr(&instance).unwrap(), b"waiting\n");
+    }
+}
+
 #[test]
 fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -1444,7 +1500,7 @@ fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let mut spawned = held_child(dir.path());
     // The deadline has passed: no connection is accepted, and the child still runs.
     let error = rendezvous
-        .accept(&mut spawned.child, Instant::now())
+        .accept(&mut spawned.child, Instant::now(), &GOING)
         .unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -1748,7 +1804,8 @@ fn one_web_admission_serves_every_start_and_is_never_built_again() {
     let config = unchecked(dir.path(), fake_program(dir.path(), "first-line\nexit 3\n"));
     let image = Image::new(&config.check, &config.program);
     let built = image.admission().unwrap();
-    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
+    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &GOING)
+    {
         Err(error) => error.to_string(),
         Ok(_) => panic!("the fake web process exits before it connects"),
     };
@@ -1806,7 +1863,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
         (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
     };
     // No web process starts, whichever step notices.
-    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
+    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &GOING) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("a missing program was started"),
     };
@@ -1816,7 +1873,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
     );
     // The program appears: the next start builds the admission, or finds the one it has.
     fake_program(dir.path(), "first-line\nexit 3\n");
-    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
+    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &GOING) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("the fake web process exits before it connects"),
     };
@@ -2465,7 +2522,15 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
                 &|| true,
                 Timing::PRODUCTION,
                 &log,
-                || Running::start(&web.config, &image, web.handler.clone(), START_WAIT),
+                || {
+                    Running::start(
+                        &web.config,
+                        &image,
+                        web.handler.clone(),
+                        START_WAIT,
+                        &stopping,
+                    )
+                },
             )
         });
         wait_for("the supervised web process serves", || {
@@ -2580,7 +2645,7 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
             &|| true,
             timing,
             &log,
-            || Running::start(&web.config, &image, web.handler.clone(), START_WAIT),
+            || Running::start(&web.config, &image, web.handler.clone(), START_WAIT, &GOING),
         );
         assert_eq!(*lock(&state), GatewayState::Failed);
         for line in lock(&lines).iter() {

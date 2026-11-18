@@ -1,16 +1,19 @@
 # Agentic Org as the main process of a container (ADR-0017 decisions 4 and 10, LNX-2).
 #
-# Build, from the repository root, after building the four executables and the UI:
+# Build, from the repository root, after building the four executables for Linux and the UI:
 #
-#   cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+#   deploy/container/build.sh
 #   (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 #   docker build -f deploy/container/Dockerfile -t agentic-org .
+#
+# build.sh builds them in the Rust toolchain's Debian image, into target/linux/debug, on a
+# Mac as on a Linux machine: a plain `cargo build` on a Mac makes macOS programs.
 #
 # Run (nothing else is needed; see README.md in this folder for volumes and the first link):
 #
 #   docker run -d --name agentic-org -p 127.0.0.1:8443:8443 agentic-org
 #
-# This is a DEVELOPMENT image: BIN names the workspace's own build output, the host logs
+# This is a DEVELOPMENT image: BIN names the workspace's own Linux build, the host logs
 # that the worker has no publisher check, and the host keeps its keys in its development
 # key store inside the secrets volume. A release image takes a signed release from the
 # release pipeline instead (README.md, "What a release image still needs").
@@ -19,8 +22,9 @@
 ARG BASE=debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0
 FROM ${BASE}
 
-# Where the four prebuilt executables and the built UI are, relative to the build context.
-ARG BIN=target/debug
+# Where the four prebuilt Linux executables (deploy/container/build.sh) and the built UI
+# are, relative to the build context.
+ARG BIN=target/linux/debug
 ARG UI=apps/agentic-org-ui/build
 
 # tini is PID 1: it forwards the stop signal to `serve` and reaps the agent processes that

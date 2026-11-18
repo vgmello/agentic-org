@@ -1045,22 +1045,40 @@ fn real_systemd() {
         .exists());
 }
 
-/// X5 review V8: a drop-in of the unit's own can replace `ExecStart` or add to the
-/// environment, so a unit with one is not ours to act on, on any operation; a drop-in that
-/// systemd applies to every service is not the unit's own.
+/// X5 review V8: a drop-in that systemd applies to the unit by its name can replace
+/// `ExecStart` or add to the environment, so a unit with one is not ours to act on, on any
+/// operation. That is a drop-in of the unit's own and one inherited from a prefix of its
+/// name that ends at a dash (systemd.unit(5)); a drop-in that systemd applies to every
+/// service, or one of another unit whose name merely starts the same, is not.
 #[test]
-fn a_unit_with_a_drop_in_of_its_own_is_a_conflict_for_every_operation() {
+fn a_unit_with_a_drop_in_that_applies_by_its_name_is_a_conflict_for_every_operation() {
     let temp = tempfile::tempdir().unwrap();
     let (systemd, fake) = systemd(temp.path());
     systemd.register(&unit()).unwrap();
     let file = temp.path().join(format!("systemd/user/{NAME}"));
-    fake.set(|s| s.drop_ins = "/usr/lib/systemd/user/service.d/10-timeout.conf".into());
-    assert_eq!(systemd.register(&unit()).unwrap(), Registration::Unchanged);
+    for drop_ins in [
+        "/usr/lib/systemd/user/service.d/10-timeout.conf",
+        "/home/a/.config/systemd/user/agentic-orgx-.service.d/x.conf",
+        "/home/a/.config/systemd/user/agentic-org-test-01965d2e.service.d/x.conf",
+        "/home/a/.config/systemd/user/agentic-org-test-01965d2e-8b1c-7c3a-9f00-0123456789ab.service.d.conf",
+    ] {
+        fake.set(|s| s.drop_ins = drop_ins.into());
+        assert_eq!(
+            systemd.register(&unit()).unwrap(),
+            Registration::Unchanged,
+            "{drop_ins}"
+        );
+    }
     for drop_ins in [
         format!("/home/a/.config/systemd/user/{NAME}.d/override.conf"),
         format!(
             "/usr/lib/systemd/user/service.d/10-timeout.conf /run/user/1000/systemd/user.control/{NAME}.d/50-x.conf"
         ),
+        "/home/a/.config/systemd/user/agentic-org-.service.d/override.conf".into(),
+        "/etc/systemd/user/agentic-.service.d/override.conf".into(),
+        "/home/a/.config/systemd/user/agentic-org-test-.service.d/override.conf".into(),
+        "/home/a/.config/systemd/user/agentic-org-test-01965d2e-8b1c-7c3a-9f00-.service.d/x.conf"
+            .into(),
     ] {
         fake.set(|s| s.drop_ins = drop_ins.clone());
         fake.clear();

@@ -264,6 +264,23 @@ impl Listener {
             let _ = live.reader.join();
         }
     }
+
+    /// [`Listener::join`], until `until` at the latest: a connection whose running request
+    /// has not ended by then (one waiting for a write lock of the registry, say) is left to
+    /// end on its own, its answer dropped. Says whether every connection ended.
+    pub(crate) fn join_by(&mut self, until: std::time::Instant) -> bool {
+        let live: Vec<Live> = lock(&self.live).drain().map(|(_, live)| live).collect();
+        for live in &live {
+            live.connection.close();
+        }
+        // Every connection is waited for, until the same bound.
+        let left = live
+            .into_iter()
+            .map(|live| crate::sync::join_by(live.reader, until))
+            .filter(|ended| !ended)
+            .count();
+        left == 0
+    }
 }
 
 impl Drop for Listener {
@@ -1635,6 +1652,53 @@ mod tests {
                 usize::from(expected_uid == uid)
             );
         }
+    }
+
+    /// X5 review V2: a stopping host waits for a request still running only until its
+    /// bound. A request that waits for something else (here a lock the test holds, as a
+    /// write lock of the registry would be held) is left running, and the wait ends at the
+    /// bound.
+    #[test]
+    fn a_bounded_join_leaves_a_request_that_does_not_end_by_its_bound() {
+        struct Waits(Arc<Mutex<()>>, Arc<AtomicBool>);
+        impl Handler for Waits {
+            fn handle(&self, _: Request, _: &Arc<Connection>, _: Received) {
+                self.1.store(true, Ordering::SeqCst);
+                drop(lock(&self.0));
+            }
+        }
+        let dir = short_tempdir();
+        let path = dir.path().join("w.sock");
+        let held = Arc::new(Mutex::new(()));
+        let entered = Arc::new(AtomicBool::new(false));
+        let holding = lock(&held);
+        let mut listener = Listener::start(
+            bind(&path).unwrap(),
+            ListenerConfig {
+                max_connections: 2,
+                max_in_flight: 4,
+                expected_uid: crate::home::euid(),
+            },
+            Arc::new(Waits(Arc::clone(&held), Arc::clone(&entered))),
+        )
+        .unwrap();
+        let mut stream = connect(&path);
+        stream
+            .write_all(b"{\"id\":1,\"method\":\"slow\"}\n")
+            .unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while !entered.load(Ordering::SeqCst) {
+            assert!(std::time::Instant::now() < until, "the request never ran");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        listener.close();
+        let asked = std::time::Instant::now();
+        assert!(!listener.join_by(asked + Duration::from_millis(300)));
+        let took = asked.elapsed();
+        assert!(took >= Duration::from_millis(300), "{took:?}");
+        assert!(took < Duration::from_secs(2), "{took:?}");
+        // The request, left to run, ends once its lock is free.
+        drop(holding);
     }
 
     #[test]
