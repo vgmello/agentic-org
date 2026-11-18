@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import { viewAction } from './org-chart-menu';
+import { enterMockedOrganization } from './mock-organization';
 
 export const titles={'add-project':'Add a project to Engineering', 'delete-refused':"Can't delete Engineering",task:'New task',report:'Report a bug',assign:'Assign a team to Scratchpad',delete:'Delete People?',
  'change-manager':'Change manager of Hana Weiss','member-teams':'Teams for Hana Weiss','team-members':'Members of Web','edit-person':'Edit Hana Weiss',
@@ -15,9 +16,7 @@ const originalWrap = (kind:TitleCase):'normal'|'anywhere' => originallyNormal.ha
 
 export async function createDialogOrganization(page: Page, width: number) {
 	await page.setViewportSize({ width, height: 900 });
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization', exact: true }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await expect(page.getByRole('table', { name: 'Agents', exact: true })).toBeVisible();
 }

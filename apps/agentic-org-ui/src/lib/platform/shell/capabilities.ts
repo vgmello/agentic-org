@@ -5,7 +5,14 @@ import { UNAVAILABLE_MESSAGE } from '../unavailable-api';
 const unavailable = unavailableFeature(UNAVAILABLE_MESSAGE);
 const available = Object.freeze({ available: true as const });
 // A3: the session pages run against the real web gateway (register, sign in, SIGN-9, sign out).
-const SESSION_PAGES: ReadonlySet<string> = new Set(['/', '/sign-in', '/register', '/welcome']);
+// A4.5: Create organization runs against the real organization routes (FC-018).
+const SESSION_PAGES: ReadonlySet<string> = new Set([
+	'/',
+	'/sign-in',
+	'/register',
+	'/welcome',
+	'/create'
+]);
 export function areaCapability(pathname: string) {
 	return SESSION_PAGES.has(pathname) ? available : unavailable();
 }

@@ -1,11 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function open(page: Page, query = '') {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, `/processes${query}`);
 	await expect(page.getByTestId('process-list').or(page.getByTestId('no-processes'))).toBeVisible();
@@ -76,9 +75,7 @@ test('PROC-10: an agent’s page says what it follows and the version it last re
 });
 
 test('PROC-16: loading shows skeleton rows; an unreachable handbook says so with the last copy’s time; an empty organization invites the first process', async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	// Hold the sample load so the loading screenshot cannot race its 250 ms timer.
 	await page.clock.install({ time: new Date('2026-11-10T12:00:00Z') });

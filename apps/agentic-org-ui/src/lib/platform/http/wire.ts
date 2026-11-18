@@ -113,18 +113,20 @@ export function readCommandEnvelope<P>(value: unknown, params: Reader<P>): Comma
 export function readCommandEnvelope<P = JsonObject>(value: unknown, params: Reader<P> = readJsonObject as Reader<P>): CommandEnvelope<P> {
 	return checked((value) => {
 		const input = fields(value);
+		// The envelope has three keys. Any other top-level key is refused, not ignored, as the server does.
+		if (Object.keys(input).some((key) => !['operation_id', 'scope', 'params'].includes(key))) return invalid();
 		return { operation_id: operationId(field(input, 'operation_id')), scope: readScope(field(input, 'scope')), params: params(businessParams(field(input, 'params'))) };
 	})(value);
 }
 export function nativeParams<P>(envelope: CommandEnvelope<P>, kind: OperationKind): JsonObject {
 	return checked(() => ({ ...businessParams(envelope.params), [idFields[readKind(kind)]]: operationId(envelope.operation_id) }))(undefined);
 }
-export const readCreateRequest = (value: unknown) => readCommandEnvelope(value, object({ name: text }));
 export const readRestartRequest = (value: unknown) => readCommandEnvelope(value, object({}));
 export const readCancelRequest = checked((value) => Object.keys(fields(value)).length === 0 ? {} : invalid());
 
 export interface LookupQuery { instance_id: string; org_id?: string; office_id?: string }
-const lookupId: Reader<string> = (value) => /^[A-Za-z0-9]{1,64}$/.test(text(value)) ? value as string : invalid();
+// Instance, organization and office IDs are canonical UUID text: letters, digits and the hyphen.
+const lookupId: Reader<string> = (value) => /^[A-Za-z0-9-]{1,64}$/.test(text(value)) ? value as string : invalid();
 const queryReader = object({ instance_id: lookupId, org_id: optional(lookupId), office_id: optional(lookupId) });
 export function readLookupQuery(pairs: Iterable<readonly [string, string]>): LookupQuery {
 	return checked(() => {
@@ -276,8 +278,6 @@ function publicProjection(value: unknown, depth = 0): void {
 		}
 	}
 }
-const organizationReader = object({ id: text, name: text, created_at: text, recovery: word(['pending', 'delivered', 'acknowledged'] as const) });
-export const readOrganization = checked((value) => { fields(value); publicProjection(value); return organizationReader(value); });
 export const readRestartResult = checked((value) => { fields(value); publicProjection(value); return {}; });
 export const readCancelResult = checked((value) => {
 	const result = object({ operation_id: operationId, state: cancelState })(value);
@@ -294,7 +294,6 @@ export const readOffice = checked(object({
 	status_reason: optional(word(['in_use', 'storage_error', 'invalid_request', 'unsupported_version', 'crashed', 'start_timeout', 'restarts_exhausted', 'stopped_by_owner'] as const)),
 	next_restart_at: optional(text)
 }));
-export const readOrganizationList = checked(object({ organizations: array(readOrganization) }));
 export const readOfficeList = checked(object({ offices: array(readOffice) }));
 const capabilityReader = object({ name: text, scope: readResponseScope, available: defaulted(bool, () => false), reason: optional(text) });
 export type Capability = ReturnType<typeof capabilityReader>;

@@ -3,14 +3,13 @@ import { visit } from './ready';
 import { shot } from './shot';
 import { signInAsAdmin } from './web-session';
 import type { Connection, Organization } from '../src/lib/proto';
+import { enterMockedOrganization } from './mock-organization';
 
 // The administrator is signed in (SIGN-9) and GET /api/v1/organizations lists the organization the
 // footer names, so "Switch organization" lands on the signed-in organizations page.
 async function openOffice(page: Page, createPath = '/create') {
 	await signInAsAdmin(page, [{ id: 'org-footer-reference', name: 'Footer reference', created_at: '2026-11-18T00:00:00Z', recovery: 'acknowledged' }]);
-	await visit(page, createPath);
-	await page.getByLabel('Organization name').fill('Footer reference');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page, 'Footer reference', createPath);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices');
 }

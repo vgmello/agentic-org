@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import expectedIcons from './fixtures/heroicons-v2.2.0.json' with { type: 'json' };
+import { enterMockedOrganization } from './mock-organization';
 
 declare global { interface Window { noEmojiReactions: Record<string, unknown>[]; } }
 
@@ -40,9 +41,7 @@ async function noEmoji(scope: Locator) {
 	expect(content.match(/\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3/gu) ?? []).toEqual([]);
 }
 async function open(page: Page) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/chat');
 	await expect(page.getByTestId('conversation-title')).toHaveText('Needs you');

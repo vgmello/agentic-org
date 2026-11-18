@@ -1,15 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 // The smart features on the TypeScript mock, in the real screens: "Report a bug from a sentence" in
 // the Report a bug dialog, and "Draft or improve" on the bug and task text fields.
 // `?copilot=off|failed|timeout` picks a scenario (src/lib/modules/copilot/mock.ts).
 
 async function openProject(page: Page, tab: 'Bugs' | 'Tasks', scenario = '') {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, `/projects/atlas${scenario ? `?copilot=${scenario}` : ''}`);
 	await page.getByRole('tab', { name: tab }).click();

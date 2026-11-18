@@ -7,7 +7,7 @@ import { NotDispatchedError } from './errors';
 
 const root = new URL('../../../../../../crates/org-proto/test-vectors/v2/', import.meta.url);
 const counts = {
-	'gateway-envelopes': 17, 'gateway-idempotency': 4, 'gateway-lookup-query': 18, 'gateway-lookups': 26,
+	'gateway-envelopes': 18, 'gateway-idempotency': 4, 'gateway-lookup-query': 18, 'gateway-lookups': 26,
 	'gateway-mutation-results': 44, 'gateway-outcomes': 38, 'gateway-paths': 17, 'gateway-resource-errors': 3,
 	'gateway-session': 10, 'gateway-stream': 15, 'gateway-views': 18
 } as const;
@@ -29,14 +29,17 @@ function normalized<T>(c: Case, reader: wire.Reader<T>): T | undefined {
 	if (c.expect.valid !== false) expect(result).toEqual(c.expect.normalized);
 	return result;
 }
-const projection = (operation: unknown): wire.Reader<unknown> => {
-	if (operation === 'organization.create') return wire.readOrganization;
+// The cases of the former four-field organization view (`organization.create` results, the
+// `organization` view) are still read by Rust; the UI reads the current view through
+// platform/organizations/readers.ts (gateway-organizations.json) and has no reader for the old one.
+const projection = (operation: unknown): wire.Reader<unknown> | undefined => {
+	if (operation === 'organization.create') return undefined;
 	if (operation === 'office.restart') return wire.readRestartResult;
 	throw new Error('Unknown fixture projection');
 };
 const views: Record<string, wire.Reader<unknown>> = {
 	version: wire.readVersion, instance: wire.readInstance, office: wire.readOffice,
-	organization: wire.readOrganization, capabilities: wire.readCapabilities, snapshot: wire.readSnapshot
+	capabilities: wire.readCapabilities, snapshot: wire.readSnapshot
 };
 
 function assertCoreCounts(data: Record<Name, Fixture>): void {
@@ -45,8 +48,8 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 		throw new Error('Unsupported gateway fixture contract_revision');
 	}
 	const pinned = revision === 2
-		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 211 }
-		: { counts, total: 210 };
+		? { counts: { ...counts, 'gateway-lookup-query': 20 }, total: 213 }
+		: { counts, total: 211 };
 	for (const name of Object.keys(counts) as Name[]) {
 		expect(data[name].schema_version, `${name} schema_version`).toBe(1);
 		expect(data[name].cases, `${name} main cases`).toHaveLength(pinned.counts[name]);
@@ -55,7 +58,7 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 }
 
 it('pins core main cases and every landed gateway file', () => {
-	// gateway-organizations is read by the Rust contract only until the create page lands its readers (A4.5); its count is pinned here.
+	// gateway-organizations is read by platform/organizations/readers.test.ts (organization and list cases); its count is pinned here.
 	const landed = { ...counts, 'gateway-organizations': 18 };
 	expect(readdirSync(root).filter((name) => /^gateway-.*\.json$/.test(name)).sort()).toEqual(Object.keys(landed).map((name) => `${name}.json`).sort());
 	expect(JSON.parse(readFileSync(new URL('gateway-organizations.json', root), 'utf8')).cases).toHaveLength(landed['gateway-organizations']);
@@ -74,14 +77,14 @@ function revisionFixtures(revision: unknown, queryCount: number): Record<Name, F
 }
 describe('core fixture revision count gate', () => {
 	it.each([
-		['legacy', undefined, 18], ['revision 1', 1, 18], ['revision 2', 2, 19]
+		['legacy', undefined, 18], ['revision 1', 1, 18], ['revision 2', 2, 20]
 	] as const)('accepts the fixed %s case set', (_, revision, queryCount) => {
 		expect(() => assertCoreCounts(revisionFixtures(revision, queryCount))).not.toThrow();
 	});
 	it.each([0, 3, '2', null])('refuses unsupported test revision %j', (revision) => {
 		expect(() => assertCoreCounts(revisionFixtures(revision, 18))).toThrow('Unsupported gateway fixture contract_revision');
 	});
-	it.each([[undefined, 19], [1, 19], [2, 18], [2, 20]] as const)(
+	it.each([[undefined, 19], [1, 19], [2, 18], [2, 19], [2, 21]] as const)(
 		'refuses revision %j with %i query cases', (revision, queryCount) => {
 			expect(() => assertCoreCounts(revisionFixtures(revision, queryCount))).toThrow('gateway-lookup-query main cases');
 		}
@@ -92,7 +95,7 @@ describe('core fixture revision count gate', () => {
 		expect(() => assertCoreCounts(data)).toThrow('gateway-lookup-query main cases');
 	});
 	it('keeps schema_version pinned to 1 independently of contract_revision', () => {
-		const data = revisionFixtures(2, 19);
+		const data = revisionFixtures(2, 20);
 		data['gateway-lookup-query'].schema_version = 2;
 		expect(() => assertCoreCounts(data)).toThrow('gateway-lookup-query schema_version');
 	});
@@ -165,6 +168,7 @@ for (const name of Object.keys(counts) as Name[]) describe(name, () => {
 				expect({ error }).toEqual(c.wire); expect(wire.gatewayErrorStatus(error, true)).toBe(c.expect.http_status); break;
 			}
 			case 'gateway-views': {
+				if (c.category === 'organization') break;
 				const response = normalized(c, (value) => wire.readResponse(value, views[c.category as string]));
 				if (response && c.category === 'capabilities' && c.expect.available !== undefined && 'result' in response) {
 					expect(wire.readCapabilities(response.result).operations.map((cap) => wire.capabilityAvailable(cap, wire.GATEWAY_OPERATION_NAMES))).toEqual(c.expect.available);
@@ -179,6 +183,7 @@ for (const name of Object.keys(counts) as Name[]) describe(name, () => {
 			case 'gateway-stream': normalized(c, c.category === 'poll' ? wire.readPollResponse : wire.readEventFrame as wire.Reader<unknown>); break;
 			case 'gateway-mutation-results': {
 				const result = projection(c.operation);
+				if (!result) break;
 				normalized(c, c.response_kind === 'mutation' ? (value) => wire.readMutationOutcome(value, result)
 					: (value) => wire.readResponse(value, (value) => wire.readOperationLookup(value, result)) as unknown);
 				break;
@@ -190,7 +195,9 @@ for (const name of Object.keys(counts) as Name[]) describe(name, () => {
 it('uses identical serialized public result bytes in both mutation/lookup pairs', () => {
 	const pairs = list(fixtures['gateway-mutation-results'].pairs); expect(pairs).toHaveLength(2);
 	for (const item of pairs) {
-		const pair = record(item), reader = projection(pair.operation), mutation = wire.readMutationOutcome(pair.mutation, reader);
+		const pair = record(item), reader = projection(pair.operation);
+		if (!reader) continue;
+		const mutation = wire.readMutationOutcome(pair.mutation, reader);
 		const response = wire.readResponse(pair.lookup, (value) => wire.readOperationLookup(value, reader));
 		if (mutation.outcome !== 'completed' || !('result' in response) || !('outcome' in response.result) || response.result.outcome !== 'completed') throw new Error('Expected paired completion');
 		const bytes = JSON.stringify(mutation.result);
@@ -257,9 +264,8 @@ it('negotiates additive revisions and validates exact nonnegative integer times'
 	for (const value of [1.5, -1, Number.MAX_SAFE_INTEGER + 1, '1', NaN, Infinity]) expect(() => wire.readSafeInteger(value)).toThrow(wire.WireDecodeError);
 	expect(wire.readSafeInteger(1.0)).toBe(1); expect(wire.readSafeInteger(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
 });
-it('validates typed create/restart and dedicated empty cancellation requests', () => {
+it('validates typed restart and dedicated empty cancellation requests', () => {
 	const first = record(fixtures['gateway-envelopes'].cases[0].wire);
-	expect(wire.readCreateRequest(first).params).toEqual({ name: 'Acme' }); expect(() => wire.readCreateRequest({ ...first, params: {} })).toThrow(wire.WireDecodeError);
 	expect(wire.readRestartRequest({ ...first, params: {} }).params).toEqual({}); expect(wire.readCancelRequest({})).toEqual({});
 	expect(() => wire.readCancelRequest({ operation_id: first.operation_id })).toThrow(wire.WireDecodeError);
 });

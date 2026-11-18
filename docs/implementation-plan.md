@@ -233,9 +233,9 @@ Three things to know about the order:
     declarations and `organization.provision.v1` are deleted. The web process serves
     `POST` and `GET /api/v1/organizations` and the host operation lookup over it
     ([web API](design/web-api-v1.md#selected-create-organization-payload)).
-  - The UI's create flow still runs against fakes
-    (`apps/agentic-org-ui/src/lib/create-flow.ts`) until A4.5 moves the create page
-    and the welcome list onto the real API.
+  - The UI's create page and organizations page read that API through
+    `apps/agentic-org-ui/src/lib/platform/organizations` (A4.5); the former
+    `src/lib/create-flow.ts`, which ran against fakes, is deleted.
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once; ENC-2 passes.

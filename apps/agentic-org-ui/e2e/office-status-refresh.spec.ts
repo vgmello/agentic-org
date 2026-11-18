@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
-import { visit } from './ready';
 import { shot } from './shot';
 import type { OfficeInfo } from '../src/lib/proto';
+import { enterMockedOrganization } from './mock-organization';
 
 type HeldRefresh = {
 	started: Promise<OfficeInfo>;
@@ -55,9 +55,7 @@ async function releaseRefresh(page: Page) {
 
 for (const unrelated of [false, true]) {
 	test(`OFC-11 / BUG-5: ${unrelated ? 'an unrelated push does not suppress a valid refresh' : 'a delayed initial refresh cannot overwrite a newer office status push'}`, async ({ page }) => {
-		await visit(page, '/create');
-		await page.getByLabel('Organization name').fill('Acme');
-		await page.getByRole('button', { name: 'Create organization' }).click();
+		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/agents$/);
 		await holdFirstRefresh(page, unrelated);
 		// SPA navigation preserves the patched test-owned API instance.
@@ -132,9 +130,7 @@ async function releasePeek(page: Page, index: number, rejected = false) {
 }
 
 test('OFC-11 / BUG-5 LOW: a delayed probe refresh cannot overwrite a newer restart refresh without a push', async ({ page }) => {
-	await visit(page, '/create?office=crashed');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page, 'Acme', '/create?office=crashed');
 	await expect(page).toHaveURL(/\/agents$/);
 	await holdOverlappingRefreshes(page);
 	await page.getByRole('link', { name: 'Offices', exact: true }).click();
@@ -157,9 +153,7 @@ test('OFC-11 / BUG-5 LOW: a delayed probe refresh cannot overwrite a newer resta
 
 for (const newerFirst of [false, true]) {
 	test(`OFC-12 / BUG-48: a failed newer refresh does not discard an older successful answer (${newerFirst ? 'failure' : 'answer'} first)`, async ({ page }) => {
-		await visit(page, '/create');
-		await page.getByLabel('Organization name').fill('Acme');
-		await page.getByRole('button', { name: 'Create organization' }).click();
+		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/agents$/);
 		await page.clock.install();
 		await holdOverlappingRefreshes(page, 'failed');
@@ -185,9 +179,7 @@ for (const newerFirst of [false, true]) {
 
 for (const newer of ['failed', 'missing'] as const) {
 	test(`OFC-12 / BUG-48: ${newer === 'failed' ? 'a newer push' : 'a successful empty result'} still supersedes an older read`, async ({ page }) => {
-		await visit(page, '/create');
-		await page.getByLabel('Organization name').fill('Acme');
-		await page.getByRole('button', { name: 'Create organization' }).click();
+		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/agents$/);
 		await page.clock.install();
 		await holdOverlappingRefreshes(page, newer);
