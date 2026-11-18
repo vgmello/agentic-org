@@ -29,6 +29,15 @@ pub(super) fn release_directory(
     Err(refusal().into())
 }
 
+/// The test entry of the release directory refuses as the host's does.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn release_directory_below(
+    _base: &std::path::Path,
+    _location: &ReleaseDirectory<'_>,
+) -> Result<ReleaseRoot, CredentialError> {
+    Err(refusal().into())
+}
+
 impl ReleaseRoot {
     pub(super) fn store(&self, _items: &ReleaseItems<'_>) -> Result<Store, CredentialError> {
         match *self {}

@@ -67,6 +67,33 @@ pub(in crate::credentials) fn release_directory(
     open(Walk { start, root, names }, location)
 }
 
+/// The release directory at `location`, with the walk started at the directory `base`
+/// instead of at `/`: for tests, whose temporary directories are below a directory
+/// that is writable by others. `base` and everything below it is opened and judged
+/// exactly as in a host's walk; the directories above `base` are not. The path must be
+/// `base` or below it, spelled with `base` as its prefix.
+#[cfg(any(test, feature = "test-support"))]
+pub(in crate::credentials) fn release_directory_below(
+    base: &Path,
+    location: &ReleaseDirectory<'_>,
+) -> Result<ReleaseRoot, CredentialError> {
+    let below = location
+        .path
+        .strip_prefix(base)
+        .map_err(|_| refused(RootRule::Relative, location.path))?;
+    // The same syntax rule, on the part of the path that is walked.
+    let names = rules::names(below).map_err(|rule| refused(rule, location.path))?;
+    let root = open_absolute(base).map_err(|error| refused(component_rule(&error), base))?;
+    open(
+        Walk {
+            start: base,
+            root,
+            names,
+        },
+        location,
+    )
+}
+
 /// A walk to a release directory: the directory it starts at, and the single names
 /// from there. A host's walk starts at `/`; that is the only start `release_directory`
 /// makes. The start itself is judged like every directory below it.

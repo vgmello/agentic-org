@@ -17,6 +17,8 @@ use super::{
     Secret, WriteError,
 };
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) use release::release_directory_below;
 pub(super) use release::{release_directory, ReleaseRoot};
 
 /// One open directory store.

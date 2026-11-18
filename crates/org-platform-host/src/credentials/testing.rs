@@ -1,5 +1,6 @@
-//! Test hooks of the directory store, for this crate's tests and the host's
-//! (`test-support`). A test reaches them as `org_platform_host::testing::credentials`.
+//! Test hooks of the directory store, and the test entry of the release directory, for
+//! this crate's tests and the host's (`test-support`). A test reaches them as
+//! `org_platform_host::testing::credentials`.
 //!
 //! Every hook belongs to the calling thread and acts on writes made on that thread, so
 //! tests that run in parallel do not see each other's. A system without the directory
@@ -9,6 +10,20 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::path::Path;
+
+/// [`release_directory`](super::release_directory) with its walk started at the
+/// directory `base` instead of at `/`, for a test whose temporary directory is below
+/// one that is writable by others (`/tmp`, `/var/tmp`), which the ancestor rule refuses
+/// on purpose. `base` and every directory below it is opened and judged exactly as a
+/// host's walk judges them, and every other check is the host's; only the directories
+/// above `base` are not looked at. `location.path` must be `base` or below it.
+/// A system without a release directory refuses, as its host entry does.
+pub fn release_directory_below(
+    base: &Path,
+    location: super::ReleaseDirectory<'_>,
+) -> Result<super::ReleaseRoot, super::CredentialError> {
+    super::native::release_directory_below(base, &location).map(|root| super::ReleaseRoot { root })
+}
 
 /// One hook: run once, with the store's directory.
 pub(super) type Hook = Box<dyn FnOnce(&Path)>;

@@ -23,6 +23,12 @@ pub(super) fn components(path: &Path) -> Result<Vec<&OsStr>, RootRule> {
     if !path.is_absolute() {
         return Err(RootRule::Relative);
     }
+    names(path)
+}
+
+/// The single names of `path`, in order, whatever it starts at: the rule of
+/// [`components`] without the requirement that the path is absolute.
+pub(super) fn names(path: &Path) -> Result<Vec<&OsStr>, RootRule> {
     let mut names = Vec::new();
     for component in path.components() {
         match component {

@@ -106,6 +106,8 @@ pub(crate) fn platform() -> Result<Platform, String> {
         return Ok(Platform {
             service: Box::new(ChildServiceManager::new(dir)),
             disk: Box::new(FakeDiskEncryption(state)),
+            // A development build keeps its secrets in its development key folder.
+            credentials: setup_flow::CredentialDirectory::Unused,
         });
     }
     #[cfg(not(all(debug_assertions, feature = "test-support")))]

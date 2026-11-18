@@ -229,6 +229,10 @@ impl Directory {
     pub(super) fn path(&self) -> &Path {
         &self.path
     }
+    /// The held directory descriptor, for a rule that compares directories and not paths.
+    pub(super) fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+        std::os::fd::AsFd::as_fd(&self.file)
+    }
     pub(super) fn identity(&self) -> Identity {
         self.identity
     }

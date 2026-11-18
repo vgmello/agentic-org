@@ -9,9 +9,10 @@
 //!   cargo's own test directory (`target/tmp`), and prints why it could not run where
 //!   that directory's ancestors do not pass either.
 //! - **From a directory the test made** ([`Tree`]): the same walk and the same checks,
-//!   started at that directory instead of at `/` (`Walk::start`), so that every rule
-//!   runs on a real tree below it whatever is above it. The directories above the
-//!   test's own are not judged in these tests; the tests from `/` judge them.
+//!   started at that directory instead of at `/` ([`release_directory_below`], the
+//!   entry the host's tests use too), so that every rule runs on a real tree below it
+//!   whatever is above it. The directories above the test's own are not judged in
+//!   these tests; the tests from `/` judge them.
 //!
 //! The tests run as whatever user runs them. Where a case needs a file of another
 //! user, only root can make one: such a case says so and runs only then; the pure
@@ -23,7 +24,7 @@ use std::io::ErrorKind;
 use std::os::fd::AsFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::credentials::{
@@ -196,22 +197,8 @@ impl Tree {
         mount_point_required: bool,
         expect_items: bool,
     ) -> Result<Opened, CredentialError> {
-        let names = path
-            .strip_prefix(&self.base)
-            .expect("a path below the tree's base")
-            .components()
-            .map(|component| match component {
-                Component::Normal(name) => name,
-                other => panic!("not a plain name: {other:?}"),
-            })
-            .collect();
-        let walk = Walk {
-            start: &self.base,
-            root: open_absolute(&self.base).unwrap(),
-            names,
-        };
-        open(
-            walk,
+        release_directory_below(
+            &self.base,
             &ReleaseDirectory {
                 path,
                 data_root: data_root.as_fd(),
@@ -1129,14 +1116,9 @@ fn a_second_host_on_the_same_store_is_refused_until_the_first_has_dropped_every_
         // Another process: the second host. It makes the same walk to the same store.
         let base = PathBuf::from(base);
         let (store, data) = (base.join("credentials"), base.join("data"));
-        let walk = Walk {
-            start: &base,
-            root: open_absolute(&base).unwrap(),
-            names: vec![std::ffi::OsStr::new("credentials")],
-        };
         let data_root = File::open(&data).unwrap();
-        let second = open(
-            walk,
+        let second = release_directory_below(
+            &base,
             &ReleaseDirectory {
                 path: &store,
                 data_root: data_root.as_fd(),
