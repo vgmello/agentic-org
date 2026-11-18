@@ -19,8 +19,12 @@ export async function signInAsAdmin(page: Page, organizations: readonly WebOrgan
 	const created = await context.request.post('/__p6-auth/new');
 	expect(created.ok()).toBe(true);
 	const { id } = await created.json();
-	await context.addCookies([{ name: 'p6_auth_case', value: id, url: new URL('/', created.url()).href }]);
-	const listed = await context.request.post('/__p6-auth/control', { data: { id, action: 'organizations', value: organizations } });
+	await context.addCookies([
+		{ name: 'p6_auth_case', value: id, url: new URL('/', created.url()).href }
+	]);
+	const listed = await context.request.post('/__p6-auth/control', {
+		data: { id, action: 'organizations', value: organizations }
+	});
 	expect(listed.ok()).toBe(true);
 	await visit(page, '/sign-in');
 	await page.getByLabel('Username').fill('admin');

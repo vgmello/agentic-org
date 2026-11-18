@@ -1,26 +1,48 @@
 import { expect, test } from '@playwright/test';
 import { quiet } from './collector';
 import { shot } from '../e2e/shot';
+import { signInAsAdmin } from '../e2e/web-session';
 
-const policy = "default-src 'none'; script-src 'report-sample' 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; report-uri /__csp-report";
-const routes = ['/', '/welcome', '/create', '/agents', '/org-chart', '/projects', '/projects/atlas', '/work', '/chat', '/processes', '/offices', '/sessions', '/activity', '/settings'];
+const policy =
+	"default-src 'none'; script-src 'report-sample' 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; report-uri /__csp-report";
+const routes = [
+	'/',
+	'/welcome',
+	'/create',
+	'/agents',
+	'/org-chart',
+	'/projects',
+	'/projects/atlas',
+	'/work',
+	'/chat',
+	'/processes',
+	'/offices',
+	'/sessions',
+	'/activity',
+	'/settings'
+];
 
-test('B1-05 Part B: identical CSP permits every route, a dialog, a sheet and a toast', async ({ page }) => {
+test('B1-05 Part B: identical CSP permits every route, a dialog, a sheet and a toast', async ({
+	page
+}) => {
+	// The session pages are enabled (A3): sign in first, as the mocked suite does; signed in, the instance URL opens /welcome.
+	await signInAsAdmin(page);
 	await page.goto('/create');
 	await expect(page.locator('html')).toHaveAttribute('data-hydrated', 'true');
 	await page.getByLabel('Organization name').fill('CSP Smoke');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
-	for (const path of routes) await test.step(`fresh route ${path}`, async () => {
-		const response = await page.goto(path);
-		expect(response?.status()).toBe(200);
-		const header = response!.headers()['content-security-policy'] ?? '';
-		const hashes = header.match(/'sha256-[A-Za-z0-9+/]{43}='/g) ?? [];
-		expect(hashes.length).toBeGreaterThan(0);
-		expect(header.replace(hashes.join(' '), '{script_hashes}')).toBe(policy);
-		await expect(page.locator('html')).toHaveAttribute('data-hydrated', 'true');
-		await expect(page).toHaveURL(new RegExp(`${path === '/' ? '/agents' : path}$`));
-	});
+	for (const path of routes)
+		await test.step(`fresh route ${path}`, async () => {
+			const response = await page.goto(path);
+			expect(response?.status()).toBe(200);
+			const header = response!.headers()['content-security-policy'] ?? '';
+			const hashes = header.match(/'sha256-[A-Za-z0-9+/]{43}='/g) ?? [];
+			expect(hashes.length).toBeGreaterThan(0);
+			expect(header.replace(hashes.join(' '), '{script_hashes}')).toBe(policy);
+			await expect(page.locator('html')).toHaveAttribute('data-hydrated', 'true');
+			await expect(page).toHaveURL(new RegExp(`${path === '/' ? '/welcome' : path}$`));
+		});
 
 	await page.goto('/offices');
 	const office = page.getByTestId('office-row').first().getByRole('button');

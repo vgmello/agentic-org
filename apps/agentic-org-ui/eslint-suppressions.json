@@ -151,9 +151,6 @@
   "src/lib/platform/auth/session-controller.test.ts": {
     "@typescript-eslint/no-empty-object-type": {
       "count": 8
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 7
     }
   },
   "src/lib/platform/auth/session-controller.ts": {
@@ -218,11 +215,6 @@
     }
   },
   "src/routes/(onboarding)/create/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
-    }
-  },
-  "src/routes/(onboarding)/welcome/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 2
     }

@@ -83,7 +83,7 @@ its `.agents/.tools-ready` marker by hand).
   only the agent can see whether its session loaded them. At session start, confirm
   each appears in your list of available skills (Claude Code loads them from
   `.claude/skills/`, pre-approved in `.claude/settings.json`; Codex from
-  `.agents/skills/` and its Svelte plugin). If any is missing, stop, name it and tell
+  `.agents/skills/`). If any is missing, stop, name it and tell
   the user; do not start work.
 - **Worktrees:** a subagent in a separate worktree is gated against the session's
   checkout, so prepare and check the worktree (`cd` into it and run the check) before
@@ -96,9 +96,11 @@ its `.agents/.tools-ready` marker by hand).
 | Node (`.node-version`) and Bun (`packageManager` in the UI `package.json`) | UI toolchain | install the pinned versions |
 | rustup and the pinned toolchain | Rust toolchain from `rust-toolchain.toml` | <https://rustup.rs>, then `rustup toolchain install` at the repository root |
 | rust-analyzer | Rust navigation (Claude Code LSP tool, Codex Rust LSP MCP) | `rustup component add rust-analyzer` at the repository root |
-| typescript-language-server with TypeScript 6 (*Claude Code only*) | TypeScript navigation through the LSP tool (TypeScript 7 has no `tsserver`) | `npm i -g typescript-language-server@6.1.0 typescript@6.0.3` |
+| svelte-language-server | Svelte navigation (Claude Code: the repository's `svelte-lsp` plugin; Codex: `svelte_lsp` in `.codex/config.toml`) | `npm i -g svelte-language-server@0.18.6` |
+| mcp-language-server (*Codex only*) | Codex's bridge to the Rust, TypeScript and Svelte language servers (`.codex/config.toml`) | `go install github.com/isaacphi/mcp-language-server@v0.1.1` |
+| typescript-language-server with TypeScript 6 | TypeScript navigation (Claude Code LSP tool; Codex: `typescript_lsp` in `.codex/config.toml`); TypeScript 7 has no `tsserver` | `npm i -g typescript-language-server@6.1.0 typescript@6.0.3` |
 | python3 | agent kit checks (`.agent-kit/runtime/kit_hooks.py check`) | install Python 3 |
-| Repowise code index | `starter_kit_context` `lookup`: search, symbols, relationships and history | `python3 .agent-kit/runtime/kit_context.py setup --query Client --expect-path crates/org-client/src/lib.rs` |
+| Repowise code index | `starter_kit_context` `lookup`: search, symbols, relationships and history | `python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs` |
 | Hindsight memory (local `hindsight-embed` daemon) | `starter_kit_context` `recall`: reviewed project memory | install as in "Local memory daemon" in `.agent-kit/ADOPTION.md`, then `python3 .agent-kit/runtime/kit_memory.py setup` (also restarts a stopped daemon) |
 | cargo-deny 0.20.2, Gitleaks 8.30.1 | required local checks | Homebrew on macOS; see `DEVELOPMENT.md` |
 | playwright-cli | browser skill | `bun add --global --exact @playwright/cli@0.1.24` |
@@ -115,13 +117,15 @@ Code first asks (Codex uses `.codex/config.toml`, managed by the agent kit):
   kit's `starter_kit_context` server (the launcher from `.agent-kit/context-mcp.json`).
   Use its `lookup` for code discovery before broad searches and its `recall` for
   project memory, as `.agent-kit/reference/CONTEXT_TOOLS.md` describes.
-- `.claude/skills/`: links to the required skills. `svelte-code-writer` and
-  `svelte-core-bestpractices` (with `.claude/agents/svelte-file-editor.md`) come from
-  the UI app; follow `apps/agentic-org-ui/AGENTS.md` for Svelte documentation and
-  autofixer use. `shadcn-svelte` and `playwright-cli` come from `.agents/skills`
-  (sources in `skills-lock.json`); do not edit those vendored copies.
-- `.claude/settings.json`: the `typescript-lsp` and `rust-analyzer-lsp` plugins, the
-  tool check at session start and before Edit/Write tool calls, pre-approval of the
+- `.claude/skills/`: committed links to the required skills in `.agents/skills`
+  (sources in `skills-lock.json`; do not edit those vendored copies). Follow
+  `apps/agentic-org-ui/AGENTS.md` for Svelte documentation and autofixer use; the
+  `svelte-file-editor` agent comes from the UI app.
+- `.claude/marketplace/`: the repository's own `svelte-lsp` plugin, which only runs
+  `svelteserver` for `.svelte` files. The upstream `svelte` plugin is not used because
+  its MCP server downloads `@sveltejs/mcp` at run time.
+- `.claude/settings.json`: the `typescript-lsp`, `rust-analyzer-lsp` and `svelte-lsp`
+  plugins, the kit's hooks, the tool check at session start and before Edit/Write tool calls, pre-approval of the
   required skills, and `permissions.deny` rules for the download forms below.
 
 Use only pinned tools; never download a package at run time. The vendored skills show

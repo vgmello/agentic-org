@@ -81,23 +81,39 @@ regenerate `scripts/format-baseline.json` to make a failing check pass.
 
 ## AI tools
 
-Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte
-and Microsoft's Playwright CLI. `skills-lock.json` records their sources. Claude Code
-starts at the repository root: the root `.mcp.json` runs the pinned Svelte MCP server,
-linked Svelte skills and agent come from the UI app, and `AGENTS.md` lists the tools
-agents need. They are required: hooks check them at session start and before
-Edit/Write tool calls, and work does not start until they all pass (`AGENTS.md`,
-"Tools for agents"). For Codex, the Svelte plugin supplies
-Svelte skills and MCP tools; the Rust LSP MCP supplies
-rust-analyzer navigation, types, references and rename edits. Follow the UI's
+Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte,
+Microsoft's Playwright CLI and the Svelte skills `svelte-code-writer` and
+`svelte-core-bestpractices`. `skills-lock.json` records their sources. `AGENTS.md`
+("Tools for agents") lists every tool agents need; they are required, and work does
+not start until `.agents/check-tools.sh` passes. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.
 
-The project pins `@sveltejs/mcp`; `bun run mcp:svelte` starts that installed version.
-For a manually configured Codex server, match the project's version:
+Both harnesses get the same tools from committed configuration:
+
+| Tool | Claude Code | Codex |
+| --- | --- | --- |
+| Instructions | `CLAUDE.md` imports `AGENTS.md` | `AGENTS.md` |
+| Required-tools check (`.agents/check-tools.sh`) | session start and Edit/Write hooks in `.claude/settings.json` | run with `--codex` before work |
+| Repowise lookup (`starter_kit_context`) | `.mcp.json` | `.codex/config.toml` |
+| Svelte MCP, pinned `@sveltejs/mcp` | `.mcp.json` | `.codex/config.toml` |
+| Skills (`.agents/skills`) | committed links in `.claude/skills` | `.agents/skills` |
+| Rust, TypeScript and Svelte language servers | LSP plugins in `.claude/settings.json` (Svelte: the repository's `svelte-lsp` plugin in `.claude/marketplace`) | `mcp-language-server` entries in `.codex/config.toml` |
+| Kit hooks (secret-file guard, format, verify, checkpoint) | `.claude/settings.json` | `.codex/hooks.json` |
+| Roles | `.claude/agents` | `.codex/agents` |
+
+Trust the project when Claude Code asks, so it installs the plugins and starts the
+servers. Install the binaries both harnesses run:
 
 ```sh
-codex mcp add svelte -- npx -y @sveltejs/mcp@0.1.30
+rustup component add rust-analyzer rust-src
+bun add --global --exact typescript@6.0.3 typescript-language-server@6.1.0 svelte-language-server@0.18.6
+go install github.com/isaacphi/mcp-language-server@v0.1.1
+python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs
 ```
+
+Codex needs `mcp-language-server`; Claude Code does not. Run `bun install` in
+`apps/agentic-org-ui` before the Svelte MCP starts. `bun run mcp:svelte` starts the
+same pinned server by hand.
 
 The browser skill uses a separate global CLI so its Playwright dependency cannot
 change the application's test runner. Install its pinned version:
@@ -131,7 +147,7 @@ and runs a measured consistency audit before handing over. Product specs outrank
 lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
 
 The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
-checkout (`.claude/skills/`, which Git ignores apart from the committed Svelte skill links). It is optional and nothing depends on it.
+checkout (`.claude/skills/`, which Git ignores apart from the committed skill links). It is optional and nothing depends on it.
 Installing it is a lead's decision: the installer adds six other, uninspected skills that
 must be removed, and whatever is left is offered to every Claude session in that checkout.
 The persona file gives the pinned command and the limits.

@@ -10,7 +10,8 @@ function bus() {
 		return {
 			postMessage(data: unknown) {
 				for (const other of tabs) {
-					if (other !== target) queueMicrotask(() => other.dispatchEvent(new MessageEvent('message', { data })));
+					if (other !== target)
+						queueMicrotask(() => other.dispatchEvent(new MessageEvent('message', { data })));
 				}
 			},
 			addEventListener: target.addEventListener.bind(target),
@@ -34,11 +35,19 @@ describe('B6 cross-tab unsaved text (SIGN-19)', () => {
 		const { channel } = bus();
 		const posted: unknown[] = [];
 		const own = channel();
-		const mine = createUnsavedQuery({ channel: { ...own, postMessage: (d) => posted.push(d) }, local: () => true });
+		const mine = createUnsavedQuery({
+			channel: { ...own, postMessage: (d) => posted.push(d) },
+			local: () => true
+		});
 		expect(await mine.anyUnsaved()).toBe(true);
 		expect(posted).toEqual([]);
 		const peer = channel();
-		const quiet = createUnsavedQuery({ channel: own, local: () => false, timeoutMs: 30, newId: () => 'mine' });
+		const quiet = createUnsavedQuery({
+			channel: own,
+			local: () => false,
+			timeoutMs: 30,
+			newId: () => 'mine'
+		});
 		const pending = quiet.anyUnsaved();
 		peer.postMessage({ kind: 'unsaved', id: 'someone-else', unsaved: true });
 		peer.postMessage({ kind: 'unsaved', id: 'mine', unsaved: 'yes' });

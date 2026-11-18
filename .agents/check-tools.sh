@@ -5,8 +5,9 @@
 #                  Claude Code's SessionStart hook.
 #   --gate         Claude Code PreToolUse hook on file edits: allows the edit when
 #                  the tools are present and blocks it (exit 2) with the same list.
-#   --codex        For Codex: same report, skipping the Claude Code only items
-#                  (TypeScript language server, .claude/skills links).
+#   --codex        For Codex: same report, checking the Codex only item
+#                  (mcp-language-server) instead of the Claude Code only one
+#                  (.claude/skills links).
 # A green Claude Code result is remembered in .agents/.tools-ready until the next
 # run without an argument, so the gate re-runs the check only while something is
 # missing.
@@ -107,12 +108,13 @@ else
 	if [ -n "$toolchain" ] && ! rustup toolchain list 2>/dev/null | grep -q "^$toolchain-"; then
 		need "Rust $toolchain" "the toolchain pinned in rust-toolchain.toml" "\`rustup toolchain install $toolchain\` (from the repository root)"
 	elif [ -n "$toolchain" ] && ! rustup component list --installed --toolchain "$toolchain" 2>/dev/null | grep -q '^rust-analyzer'; then
-		need rust-analyzer "Rust code navigation for the LSP tool" "\`rustup component add rust-analyzer\` (from the repository root)"
+		need rust-analyzer "Rust navigation (Claude Code LSP tool, Codex Rust LSP)" "\`rustup component add rust-analyzer\` (from the repository root)"
 	fi
 fi
 
-if [ -n "$claude" ]; then
-has typescript-language-server || need typescript-language-server "TypeScript code navigation for the LSP tool" \
+has svelteserver || need svelteserver "Svelte navigation (Claude Code svelte-lsp plugin, Codex svelte_lsp)" \
+	"\`npm i -g svelte-language-server@0.18.6\`"
+has typescript-language-server || need typescript-language-server "TypeScript navigation (Claude Code LSP tool, Codex typescript_lsp)" \
 	"\`npm i -g typescript-language-server@6.1.0 typescript@6.0.3\`"
 if has typescript-language-server; then
 	# TypeScript 7 no longer ships tsserver, which the language server needs.
@@ -121,6 +123,9 @@ if has typescript-language-server; then
 			"\`npm i -g typescript@6.0.3\`"
 	fi
 fi
+if [ -z "$claude" ]; then
+has mcp-language-server || need mcp-language-server "Codex's bridge to rust-analyzer, typescript-language-server and svelteserver (.codex/config.toml)" \
+	"\`go install github.com/isaacphi/mcp-language-server@v0.1.1\`"
 fi
 
 has python3 || need python3 "runs the agent kit checks (.agent-kit/runtime/kit_hooks.py check)" "install Python 3"
@@ -133,7 +138,7 @@ ready() { # ready <receipt> <status>
 }
 ready .agent-kit/logs/context/setup.json CONTEXT_READY ||
 	need "Repowise code index" "the starter_kit_context lookup tool has no index for this checkout" \
-		"\`python3 .agent-kit/runtime/kit_context.py setup --query Client --expect-path crates/org-client/src/lib.rs\`"
+		"\`python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs\`"
 memory=.agent-kit/logs/memory/hindsight/setup.json
 pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$memory" 2>/dev/null)"
 if ! has hindsight-embed; then
@@ -153,7 +158,7 @@ has playwright-cli || need playwright-cli "the playwright-cli browser skill" "\`
 skill_named() { # skill_named <SKILL.md> <name>
 	awk -v want="name: $2" 'NR == 1 && $0 != "---" { exit 1 } NR > 1 && $0 == "---" { exit found ? 0 : 1 } $0 == want { found = 1 } END { exit found ? 0 : 1 }' "$1" 2>/dev/null
 }
-for source in apps/agentic-org-ui/.claude/skills/svelte-code-writer apps/agentic-org-ui/.claude/skills/svelte-core-bestpractices \
+for source in .agents/skills/svelte-code-writer .agents/skills/svelte-core-bestpractices \
 	.agents/skills/shadcn-svelte .agents/skills/playwright-cli; do
 	skill="${source##*/}"
 	if ! skill_named "$source/SKILL.md" "$skill"; then

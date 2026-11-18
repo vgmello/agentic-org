@@ -7,7 +7,8 @@ export const PASSWORD_MIN_SCALARS = 12;
 export const PASSWORD_MAX_BYTES = 1024;
 
 export type CredentialField = 'login' | 'password';
-export type CredentialRule = 'required' | 'format' | 'taken' | 'too_short' | 'too_long' | 'mismatch';
+export type CredentialRule =
+	'required' | 'format' | 'taken' | 'too_short' | 'too_long' | 'mismatch';
 export interface CredentialProblem {
 	readonly field: CredentialField;
 	readonly rule: CredentialRule;
@@ -37,7 +38,8 @@ export function checkNewPassword(input: string): CredentialProblem | undefined {
 	if (input.length === 0) return { field: 'password', rule: 'required' };
 	if (new TextEncoder().encode(input).byteLength > PASSWORD_MAX_BYTES)
 		return { field: 'password', rule: 'too_long' };
-	if (scalars(input.normalize('NFC')) < PASSWORD_MIN_SCALARS) return { field: 'password', rule: 'too_short' };
+	if (scalars(input.normalize('NFC')) < PASSWORD_MIN_SCALARS)
+		return { field: 'password', rule: 'too_short' };
 	return undefined;
 }
 
@@ -50,7 +52,11 @@ export function checkSignIn(login: string, password: string): CredentialProblem[
 }
 
 /** Registration: username, password rule, then the two entries must match (SIGN-21). */
-export function checkRegistration(login: string, password: string, again: string): CredentialProblem[] {
+export function checkRegistration(
+	login: string,
+	password: string,
+	again: string
+): CredentialProblem[] {
 	const problems: CredentialProblem[] = [];
 	const name = checkUsername(login);
 	if (name) problems.push(name);
