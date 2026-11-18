@@ -564,6 +564,34 @@ no longer reads are refused by path, because nothing has shipped to keep.
 
 ## 7. Reading
 
+**The reader pool.** SQLite read connections in WAL mode, opened `query_only`, up to four
+kept idle (today's `MAX_IDLE_READERS`) and more opened under load. Each `Store::read` call
+runs in one read transaction. The memory engine hands out an immutable snapshot.
+
+**What a caller can rely on.**
+
+- One call is one consistent snapshot, taken between batches: never part of a batch.
+- A call sees every change acknowledged before it started, because the projection is
+  committed before any reply. It may also see a durable change whose flush is still in
+  progress (section 4).
+- Every result carries the feed position of its snapshot.
+- Two calls are two snapshots. A caller that needs several facts from one moment asks
+  one read port method for them, or compares positions.
+- Reads never wait for the writer, never read a file and never call the host.
+
+**The change stream.** The writer feeds it right after each projection commit: one
+`Committed { feed, ordinal, kind, paths }` per entry that changed something, into a
+bounded in-memory ring (8,192 entries) and to every subscriber. Feed positions are a
+store sequence recorded in each entry, never reused, continued from the journal after a
+restart. `subscribe(after)` replays from the ring and then follows; a position older
+than the ring, which includes every position from before a restart, answers `Resync`,
+and the client reads again (getting a fresh position) and subscribes from there.
+
+Families turn paths into their events. The work family emits `work.changed` to the web
+process over its office connection (the web process has no database). The messaging
+family wakes the waiters of `agent-os wait` and of an ask when a message or a
+participant file for that recipient commits. Nothing polls the database.
+
 ## 8. Speed
 
 ## 9. Engine independence
