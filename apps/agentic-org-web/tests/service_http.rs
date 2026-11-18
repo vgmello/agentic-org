@@ -283,7 +283,7 @@ fn connect(address: SocketAddr) -> TcpStream {
 
 fn exchange(address: SocketAddr, path: &str, body: &[u8]) -> Wire {
     let mut stream = connect(address);
-    write!(stream, "POST {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
+    write!(stream, "POST {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
     stream.write_all(body).unwrap();
     Wire::read(stream)
 }
@@ -323,7 +323,7 @@ fn rowan_b105_literal_fragment_uses_the_same_effective_api_target() {
 fn rowan_b105_hashes_in_chunked_business_data_remain_ordinary_data() {
     let server = Running::start(ApiLimits::default());
     let mut stream = connect(server.address);
-    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n", address = server.address).unwrap();
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n", address = server.address).unwrap();
     // A body chunk can look exactly like a request line. It is not a request target.
     for chunk in ["{\"value\":\"", "GET /# HTTP/1.1", "\"}"] {
         write!(stream, "{:x}\r\n{chunk}\r\n", chunk.len()).unwrap();
@@ -338,7 +338,7 @@ fn rowan_b105_hashes_in_chunked_business_data_remain_ordinary_data() {
 fn rowan_b105_next_keepalive_target_uses_the_same_effective_path() {
     let server = Running::start(ApiLimits::default());
     let mut stream = connect(server.address);
-    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Length: 2\r\n\r\n{{}}POST /api/v1/test/read#fragment HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}", address = server.address).unwrap();
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}POST /api/v1/test/read#fragment HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}", address = server.address).unwrap();
     let mut response = String::new();
     // Both requests are fully read; the lingering close leaves no reset.
     stream.read_to_string(&mut response).unwrap();
@@ -366,10 +366,10 @@ fn path_json_and_body_refusals_use_the_shared_response_policy_before_dispatch() 
         .request("/api/v1/test/read", &[b'x'; 17])
         .assert_error_headers(413);
     let mut malformed = connect(server.address);
-    write!(malformed, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\ninvalid\r\n", address = server.address).unwrap();
+    write!(malformed, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\ninvalid\r\n", address = server.address).unwrap();
     Wire::read(malformed).assert_error_headers(400);
     let mut stream = connect(server.address);
-    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: 10\r\n\r\n{{", address = server.address).unwrap();
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 10\r\n\r\n{{", address = server.address).unwrap();
     Wire::read(stream).assert_error_headers(503);
     assert_eq!(server.executed.load(Ordering::Acquire), 0);
     let valid = server.request("/api/v1/test/read", b"{}");
@@ -518,7 +518,7 @@ fn an_incomplete_keepalive_body_is_closed_after_its_ingress_deadline() {
         .unwrap();
     write!(
         stream,
-        "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Length: 10\r\n\r\n{{",
+        "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nContent-Length: 10\r\n\r\n{{",
         address = server.address
     )
     .unwrap();
@@ -551,7 +551,7 @@ fn b106_wrong_host_or_origin_never_reaches_route() {
     for (headers, status) in [
         (
             format!(
-                "Host: attacker.test\r\nOrigin: http://{}\r\n",
+                "Host: attacker.test\r\nOrigin: http://{}\r\nContent-Type: application/json\r\n",
                 server.address
             ),
             400,
@@ -583,7 +583,10 @@ fn b106_wrong_host_or_origin_never_reaches_route() {
 fn b106_host_target_and_origin_guards_cover_static_and_other_api_versions_on_the_wire() {
     let server = Running::start(ApiLimits::default());
     let valid_host = format!("Host: {}\r\n", server.address);
-    let valid = format!("{valid_host}Origin: http://{}\r\n", server.address);
+    let valid = format!(
+        "{valid_host}Origin: http://{}\r\nContent-Type: application/json\r\n",
+        server.address
+    );
     for (method, path, headers, status, code) in [
         (
             "GET",
