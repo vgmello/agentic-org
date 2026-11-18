@@ -29,11 +29,11 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | --- | ---: |
 | Done | 9 |
 | In progress | 62 |
-| Planned | 53 |
+| Planned | 54 |
 | Blocked | 1 |
 | Deferred | 42 |
 | Needs verification | 0 |
-| **Total** | **167** |
+| **Total** | **168** |
 
 ## Feature tables
 
@@ -231,6 +231,7 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 | [ ] | FC-106 | [Goals, reminders and automatic memory consolidation](specs/employee-supervision-ux.md) | Deferred | Scheduling/memory engine remains separate pending selection. |
 | [ ] | FC-107 | [Private specialists and child delegation engines](specs/employee-supervision-ux.md) | Deferred | Native delegate/replica orchestration requires separate selection and execution/accounting boundaries. |
 | [ ] | FC-161 | [Selectable agent isolation with a dedicated OS user](adr/0015-agent-isolation-modes.md) | Planned | The launch contract has no isolation setting and agents share the service user; the macOS spike of decision 7 and criteria ISO-1 to ISO-9 are unmet. Includes the private agent home and the sign-in from the subscription pool (decisions 10 to 12). |
+| [ ] | FC-168 | [The agent command line: one grammar, one answer envelope, one table of commands](design/agent-os-command-line.md) | Planned | Owner requirement [REQ-08](specs/req-08-agent-os-cli-and-kernel-primitives.md), 2026-11-18. `apps/agent-os/src/main.rs` parses by hand with positional arguments, prints text unless `--json` is given and has no schema, dry run or structured error hint. Remaining: the shared command library and its contract tests (K1, CLI-1 to CLI-14), then each domain's commands with the increment that builds the domain, on macOS and Linux. Process packages, the information architecture index, artifacts and the event bus wait for the owner's baseline requirements. |
 
 ### Roles, processes and retrospectives
 

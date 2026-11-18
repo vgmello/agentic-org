@@ -194,7 +194,7 @@ v1 §3.6 holds, with these changes for the office model:
 
 A hire is approved by a person: the organization's owner, or a person in the lead chain of the team the new agent joins (that team's lead, or a lead of a team above it). No agent approves a hire, and no flag, role, team name or other field on a record grants the right; the service derives it from the person's position when the approval is submitted ([employee structure](../design/organization-data/04-agent-structure.md)).
 
-**The route.** A hire request (from an agent or a person, through `@hr`, `agent-os hire request` or the app's Hire) becomes a **hire proposal**, drafted by the HR lead, or built from the fields the requester filled in (Fill in the details yourself, §7): optional role, title and reporting, required home team, separate execution profile/model and office choices, and the cost estimate once it exists (§7 Review). The proposal then goes to its **approver**:
+**The route.** A hire request (from an agent or a person, through `@hr`, `agent-os hr hire` or the app's Hire) becomes a **hire proposal**, drafted by the HR lead, or built from the fields the requester filled in (Fill in the details yourself, §7): optional role, title and reporting, required home team, separate execution profile/model and office choices, and the cost estimate once it exists (§7 Review). The proposal then goes to its **approver**:
 
 1. The nearest person in the lead chain of the new agent's home team: that team's lead if it is a person, otherwise the nearest person leading a team above it.
 2. Otherwise **the owner**.
@@ -293,7 +293,7 @@ Task references are the same everywhere, for example T-A15. All task types use T
 - APPR-5 · Every approved hire records who requested and who approved it, on the new agent's profile and in Activity, and the owner sees it on Home.
 - APPR-6 · The owner can approve or reject any proposal at any time, and a proposal waiting on a lead for over a day is shown to the owner.
 - APPR-7 · Above the optional weekly or cost limit, a proposal goes to the owner and says why.
-- APPR-8 · `agent-os hire request` works with the same words as the app; approving and rejecting are done by a person and need a reason. When the HR lead can't run, `hire request` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire."
+- APPR-8 · `agent-os hr hire` works with the same words as the app and answers `gate_required` with the proposal and its approver; approving and rejecting are done by a person and need a reason. When the HR lead can't run, `hr hire` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire."
 - APPR-9 · A proposal waiting on a lead for over a day also shows to the owner, and the first answer decides. A proposal whose approver is deactivated moves to the next person up the lead chain, or to the owner, and says so.
 - APPR-10 · After approval a request shows Hiring…, then Hired. If hiring stops partway, it shows "Approved, not hired: <failed step>" with Try again, the owner gets a Needs you item, the steps already done are named, finishing needs no new approval, and the agent is shown in no chart, roster or picker until the hire completes.
 

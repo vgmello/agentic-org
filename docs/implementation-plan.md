@@ -27,7 +27,7 @@ single office on macOS. Its steps, in order:
 
 | Step | A person can | Increments |
 | --- | --- | --- |
-| 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
+| 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 and K1 alongside |
 | 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1a to B1c, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
 | 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
@@ -232,6 +232,30 @@ Three things to know about the order:
 - **Needs:** A3. A4 lands on the office store as it is. B1b then rebuilds that store
   underneath it and makes organization creation the first accepted transaction.
 
+### K1 · The command contract
+
+- **Outcome:** none a person can see. It is a foundation: every command of `agent-os`
+  and `agentic-org` is written against one grammar and answers in one format, and a
+  test suite holds every later command to it.
+- **Build:** the shared command library of the
+  [agent command line design](design/agent-os-command-line.md): the table of commands;
+  the parser (`<resource> <verb>`, named flags, no positional arguments); the three ways
+  to give input (flags, `--json`, `--input-file` or `--stdin`); the answer envelope and
+  its three formats; `--help` and `--schema` generated from the table; exit codes;
+  `operation new`; and the contract tests, run against a test office. No command of
+  today is converted here. Each later increment adds its own rows and deletes what they
+  replace.
+- **Read:** [REQ-08](specs/req-08-agent-os-cli-and-kernel-primitives.md),
+  [agent command line design](design/agent-os-command-line.md) sections 2, 7 and 8.
+  Row FC-168.
+- **Code today:** `apps/agent-os/src/main.rs` parses arguments by hand, with positional
+  arguments and text output; none of it is kept.
+- **Done when:** CLI-1, CLI-2, CLI-3, CLI-7, CLI-8 and CLI-11 pass for every row in the
+  table against the test office, and a row is added in a test without touching the
+  parser. The first use on the real path is A5 and B2.
+- **Needs nothing and can start at any time.** A5 and every increment that adds a
+  command need it.
+
 ### A5 · A person on the command line
 
 - **Outcome:** a person signs in from a terminal and runs commands against the running
@@ -244,7 +268,7 @@ Three things to know about the order:
     when its connection closes.
   - The person's executable is `agentic-org`. After `agentic-org sign-in` it offers the
     same office commands that `agent-os` offers an agent (teams, people, tasks,
-    messages), from one shared library, under the person's name. `agent-os` is for
+    messages), from the one shared library of K1, under the person's name. `agent-os` is for
     agents only and refuses to run without the binding of a run the office started.
   - A person-started command names the instance and the office, or uses a saved context
     bound to those two IDs. With neither it fails and says how to select one.
@@ -407,6 +431,10 @@ on the offers of design section 10.
 - **Build:** the organization, teams, employees and roles of the data contract. One home
   team per employee. One status field. A team lead who is a direct member. HQ gives
   teams their numbers. The many-to-many membership model is deleted.
+- **Commands:** `org inspect`, `team roster`, `agent inspect`, and the owner's commands
+  for teams and people, which this increment names under the grammar. With the first
+  write: `--dry-run`, `--idempotency-key`, `--if-match`, `grant check` and
+  `operation inspect` ([command line design](design/agent-os-command-line.md), sections 2.6, 2.7 and 3.2; CLI-4, 5, 6 and 10).
 - **Read:** [organization structure](design/organization-data/01-organization-structure.md),
   [agent structure](design/organization-data/04-agent-structure.md),
   [identity and numbering](design/organization-data/06-identity-and-numbering.md),
@@ -427,6 +455,8 @@ on the offers of design section 10.
   contributing teams. Creating a project creates its team by default: a new team
   named after the project, under the top-level team, accountable for it. Naming an
   existing team instead stays possible. No features, releases or repositories yet.
+- **Commands:** `project list`, `project inspect`, and `project create` for the owner
+  ([command line design](design/agent-os-command-line.md), section 3.2).
 - **Read:** [project structure](design/organization-data/02-project-structure.md). Rows
   FC-030, FC-038.
 - **Done when:** a project and its team exist after a restart, created from a terminal
@@ -552,6 +582,9 @@ on the offers of design section 10.
   - The built-in HR lead drafts the proposal once agents can run (C3). Until then, and
     whenever HR cannot run, the same flow works with the form.
   - Edit, move, pause, resume and offboard an agent.
+- **Commands:** `hr roles`, `hr inspect-role` and `hr hire`, which answers
+  `gate_required` with the proposal and its approver ([command line design](design/agent-os-command-line.md), section 3.2;
+  CLI-14).
 - **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
   hire flow; who approves; STAFF and HRL criteria), [roles UX](specs/roles-ux.md),
   [agent structure](design/organization-data/04-agent-structure.md),
@@ -571,6 +604,10 @@ on the offers of design section 10.
   description, with the product stating the reduced protection of that mode; one vendor
   adapter behind the runtime contract; one open turn per agent, started only by an
   explicit instruction; `agent-os` bound to the run the office started.
+- **Commands:** the binding and the `AGENT_OS_` launch variables; `agent-os` refuses
+  to run without a binding; `session inspect` and `grant list`; the short catalogue in
+  the agent's instructions; an empty MCP configuration ([command line design](design/agent-os-command-line.md),
+  sections 2.5, 2.8, 2.10 and 3.1; CLI-9, 11 and 12).
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
@@ -603,6 +640,8 @@ on the offers of design section 10.
   its work, with the non-overridable ones marked as must-follow.
 - **Build:** the one-chain resolution (organization, the accountable team's chain, the
   project) and its delivery at launch.
+- **Commands:** `process catalog`, `process inspect`, `policy list`, `policy inspect`,
+  `skill list` and `skill read` ([command line design](design/agent-os-command-line.md), section 3.5).
 - **Read:** [processes design](design/processes.md), [processes UX](specs/processes-ux.md).
   Rows FC-110, FC-112.
 - **Code today:** `crates/org-process` resolves several chains, which the design
@@ -624,6 +663,10 @@ on the offers of design section 10.
   - A send is acknowledged at the local commit and relayed afterwards.
   - `agent-os` talks to the office for every call and gains the long-running mode. The
     file queue, `crates/org-spool` and the route through it are deleted.
+- **Commands:** `channel list`, `join`, `leave` and `post`; `thread list`, `read`,
+  `reply`, `done`, `defer` and `wait`; `agent status`; `session attach`, which is the
+  long-running mode. Today's `msg` commands are deleted with the file queue
+  ([command line design](design/agent-os-command-line.md), sections 2.9, 3.3 and 3.7; CLI-13).
 - **Read:** [messaging and chat](design/organization-data/15-messaging-and-chat.md),
   [ADR-0003](adr/0003-agent-messaging-office-first.md),
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) (ACK-1 to ACK-9),
@@ -649,6 +692,8 @@ on the offers of design section 10.
     single choice, multiple choice, yes/no, free text. A default is preselected.
   - A required ask that is not answered in time returns "required answer pending". The
     suspension that follows is increment C6.
+- **Commands:** `channel ask` and `consult ask`, with the `timed_out` and `withdrawn`
+  outcomes ([command line design](design/agent-os-command-line.md), sections 2.3 and 3.3; CLI-14).
 - **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
   [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
   (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
@@ -660,6 +705,9 @@ on the offers of design section 10.
 
 - **Outcome:** an agent that cannot continue without an answer is stopped after being
   told, and starts again in the same session when the answer arrives.
+- **Commands:** the `suspended` outcome; `gate open` and `gate status`, a gate being a
+  required yes-or-no ask to the person above ([command line design](design/agent-os-command-line.md), section 3.3;
+  CLI-14).
 - **Read:** [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 5 to 13.
   Row FC-166.
 - **Done when:** ASK-3, ASK-5, ASK-6, ASK-7 and ASK-9 pass, and the presence part of
@@ -710,6 +758,8 @@ on the offers of design section 10.
 - **Build:** the task commands of `agent-os`, with the project taken from the agent's
   context and required when there is none; the board, list and detail screens against
   the real API, updated by the change stream.
+- **Commands:** `task create`, `list`, `inspect`, `update`, `transition`, `assign`,
+  `comment` and `watch`, and `checklist` ([command line design](design/agent-os-command-line.md), section 3.4).
 - **Read:** [work items UX](specs/work-items-ux.md) (TSK, BUG, CHK, WORK criteria),
   [identity and numbering, default project](design/organization-data/06-identity-and-numbering.md#stable-ids-readable-references-and-scopes).
   Rows FC-038, FC-039, FC-043.
@@ -722,6 +772,8 @@ on the offers of design section 10.
 
 - **Outcome:** an agent works in a worktree of a registered repository and the office
   pushes its task branch.
+- **Commands:** `repo list`, `repo attach` for the owner, `worktree create`, `list` and
+  `cleanup`, and `repo push` ([command line design](design/agent-os-command-line.md), section 3.6).
 - **Read:** [Git design](design/projects-git-github.md) and its open questions, which the
   engineer answers first. Rows FC-103, FC-139, FC-140.
 - **Needs:** C3, B4.
@@ -851,6 +903,9 @@ half of LNX-6 run).
   - The root refusal at the `serve` composition; the non-dumpable test drops its child
     to an unprivileged user when run as root.
   - The host's integration tests and `org-host`'s tests run on Linux.
+- **Commands:** the binding on Linux (the token, and descent from the started process);
+  the command contract tests that need an office pass on Linux for the commands that
+  exist then ([command line design](design/agent-os-command-line.md), section 5).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.1 and 4,
   [host boundary design](design/office-host-boundary.md) (admission and the verified
   rendezvous). LNX-1.
@@ -919,6 +974,9 @@ half of LNX-6 run).
   Ubuntu hosts; the container's HTTPS listener with an operator-supplied certificate
   pair and the host's verifier for it, unless A3 has built it; the documented run
   command and the `docker exec -u 0 … admin reset --user` step.
+- **Commands:** `agent-os` is in the image's release `bin/`, first on an agent's
+  `PATH`, and the image has a shell; no MCP wrapper is built ([command line design](design/agent-os-command-line.md),
+  section 5).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.4 and 3.5,
   [standalone server design](design/standalone-server.md) (service, non-interactive
   setup). LNX-2.
@@ -943,6 +1001,9 @@ half of LNX-6 run).
 - **Build:** the CI matrix runs the full workspace checks on macOS and Linux with no
   exclusion; the platform check runs with an empty allowlist; a job builds the
   container image and runs the LNX-2 send and read in it.
+- **Commands:** the command contract tests run on both systems; the catalogue and
+  every schema are byte-identical on macOS and Linux; one-shot and `session attach`
+  timings are recorded on Linux ([command line design](design/agent-os-command-line.md), section 5; CLI-11).
 - **Read:** ADR-0017. LNX-5, LNX-6.
 - **Code today:** `.github/workflows/ci.yml` excludes `org-host` and `agentic-org` from
   the Linux clippy and test runs.
