@@ -54,6 +54,19 @@ const READY_WITHIN: Duration = Duration::from_secs(60);
 /// How long a command waits for the instance locator while a starting service holds it.
 const LOCATOR_WAIT: Duration = Duration::from_secs(5);
 
+/// What a configuration that names a certificate pair is told. The host has no verifier
+/// for a supplied pair yet (the key matches the leaf, the leaf is valid now and names the
+/// origin's host, the chain parses), and a pair that was not verified is never stored.
+pub(crate) const SUPPLIED_PAIR_UNVERIFIED: &str = "\"certificate\" names a certificate pair, \
+     and this build cannot verify a supplied pair yet; remove it";
+
+/// What setup says of an HTTPS listener: the host cannot make or verify a certificate yet,
+/// and its web start serves loopback HTTP only, so nothing answers a browser at the
+/// address until it can. Said plainly at setup and never discovered at the first visit.
+pub(crate) const HTTPS_NOT_SERVED: &str = "Browser access: not available yet. This address \
+     is HTTPS, and this build cannot make or verify the listener's certificate; the service, \
+     its offices and agentic-org admin reset work without it.";
+
 /// The platform adapters setup composes.
 pub struct Platform {
     pub service: Box<dyn ServiceManager>,
@@ -439,6 +452,11 @@ pub fn configuration(path: &Path) -> Result<Configuration, String> {
     input
         .fits(org_platform_host::credentials::protected_store().ok())
         .map_err(|why| format!("{shown}: {why}; nothing was changed"))?;
+    if input.certificate.is_some() {
+        return Err(format!(
+            "{shown}: {SUPPLIED_PAIR_UNVERIFIED}; nothing was changed"
+        ));
+    }
     Ok(Configuration(input))
 }
 
@@ -874,6 +892,9 @@ pub(crate) fn run_at(
     };
     if let Some(credentials) = &record.credentials {
         say(out, format!("Secrets: {}", credentials.display()))?;
+    }
+    if record.input.listen.scheme() == org_host_control::listen::ListenMode::Https {
+        say(out, HTTPS_NOT_SERVED)?;
     }
 
     // 4. ENC-3, with the modes read back from disk.

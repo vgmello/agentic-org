@@ -396,6 +396,23 @@ fn a_configuration_file_is_read_without_changing_anything() {
     .unwrap();
     let registered = configuration(&file).unwrap();
     assert!(!registered.foreground());
+    // A supplied certificate pair is refused until the host can verify one: never stored
+    // unverified, never silently ignored.
+    let supplied = temp.path().join("https.json");
+    std::fs::write(
+        &supplied,
+        br#"{"version":1,"service":"registered","root":"/srv/agentic/instance",
+            "listen":{"address":"0.0.0.0","port":8443,"scheme":"https",
+                      "origin":"https://office.example:8443","hsts":"off"},
+            "certificate":{"chain":"/etc/tls/chain.pem","key":"/etc/tls/key.pem"}}"#,
+    )
+    .unwrap();
+    let refused = configuration(&supplied).unwrap_err();
+    assert!(
+        refused.contains("cannot verify a supplied pair yet"),
+        "{refused}"
+    );
+    std::fs::remove_file(&supplied).unwrap();
     assert_eq!(registered.0.root, PathBuf::from("/srv/agentic/instance"));
     assert_eq!(
         std::fs::read_dir(temp.path()).unwrap().count(),
