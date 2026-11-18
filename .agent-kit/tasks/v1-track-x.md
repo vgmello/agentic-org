@@ -40,7 +40,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
-| X1d `credentials` | Integrated at `f2ef6ba6`; its review was interrupted and is owed | See below |
+| X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
 | X2 first worker on Linux (LNX-1) | The Linux admission adapter is written on `x/x2-linux-admission` (`17c9ae02`), not yet verified by the lead, reviewed or integrated; the host composition is not started | See below |
 | X3 host secrets on Linux (LNX-4) | Not started | |
 | X4 web process confined on Linux (LNX-3) | Brief written; no code yet | See below |
@@ -439,9 +439,24 @@ workspace's tests, 3,164 passed, the same 22 known failures and no other. `cargo
 refusing-target lint and tests of both platform crates pass. The list is at 37 files
 and 221 predicates.
 
-**Owed.** The fresh read-only review of `fb171f20..f2ef6ba6` was started and
-interrupted by a usage limit before it reported; X1d is not accepted until it has
-run. From a Mac, on a signed and entitled build: the 16 Keychain adapter tests and
+**Review.** A fresh read-only review of `fb171f20..f2ef6ba6` (interrupted once by a
+usage limit, then resumed): accept. Every Keychain dictionary and call sequence was
+compared entry by entry with the old code and with the framework crate's source and
+is the same; no case creates a key where the old code refused, nor the reverse; the
+directory engine keeps or tightens every check of the old host-secrets store. 5
+minor, 5 nit. Repairs by the lead: the key store's documentation states the one
+error that can follow a complete store; a location's `Debug` output carries no path.
+
+**Deviations kept on purpose** (development stores only; nothing has shipped, so no
+old layout or crash residue is handled): the lock file is `.lock`, where the old
+host-secrets store used `lock`, so a development store made before this change shows
+one ignored entry in its listing and does not exclude an older host; a temporary
+left by a crash of the old add-only publish (two links) makes the new open refuse
+that store. A file named like a key but with the wrong kind or mode fails the whole
+listing, so the orphan sweep does nothing until it is fixed. Five predicates stay in
+`host_secrets/tests.rs` and leave the list in X2 with the other test files.
+
+**Owed from a Mac**, on a signed and entitled build: the 16 Keychain adapter tests and
 the engine's tests on APFS, `cargo test -p agentic-org` (`tests/keys.rs`,
 `instances.rs`, `host_control.rs`), creating an organization and restarting the
 host with the same key, and that items written before this change are still found.

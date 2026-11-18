@@ -63,7 +63,11 @@ fn keychain_service(instance_id: Option<&str>) -> String {
 /// ([`KeyStoreError::NotPlainId`]).
 pub(crate) trait KeyStore: Send + Sync {
     /// Stores `key` as office `office_id`'s key. Add-only: an existing item is
-    /// [`KeyStoreError::Exists`] and is left as it is. On any other error nothing is stored.
+    /// [`KeyStoreError::Exists`] and is left as it is. On any other error no key is replaced
+    /// and no partial item is left. One error can follow a complete store: in the
+    /// development store, a directory flush that fails after the key was published. The key
+    /// then exists although `create` failed; it belongs to no started office and the orphan
+    /// sweep removes it.
     fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError>;
 
     /// Office `office_id`'s key, or `None` if the store has no item for it. An item that isn't a

@@ -89,13 +89,36 @@ pub const MAX_NAME_BYTES: usize = 128;
 
 /// Where one item store is. The host chooses the variant; nothing here chooses one
 /// for it or falls back from one to the other.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub enum CredentialLocation<'a> {
     /// The system's protected store for a release: on macOS the Data Protection
     /// keychain. Refused on every system without one.
     Keychain(KeychainItems<'a>),
     /// A directory of owner-only files.
     Directory(DirectoryStore<'a>),
+}
+
+// No path in any output of this capability: a location prints which kind of store it
+// is and nothing of where.
+impl fmt::Debug for CredentialLocation<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Keychain(items) => f.debug_tuple("Keychain").field(items).finish(),
+            Self::Directory(store) => f.debug_tuple("Directory").field(store).finish(),
+        }
+    }
+}
+
+impl fmt::Debug for DirectoryStore<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DirectoryStore")
+            .field("anchor", &"<redacted>")
+            .field("below", &"<redacted>")
+            .field("create", &self.create)
+            .field("sharing", &self.sharing)
+            .field("suffix", &self.suffix)
+            .finish()
+    }
 }
 
 /// The Keychain items of one store: every item is a generic password of `service` in
@@ -111,7 +134,7 @@ pub struct KeychainItems<'a> {
 }
 
 /// One directory store.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct DirectoryStore<'a> {
     /// An existing directory, absolute and without `..`, owned by this user with mode
     /// exactly `0700`. Its last component is not followed if it is a symbolic link.

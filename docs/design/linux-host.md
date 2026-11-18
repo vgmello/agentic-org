@@ -350,6 +350,17 @@ impl Credentials {
 }
 ```
 
+Built in X1d in `org_platform_host::credentials`, with the location as an enum
+(`CredentialLocation::Keychain { access_group, service }` or `Directory { anchor,
+below, create, sharing, suffix }`), because exactly one store is chosen and the
+Keychain service and the directory's layout are host policy passed as data.
+`data_root` and `expect_items` arrive with X3's release store. `add` and `replace`
+report whether a temporary file was left; `list` takes the consumer's name rule and
+never opens a file that rule refuses. The directory engine's lock file is `.lock`; an
+add publishes by exclusive rename; the office-keys view holds a shared lock and opens
+at first use, the host-secrets view an exclusive one; the two development layouts on
+disk are the ones the two old development stores had.
+
 `org-host` keeps its two typed views, `keys::KeyStore` (office secrets keys) and
 `host_secrets::HostSecrets` (writer custody, TLS, pending recovery code), with their
 name rules and add-only rules, as wrappers over one `Credentials`. Errors carry kinds

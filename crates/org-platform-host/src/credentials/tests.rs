@@ -145,3 +145,19 @@ fn on_a_refusing_build_every_location_refuses_first() {
         assert_eq!(credentials(location).unwrap_err(), refused);
     }
 }
+
+#[test]
+fn a_location_prints_its_kind_and_no_path() {
+    let location = CredentialLocation::Directory(DirectoryStore {
+        anchor: std::path::Path::new("/secret/place"),
+        below: &["host-secrets", "an-instance"],
+        create: false,
+        sharing: Sharing::Exclusive,
+        suffix: ".key",
+    });
+    let printed = format!("{location:?}");
+    assert!(printed.starts_with("Directory(DirectoryStore"), "{printed}");
+    for hidden in ["/secret/place", "host-secrets", "an-instance"] {
+        assert!(!printed.contains(hidden), "{printed}");
+    }
+}
