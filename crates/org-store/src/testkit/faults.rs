@@ -135,6 +135,49 @@ struct Rule {
     repeat: bool,
 }
 
+/// A change to a directory's entries that no flush of that directory has covered yet.
+#[derive(Debug)]
+enum EntryChange {
+    /// A name that was not there before: a created file or a new link.
+    Created(PathBuf),
+    /// A name taken away, and what it held.
+    Unlinked(PathBuf, Vec<u8>),
+    /// A rename, and what the new name held before it, if anything.
+    Renamed {
+        from: PathBuf,
+        to: PathBuf,
+        replaced: Option<Vec<u8>>,
+    },
+}
+
+impl EntryChange {
+    fn directory(&self) -> Option<&Path> {
+        match self {
+            Self::Created(path) | Self::Unlinked(path, _) | Self::Renamed { to: path, .. } => {
+                path.parent()
+            }
+        }
+    }
+
+    /// Puts the directory back as it was before this change.
+    fn undo(&self) -> io::Result<()> {
+        match self {
+            Self::Created(path) => match std::fs::remove_file(path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            },
+            Self::Unlinked(path, bytes) => std::fs::write(path, bytes),
+            Self::Renamed { from, to, replaced } => {
+                std::fs::rename(to, from)?;
+                match replaced {
+                    Some(bytes) => std::fs::write(to, bytes),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     dead: bool,
@@ -143,6 +186,8 @@ struct State {
     log: Vec<(DiskOp, PathBuf)>,
     /// Per appended file: its length now, and at its last full flush.
     lengths: BTreeMap<PathBuf, (u64, u64)>,
+    /// Entry changes since the last flush of their directory, oldest first.
+    entries: Vec<EntryChange>,
     hold_flushes: bool,
     blocked_flushes: usize,
     /// Sites in the writer and flusher to die at, each after this many passes.
@@ -338,10 +383,29 @@ impl Faults {
     }
 
     /// A power cut: every appended file loses what was written after its last full flush.
-    /// The process is dead afterwards.
+    /// Directory entries survive, flushed or not. The process is dead afterwards.
     pub fn power_cut(&self) -> io::Result<()> {
+        self.cut(false)
+    }
+
+    /// A power cut that also takes every directory entry changed since the last flush of
+    /// its directory: a created file or a new link is gone, an unlinked file is back, a
+    /// rename is undone. A drive may keep any of them; [`Faults::power_cut`] is the cut
+    /// that keeps them all. Only files are modelled, not directories.
+    pub fn power_cut_losing_entries(&self) -> io::Result<()> {
+        self.cut(true)
+    }
+
+    fn cut(&self, lose_entries: bool) -> io::Result<()> {
         let mut state = self.lock();
         state.dead = true;
+        let changes = std::mem::take(&mut state.entries);
+        if lose_entries {
+            for change in changes.iter().rev() {
+                change.undo()?;
+            }
+        }
+        state.lengths.retain(|path, _| path.exists());
         for (path, (length, flushed)) in &mut state.lengths {
             if path.exists() {
                 std::fs::OpenOptions::new()
@@ -427,12 +491,16 @@ struct FaultFile {
 impl Disk for FaultDisk {
     fn open_append(&self, path: &Path) -> io::Result<Arc<dyn DiskFile>> {
         let mut opened = None;
+        let existed = path.symlink_metadata().is_ok();
         self.0.run(DiskOp::Open, path, || {
             opened = Some(RealDisk.open_append(path)?);
             Ok(())
         })?;
         let length = std::fs::metadata(path)?.len();
         let mut state = self.0.lock();
+        if !existed {
+            state.entries.push(EntryChange::Created(path.to_path_buf()));
+        }
         // What an earlier process left is taken as flushed: the journal flushes at opening.
         state
             .lengths
@@ -453,6 +521,8 @@ impl Disk for FaultDisk {
             created = Some(RealDisk.create_new(path)?);
             Ok(())
         })?;
+        let created_entry = EntryChange::Created(path.to_path_buf());
+        self.0.lock().entries.push(created_entry);
         Ok(Arc::new(FaultFile {
             faults: Arc::clone(&self.0),
             path: path.to_path_buf(),
@@ -462,16 +532,34 @@ impl Disk for FaultDisk {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        self.0.run(DiskOp::Rename, to, || RealDisk.rename(from, to))
+        let replaced = std::fs::read(to).ok();
+        self.0
+            .run(DiskOp::Rename, to, || RealDisk.rename(from, to))?;
+        self.0.lock().entries.push(EntryChange::Renamed {
+            from: from.to_path_buf(),
+            to: to.to_path_buf(),
+            replaced,
+        });
+        Ok(())
     }
 
     fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
-        self.0.run(DiskOp::Link, to, || RealDisk.link(from, to))
+        self.0.run(DiskOp::Link, to, || RealDisk.link(from, to))?;
+        let linked = EntryChange::Created(to.to_path_buf());
+        self.0.lock().entries.push(linked);
+        Ok(())
     }
 
     fn unlink(&self, path: &Path) -> io::Result<()> {
+        let held = std::fs::read(path).ok();
         self.0.run(DiskOp::Unlink, path, || RealDisk.unlink(path))?;
-        self.0.lock().lengths.remove(path);
+        let mut state = self.0.lock();
+        state.lengths.remove(path);
+        if let Some(held) = held {
+            state
+                .entries
+                .push(EntryChange::Unlinked(path.to_path_buf(), held));
+        }
         Ok(())
     }
 
@@ -482,7 +570,12 @@ impl Disk for FaultDisk {
 
     fn sync_dir(&self, path: &Path) -> io::Result<()> {
         self.0
-            .run(DiskOp::SyncDir, path, || RealDisk.sync_dir(path))
+            .run(DiskOp::SyncDir, path, || RealDisk.sync_dir(path))?;
+        let mut state = self.0.lock();
+        state
+            .entries
+            .retain(|change| change.directory() != Some(path));
+        Ok(())
     }
 }
 

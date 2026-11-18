@@ -713,10 +713,23 @@ impl Journal {
             }
         }
         firsts.sort_unstable();
+        // Nothing on the drive is changed until the confirmed head has been compared:
+        // an opening that refuses leaves every byte where it found it.
+        let mut repairs: Vec<Repair> = Vec::new();
         while firsts.len() > 1 && firsts[1] <= base.ordinal + 1 {
             let path = segments_dir.join(segment_name(firsts.remove(0)));
-            disk.unlink(&path)
-                .map_err(|e| io_error(&path, "remove", &e))?;
+            repairs.push(Repair::Unlink(path));
+        }
+        // The last of the released segments has no successor's name to prove it: a cut
+        // that lost its unlink can also have lost the entry of the segment after it. It
+        // is told by what it holds.
+        if let Some(first) = firsts.first().copied().filter(|f| *f <= base.ordinal) {
+            let path = segments_dir.join(segment_name(first));
+            let bytes = fs::read(&path).map_err(|e| io_error(&path, "read", &e))?;
+            if ends_at_or_below(&bytes, first, base.ordinal) {
+                firsts.remove(0);
+                repairs.push(Repair::Unlink(path));
+            }
         }
 
         let mut point = base.clone();
@@ -729,8 +742,7 @@ impl Journal {
             let path = segments_dir.join(segment_name(first));
             if truncated.is_some() {
                 // Everything after a torn entry was never acknowledged durable.
-                disk.unlink(&path)
-                    .map_err(|e| io_error(&path, "remove", &e))?;
+                repairs.push(Repair::Unlink(path));
                 continue;
             }
             if first != point.ordinal + 1 {
@@ -747,8 +759,7 @@ impl Journal {
                     return Err(JournalError::MissingPredecessor { ordinal: first });
                 }
                 truncated = Some(point.ordinal + 1);
-                disk.unlink(&path)
-                    .map_err(|e| io_error(&path, "remove", &e))?;
+                repairs.push(Repair::Unlink(path));
                 continue;
             }
             let bytes = fs::read(&path).map_err(|e| io_error(&path, "read", &e))?;
@@ -775,8 +786,11 @@ impl Journal {
                 .open_append(&path)
                 .map_err(|e| io_error(&path, "open", &e))?;
             if good < bytes.len() {
-                file.truncate(good as u64)
-                    .map_err(|e| io_error(&path, "truncate", &e))?;
+                repairs.push(Repair::Truncate {
+                    path: path.clone(),
+                    file: Arc::clone(&file),
+                    length: good as u64,
+                });
             }
             kept.push((path.clone(), Arc::clone(&file)));
             active = Some(file);
@@ -814,6 +828,18 @@ impl Journal {
             }
         }
 
+        // The journal is this writer's and holds the confirmed head: only now is the
+        // torn tail cut away and what a release left behind removed.
+        for repair in repairs {
+            match repair {
+                Repair::Unlink(path) => disk
+                    .unlink(&path)
+                    .map_err(|e| io_error(&path, "remove", &e))?,
+                Repair::Truncate { path, file, length } => file
+                    .truncate(length)
+                    .map_err(|e| io_error(&path, "truncate", &e))?,
+            }
+        }
         // Make what was kept durable before anything is built on it.
         disk.sync_dir(&segments_dir)
             .map_err(|e| flush_error(&segments_dir, &e))?;
@@ -1070,7 +1096,9 @@ impl Journal {
 
     /// Drops every rolled segment whose entries are all at or below `ordinal` and the
     /// materialized mark. `checkpoint.json` is written and flushed first, so the chain
-    /// always has a verifiable start. Returns how many segments were dropped.
+    /// always has a verifiable start; and the segment directory is flushed before that,
+    /// so the segment the checkpoint leads to is on the drive by name before the
+    /// checkpoint names it. Returns how many segments were dropped.
     pub(crate) fn release_through(&self, ordinal: u64) -> Result<usize, JournalError> {
         let (drop, base) = {
             let inner = self.inner();
@@ -1095,6 +1123,12 @@ impl Journal {
         };
         let bytes =
             serde_json::to_vec(&checkpoint).map_err(|e| JournalError::Internal(e.to_string()))?;
+        // The segment kept after the released ones may have been rolled since the last
+        // flush: its directory entry must not be losable once the checkpoint is.
+        let segments = self.dir.join("segments");
+        self.disk
+            .sync_dir(&segments)
+            .map_err(|e| flush_error(&segments, &e))?;
         write_small(
             self.disk.as_ref(),
             &self.dir,
@@ -1114,7 +1148,6 @@ impl Journal {
                 .unlink(path)
                 .map_err(|e| io_error(path, "remove", &e))?;
         }
-        let segments = self.dir.join("segments");
         self.disk
             .sync_dir(&segments)
             .map_err(|e| flush_error(&segments, &e))?;
@@ -1125,6 +1158,16 @@ impl Journal {
     pub fn segment_firsts(&self) -> Vec<u64> {
         self.inner().segments.iter().map(|s| s.first).collect()
     }
+}
+
+/// A change opening makes to the drive, held back until the opening is known to pass.
+enum Repair {
+    Unlink(PathBuf),
+    Truncate {
+        path: PathBuf,
+        file: Arc<dyn DiskFile>,
+        length: u64,
+    },
 }
 
 enum Bad {
@@ -1154,29 +1197,53 @@ fn scan(
             ordinal,
             reason: reason.to_owned(),
         };
-        let rest = &bytes[offset..];
-        let Some(length) = rest.first_chunk::<4>() else {
-            return Err(torn("a cut length"));
-        };
-        let length = u32::from_be_bytes(*length) as usize;
-        let total = 4 + length + TRAILER;
-        if length == 0 || total > MAX_ENTRY_BYTES {
-            return Err(torn("an impossible length"));
-        }
-        if rest.len() < total {
-            return Err(torn("a cut entry"));
-        }
-        let sha256 = Sha256::of(&rest[4..4 + length]);
-        if sha256.as_bytes()[..] != rest[4 + length..total] {
-            return Err(torn("its hash does not match its bytes"));
-        }
+        let (frame, sha256) = whole_frame(&bytes[offset..]).map_err(torn)?;
         let chain = |reason: String| Bad::Chain { ordinal, reason };
-        let entry = Entry::parse(&rest[..total], sha256).map_err(chain)?;
+        let entry = Entry::parse(frame, sha256).map_err(chain)?;
         *point = point.after(&entry, identity).map_err(chain)?;
         entries.push(Arc::new(entry));
-        offset += total;
+        offset += frame.len();
     }
     Ok(offset)
+}
+
+/// The first frame of `rest`, if it is whole and its hash matches, or what a cut left.
+fn whole_frame(rest: &[u8]) -> Result<(&[u8], Sha256), &'static str> {
+    let Some(length) = rest.first_chunk::<4>() else {
+        return Err("a cut length");
+    };
+    let length = u32::from_be_bytes(*length) as usize;
+    let total = 4 + length + TRAILER;
+    if length == 0 || total > MAX_ENTRY_BYTES {
+        return Err("an impossible length");
+    }
+    if rest.len() < total {
+        return Err("a cut entry");
+    }
+    let sha256 = Sha256::of(&rest[4..4 + length]);
+    if sha256.as_bytes()[..] != rest[4 + length..total] {
+        return Err("its hash does not match its bytes");
+    }
+    Ok((&rest[..total], sha256))
+}
+
+/// Whether a segment named `first` holds only whole entries, numbered from `first`
+/// without a gap, the last of them at or below `limit`: a segment a release had passed.
+/// Its chain cannot be verified (its predecessor is gone) and need not be: nothing in it
+/// is read again.
+fn ends_at_or_below(bytes: &[u8], first: u64, limit: u64) -> bool {
+    let (mut offset, mut next) = (0, first);
+    while offset < bytes.len() {
+        let Ok((frame, sha256)) = whole_frame(&bytes[offset..]) else {
+            return false;
+        };
+        if next > limit || Entry::parse(frame, sha256).map(|e| e.ordinal()) != Ok(next) {
+            return false;
+        }
+        next += 1;
+        offset += frame.len();
+    }
+    true
 }
 
 fn read_small(path: &Path) -> Result<Option<Vec<u8>>, JournalError> {

@@ -717,6 +717,143 @@ fn a_release_cut_after_its_checkpoint_is_finished_at_the_next_opening() {
     assert!(!f.segment(2).exists() && !f.segment(3).exists());
 }
 
+impl Fixture {
+    /// Three flushed one-entry segments, a fourth rolled since the last flush, and a
+    /// release through 3 that dies before its first unlink. Then the power goes, taking
+    /// every directory entry that was not flushed.
+    fn cut_in_a_release(&self) {
+        let journal = self.create();
+        journal.set_segment_bytes(1);
+        self.fill(&journal, 3);
+        journal.set_materialized(3).unwrap();
+        let fourth = next(&journal.head(), &self.identity);
+        journal.append(std::slice::from_ref(&fourth)).unwrap();
+        assert_eq!(journal.segment_firsts(), [1, 2, 3, 4]);
+        self.faults.crash(DiskOp::Unlink, Target::Segment, 1, false);
+        assert!(journal.release_through(3).is_err());
+        drop(journal);
+        self.faults.power_cut_losing_entries().unwrap();
+        self.faults.revive();
+    }
+
+    /// Every segment file and what it holds.
+    fn segment_bytes(&self) -> BTreeMap<PathBuf, Vec<u8>> {
+        let dir = journal_dir(&self.root, &self.identity).join("segments");
+        let listing = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path());
+        listing
+            .map(|path| (path.clone(), fs::read(&path).unwrap()))
+            .collect()
+    }
+}
+
+/// The checkpoint names the segment after the released ones. That segment may have been
+/// rolled since the last flush, so the release flushes the directory first: a power cut
+/// cannot keep the checkpoint and lose the segment it leads to.
+#[test]
+fn a_power_cut_in_a_release_keeps_the_segment_the_checkpoint_leads_to() {
+    let f = fixture();
+    f.cut_in_a_release();
+    // On the drive by name; its one entry was never flushed.
+    assert_eq!(fs::metadata(f.segment(4)).unwrap().len(), 0);
+    assert!(f.segment(1).exists() && f.segment(3).exists());
+
+    let (journal, recovered) = f.open().unwrap();
+    assert_eq!((journal.base().ordinal, journal.head().ordinal), (3, 3));
+    assert_eq!(journal.segment_firsts(), [4]);
+    assert!(recovered.entries.is_empty());
+    assert!(!f.segment(1).exists() && !f.segment(3).exists());
+    f.fill(&journal, 1);
+    drop(journal);
+    let (journal, recovered) = f.open().unwrap();
+    assert_eq!((journal.head().ordinal, recovered.entries.len()), (4, 1));
+}
+
+/// A journal can be left with the checkpoint and only released segments (one written
+/// before the release flushed the directory first). The last of them has no successor to
+/// prove it by name: it is dropped when all it holds is whole and at or below the
+/// checkpoint, and refused otherwise.
+#[test]
+fn a_sole_segment_wholly_below_the_checkpoint_is_dropped_and_any_other_refuses() {
+    let f = fixture();
+    f.cut_in_a_release();
+    fs::remove_file(f.segment(4)).unwrap();
+    let whole = fs::read(f.segment(3)).unwrap();
+
+    // Not whole: it is not what a release left.
+    fs::write(f.segment(3), &whole[..whole.len() - 1]).unwrap();
+    let before = f.segment_bytes();
+    assert_eq!(
+        f.open().err(),
+        Some(JournalError::MissingPredecessor { ordinal: 3 })
+    );
+    assert_eq!(f.segment_bytes(), before);
+    // Holding an entry past the checkpoint: the same.
+    let third = JournalPoint {
+        ordinal: 3,
+        sha256: Sha256::of(b"entry three"),
+        high_waters: HighWaters::default(),
+        feed: FeedPosition(3),
+    };
+    let stray = next(&third, &f.identity);
+    let mut longer = whole.clone();
+    longer.extend_from_slice(stray.stored());
+    fs::write(f.segment(3), &longer).unwrap();
+    assert_eq!(
+        f.open().err(),
+        Some(JournalError::MissingPredecessor { ordinal: 3 })
+    );
+
+    fs::write(f.segment(3), &whole).unwrap();
+    let (journal, recovered) = f.open().unwrap();
+    assert_eq!((journal.base().ordinal, journal.head().ordinal), (3, 3));
+    assert!(journal.segment_firsts().is_empty() && recovered.entries.is_empty());
+    assert!(f.segment_bytes().is_empty());
+    // The journal goes on from the checkpoint.
+    f.fill(&journal, 2);
+    assert_eq!(journal.segment_firsts(), [4]);
+    drop(journal);
+    let (journal, recovered) = f.open().unwrap();
+    assert_eq!((journal.head().ordinal, recovered.entries.len()), (5, 2));
+}
+
+/// Recovery removes a torn tail only from a journal it accepts. An opening that ends in
+/// a fork changes nothing: the tail may be the only copy of what was acknowledged, and
+/// it is the evidence.
+#[test]
+fn an_opening_that_refuses_a_fork_leaves_every_byte_of_a_torn_tail() {
+    let f = fixture();
+    let journal = f.create();
+    journal.set_segment_bytes(1);
+    let entries = f.fill(&journal, 5);
+    drop(journal);
+    // Entry 3 is cut one byte short: a repair would empty its segment and remove the
+    // two after it.
+    let third = fs::read(f.segment(3)).unwrap();
+    fs::write(f.segment(3), &third[..third.len() - 1]).unwrap();
+    let before = f.segment_bytes();
+    assert_eq!(before.len(), 5);
+
+    let mut other = head_of(&entries[1]);
+    other.sha256 = Sha256::of(b"another history");
+    f.custody.hold(&f.identity, other);
+    f.faults.clear_log();
+    assert_eq!(f.open().err(), Some(JournalError::Fork { ordinal: 2 }));
+    assert_eq!(f.segment_bytes(), before);
+    let changed = [DiskOp::Unlink, DiskOp::Truncate, DiskOp::Write];
+    let log = f.faults.log();
+    assert!(log.iter().all(|(op, _)| !changed.contains(op)), "{log:?}");
+
+    // The journal the host did confirm is repaired as before.
+    f.custody.hold(&f.identity, head_of(&entries[1]));
+    let (journal, recovered) = f.open().unwrap();
+    assert_eq!(recovered.truncated, Some(3));
+    assert_eq!(journal.head().ordinal, 2);
+    assert_eq!(fs::metadata(f.segment(3)).unwrap().len(), 0);
+    assert!(!f.segment(4).exists() && !f.segment(5).exists());
+}
+
 #[test]
 fn journal_and_origin_arithmetic_never_wrap_or_restart_incarnations() {
     // A new incarnation continues the positions its anchor names.
