@@ -63,7 +63,9 @@ means for a design, and when it stops applying.
 - **Hick's law.** Decision time grows with the number and similarity of choices. Cut, group,
   recommend a default, disclose progressively. *Breaks when* the person already knows what
   they want and the list is ordered. Finding a known name in an alphabetical list is fast at
-  any length, so do not truncate one in the name of simplicity.
+  any length, so do not truncate one in the name of simplicity. It also does not apply to
+  reading: facts laid out in aligned columns are scanned, not chosen between. Removing
+  information people use, in the name of this law, trades a fast scan for a click per row.
 - **Choice overload is real but oversold.** Many similar options with no way to tell them
   apart cause people to defer or pick badly. The effect mostly disappears when options are
   categorized, when one is recommended, or when the person knows the domain. Fix the
