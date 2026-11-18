@@ -61,3 +61,8 @@ secret_text!(
     /// `admin.reset`'s results. The part after `#` is the secret; the host keeps only its digest.
     OneTimeLinkUrl
 );
+secret_text!(
+    /// A one-time link's secret: the part after `#`, which the web process forwards to the host
+    /// in `link.register`. The host keeps only its digest.
+    LinkToken
+);

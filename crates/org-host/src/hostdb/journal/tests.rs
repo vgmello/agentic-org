@@ -43,10 +43,7 @@ fn completed() -> Effect {
 fn rejected(code: org_proto::ErrorCode) -> Effect {
     Effect {
         stored: Stored::Rejected {
-            refusal: org_proto::ApiError {
-                code,
-                message: "refused".into(),
-            },
+            refusal: org_proto::ApiError::new(code, "refused"),
         },
         verifier: None,
     }

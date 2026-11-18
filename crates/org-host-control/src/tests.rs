@@ -45,6 +45,10 @@ fn op_methods() {
         (RecoveryRelease::METHOD, "recovery.release"),
         (RecoveryAcknowledge::METHOD, "recovery.acknowledge"),
         (Subscribe::METHOD, "subscribe"),
+        (crate::browser::LinkRegister::METHOD, "link.register"),
+        (crate::browser::SessionSignIn::METHOD, "session.sign_in"),
+        (crate::browser::SessionValidate::METHOD, "session.validate"),
+        (crate::browser::BrowserSessionEnd::METHOD, "session.end"),
     ] {
         assert_eq!(method, want);
     }
@@ -54,6 +58,7 @@ fn op_methods() {
         (event::OFFICE_STATUS_CHANGED, "office.status_changed"),
         (event::ACCOUNT_CHANGED, "account.changed"),
         (event::TLS_RENEW, "tls.renew"),
+        (crate::browser::SESSION_ENDED, "session.ended"),
     ] {
         assert_eq!(name, want);
     }
@@ -775,4 +780,66 @@ fn web_serving_params_are_closed_and_empty() {
     let params: WebServingParams = serde_json::from_str("{}").unwrap();
     assert_eq!(serde_json::to_value(params).unwrap(), serde_json::json!({}));
     assert!(serde_json::from_str::<WebServingParams>(r#"{"ready":true}"#).is_err());
+}
+
+#[test]
+fn browser_ops_carry_only_digests_and_hide_passwords() {
+    let digest = "ab".repeat(32);
+    let params: crate::browser::SessionSignInParams = serde_json::from_value(json!({
+        "login": "ada", "password": "correct horse battery", "client_address": "2001:db8::1",
+        "cookie_digest": digest, "proof_digest": digest,
+        "origin": {"scheme": "https", "host": "org.example", "port": 443},
+    }))
+    .unwrap();
+    assert_eq!(params.cookie_digest.0, [0xab; 32]);
+    assert!(!format!("{params:?}").contains("correct horse"));
+    // Upper-case or short digests, unknown fields and a raw cookie field are refused.
+    for bad in [
+        json!({"login": "a", "password": "p", "client_address": "127.0.0.1", "cookie_digest": "AB".repeat(32),
+               "proof_digest": digest, "origin": {"scheme": "https", "host": "h", "port": 1}}),
+        json!({"login": "a", "password": "p", "client_address": "127.0.0.1", "cookie_digest": "ab",
+               "proof_digest": digest, "origin": {"scheme": "https", "host": "h", "port": 1}}),
+        json!({"login": "a", "password": "p", "client_address": "127.0.0.1", "cookie_digest": digest,
+               "proof_digest": digest, "cookie": "raw", "origin": {"scheme": "https", "host": "h", "port": 1}}),
+    ] {
+        assert!(serde_json::from_value::<crate::browser::SessionSignInParams>(bad).is_err());
+    }
+    let register: crate::browser::LinkRegisterParams = serde_json::from_value(json!({
+        "link": "secret-token", "login": "ada", "password": "correct horse battery",
+        "cookie_digest": digest, "proof_digest": digest,
+        "origin": {"scheme": "http", "host": "localhost", "port": 8080},
+    }))
+    .unwrap();
+    let shown = format!("{register:?}");
+    assert!(!shown.contains("secret-token") && !shown.contains("correct horse"));
+    assert_eq!(
+        serde_json::to_value(register.proof_digest).unwrap(),
+        json!(digest)
+    );
+}
+
+#[test]
+fn host_errors_carry_retry_and_rule_fields_only_when_set() {
+    let plain = org_proto::ApiError::new(
+        org_proto::ErrorCode::NotAuthorized,
+        "authentication refused",
+    );
+    assert_eq!(
+        serde_json::to_value(&plain).unwrap(),
+        json!({"code": "not_authorized", "message": "authentication refused"})
+    );
+    let limited = serde_json::to_value(org_proto::ApiError::rate_limited(1500)).unwrap();
+    assert_eq!(limited["code"], "rate_limited");
+    assert_eq!(limited["retry_after_ms"], 1500);
+    let rule = serde_json::to_value(org_proto::ApiError::rule("login", "format")).unwrap();
+    assert_eq!(
+        (
+            rule["code"].as_str(),
+            rule["field"].as_str(),
+            rule["rule"].as_str()
+        ),
+        (Some("invalid_request"), Some("login"), Some("format"))
+    );
+    let back: org_proto::ApiError = serde_json::from_value(limited).unwrap();
+    assert_eq!(back.retry_after_ms, Some(1500));
 }
