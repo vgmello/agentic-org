@@ -1,5 +1,6 @@
 //! Connection lifetime bounds. HTTP parsing remains Hyper's responsibility.
 
+mod linger;
 mod server;
 pub mod write_stall;
 

@@ -20,6 +20,7 @@ use tokio::task::JoinSet;
 use tokio::time;
 use tokio_rustls::TlsAcceptor;
 
+use super::linger::{linger, reclaimed, Reclaim};
 use super::write_stall::WriteStall;
 use crate::origin::check_listener;
 use crate::tls::TlsCertificates;
@@ -161,14 +162,14 @@ where
                 };
                 match mode {
                     ListenMode::HttpLoopback => {
-                        let _ = serve_connection(stream, handler, limits).await;
+                        serve_then_linger(stream, handler, limits).await;
                     }
                     ListenMode::Https(certificates) => {
                         let accept = TlsAcceptor::from(certificates.server_config());
                         if let Ok(Ok(stream)) =
                             time::timeout(limits.handshake_timeout, accept.accept(stream)).await
                         {
-                            let _ = serve_connection(stream, handler, limits).await;
+                            serve_then_linger(stream, handler, limits).await;
                         }
                     }
                 }
@@ -194,6 +195,21 @@ async fn until_shutdown<F: Future, S: Future<Output = ()>>(
         future.as_mut().poll(cx).map(Some)
     })
     .await
+}
+
+/// Serve one connection, then close it with a bounded linger (see `linger`),
+/// so an early reply to a request with unread body bytes is not reset.
+async fn serve_then_linger<T, H, F>(stream: T, handler: Arc<H>, limits: HttpLimits)
+where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
+    F: Future<Output = Result<Response<Full<Bytes>>, Infallible>> + Send + 'static,
+{
+    let (stream, slot) = Reclaim::new(stream);
+    let _ = serve_connection(stream, handler, limits).await;
+    if let Some((stream, shut_down)) = reclaimed(&slot) {
+        linger(stream, shut_down).await;
+    }
 }
 
 async fn serve_connection<T, H, F>(
