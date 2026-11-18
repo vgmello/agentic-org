@@ -62,3 +62,12 @@ fn private_copy(built: &Path) -> PathBuf {
     fs::rename(&staged, &private).unwrap();
     private
 }
+
+/// What this system's admission identifies an image by, as the platform says. A test whose
+/// expected outcome differs by system takes it from this fact and expects exactly that one
+/// outcome; no outcome of another system passes. The host's tests run only where there is an
+/// admission adapter.
+pub(crate) fn image_identity() -> org_platform_host::admission::ImageIdentity {
+    org_platform_host::admission::image_identity()
+        .expect("the host's tests need an admission adapter")
+}

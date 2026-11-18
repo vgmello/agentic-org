@@ -277,9 +277,12 @@ mod tests {
         let after = org_platform::fs::testing::full_sync_counts();
         let counts = take_flush_counts();
         assert_eq!(counts[0], 2);
-        // A device flush for every file flush on a system that has one, none elsewhere.
+        // What this module counted is what the platform counted, and it is exactly the device
+        // flushes this system makes for two file flushes (its fixed fact: one each on macOS,
+        // none on GNU/Linux).
         assert_eq!(counts[1] as u64, after.device_flush - before.device_flush);
-        assert!(counts[1] == 0 || counts[1] == counts[0]);
+        let per_flush = org_platform::fs::testing::device_flushes_per_full_sync().unwrap();
+        assert_eq!(counts[1] as u64, 2 * per_flush);
         assert_eq!(counts[2], 0);
         assert_eq!(take_flush_counts(), [0; 3]);
     }

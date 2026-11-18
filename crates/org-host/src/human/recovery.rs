@@ -363,7 +363,10 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         .or(default_login)
         .ok_or("explicit --login required")?;
     let stream = UnixStream::connect(socket).map_err(error)?;
-    super::verify_host(&stream)?;
+    // Before anything is said to it, and before a password is asked for: this command signs
+    // in with a password and collects a recovery secret, and a host known only by its user
+    // is sent neither.
+    super::verify_host(&stream)?.may_receive_secrets()?;
     let mut wire = Wire::new(stream)?;
     let hello: HelloResult = wire
         .call::<Hello>(

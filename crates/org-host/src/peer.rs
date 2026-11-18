@@ -106,11 +106,17 @@ mod tests {
             Ok(peer) => {
                 assert_eq!(sampled.identity, Some(peer));
                 org_platform_host::admission::native_peers().unwrap();
-                // A peer named by its user is this process's own user here: both ends of the
-                // pair are this process.
-                if let Some(uid) = peer.uid {
-                    assert_eq!(uid, org_socket::effective_uid());
-                }
+                // Both ends of the pair are this process. Where the system names a peer by
+                // its user alone that user is this process's own; where it identifies the
+                // image, it names no user at all (the platform's fact decides which).
+                use org_platform_host::admission::ImageIdentity;
+                assert_eq!(
+                    peer.uid,
+                    match crate::test_programs::image_identity() {
+                        ImageIdentity::VerifiedBytes => Some(org_socket::effective_uid()),
+                        ImageIdentity::CodeSignature => None,
+                    }
+                );
             }
             Err(error) => {
                 assert!(unidentifiable(&error), "{error}");

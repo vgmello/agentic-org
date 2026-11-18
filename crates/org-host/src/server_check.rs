@@ -63,7 +63,7 @@ use std::io;
 use std::path::Path;
 
 use org_platform_host::admission::{
-    Admission, AdmissionError, ExpectedImage, ImageRefusal, SigningRule,
+    Admission, AdmissionError, ExpectedImage, ImageIdentity, ImageRefusal, SigningRule,
 };
 
 use crate::code_signing::HARDENED;
@@ -94,6 +94,12 @@ pub(crate) enum ServerCheck {
     Requirement(String),
     /// Same Developer ID/hardening rules, additionally forbidding Keychain entitlement.
     Gateway(String),
+    /// A release build on a system whose admission checks the bytes it executes, not a code
+    /// signature: every server must be the image the selected release names, by the digest
+    /// in its signed manifest ([`Pin`]). There is no team and no requirement there; the
+    /// publisher is whoever signed the manifest. Without a selected release nothing names
+    /// the image, and the platform refuses it ([`ImageRefusal::Unpinned`]).
+    Published,
     /// Same platform policy plus the selected publisher-signed exact image.
     Pinned(Box<ServerCheck>, Pin),
     /// No team id: no server may be started.
@@ -184,35 +190,80 @@ impl ServerCheck {
     pub(crate) fn pinned(self, pin: Pin) -> Self {
         Self::Pinned(Box::new(self), pin)
     }
+    /// The web process's check for a build (`debug`) whose app team id is `team_id`.
+    ///
+    /// It still applies the code-signature rule on every system: the web process's start and
+    /// its tests (`web`, `web/tests.rs`) state that a release build without a team id starts
+    /// no web process, and they change together with this. The rule for a system that checks
+    /// the executed bytes instead is [`Self::gateway_for_system`], ready for that change.
     pub(crate) fn gateway_for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
+        Self::gateway_for_system(debug, team_id, Some(ImageIdentity::CodeSignature))
+    }
+
+    /// The web process's check for a build (`debug`) whose app team id is `team_id`, on a
+    /// system whose admission identifies an image by `identity` (`None`: no adapter).
+    /// The same decision as [`Self::for_system`], with the web process's own requirement.
+    pub(crate) fn gateway_for_system(
+        debug: bool,
+        team_id: Option<&str>,
+        identity: Option<ImageIdentity>,
+    ) -> Result<Self, String> {
         if debug {
             return Ok(Self::Skip);
         }
-        match team_id {
-            Some(team) => crate::code_signing::developer_id_requirement(WEB_SIGNING_ID, team)
-                .map(Self::Gateway),
-            None => Ok(Self::WebRefused(
-                "no app team id (ORG_APP_TEAM_ID at build time)",
-            )),
-        }
+        let requirement = team_id
+            .map(|team| crate::code_signing::developer_id_requirement(WEB_SIGNING_ID, team))
+            .transpose()?;
+        Ok(match (identity, requirement) {
+            (Some(ImageIdentity::VerifiedBytes), _) => Self::Published,
+            (_, Some(requirement)) => Self::Gateway(requirement),
+            (_, None) => Self::WebRefused("no app team id (ORG_APP_TEAM_ID at build time)"),
+        })
     }
-    /// The check for a build (`debug`) whose app team id is `team_id`. A team id that isn't well
-    /// formed is an error, never a weaker check.
+
+    /// The check for a build (`debug`) whose app team id is `team_id`, on this system: what
+    /// identifies an image here is the platform admission's own fact
+    /// ([`org_platform_host::admission::image_identity`]). A team id that isn't well formed
+    /// is an error, never a weaker check.
     pub(crate) fn for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
+        Self::for_system(
+            debug,
+            team_id,
+            org_platform_host::admission::image_identity().ok(),
+        )
+    }
+
+    /// The check for a build (`debug`) whose app team id is `team_id`, on a system whose
+    /// admission identifies an image by `identity` (`None`: no adapter, where nothing starts
+    /// whatever this answers).
+    ///
+    /// - A debug build checks nothing: its servers are its own build output.
+    /// - Where a code signature is checked, a release build needs the team its servers are
+    ///   signed by; without one no server's signature can be checked and none is started.
+    /// - Where the executed bytes are checked, there is no signature and no team: a release
+    ///   build's servers are the images the selected release names ([`Self::Published`]).
+    ///   A team id given there is still validated and then names nothing.
+    pub(crate) fn for_system(
+        debug: bool,
+        team_id: Option<&str>,
+        identity: Option<ImageIdentity>,
+    ) -> Result<Self, String> {
         if debug {
             return Ok(ServerCheck::Skip);
         }
-        match team_id {
-            Some(team_id) => Ok(ServerCheck::Requirement(server_requirement(team_id)?)),
-            None => Ok(ServerCheck::Refuse),
-        }
+        let requirement = team_id.map(server_requirement).transpose()?;
+        Ok(match (identity, requirement) {
+            (Some(ImageIdentity::VerifiedBytes), _) => ServerCheck::Published,
+            (_, Some(requirement)) => ServerCheck::Requirement(requirement),
+            (_, None) => ServerCheck::Refuse,
+        })
     }
 
     /// What the host logs about the check at startup.
     pub(crate) fn describe(&self) -> String {
         match self {
             ServerCheck::Pinned(check, _) => format!(
-                "{}; exact selected release kernel image required",
+                "{}; exact selected release image required",
                 check.describe()
             ),
             ServerCheck::Skip => "debug build: office servers' code signatures aren't checked \
@@ -225,6 +276,9 @@ impl ServerCheck {
             ServerCheck::Gateway(requirement) => format!(
                 "gateway requires hardened code without Keychain entitlement: {requirement}"
             ),
+            ServerCheck::Published => "a server is started only from the bytes whose SHA-256 \
+                                       the selected release's signed manifest names"
+                .to_owned(),
             ServerCheck::Refuse => "WARNING: no app team id (ORG_APP_TEAM_ID at build time), so \
                                     no office server's signature can be checked: no office \
                                     server will be started"
@@ -271,7 +325,7 @@ impl ServerCheck {
             }
             ServerCheck::WebRefused(cause) => Err((*cause).into()),
             ServerCheck::Skip | ServerCheck::Requirement(_) => Ok(()),
-            ServerCheck::Gateway(_) => Ok(()),
+            ServerCheck::Gateway(_) | ServerCheck::Published => Ok(()),
             #[cfg(test)]
             ServerCheck::Scripted(_) | ServerCheck::ByPath => Ok(()),
         }
@@ -310,6 +364,9 @@ impl ServerCheck {
                 })
             }
             ServerCheck::Skip => Ok(image(true)),
+            // A release image with no requirement: only a pin can name it. A system that
+            // checks a code signature never admits it (nothing names its publisher there).
+            ServerCheck::Published => Ok(image(false)),
             ServerCheck::Requirement(requirement) => Ok(ExpectedImage {
                 macos_requirement: Some(requirement.clone()),
                 ..image(false)
@@ -466,22 +523,143 @@ mod tests {
         assert!(server_requirement("not a team").is_err());
     }
 
+    /// What this system's admission identifies an image by: the platform's own fact. Every
+    /// test below that differs by system expects exactly the outcome this names.
+    fn identity() -> ImageIdentity {
+        crate::test_programs::image_identity()
+    }
+
+    /// The office check as a pure decision over the build, the team id and what the system's
+    /// admission identifies an image by.
     #[test]
-    fn the_check_follows_the_build() {
+    fn the_check_follows_the_build_and_what_the_system_identifies_an_image_by() {
+        let signed = Some(ImageIdentity::CodeSignature);
+        let bytes = Some(ImageIdentity::VerifiedBytes);
+        // A debug build checks nothing, on every system.
+        for identity in [signed, bytes, None] {
+            for team in [Some(TEAM), None, Some("ab12")] {
+                assert_eq!(
+                    ServerCheck::for_system(true, team, identity),
+                    Ok(ServerCheck::Skip)
+                );
+            }
+        }
+        // Where a code signature is checked (and where there is no adapter at all): the
+        // team's requirement, and without a team no server is ever started.
+        for identity in [signed, None] {
+            assert_eq!(
+                ServerCheck::for_system(false, Some(TEAM), identity),
+                Ok(ServerCheck::Requirement(server_requirement(TEAM).unwrap()))
+            );
+            assert_eq!(
+                ServerCheck::for_system(false, None, identity),
+                Ok(ServerCheck::Refuse)
+            );
+        }
+        // Where the executed bytes are checked: no team is needed, and none names anything.
         assert_eq!(
-            ServerCheck::for_build(true, Some(TEAM)),
-            Ok(ServerCheck::Skip)
+            ServerCheck::for_system(false, None, bytes),
+            Ok(ServerCheck::Published)
         );
-        assert_eq!(ServerCheck::for_build(true, None), Ok(ServerCheck::Skip));
         assert_eq!(
-            ServerCheck::for_build(false, Some(TEAM)),
-            Ok(ServerCheck::Requirement(server_requirement(TEAM).unwrap()))
+            ServerCheck::for_system(false, Some(TEAM), bytes),
+            Ok(ServerCheck::Published)
         );
-        assert_eq!(ServerCheck::for_build(false, None), Ok(ServerCheck::Refuse));
-        assert!(ServerCheck::for_build(false, Some("ab12")).is_err());
+        // A malformed team id is an error everywhere, never a weaker check.
+        for identity in [signed, bytes, None] {
+            assert!(ServerCheck::for_system(false, Some("ab12"), identity).is_err());
+        }
+        // The host's own constructor is that decision for this system.
+        for (debug, team) in [(true, None), (false, None), (false, Some(TEAM))] {
+            assert_eq!(
+                ServerCheck::for_build(debug, team),
+                ServerCheck::for_system(debug, team, Some(identity()))
+            );
+        }
         assert!(ServerCheck::Refuse.may_spawn().is_err());
         assert!(ServerCheck::Refuse.describe().starts_with("WARNING"));
+        assert_eq!(
+            ServerCheck::Refuse.describe(),
+            "WARNING: no app team id (ORG_APP_TEAM_ID at build time), so no office server's \
+             signature can be checked: no office server will be started"
+        );
         assert!(ServerCheck::Skip.may_spawn().is_ok());
+    }
+
+    /// The release check of a system without code signatures: it may spawn, names a release
+    /// image with no requirement and no digest of its own, and a selected release gives it
+    /// the pin. Its log line names no signature and no team.
+    #[test]
+    fn a_published_check_names_a_release_image_that_only_a_pin_identifies() {
+        let check = ServerCheck::Published;
+        assert!(check.may_spawn().is_ok());
+        let expected = check.expected(PROGRAM.as_ref()).unwrap();
+        assert!(!expected.development);
+        assert_eq!(expected.macos_requirement, None);
+        assert_eq!((expected.sha256, expected.macos_cdhash), (None, None));
+        let pinned = check
+            .clone()
+            .pinned(Pin {
+                sha256: [7; 32],
+                macos_cdhash: None,
+            })
+            .expected(PROGRAM.as_ref())
+            .unwrap();
+        assert_eq!(
+            pinned,
+            ExpectedImage {
+                sha256: Some([7; 32]),
+                ..expected
+            }
+        );
+        let line = check.describe();
+        assert!(line.contains("signed manifest"), "{line}");
+        for foreign in ["team", "code signature", "Keychain", "hardened", "kernel"] {
+            assert!(!line.contains(foreign), "{line}");
+        }
+        let pinned_line = check.pinned(pin(7)).describe();
+        assert!(
+            pinned_line.ends_with("; exact selected release image required"),
+            "{pinned_line}"
+        );
+        assert!(!pinned_line.contains("kernel"), "{pinned_line}");
+    }
+
+    /// The web process's check as the same pure decision. The host's constructor still
+    /// applies the code-signature rule on every system (see `gateway_for_build`).
+    #[test]
+    fn the_web_check_follows_the_build_and_what_the_system_identifies_an_image_by() {
+        let signed = Some(ImageIdentity::CodeSignature);
+        let bytes = Some(ImageIdentity::VerifiedBytes);
+        for identity in [signed, bytes, None] {
+            assert_eq!(
+                ServerCheck::gateway_for_system(true, None, identity),
+                Ok(ServerCheck::Skip)
+            );
+            assert!(ServerCheck::gateway_for_system(false, Some("bad"), identity).is_err());
+        }
+        for identity in [signed, None] {
+            assert!(matches!(
+                ServerCheck::gateway_for_system(false, Some(TEAM), identity),
+                Ok(ServerCheck::Gateway(_))
+            ));
+            assert!(matches!(
+                ServerCheck::gateway_for_system(false, None, identity),
+                Ok(ServerCheck::WebRefused(_))
+            ));
+        }
+        for team in [None, Some(TEAM)] {
+            assert_eq!(
+                ServerCheck::gateway_for_system(false, team, bytes),
+                Ok(ServerCheck::Published)
+            );
+        }
+        for (debug, team) in [(true, None), (false, None), (false, Some(TEAM))] {
+            assert_eq!(
+                ServerCheck::gateway_for_build(debug, team),
+                ServerCheck::gateway_for_system(debug, team, signed)
+            );
+        }
     }
 
     #[test]
@@ -728,7 +906,9 @@ mod tests {
             ServerCheck::Skip,
             ServerCheck::Requirement("R".into()),
             ServerCheck::Gateway("W".into()),
+            ServerCheck::Published,
             ServerCheck::Skip.pinned(pin(7)),
+            ServerCheck::Published.pinned(pin(7)),
         ] {
             for refusal in &common {
                 let words = check.why(refusal);
@@ -892,24 +1072,18 @@ mod tests {
         );
         assert!(pinned.scripted().is_some());
         assert!(ServerCheck::Skip.scripted().is_none());
-        // Whether a production admission exists decides whether a scripted one does.
-        assert_eq!(
-            check.admission(PROGRAM.as_ref()).is_ok(),
-            ServerCheck::Skip.admission(PROGRAM.as_ref()).is_ok()
-        );
-        // No admission here means no adapter, or an adapter that reads the image when the
-        // admission is built and found none at this path: the system's error, never a
-        // refusal of the check.
-        match check.admission(PROGRAM.as_ref()) {
-            Ok(_) => {}
-            Err(NoAdmission::Unavailable(error)) => assert!(
-                matches!(
-                    error.kind(),
-                    io::ErrorKind::Unsupported | io::ErrorKind::NotFound
-                ),
-                "{error:?}"
-            ),
-            Err(NoAdmission::Refused(why)) => panic!("refused: {why}"),
+        // A scripted admission is built as the system's own is: of a program that is not
+        // there, at once where the image is checked on the started child (nothing is read
+        // yet), and not at all where the bytes are read when the admission is built (the
+        // system's error, never a refusal of the check).
+        for check in [check.clone(), ServerCheck::Skip] {
+            match (identity(), check.admission(PROGRAM.as_ref())) {
+                (ImageIdentity::CodeSignature, Ok(_)) => {}
+                (ImageIdentity::VerifiedBytes, Err(NoAdmission::Unavailable(error))) => {
+                    assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error:?}");
+                }
+                (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
+            }
         }
         // Building the admission started nothing and asked the script nothing.
         assert!(asked.lock().unwrap().is_empty());
@@ -921,7 +1095,8 @@ mod tests {
     }
 
     /// The by-path check (tests only) starts a development image by its path: it may spawn,
-    /// names no digest, keeps a pin, and gets an admission without the image being read.
+    /// names no digest, keeps a pin, and gets an admission without the image being read, on
+    /// every system with an adapter.
     #[test]
     fn a_by_path_check_names_a_development_image_and_reads_nothing() {
         let check = ServerCheck::ByPath;
@@ -930,60 +1105,57 @@ mod tests {
         assert!(!ServerCheck::Skip.by_path());
         let expected = check.expected(PROGRAM.as_ref()).unwrap();
         assert!(expected.development && expected.sha256.is_none());
-        // Nothing at the path is read when the admission is built, on any system with an
-        // adapter: the program is opened only when a child is started.
-        match check.admission(PROGRAM.as_ref()) {
-            Ok(admission) => {
-                assert_eq!(admission.image_sha256(), None);
-                assert_eq!(check.describe_admitted(PROGRAM.as_ref(), &admission), None);
-            }
-            Err(NoAdmission::Unavailable(error)) => {
-                assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{error:?}");
-            }
-            Err(NoAdmission::Refused(why)) => panic!("refused: {why}"),
-        }
+        // Nothing at the path is read when the admission is built: the program is opened
+        // only when a child is started.
+        let admission = check
+            .admission(PROGRAM.as_ref())
+            .unwrap_or_else(|none| panic!("{none}"));
+        assert_eq!(admission.image_sha256(), None);
+        assert_eq!(check.describe_admitted(PROGRAM.as_ref(), &admission), None);
     }
 
     /// A debug build's admission of a real program (a compiled test worker). Where the system
     /// executes the bytes it read, the admission reports their SHA-256, which is the file's,
-    /// and the host's log line names it; where the loaded image is checked instead there is
+    /// and the host's log line names it. Where the loaded image is checked instead there is
     /// no digest and nothing more to log.
     #[test]
     fn a_development_admission_reports_the_digest_of_the_bytes_it_read() {
         let me = crate::test_programs::recording_worker();
         let check = ServerCheck::Skip;
-        let admission = match check.admission(&me) {
-            Ok(admission) => admission,
-            Err(NoAdmission::Unavailable(error)) if error.kind() == io::ErrorKind::Unsupported => {
-                return
-            }
-            Err(none) => panic!("{none}"),
-        };
+        let admission = check.admission(&me).unwrap_or_else(|none| panic!("{none}"));
         let line = check.describe_admitted(&me, &admission);
-        match admission.image_sha256() {
-            Some(digest) => {
+        match identity() {
+            ImageIdentity::VerifiedBytes => {
+                let digest = admission
+                    .image_sha256()
+                    .expect("the digest of the bytes read");
                 assert_eq!(digest, sha256_of(&me));
                 let line = line.expect("a development image's digest is logged");
                 assert!(line.contains(&hex(&digest)), "{line}");
                 assert!(line.contains("no publisher check"), "{line}");
                 assert!(line.contains(me.to_str().unwrap()), "{line}");
             }
-            None => assert_eq!(line, None),
+            ImageIdentity::CodeSignature => {
+                assert_eq!(admission.image_sha256(), None);
+                assert_eq!(line, None);
+            }
         }
-        // A pinned image is the release's, not a development image: nothing more is logged.
+        // A pinned image is the release's, not a development image: nothing more is logged,
+        // on either kind of system.
         let pinned = ServerCheck::Skip.pinned(Pin {
             sha256: sha256_of(&me),
             macos_cdhash: None,
         });
-        if let Ok(admission) = pinned.admission(&me) {
-            assert_eq!(pinned.describe_admitted(&me, &admission), None);
-        }
+        let admission = pinned
+            .admission(&me)
+            .unwrap_or_else(|none| panic!("{none}"));
+        assert_eq!(pinned.describe_admitted(&me, &admission), None);
     }
 
     /// A pinned check never starts a program that is not the pinned image, whatever the
     /// build. A system that executes verified bytes refuses when the admission is built (the
-    /// digest differs); a system that checks the loaded image starts the child held, cannot
-    /// identify a development image, and kills it. Nothing of it is left either way.
+    /// digest differs), so no child exists. A system that checks the loaded image builds its
+    /// admission, starts the child held, cannot identify a development image, and kills it.
     #[test]
     fn a_pinned_check_never_starts_an_image_that_is_not_the_pinned_one() {
         use org_platform_host::admission::{ChildEnv, SpawnRefused};
@@ -994,14 +1166,11 @@ mod tests {
             sha256: other,
             macos_cdhash: Some([0; 20]),
         });
-        match check.admission(&me) {
-            Err(NoAdmission::Refused(why)) => {
+        match (identity(), check.admission(&me)) {
+            (ImageIdentity::VerifiedBytes, Err(NoAdmission::Refused(why))) => {
                 assert_eq!(why, "selected release image mismatch");
             }
-            Err(NoAdmission::Unavailable(error)) => {
-                assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{error:?}");
-            }
-            Ok(admission) => {
+            (ImageIdentity::CodeSignature, Ok(admission)) => {
                 let error = admission
                     .start(&[], &ChildEnv::new(), &crate::cloexec::SPAWN_LOCK)
                     .err()
@@ -1014,76 +1183,155 @@ mod tests {
                     "the refused child was left behind"
                 );
             }
+            (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
         }
-        // The pinned image itself is admitted where its digest is what is checked.
+        // The program under the digest of its own bytes has an admission on both kinds of
+        // system; where the digest is what is checked, the admission reports that digest.
         let exact = ServerCheck::Skip.pinned(Pin {
             sha256: sha256_of(&me),
             macos_cdhash: None,
         });
-        match exact.admission(&me) {
-            Ok(admission) => {
-                if let Some(digest) = admission.image_sha256() {
-                    assert_eq!(digest, sha256_of(&me));
-                }
+        let admission = exact.admission(&me).unwrap_or_else(|none| panic!("{none}"));
+        assert_eq!(
+            admission.image_sha256(),
+            match identity() {
+                ImageIdentity::VerifiedBytes => Some(sha256_of(&me)),
+                ImageIdentity::CodeSignature => None,
             }
-            Err(NoAdmission::Unavailable(error)) => {
-                assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{error:?}");
-            }
-            Err(NoAdmission::Refused(why)) => panic!("the pinned image was refused: {why}"),
-        }
+        );
     }
 
-    /// A release build without a selected release, on a system that needs the release's
-    /// digest to check an image: no admission, in words that say what is missing. Where a
-    /// code signature is checked instead, the admission exists and reads nothing yet.
+    /// A release build's requirement check without a selected release. Where a code
+    /// signature is checked, the admission exists and reads nothing yet. Where the executed
+    /// bytes are checked there is no admission, in words that say what is missing.
     #[test]
     fn a_release_check_without_a_selected_release_is_worded_where_it_refuses() {
         let me = crate::test_programs::recording_worker();
         let check = ServerCheck::Requirement(server_requirement(TEAM).unwrap());
-        match check.admission(&me) {
-            Ok(admission) => assert_eq!(admission.image_sha256(), None),
-            Err(NoAdmission::Refused(why)) => {
+        match (identity(), check.admission(&me)) {
+            (ImageIdentity::CodeSignature, Ok(admission)) => {
+                assert_eq!(admission.image_sha256(), None);
+            }
+            (ImageIdentity::VerifiedBytes, Err(NoAdmission::Refused(why))) => {
                 assert_eq!(why, check.why(&ImageRefusal::Unpinned));
                 assert!(why.contains("no selected release"), "{why}");
             }
-            Err(NoAdmission::Unavailable(error)) => {
-                assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{error:?}");
-            }
+            (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
         }
     }
 
+    /// A release build with no team id, through the system's own admission and a compiled
+    /// program (the decision of a system that checks the executed bytes, [`Published`]).
+    ///
+    /// Where the executed bytes are checked: a pin whose digest is the program's admits it,
+    /// and a child runs; a pin with another digest refuses; no pin refuses, each before any
+    /// child exists. Where a code signature is checked, that check names no publisher, so
+    /// the started child is refused and killed in all three cases: there a release build
+    /// without a team id is never given this check at all (`for_system` answers `Refuse`).
+    ///
+    /// [`Published`]: ServerCheck::Published
+    #[test]
+    fn a_release_build_without_a_team_admits_only_the_image_the_release_pins() {
+        use org_platform_host::admission::{ChildEnv, SpawnRefused};
+        use std::io::Read;
+        let me = crate::test_programs::recording_worker();
+        let digest = sha256_of(&me);
+        let mut other = digest;
+        other[31] ^= 1;
+        let bytes_pin = |sha256| Pin {
+            sha256,
+            macos_cdhash: None,
+        };
+        let matching = ServerCheck::Published.pinned(bytes_pin(digest));
+        let mismatching = ServerCheck::Published.pinned(bytes_pin(other));
+        let unpinned = ServerCheck::Published;
+        assert_eq!(
+            ServerCheck::for_system(false, None, Some(ImageIdentity::VerifiedBytes)),
+            Ok(unpinned.clone())
+        );
+        let home = tempfile::tempdir().unwrap();
+        let mut env = ChildEnv::new();
+        env.set("ORG_OFFICE_HOME", home.path()).unwrap();
+        match identity() {
+            ImageIdentity::VerifiedBytes => {
+                let admission = matching
+                    .admission(&me)
+                    .unwrap_or_else(|none| panic!("the pinned image was refused: {none}"));
+                assert_eq!(admission.image_sha256(), Some(digest));
+                let mut started = admission
+                    .spawn(&[], &env, &crate::cloexec::SPAWN_LOCK)
+                    .expect("the pinned image starts");
+                drop(started.stdin);
+                let mut rest = Vec::new();
+                started.stdout.read_to_end(&mut rest).unwrap();
+                assert_eq!(crate::test_programs::recorded_starts(home.path()), 1);
+                started.child.kill();
+                match mismatching.admission(&me) {
+                    Err(NoAdmission::Refused(why)) => {
+                        assert_eq!(why, "selected release image mismatch");
+                    }
+                    other => panic!("{:?}", other.map(drop)),
+                }
+                match unpinned.admission(&me) {
+                    Err(NoAdmission::Refused(why)) => {
+                        assert_eq!(why, unpinned.why(&ImageRefusal::Unpinned));
+                    }
+                    other => panic!("{:?}", other.map(drop)),
+                }
+            }
+            ImageIdentity::CodeSignature => {
+                for check in [&matching, &mismatching, &unpinned] {
+                    let admission = check
+                        .admission(&me)
+                        .unwrap_or_else(|none| panic!("{check:?}: {none}"));
+                    let error = admission
+                        .spawn(&[], &env, &crate::cloexec::SPAWN_LOCK)
+                        .err()
+                        .unwrap_or_else(|| panic!("{check:?}: an unsigned image was started"));
+                    let refused = SpawnRefused::of(&error).expect("an image refusal");
+                    assert_eq!(refused.refusal, ImageRefusal::NotTheImage, "{check:?}");
+                }
+            }
+        }
+        // Nothing but the one admitted child ever ran.
+        assert_eq!(
+            crate::test_programs::recorded_starts(home.path()),
+            match identity() {
+                ImageIdentity::VerifiedBytes => 1,
+                ImageIdentity::CodeSignature => 0,
+            }
+        );
+    }
+
     /// A release check and a real program that isn't the office server (`/bin/sleep`): it is
-    /// never started as one. Where the loaded image is checked, the child is started held (its
-    /// loader hasn't run), refused with the office server's refusal, killed and reaped. Where
-    /// the verified bytes are executed, a release check without a selected release has no
-    /// admission at all, so no child ever exists.
+    /// never started as one. Where the loaded image is checked, the admission exists, the
+    /// child is started held (its loader hasn't run), refused with the office server's
+    /// refusal, killed and reaped. Where the verified bytes are executed, a release check
+    /// without a selected release has no admission at all, so no child ever exists.
     #[test]
     fn a_real_child_that_isnt_the_signed_server_is_refused() {
         use org_platform_host::admission::{ChildEnv, SpawnRefused};
         let check = ServerCheck::Requirement(server_requirement(TEAM).unwrap());
         let args = [std::ffi::OsStr::new("30")];
-        let admission = match check.admission("/bin/sleep".as_ref()) {
-            Ok(admission) => admission,
-            Err(NoAdmission::Refused(why)) => {
+        match (identity(), check.admission("/bin/sleep".as_ref())) {
+            (ImageIdentity::CodeSignature, Ok(admission)) => {
+                let error = admission
+                    .spawn(&args, &ChildEnv::new(), &crate::cloexec::SPAWN_LOCK)
+                    .err()
+                    .expect("/bin/sleep was admitted as the office server");
+                let refused = SpawnRefused::of(&error).expect("an image refusal");
+                assert_eq!(refused.refusal, ImageRefusal::NotTheImage);
+                assert!(check.why(&refused.refusal).contains("office server"));
+                // SAFETY: signal 0 only checks the pid.
+                assert!(
+                    unsafe { libc::kill(refused.pid as libc::pid_t, 0) } != 0,
+                    "the refused child was left behind"
+                );
+            }
+            (ImageIdentity::VerifiedBytes, Err(NoAdmission::Refused(why))) => {
                 assert_eq!(why, check.why(&ImageRefusal::Unpinned));
-                return;
             }
-            Err(NoAdmission::Unavailable(error)) => {
-                assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{error:?}");
-                return;
-            }
-        };
-        let error = admission
-            .spawn(&args, &ChildEnv::new(), &crate::cloexec::SPAWN_LOCK)
-            .err()
-            .expect("/bin/sleep was admitted as the office server");
-        let refused = SpawnRefused::of(&error).expect("an image refusal");
-        assert_eq!(refused.refusal, ImageRefusal::NotTheImage);
-        assert!(check.why(&refused.refusal).contains("office server"));
-        // SAFETY: signal 0 only checks the pid.
-        assert!(
-            unsafe { libc::kill(refused.pid as libc::pid_t, 0) } != 0,
-            "the refused child was left behind"
-        );
+            (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
+        }
     }
 }
