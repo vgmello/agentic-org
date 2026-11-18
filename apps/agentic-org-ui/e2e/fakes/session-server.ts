@@ -43,12 +43,7 @@ type CreateStep =
 	| { rejected: Refusal; status: number }
 	| { refused: Refusal };
 type LookupStep =
-	| 'accepted'
-	| 'completed'
-	| 'missing'
-	| 'unavailable'
-	| 'expired'
-	| { rejected: Refusal };
+	'accepted' | 'completed' | 'missing' | 'unavailable' | 'expired' | { rejected: Refusal };
 const ulid = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const hostLookup = /^\/api\/v1\/operations\/host\/([^/]+)$/;
 function newCase() {
@@ -65,11 +60,20 @@ function newCase() {
 		signOutRefused: undefined as 400 | 403 | undefined,
 		revision: 2,
 		/** What GET /api/v1/organizations lists: a real instance lists none until A4 (SIGN-9). */
-		organizations: [] as ({ id: string; name: string; created_at: string; recovery: string } & Record<string, unknown>)[],
+		organizations: [] as ({
+			id: string;
+			name: string;
+			created_at: string;
+			recovery: string;
+		} & Record<string, unknown>)[],
 		/**
 		 * Scripted answers of POST /api/v1/organizations and of the host operation lookup, one per
 		 * request; when a script is empty the create is `accepted` and the lookup `completed`.
 		 */
+		/** The account's creates still in progress, as GET /api/v1/organizations lists them. */
+		creating: [] as { operation_id: string; name: string; slug: string }[],
+		/** GET /api/v1/organizations answers 503: HQ can't be reached. */
+		listUnavailable: false,
 		createScript: [] as CreateStep[],
 		lookupScript: [] as LookupStep[],
 		creates: [] as { operation_id: string; params: CreateParams }[],
@@ -171,6 +175,17 @@ export function sessionTestMiddleware() {
 					else if (value.action === 'revision') controlled.revision = value.value;
 					else if (value.action === 'organizations' && Array.isArray(value.value))
 						controlled.organizations = value.value;
+					else if (value.action === 'creating' && Array.isArray(value.value)) {
+						controlled.creating = value.value;
+						// A listed create is one the host knows: its lookup answers.
+						for (const entry of controlled.creating)
+							if (!controlled.creates.some((c) => c.operation_id === entry.operation_id))
+								controlled.creates.push({
+									operation_id: entry.operation_id,
+									params: { name: entry.name, slug: entry.slug } as CreateParams
+								});
+					} else if (value.action === 'listUnavailable')
+						controlled.listUnavailable = value.value === true;
 					else if (value.action === 'createScript' && Array.isArray(value.value))
 						controlled.createScript = value.value;
 					else if (value.action === 'lookupScript' && Array.isArray(value.value))
@@ -293,10 +308,18 @@ export function sessionTestMiddleware() {
 					employee_id: 'person-1',
 					recovery: 'pending',
 					offices: [
-						{ id: `${id}-hq`, organization_id: id, name: 'HQ', role: 'hq', host: 'hq-mac', status: 'starting' }
+						{
+							id: `${id}-hq`,
+							organization_id: id,
+							name: 'HQ',
+							role: 'hq',
+							host: 'hq-mac',
+							status: 'starting'
+						}
 					]
 				};
 				if (!state.organizations.some((o) => o.id === id)) state.organizations.push(view);
+				state.creating = state.creating.filter((c) => c.operation_id !== operation_id);
 				return view;
 			};
 			const refusal = (error: Refusal) => ({ message: 'Refused.', ...error });
@@ -322,7 +345,9 @@ export function sessionTestMiddleware() {
 					Object.keys(sent).sort().join() !== 'operation_id,params,scope' ||
 					sent.scope?.kind !== 'instance' ||
 					sent.scope?.instance_id !== state.view.instance_id ||
-					Object.keys(sent.params ?? {}).sort().join() !== 'name,organization_repository,slug,state_branch'
+					Object.keys(sent.params ?? {})
+						.sort()
+						.join() !== 'name,organization_repository,slug,state_branch'
 				) {
 					json(invalidRequest, 400);
 					return;
@@ -339,12 +364,14 @@ export function sessionTestMiddleware() {
 					res.statusCode = 502;
 					res.setHeader('Content-Type', 'text/html');
 					res.end('<html>Bad gateway</html>');
-				}
-				else if (step === 'accepted') json({ outcome: 'accepted', operation_id }, 202);
-				else if (step === 'completed') json({ outcome: 'completed', operation_id, result: link(operation_id) });
+				} else if (step === 'accepted') json({ outcome: 'accepted', operation_id }, 202);
+				else if (step === 'completed')
+					json({ outcome: 'completed', operation_id, result: link(operation_id) });
 				else if (step === 'unknown') json({ outcome: 'unknown', operation_id }, 504);
-				else if (step === 'unavailable') json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
-				else json({ outcome: 'rejected', operation_id, error: refusal(step.rejected) }, step.status);
+				else if (step === 'unavailable')
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+				else
+					json({ outcome: 'rejected', operation_id, error: refusal(step.rejected) }, step.status);
 				return;
 			}
 			const looked = hostLookup.exec(url.pathname);
@@ -361,18 +388,23 @@ export function sessionTestMiddleware() {
 				state.lookups.push(operation_id);
 				const step = state.lookupScript.shift() ?? 'completed';
 				const known = state.creates.some((c) => c.operation_id === operation_id);
-				const result = (rest: Record<string, unknown>) => respond({ operation_id, kind: 'host', ...rest });
+				const result = (rest: Record<string, unknown>) =>
+					respond({ operation_id, kind: 'host', ...rest });
 				if (step === 'missing' || !known) json(notFound, 404);
-				else if (step === 'unavailable') json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+				else if (step === 'unavailable')
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
 				else if (step === 'expired') json({ error: { code: 'expired', message: 'Expired.' } }, 410);
 				else if (step === 'accepted') result({ outcome: 'accepted', state: 'reserved' });
-				else if (step === 'completed') result({ outcome: 'completed', state: 'linked', result: link(operation_id) });
+				else if (step === 'completed')
+					result({ outcome: 'completed', state: 'linked', result: link(operation_id) });
 				else result({ outcome: 'rejected', error: refusal(step.rejected) });
 				return;
 			}
 			if (url.pathname === '/api/v1/organizations') {
-				if (req.method === 'GET' && url.search === '')
-					respond({ organizations: state.organizations, creating: [] });
+				if (req.method === 'GET' && url.search === '' && state.listUnavailable)
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+				else if (req.method === 'GET' && url.search === '')
+					respond({ organizations: state.organizations, creating: state.creating });
 				else json(invalidRequest, 400);
 				return;
 			}

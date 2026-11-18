@@ -8,10 +8,24 @@ const ORGANIZATIONS_KEY = 'agentic-org.mock.organizations';
 
 /** The mock's HQ office, with the stopped state its `?office=` scenario gives it. */
 function hqOffice(organizationId: string, stopped: string | null): OfficeInfo {
-	const base: OfficeInfo = { id: `office-${organizationId}`, organization_id: organizationId, name: 'HQ', role: 'hq', host: 'This Mac', status: 'active' };
+	const base: OfficeInfo = {
+		id: `office-${organizationId}`,
+		organization_id: organizationId,
+		name: 'HQ',
+		role: 'hq',
+		host: 'This Mac',
+		status: 'active'
+	};
 	if (stopped === 'crashed') return { ...base, status: 'unavailable', status_reason: 'crashed' };
-	if (stopped === 'restarting') return { ...base, status: 'offline', status_reason: 'crashed', next_restart_at: new Date(Date.now() + 10 * 60_000).toISOString() };
-	if (stopped === 'stopped_by_owner') return { ...base, status: 'unavailable', status_reason: 'stopped_by_owner' };
+	if (stopped === 'restarting')
+		return {
+			...base,
+			status: 'offline',
+			status_reason: 'crashed',
+			next_restart_at: new Date(Date.now() + 10 * 60_000).toISOString()
+		};
+	if (stopped === 'stopped_by_owner')
+		return { ...base, status: 'unavailable', status_reason: 'stopped_by_owner' };
 	if (stopped === 'unknown') return { ...base, status: 'unavailable' };
 	return base;
 }
@@ -27,20 +41,38 @@ function hqOffice(organizationId: string, stopped: string | null): OfficeInfo {
  */
 export async function enterMockedOrganization(page: Page, name = 'Acme', createPath = '/create') {
 	const stopped = new URLSearchParams(createPath.split('?')[1] ?? '').get('office');
-	const organization = (id: string, organizationName: string, created_at: string): Organization => ({ id, name: organizationName, created_at, offices: [hqOffice(id, stopped)] });
+	const organization = (
+		id: string,
+		organizationName: string,
+		created_at: string
+	): Organization => ({ id, name: organizationName, created_at, offices: [hqOffice(id, stopped)] });
 	const hosted = [
 		organization('sample-northwind', 'Northwind Labs', '2026-09-14T09:30:00.000Z'),
 		organization('sample-globex', 'Globex Research', '2026-10-02T16:05:00.000Z')
 	];
-	const created = organization(`org-${Date.now().toString(36)}-${hosted.length}`, name, new Date().toISOString());
+	const created = organization(
+		`org-${Date.now().toString(36)}-${hosted.length}`,
+		name,
+		new Date().toISOString()
+	);
 	const connection: Connection = { office: created.offices[0], organization: created };
 	// A static file gives the origin its storage without starting the app.
 	await page.goto('/favicon.svg');
 	await page.evaluate(
 		([connectionsKey, organizationsKey, organizations, remembered]) => {
-			const kept = (JSON.parse(localStorage.getItem(connectionsKey) ?? '[]') as { organization: { id: string } }[]).filter((c) => c.organization.id !== remembered.organization.id);
+			const kept = (
+				JSON.parse(localStorage.getItem(connectionsKey) ?? '[]') as {
+					organization: { id: string };
+				}[]
+			).filter((c) => c.organization.id !== remembered.organization.id);
 			const before = localStorage.getItem(organizationsKey);
-			localStorage.setItem(organizationsKey, JSON.stringify([...(before ? (JSON.parse(before) as unknown[]) : organizations.slice(0, -1)), organizations[organizations.length - 1]]));
+			localStorage.setItem(
+				organizationsKey,
+				JSON.stringify([
+					...(before ? (JSON.parse(before) as unknown[]) : organizations.slice(0, -1)),
+					organizations[organizations.length - 1]
+				])
+			);
 			localStorage.setItem(connectionsKey, JSON.stringify([...kept, remembered]));
 		},
 		[CONNECTIONS_KEY, ORGANIZATIONS_KEY, [...hosted, created], connection] as const

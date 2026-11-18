@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
-import { signInAsAdmin } from './web-session';
+import { organizationView, signInAsAdmin, type WebOrganization } from './web-session';
 
 // Create organization against the mocked web API (fakes/session-server.ts): offices-and-teams
 // UX §5a, OFC-15 to OFC-24, and the create items of FC-018. The spec's copy is the requirement.
@@ -15,6 +15,12 @@ async function backend(page: Page) {
 	const context = page.context();
 	const id = (await context.cookies()).find((cookie) => cookie.name === 'p6_auth_case')!.value;
 	return {
+		async set(action: 'organizations' | 'creating' | 'listUnavailable', value: unknown) {
+			const reply = await context.request.post('/__p6-auth/control', {
+				data: { id, action, value }
+			});
+			expect(reply.ok()).toBe(true);
+		},
 		async script(action: 'createScript' | 'lookupScript', value: unknown[]) {
 			const reply = await context.request.post('/__p6-auth/control', {
 				data: { id, action, value }
@@ -353,4 +359,145 @@ test('closing while creating leaves the page and sends nothing more: the create 
 test('signed out, /create opens sign-in and returns afterwards', async ({ page }) => {
 	await visit(page, '/create');
 	await expect(page).toHaveURL(/\/sign-in\?next=%2Fcreate$/);
+});
+
+// The signed-in organizations page on the real list (FC-018 (1), (4), (9)-(11)).
+const LUMEN: WebOrganization = {
+	id: 'org-lumen',
+	name: 'Lumen Labs',
+	created_at: '2026-10-02T12:00:00.000Z',
+	recovery: 'acknowledged'
+};
+const SIDE: WebOrganization = {
+	id: 'org-side',
+	name: 'Side Project',
+	created_at: '2026-11-10T12:00:00.000Z',
+	recovery: 'pending'
+};
+const hqDown = (organization: WebOrganization) => {
+	const view = organizationView(organization);
+	return {
+		...view,
+		offices: [{ ...view.offices[0], status: 'unavailable', status_reason: 'crashed' }]
+	};
+};
+const row = (page: Page, name: string) =>
+	page.getByTestId('organization-row').filter({ hasText: name });
+
+test('the organizations page lists each organization with its HQ office, host, created date and the open one; opening selects it (FC-018 (1))', async ({
+	page
+}) => {
+	await signInAsAdmin(page, [LUMEN, SIDE]);
+	await expect(page.getByRole('heading', { level: 1, name: 'Organizations' })).toBeVisible();
+	await expect(page.getByTestId('organization-row')).toHaveCount(2);
+	await expect(row(page, 'Lumen Labs')).toContainText('HQ · hq-mac');
+	await expect(row(page, 'Lumen Labs')).toContainText(/Created\s+\S.*2026/);
+	await expect(row(page, 'Side Project')).toContainText('HQ · hq-mac');
+	await expect(page.getByText('Open now')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Create organization' })).toBeVisible();
+	expect(await axe(page)).toEqual([]);
+
+	await page.getByRole('button', { name: 'Open Side Project' }).click();
+	await expect(row(page, 'Side Project')).toContainText('Open now');
+	await expect(row(page, 'Lumen Labs')).not.toContainText('Open now');
+	// Only IDs are kept, and the choice survives a reload.
+	const stored = await page.evaluate(() => localStorage.getItem('org-selection'));
+	expect(Object.values(JSON.parse(stored!))).toEqual(['org-side']);
+	expect(stored).not.toContain('Side Project');
+	await visit(page, '/welcome');
+	await expect(row(page, 'Side Project')).toContainText('Open now');
+});
+
+test('an organization created here is listed afterwards and marked open now (FC-018 (4))', async ({
+	page
+}) => {
+	await signInAsAdmin(page, [LUMEN]);
+	await page.getByRole('link', { name: 'Create organization' }).click();
+	await expect(page.getByText('HQ instance default')).toBeVisible();
+	await fill(page);
+	await create(page).click();
+	await expect(
+		page.getByRole('heading', { name: 'Created Side Project. You own it.' })
+	).toBeVisible();
+	await visit(page, '/welcome');
+	await expect(page.getByTestId('organization-row')).toHaveCount(2);
+	await expect(row(page, 'Side Project')).toContainText('Open now');
+	await expect(row(page, 'Lumen Labs')).not.toContainText('Open now');
+});
+
+test('a create still in progress is shown as being created and resumes its lookup until it is listed', async ({
+	page
+}) => {
+	await signInAsAdmin(page, [LUMEN]);
+	const server = await backend(page);
+	const operation_id = '01M72N8MG00000000000000006';
+	await server.set('creating', [{ operation_id, name: 'Side Project', slug: 'side-project' }]);
+	await server.script('lookupScript', ['accepted']);
+	await visit(page, '/welcome');
+	const pending = page.getByTestId('organization-creating');
+	await expect(pending).toContainText('Side Project');
+	await expect(pending).toContainText('Being created…');
+	await expect(pending.getByRole('button')).toHaveCount(0);
+	// The second lookup completes: the entry becomes a listed organization.
+	await expect(row(page, 'Side Project')).toBeVisible();
+	await expect(pending).toHaveCount(0);
+	const stats = await server.stats();
+	expect(stats.lookups).toEqual([operation_id, operation_id]);
+	expect(stats.creates.filter((c) => c.operation_id !== operation_id)).toEqual([]);
+});
+
+test("when HQ can't be reached the page explains why and still offers Create; Try again reads the list (FC-018 (9))", async ({
+	page
+}) => {
+	await signInAsAdmin(page, [LUMEN]);
+	const server = await backend(page);
+	await server.set('listUnavailable', true);
+	await visit(page, '/welcome');
+	await expect(page.getByRole('alert')).toContainText(
+		"Can't reach HQ. Check that the instance is running on the HQ machine, then try again."
+	);
+	await expect(page.getByTestId('organization-row')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Create organization' })).toBeVisible();
+	expect(await axe(page)).toEqual([]);
+	await server.set('listUnavailable', false);
+	await page.getByRole('button', { name: 'Try again' }).click();
+	await expect(row(page, 'Lumen Labs')).toBeVisible();
+});
+
+test('an organization that vanished after the list was shown is dropped when opening it fails, staying on the list (FC-018 (10))', async ({
+	page
+}) => {
+	await signInAsAdmin(page, [LUMEN, SIDE]);
+	const server = await backend(page);
+	await server.set('organizations', [organizationView(LUMEN)]);
+	await page.getByRole('button', { name: 'Open Side Project' }).click();
+	const alert = page.getByRole('alert');
+	await expect(alert).toContainText("Couldn't open it");
+	await expect(alert).toContainText('Side Project is no longer on this HQ.');
+	await expect(alert).toBeFocused();
+	await expect(page).toHaveURL(/\/welcome$/);
+	await expect(page.getByTestId('organization-row')).toHaveCount(1);
+	await expect(row(page, 'Lumen Labs')).toBeVisible();
+	expect(await page.evaluate(() => localStorage.getItem('org-selection'))).toBeNull();
+});
+
+test('an organization whose HQ is unavailable is listed, marked Unavailable and cannot be opened, also when it goes down after the list was shown (FC-018 (11))', async ({
+	page
+}) => {
+	await signInAsAdmin(page, [LUMEN, SIDE]);
+	const server = await backend(page);
+	await server.set('organizations', [hqDown(LUMEN), organizationView(SIDE)]);
+	await visit(page, '/welcome');
+	await expect(row(page, 'Lumen Labs')).toContainText('Unavailable');
+	await expect(page.getByRole('button', { name: 'Open Lumen Labs' })).toBeDisabled();
+	await expect(row(page, 'Side Project')).not.toContainText('Unavailable');
+	// It goes down after the list was shown: opening reads the list again and refuses.
+	await server.set('organizations', [hqDown(LUMEN), hqDown(SIDE)]);
+	await page.getByRole('button', { name: 'Open Side Project' }).click();
+	await expect(page.getByRole('alert')).toContainText(
+		"Side Project's HQ office is unavailable right now."
+	);
+	await expect(row(page, 'Side Project')).toContainText('Unavailable');
+	await expect(page.getByRole('button', { name: 'Open Side Project' })).toBeDisabled();
+	expect(await page.evaluate(() => localStorage.getItem('org-selection'))).toBeNull();
 });
