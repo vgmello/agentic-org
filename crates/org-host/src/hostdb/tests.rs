@@ -1065,7 +1065,7 @@ fn retry_removes_both_temporary_wal_sidecars_before_sqlite() {
 }
 
 #[test]
-fn any_rollback_journal_is_refused_before_key_load_and_left_untouched() {
+fn any_rollback_journal_is_refused_before_open_and_left_untouched() {
     for kind in ["empty", "nonempty", "directory", "symlink", "dangling"] {
         let (home, _, db) = fixture();
         drop(db);
@@ -1304,7 +1304,7 @@ fn validation_descriptors_are_close_on_exec_and_sql_errors_discard_payloads() {
 }
 
 #[test]
-fn sqlite_refuses_a_valid_encrypted_symlink_swapped_after_validation() {
+fn sqlite_refuses_a_valid_registry_symlink_swapped_after_validation() {
     let (home, secrets, db) = fixture();
     drop(db);
     let root = home.path().canonicalize().unwrap();

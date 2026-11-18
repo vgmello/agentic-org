@@ -87,10 +87,10 @@ impl Office {
         if completed.as_ref().is_some_and(|prior| prior != &info) {
             return Err(invalid());
         }
-        verify_completed_history(&folder, &key, completed.is_some())?;
+        verify_completed_history(&folder, completed.is_some())?;
         failpoint(&folder, "hq_after_intent")?;
         let (org, local) =
-            storage::open_preparing(&folder, &key, instance, &info.office_id, &info.org_id)?;
+            storage::open_preparing(&folder, instance, &info.office_id, &info.org_id)?;
         failpoint(&folder, "hq_before_material")?;
         let prior = local.read(storage::read)?;
         // Binding and CA completion were one initial writer transaction. A
@@ -140,6 +140,7 @@ impl Office {
             info,
             stores,
             changes: ChangeSignal::default(),
+            secrets_key: Some(key),
             _lock: OfficeLock(lock),
         })
     }
@@ -147,8 +148,8 @@ impl Office {
 
 /// Created or retained admission proves native history must already exist.
 /// Validate before preparation can initialize organization storage again.
-fn verify_completed_history(folder: &Path, key: &Key, completed: bool) -> Result<(), OfficeError> {
-    if !completed && !storage::has_selected_history(&folder.join(OFFICE_DB), key)? {
+fn verify_completed_history(folder: &Path, completed: bool) -> Result<(), OfficeError> {
+    if !completed && !storage::has_selected_history(&folder.join(OFFICE_DB))? {
         return Ok(());
     }
     let path = folder.join(ORG_DB);
@@ -156,7 +157,7 @@ fn verify_completed_history(folder: &Path, key: &Key, completed: bool) -> Result
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() == 0 {
         return Err(invalid());
     }
-    if !Store::inspect(&path, key, org_db::is_committed)? {
+    if !Store::inspect(&path, org_db::is_committed)? {
         return Err(invalid());
     }
     Ok(())

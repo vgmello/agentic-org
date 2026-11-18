@@ -139,16 +139,15 @@ fn versions_preserve_start_keys_authority_and_instance() {
     }
 }
 #[test]
-fn versions_preserve_discard_null_and_present_key() {
+fn discard_accepts_a_null_or_present_key_and_carries_none() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     for version in [2, 3] {
         for present in [false, true] {
-            let Launch::Discard { key, office } =
+            let Launch::Discard { office } =
                 Launch::from_request(request(version, 2, present)).unwrap()
             else {
                 panic!("not discard")
             };
-            assert!(key == present.then(|| Key::from_db_key(db_key())));
             assert_eq!(
                 office,
                 (version == 3).then(|| OfficeIdentity {

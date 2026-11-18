@@ -847,8 +847,7 @@ mod tests {
                 Digest::ZERO,
             )
             .unwrap();
-        let transport = Key::from_bytes([8; 32]);
-        let exported = hq.export_replication_snapshot(&transport, LIMIT).unwrap();
+        let exported = hq.export_replication_snapshot(LIMIT).unwrap();
         assert_eq!(
             exported.manifest.position,
             Position {
@@ -861,8 +860,7 @@ mod tests {
             .stage_replication_snapshot(
                 &HqAt(authority),
                 &exported.manifest,
-                &transport,
-                &*exported.ciphertext,
+                &*exported.artifact,
                 LIMIT,
                 SnapshotStageMode::Normal,
             )
@@ -884,8 +882,7 @@ mod tests {
             satellite.stage_replication_snapshot(
                 &HqAt(authority),
                 &conflicting,
-                &transport,
-                &*exported.ciphertext,
+                &*exported.artifact,
                 LIMIT,
                 SnapshotStageMode::Normal,
             ),
@@ -1024,16 +1021,12 @@ mod tests {
                 Digest::ZERO,
             )
             .unwrap();
-        let transport = Key::from_bytes([8; 32]);
         let stage = || {
-            let exported = hq
-                .export_replication_snapshot(&transport, MAX_BYTES)
-                .unwrap();
+            let exported = hq.export_replication_snapshot(MAX_BYTES).unwrap();
             satellite.stage_replication_snapshot(
                 &Hq,
                 &exported.manifest,
-                &transport,
-                exported.ciphertext.as_slice(),
+                exported.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
@@ -1484,7 +1477,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_staging_verifies_ciphertext_and_installs_only_the_org_projection() {
+    fn snapshot_staging_verifies_the_artifact_and_installs_only_the_org_projection() {
         const MAX_BYTES: u64 = 1024 * 1024;
         let dir = TempDir::new().unwrap();
         let satellite = new_office(&dir, "SAT");
@@ -1500,10 +1493,7 @@ mod tests {
             )
             .unwrap();
         let anchor = hq.replication_checkpoint().unwrap();
-        let transport_key = Key::from_bytes([9; 32]);
-        let older = hq
-            .export_replication_snapshot(&transport_key, MAX_BYTES)
-            .unwrap();
+        let older = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         let first = event(2, anchor.digest, COMMAND, "first");
         let next = first.clone();
         assert_eq!(
@@ -1521,29 +1511,42 @@ mod tests {
         satellite
             .local_store()
             .run_sql_for_test("INSERT INTO meta VALUES ('outbox', 'pending')");
-        assert!(hq.export_replication_snapshot(&key(), MAX_BYTES).is_err());
-        let exported = hq
-            .export_replication_snapshot(&transport_key, MAX_BYTES)
-            .unwrap();
-        let bytes = exported.ciphertext.as_slice();
-        assert!(!bytes.starts_with(b"SQLite format 3\0"));
+        let exported = hq.export_replication_snapshot(MAX_BYTES).unwrap();
+        let bytes = exported.artifact.as_slice();
+        // ADR-0016 decision 5: the artifact is a plain SQLite file, guarded by its digest.
+        assert!(bytes.starts_with(b"SQLite format 3\0"));
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &Hq,
                 &exported.manifest,
-                &transport_key,
                 &bytes[..bytes.len() - 1],
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             ),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
+        let mut tampered = bytes.to_vec();
+        *tampered.last_mut().unwrap() ^= 1;
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &Hq,
                 &exported.manifest,
-                &Key::from_bytes([4; 32]),
-                bytes,
+                tampered.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            ),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        // A digest that matches bytes which are not a database is still refused at import.
+        let garbage = vec![0x5a; bytes.len()];
+        let mut forged = exported.manifest.clone();
+        forged.artifact_digest =
+            Digest::from_bytes(<sha2::Sha256 as sha2::Digest>::digest(&garbage).into());
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &forged,
+                garbage.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             ),
@@ -1554,15 +1557,12 @@ mod tests {
             "CREATE TEMP TABLE seed_outcome AS SELECT * FROM commands;
             DELETE FROM commands;",
         );
-        let missing = hq
-            .export_replication_snapshot(&transport_key, MAX_BYTES)
-            .unwrap();
+        let missing = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &Hq,
                 &missing.manifest,
-                &transport_key,
-                missing.ciphertext.as_slice(),
+                missing.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             ),
@@ -1576,23 +1576,18 @@ mod tests {
             .stage_replication_snapshot(
                 &Hq,
                 &exported.manifest,
-                &transport_key,
                 bytes,
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
             .unwrap();
-        let retry_key = Key::from_bytes([10; 32]);
-        let retransmitted = hq
-            .export_replication_snapshot(&retry_key, MAX_BYTES)
-            .unwrap();
+        let retransmitted = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         assert_eq!(
             satellite
                 .stage_replication_snapshot(
                     &Hq,
                     &retransmitted.manifest,
-                    &retry_key,
-                    retransmitted.ciphertext.as_slice(),
+                    retransmitted.artifact.as_slice(),
                     MAX_BYTES,
                     SnapshotStageMode::Normal,
                 )
@@ -1603,15 +1598,12 @@ mod tests {
             r#"UPDATE teams SET name_key = 'different',
             body = '{"id":"first","name":"different","version":1}' WHERE id = 'first'"#,
         );
-        let conflicting = hq
-            .export_replication_snapshot(&retry_key, MAX_BYTES)
-            .unwrap();
+        let conflicting = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &Hq,
                 &conflicting.manifest,
-                &retry_key,
-                conflicting.ciphertext.as_slice(),
+                conflicting.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             ),
@@ -1621,8 +1613,7 @@ mod tests {
             satellite.stage_replication_snapshot(
                 &Hq,
                 &older.manifest,
-                &transport_key,
-                older.ciphertext.as_slice(),
+                older.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal
             ),
@@ -1656,8 +1647,7 @@ mod tests {
                 .stage_replication_snapshot(
                     &Hq,
                     &retransmitted.manifest,
-                    &retry_key,
-                    retransmitted.ciphertext.as_slice(),
+                    retransmitted.artifact.as_slice(),
                     MAX_BYTES,
                     SnapshotStageMode::Normal
                 )
@@ -1708,19 +1698,15 @@ mod tests {
             .unwrap();
         let hq = new_office(&dir, "HQ");
         hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
-        let transport_key = Key::from_bytes([8; 32]);
         hq.org_store().run_sql_for_test("INSERT INTO memberships (id, team_id, member_id, body)
             VALUES ('m', 'missing-team', 'missing-member',
                     '{\"id\":\"m\",\"team_id\":\"missing-team\",\"member_id\":\"missing-member\",\"version\":1}')");
         let stage = || {
-            let export = hq
-                .export_replication_snapshot(&transport_key, MAX_BYTES)
-                .unwrap();
+            let export = hq.export_replication_snapshot(MAX_BYTES).unwrap();
             satellite.stage_replication_snapshot(
                 &Hq,
                 &export.manifest,
-                &transport_key,
-                export.ciphertext.as_slice(),
+                export.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
@@ -1752,16 +1738,12 @@ mod tests {
             .unwrap();
         let hq = new_office(&dir, "HQ");
         hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
-        let transport_key = Key::from_bytes([8; 32]);
         let stage = || {
-            let export = hq
-                .export_replication_snapshot(&transport_key, MAX_BYTES)
-                .unwrap();
+            let export = hq.export_replication_snapshot(MAX_BYTES).unwrap();
             satellite.stage_replication_snapshot(
                 &Hq,
                 &export.manifest,
-                &transport_key,
-                export.ciphertext.as_slice(),
+                export.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
@@ -1852,16 +1834,12 @@ mod tests {
             .unwrap();
         let hq = new_office(&dir, "HQ");
         hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
-        let transport_key = Key::from_bytes([8; 32]);
         let stage = || {
-            let export = hq
-                .export_replication_snapshot(&transport_key, MAX_BYTES)
-                .unwrap();
+            let export = hq.export_replication_snapshot(MAX_BYTES).unwrap();
             satellite.stage_replication_snapshot(
                 &Hq,
                 &export.manifest,
-                &transport_key,
-                export.ciphertext.as_slice(),
+                export.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
@@ -1937,14 +1915,12 @@ mod tests {
         }))
         .unwrap()
         .unwrap();
-        let key = Key::from_bytes([8; 32]);
         let stage = || {
-            let snapshot = hq.export_replication_snapshot(&key, MAX_BYTES).unwrap();
+            let snapshot = hq.export_replication_snapshot(MAX_BYTES).unwrap();
             satellite.stage_replication_snapshot(
                 &Hq,
                 &snapshot.manifest,
-                &key,
-                snapshot.ciphertext.as_slice(),
+                snapshot.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
@@ -2046,14 +2022,13 @@ mod tests {
             digest: Digest::ZERO,
             protocol_level: 99,
             schema: 99,
-            ciphertext_bytes: 0,
-            ciphertext_digest: Digest::ZERO,
+            artifact_bytes: 0,
+            artifact_digest: Digest::ZERO,
         };
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &Hq,
                 &stale,
-                &key(),
                 &[][..],
                 0,
                 SnapshotStageMode::Normal,
@@ -2241,16 +2216,12 @@ mod tests {
             Err(SyncError::Refused(Refusal::NotAuthorized))
         ));
 
-        let transport_key = Key::from_bytes([8; 32]);
-        let exported = hq
-            .export_replication_snapshot(&transport_key, MAX_BYTES)
-            .unwrap();
+        let exported = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         let stage = |mode| {
             satellite.stage_replication_snapshot(
                 &HqAt(next),
                 &exported.manifest,
-                &transport_key,
-                exported.ciphertext.as_slice(),
+                exported.artifact.as_slice(),
                 MAX_BYTES,
                 mode,
             )
@@ -2268,15 +2239,12 @@ mod tests {
         ));
         hq.org_store()
             .run_sql_for_test("UPDATE org_replica SET digest = zeroblob(32);");
-        let wrong = hq
-            .export_replication_snapshot(&transport_key, MAX_BYTES)
-            .unwrap();
+        let wrong = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &HqAt(next),
                 &wrong.manifest,
-                &transport_key,
-                wrong.ciphertext.as_slice(),
+                wrong.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::RecoveryWarningShown {
                     authority: next,
@@ -2367,17 +2335,13 @@ mod tests {
                 Digest::ZERO,
             )
             .unwrap();
-        let transport_key = Key::from_bytes([8; 32]);
-        let export = hq
-            .export_replication_snapshot(&transport_key, MAX_BYTES)
-            .unwrap();
+        let export = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         assert_eq!(export.manifest.position.seq, 3);
         let staged = satellite
             .stage_replication_snapshot(
                 &Hq,
                 &export.manifest,
-                &transport_key,
-                export.ciphertext.as_slice(),
+                export.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
@@ -2425,15 +2389,12 @@ mod tests {
         );
         let prior = org_proto::Position { epoch: 1, seq: 2 };
         let before = satellite.org_changes_after(prior, 8).unwrap();
-        let at_head = hq
-            .export_replication_snapshot(&transport_key, MAX_BYTES)
-            .unwrap();
+        let at_head = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         let same_head = satellite
             .stage_replication_snapshot(
                 &Hq,
                 &at_head.manifest,
-                &transport_key,
-                at_head.ciphertext.as_slice(),
+                at_head.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )
@@ -2447,14 +2408,11 @@ mod tests {
             .unwrap()
             .unwrap_err();
         let stage_latest = || {
-            let export = hq
-                .export_replication_snapshot(&transport_key, MAX_BYTES)
-                .unwrap();
+            let export = hq.export_replication_snapshot(MAX_BYTES).unwrap();
             satellite.stage_replication_snapshot(
                 &Hq,
                 &export.manifest,
-                &transport_key,
-                export.ciphertext.as_slice(),
+                export.artifact.as_slice(),
                 MAX_BYTES,
                 SnapshotStageMode::Normal,
             )

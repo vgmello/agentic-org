@@ -206,7 +206,6 @@ fn c1_work_construction_is_between_workspace_and_genesis() {
     let dir = TempDir::new().unwrap();
     let key = test_key();
     let before = STORES_BUILT.with(Cell::get);
-    let seen_key = key.clone();
     let seen = Rc::new(Cell::new(0));
     let record = Rc::clone(&seen);
     ON_STEP.with(|hook| {
@@ -219,7 +218,7 @@ fn c1_work_construction_is_between_workspace_and_genesis() {
                 STORES_BUILT.with(Cell::get),
                 before + usize::from(step != "workspace")
             );
-            let committed = Store::inspect(&folder.join(ORG_DB), &seen_key, |db| {
+            let committed = Store::inspect(&folder.join(ORG_DB), |db| {
                 db.query_row(
                     "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
                     (),

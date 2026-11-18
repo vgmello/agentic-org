@@ -1,5 +1,5 @@
 use super::*;
-use crate::{office::OFFICE_SCHEMA, store::Opening, Key};
+use crate::{office::OFFICE_SCHEMA, store::Opening};
 use std::{
     path::Path,
     sync::{
@@ -157,13 +157,7 @@ fn protected_checkpoint_detects_in_place_rollback_before_projection_or_decision(
     );
 }
 fn open(dir: &Path, opening: Opening) -> Store {
-    Store::open(
-        &dir.join("office.db"),
-        &Key::from_bytes([19; 32]),
-        opening,
-        &OFFICE_SCHEMA,
-    )
-    .unwrap()
+    Store::open(&dir.join("office.db"), opening, &OFFICE_SCHEMA).unwrap()
 }
 fn fresh(dir: &Path) -> Store {
     let store = open(dir, Opening::New);

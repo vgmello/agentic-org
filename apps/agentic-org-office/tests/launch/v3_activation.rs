@@ -447,10 +447,12 @@ fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes
         INSTANCE,
         Some(DbKey::from_bytes([0; 32])),
     );
-    assert_eq!(wrong_key.event()["code"], "key_missing");
-    assert!(!wrong_key.run.wait().success());
-    wrong_key.no_stdout();
-    assert_eq!(database_bytes(&world.home), before);
+    // ADR-0016 decision 3: the key only wraps private keys. The plain databases open
+    // without it, so a wrong key still serves the office's data.
+    assert_eq!(wrong_key.event()["event"], "ready");
+    assert_eq!(hello(&world).office.id, OFFICE);
+    wrong_key.stop();
+    assert_reopens(&world);
 }
 
 #[test]

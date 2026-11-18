@@ -823,13 +823,7 @@ fn work_call_outside_writer_is_refused_before_callback_or_feed_allocation() {
     let (root, store) = fixture();
     initialize_origin(&store);
     let before = snapshot(&store);
-    let db = crate::store::connect(
-        &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
-        false,
-        true,
-    )
-    .unwrap();
+    let db = crate::store::connect(&root.path().join("office.db"), false, true).unwrap();
     let (item, events) = task_fixture(1, false);
     let mut called = false;
     let result = run(&db, |call| {

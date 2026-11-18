@@ -19,11 +19,6 @@ pub enum OfficeError {
     /// `Office::create` found an office (an `office.json`, databases or a workspace) already in
     /// the folder, or `Office::discard` found one that is finished or holds an organization.
     OfficeExists,
-    /// The office's databases exist but the key given does not open them (`key_missing`, fatal;
-    /// never retried). The server never makes a key: the host holds it. SQLCipher cannot tell a
-    /// wrong key from a damaged or truncated file ("not a database"), so a corrupt database is
-    /// reported the same way.
-    KeyMissing,
     /// Disk, database or OS failure. The cause is kept for the server's log only; `Display`
     /// never includes paths or SQL, so it is safe to show to a client.
     Storage(Box<dyn Error + Send + Sync>),
@@ -45,7 +40,6 @@ impl fmt::Display for OfficeError {
             Self::NotFound => f.write_str("the office does not exist"),
             Self::SnapshotPending => f.write_str("organization snapshot is not available yet"),
             Self::OfficeExists => f.write_str("the office already exists"),
-            Self::KeyMissing => f.write_str("the key given does not open the office's databases"),
             Self::Storage(_) => f.write_str("the office could not read or write its storage"),
         }
     }

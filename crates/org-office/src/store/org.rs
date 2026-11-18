@@ -879,7 +879,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::key::Key;
+
     use crate::rules::memory::MemState;
     use crate::rules::{decide, OrgCommand};
     use crate::store::{Opening, Store};
@@ -889,13 +889,7 @@ mod tests {
 
     fn store() -> (TempDir, Store) {
         let dir = TempDir::new().unwrap();
-        let store = Store::open(
-            &dir.path().join("org.db"),
-            &Key::from_bytes([5; 32]),
-            Opening::New,
-            &SCHEMA,
-        )
-        .unwrap();
+        let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
         let genesis = Genesis {
             org_id: "ORG1".into(),
             org_name: "Acme".into(),
@@ -1472,13 +1466,7 @@ mod tests {
     #[test]
     fn an_org_db_from_before_the_log_with_its_identity_row_still_counts_as_committed() {
         let dir = TempDir::new().unwrap();
-        let store = Store::open(
-            &dir.path().join("org.db"),
-            &Key::from_bytes([5; 32]),
-            Opening::New,
-            &SCHEMA,
-        )
-        .unwrap();
+        let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
         assert!(
             !store.read(is_committed).unwrap(),
             "a schema alone is not an organization"
@@ -1499,13 +1487,7 @@ mod tests {
     #[test]
     fn a_snapshot_of_an_empty_log_is_not_found() {
         let dir = TempDir::new().unwrap();
-        let store = Store::open(
-            &dir.path().join("org.db"),
-            &Key::from_bytes([5; 32]),
-            Opening::New,
-            &SCHEMA,
-        )
-        .unwrap();
+        let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
         assert!(matches!(store.read(snapshot), Err(OfficeError::NotFound)));
     }
 
