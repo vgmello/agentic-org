@@ -39,7 +39,6 @@ compile_error!(
 
 mod accounts;
 mod app_auth;
-pub mod bootstrap;
 mod broadcast;
 mod catalog;
 mod clock;
@@ -56,8 +55,13 @@ mod host_secrets;
 mod hostdb;
 pub mod human;
 mod ids;
+// Composed into `admin.link.initial` and `admin.reset` by A2 B3.
+#[cfg_attr(not(test), allow(dead_code))]
+mod links;
 pub mod release;
 mod web;
+#[cfg(all(test, debug_assertions))]
+mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[cfg_attr(not(test), expect(dead_code, reason = "B2-01.2 wires the host"))]

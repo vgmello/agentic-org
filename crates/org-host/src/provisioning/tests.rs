@@ -190,30 +190,19 @@ fn custody_snapshot(custody: &dyn HostSecrets) -> Vec<(Name, Vec<u8>)> {
 }
 
 fn pending_registry_init(instance: &str) -> crate::hostdb::HostDbInit {
-    use crate::hostdb::{BootstrapRecord, FirstAccount, HostDbInit};
-    let account = crate::ids::generate().unwrap();
-    HostDbInit {
+    crate::hostdb::HostDbInit {
         instance_id: instance.into(),
-        clock_high_ms: org_proto::ulid_time_ms(&account).unwrap() as i64,
-        bootstrap: BootstrapRecord {
-            operation_id: crate::ids::generate().unwrap(),
-            hq_operation_id: crate::ids::generate().unwrap(),
-            fingerprint: "pending recovery fixture".into(),
-            account: account.clone(),
-            finished: false,
-        },
-        first_account: FirstAccount::new(
-            &account,
-            "Owner",
-            crate::service::authentication::hash_password(
-                &org_host_control::Password::new("synthetic pending recovery password".into())
-                    .unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap(),
-        tls_pair: None,
+        clock_high_ms: org_proto::ulid_time_ms(&crate::ids::generate().unwrap()).unwrap() as i64,
     }
+}
+fn seed_owner(db: &HostDb) {
+    let account = crate::ids::generate().unwrap();
+    let verifier = crate::service::authentication::hash_password(
+        &org_host_control::Password::new("synthetic pending recovery password".into()).unwrap(),
+    )
+    .unwrap();
+    db.seed_account(&account, "Owner", &verifier, true, 1)
+        .unwrap();
 }
 
 #[test]
@@ -230,6 +219,7 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
         let custody = Arc::new(DevSecrets::open(base.path(), &root, &instance).unwrap());
         let db =
             Arc::new(HostDb::create(&root, &*custody, &pending_registry_init(&instance)).unwrap());
+        seed_owner(&db);
         let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
         let controller = Provisioning::new(
             db.clone(),
@@ -292,7 +282,6 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
     let custody = DevSecrets::open(base.path(), &root, &instance).unwrap();
     assert!(custody_snapshot(&custody) == credentials);
     let replacement = pending_registry_init(&instance);
-    assert_ne!(replacement.first_account.account_id(), reservation.account);
     assert!(matches!(
         HostDb::create(&root, &custody, &replacement),
         Err(crate::hostdb::Error::Unsafe)

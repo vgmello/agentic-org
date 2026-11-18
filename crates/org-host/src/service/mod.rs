@@ -140,6 +140,10 @@ impl Service {
         })
     }
     #[cfg(test)]
+    #[expect(
+        dead_code,
+        reason = "bootstrap recovery-custody proof is being ported onto the registered-host fixture (A2 run 6)"
+    )]
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
     }
@@ -920,8 +924,8 @@ pub(crate) mod tests {
         service.instance_id = Some(crate::ids::generate().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
-        // A setup connection and a host.sock connection are both `Local`.
-        let local = listener::SetupConnection::start(host, Arc::new(service)).unwrap();
+        // Every host.sock connection is `Local`.
+        let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
         peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .unwrap();
         let mut peer = std::io::BufReader::new(peer);

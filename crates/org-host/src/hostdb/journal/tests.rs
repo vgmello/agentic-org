@@ -1,5 +1,5 @@
 use super::*;
-use crate::hostdb::tests::first_account::PHC;
+use crate::hostdb::tests::admin_fixture::PHC;
 use serde_json::json;
 
 thread_local! {
