@@ -10,9 +10,13 @@
 //! 4. Report disk encryption and the folder modes, read back from disk (ENC-3).
 //! 5. Register the service and start it unless it already runs (SRV-6).
 //! 6. Wait until `host.sock` answers hello and `instance.status` for this instance.
-//! 7. Ask for the initial registration link once (`admin.link.initial`) and print it.
+//! 7. Ask for the initial registration link once (`admin.link.initial`) and print it, only
+//!    when the output is a terminal. Noninteractive setup asks for no link and names
+//!    `agentic-org admin reset` instead (ADR-0022, UX §4a.2).
 //!
 //! Every step is idempotent; a second run reuses the frozen record and prints no link.
+//! Ports other instances saved are never chosen, and a saved port another program holds
+//! is reported before the service starts.
 use std::ffi::OsString;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -24,7 +28,9 @@ use org_host_control::admin::{
     AdminLinkInitial, AdminLinkInitialParams, AdminLinkResult, AdminReset, AdminResetParams,
 };
 use org_host_control::listen::ListenConfig;
-use org_host_control::{Administrator, InstanceStatus, InstanceStatusParams};
+use org_host_control::{
+    Administrator, GatewayState, InstanceStatus, InstanceStatusParams, InstanceStatusResult,
+};
 use org_platform::disk::{DiskEncryption, EncryptionState};
 use org_platform::service::{ServiceManager, ServiceStatus, Unit};
 use org_proto::{Hello, HelloParams};
@@ -61,6 +67,8 @@ pub struct Request<'a> {
     /// The service program (`agentic-org` itself) and its explicit environment.
     pub program: PathBuf,
     pub env: Vec<(OsString, OsString)>,
+    /// Whether `out` is a terminal. The one-time link is printed only to a terminal.
+    pub terminal: bool,
 }
 
 fn fail(context: &str, why: impl std::fmt::Display) -> String {
@@ -101,15 +109,66 @@ fn port_free(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
+/// The ports other instances saved, by name: their frozen setup records and the browser
+/// addresses in the instance locator. Unreadable entries are skipped; this only steers
+/// the choice of a new port.
+fn saved_ports(paths: &Paths, name: Option<&str>) -> Vec<(String, u16)> {
+    let shown = name.unwrap_or("default");
+    let mut saved = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(paths.base.join("setup")) {
+        for entry in entries.flatten() {
+            let Some(other) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if other == shown {
+                continue;
+            }
+            if let Ok(record) = Journal::snapshot(&paths.base, Some(&other)) {
+                saved.push((other, record.input.listen.port()));
+            }
+        }
+    }
+    if let Ok(registry) = Registry::open(&paths.locator, &paths.user_temp) {
+        if let Ok(ports) = registry.saved_browser_ports() {
+            saved.extend(ports.into_iter().filter(|(other, _)| other != shown));
+        }
+    }
+    saved.sort();
+    saved.dedup();
+    saved
+}
+
+/// Refuses a saved port that another program holds while this instance's service is not
+/// running: the service could not serve its address, and the address does not change.
+fn port_held_elsewhere(port: u16, name: Option<&str>) -> String {
+    format!(
+        "port {port} on 127.0.0.1, this instance's saved address, is in use by another \
+         program, so its service cannot serve it; stop that program, then run {}",
+        match name {
+            None | Some("default") => "agentic-org setup".to_owned(),
+            Some(name) => format!("agentic-org setup --name {name}"),
+        }
+    )
+}
+
 /// The first run's port: the requested one if free, otherwise the instance's default.
+/// `saved` holds the ports other instances saved, by name; none of them is chosen.
 pub(crate) fn choose_port(
     name: Option<&str>,
     requested: Option<u16>,
     free: impl Fn(u16) -> bool,
+    saved: &[(String, u16)],
 ) -> Result<u16, String> {
+    let owner = |port: u16| saved.iter().find(|(_, p)| *p == port).map(|(n, _)| n);
     if let Some(port) = requested {
         if port == 0 {
             return Err("port 0 is not a fixed address; choose a port from 1 to 65535".into());
+        }
+        if let Some(other) = owner(port) {
+            return Err(format!(
+                "port {port} is the saved address of instance \"{other}\"; choose another \
+                 port with --port; nothing was saved"
+            ));
         }
         if !free(port) {
             return Err(format!(
@@ -121,7 +180,12 @@ pub(crate) fn choose_port(
     }
     match name {
         None | Some("default") => {
-            if free(DEFAULT_PORT) {
+            if let Some(other) = owner(DEFAULT_PORT) {
+                Err(format!(
+                    "port {DEFAULT_PORT} is the saved address of instance \"{other}\"; choose \
+                     another port with --port; nothing was saved"
+                ))
+            } else if free(DEFAULT_PORT) {
                 Ok(DEFAULT_PORT)
             } else {
                 Err(format!(
@@ -131,7 +195,7 @@ pub(crate) fn choose_port(
             }
         }
         Some(_) => (DEFAULT_PORT + 1..=u16::MAX)
-            .find(|p| free(*p))
+            .find(|p| owner(*p).is_none() && free(*p))
             .ok_or_else(|| "no free port on 127.0.0.1 from 7421; nothing was saved".into()),
     }
 }
@@ -223,6 +287,8 @@ pub fn platform() -> Result<Platform, String> {
 
 /// Runs setup for `request`. See the module docs for the steps.
 pub fn run(platform: &Platform, request: Request<'_>, out: &mut dyn Write) -> Result<(), String> {
+    // A release build without a pinned runtime refuses before any path is resolved or made.
+    release_pin()?;
     let paths = crate::human::paths(request.name.as_deref())?;
     run_at(&paths, platform, request, out)
 }
@@ -256,11 +322,12 @@ pub(crate) fn run_at(
             record
         }
         None => {
-            let mut port = choose_port(name, request.port, port_free)?;
+            let saved = saved_ports(paths, name);
+            let mut port = choose_port(name, request.port, port_free, &saved)?;
             if request.port.is_none() {
                 if let Some(prompt) = request.prompt.as_mut() {
                     if let Some(chosen) = prompt(&format!("http://127.0.0.1:{port}"))? {
-                        port = choose_port(name, Some(chosen), port_free)?;
+                        port = choose_port(name, Some(chosen), port_free, &saved)?;
                     }
                 }
             }
@@ -358,16 +425,28 @@ pub(crate) fn run_at(
             .map_err(|e| fail("saving setup", e))?;
     }
     say(out, "Service registered.")?;
+    let port = record.input.listen.port();
     match platform.service.status(&service_id) {
         Ok(ServiceStatus::Running { .. }) => {}
-        _ => platform
-            .service
-            .start(&service_id)
-            .map_err(|e| fail("starting the service", e))?,
+        _ => {
+            // Nothing of this instance runs, so a held port belongs to another program.
+            if !port_free(port) {
+                return Err(port_held_elsewhere(port, name));
+            }
+            platform
+                .service
+                .start(&service_id)
+                .map_err(|e| fail("starting the service", e))?
+        }
     }
 
     // 6. Readiness: hello and instance.status for this instance within the deadline.
-    let administrator = ready(&socket, &instance_id, READY_WITHIN)?;
+    let status = ready(&socket, &instance_id, READY_WITHIN)?;
+    // A failed browser service no longer holds its port; if something else does, say so.
+    if status.gateway.state == GatewayState::Failed && !port_free(port) {
+        return Err(port_held_elsewhere(port, name));
+    }
+    let administrator = status.administrator;
     say(out, "Service running.")?;
     if !record.registry_created {
         record.registry_created = true;
@@ -378,11 +457,17 @@ pub(crate) fn run_at(
 
     // 7. The initial link, at most once.
     if administrator == Administrator::Present {
-        say(out, "Instance ready. It has an administrator.")?;
-        return Ok(());
+        return say(
+            out,
+            format!(
+                "Instance {shown} is running. Open {} and sign in.",
+                record.input.listen.origin().as_str()
+            ),
+        );
     }
     say(out, "Instance ready. It has no administrator yet.")?;
-    let result = if record.initial_link_issued {
+    // The link is shown only in a terminal; noninteractive setup does not ask for it.
+    let result = if record.initial_link_issued || !request.terminal {
         AdminLinkResult::AlreadyIssued
     } else {
         let mut wire = connect(&socket, &instance_id)?;
@@ -483,7 +568,11 @@ fn connect(socket: &Path, instance_id: &str) -> Result<Wire, String> {
 }
 
 /// Polls until the service answers for `instance_id`, or the deadline passes.
-fn ready(socket: &Path, instance_id: &str, within: Duration) -> Result<Administrator, String> {
+fn ready(
+    socket: &Path,
+    instance_id: &str,
+    within: Duration,
+) -> Result<InstanceStatusResult, String> {
     let deadline = Instant::now() + within;
     loop {
         let attempt = connect(socket, instance_id).and_then(|mut wire| {
@@ -491,7 +580,7 @@ fn ready(socket: &Path, instance_id: &str, within: Duration) -> Result<Administr
                 .map_err(|e| fail("reading the instance status", e))
         });
         match attempt {
-            Ok(status) if status.instance_id == instance_id => return Ok(status.administrator),
+            Ok(status) if status.instance_id == instance_id => return Ok(status),
             Ok(_) => return Err("the service answering is not this instance".into()),
             Err(why) if Instant::now() >= deadline => {
                 return Err(format!(
@@ -521,7 +610,16 @@ fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, Path
 }
 
 /// `agentic-org admin reset`: a new registration link after presence at the host.
-pub fn admin_reset(name: Option<&str>, out: &mut dyn Write) -> Result<(), String> {
+/// `terminal` says whether `out` is a terminal: the link is printed only there, so
+/// otherwise this refuses before asking the host, and no link is issued or cancelled.
+pub fn admin_reset(name: Option<&str>, terminal: bool, out: &mut dyn Write) -> Result<(), String> {
+    if !terminal {
+        return Err(
+            "admin reset prints a one-time link only to a terminal; run it in Terminal on \
+             this Mac without redirecting its output; nothing was changed"
+                .into(),
+        );
+    }
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let mut wire = connect(&socket, &id).map_err(|why| {
         format!(

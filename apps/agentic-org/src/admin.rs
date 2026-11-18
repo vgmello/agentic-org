@@ -12,8 +12,14 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
                 return Ok(());
             }
             let options = crate::options(rest, &["--name"])?;
+            use std::io::IsTerminal;
+            let terminal = std::io::stdout().is_terminal();
             let mut out = std::io::stdout().lock();
-            org_host::setup_flow::admin_reset(options.get("--name").map(String::as_str), &mut out)
+            org_host::setup_flow::admin_reset(
+                options.get("--name").map(String::as_str),
+                terminal,
+                &mut out,
+            )
         }
         [flag] if flag == "--help" || flag == "-h" => {
             println!("{HELP}");

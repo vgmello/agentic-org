@@ -598,6 +598,31 @@ impl Registry {
         Ok((entry.binding.id.clone(), entry.binding.temp_folder.clone()))
     }
 
+    /// The browser ports registered instances saved, with each instance's name. An entry
+    /// whose root or configuration cannot be read is skipped: setup uses this only to
+    /// avoid choosing a port another instance already owns.
+    pub(crate) fn saved_browser_ports(&self) -> Result<Vec<(String, u16)>, Error> {
+        let lock = self.directory.lock_file(LOCK)?;
+        let (locator, _) = self.load()?;
+        let mut ports = Vec::new();
+        for entry in &locator.entries {
+            let Ok(root) = Directory::open_root(&entry.binding.root, false) else {
+                continue;
+            };
+            let Ok(Some(bytes)) = root.read(CONFIG, MAX_BYTES) else {
+                continue;
+            };
+            let Ok(config) = decode::<Config>(&bytes) else {
+                continue;
+            };
+            if let Some(listen) = config.browser {
+                ports.push((entry.binding.name.as_str().to_owned(), listen.port()));
+            }
+        }
+        self.directory.verify_file(LOCK, &lock)?;
+        Ok(ports)
+    }
+
     fn load(&self) -> Result<(Locator, Option<ControlFile>), Error> {
         let previous = self.directory.read(REGISTRY, MAX_BYTES)?;
         let locator = match previous.as_ref() {

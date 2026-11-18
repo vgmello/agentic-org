@@ -4,7 +4,8 @@
 //! Development builds with the `test-support` feature compose test adapters instead of launchd
 //! when `ORG_DEV_SERVICE_DIR` names a folder: the service runs as a detached child
 //! (`ChildServiceManager`), and `ORG_DEV_DISK_ENCRYPTION` (`on`, `off`, anything else unknown)
-//! is the disk-encryption answer. Release builds never contain them.
+//! is the disk-encryption answer. Release builds never contain them, and a build without the
+//! adapters refuses `ORG_DEV_SERVICE_DIR` instead of registering a real service.
 use std::ffi::OsString;
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -42,13 +43,15 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         .and_then(|p| p.canonicalize())
         .map_err(|e| format!("locating agentic-org: {e}"))?;
     let mut ask = ask_port;
-    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let terminal = std::io::stdout().is_terminal();
+    let interactive = std::io::stdin().is_terminal() && terminal;
     let request = Request {
         name: options.get("--name").cloned(),
         port,
         prompt: if interactive { Some(&mut ask) } else { None },
         program,
         env: service_environment(),
+        terminal,
     };
     let mut out = std::io::stdout().lock();
     setup_flow::run(&platform, request, &mut out)
@@ -104,6 +107,15 @@ pub(crate) fn platform() -> Result<Platform, String> {
             service: Box::new(ChildServiceManager::new(dir)),
             disk: Box::new(FakeDiskEncryption(state)),
         });
+    }
+    #[cfg(not(all(debug_assertions, feature = "test-support")))]
+    if std::env::var_os("ORG_DEV_SERVICE_DIR").is_some_and(|d| !d.is_empty()) {
+        return Err(
+            "ORG_DEV_SERVICE_DIR names the development test service adapter, which \
+                    this build does not contain; unset it to use the system service manager; \
+                    nothing was changed"
+                .into(),
+        );
     }
     setup_flow::platform()
 }

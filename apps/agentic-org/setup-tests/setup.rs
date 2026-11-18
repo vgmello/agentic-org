@@ -3,9 +3,12 @@
 //! (`ORG_DEV_SERVICE_DIR`: the service is a detached child, never launchd; disk encryption is a
 //! fixed answer, never `fdesetup`). Development key files replace the Keychain. No test opens a
 //! real organization root.
+use std::io::Read;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::Duration;
 
 const BIN: &str = env!("CARGO_BIN_EXE_agentic-org");
 
@@ -31,8 +34,9 @@ impl Account {
         Self { base, _temp: temp }
     }
 
-    fn run(&self, args: &[&str]) -> Output {
-        Command::new(BIN)
+    fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(BIN);
+        command
             .args(args)
             .env_clear()
             .env("HOME", &self.base)
@@ -40,9 +44,85 @@ impl Account {
             .env("ORG_DEV_ACCOUNT_BASE", self.base.join("app"))
             .env("ORG_OFFICE_DEV_KEY_DIR", self.base.join("keys"))
             .env("ORG_DEV_SERVICE_DIR", self.base.join("svc"))
-            .env("ORG_DEV_DISK_ENCRYPTION", "on")
-            .output()
+            .env("ORG_DEV_DISK_ENCRYPTION", "on");
+        command
+    }
+
+    /// Runs with stdout and stderr piped: not a terminal.
+    fn run(&self, args: &[&str]) -> Output {
+        self.command(args).output().unwrap()
+    }
+
+    /// Runs with stdout on a pseudo-terminal, as at a person's terminal (stdin stays
+    /// closed, so setup asks no question). Returns success, stdout and stderr.
+    fn run_in_terminal(&self, args: &[&str]) -> (bool, String, String) {
+        let (mut master, mut slave) = (-1, -1);
+        // SAFETY: openpty only writes the two descriptors; no name, termios or size.
+        let opened = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(opened, 0, "openpty: {}", std::io::Error::last_os_error());
+        // SAFETY: both descriptors are new and owned only here.
+        let (master, slave) =
+            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+        for fd in [&master, &slave] {
+            // SAFETY: plain flag change on a descriptor this function owns. Children of
+            // parallel tests must not inherit the terminal, or its end would never be seen.
+            unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
+        }
+        let mut command = self.command(args);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(slave))
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        drop(command);
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut reader = std::fs::File::from(master);
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            while let Ok(n @ 1..) = reader.read(&mut buffer) {
+                if send.send(buffer[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut err = String::new();
+        child
+            .stderr
+            .take()
             .unwrap()
+            .read_to_string(&mut err)
+            .unwrap();
+        let status = child.wait().unwrap();
+        let mut out = Vec::new();
+        while let Ok(chunk) = receive.recv_timeout(Duration::from_millis(500)) {
+            out.extend(chunk);
+        }
+        (
+            status.success(),
+            String::from_utf8_lossy(&out).replace("\r\n", "\n"),
+            err,
+        )
+    }
+
+    /// The frozen setup record of `name`, as JSON.
+    fn record(&self, name: &str) -> serde_json::Value {
+        let path = self.base.join(format!("app/setup/{name}/setup.v1.json"));
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    fn address(out: &str) -> u16 {
+        out.lines()
+            .find_map(|l| l.trim().strip_prefix("Address: http://127.0.0.1:"))
+            .and_then(|p| p.trim_end_matches('/').parse().ok())
+            .unwrap_or_else(|| panic!("no address in:\n{out}"))
     }
 
     fn service_pids(&self) -> Vec<(String, u32)> {
@@ -107,9 +187,8 @@ fn link_token(stdout: &str) -> Option<String> {
 fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     let account = Account::new();
     let port = free_port().to_string();
-    let first = account.run(&["setup", "--port", &port]);
-    let (out, err) = text(&first);
-    assert!(first.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    let (ok, out, err) = account.run_in_terminal(&["setup", "--port", &port]);
+    assert!(ok, "stdout:\n{out}\nstderr:\n{err}");
     assert!(out.contains("Setting up instance \"default\"."), "{out}");
     assert!(
         out.contains(&format!("Address: http://127.0.0.1:{port}")),
@@ -121,8 +200,9 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     assert!(out.contains("same-user mode"), "{out}");
     assert!(out.contains("Service running."), "{out}");
     assert!(out.contains("It has no administrator yet."), "{out}");
-    let token = link_token(&out).expect("the first run prints the link");
+    let token = link_token(&out).expect("the first run in a terminal prints the link");
     assert!(token.len() >= 40, "{out}");
+    assert_eq!(account.record("default")["initial_link_issued"], true);
 
     let pids = account.service_pids();
     assert_eq!(pids.len(), 1, "one service child");
@@ -163,6 +243,16 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     assert!(!other.status.success());
     assert!(text(&other).1.contains("does not change on a later run"));
 
+    // admin reset never prints a link to a pipe or file: refused before the host is asked.
+    let piped = account.run(&["admin", "reset"]);
+    assert!(!piped.status.success());
+    assert!(
+        text(&piped).1.contains("only to a terminal"),
+        "{:?}",
+        text(&piped)
+    );
+    assert!(link_token(&text(&piped).0).is_none());
+
     // service status and stop go through the same adapter.
     let status = account.run(&["service", "status"]);
     assert!(
@@ -174,17 +264,83 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     assert!(stop.status.success(), "{:?}", text(&stop));
     assert!(!alive(pid));
     // With the service stopped, admin reset names the recovery.
-    let reset = account.run(&["admin", "reset"]);
-    assert!(!reset.status.success());
+    let (ok, reset_out, reset_err) = account.run_in_terminal(&["admin", "reset"]);
+    assert!(!ok, "{reset_out}");
     assert!(
-        text(&reset).1.contains("agentic-org service start"),
+        reset_err.contains("agentic-org service start"),
+        "{reset_err}"
+    );
+
+    // While the service is stopped, another program takes the saved port: setup names the
+    // port and the way out instead of starting a service that cannot serve it.
+    let busy = std::net::TcpListener::bind(("127.0.0.1", port.parse::<u16>().unwrap())).unwrap();
+    let held = account.run(&["setup"]);
+    let (held_out, held_err) = text(&held);
+    assert!(!held.status.success(), "{held_out}");
+    assert!(
+        held_err.contains(&format!("port {port} on 127.0.0.1"))
+            && held_err.contains("another program")
+            && held_err.contains("then run agentic-org setup"),
+        "{held_err}"
+    );
+    assert!(account.service_pids().iter().all(|(_, pid)| !alive(*pid)));
+    drop(busy);
+}
+
+/// ADR-0022 / UX §4a.2: noninteractive setup asks for no link and prints none; the link
+/// stays unissued, so a later run at a terminal still gets the initial one.
+#[test]
+fn piped_setup_prints_no_link_and_leaves_it_unissued() {
+    let account = Account::new();
+    let port = free_port().to_string();
+    let piped = account.run(&["setup", "--port", &port]);
+    let (out, err) = text(&piped);
+    assert!(piped.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.contains("It has no administrator yet."), "{out}");
+    assert!(
+        out.contains("For a new link, run: agentic-org admin reset"),
+        "{out}"
+    );
+    assert!(link_token(&out).is_none(), "{out}");
+    assert!(!out.contains("/register"), "{out}");
+    assert_eq!(account.record("default")["initial_link_issued"], false);
+
+    let (ok, again, err) = account.run_in_terminal(&["setup"]);
+    assert!(ok, "stdout:\n{again}\nstderr:\n{err}");
+    assert!(link_token(&again).is_some(), "{again}");
+    assert_eq!(account.record("default")["initial_link_issued"], true);
+}
+
+/// A second named instance never takes the port the first one saved, even while the first
+/// one's service is stopped and nothing listens there.
+#[test]
+fn a_named_instance_skips_ports_other_instances_saved() {
+    let account = Account::new();
+    let first = account.run(&["setup", "--name", "one"]);
+    let (out, err) = text(&first);
+    assert!(first.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    let saved = Account::address(&out);
+    let stop = account.run(&["service", "stop", "--name", "one"]);
+    assert!(stop.status.success(), "{:?}", text(&stop));
+    let second = account.run(&["setup", "--name", "two"]);
+    let (out2, err2) = text(&second);
+    assert!(second.status.success(), "stdout:\n{out2}\nstderr:\n{err2}");
+    assert_ne!(Account::address(&out2), saved, "{out2}");
+    // An explicit request for the saved port is refused by name.
+    let third = account.run(&["setup", "--name", "three", "--port", &saved.to_string()]);
+    assert!(!third.status.success());
+    assert!(
+        text(&third).1.contains("saved address of instance \"one\""),
         "{:?}",
-        text(&reset)
+        text(&third)
     );
 }
 
 /// A named instance without `--port` takes the first free port from 7421 (7420 is
-/// `default`'s). The test holds 7421 when it can, so the named instance must skip it.
+/// `default`'s). The test holds 7421 when it can; if it cannot, another program (or a
+/// parallel test) holds it. Either way the named instance skips it, so the test asserts
+/// only a lower bound, never a fixed port. Residual: a holder that releases 7421 between
+/// this test's bind attempt and setup's choice would let setup take 7421.
 #[test]
 fn a_named_instance_takes_the_first_free_port_from_7421() {
     let account = Account::new();
@@ -193,15 +349,12 @@ fn a_named_instance_takes_the_first_free_port_from_7421() {
     let (out, err) = text(&output);
     assert!(output.status.success(), "stdout:\n{out}\nstderr:\n{err}");
     assert!(out.contains("Setting up instance \"lab\"."), "{out}");
-    let port: u16 = out
-        .lines()
-        .find_map(|l| l.trim().strip_prefix("Address: http://127.0.0.1:"))
-        .and_then(|p| p.trim_end_matches('/').parse().ok())
-        .unwrap_or_else(|| panic!("no address in:\n{out}"));
-    assert!(
-        port >= 7422,
-        "7421 is held by the test or another program: {port}"
-    );
+    let port = Account::address(&out);
+    if held.is_some() {
+        assert!(port >= 7422, "7421 is held by the test: {port}");
+    } else {
+        assert!(port >= 7421, "{port}");
+    }
     assert_ne!(port, 7420);
     drop(held);
     // The unit serves the named instance, and a rerun keeps the frozen port even though
@@ -252,6 +405,16 @@ fn satellite_flags_and_unknown_arguments_are_refused_before_any_change() {
     ] {
         let output = account.run(args);
         assert!(!output.status.success(), "{args:?}");
+        if args[1].starts_with("--hq")
+            || args[1] == "--satellite"
+            || args[1].starts_with("--invitation")
+        {
+            assert!(
+                text(&output).1.contains("setup creates HQ only"),
+                "{args:?}: {:?}",
+                text(&output)
+            );
+        }
     }
     assert!(!account.base.join("app").exists(), "nothing was created");
 }
