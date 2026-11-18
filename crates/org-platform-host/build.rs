@@ -1,11 +1,10 @@
 //! Compiles the recovery presence bridge (ADR-0011) when the build target is macOS.
 //!
 //! `src/presence/bridge.m` is the Objective-C translation unit behind
-//! `org_platform_host::presence` on macOS: exact, confined, source-pinned build input. This
-//! script moved here from `org-host` with the bridge; nothing else in it is new. A build
-//! script runs on the build machine, so it reads the target from
-//! `CARGO_CFG_TARGET_OS`. It emits no `cfg`. For every other target it compiles and
-//! links nothing.
+//! `org_platform_host::presence` on macOS. Its bytes are pinned below and compared
+//! before the compiler reads the file. A build script runs on the build machine, so it
+//! reads the target from `CARGO_CFG_TARGET_OS`; it emits no `cfg`. For every other
+//! target it compiles and links nothing.
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
