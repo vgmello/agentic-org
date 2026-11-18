@@ -14,9 +14,9 @@
 	import { Button } from '$lib/components/ui/button';
 	import { toast } from 'svelte-sonner';
 	import { OffboardAgentDialog } from '$lib/modules/employees';
-	import ConfirmDialog from '$lib/modules/settings/components/ConfirmDialog.svelte';
-	import { neighbourFocus } from '$lib/modules/settings/components/focus';
-	import { Resource } from '$lib/modules/settings/resource.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { neighbourFocus } from '$lib/components/focus';
+	import { Resource } from '$lib/components/resource.svelte';
 	import { officesApi } from '$lib/modules/offices/api';
 	import { layerOffices, satelliteWhere } from '$lib/modules/offices/layer';
 	import { withPlacements } from '$lib/modules/offices/placements';

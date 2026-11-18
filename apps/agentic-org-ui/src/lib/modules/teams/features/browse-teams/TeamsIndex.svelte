@@ -5,7 +5,7 @@
   or Contributor. New team, and each row's menu: Move, Rename, Change lead, Add team under, Archive, Delete.
 -->
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import { invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
@@ -22,9 +22,9 @@
 	import { sessionFor } from '$lib/org/session';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import type { OrgSnapshot } from '$lib/proto';
-	import Loaded from '$lib/modules/members/components/Loaded.svelte';
+	import Loaded from '$lib/components/Loaded.svelte';
 	import { membersApi } from '$lib/modules/members/api';
-	import { resource } from '$lib/modules/members/resource.svelte';
+	import { Resource } from '$lib/components/resource.svelte';
 	import { teamsApi } from '../../api';
 	import { focusAfterRemoval, indentTeams } from '../../tree';
 	import type { LeadCandidate, TeamRow } from '../../types';
@@ -34,10 +34,9 @@
 
 	let { organizationId, snapshot }: { organizationId: string; snapshot: OrgSnapshot } = $props();
 
-	const teams = resource(() => teamsApi.list(organizationId));
-	onMount(() => void teams.load());
-	const active = $derived((teams.value ?? []).filter((t) => t.status === 'active'));
-	const archived = $derived((teams.value ?? []).filter((t) => t.status === 'archived'));
+	const teams = new Resource(() => teamsApi.list(organizationId));
+	const active = $derived((teams.data ?? []).filter((t) => t.status === 'active'));
+	const archived = $derived((teams.data ?? []).filter((t) => t.status === 'archived'));
 	const rows = $derived(indentTeams(active));
 	const session = $derived(sessionFor(orgApi, organizationId));
 	const orgTeam = (row: TeamRow | undefined) => row && snapshot.teams.find((t) => t.id === row.id);
@@ -83,7 +82,7 @@
 
 	async function reload() {
 		await invalidate('app:org');
-		await teams.load();
+		await teams.reload();
 	}
 
 	/** After a row goes away: the next surviving row, else the previous, else the heading (§7.2). */
@@ -133,9 +132,9 @@
 </PageHeader>
 
 <Loaded
-	res={teams}
+	resource={teams}
 	label="teams"
-	errorTitle="Couldn't load the teams"
+	error="Couldn't load the teams"
 	isEmpty={(v) => v.length === 0}
 	emptyTitle="No teams yet"
 	emptyDescription="Every organization starts with its top-level team. If none shows here, HQ hasn't sent the organization's teams yet."

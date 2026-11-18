@@ -25,7 +25,7 @@
 		inputClass,
 		mobileButton,
 		selectClass
-	} from '../../components/classes';
+	} from '$lib/components/classes';
 	import type { GeneralSettings } from '../../types';
 
 	let {

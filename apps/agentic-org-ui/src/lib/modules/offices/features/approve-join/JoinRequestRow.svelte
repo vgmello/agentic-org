@@ -6,7 +6,7 @@
 	import Bell from '@lucide/svelte/icons/bell';
 	import { Button } from '$lib/components/ui/button';
 	import StatusPill from '$lib/components/StatusPill.svelte';
-	import { tone } from '$lib/modules/settings/components/pills';
+	import { tone } from '$lib/components/pills';
 	import { agoText } from '../../time';
 	import type { JoinRequest } from '../../types';
 

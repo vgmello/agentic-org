@@ -19,12 +19,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import {
-		errorClass,
-		helpClass,
-		inputClass,
-		mobileButton
-	} from '$lib/modules/settings/components/classes';
+	import { errorClass, helpClass, inputClass, mobileButton } from '$lib/components/classes';
 	import { officesApi } from '../../api';
 	import { CODE_HINT, groupCode, readCheckCode } from '../../check-code';
 	import { agoText } from '../../time';

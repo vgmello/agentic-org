@@ -5,9 +5,9 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { settingsApi } from '../../api';
-	import Loaded from '../../components/Loaded.svelte';
-	import { tone } from '../../components/pills';
-	import { Resource } from '../../resource.svelte';
+	import Loaded from '$lib/components/Loaded.svelte';
+	import { tone } from '$lib/components/pills';
+	import { Resource } from '$lib/components/resource.svelte';
 	import type { RuntimeSupport } from '../../types';
 	import HandOverDialog from './HandOverDialog.svelte';
 	import RecoveryRow from './RecoveryRow.svelte';
@@ -33,6 +33,7 @@
 	label="settings"
 	error="Couldn't load the organization's settings"
 	place="General"
+	area="Organization settings"
 >
 	{#snippet children(general)}
 		{#snippet adminText()}
