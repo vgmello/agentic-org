@@ -412,7 +412,9 @@ fn b111_native_parent_guard_preserves_link_read_storage_errors_without_writes() 
             shortcut: None,
         })
     };
-    let refusal = service.call(Caller::app("owner1"), call(999_861)).unwrap();
+    let refusal = service
+        .call(Caller::grant_bound("owner1"), call(999_861))
+        .unwrap();
     assert!(
         matches!(refusal,TxnOutput::Refused(error) if error.code==org_proto::ErrorCode::InvalidRequest)
     );
@@ -429,7 +431,7 @@ fn b111_native_parent_guard_preserves_link_read_storage_errors_without_writes() 
     .unwrap();
     let before = db.read(|db| Ok(super::metadata::old_rows(db))).unwrap();
     let error = service
-        .call(Caller::app("owner1"), call(999_862))
+        .call(Caller::grant_bound("owner1"), call(999_862))
         .unwrap_err();
     let mut cause = error.source();
     let mut json_error = false;

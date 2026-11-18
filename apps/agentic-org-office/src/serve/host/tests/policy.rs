@@ -19,7 +19,7 @@ fn shared() -> Shared {
         .unwrap()))
     });
     ports.work = Box::new(|caller, _| {
-        assert_eq!(caller, org_work::Caller::app(OWNER_ID));
+        assert_eq!(caller, org_work::Caller::grant_bound(OWNER_ID));
         Ok(Ok(
             serde_json::from_value(json!({"status":"queued"})).unwrap()
         ))

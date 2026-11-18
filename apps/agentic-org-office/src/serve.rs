@@ -1112,7 +1112,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
                 Ok(None) => unreachable!("unknown work method fell through"),
             };
             let caller = if *via_grant {
-                Caller::app(id.as_str())
+                Caller::grant_bound(id.as_str())
             } else {
                 Caller::agent(id.as_str())
             };
@@ -3916,7 +3916,9 @@ mod tests {
             text_of(client.bind(Some("pat"), None)),
             text_of(client.bind(Some("nobody"), None))
         );
-        // A person or the owner needs the token: none, or a wrong one.
+        // A person or the owner never binds on the office socket: they act only through a
+        // host channel's grant. No token, a wrong one, or the one that formerly matched: all
+        // refused the same way.
         for who in ["pat", "owner"] {
             assert_eq!(
                 code_of(client.bind(Some(who), None)),
@@ -3926,6 +3928,11 @@ mod tests {
             let wrong = org_proto::AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
             assert_eq!(
                 code_of(client.bind(Some(who), Some(wrong))),
+                ErrorCode::NotAuthorized,
+                "{who}"
+            );
+            assert_eq!(
+                code_of(client.bind(Some(who), Some(any_app_token()))),
                 ErrorCode::NotAuthorized,
                 "{who}"
             );

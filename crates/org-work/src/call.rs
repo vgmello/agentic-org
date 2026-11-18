@@ -20,8 +20,9 @@ use org_proto::{ApiError, Call, ErrorCode, Request};
 pub struct Caller {
     /// The member the connection is bound as.
     pub member_id: String,
-    /// The connection is the app's (it may make app-only calls).
-    pub via_app: bool,
+    /// The call came through a host channel's grant, as the owner or a person (it may make the
+    /// calls only a person's session makes).
+    pub via_grant: bool,
 }
 
 impl Caller {
@@ -29,15 +30,15 @@ impl Caller {
     pub fn agent(member_id: impl Into<String>) -> Self {
         Self {
             member_id: member_id.into(),
-            via_app: false,
+            via_grant: false,
         }
     }
 
-    /// The app's connection, bound as the owner or a person.
-    pub fn app(member_id: impl Into<String>) -> Self {
+    /// A grant-bound call on a host channel, as the owner or a person.
+    pub fn grant_bound(member_id: impl Into<String>) -> Self {
         Self {
             member_id: member_id.into(),
-            via_app: true,
+            via_grant: true,
         }
     }
 }

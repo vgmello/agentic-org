@@ -106,7 +106,7 @@ fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
                         calls.as_slice(),
                         &[(
                             if via_grant {
-                                Caller::app("member-id")
+                                Caller::grant_bound("member-id")
                             } else {
                                 Caller::agent("member-id")
                             },

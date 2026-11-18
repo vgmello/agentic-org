@@ -51,7 +51,7 @@ fn core_task(seed: u128, with_step: bool) -> (Arc<MemStore>, WorkService<Arc<Mem
     let service = WorkService::new(Arc::clone(&store), TestClock::at(T0), "OFFICE1");
     let output = service
         .call(
-            Caller::app("owner1"),
+            Caller::grant_bound("owner1"),
             WorkCall::TaskCreate(TaskCreateParams {
                 change_id: org_work::ulid_from_parts(T0, seed * 10),
                 item_id: id.clone(),
@@ -261,7 +261,7 @@ fn history() -> History {
     ];
     for (n, call) in calls.into_iter().enumerate() {
         assert!(matches!(
-            service.call(Caller::app("owner1"), call).unwrap(),
+            service.call(Caller::grant_bound("owner1"), call).unwrap(),
             TxnOutput::Committed { .. }
         ));
         capture(if n == 0 { &target } else { &source }, &mut states);
@@ -279,7 +279,7 @@ fn history() -> History {
     });
     for call in [remove, unlink] {
         assert!(matches!(
-            service.call(Caller::app("owner1"), call).unwrap(),
+            service.call(Caller::grant_bound("owner1"), call).unwrap(),
             TxnOutput::Committed { .. }
         ));
         capture(&source, &mut states);
@@ -290,7 +290,7 @@ fn history() -> History {
         expected_version: store.snapshot().items[&source].version,
     });
     assert!(matches!(
-        service.call(Caller::app("owner1"), delete).unwrap(),
+        service.call(Caller::grant_bound("owner1"), delete).unwrap(),
         TxnOutput::Committed { .. }
     ));
     capture(&source, &mut states);

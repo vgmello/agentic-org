@@ -30,7 +30,7 @@ pub const AREA_UI: &str = "ar-ui";
 pub const GENERAL: &str = "p-chk-general";
 
 pub fn app() -> Caller {
-    Caller::app(OWNER)
+    Caller::grant_bound(OWNER)
 }
 
 pub fn agent() -> Caller {
@@ -39,7 +39,7 @@ pub fn agent() -> Caller {
 
 /// A person who reports bugs through the app.
 pub fn pat() -> Caller {
-    Caller::app("pat")
+    Caller::grant_bound("pat")
 }
 
 pub fn org() -> MemOrg {

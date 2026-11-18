@@ -776,13 +776,6 @@ fn command_id(n: u8) -> String {
     String::from_utf8(out.to_vec()).unwrap()
 }
 
-fn bind(client: &Client, app_token: AppToken) -> Result<(), org_client::ClientError> {
-    let bound = client.bind_app(app_token)?;
-    assert_eq!(bound.office_id, OFFICE);
-    assert_eq!(bound.member_id, None);
-    Ok(())
-}
-
 fn team_create(
     client: &Client,
     command: &str,
@@ -803,167 +796,28 @@ fn api_code(error: org_client::ClientError) -> org_proto::ErrorCode {
     }
 }
 
-fn changed(event: &org_proto::Event) -> org_proto::org::OrgChangedData {
-    assert_eq!(event.event, "org.changed");
-    serde_json::from_value(event.data.clone()).unwrap()
-}
-
-fn next_event(sub: &org_client::Subscription) -> org_proto::Event {
-    sub.recv_timeout(WAIT).expect("no event")
-}
-
 #[test]
-#[ignore = "host-channel subscribe arrives with A3 /events"]
+#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
+/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
+/// binds or subscribes as the owner on the office socket, and host channels refuse `subscribe`
+/// until A3. Scenario to keep: an unbound connection's subscribe is `not_authorized`; a
+/// subscriber from a snapshot position gets another caller's committed `team.create` as
+/// `org.changed` (seq 1, same position and command id); a refused command and a retry of a
+/// committed one are not events; a position beyond the log is `snapshot_required`; after a host
+/// restart a subscriber resuming from the old position gets the backlog, then live changes.
 fn a_subscriber_follows_the_organization_and_resumes_from_where_it_was_after_a_restart() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut first = started(&world);
-    let app = Client::connect(socket(&world)).unwrap();
-    let watcher = Client::connect(socket(&world)).unwrap();
-
-    // Only a bound connection subscribes.
-    assert_eq!(
-        api_code(watcher.subscribe().err().unwrap()),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    bind(&app, token()).unwrap();
-    bind(&watcher, token()).unwrap();
-    let snapshot = app
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
-
-    // Live: another connection's command arrives as `org.changed`, with its command id.
-    let sub = watcher.subscribe_from(Some(snapshot.position)).unwrap();
-    let command = command_id(1);
-    let accepted = team_create(&app, &command, "Platform").unwrap();
-    let event = next_event(&sub);
-    assert_eq!(event.seq, 1);
-    let data = changed(&event);
-    assert_eq!(Some(data.position), accepted.position);
-    assert_eq!(data.command_id, command);
-    assert!(matches!(
-        &data.changes[..],
-        [org_proto::org::OrgChange::TeamUpserted { team }] if team.name == "Platform"
-    ));
-    // A refused command is not an event, and a retry of a committed one is not either.
-    let _ = team_create(&app, &command_id(2), " ").unwrap_err();
-    team_create(&app, &command, "Platform").unwrap();
-    assert!(sub.recv_timeout(Duration::from_millis(500)).is_err());
-
-    // A position the log does not have: take a snapshot.
-    let beyond = org_proto::org::Position { epoch: 1, seq: 99 };
-    let probe = Client::connect(socket(&world)).unwrap();
-    bind(&probe, token()).unwrap();
-    assert_eq!(
-        api_code(probe.subscribe_from(Some(beyond)).err().unwrap()),
-        org_proto::ErrorCode::SnapshotRequired
-    );
-    drop((sub, app, watcher, probe));
-    assert!(first.host_goes_away().success());
-
-    // After a restart a client resumes from the position it held and misses nothing.
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    let sub = app.subscribe_from(Some(snapshot.position)).unwrap();
-    let backlog = changed(&next_event(&sub));
-    assert_eq!(Some(backlog.position), accepted.position);
-    assert_eq!(backlog.command_id, command);
-    // ...and then follows live from there.
-    let other = Client::connect(socket(&world)).unwrap();
-    bind(&other, token()).unwrap();
-    let rename = org_proto::org::TeamRenameParams {
-        command_id: command_id(3),
-        team_id: "T1".into(),
-        expected_version: 1,
-        name: "Platform team".into(),
-    };
-    let renamed = other.call::<org_proto::org::TeamRename>(&rename).unwrap();
-    let live = changed(&next_event(&sub));
-    assert_eq!(Some(live.position), renamed.position);
-    assert_eq!(live.command_id, rename.command_id);
-    drop((sub, app, other));
-    assert!(again.host_goes_away().success());
+    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
 }
 
 #[test]
-#[ignore = "host-channel subscribe arrives with A3 /events"]
+#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
+/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
+/// binds or subscribes as the owner on the office socket, and host channels refuse `subscribe`
+/// until A3. Scenario to keep: the owner's subscriber gets an agent's `msg.send` to the owner as
+/// `message.received` (header id, never the body), then the agent's `status.set` as
+/// `member.presence_changed` (member id, status text) with the next seq on the same connection.
 fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_office() {
-    let _process = process_isolation();
-    use org_proto::directory::{StatusSet, StatusSetParams};
-    use org_proto::msg::{MsgBind, MsgBindParams, MsgSend, MsgSendParams, KIND_MSG};
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-    };
-    let world = World::new();
-    let _server = started(&world);
-    let app = Client::connect(socket(&world)).unwrap();
-    bind(&app, token()).unwrap();
-    app.call::<MemberAddAgent>(&MemberAddAgentParams {
-        command_id: command_id(1),
-        member_id: "AGENT00000000000000000000A".into(),
-        name: "Pixel".into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: "pixel".into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    })
-    .unwrap();
-    let agent = Client::connect(socket(&world)).unwrap();
-    agent
-        .call::<MsgBind>(&MsgBindParams {
-            member: Some("pixel".into()),
-            app_token: None,
-        })
-        .unwrap();
-
-    // The app follows; the org command above is behind it, and only what happens now arrives.
-    let watcher = Client::connect(socket(&world)).unwrap();
-    bind(&watcher, token()).unwrap();
-    let sub = watcher.subscribe().unwrap();
-
-    let sent_id = command_id(10);
-    agent
-        .call::<MsgSend>(&MsgSendParams {
-            id: sent_id.clone(),
-            to: "owner".into(),
-            kind: KIND_MSG.into(),
-            priority: None,
-            subject: Some("hello".into()),
-            body: "SECRET-BODY".into(),
-            meta: Default::default(),
-            reply_to: None,
-        })
-        .unwrap();
-    let received = next_event(&sub);
-    assert_eq!(received.event, "message.received");
-    assert_eq!(received.data["header"]["id"], sent_id);
-    assert!(!received.data.to_string().contains("SECRET-BODY"));
-
-    agent
-        .call::<StatusSet>(&StatusSetParams {
-            text: Some("Wiring events".into()),
-            ttl_ms: None,
-        })
-        .unwrap();
-    let presence = next_event(&sub);
-    assert_eq!(presence.event, "member.presence_changed");
-    assert_eq!(presence.data["member_id"], "AGENT00000000000000000000A");
-    assert_eq!(presence.data["status"], "Wiring events");
-    // The events share the connection's numbering.
-    assert_eq!(presence.seq, received.seq + 1);
+    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
 }
 
 #[path = "launch/v3_activation.rs"]

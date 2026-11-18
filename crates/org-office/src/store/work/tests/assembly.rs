@@ -898,7 +898,7 @@ impl Oracle {
         .unwrap()
         .unwrap();
         let out = self.command(
-            Caller::app(crate::store::org::work_view::tests::OWNER),
+            Caller::grant_bound(crate::store::org::work_view::tests::OWNER),
             command.clone(),
         );
         (command, out)
@@ -1019,7 +1019,10 @@ fn run_workservice_script(mut w: Oracle) {
         json!({"item_id":task,"expected_version":w.version(&task),"title":"updated task"}),
     );
     assert!(matches!(
-        w.command(Caller::app(crate::store::org::work_view::tests::OWNER), cmd),
+        w.command(
+            Caller::grant_bound(crate::store::org::work_view::tests::OWNER),
+            cmd
+        ),
         TxnOutput::Replayed(Ok(_))
     ));
     w.ok(
@@ -1065,7 +1068,7 @@ fn run_workservice_script(mut w: Oracle) {
     assert!(w.mem.snapshot().results.contains_key(stored.change_id()));
     assert!(matches!(
         w.command(
-            Caller::app(crate::store::org::work_view::tests::OWNER),
+            Caller::grant_bound(crate::store::org::work_view::tests::OWNER),
             stored
         ),
         TxnOutput::Replayed(Err(_))
@@ -1864,7 +1867,7 @@ fn native_retry_case(refusal: bool) {
         .unwrap()
         .unwrap();
         let original = service
-            .call(Caller::app("owner1"), command.clone())
+            .call(Caller::grant_bound("owner1"), command.clone())
             .unwrap();
         let expected = match original {
             TxnOutput::Committed { accepted, .. } => Ok(accepted),
@@ -1892,14 +1895,16 @@ fn native_retry_case(refusal: bool) {
         let publications = retained_publications(&c.protected_root);
         assert_eq!(
             service
-                .call(Caller::app("owner1"), command.clone())
+                .call(Caller::grant_bound("owner1"), command.clone())
                 .unwrap(),
             TxnOutput::Replayed(expected.clone())
         );
         assert_eq!(retained_publications(&c.protected_root), publications);
         wall.set(T0 + index as u64 * 100);
         assert_eq!(
-            service.call(Caller::app("owner1"), command).unwrap(),
+            service
+                .call(Caller::grant_bound("owner1"), command)
+                .unwrap(),
             TxnOutput::Replayed(expected)
         );
         let after = store
@@ -2061,7 +2066,7 @@ fn native_replay_max_arc_dispatch_and_new_command_predecision_fence() {
         .iter()
         .map(|c| {
             service
-                .call(Caller::app("owner1"), c.clone())
+                .call(Caller::grant_bound("owner1"), c.clone())
                 .unwrap()
                 .answer()
                 .cloned()
@@ -2089,18 +2094,18 @@ fn native_replay_max_arc_dispatch_and_new_command_predecision_fence() {
     for (command, answer) in commands.iter().zip(&expected) {
         assert_eq!(
             service
-                .call(Caller::app("owner1"), command.clone())
+                .call(Caller::grant_bound("owner1"), command.clone())
                 .unwrap(),
             TxnOutput::Replayed(answer.clone())
         );
     }
     assert!(service
-        .call(Caller::app("owner1"), replay_command(32, false))
+        .call(Caller::grant_bound("owner1"), replay_command(32, false))
         .is_err());
     assert!(f
         .native
         .transact_command(
-            &Caller::app("owner1"),
+            &Caller::grant_bound("owner1"),
             &replay_command(33, false),
             Arc::new(|_, _| panic!("MAX must precede arbitrary decision"))
         )
@@ -2109,7 +2114,7 @@ fn native_replay_max_arc_dispatch_and_new_command_predecision_fence() {
     assert_eq!(retained_publications(&f.config.protected_root), files);
     assert_eq!(
         service
-            .call(Caller::app("owner1"), commands[0].clone())
+            .call(Caller::grant_bound("owner1"), commands[0].clone())
             .unwrap(),
         TxnOutput::Replayed(expected[0].clone())
     );
@@ -2121,7 +2126,7 @@ fn native_replay_authorization_and_hash_precedence_remain_live_without_publicati
     let service = f.service();
     let command = replay_command(40, false);
     let original = service
-        .call(Caller::app("owner1"), command.clone())
+        .call(Caller::grant_bound("owner1"), command.clone())
         .unwrap();
     let state = f.state();
     let files = retained_publications(&f.config.protected_root);
@@ -2136,20 +2141,20 @@ fn native_replay_authorization_and_hash_precedence_remain_live_without_publicati
     .unwrap()
     .unwrap();
     let wrong = service
-        .call(Caller::app("owner1"), different.clone())
+        .call(Caller::grant_bound("owner1"), different.clone())
         .unwrap();
     assert_eq!(wrong.answer().unwrap_err().code, ErrorCode::InvalidRequest);
     let agent = service.call(Caller::agent("owner1"), different).unwrap();
     assert_eq!(agent.answer().unwrap_err().code, ErrorCode::NotAuthorized);
     let owner = f.org.lock().unwrap().members.remove("owner1").unwrap();
     let revoked = service
-        .call(Caller::app("owner1"), command.clone())
+        .call(Caller::grant_bound("owner1"), command.clone())
         .unwrap();
     assert_eq!(revoked.answer().unwrap_err().code, ErrorCode::NotAuthorized);
     f.org.lock().unwrap().members.insert("owner1".into(), owner);
     assert_eq!(
         service
-            .call(Caller::app("owner1"), command)
+            .call(Caller::grant_bound("owner1"), command)
             .unwrap()
             .answer(),
         original.answer()
@@ -2164,19 +2169,21 @@ fn native_replay_protected_authority_revocation_fences_saved_result() {
     let service = f.service();
     let command = replay_command(50, false);
     service
-        .call(Caller::app("owner1"), command.clone())
+        .call(Caller::grant_bound("owner1"), command.clone())
         .unwrap();
     let before = f.state();
     f.authority
         .revoked
         .store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(service
-        .call(Caller::app("owner1"), command.clone())
+        .call(Caller::grant_bound("owner1"), command.clone())
         .is_err());
     f.authority
         .revoked
         .store(false, std::sync::atomic::Ordering::SeqCst);
-    assert!(service.call(Caller::app("owner1"), command).is_err());
+    assert!(service
+        .call(Caller::grant_bound("owner1"), command)
+        .is_err());
     assert_eq!(f.state(), before);
 }
 
@@ -2186,7 +2193,7 @@ fn native_probe_readonly_error_panic_and_failed_cleanup_never_expose_value_or_mi
         let f = NativeReplayFixture::new();
         let command = replay_command(60, false);
         f.service()
-            .call(Caller::app("owner1"), command.clone())
+            .call(Caller::grant_bound("owner1"), command.clone())
             .unwrap();
         let before = f.state();
         let files = retained_publications(&f.config.protected_root);
@@ -2231,7 +2238,9 @@ fn native_probe_readonly_error_panic_and_failed_cleanup_never_expose_value_or_mi
             .write::<()>(|_| panic!("failed probe must fence later writer callbacks"))
             .is_err());
         assert!(
-            f.service().call(Caller::app("owner1"), command).is_err(),
+            f.service()
+                .call(Caller::grant_bound("owner1"), command)
+                .is_err(),
             "{failure}"
         );
         assert_eq!(f.state(), before);
@@ -2262,7 +2271,7 @@ fn native_concurrent_duplicate_and_unrelated_reopen_keep_original_result() {
         let b = barrier.clone();
         threads.push(std::thread::spawn(move || {
             b.wait();
-            service.call(Caller::app("owner1"), c).unwrap()
+            service.call(Caller::grant_bound("owner1"), c).unwrap()
         }));
     }
     barrier.wait();
@@ -2286,11 +2295,11 @@ fn native_concurrent_duplicate_and_unrelated_reopen_keep_original_result() {
     let expected = outputs[0].answer().cloned().map_err(Clone::clone);
     f.wall.set(T0 + 1000);
     f.service()
-        .call(Caller::app("owner1"), replay_command(71, false))
+        .call(Caller::grant_bound("owner1"), replay_command(71, false))
         .unwrap();
     assert_eq!(
         f.service()
-            .call(Caller::app("owner1"), command.clone())
+            .call(Caller::grant_bound("owner1"), command.clone())
             .unwrap(),
         TxnOutput::Replayed(expected.clone())
     );
@@ -2311,7 +2320,9 @@ fn native_concurrent_duplicate_and_unrelated_reopen_keep_original_result() {
         Arc::new(OfficeWorkStore::new(store, org, Arc::new(move || wall.now_ms())).unwrap());
     let service = WorkService::new(native.clone(), native.clock(), "OFFICE1");
     assert_eq!(
-        service.call(Caller::app("owner1"), command).unwrap(),
+        service
+            .call(Caller::grant_bound("owner1"), command)
+            .unwrap(),
         TxnOutput::Replayed(expected)
     );
 }
@@ -2322,7 +2333,7 @@ fn native_fallback_replayed_after_probe_miss_does_not_raise_clock_or_publish() {
     let command = replay_command(80, false);
     let original = f
         .service()
-        .call(Caller::app("owner1"), command.clone())
+        .call(Caller::grant_bound("owner1"), command.clone())
         .unwrap();
     let expected = original.answer().cloned().map_err(Clone::clone);
     let before = f.state();
@@ -2336,7 +2347,7 @@ fn native_fallback_replayed_after_probe_miss_does_not_raise_clock_or_publish() {
             txn,
             clock.as_ref(),
             "OFFICE1",
-            &Caller::app("owner1"),
+            &Caller::grant_bound("owner1"),
             &command,
         )
     });
