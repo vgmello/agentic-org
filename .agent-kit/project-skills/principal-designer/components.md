@@ -135,7 +135,7 @@ as All, Active, Paused, Former, or a switch between views.
   as the field or button beside it: 36 px on desktop, 44 px for touch in this product.
 - **The selected segment is a tile inset inside the track**, by 2 to 4 px, so it is shorter
   than the track: a 36 px tile in a 44 px track. Its radius is the track's radius minus the
-  inset.
+  inset, but no smaller than the product's other tiles of this kind; match them.
 - **Each segment's hit area fills the full height of the track**, inset included, and
   segments touch, leaving no dead gap between them. That is how a 36 px tile meets a 44 px
   target without the control growing.

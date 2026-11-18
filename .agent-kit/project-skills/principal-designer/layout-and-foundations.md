@@ -110,6 +110,8 @@ chat") makes the person do the ranking. Arrange by what they need next.
 - **Align optically where the math looks wrong.** Icons with uneven visual weight, text in
   a pill and round shapes next to square ones need a nudge.
 - **Nested corners.** Inner radius equals outer radius minus the padding between them.
+  *Breaks when* the result would be nearly square: keep the smallest radius the product
+  already uses for that kind of element, so it still reads as part of the same family.
 - **Density is chosen per task.** Comfortable for occasional use, compact for repeated
   expert scanning. Never get density by shrinking type below legibility or targets below
   the minimum.
