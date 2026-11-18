@@ -82,7 +82,8 @@ The design:
 9. **A pass.** A message queues a pass when it is posted in a channel that has an open
    watch of somebody other than its author, either outside every thread or as a thread
    reply that was also sent to the channel. A pass runs at most once in 30 seconds for
-   a channel and takes everything new since the last one. The watcher is given:
+   a channel and takes what is new since the last one, at most 50 messages; more are
+   left for the next pass. The watcher is given:
    - the open questions of that channel, each with its ID, its asker, its text and
      anything the asker has since added to it;
    - the new messages, each with its ID, its author and its text;
@@ -94,7 +95,11 @@ The design:
    it, asks the asker to clarify it, or says where the answer is. One message may be
    paired with several questions. The office accepts only IDs it supplied, and drops
    any pair whose message was written by the asker of that question; any other output
-   fails the pass.
+   fails the pass. A failed pass is run again on the same messages at most twice.
+   After the third failure the office advances the marks past those messages,
+   records the pass as failed with their IDs, and judges nothing for them: a
+   message that makes the model fail cannot stop the watcher or be retried
+   without end.
 10. **A pass is a tool-less, read-only model run,** made through the same port and
     with the same safeguards as the [copilot](../design/smart-features.md) runs: no
     tools, no files, no network, the questions and messages given as fenced data that
@@ -111,7 +116,8 @@ The design:
 12. **Starting the asker.** If the asker is in a turn, the entry is there at its next
     `msg inbox`, at its next turn boundary, or as the result of `msg wait --thread`.
     If the asker is idle, a turn starts for it in the same session (ADR-0023) for:
-    - a reply in the question's thread, from anyone;
+    - a reply in the question's thread, from anyone, while the question is open
+      ([ADR-0030](0030-an-agent-works-while-it-has-work.md) decision 6);
     - a confident match on a message written by a person.
 
     A match the watcher is not confident of, and any match on a message written by
@@ -138,7 +144,13 @@ The design:
     project's when the channel is a project's
     ([usage and cost](../design/organization-data/10-usage-and-cost-accounting.md)).
     The questions it served are in the record's metadata. It is not divided among the
-    askers.
+    askers. The usage of a pass is recorded before its inbox entries are written,
+    and a pass that failed or was interrupted keeps the usage of the call it made.
+    A pass takes no turn permit in milestone one, where permits do not exist yet;
+    when permits are built (L4) a pass takes one as a consumer of kind `one_off`,
+    so it counts against a connection's concurrent sessions. There is no
+    organization budget in v1, so nothing holds a pass for cost; the bounds of
+    decision 14 are its limit.
 16. **Where it is kept.** A watch is a durable local record of the asker's office,
     like the suspension record of ADR-0020. So is the mark of how far each channel has
     been judged: one mark for each office and incarnation that messages originate

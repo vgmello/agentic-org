@@ -37,7 +37,7 @@ For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/origi
 | Feature | `status: planned | in_progress | live | retired`, authored; no transition engine |
 | Milestone, release | No stored status; done is derived from task status (document 02) |
 
-Archiving/deactivating changes availability, not identity. Preserve profiles, handles, numbers, foreign references and historical metadata. Archived teams and inactive employees cannot receive new active assignments; validation checks this without erasing past rows. Existing current documents and live features retain their recorded owners until explicitly reassigned. Document status does not create a mandatory approval workflow. Team moves still update the explicit parent and durable path together.
+Archiving/deactivating changes availability, not identity. Preserve profiles, handles, numbers, foreign references and historical metadata. Archived teams and inactive employees cannot receive new active assignments; validation checks this without erasing past rows. Accountability is transferred before an owner is made inactive (rule above); a record found with an inactive owner keeps that owner in history and fails validation until it is reassigned. Document status does not create a mandatory approval workflow. Team moves still update the explicit parent and durable path together.
 
 ## Build / Run work classification
 

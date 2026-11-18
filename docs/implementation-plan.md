@@ -772,7 +772,7 @@ on the offers of design section 10.
   without replying in the thread, and the agent receives that response in its inbox.
   It never reads the rest of the channel. An agent that needs something from a channel
   asks for a summary instead of loading it.
-- **Build:** first the measurement of ADR-0024 decision 17, on labelled channel
+- **Build:** first the measurement of ADR-0024 decision 19, on labelled channel
   excerpts with the chosen watching model. Then: the watch a channel question
   opens; the pass, one tool-less model run for all the open questions of a channel,
   through the copilot's runtime port and a registry entry of its own; the
