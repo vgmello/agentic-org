@@ -9,7 +9,6 @@ use org_office_launch::writer::{self as wire, Admission, Request, Response};
 use org_proto::work::JournalPosition;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::os::fd::AsRawFd;
 use std::{
     collections::BTreeSet,
     fs,
@@ -106,13 +105,7 @@ fn name(office: &str) -> io::Result<Name> {
 const MARKER_BYTES: &[u8] = b"selected-writer/1\n";
 
 fn flush_marker(file: &fs::File) -> io::Result<()> {
-    file.sync_all()?;
-    #[cfg(target_os = "macos")]
-    // SAFETY: live regular-file descriptor; F_FULLFSYNC takes no pointer argument.
-    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
+    org_platform::fs::full_sync(file)
 }
 
 fn existing_marker(path: &Path) -> io::Result<Option<fs::File>> {
@@ -145,27 +138,9 @@ fn existing_marker(path: &Path) -> io::Result<Option<fs::File>> {
 fn publish_marker(parent: &fs::File, temporary: &str) -> io::Result<()> {
     let from = std::ffi::CString::new(temporary).map_err(private)?;
     let to = c"selected-writer.required";
-    let fd = parent.as_raw_fd();
-    // SAFETY: fixed/generated single-component names under the retained parent;
+    // Fixed/generated single-component names under the retained parent;
     // exclusive rename never overwrites an existing final entry.
-    #[cfg(target_os = "macos")]
-    let result =
-        unsafe { libc::renameatx_np(fd, from.as_ptr(), fd, to.as_ptr(), libc::RENAME_EXCL) };
-    #[cfg(target_os = "linux")]
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            fd,
-            from.as_ptr(),
-            fd,
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
+    org_platform::fs::rename_noreplace_at(parent, &from, parent, to)
 }
 
 fn empty_reservation_root(path: &Path) -> io::Result<()> {

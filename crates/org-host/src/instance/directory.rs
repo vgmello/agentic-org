@@ -290,25 +290,10 @@ impl Directory {
         Ok(Some(self.child(name, false)?))
     }
 
-    #[cfg(target_os = "linux")]
+    /// Fail closed on a memory filesystem where the platform can tell
+    /// (`org_platform::fs::require_disk`); setup supplies the explicit disk base.
     pub(super) fn require_disk(&self) -> Result<(), Error> {
-        // Linux UAPI include/uapi/linux/magic.h defines ramfs/tmpfs/hugetlbfs.
-        // Fail closed on known memory filesystems; setup supplies the explicit disk base.
-        let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
-        // SAFETY: fstatfs initializes stats on success for our valid directory fd.
-        if unsafe { libc::fstatfs(self.file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
-            return Err(Error::FilesystemProbe {
-                path: self.path.clone(),
-                probe: "fstatfs",
-                source: io::Error::last_os_error(),
-            });
-        }
-        // SAFETY: fstatfs succeeded.
-        let kind = unsafe { stats.assume_init() }.f_type as u32 as u64;
-        if matches!(kind, 0x01021994 | 0x858458f6 | 0x958458f6) {
-            return Err(Error::Unsafe("user temp base must be disk-backed"));
-        }
-        Ok(())
+        Ok(org_platform::fs::require_disk(&self.file, &self.path)?)
     }
 
     fn require_device(&self, device: u64) -> Result<(), Error> {
@@ -377,16 +362,8 @@ impl Directory {
                 "control entry must be regular, private, owned and singly linked",
             ));
         }
-        #[cfg(target_os = "macos")]
-        let identity = Identity {
-            device: current.st_dev as u64,
-            inode: current.st_ino,
-        };
-        #[cfg(target_os = "linux")]
-        let identity = Identity {
-            device: current.st_dev,
-            inode: current.st_ino,
-        };
+        let (device, inode) = org_platform::fs::device_and_inode(&current)?;
+        let identity = Identity { device, inode };
         self.require_device(identity.device)?;
         if identity != Identity::of(held)? {
             return Err(Error::Unsafe("control file was replaced"));
@@ -464,14 +441,10 @@ impl Directory {
         let mut file = self.open_file(&temporary, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL)?;
         let result = (|| {
             file.write_all(bytes)?;
-            file.sync_all()?;
-            #[cfg(target_os = "macos")]
-            // SAFETY: this is our live regular control-file descriptor. Refuse
+            // This is our live regular control-file descriptor. Refuse
             // unsupported full flush rather than acknowledging a weaker setup
             // identity/operation record before protected creation.
-            if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
-                return Err(io::Error::last_os_error().into());
-            }
+            org_platform::fs::full_sync(&file)?;
             self.verify()?;
             self.verify_file(&temporary, &file)?;
             let from = leaf(&temporary)?;
@@ -480,16 +453,13 @@ impl Directory {
             if let Some(previous) = previous {
                 self.verify_file(name, &previous.file)?;
             }
-            // SAFETY: both names are module-owned components relative to our retained fd.
-            let rc = unsafe {
-                if previous.is_some() {
-                    libc::renameat(fd, from.as_ptr(), fd, to.as_ptr())
-                } else {
-                    rename_exclusive(fd, &from, &to)
+            if previous.is_some() {
+                // SAFETY: both names are module-owned components relative to our retained fd.
+                if unsafe { libc::renameat(fd, from.as_ptr(), fd, to.as_ptr()) } != 0 {
+                    return Err(io::Error::last_os_error().into());
                 }
-            };
-            if rc != 0 {
-                return Err(io::Error::last_os_error().into());
+            } else {
+                org_platform::fs::rename_noreplace_at(&self.file, &from, &self.file, &to)?;
             }
             self.file.sync_all()?;
             self.verify_file(name, &file)?;
@@ -535,7 +505,7 @@ impl Directory {
         }
         let stream = Stream(stream);
         loop {
-            set_errno(0);
+            org_platform::fs::set_errno(0)?;
             // SAFETY: stream is live and exclusively used by this loop.
             let entry = unsafe { libc::readdir(stream.0) };
             if entry.is_null() {
@@ -571,159 +541,11 @@ impl Directory {
     }
 }
 
+/// The platform's rules for one directory on the way to an instance root
+/// (`org_platform::fs::check_instance_root`): on Linux no case-folding directory and a
+/// supported root filesystem; none on macOS.
 fn check_path_component(file: &File, path: &Path, root: bool) -> Result<(), Error> {
-    #[cfg(target_os = "linux")]
-    {
-        check_linux_component(file, path, root, &NativeProbe)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (file, path, root);
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "linux")]
-trait LinuxProbe {
-    fn flags(&self, file: &File, path: &Path) -> io::Result<libc::c_int>;
-    fn filesystem(&self, file: &File, path: &Path) -> io::Result<u64>;
-    fn xfs(&self, file: &File, path: &Path) -> io::Result<u32>;
-}
-
-#[cfg(target_os = "linux")]
-struct NativeProbe;
-
-#[cfg(target_os = "linux")]
-impl LinuxProbe for NativeProbe {
-    fn flags(&self, file: &File, _: &Path) -> io::Result<libc::c_int> {
-        let mut flags = 0;
-        // SAFETY: FS_IOC_GETFLAGS writes into our valid output for a retained directory.
-        if unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_GETFLAGS, &mut flags) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(flags)
-    }
-    fn filesystem(&self, file: &File, _: &Path) -> io::Result<u64> {
-        let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
-        // SAFETY: fstatfs initializes stats on success for this retained descriptor.
-        if unsafe { libc::fstatfs(file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: the call succeeded.
-        Ok(unsafe { stats.assume_init() }.f_type as u32 as u64)
-    }
-    fn xfs(&self, file: &File, _: &Path) -> io::Result<u32> {
-        xfs_geometry_flags(file)
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn check_linux_component(
-    file: &File,
-    path: &Path,
-    root: bool,
-    probe: &impl LinuxProbe,
-) -> Result<(), Error> {
-    // Ancestor mount types may be tmpfs/autofs/etc.; their casefold flags still matter.
-    check_flags(path, probe.flags(file, path))?;
-    if root {
-        let kind = probe
-            .filesystem(file, path)
-            .map_err(|source| Error::FilesystemProbe {
-                path: path.to_owned(),
-                probe: "fstatfs",
-                source,
-            })?;
-        require_root_filesystem(path, kind)?;
-        if kind == 0x5846_5342 {
-            check_xfs_geometry(path, probe.xfs(file, path))?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn require_root_filesystem(path: &Path, kind: u64) -> Result<(), Error> {
-    if !matches!(
-        kind,
-        0xEF53 | 0x5846_5342 | 0x9123_683E | 0xF2F5_2010 | 0x794C_7630
-    ) {
-        return Err(Error::UnsupportedFilesystem {
-            path: path.to_owned(),
-            kind,
-        });
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn check_flags(path: &Path, flags: io::Result<libc::c_int>) -> Result<(), Error> {
-    let flags = match flags {
-        Err(error) if matches!(error.raw_os_error(), Some(libc::ENOTTY | libc::EOPNOTSUPP)) => 0,
-        result => result.map_err(|source| Error::FilesystemProbe {
-            path: path.to_owned(),
-            probe: "FS_IOC_GETFLAGS",
-            source,
-        })?,
-    };
-    reject_casefold(path, flags)
-}
-
-#[cfg(target_os = "linux")]
-fn reject_casefold(path: &Path, flags: libc::c_int) -> Result<(), Error> {
-    // Linux UAPI include/uapi/linux/fs.h: FS_CASEFOLD_FL.
-    if flags & 0x4000_0000 != 0 {
-        return Err(Error::CaseInsensitive(path.to_owned()));
-    }
-    Ok(())
-}
-
-// Linux fs/xfs/libxfs/xfs_fs.h, xfs_fsop_geom. The v5 UAPI is 256 bytes;
-// newer geometry fields occupy the reserved tail, which this adapter never reads.
-#[cfg(target_os = "linux")]
-#[repr(C)]
-struct XfsGeometry {
-    dimensions: [u32; 8],
-    blocks: [u64; 4],
-    uuid: [u8; 16],
-    stripe: [u32; 2],
-    version: i32,
-    flags: u32,
-    sectors: [u32; 4],
-    health: [u32; 2],
-    reserved: [u64; 17],
-}
-
-#[cfg(target_os = "linux")]
-const _: () = {
-    assert!(std::mem::size_of::<XfsGeometry>() == 256);
-    assert!(std::mem::offset_of!(XfsGeometry, flags) == 92);
-};
-
-#[cfg(target_os = "linux")]
-fn xfs_geometry_flags(file: &File) -> io::Result<u32> {
-    let mut geometry = std::mem::MaybeUninit::<XfsGeometry>::zeroed();
-    let request = libc::_IOR::<XfsGeometry>(u32::from(b'X'), 126);
-    // SAFETY: request encodes this UAPI buffer's size; the descriptor and buffer are live.
-    if unsafe { libc::ioctl(file.as_raw_fd(), request, geometry.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: successful FSGEOMETRY initialized the zeroed UAPI output.
-    Ok(unsafe { geometry.assume_init() }.flags)
-}
-
-#[cfg(target_os = "linux")]
-fn check_xfs_geometry(path: &Path, flags: io::Result<u32>) -> Result<(), Error> {
-    let flags = flags.map_err(|source| Error::FilesystemProbe {
-        path: path.to_owned(),
-        probe: "XFS_IOC_FSGEOMETRY",
-        source,
-    })?;
-    // XFS_FSOP_GEOM_FLAGS_DIRV2CI: legacy ASCII case-insensitive lookups.
-    if flags & (1 << 12) != 0 {
-        return Err(Error::CaseInsensitive(path.to_owned()));
-    }
-    Ok(())
+    Ok(org_platform::fs::check_instance_root(file, path, root)?)
 }
 
 fn lock(file: &File, path: &Path) -> Result<(), Error> {
@@ -734,75 +556,15 @@ fn lock(file: &File, path: &Path) -> Result<(), Error> {
     }
 }
 
-#[cfg(target_os = "macos")]
-unsafe fn rename_exclusive(fd: i32, from: &CStr, to: &CStr) -> i32 {
-    // SAFETY: forwarded validated relative names and retained parent fd.
-    unsafe { libc::renameatx_np(fd, from.as_ptr(), fd, to.as_ptr(), libc::RENAME_EXCL) }
-}
-
-#[cfg(target_os = "linux")]
-unsafe fn rename_exclusive(fd: i32, from: &CStr, to: &CStr) -> i32 {
-    // SAFETY: forwarded validated relative names and retained parent fd.
-    unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            fd,
-            from.as_ptr(),
-            fd,
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        ) as i32
-    }
-}
-
-fn set_errno(value: i32) {
-    // SAFETY: libc returns this thread's errno pointer.
-    unsafe {
-        #[cfg(target_os = "macos")]
-        {
-            *libc::__error() = value;
-        }
-        #[cfg(target_os = "linux")]
-        {
-            *libc::__errno_location() = value;
-        }
-    }
-}
-
 pub(super) fn paths_overlap(a: &Path, b: &Path, unavailable: bool) -> bool {
     if a.starts_with(b) || b.starts_with(a) {
         return true;
     }
-    #[cfg(target_os = "macos")]
-    if unavailable {
-        // Compare components, not string prefixes: APFS/HFS+ also equate canonical
-        // Unicode spellings. No localized, diacritic-ignoring or width-ignoring flags.
-        // Existing registered targets retain their proven distinct inode ownership
-        // on case-sensitive volumes; this conservative comparison is for new claims.
-        return a.components().zip(b.components()).all(|(left, right)| {
-            match (left, right) {
-                (std::path::Component::Normal(left), std::path::Component::Normal(right)) => {
-                    use core_foundation::base::{CFComparisonResult, TCFType};
-                    use core_foundation::string::{
-                        kCFCompareCaseInsensitive, kCFCompareNonliteral, CFString, CFStringCompare,
-                    };
-                    let left = CFString::new(&left.to_string_lossy());
-                    let right = CFString::new(&right.to_string_lossy());
-                    // SAFETY: both owned strings remain live throughout this comparison.
-                    unsafe {
-                        CFStringCompare(
-                            left.as_concrete_TypeRef(),
-                            right.as_concrete_TypeRef(),
-                            kCFCompareCaseInsensitive | kCFCompareNonliteral,
-                        ) == CFComparisonResult::EqualTo
-                    }
-                }
-                (left, right) => left == right,
-            }
-        });
-    }
-    let _ = unavailable;
-    false
+    // For a new claim against a root that cannot be opened, also the spellings this
+    // system's filesystems may take for the same names (`org_platform::fs`; none on
+    // Linux). Existing registered targets retain their proven distinct inode ownership.
+    // A system that cannot say is taken to overlap.
+    unavailable && org_platform::fs::paths_may_alias(a, b).unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -925,81 +687,59 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    /// What each directory is checked for is the platform's rule (`org_platform::fs`, tested
+    /// there); the walk's part is to check every directory from `/` in order, and only the
+    /// last one as the root.
     #[test]
-    fn walked_ancestors_probe_flags_but_only_the_root_probes_filesystem_and_xfs() {
-        use std::cell::RefCell;
-        struct Probe<'a> {
-            root: &'a Path,
-            folded: Option<&'a Path>,
-            kind: u64,
-            xfs_flags: u32,
-            flags: RefCell<Vec<PathBuf>>,
-            xfs_calls: RefCell<Vec<PathBuf>>,
-        }
-        impl LinuxProbe for Probe<'_> {
-            fn flags(&self, _: &File, path: &Path) -> io::Result<i32> {
-                self.flags.borrow_mut().push(path.to_owned());
-                if self.folded == Some(path) {
-                    Ok(0x4000_0000)
-                } else if path == self.root {
-                    Ok(0)
-                } else {
-                    Err(io::Error::from_raw_os_error(libc::ENOTTY))
-                }
-            }
-            fn filesystem(&self, _: &File, path: &Path) -> io::Result<u64> {
-                // Any call on an ancestor (which may be unsupported tmpfs/autofs)
-                // is a policy/walk wiring regression, not a classifier failure.
-                assert_eq!(path, self.root);
-                Ok(self.kind)
-            }
-            fn xfs(&self, _: &File, path: &Path) -> io::Result<u32> {
-                self.xfs_calls.borrow_mut().push(path.to_owned());
-                Ok(self.xfs_flags)
-            }
-        }
+    fn the_walk_checks_every_directory_in_order_and_only_the_last_as_the_root() {
         let fixture = super::super::test_directory();
         let root = fixture.path().canonicalize().unwrap();
-        let probe = |folded, kind, xfs_flags| Probe {
-            root: &root,
-            folded,
-            kind,
-            xfs_flags,
-            flags: RefCell::default(),
-            xfs_calls: RefCell::default(),
-        };
-        let walk = |probe: &Probe<'_>| {
-            Directory::walk_with_probe(&root, false, true, |file, path, is_root| {
-                check_linux_component(file, path, is_root, probe)
-            })
-        };
-        let ext4 = probe(None, 0xEF53, 0);
-        walk(&ext4).unwrap();
         let mut expected: Vec<_> = root.ancestors().map(Path::to_owned).collect();
         expected.reverse();
-        assert_eq!(*ext4.flags.borrow(), expected);
+        for is_root in [false, true] {
+            let mut checked = Vec::new();
+            Directory::walk_with_probe(&root, false, is_root, |file, path, root| {
+                assert_eq!(
+                    Identity::of(file).unwrap(),
+                    Identity::of(&File::open(path).unwrap()).unwrap()
+                );
+                checked.push((path.to_owned(), root));
+                Ok(())
+            })
+            .unwrap();
+            let paths: Vec<_> = checked.iter().map(|(path, _)| path.clone()).collect();
+            assert_eq!(paths, expected);
+            for (path, as_root) in &checked {
+                assert_eq!(*as_root, is_root && path == &root, "{}", path.display());
+            }
+        }
+        // A refusal of any directory on the way ends the walk with that refusal.
         for component in &expected {
-            assert!(matches!(walk(&probe(Some(component), 0xEF53, 0)),
+            let walked = Directory::walk_with_probe(&root, false, true, |_, path, _| {
+                if path == component {
+                    Err(
+                        org_platform::fs::FilesystemRefusal::CaseInsensitive(path.to_owned())
+                            .into(),
+                    )
+                } else {
+                    Ok(())
+                }
+            });
+            assert!(matches!(walked,
                 Err(Error::CaseInsensitive(path)) if &path == component));
         }
-        assert!(matches!(walk(&probe(None, 0x0102_1994, 0)),
-            Err(Error::UnsupportedFilesystem { path, .. }) if path == root));
-        let xfs = probe(None, 0x5846_5342, 0);
-        walk(&xfs).unwrap();
-        assert_eq!(*xfs.xfs_calls.borrow(), vec![root.clone()]);
-        assert!(matches!(walk(&probe(None, 0x5846_5342, 1 << 12)),
-            Err(Error::CaseInsensitive(path)) if path == root));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn unsupported_new_root_is_refused_before_creation() {
         let fixture = super::super::test_directory();
         let root = fixture.path().canonicalize().unwrap().join("new");
         let result = Directory::walk_with_probe(&root, true, true, |_, path, is_root| {
             if is_root {
-                require_root_filesystem(path, 0x0102_1994)
+                Err(Error::UnsupportedFilesystem {
+                    path: path.to_owned(),
+                    kind: 0x0102_1994,
+                })
             } else {
                 Ok(())
             }
@@ -1030,91 +770,52 @@ mod tests {
         assert!(!child_path.join("untouched").exists());
     }
 
-    #[cfg(target_os = "linux")]
+    /// The platform's refusals (`org_platform::fs`, where the rules are tested) keep the
+    /// data and the wording this module reports.
     #[test]
-    fn disk_validation_refuses_a_real_memory_filesystem() {
-        let temporary = tempfile::tempdir_in("/dev/shm").unwrap();
-        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let path = temporary.path().canonicalize().unwrap();
-        let directory = Directory::from_file(File::open(&path).unwrap(), path).unwrap();
-        assert!(matches!(
-            directory.require_disk(),
-            Err(Error::Unsafe("user temp base must be disk-backed"))
-        ));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn casefold_refusal_names_the_unsupported_component() {
+    fn platform_refusals_keep_their_instance_diagnostics() {
+        use org_platform::fs::FilesystemRefusal as Refusal;
         let path = Path::new("/disk/folded-parent");
-        for flags in [0x4000_0000, 0x4008_0000] {
-            let error = check_flags(path, Ok(flags)).unwrap_err();
-            assert!(matches!(&error, Error::CaseInsensitive(component) if component == path));
-            let diagnostic = error.to_string();
-            assert!(diagnostic.contains("/disk/folded-parent"));
-            assert!(diagnostic.contains("case-insensitive directories aren't supported on Linux"));
-        }
-        check_flags(path, Ok(0)).unwrap();
-        check_flags(path, Ok(0x0008_0000)).unwrap();
-    }
+        let error = Error::from(Refusal::CaseInsensitive(path.to_owned()));
+        assert!(matches!(&error, Error::CaseInsensitive(component) if component == path));
+        let diagnostic = error.to_string();
+        assert!(diagnostic.contains("/disk/folded-parent"));
+        assert!(diagnostic.contains("case-insensitive directories aren't supported on Linux"));
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_filesystem_support_is_explicit_and_ioctl_errors_fail_closed() {
         let path = Path::new("/disk/instance");
-        for kind in [0xEF53, 0x5846_5342, 0x9123_683E, 0xF2F5_2010, 0x794C_7630] {
-            require_root_filesystem(path, kind).unwrap();
-            check_flags(path, Ok(0)).unwrap();
-            for errno in [libc::ENOTTY, libc::EOPNOTSUPP] {
-                check_flags(path, Err(io::Error::from_raw_os_error(errno))).unwrap();
-            }
-            let error =
-                check_flags(path, Err(io::Error::from_raw_os_error(libc::EACCES))).unwrap_err();
+        for (probe, errno) in [
+            ("FS_IOC_GETFLAGS", libc::EACCES),
+            ("XFS_IOC_FSGEOMETRY", libc::EIO),
+            ("fstatfs", libc::EACCES),
+        ] {
+            let error = Error::from(Refusal::Probe {
+                path: path.to_owned(),
+                probe,
+                source: io::Error::from_raw_os_error(errno),
+            });
             assert!(
-                matches!(&error, Error::FilesystemProbe { path: reported, probe: "FS_IOC_GETFLAGS", source } if reported == path && source.raw_os_error() == Some(libc::EACCES))
+                matches!(&error, Error::FilesystemProbe { path: reported, probe: named, source } if reported == path && *named == probe && source.raw_os_error() == Some(errno))
             );
             assert!(error.to_string().contains("/disk/instance"));
-            assert!(error.to_string().contains("FS_IOC_GETFLAGS"));
+            assert!(error.to_string().contains(probe));
         }
-        for kind in [
-            0,
-            0x4d44,
-            0x2011_BAB0,
-            0xff53_4d42,
-            0x6969,
-            0x6573_5546,
-            0x5346_544e,
-            0x0102_1994,
-            0x2FC1_2FC1,
-            u64::MAX,
-        ] {
-            let error = require_root_filesystem(path, kind).unwrap_err();
+        for kind in [0, 0x0102_1994, u64::MAX] {
+            let error = Error::from(Refusal::UnsupportedFilesystem {
+                path: path.to_owned(),
+                kind,
+            });
             assert!(
                 matches!(&error, Error::UnsupportedFilesystem { path: reported, kind: reported_kind } if reported == path && *reported_kind == kind)
             );
             assert!(error.to_string().contains(&format!("type {kind:#x}")));
         }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn xfs_requires_successful_geometry_without_ascii_casefolding() {
-        let path = Path::new("/disk/xfs");
-        for flags in [1 << 12, (1 << 12) | (1 << 15)] {
-            assert!(
-                matches!(check_xfs_geometry(path, Ok(flags)), Err(Error::CaseInsensitive(component)) if component == path)
-            );
-        }
-        check_xfs_geometry(path, Ok(0)).unwrap();
-        check_xfs_geometry(path, Ok(1 << 15)).unwrap();
-        for errno in [libc::ENOTTY, libc::EOPNOTSUPP, libc::EACCES, libc::EIO] {
-            let error =
-                check_xfs_geometry(path, Err(io::Error::from_raw_os_error(errno))).unwrap_err();
-            assert!(
-                matches!(&error, Error::FilesystemProbe { path: reported, probe: "XFS_IOC_FSGEOMETRY", source } if reported == path && source.raw_os_error() == Some(errno))
-            );
-            assert!(error.to_string().contains("/disk/xfs"));
-        }
+        assert!(matches!(
+            Error::from(Refusal::MemoryBacked {
+                path: path.to_owned(),
+                kind: 0x0102_1994
+            }),
+            Error::Unsafe("user temp base must be disk-backed")
+        ));
     }
 
     #[test]

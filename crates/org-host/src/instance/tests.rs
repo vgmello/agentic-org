@@ -13,14 +13,13 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         // Canonicalize only this test-owned OS temporary base, before composing owned paths.
-        #[cfg(target_os = "macos")]
-        let temporary = tempfile::tempdir_in("/private/tmp").unwrap();
-        #[cfg(target_os = "linux")]
+        // The base is this system's disk-backed shared temporary directory unless the
+        // environment names another disk.
         let temporary =
             {
                 let base = std::env::var_os("ORG_INSTANCE_TEST_DISK_BASE")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/tmp"));
+                    .unwrap_or_else(|| org_platform::dirs::testing::disk_backed_temp().unwrap());
                 tempfile::tempdir_in(&base).unwrap_or_else(|error|
                 panic!("disk fixture base {} unavailable: {error}; set ORG_INSTANCE_TEST_DISK_BASE",
                        base.display()))
@@ -614,24 +613,35 @@ fn an_unavailable_root_reserves_unicode_normalization_aliases() {
     assert!(!composed.exists() && !decomposed.exists());
 }
 
-#[cfg(target_os = "macos")]
+/// The spellings a system may take for the same names are the platform's rule
+/// (`org_platform::fs::paths_may_alias`, tested there); a new claim against an unavailable
+/// root applies it, a claim against an available one compares plain prefixes only.
 #[test]
-fn unavailable_path_comparison_preserves_component_and_accent_boundaries() {
-    assert!(paths_overlap(
-        Path::new("/data/CAF\u{c9}"),
-        Path::new("/data/cafe\u{301}/child"),
-        true
-    ));
-    assert!(!paths_overlap(
-        Path::new("/data/caf\u{e9}"),
-        Path::new("/data/cafe"),
-        true
-    ));
-    assert!(!paths_overlap(
-        Path::new("/data/caf\u{e9}"),
-        Path::new("/data/caf\u{e9}2"),
-        true
-    ));
+fn unavailable_path_comparison_adds_the_platforms_aliases_to_plain_prefixes() {
+    for (a, b) in [
+        ("/data/CAF\u{c9}", "/data/cafe\u{301}/child"),
+        ("/data/caf\u{e9}", "/data/cafe"),
+        ("/data/caf\u{e9}", "/data/caf\u{e9}2"),
+    ] {
+        let (a, b) = (Path::new(a), Path::new(b));
+        assert_eq!(
+            paths_overlap(a, b, true),
+            org_platform::fs::paths_may_alias(a, b).unwrap()
+        );
+        assert!(!paths_overlap(a, b, false));
+    }
+    for unavailable in [false, true] {
+        assert!(paths_overlap(
+            Path::new("/data/lab"),
+            Path::new("/data/lab/child"),
+            unavailable
+        ));
+        assert!(paths_overlap(
+            Path::new("/data/lab/child"),
+            Path::new("/data/lab"),
+            unavailable
+        ));
+    }
 }
 
 #[test]

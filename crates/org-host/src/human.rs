@@ -178,29 +178,15 @@ pub(super) fn paths(name: Option<&str>) -> Result<Paths, String> {
         );
     }
     let account = crate::home::account_dir().ok_or("account home unavailable")?;
-    Paths::prepare(&account, user_temp()?, name).map_err(|_| unavailable())
+    Paths::prepare(&account, user_temp(&account)?, name).map_err(|_| unavailable())
 }
-fn user_temp() -> Result<PathBuf, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut bytes = vec![0_u8; 4096];
-        // SAFETY: module-owned writable storage and supported Darwin query.
-        let n = unsafe {
-            libc::confstr(
-                libc::_CS_DARWIN_USER_TEMP_DIR,
-                bytes.as_mut_ptr().cast(),
-                bytes.len(),
-            )
-        };
-        if n == 0 || n > bytes.len() || bytes[n - 1] != 0 {
-            return Err("OS private temporary directory unavailable".into());
-        }
-        bytes.truncate(n - 1);
-        let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| unavailable())?);
-        path.canonicalize().map_err(|_| unavailable())
-    }
-    #[cfg(not(target_os = "macos"))]
-    Err("protected platform setup is unavailable".into())
+fn user_temp(account: &std::path::Path) -> Result<PathBuf, String> {
+    use org_platform::dirs::UserTempError;
+    org_platform::dirs::user_temp_base(account).map_err(|error| match error {
+        UserTempError::Unavailable => "OS private temporary directory unavailable".into(),
+        UserTempError::Invalid(_) => unavailable(),
+        UserTempError::Unsupported(_) => "protected platform setup is unavailable".into(),
+    })
 }
 mod recovery;
 pub use recovery::recovery;
