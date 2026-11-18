@@ -4,7 +4,7 @@ use std::io::Cursor;
 use serde_json::{json, Value};
 
 use super::*;
-use crate::{read_first_host_message, write_host_message, HostMessage, ServerEvent, StartOffice};
+use crate::{write_host_message, HostMessage, StartOffice};
 
 const INSTANCE: &str = "01M72N8MG00000000000000I01";
 const OFFICE: &str = "01M72N8MG00000000000000F01";
@@ -274,14 +274,8 @@ fn first_lines_round_trip_and_match_the_flag() {
 }
 
 #[test]
-fn v2_and_v3_refuse_each_others_lines() {
-    // A v2 reader refuses a v3 line as another version, and the other way round.
-    let mut v3 = Vec::new();
-    write_first_line(&mut v3, &HostFirstLine::Start(office())).unwrap();
-    assert!(matches!(
-        read_first_host_message(&mut Cursor::new(v3), FirstLine::Start),
-        Err(LaunchError::UnsupportedVersion { found: 3, .. })
-    ));
+fn the_v3_reader_refuses_a_v2_line() {
+    // No v2 reader is left (A1.5 step 3a); the v3 reader refuses a v2 line as another version.
     let mut v2 = Vec::new();
     write_host_message(
         &mut v2,
@@ -296,18 +290,10 @@ fn v2_and_v3_refuse_each_others_lines() {
         err,
         LaunchError::UnsupportedVersion { found: 2, .. }
     ));
-    // Each reader names the version it speaks, not a fixed one.
+    // The reader names the version it speaks.
     assert_eq!(
         err.to_string(),
         "launch version 2 isn't supported (this build speaks 3)"
-    );
-    let mut v3 = Vec::new();
-    write_first_line(&mut v3, &HostFirstLine::Start(office())).unwrap();
-    assert_eq!(
-        read_first_host_message(&mut Cursor::new(v3), FirstLine::Start)
-            .unwrap_err()
-            .to_string(),
-        "launch version 3 isn't supported (this build speaks 2)"
     );
 }
 
@@ -854,10 +840,6 @@ fn rendezvous_receipt_vectors_pin_encoding_decoding_and_strict_fields() {
         let mut encoded = Vec::new();
         write_rendezvous_event(&mut encoded, &expected).unwrap();
         assert_eq!(encoded, wire.as_bytes());
-        assert!(matches!(
-            crate::read_server_event(&mut Cursor::new(wire)),
-            Err(LaunchError::UnsupportedVersion { found: 3, .. })
-        ));
     }
     for case in invalid {
         let error =
@@ -882,14 +864,6 @@ fn rendezvous_receipt_vectors_pin_encoding_decoding_and_strict_fields() {
         )),
         Err(LaunchError::UnsupportedVersion { found: 4, .. })
     ));
-    // A v2 build still ignores this unknown event; it gains no receipt authority.
-    assert_eq!(
-        crate::read_server_event(&mut Cursor::new(
-            b"{\"v\":2,\"event\":\"fds_received\",\"of\":\"handoff\"}\n"
-        ))
-        .unwrap(),
-        Some(ServerEvent::Unknown)
-    );
 }
 
 #[test]

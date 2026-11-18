@@ -121,17 +121,18 @@ work_calls!(
     BugReopen(BugReopen, BugReopenParams),
 );
 
-const APP_ONLY: &[&str] = &[WorkDelete::METHOD];
+const GRANT_ONLY: &[&str] = &[WorkDelete::METHOD];
 
 impl WorkCall {
-    /// Whether this request is app-only, even before its params can be parsed.
-    pub fn is_app_only(request: &Request) -> bool {
-        APP_ONLY.contains(&request.method.as_str())
+    /// Whether this request is grant-only, even before its params can be parsed.
+    pub fn is_grant_only(request: &Request) -> bool {
+        GRANT_ONLY.contains(&request.method.as_str())
     }
 
-    /// App-only calls (§2.2): refused on any other connection with `not_authorized`, before
+    /// Grant-only calls (§2.2): made only by a person or owner acting through a verified grant
+    /// on a host channel; refused on any other connection with `not_authorized`, before
     /// anything else. In phase 1: `work.delete`.
-    pub fn app_only(&self) -> bool {
-        APP_ONLY.contains(&self.method())
+    pub fn grant_only(&self) -> bool {
+        GRANT_ONLY.contains(&self.method())
     }
 }

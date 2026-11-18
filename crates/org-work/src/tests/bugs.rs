@@ -235,22 +235,22 @@ fn a_report_in_a_task_call_or_a_task_call_on_a_bug_is_a_kind_mismatch() {
     let task = w.task();
     let p = w.status(&bug, ItemStatus::InProgress);
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     let p = w.update(&bug);
     assert_eq!(
-        w.code(&app(), WorkCall::TaskUpdate(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskUpdate(p)),
         ErrorCode::InvalidRequest
     );
     let p = w.bug_assign(&task, None);
     assert_eq!(
-        w.code(&app(), WorkCall::BugAssign(p)),
+        w.code(&owner_by_grant(), WorkCall::BugAssign(p)),
         ErrorCode::InvalidRequest
     );
     let p = w.triage_params(&task, AREA_PAY);
     assert_eq!(
-        w.code(&app(), WorkCall::BugTriage(p)),
+        w.code(&owner_by_grant(), WorkCall::BugTriage(p)),
         ErrorCode::InvalidRequest
     );
 }
@@ -277,7 +277,7 @@ fn bug_numbers_are_per_project_and_separate_from_task_numbers() {
     );
 
     // Never reused, deleted bugs included.
-    w.ok(&app(), w.delete(&b2));
+    w.ok(&owner_by_grant(), w.delete(&b2));
     let b3 = w.bug();
     assert_eq!(w.item(&b3).number, Some(3));
 }
@@ -308,7 +308,7 @@ fn update_changes_the_fields_given_in_one_event() {
     p.environment = Some("Chrome".into());
     p.severity = Some(Severity::Critical);
     p.priority = Some(Priority::Urgent);
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
     let bug = w.item(&id);
     assert_eq!(bug.title, "Coupon total is wrong");
     assert_eq!(bug.bug.what_happened, "Off by a cent");
@@ -338,7 +338,7 @@ fn update_changes_the_fields_given_in_one_event() {
     p.clear_expected = true;
     p.clear_steps = true;
     p.clear_environment = true;
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
     let bug = w.item(&id);
     assert_eq!(
         (bug.bug.expected, bug.bug.steps, bug.bug.environment),
@@ -403,7 +403,11 @@ fn update_refusals() {
     for (i, (f, code)) in cases.into_iter().enumerate() {
         let mut p = w.bug_update(&id);
         f(&mut p);
-        assert_eq!(w.code(&app(), WorkCall::BugUpdate(p)), code, "case {i}");
+        assert_eq!(
+            w.code(&owner_by_grant(), WorkCall::BugUpdate(p)),
+            code,
+            "case {i}"
+        );
     }
     assert_eq!(w.version(&id), 1, "nothing changed");
 
@@ -412,19 +416,19 @@ fn update_refusals() {
     let mut p = w.bug_update(&closed);
     p.area_id = Some(AREA_UI.into());
     assert_eq!(
-        w.code(&app(), WorkCall::BugUpdate(p)),
+        w.code(&owner_by_grant(), WorkCall::BugUpdate(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.bug_update(&closed);
     p.title = Some("A better title".into());
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
 
     // A deleted bug takes no change.
-    w.ok(&app(), w.delete(&id));
+    w.ok(&owner_by_grant(), w.delete(&id));
     let mut p = w.bug_update(&id);
     p.title = Some("x".into());
     assert_eq!(
-        w.code(&app(), WorkCall::BugUpdate(p)),
+        w.code(&owner_by_grant(), WorkCall::BugUpdate(p)),
         ErrorCode::InvalidRequest
     );
 }
@@ -435,20 +439,26 @@ fn updates_conflict_per_field() {
     let id = w.bug();
     let v = w.version(&id);
     // A comment and a tick don't make a title edit stale; another title edit does.
-    w.ok(&app(), WorkCall::Comment(w.comment(&id, "Seen it too")));
+    w.ok(
+        &owner_by_grant(),
+        WorkCall::Comment(w.comment(&id, "Seen it too")),
+    );
     let mut p = w.bug_update(&id);
     p.expected_version = v;
     p.title = Some("First".into());
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
     let mut p = w.bug_update(&id);
     p.expected_version = v;
     p.title = Some("Second".into());
-    assert_eq!(w.code(&app(), WorkCall::BugUpdate(p)), ErrorCode::Conflict);
+    assert_eq!(
+        w.code(&owner_by_grant(), WorkCall::BugUpdate(p)),
+        ErrorCode::Conflict
+    );
     // A different field is still fine.
     let mut p = w.bug_update(&id);
     p.expected_version = v;
     p.environment = Some("Safari".into());
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
 }
 
 #[test]
@@ -461,7 +471,7 @@ fn a_reroute_after_a_triage_is_stale() {
     p.expected_version = v;
     p.area_id = Some(AREA_UI.into());
     assert_eq!(
-        w.code(&app(), WorkCall::BugUpdate(p)),
+        w.code(&owner_by_grant(), WorkCall::BugUpdate(p)),
         ErrorCode::Conflict,
         "the triage confirmed the area"
     );
@@ -507,7 +517,7 @@ fn triage_without_an_assignee_keeps_the_assignee() {
     let w = World::new();
     let id = w.bug();
     let p = w.bug_assign(&id, Some("pau"));
-    w.ok(&app(), WorkCall::BugAssign(p));
+    w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
     w.triage(&id);
     assert_eq!(w.item(&id).assignee_id.as_deref(), Some("pau"));
 }
@@ -518,37 +528,37 @@ fn triage_refusals() {
     let id = w.bug();
     let mut p = w.triage_params(&id, "nope");
     assert_eq!(
-        w.code(&app(), WorkCall::BugTriage(p.clone())),
+        w.code(&owner_by_grant(), WorkCall::BugTriage(p.clone())),
         ErrorCode::NotFound
     );
     p.area_id = "p-pay-general".into();
     assert_eq!(
-        w.code(&app(), WorkCall::BugTriage(p)),
+        w.code(&owner_by_grant(), WorkCall::BugTriage(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.triage_params(&id, AREA_PAY);
     p.severity = Severity::Unknown;
     assert_eq!(
-        w.code(&app(), WorkCall::BugTriage(p)),
+        w.code(&owner_by_grant(), WorkCall::BugTriage(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.triage_params(&id, AREA_PAY);
     p.priority = Priority::Unknown;
     assert_eq!(
-        w.code(&app(), WorkCall::BugTriage(p)),
+        w.code(&owner_by_grant(), WorkCall::BugTriage(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.triage_params(&id, AREA_PAY);
     p.assignee_id = Some("off".into());
     assert_eq!(
-        w.code(&app(), WorkCall::BugTriage(p)),
+        w.code(&owner_by_grant(), WorkCall::BugTriage(p)),
         ErrorCode::UnknownRecipient
     );
     // A deleted area.
     w.store.org_mut(|o| o.delete_area(AREA_UI, AREA_PAY));
     let p = w.triage_params(&id, AREA_UI);
     assert_eq!(
-        w.code(&app(), WorkCall::BugTriage(p)),
+        w.code(&owner_by_grant(), WorkCall::BugTriage(p)),
         ErrorCode::InvalidRequest
     );
     assert_eq!(w.item(&id).status, ItemStatus::New);
@@ -562,7 +572,7 @@ fn two_triages_from_the_same_version_conflict() {
         w.triage_params(&id, AREA_PAY),
         w.triage_params(&id, AREA_UI),
     );
-    w.ok(&app(), WorkCall::BugTriage(a));
+    w.ok(&owner_by_grant(), WorkCall::BugTriage(a));
     assert_eq!(
         w.code(&agent(), WorkCall::BugTriage(b)),
         ErrorCode::Conflict,
@@ -583,7 +593,7 @@ fn assign_sets_and_clears_the_assignee_on_an_open_bug() {
     let w = World::new();
     let id = w.bug();
     let p = w.bug_assign(&id, Some("riley"));
-    w.ok(&app(), WorkCall::BugAssign(p));
+    w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
     assert_eq!(w.item(&id).assignee_id.as_deref(), Some("riley"));
     assert_eq!(
         w.last_event(&id).change,
@@ -593,21 +603,21 @@ fn assign_sets_and_clears_the_assignee_on_an_open_bug() {
         }
     );
     let p = w.bug_assign(&id, None);
-    w.ok(&app(), WorkCall::BugAssign(p));
+    w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
     assert_eq!(w.item(&id).assignee_id, None);
 
     let p = w.bug_assign(&id, Some("off"));
     assert_eq!(
-        w.code(&app(), WorkCall::BugAssign(p)),
+        w.code(&owner_by_grant(), WorkCall::BugAssign(p)),
         ErrorCode::UnknownRecipient
     );
     let p = w.bug_assign(&id, Some("pau"));
-    w.ok(&app(), WorkCall::BugAssign(p));
+    w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
 
     let closed = w.bug_at(ItemStatus::Closed);
     let p = w.bug_assign(&closed, Some("riley"));
     assert_eq!(
-        w.code(&app(), WorkCall::BugAssign(p)),
+        w.code(&owner_by_grant(), WorkCall::BugAssign(p)),
         ErrorCode::InvalidRequest
     );
 }
@@ -642,13 +652,13 @@ fn mark_fixed_records_what_fixed_it() {
     let mut p = w.fixed_params(&w.triaged());
     p.note = "two\nlines".into();
     assert_eq!(
-        w.code(&app(), WorkCall::BugMarkFixed(p)),
+        w.code(&owner_by_grant(), WorkCall::BugMarkFixed(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.fixed_params(&w.triaged());
     p.note = " ".into();
     assert_eq!(
-        w.code(&app(), WorkCall::BugMarkFixed(p)),
+        w.code(&owner_by_grant(), WorkCall::BugMarkFixed(p)),
         ErrorCode::InvalidRequest
     );
 }
@@ -665,7 +675,7 @@ fn mark_fixed_is_guarded_by_required_steps_like_done() {
     w.triage(&id);
 
     let p = w.fixed_params(&id);
-    let err = w.err(&app(), WorkCall::BugMarkFixed(p));
+    let err = w.err(&owner_by_grant(), WorkCall::BugMarkFixed(p));
     assert_eq!(err.code, ErrorCode::ChecklistIncomplete);
     assert!(err.message.contains("Add a regression test"));
     assert_eq!(w.item(&id).status, ItemStatus::Triaged, "nothing changed");
@@ -673,7 +683,7 @@ fn mark_fixed_is_guarded_by_required_steps_like_done() {
     // With a reason it is Fixed, and the step is recorded; optional steps never block.
     let mut p = w.fixed_params(&id);
     p.anyway_reason = Some("Test follows in the next release".into());
-    let accepted = w.ok(&app(), WorkCall::BugMarkFixed(p));
+    let accepted = w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
     assert!(accepted.items[0].done_anyway);
     let WorkEventKind::StatusChanged { anyway, .. } = w.last_event(&id).change else {
         panic!("status")
@@ -693,9 +703,9 @@ fn a_ticked_required_step_lets_mark_fixed_through() {
         p.checklist = vec![step];
     });
     w.triage(&id);
-    w.ok(&app(), w.check(&step_id, true));
+    w.ok(&owner_by_grant(), w.check(&step_id, true));
     let p = w.fixed_params(&id);
-    let accepted = w.ok(&app(), WorkCall::BugMarkFixed(p));
+    let accepted = w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
     assert!(!accepted.items[0].done_anyway);
 }
 
@@ -742,7 +752,7 @@ fn still_happens_sends_the_bug_back_to_triaged_keeping_assignee_and_fix_links() 
     let w = World::new();
     let id = w.triaged();
     let p = w.bug_assign(&id, Some("riley"));
-    w.ok(&app(), WorkCall::BugAssign(p));
+    w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
     let task = w.fix_task(&id);
     w.set(&task, ItemStatus::InProgress);
     w.set(&task, ItemStatus::Done);
@@ -813,18 +823,18 @@ fn wont_fix_and_cant_reproduce_need_a_reason() {
         p.resolution = Some(resolution);
         p.reason = None;
         assert_eq!(
-            w.code(&app(), WorkCall::BugClose(p.clone())),
+            w.code(&owner_by_grant(), WorkCall::BugClose(p.clone())),
             ErrorCode::InvalidRequest
         );
         p.change_id = w.id();
         p.reason = Some("x".repeat(WORK_REASON_MAX_CHARS + 1));
         assert_eq!(
-            w.code(&app(), WorkCall::BugClose(p.clone())),
+            w.code(&owner_by_grant(), WorkCall::BugClose(p.clone())),
             ErrorCode::InvalidRequest
         );
         p.change_id = w.id();
         p.reason = Some("Works for me".into());
-        w.ok(&app(), WorkCall::BugClose(p));
+        w.ok(&owner_by_grant(), WorkCall::BugClose(p));
         let bug = w.item(&id);
         assert_eq!(
             (bug.status, bug.resolution),
@@ -837,7 +847,7 @@ fn wont_fix_and_cant_reproduce_need_a_reason() {
     let mut p = w.wont_fix_params(&id);
     p.resolution = None;
     assert_eq!(
-        w.code(&app(), WorkCall::BugClose(p)),
+        w.code(&owner_by_grant(), WorkCall::BugClose(p)),
         ErrorCode::InvalidRequest
     );
     for r in [
@@ -848,7 +858,7 @@ fn wont_fix_and_cant_reproduce_need_a_reason() {
         let mut p = w.wont_fix_params(&id);
         p.resolution = Some(r);
         assert_eq!(
-            w.code(&app(), WorkCall::BugClose(p)),
+            w.code(&owner_by_grant(), WorkCall::BugClose(p)),
             ErrorCode::InvalidRequest,
             "{r:?}"
         );
@@ -857,7 +867,7 @@ fn wont_fix_and_cant_reproduce_need_a_reason() {
     let mut p = w.duplicate_params(&id, &original);
     p.reason = Some("also".into());
     assert_eq!(
-        w.code(&app(), WorkCall::BugClose(p)),
+        w.code(&owner_by_grant(), WorkCall::BugClose(p)),
         ErrorCode::InvalidRequest
     );
 }
@@ -933,11 +943,11 @@ fn duplicate_refusals() {
         i
     };
     let deleted = w.bug();
-    w.ok(&app(), w.delete(&deleted));
+    w.ok(&owner_by_grant(), w.delete(&deleted));
     let was_dup = w.bug();
     let real = w.bug();
     let p = w.duplicate_params(&was_dup, &real);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
 
     let cases = [
         (id.clone(), ErrorCode::InvalidRequest, "itself"),
@@ -949,14 +959,18 @@ fn duplicate_refusals() {
     ];
     for (original, code, what) in cases {
         let p = w.duplicate_params(&id, &original);
-        assert_eq!(w.code(&app(), WorkCall::BugClose(p)), code, "{what}");
+        assert_eq!(
+            w.code(&owner_by_grant(), WorkCall::BugClose(p)),
+            code,
+            "{what}"
+        );
     }
     assert_eq!(w.item(&id).status, ItemStatus::New);
 
     // Closed for another reason, the original is still a fine original.
     let closed = w.bug_at(ItemStatus::Closed);
     let p = w.duplicate_params(&id, &closed);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
 }
 
 #[test]
@@ -964,10 +978,10 @@ fn two_bugs_cannot_be_duplicates_of_each_other() {
     let w = World::new();
     let (a, b) = (w.bug(), w.bug());
     let p = w.duplicate_params(&a, &b);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     let p = w.duplicate_params(&b, &a);
     assert_eq!(
-        w.code(&app(), WorkCall::BugClose(p)),
+        w.code(&owner_by_grant(), WorkCall::BugClose(p)),
         ErrorCode::InvalidRequest,
         "a is closed as a duplicate"
     );
@@ -980,7 +994,7 @@ fn reopening_a_closed_bug_goes_back_to_triaged() {
     let mut p = w.reopen_params(&id);
     p.note = " ".into();
     assert_eq!(
-        w.code(&app(), WorkCall::BugReopen(p)),
+        w.code(&owner_by_grant(), WorkCall::BugReopen(p)),
         ErrorCode::InvalidRequest
     );
     let p = w.reopen_params(&id);
@@ -998,9 +1012,9 @@ fn reopening_a_closed_bug_goes_back_to_triaged() {
     );
     // And again.
     let p = w.wont_fix_params(&id);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     let p = w.reopen_params(&id);
-    w.ok(&app(), WorkCall::BugReopen(p));
+    w.ok(&owner_by_grant(), WorkCall::BugReopen(p));
     assert_eq!(w.item(&id).bug.reopen_count, 2);
 }
 
@@ -1011,9 +1025,9 @@ fn reopening_a_duplicate_goes_to_new_and_clears_the_original() {
     let dup = w.triaged();
     assert!(w.item(&dup).bug.severity_confirmed);
     let p = w.duplicate_params(&dup, &original);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     let p = w.reopen_params(&dup);
-    let accepted = w.ok(&app(), WorkCall::BugReopen(p));
+    let accepted = w.ok(&owner_by_grant(), WorkCall::BugReopen(p));
     let bug = w.item(&dup);
     assert_eq!(bug.status, ItemStatus::New, "triage looks again");
     assert!(
@@ -1039,7 +1053,7 @@ fn a_wont_fix_close_keeps_its_reason_as_free_text_and_names_no_original() {
     let id = w.bug();
     let p = w.wont_fix_params(&id);
     let reason = p.reason.clone();
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     let WorkEventKind::StatusChanged {
         resolution,
         reason: recorded,
@@ -1134,7 +1148,7 @@ fn every_bug_transition_is_allowed_or_refused_as_the_design_says() {
             let others = w.store.snapshot().items.len();
             let version = w.version(&id);
             if allowed(from, op) {
-                let accepted = w.ok(&app(), call);
+                let accepted = w.ok(&owner_by_grant(), call);
                 assert!(!accepted.items.is_empty(), "{from:?} {op:?}");
                 let events = w.events(&id);
                 let new: Vec<_> = events.iter().filter(|e| e.version > version).collect();
@@ -1151,7 +1165,7 @@ fn every_bug_transition_is_allowed_or_refused_as_the_design_says() {
                     "{from:?} {op:?}: one event per call"
                 );
             } else {
-                let err = w.err(&app(), call);
+                let err = w.err(&owner_by_grant(), call);
                 assert_eq!(err.code, ErrorCode::InvalidRequest, "{from:?} {op:?}");
                 assert_eq!(w.version(&id), version, "{from:?} {op:?} changed nothing");
                 assert_eq!(
@@ -1189,7 +1203,7 @@ fn where_each_allowed_call_leads() {
         let w = World::new();
         let id = w.bug_at(from);
         let call = call_for(&w, &id, op);
-        w.ok(&app(), call);
+        w.ok(&owner_by_grant(), call);
         assert_eq!(w.item(&id).status, to, "{from:?} {op:?}");
     }
 }

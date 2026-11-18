@@ -66,7 +66,7 @@ fn assert_error(response: Response, expected: ErrorCode, message: Option<&str>) 
 }
 
 #[test]
-fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
+fn c1_work_guard_matrix_checks_binding_and_grant_only_before_params() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     for binding in [Binding::Anonymous, member(false), member(true)] {
         for method in ["task.create", "work.delete"] {
@@ -228,16 +228,16 @@ fn c1_leaves_later_work_calls_unknown_and_org_dispatch_unchanged() {
 }
 
 #[test]
-fn c1_app_only_request_classifier_ignores_bad_params_and_shares_call_policy() {
+fn c1_grant_only_request_classifier_ignores_bad_params_and_shares_call_policy() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for (method, app_only) in [
+    for (method, grant_only) in [
         ("work.delete", true),
         ("task.create", false),
         ("work.get", false),
     ] {
-        assert_eq!(WorkCall::is_app_only(&request(method, false)), app_only);
+        assert_eq!(WorkCall::is_grant_only(&request(method, false)), grant_only);
         if let Some(call) = WorkCall::parse(&request(method, true)).unwrap() {
-            assert_eq!(call.app_only(), app_only);
+            assert_eq!(call.grant_only(), grant_only);
         }
     }
     let params: TaskCreateParams = request("task.create", true).params::<TaskCreate>().unwrap();

@@ -80,14 +80,17 @@ pub fn lookup_existing(
     call: &WorkCall,
     lookup: impl FnOnce(&str) -> Result<Option<StoredResult>, StoreError>,
 ) -> Result<Option<TxnOutput>, StoreError> {
-    if call.app_only() && !caller.via_grant {
+    if call.grant_only() && !caller.via_grant {
         return Ok(Some(TxnOutput::Refused(ApiError::new(
             ErrorCode::NotAuthorized,
-            format!("`{}` can only be made from the app", call.method()),
+            format!(
+                "`{}` can only be made through a person's grant",
+                call.method()
+            ),
         ))));
     }
-    // An agent's connection acts as an agent that isn't offboarded, and only the app's acts as
-    // the owner or a person (§2.2). The office binds connections; this keeps the rule true
+    // An agent's connection acts as an agent that isn't offboarded, and only a grant-bound
+    // caller acts as the owner or a person (§2.2). The office binds connections; this keeps the rule true
     // inside the library too.
     let member = org.member(&caller.member_id)?;
     let may_act = match &member {

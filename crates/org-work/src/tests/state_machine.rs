@@ -78,7 +78,7 @@ fn statuses_of_other_kinds_and_unknown_are_refused() {
     for s in [New, Triaged, Fixed, Closed, Scoped, ItemStatus::Unknown] {
         let p = w.status(&id, s);
         assert_eq!(
-            w.code(&app(), WorkCall::TaskSetStatus(p)),
+            w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
             ErrorCode::InvalidRequest
         );
     }
@@ -92,44 +92,44 @@ fn reasons_go_exactly_where_they_belong() {
     let mut p = w.status(&id, Blocked);
     p.blocked_reason = None;
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     // A reason with another status, a resolution or anyway reason without Done, a shortcut.
     let mut p = w.status(&id, InProgress);
     p.blocked_reason = Some("x".into());
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.status(&id, InProgress);
     p.resolution = Some(Resolution::Completed);
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.status(&id, InProgress);
     p.anyway_reason = Some("x".into());
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.status(&id, Done);
     p.resolution = Some(Resolution::Verified);
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.status(&id, Done);
     p.shortcut = Some(Shortcut::None);
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     let mut p = w.status(&id, Blocked);
     p.blocked_reason = Some("two\nlines".into());
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     assert_eq!(w.version(&id), 1, "nothing was recorded");
@@ -158,7 +158,7 @@ fn moves_set_and_clear_what_goes_with_the_status() {
     assert_eq!((item.status, item.resolution), (InProgress, None));
     let mut p = w.status(&id, Done);
     p.resolution = Some(Resolution::Cancelled);
-    w.ok(&app(), WorkCall::TaskSetStatus(p));
+    w.ok(&owner_by_grant(), WorkCall::TaskSetStatus(p));
     assert_eq!(w.item(&id).resolution, Some(Resolution::Cancelled));
 }
 
@@ -177,13 +177,13 @@ fn a_task_call_on_another_kind_is_refused() {
         .kind = ItemKind::Bug;
     let p = w.status(&id, InProgress);
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
     let mut u = w.update(&id);
     u.title = Some("x".into());
     assert_eq!(
-        w.code(&app(), WorkCall::TaskUpdate(u)),
+        w.code(&owner_by_grant(), WorkCall::TaskUpdate(u)),
         ErrorCode::InvalidRequest
     );
 }
@@ -192,10 +192,10 @@ fn a_task_call_on_another_kind_is_refused() {
 fn a_deleted_task_takes_no_more_moves() {
     let w = World::new();
     let id = w.task();
-    w.ok(&app(), w.delete(&id));
+    w.ok(&owner_by_grant(), w.delete(&id));
     let p = w.status(&id, InProgress);
     assert_eq!(
-        w.code(&app(), WorkCall::TaskSetStatus(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
 }

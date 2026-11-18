@@ -1,6 +1,6 @@
-//! Launch contract v3 (X-02 §5.1, §5.2, §5.4): the types only. Version 2 (the crate root) is
-//! unchanged and stays what the host and the server speak until the migration's moves 2a and 2b
-//! switch to these.
+//! Launch contract v3 (X-02 §5.1, §5.2, §5.4). Workers speak only v3. The version 2 writers and
+//! types at the crate root stay for the host carrier and a test fake, and are removed in A1.5
+//! step 3b.
 //!
 //! What changes from v2:
 //! - **The first line is non-secret** ([`HostFirstLine`]): the instance, the office and the path
@@ -31,8 +31,8 @@
 //!
 //! The "first line only, then drain unparsed" rule of v2 stays for the pipe. A v3 line is
 //! `{"v": 3, ...}`; a v2 build refuses it as another version, and [`read_first_line`] refuses a
-//! v2 line the same way. Move 2a's server reads both with [`read_first_line_any`] until move 2b's
-//! host lands.
+//! v2 line the same way. [`read_first_line_any`] still reads both; removed in A1.5 step 3b (host
+//! carrier, test fake).
 
 use std::io::{BufRead, Write};
 
@@ -369,8 +369,8 @@ pub fn write_first_line(w: &mut impl Write, line: &HostFirstLine) -> Result<(), 
 
 /// Read a server's v3 first line and check it matches the flag. `Ok(None)` means EOF before it
 /// (the host is gone). Another `v` is [`LaunchError::UnsupportedVersion`]; an unknown op, or
-/// another flag's op, is [`LaunchError::Invalid`]. The line is read like v2's secret lines and
-/// zeroed afterwards, since a v2 host's line carries keys.
+/// another flag's op, is [`LaunchError::Invalid`]. The line is read through a buffer reserved
+/// up front and zeroed afterwards, since a stray v2 host line carries keys.
 pub fn read_first_line(
     r: &mut impl BufRead,
     expected: FirstLine,
@@ -394,8 +394,8 @@ pub fn read_first_line(
     }
 }
 
-/// A first line of either version, for the rollout (X-02 §5.4): move 2a's server accepts v2 and
-/// v3 first lines until move 2b's host lands, and move 3 drops v2.
+/// A first line of either version, for the rollout (X-02 §5.4). No worker reads v2 any more.
+/// Removed in A1.5 step 3b (host carrier, test fake).
 #[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AnyFirstLine {
@@ -405,8 +405,10 @@ pub enum AnyFirstLine {
     V3(HostFirstLine),
 }
 
+/// Removed in A1.5 step 3b (host carrier, test fake): workers use [`read_first_line`].
+///
 /// Read a server's first line, v2 or v3, and check it matches the flag. One read of one line,
-/// through a buffer reserved up front and zeroed on every path, as v2's reader does. Another `v`
+/// through a buffer reserved up front and zeroed on every path. Another `v`
 /// is [`LaunchError::UnsupportedVersion`]; an unknown op, or another flag's op, is
 /// [`LaunchError::Invalid`]. `Ok(None)` means EOF before it.
 pub fn read_first_line_any(
@@ -540,7 +542,7 @@ pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<RendezvousEvent>
 }
 
 /// A v3 worker event as it arrives: [`ServerEvent`]'s variants plus `v`, refusing any field the
-/// event doesn't define, like every other v3 line. (v2's stdout events keep their lenient reader.)
+/// event doesn't define, like every other v3 line.
 /// The `office` in `created` is an `office.json` body and keeps that file's own rule: fields this
 /// build doesn't know are kept, not refused. An event name this build doesn't know is
 /// [`ServerEvent::Unknown`], whatever its fields.

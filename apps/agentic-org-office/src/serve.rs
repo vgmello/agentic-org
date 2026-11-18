@@ -1088,7 +1088,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
                     "bind as a member to change work",
                 );
             };
-            if WorkCall::is_app_only(request) && !*via_grant {
+            if WorkCall::is_grant_only(request) && !*via_grant {
                 return Response::error(
                     request.id,
                     ApiError::new(

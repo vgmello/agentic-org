@@ -99,6 +99,28 @@ fn selected_marker_round_trip_keeps_version_and_explicit_uuid_identity() {
     );
 }
 
+/// Decodes one line the kept v2 writers emit, with serde alone. No worker reads v2 any more (the
+/// v2 readers went in A1.5 step 3a), so this checks the writers' bytes and the types' own rules,
+/// not a reader's. Removed with the writers in A1.5 step 3b (host carrier, test fake).
+fn decode_host(r: &mut impl BufRead) -> Result<Option<HostMessage>, LaunchError> {
+    let Some(line) = frame::read_line(r).map_err(LaunchError::Frame)? else {
+        return Ok(None);
+    };
+    serde_json::from_slice(&line)
+        .map(Some)
+        .map_err(LaunchError::Json)
+}
+
+/// As [`decode_host`], for a v2 server event.
+fn decode_event(r: &mut impl BufRead) -> Result<Option<ServerEvent>, LaunchError> {
+    let Some(line) = frame::read_line(r).map_err(LaunchError::Frame)? else {
+        return Ok(None);
+    };
+    serde_json::from_slice(&line)
+        .map(Some)
+        .map_err(LaunchError::Json)
+}
+
 fn json(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes).unwrap()
 }
@@ -114,18 +136,6 @@ fn the_create_message_has_the_agreed_shape() {
             "org_name":"Acme","office_id":"01M6WGY1WJCC503RXF2NS0SH84",
             "office_name":"HQ","role":"hq","app_token":TOKEN_HEX,"db_key":KEY_HEX})
     );
-}
-
-#[test]
-fn host_messages_round_trip_and_eof_is_none() {
-    let mut out = Vec::new();
-    write_host_message(&mut out, &HostMessage::Create(create())).unwrap();
-    let mut r = Cursor::new(out);
-    assert_eq!(
-        read_host_message(&mut r).unwrap(),
-        Some(HostMessage::Create(create()))
-    );
-    assert_eq!(read_host_message(&mut r).unwrap(), None);
 }
 
 #[test]
@@ -160,10 +170,7 @@ fn server_events_have_the_agreed_shapes() {
         let mut out = Vec::new();
         write_server_event(&mut out, &event).unwrap();
         assert_eq!(json(&out), expected);
-        assert_eq!(
-            read_server_event(&mut Cursor::new(out)).unwrap(),
-            Some(event)
-        );
+        assert_eq!(decode_event(&mut Cursor::new(out)).unwrap(), Some(event));
     }
 }
 
@@ -192,21 +199,21 @@ fn unknown_ops_events_codes_and_fields_are_tolerated() {
     let line = br#"{"v":2,"op":"shutdown","grace_ms":5}
 "#;
     assert_eq!(
-        read_host_message(&mut Cursor::new(&line[..])).unwrap(),
+        decode_host(&mut Cursor::new(&line[..])).unwrap(),
         Some(HostMessage::Unknown)
     );
 
     let line = br#"{"v":2,"event":"status","busy":true}
 "#;
     assert_eq!(
-        read_server_event(&mut Cursor::new(&line[..])).unwrap(),
+        decode_event(&mut Cursor::new(&line[..])).unwrap(),
         Some(ServerEvent::Unknown)
     );
 
     let line = br#"{"v":2,"event":"failed","code":"disk_on_fire","message":"m","extra":1}
 "#;
     assert_eq!(
-        read_server_event(&mut Cursor::new(&line[..])).unwrap(),
+        decode_event(&mut Cursor::new(&line[..])).unwrap(),
         Some(ServerEvent::Failed {
             code: FailCode::StorageError,
             message: "m".into()
@@ -215,8 +222,7 @@ fn unknown_ops_events_codes_and_fields_are_tolerated() {
 
     let line = br#"{"v":2,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"hq","hq_address":"x","app_token":"abababababababababababababababababababababababababababababababab","db_key":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"}
 "#;
-    let Some(HostMessage::Create(c)) = read_host_message(&mut Cursor::new(&line[..])).unwrap()
-    else {
+    let Some(HostMessage::Create(c)) = decode_host(&mut Cursor::new(&line[..])).unwrap() else {
         panic!("not a create");
     };
     assert_eq!(c.role, OfficeRole::Hq);
@@ -232,7 +238,7 @@ fn a_create_with_a_role_this_version_cant_create_is_refused() {
         &br#"{"v":2,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","app_token":"abababababababababababababababababababababababababababababababab","db_key":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"}
 "#[..],
     ] {
-        let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
+        let err = decode_host(&mut Cursor::new(line)).unwrap_err();
         assert!(matches!(err, LaunchError::Json(_)), "{err}");
         assert_eq!(err.fail_code(), FailCode::InvalidRequest);
     }
@@ -247,7 +253,7 @@ fn a_create_with_a_role_this_version_cant_create_is_refused() {
 
 #[test]
 fn the_types_check_their_rules_on_every_serde_path() {
-    // Reading with the plain frame API, bypassing `read_host_message`, is still refused.
+    // Reading with the plain frame API, is still refused by the type itself.
     let mut line = serde_json::to_value(HostMessage::Create(create())).unwrap();
     line["office_id"] = "../../etc".into();
     let mut r = Cursor::new(line.to_string() + "\n");
@@ -275,7 +281,7 @@ fn a_created_event_with_a_bad_office_is_refused() {
     office["office_id"] = "../../x".into();
     let line = serde_json::json!({"v":2,"event":"created","office":office}).to_string() + "\n";
     assert!(matches!(
-        read_server_event(&mut Cursor::new(line)),
+        decode_event(&mut Cursor::new(line)),
         Err(LaunchError::Json(_))
     ));
 
@@ -283,7 +289,7 @@ fn a_created_event_with_a_bad_office_is_refused() {
     office["v"] = 7.into();
     let line = serde_json::json!({"v":2,"event":"created","office":office}).to_string() + "\n";
     assert!(matches!(
-        read_server_event(&mut Cursor::new(line)),
+        decode_event(&mut Cursor::new(line)),
         Err(LaunchError::Json(_))
     ));
 
@@ -314,17 +320,7 @@ fn unknown_variants_are_never_written() {
 }
 
 #[test]
-fn oversized_lines_are_refused_both_ways() {
-    let mut line = br#"{"v":2,"event":"failed","code":"in_use","message":""#.to_vec();
-    line.extend(std::iter::repeat_n(b'x', org_proto::MAX_FRAME_BYTES));
-    line.extend(b"\"}\n{\"v\":2,\"event\":\"ready\",\"socket\":\"/s\",\"pid\":1}\n");
-    let err = read_server_event(&mut Cursor::new(line)).unwrap_err();
-    assert!(
-        matches!(err, LaunchError::Frame(FrameError::TooLarge)),
-        "{err}"
-    );
-    assert!(err.closes_stream());
-
+fn an_oversized_server_event_is_not_sent() {
     let huge = ServerEvent::Failed {
         code: FailCode::StorageError,
         message: "x".repeat(org_proto::MAX_FRAME_BYTES),
@@ -335,65 +331,6 @@ fn oversized_lines_are_refused_both_ways() {
         Err(LaunchError::Frame(FrameError::TooLargeToSend))
     ));
     assert!(out.is_empty());
-}
-
-#[test]
-fn errors_say_whether_the_pipe_is_still_in_step() {
-    let mut r =
-        Cursor::new(&b"not json\n{\"v\":2,\"event\":\"ready\",\"socket\":\"/s\",\"pid\":2}\n"[..]);
-    let err = read_server_event(&mut r).unwrap_err();
-    assert!(!err.closes_stream());
-    assert!(std::error::Error::source(&err).is_some());
-    assert_eq!(
-        read_server_event(&mut r).unwrap(),
-        Some(ServerEvent::Ready {
-            socket: "/s".into(),
-            pid: 2
-        })
-    );
-    let err = LaunchError::UnsupportedVersion {
-        found: 2,
-        supported: &[LAUNCH_VERSION],
-    };
-    assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
-    let err = LaunchError::UnsupportedOfficeFileVersion(3);
-    assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
-    assert_eq!(
-        err.to_string(),
-        "office.json version 3 isn't supported (this build reads 1 or 2)"
-    );
-    assert_eq!(
-        LaunchError::UnsupportedVersion {
-            found: 1,
-            supported: &[LAUNCH_VERSION]
-        }
-        .to_string(),
-        "launch version 1 isn't supported (this build speaks 2)"
-    );
-    assert!(!err.closes_stream());
-}
-
-#[test]
-fn another_version_is_refused_before_its_shape_is_read() {
-    // A v3 line with a shape v2 can't decode still reports the version, not a JSON error.
-    let line = br#"{"v":3,"op":"create","org":{"nested":true}}
-"#;
-    assert!(matches!(
-        read_host_message(&mut Cursor::new(&line[..])),
-        Err(LaunchError::UnsupportedVersion { found: 3, .. })
-    ));
-    let line = br#"{"v":0,"event":"ready","socket":"/s","pid":1}
-"#;
-    assert!(matches!(
-        read_server_event(&mut Cursor::new(&line[..])),
-        Err(LaunchError::UnsupportedVersion { found: 0, .. })
-    ));
-    let line = br#"{"op":"create"}
-"#;
-    assert!(matches!(
-        read_host_message(&mut Cursor::new(&line[..])),
-        Err(LaunchError::Json(_))
-    ));
 }
 
 #[test]
@@ -427,26 +364,12 @@ fn a_create_with_a_hostile_id_is_refused() {
         let line = line.to_string() + "\n";
         assert!(
             matches!(
-                read_host_message(&mut Cursor::new(line)),
+                decode_host(&mut Cursor::new(line)),
                 Err(LaunchError::Json(_))
             ),
             "accepted {org_id:?} / {office_id:?}"
         );
     }
-}
-
-#[test]
-fn malformed_lines_and_truncation_are_errors() {
-    let mut r = Cursor::new(&b"not json\n"[..]);
-    assert!(matches!(
-        read_server_event(&mut r),
-        Err(LaunchError::Json(_))
-    ));
-    let mut r = Cursor::new(&br#"{"v":2,"event":"ready""#[..]);
-    assert!(matches!(
-        read_server_event(&mut r),
-        Err(LaunchError::Frame(FrameError::Truncated))
-    ));
 }
 
 #[test]
@@ -484,7 +407,7 @@ fn discarded_has_its_shape_and_fail_codes_map_errors() {
     write_server_event(&mut out, &ServerEvent::Discarded).unwrap();
     assert_eq!(json(&out), serde_json::json!({"v":2,"event":"discarded"}));
     assert_eq!(
-        read_server_event(&mut Cursor::new(out)).unwrap(),
+        decode_event(&mut Cursor::new(out)).unwrap(),
         Some(ServerEvent::Discarded)
     );
     assert_eq!(DISCARD_FLAG, "--discard");
@@ -499,7 +422,7 @@ fn discarded_has_its_shape_and_fail_codes_map_errors() {
         LaunchError::Frame(FrameError::TooLarge).fail_code(),
         FailCode::InvalidRequest
     );
-    let bad_json = read_server_event(&mut Cursor::new(&b"{]\n"[..])).unwrap_err();
+    let bad_json = decode_event(&mut Cursor::new(&b"{]\n"[..])).unwrap_err();
     assert_eq!(bad_json.fail_code(), FailCode::InvalidRequest);
 }
 
@@ -566,10 +489,7 @@ fn the_start_message_has_the_agreed_shape_and_round_trips() {
         json(&out),
         serde_json::json!({"v":2,"op":"start","app_token":TOKEN_HEX,"db_key":KEY_HEX})
     );
-    assert_eq!(
-        read_host_message(&mut Cursor::new(out)).unwrap(),
-        Some(start)
-    );
+    assert_eq!(decode_host(&mut Cursor::new(out)).unwrap(), Some(start));
 }
 
 #[test]
@@ -590,7 +510,7 @@ fn the_app_token_never_shows_in_debug_or_errors() {
             "1234567890".repeat(7)
         ),
     ] {
-        let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
+        let err = decode_host(&mut Cursor::new(line)).unwrap_err();
         let text = format!("{err} {err:?}");
         assert!(
             !text.contains("abababab") && !text.contains("12345678"),
@@ -601,7 +521,7 @@ fn the_app_token_never_shows_in_debug_or_errors() {
     let mut value = serde_json::to_value(HostMessage::Create(create())).unwrap();
     value.as_object_mut().unwrap().remove("app_token");
     value["v"] = 2.into();
-    let err = read_host_message(&mut Cursor::new(value.to_string() + "\n")).unwrap_err();
+    let err = decode_host(&mut Cursor::new(value.to_string() + "\n")).unwrap_err();
     assert!(matches!(err, LaunchError::Json(_)), "{err}");
 }
 
@@ -743,24 +663,6 @@ fn an_office_file_made_without_a_role_cant_be_written() {
 }
 
 #[test]
-fn host_lines_are_zeroed_after_decoding_on_every_path() {
-    let good = encode_host_line(&HostMessage::Start(start())).unwrap();
-    let mut line = good[..good.len() - 1].to_vec();
-    assert!(decode_host_line(&mut line).is_ok());
-    assert!(line.iter().all(|&b| b == 0));
-
-    let mut other_version =
-        format!("{{\"v\":3,\"op\":\"start\",\"app_token\":\"{TOKEN_HEX}\"}}").into_bytes();
-    assert!(decode_host_line(&mut other_version).is_err());
-    assert!(other_version.iter().all(|&b| b == 0));
-
-    let mut bad =
-        format!("{{\"v\":2,\"op\":\"start\",\"app_token\":\"{TOKEN_HEX}\",]").into_bytes();
-    assert!(decode_host_line(&mut bad).is_err());
-    assert!(bad.iter().all(|&b| b == 0));
-}
-
-#[test]
 fn host_lines_are_encoded_without_reallocating() {
     let line = encode_host_line(&HostMessage::Create(create())).unwrap();
     assert_eq!(line.capacity(), line.len());
@@ -803,7 +705,7 @@ fn the_largest_host_line_is_sent_and_one_byte_more_is_not() {
     let mut out = Vec::new();
     write_host_message(&mut out, &fits).unwrap();
     assert_eq!(out.len(), org_proto::MAX_FRAME_BYTES + 1);
-    assert!(read_host_message(&mut Cursor::new(out)).unwrap().is_some());
+    assert!(decode_host(&mut Cursor::new(out)).unwrap().is_some());
 
     let too_big = HostMessage::Create(CreateOffice {
         org_name: format!("Acme{}", "x".repeat(pad + 1)),
@@ -815,26 +717,6 @@ fn the_largest_host_line_is_sent_and_one_byte_more_is_not() {
         Err(LaunchError::Frame(FrameError::TooLargeToSend))
     ));
     assert!(out.is_empty());
-}
-
-#[test]
-fn an_oversized_host_line_is_too_large_and_closes_the_pipe() {
-    let mut line = vec![b'x'; org_proto::MAX_FRAME_BYTES + 1];
-    line.push(b'\n');
-    let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
-    assert!(
-        matches!(err, LaunchError::Frame(FrameError::TooLarge)),
-        "{err}"
-    );
-    assert_eq!(err.fail_code(), FailCode::InvalidRequest);
-    assert!(err.closes_stream());
-    // One byte less is a whole (if malformed) line, not too large.
-    let mut line = vec![b'x'; org_proto::MAX_FRAME_BYTES];
-    line.push(b'\n');
-    assert!(matches!(
-        read_host_message(&mut Cursor::new(line)),
-        Err(LaunchError::Json(_))
-    ));
 }
 
 #[test]
@@ -864,9 +746,7 @@ fn the_role_rule_is_what_refuses_a_non_hq_create() {
              \"office_id\":\"B2\",\"office_name\":\"HQ\",\"role\":{role},\
              \"app_token\":\"{TOKEN_HEX}\",\"db_key\":\"{KEY_HEX}\"}}\n"
         );
-        let err = read_host_message(&mut Cursor::new(line))
-            .unwrap_err()
-            .to_string();
+        let err = decode_host(&mut Cursor::new(line)).unwrap_err().to_string();
         assert!(err.contains("only HQ"), "{role}: {err}");
     }
 }
@@ -1002,7 +882,7 @@ fn the_office_file_write_cap_is_exact() {
     .unwrap();
     // And it is accepted when read back.
     assert!(matches!(
-        read_server_event(&mut Cursor::new(out)).unwrap(),
+        decode_event(&mut Cursor::new(out)).unwrap(),
         Some(ServerEvent::Created { .. })
     ));
 
@@ -1011,21 +891,6 @@ fn the_office_file_write_cap_is_exact() {
     let mut out = Vec::new();
     assert!(write_server_event(&mut out, &ServerEvent::Created { office: over }).is_err());
     assert!(out.is_empty());
-}
-
-#[test]
-fn a_created_event_over_the_office_file_cap_is_refused_when_read() {
-    let over = office_file_of_len(MAX_OFFICE_FILE_BYTES + 1);
-    // Built by hand, as a buggy server might, since write_server_event won't send it.
-    let mut value = serde_json::json!({"v":2,"event":"created"});
-    let mut office = serde_json::to_value(&over).unwrap();
-    office["v"] = 1.into();
-    value["office"] = office;
-    let line = value.to_string() + "\n";
-    assert!(matches!(
-        read_server_event(&mut Cursor::new(line)),
-        Err(LaunchError::Invalid(_))
-    ));
 }
 
 #[test]
@@ -1049,52 +914,6 @@ fn a_sent_host_line_is_zeroed_whether_or_not_the_write_works() {
     let mut line = encode_host_line(&message).unwrap();
     assert!(send_and_zero(&mut Broken, &mut line).is_err());
     assert!(!line.is_empty() && line.iter().all(|&b| b == 0));
-}
-
-#[test]
-fn a_host_that_dies_mid_line_is_gone_not_a_failure() {
-    let line = encode_host_line(&HostMessage::Start(start())).unwrap();
-    let err = read_host_message(&mut Cursor::new(&line[..20])).unwrap_err();
-    assert!(err.is_host_gone());
-    let bad = read_host_message(&mut Cursor::new(&b"{]\n"[..])).unwrap_err();
-    assert!(!bad.is_host_gone());
-    assert!(!LaunchError::UnsupportedVersion {
-        found: 2,
-        supported: &[LAUNCH_VERSION]
-    }
-    .is_host_gone());
-}
-
-#[test]
-fn the_first_line_must_match_the_flag() {
-    let mut create_line = Vec::new();
-    write_host_message(&mut create_line, &HostMessage::Create(create())).unwrap();
-    let mut start_line = Vec::new();
-    write_host_message(&mut start_line, &HostMessage::Start(start())).unwrap();
-    assert!(matches!(
-        read_first_host_message(&mut Cursor::new(create_line.clone()), FirstLine::Create),
-        Ok(Some(HostMessage::Create(_)))
-    ));
-    assert!(matches!(
-        read_first_host_message(&mut Cursor::new(start_line.clone()), FirstLine::Start),
-        Ok(Some(HostMessage::Start(_)))
-    ));
-    for (line, expected) in [
-        (create_line, FirstLine::Start),
-        (start_line, FirstLine::Create),
-    ] {
-        let err = read_first_host_message(&mut Cursor::new(line), expected).unwrap_err();
-        assert!(matches!(err, LaunchError::Invalid(_)), "{err}");
-        assert_eq!(err.fail_code(), FailCode::InvalidRequest);
-    }
-    let unknown = b"{\"v\":2,\"op\":\"shutdown\"}\n";
-    let err =
-        read_first_host_message(&mut Cursor::new(&unknown[..]), FirstLine::Start).unwrap_err();
-    assert_eq!(err.fail_code(), FailCode::InvalidRequest);
-    assert!(matches!(
-        read_first_host_message(&mut Cursor::new(&b""[..]), FirstLine::Create),
-        Ok(None)
-    ));
 }
 
 #[test]
@@ -1133,10 +952,7 @@ fn the_discard_message_has_the_agreed_shapes_and_round_trips() {
         write_host_message(&mut out, &message).unwrap();
         assert_eq!(out.last(), Some(&b'\n'));
         assert_eq!(json(&out), expected);
-        assert_eq!(
-            read_host_message(&mut Cursor::new(out)).unwrap(),
-            Some(message)
-        );
+        assert_eq!(decode_host(&mut Cursor::new(out)).unwrap(), Some(message));
     }
 }
 
@@ -1146,7 +962,7 @@ fn create_and_start_carry_the_key_and_round_trip() {
         let mut out = Vec::new();
         write_host_message(&mut out, &message).unwrap();
         assert_eq!(json(&out)["db_key"], KEY_HEX);
-        let read = read_host_message(&mut Cursor::new(out)).unwrap().unwrap();
+        let read = decode_host(&mut Cursor::new(out)).unwrap().unwrap();
         let read_key = match &read {
             HostMessage::Create(c) => &c.db_key,
             HostMessage::Start(s) => &s.db_key,
@@ -1173,14 +989,13 @@ fn a_create_or_start_without_a_key_is_refused() {
             if let Some(db_key) = db_key.clone() {
                 object.insert("db_key".into(), db_key);
             }
-            let err = read_host_message(&mut Cursor::new(value.to_string() + "\n")).unwrap_err();
+            let err = decode_host(&mut Cursor::new(value.to_string() + "\n")).unwrap_err();
             assert!(matches!(err, LaunchError::Json(_)), "{db_key:?}: {err}");
             assert_eq!(err.fail_code(), FailCode::InvalidRequest);
         }
     }
     // A discard needs the field too, `null` included: a missing one isn't read as `null`.
-    let err =
-        read_host_message(&mut Cursor::new(&b"{\"v\":2,\"op\":\"discard\"}\n"[..])).unwrap_err();
+    let err = decode_host(&mut Cursor::new(&b"{\"v\":2,\"op\":\"discard\"}\n"[..])).unwrap_err();
     assert!(matches!(err, LaunchError::Json(_)), "{err}");
 }
 
@@ -1201,7 +1016,7 @@ fn a_bad_key_is_refused_without_echoing_it() {
             "1234567890".repeat(7)
         ),
     ] {
-        let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
+        let err = decode_host(&mut Cursor::new(line)).unwrap_err();
         let text = format!("{err} {err:?}");
         assert!(
             !text.contains("cdcdcdcd") && !text.contains("12345678"),
@@ -1209,71 +1024,6 @@ fn a_bad_key_is_refused_without_echoing_it() {
         );
         assert_eq!(err.fail_code(), FailCode::InvalidRequest);
     }
-}
-
-#[test]
-fn a_version_1_line_is_refused() {
-    for line in [
-        format!("{{\"v\":1,\"op\":\"start\",\"app_token\":\"{TOKEN_HEX}\"}}\n"),
-        format!(
-            "{{\"v\":1,\"op\":\"start\",\"app_token\":\"{TOKEN_HEX}\",\"db_key\":\"{KEY_HEX}\"}}\n"
-        ),
-        "{\"v\":1,\"op\":\"discard\",\"db_key\":null}\n".to_string(),
-    ] {
-        let err = read_first_host_message(&mut Cursor::new(line), FirstLine::Start).unwrap_err();
-        assert!(
-            matches!(err, LaunchError::UnsupportedVersion { found: 1, .. }),
-            "{err}"
-        );
-        assert!(err.to_string().contains("launch version 1 isn't supported"));
-        assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
-    }
-    let mut v1_create = json(&encode_host_line(&HostMessage::Create(create())).unwrap());
-    v1_create["v"] = 1.into();
-    assert!(matches!(
-        read_host_message(&mut Cursor::new(v1_create.to_string() + "\n")),
-        Err(LaunchError::UnsupportedVersion { found: 1, .. })
-    ));
-    // A v1 server event is refused too: host and server ship together.
-    let line = b"{\"v\":1,\"event\":\"discarded\"}\n";
-    assert!(matches!(
-        read_server_event(&mut Cursor::new(&line[..])),
-        Err(LaunchError::UnsupportedVersion { found: 1, .. })
-    ));
-}
-
-#[test]
-fn discard_is_the_first_line_for_discard_only() {
-    let mut discard_line = Vec::new();
-    write_host_message(
-        &mut discard_line,
-        &HostMessage::Discard(DiscardOffice { db_key: None }),
-    )
-    .unwrap();
-    assert!(matches!(
-        read_first_host_message(&mut Cursor::new(discard_line.clone()), FirstLine::Discard),
-        Ok(Some(HostMessage::Discard(DiscardOffice { db_key: None })))
-    ));
-    for expected in [FirstLine::Create, FirstLine::Start] {
-        let err =
-            read_first_host_message(&mut Cursor::new(discard_line.clone()), expected).unwrap_err();
-        assert!(matches!(err, LaunchError::Invalid(_)), "{err}");
-        assert_eq!(err.fail_code(), FailCode::InvalidRequest);
-    }
-    for other in [HostMessage::Create(create()), HostMessage::Start(start())] {
-        let mut line = Vec::new();
-        write_host_message(&mut line, &other).unwrap();
-        let err = read_first_host_message(&mut Cursor::new(line), FirstLine::Discard).unwrap_err();
-        assert!(matches!(err, LaunchError::Invalid(_)), "{err}");
-    }
-    let unknown = b"{\"v\":2,\"op\":\"shutdown\"}\n";
-    let err =
-        read_first_host_message(&mut Cursor::new(&unknown[..]), FirstLine::Discard).unwrap_err();
-    assert_eq!(err.fail_code(), FailCode::InvalidRequest);
-    assert!(matches!(
-        read_first_host_message(&mut Cursor::new(&b""[..]), FirstLine::Discard),
-        Ok(None)
-    ));
 }
 
 #[test]
@@ -1317,9 +1067,7 @@ fn key_lines_are_zeroed_and_sent_without_reallocating() {
         send_and_zero(&mut out, &mut line).unwrap();
         assert!(line.iter().all(|&b| b == 0));
 
-        let mut read = out[..out.len() - 1].to_vec();
-        assert_eq!(decode_host_line(&mut read).unwrap(), message);
-        assert!(read.iter().all(|&b| b == 0));
+        assert_eq!(decode_host(&mut Cursor::new(&out)).unwrap(), Some(message));
     }
 }
 
@@ -1339,73 +1087,4 @@ fn a_version_1_office_file_still_reads_and_is_written_as_version_1() {
         (event["v"].clone(), event["office"]["v"].clone()),
         (2.into(), 1.into())
     );
-}
-
-#[test]
-fn borrowed_host_lines_write_the_same_bytes_as_owned_messages() {
-    let create = create();
-    let app_token = token();
-    let db_key = key();
-    let cases = [
-        (
-            HostLine::Create(&create),
-            HostMessage::Create(self::create()),
-        ),
-        (
-            HostLine::Start {
-                app_token: &app_token,
-                db_key: &db_key,
-            },
-            HostMessage::Start(start()),
-        ),
-        (
-            HostLine::Discard {
-                db_key: Some(&db_key),
-            },
-            HostMessage::Discard(DiscardOffice {
-                db_key: Some(key()),
-            }),
-        ),
-        (
-            HostLine::Discard { db_key: None },
-            HostMessage::Discard(DiscardOffice { db_key: None }),
-        ),
-    ];
-    for (borrowed, owned) in cases {
-        let mut from_borrowed = Vec::new();
-        write_host_line(&mut from_borrowed, &borrowed).unwrap();
-        let mut from_owned = Vec::new();
-        write_host_message(&mut from_owned, &owned).unwrap();
-        assert_eq!(from_borrowed, from_owned, "{borrowed:?}");
-        assert_eq!(
-            read_host_message(&mut Cursor::new(from_borrowed)).unwrap(),
-            Some(owned)
-        );
-        let encoded = encode_host_line(&borrowed).unwrap();
-        assert_eq!(encoded.capacity(), encoded.len());
-        for shown in [format!("{borrowed:?}"), format!("{borrowed:#?}")] {
-            assert!(
-                !shown.contains("cdcd")
-                    && !shown.contains("abab")
-                    // A derived Debug would print the bytes in decimal.
-                    && !shown.contains("205")
-                    && !shown.contains("171"),
-                "{shown}"
-            );
-        }
-    }
-}
-
-#[test]
-fn a_borrowed_create_that_breaks_the_rules_is_not_sent() {
-    let bad = CreateOffice {
-        office_id: "../x".into(),
-        ..create()
-    };
-    let mut out = Vec::new();
-    assert!(matches!(
-        write_host_line(&mut out, &HostLine::Create(&bad)),
-        Err(LaunchError::Invalid(_))
-    ));
-    assert!(out.is_empty());
 }
