@@ -39,7 +39,7 @@ and in the "Code today" line of each increment.
 
 ## Known facts that affect the first increments
 
-- `crates/org-platform` exists from X1a. No file outside it gains a platform predicate:
+- `crates/org-platform` exists (A2 B0), and from X1a no file outside it gains a platform predicate:
   `crates/org-platform/tests/platform_conditionals.rs` fails on one, and CI fails a
   change that adds a file to `.github/platform-conditionals.allow` or raises a count. A new operating-system need goes
   into that crate, with its macOS adapter and a refusing one, and a note for Track X.

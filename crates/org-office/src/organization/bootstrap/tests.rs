@@ -4,7 +4,6 @@ use crate::{
     AcceptanceConfig, AcceptanceIdentity, Key, NewOffice, OfficeRole, OwnerAccount,
 };
 use org_proto::selected_bootstrap::{PlanV1, PreparedV1};
-use zeroize::Zeroizing;
 const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const OP: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 fn prepared() -> PreparedV1 {
@@ -68,7 +67,7 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
                 OP.into(),
                 [4; 65],
                 vec![7; 140],
-                Zeroizing::new(vec![1; 138]),
+                vec![1; 138],
             )
         })
         .unwrap();
@@ -299,15 +298,7 @@ fn selected_bootstrap_open_and_admission_reject_lost_or_incoherent_prepared_stat
             key.clone(),
             INSTANCE,
             &bound,
-            move |_| {
-                LocalRecord::new(
-                    org,
-                    OP.into(),
-                    [4; 65],
-                    vec![7; 140],
-                    Zeroizing::new(vec![1; 138]),
-                )
-            },
+            move |_| LocalRecord::new(org, OP.into(), [4; 65], vec![7; 140], vec![1; 138]),
         )
         .unwrap();
         let path = folder.join("hq-creation.v1.json");

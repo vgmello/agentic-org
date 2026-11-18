@@ -65,7 +65,7 @@ fn actual_ca_creation_reopens_retries_exactly_and_starts_without_pending_code() 
         office.org_snapshot().unwrap().members[0].id,
         binding(dir.path()).owner_member_id
     );
-    verify_existing(&office).unwrap();
+    verify_existing(&office, &key()).unwrap();
     drop(office);
     let office = prepare(
         &folder,
@@ -93,7 +93,7 @@ fn actual_ca_creation_reopens_retries_exactly_and_starts_without_pending_code() 
     )
     .is_err());
     let office = Office::open_for_instance(&folder, key(), INSTANCE).unwrap();
-    verify_existing(&office).unwrap();
+    verify_existing(&office, &key()).unwrap();
     assert_eq!(
         office.hq_creation_record().unwrap().unwrap().public_key,
         public
@@ -104,9 +104,13 @@ fn actual_ca_creation_reopens_retries_exactly_and_starts_without_pending_code() 
     );
     // Neither local key nor code appears in the copied org snapshot/export DTO.
     let snapshot = serde_json::to_vec(&office.org_snapshot().unwrap()).unwrap();
-    assert!(!snapshot
-        .windows(record.local_der().len())
-        .any(|w| w == record.local_der()));
+    let der = unwrap_ca(&key(), &record, "HQ")
+        .unwrap()
+        .local_der()
+        .to_vec();
+    for secret in [der.as_slice(), record.wrapped_ca_key()] {
+        assert!(!snapshot.windows(secret.len()).any(|w| w == secret));
+    }
     assert!(!snapshot
         .windows(code().expose().len())
         .any(|w| w == code().expose().as_bytes()));
@@ -153,7 +157,7 @@ fn selected_uuid_hq_marker_keeps_ca_identity_through_retry_and_reopen() {
     );
     drop(office);
     let office = Office::open_for_instance(&folder, key(), INSTANCE).unwrap();
-    verify_existing(&office).unwrap();
+    verify_existing(&office, &key()).unwrap();
     let current = office.hq_creation_public_record().unwrap().unwrap();
     assert_eq!(current.public_key, record.public_key);
     assert_eq!(current.organization_id, new.org_id);
@@ -185,7 +189,7 @@ fn legacy_satellite_without_hq_receipt_starts_but_retained_hq_material_requires_
         } else {
             Office::create(&folder, &new(), key()).unwrap()
         };
-        verify_existing(&office).unwrap();
+        verify_existing(&office, &key()).unwrap();
         let mut source = new();
         source.office_id = "SOURCE".into();
         let source = Office::create(dir.path().join("SOURCE"), &source, key()).unwrap();
@@ -203,13 +207,61 @@ fn legacy_satellite_without_hq_receipt_starts_but_retained_hq_material_requires_
             .unwrap();
         assert!(!office.is_replication_hq().unwrap());
         if provisioned {
-            assert!(verify_existing(&office).is_err());
+            assert!(verify_existing(&office, &key()).is_err());
         } else {
             assert!(office.hq_creation_record().unwrap().is_none());
-            verify_existing(&office).unwrap();
+            verify_existing(&office, &key()).unwrap();
             drop(office);
             let office = Office::open(&folder, key()).unwrap();
-            verify_existing(&office).unwrap();
+            verify_existing(&office, &key()).unwrap();
         }
     }
+}
+
+/// ENC-5 (library level): the stored CA key is only a wrapped record. It holds no
+/// PKCS#8 bytes, unwraps with the office secrets key to the recorded public key,
+/// and opens for no other key, office or organization.
+#[test]
+fn enc5_ca_key_is_stored_only_wrapped_with_the_office_secrets_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("HQ");
+    let office = prepare(
+        &folder,
+        &new(),
+        key(),
+        INSTANCE,
+        &binding(dir.path()),
+        code(),
+    )
+    .unwrap();
+    let record = office.hq_creation_record().unwrap().unwrap();
+    let wrapped = record.wrapped_ca_key();
+    assert!(org_pki::SigningKey::from_local_der(wrapped).is_err());
+    let ca = unwrap_ca(&key(), &record, "HQ").unwrap();
+    assert_eq!(ca.public_key(), record.public_key);
+    let der = ca.local_der();
+    assert!(!wrapped.windows(der.len()).any(|w| w == der));
+    // Every byte the office stores locally: no plaintext DER anywhere.
+    drop(office);
+    for entry in std::fs::read_dir(&folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            assert!(!bytes.windows(der.len()).any(|w| w == der), "{path:?}");
+        }
+    }
+    let other = Key::from_db_key(org_proto::DbKey::from_bytes([9; 32]));
+    assert!(unwrap_ca(&other, &record, "HQ").is_err());
+    assert!(unwrap_ca(&key(), &record, "SAT").is_err());
+    let mut moved = LocalRecord::new(
+        "OTHER".into(),
+        record.operation_id.clone(),
+        record.public_key,
+        record.package.clone(),
+        wrapped.to_vec(),
+    )
+    .unwrap();
+    assert!(unwrap_ca(&key(), &moved, "HQ").is_err());
+    moved.organization_id = record.organization_id.clone();
+    assert!(unwrap_ca(&key(), &moved, "HQ").is_ok());
 }

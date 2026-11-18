@@ -1,13 +1,13 @@
 [package]
 name = "org-platform"
-description = "Every operating-system difference: the platform contracts of ADR-0017 with their macOS, Linux and refusing adapters. No domain or policy knowledge."
+description = "Every operating-system difference behind small contracts: one non-conditional constructor per capability, the macOS adapter, and a refusing adapter elsewhere (ADR-0017 decision 6)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = false
 
 [features]
-# Test doubles and executable contract checks (`service::testing`), for other crates' tests.
+# Test adapters built from the contracts, for consumer tests only.
 test-support = []
 
 [dependencies]
@@ -15,6 +15,6 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-# The platform-conditional check (ADR-0017 LNX-5) parses the workspace's sources.
+# The platform-conditional check (ADR-0017 LNX-5) reads the workspace's sources.
 syn = { version = "=2.0.119", default-features = false, features = ["full", "parsing"] }
 proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }

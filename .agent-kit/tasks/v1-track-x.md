@@ -20,7 +20,8 @@ the checklist row is FC-164. Every handoff and review of this track also carries
   fails on the missing tool); the remaining kit checks and the project checks are run
   directly and their results are recorded per increment below.
 - **Where the work is.** Branch `claude/hopeful-noether-lsmbac`, started from
-  `origin/v1-integration` at `032ea63`. The session that runs this lead may push only
+  `origin/v1-integration` at `032ea63` and merged with it at `d408bfb9` (A1 part 1 and
+  A2 part 1, which created `crates/org-platform`). The session that runs this lead may push only
   that branch; the merge into `v1-integration` is made by a session that may.
 - **Systems.** Development and the full Linux checks run on Linux x86-64 (kernel
   6.18, as root in a container). macOS code is type-checked locally with
@@ -48,57 +49,74 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 ## X1a · The platform crate and the check
 
 **Outcome.** An internal foundation; nothing a person can see. No change can add a
-platform predicate outside `crates/org-platform`, and A2 has a `service` contract to
-write the launchd registration behind.
+platform predicate outside `crates/org-platform`.
+
+**What happened.** The Track A lead created `crates/org-platform` in A2 B0, with the
+`Refused` type, the `service` contract and its launchd adapter, `disk` and `dirs`, and
+a fake service manager in `testing`, while this track was building the same crate
+from the design. A2's crate reached `v1-integration` first, so it is the crate: this
+track's own `service` contract was dropped at the merge, and X1a is what A2's plan
+entry says it is, the check, the allowlist, the layout for the remaining modules, and
+a review of the `service` contract as built.
 
 **Prerequisites.** None. **Early production-path proof.** The check runs against the
 real workspace sources in `cargo test --workspace` and as its own CI step on both
 systems.
 
-**Files owned.** New: `crates/org-platform/` (`Cargo.toml`, `src/lib.rs`,
-`src/refusal.rs`, `src/service.rs`, `src/service/{macos,linux,refused,testing,tests}.rs`,
-`tests/platform_conditionals.rs`, and the X1b module stubs `src/{dirs,fs,process,socket}.rs`),
-`.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`.
-Edited: the workspace `Cargo.toml` and `Cargo.lock`, `.github/workflows/ci.yml` (one
-step and one job), `docs/design/linux-host.md`, `docs/implementation-plan.md` (X1a),
-`docs/FEATURES.md` and `docs/FEATURE-AREAS.md` (FC-164), this file, `v1-state.md`,
+**Files owned.** New: `crates/org-platform/tests/platform_conditionals.rs`,
+`.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`,
+the module stubs `crates/org-platform/src/{fs/mod.rs,process.rs,socket.rs}`. Edited:
+`crates/org-platform/src/lib.rs` (the layout text, `adapters!`, `supported!`,
+`From<Refused> for io::Error`) and `Cargo.toml` (the check's dev-dependencies),
+`Cargo.lock`, `.github/workflows/ci.yml` (two steps and one job),
+`docs/design/linux-host.md`, `docs/implementation-plan.md` (X1a), `docs/FEATURES.md`
+and `docs/FEATURE-AREAS.md` (FC-164), this file, `v1-state.md`,
 `.agent-kit/project-skills/rust-workspace/SKILL.md` (the platform rule for every Rust
 worker) and `.agent-kit/skill-catalog.json` (`crates/org-platform` joins the critical
-host-and-storage area; evidence hashes).
-**Deleted.** Nothing.
+host-and-storage area; evidence hashes). **Deleted.** Nothing of anyone else's.
 
 **Decisions taken where the documents were silent** (each is written into the
-[design](../../docs/design/linux-host.md), sections 1 and 3.4):
+[design](../../docs/design/linux-host.md), section 1):
 
 1. The check is a test of `org-platform`, not a separate script: `cargo test
    --workspace` runs it for every engineer and on both CI systems with no extra
    tooling, and CI names it as its own step for a fast, readable failure.
 2. The allowlist carries a count per file, and the check requires the exact count.
-   A file-only list would let a listed file gain predicates unnoticed; the plan's
-   "Done when" requires failing on a new predicate.
+   A file-only list would let a listed file gain predicates unnoticed.
 3. The check works on each file's whole token stream, with `syn` as the gate that the
    file is Rust. A walk of the syntax tree missed predicates in places `syn` keeps as
-   raw tokens (review findings R2, R3). It also counts `cfg_select!` and `cfg_match!`,
-   raw identifiers, and any other use of the four target names, which are reserved
-   for `org-platform`.
+   raw tokens (first review, findings R2 and R3). It also counts `cfg_select!` and
+   `cfg_match!`, raw identifiers, and any other use of the four target names, which
+   are reserved for `org-platform`.
 4. A second CI job compares the list with the commit where the branch left
    `v1-integration` and fails on an added path or a raised count. Without it "the list
    only shrinks" was a convention.
-5. Every capability has the same layout: a contract module and `macos`, `linux` and
-   `refused` adapters declared by `adapters!()`. The refusing adapter is compiled and
-   tested on every target. "Linux" is GNU/Linux; another C library gets the refusing
-   adapter.
-6. The `service` contract: `InstanceId` and `Unit` are checked types, so an adapter
-   cannot receive an unchecked one; `ServiceStatus` is one enum, so a status cannot
-   combine states that do not go together; a foreign registration is `Foreign` for
-   every method; `register` never starts; each mode's behaviour for every method is
-   stated and held by `service::testing::check_registered` and `check_foreground`.
-7. Foreground mode is built now, the same code on macOS and Linux, because it calls
-   nothing in the system. Registered mode refuses on every target until A2 (launchd)
-   and X5 (systemd).
-8. `ServiceManager` is `Send + Sync`, so a composition can hold one across threads.
+5. A capability with both adapters is declared by `adapters!()`; code only the two
+   real adapters share sits in `supported! { … }`; the refusing adapter is compiled
+   and tested on every target, and CI builds and tests the crate for Linux with musl,
+   which gets only the refusing adapters. "Linux" is GNU/Linux. A2's modules keep
+   their own two `cfg` lines until their Linux adapters are written.
 
-**Still open.** The A2 lead reviews the `service` contract when A2 starts; that is
-the unmet part of the plan's "Done when". Nothing in Track X depends on it before X5.
+**Review of the `service` contract as built (for the A2 lead, and for X5).** The
+contract and its launchd adapter are A2's and are not changed here. What the systemd
+adapter and the container mode need from it, to settle before X5 writes them:
+
+- `validate` accepts an environment name that is not an identifier (for example
+  `MY-VAR`) and line breaks in values. A systemd unit file silently drops the first
+  and needs escaping for the second. X5 either tightens `validate` with the A2 lead
+  or refuses those units in the Linux adapter.
+- `ServiceStatus` has no place for "runs only while the user is logged in" (design
+  3.4: `status` and setup report lingering). X5 adds it with the A2 lead.
+- `Foreground` refuses everywhere and has no stated behaviour per method. X5 defines
+  it (the design says nothing is registered and the runtime is the supervisor).
+- `valid_instance_id` allows only lowercase letters, digits and `-`; the instance ids
+  the host makes must fit that on Linux too.
+- On Linux, `validate`, `xml_text` and `valid_instance_id` are used only by the
+  `testing` module, so the Linux CI lint (`cargo clippy --workspace --all-targets
+  --exclude org-host --exclude agentic-org -- -D warnings`, which leaves out the one
+  consumer that enables `test-support`) failed on `v1-integration` at `d408bfb9`
+  with three dead-code errors. This track's merge adds an `allow(dead_code)` for
+  targets other than macOS to those three functions, the one change it makes to
+  A2's files; the Linux adapter of X5 removes it.
 
 **Checks and review.** Recorded here when run.

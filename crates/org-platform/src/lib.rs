@@ -1,45 +1,45 @@
-//! Every operating-system difference in the workspace, behind small contracts.
+//! Every operating-system difference sits here, behind one contract per capability
+//! ([ADR-0017](../../../docs/adr/0017-linux-and-container-hosting.md) decision 6,
+//! [Linux host design](../../../docs/design/linux-host.md) section 1).
 //!
-//! ADR-0017 decision 6 and the Linux host design (`docs/design/linux-host.md`). No
-//! other crate has a `cfg` on `target_os`, `target_vendor`, `target_env` or
-//! `target_family`; `tests/platform_conditionals.rs` enforces that (LNX-5).
+//! Each module exports one non-conditional constructor. It returns the build target's
+//! implementation, or the refusing adapter, which reports [`Refused::Unsupported`] and
+//! never falls back to another system's behaviour. Platform conditionals stay inside this
+//! crate. Consumers keep their policy (which program, which label prefix) and pass it as
+//! data. The crate depends on no workspace crate.
 //!
-//! The crate knows nothing about the domain. Consumers keep their policy (which image
-//! is trusted, which secret names exist) and pass it in as plain data. It depends on
-//! no workspace crate.
+//! Implemented today (milestone one): macOS. Linux arrives with Track X; until then every
+//! other Unix target gets the refusing adapters. No other crate has a `cfg` on
+//! `target_os`, `target_vendor`, `target_env` or `target_family`:
+//! `tests/platform_conditionals.rs` enforces that (LNX-5).
 //!
 //! # How a capability is laid out
 //!
-//! Each capability is one module, `src/<capability>.rs`, with three adapters beside it:
+//! Each capability is one module, `src/<capability>/mod.rs`, with its adapters beside it:
 //!
-//! - `<capability>.rs` is the contract: the public types and functions, their
-//!   documentation, and the code that is the same on every system. Its public
-//!   functions are not conditional. They call `native::…`.
-//! - `<capability>/macos.rs` and `<capability>/linux.rs` are the adapters for macOS
-//!   and for GNU/Linux (glibc). They define the same `pub(super)` items.
-//! - `<capability>/refused.rs` is the adapter for every other Unix target, including
-//!   Linux with another C library. Every item in it returns [`Refused`] (or an
-//!   `io::Error` made from one). It never falls back to another system's behaviour.
-//!   It is compiled and tested on every target, so it cannot rot.
+//! - `mod.rs` is the contract: the public types and functions, their documentation, and
+//!   the code that is the same on every system. Its public functions are not
+//!   conditional.
+//! - `macos.rs` and `linux.rs` are the adapters for macOS and for GNU/Linux (glibc).
+//!   They define the same `pub(super)` items.
+//! - `refused.rs` is the adapter for every other Unix target, including Linux with
+//!   another C library. Every item in it returns [`Refused`] (or an `io::Error` made
+//!   from one). It is compiled and tested on every target, so it cannot rot.
 //!
-//! `adapters!()` at the top of the contract declares the three modules and binds
-//! `native` to the build target's. Code that the macOS and Linux adapters share, and
-//! the refusing one does not use, goes in the contract file inside `supported! { … }`.
-//! Those two macros, and the `compile_error!` below, are the only places a new
-//! capability needs a platform predicate; an adapter file is already compiled for one
-//! system only.
-//!
-//! A difference found later becomes a new function in the capability it belongs to,
-//! or a new capability, with all three adapters, and a row in section 2 of the design.
+//! A capability with both adapters declares them with `adapters!()`, which binds
+//! `native` to the build target's adapter, and puts code that only the two real
+//! adapters share inside `supported! { … }`. A capability that has only its macOS
+//! adapter so far selects it with its own two `cfg` lines until its Linux adapter is
+//! written. An adapter file is already compiled for one system only and needs no
+//! predicate.
 
 #[cfg(not(unix))]
-compile_error!(
-    "org-platform builds only for Unix targets; macOS and GNU/Linux have adapters and \
-     every other Unix target gets the refusing ones (ADR-0017)"
-);
+compile_error!("org-platform builds only for Unix targets");
 
 /// Declares `macos`, `linux` and `refused` beside the calling module and binds
 /// `native` to the build target's adapter.
+// Unused until the first capability with both adapters lands (X1b).
+#[allow(unused_macros)]
 macro_rules! adapters {
     () => {
         #[cfg(target_os = "macos")]
@@ -65,6 +65,8 @@ macro_rules! adapters {
 
 /// Wraps items that only the macOS and GNU/Linux adapters use (code the two share),
 /// so a build for a refusing target does not compile them.
+// Unused until the first capability with both adapters lands (X1b).
+#[allow(unused_macros)]
 macro_rules! supported {
     ($($item:item)*) => {
         $(
@@ -74,12 +76,68 @@ macro_rules! supported {
     };
 }
 
-mod refusal;
-
 pub mod dirs;
+pub mod disk;
 pub mod fs;
 pub mod process;
 pub mod service;
 pub mod socket;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
-pub use refusal::Refused;
+/// A capability this build target has no adapter for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refused {
+    Unsupported {
+        capability: &'static str,
+        os: &'static str,
+    },
+}
+
+impl Refused {
+    pub(crate) fn unsupported(capability: &'static str) -> Self {
+        Self::Unsupported {
+            capability,
+            os: std::env::consts::OS,
+        }
+    }
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported { capability, os } => write!(
+                f,
+                "{capability} is not available on {os} in this release; nothing was changed"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// For contracts whose functions return `io::Result`: the refusal as an
+/// [`std::io::ErrorKind::Unsupported`] error that keeps the [`Refused`] as its source.
+impl From<Refused> for std::io::Error {
+    fn from(refused: Refused) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Unsupported, refused)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Refused;
+    use std::io;
+
+    #[test]
+    fn a_refusal_becomes_an_unsupported_io_error_that_keeps_its_reason() {
+        let error = io::Error::from(Refused::unsupported("fs"));
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        let source = error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<Refused>())
+            .expect("the refusal is the error's source");
+        assert_eq!(source, &Refused::unsupported("fs"));
+        assert_eq!(error.to_string(), Refused::unsupported("fs").to_string());
+    }
+}
