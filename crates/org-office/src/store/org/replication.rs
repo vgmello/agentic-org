@@ -1511,10 +1511,26 @@ mod tests {
         satellite
             .local_store()
             .run_sql_for_test("INSERT INTO meta VALUES ('outbox', 'pending')");
+        // Only unfenced HQ authority exports: a satellite has none to give.
+        assert!(matches!(
+            satellite.export_replication_snapshot(MAX_BYTES),
+            Err(OfficeError::Invalid(
+                "organization snapshot requires unfenced HQ authority"
+            ))
+        ));
         let exported = hq.export_replication_snapshot(MAX_BYTES).unwrap();
         let bytes = exported.artifact.as_slice();
         // ADR-0016 decision 5: the artifact is a plain SQLite file, guarded by its digest.
         assert!(bytes.starts_with(b"SQLite format 3\0"));
+        // It holds only the organization projection: the HQ's office-local meta row is not in
+        // the raw bytes at all, under its key or its value.
+        for needle in [&b"sender_local"[..], &b"private"[..]] {
+            assert!(
+                !bytes.windows(needle.len()).any(|window| window == needle),
+                "{}",
+                String::from_utf8_lossy(needle)
+            );
+        }
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &Hq,

@@ -462,6 +462,9 @@ impl Store {
         if !db_path.is_absolute() {
             return Err(failure("the database path must be absolute"));
         }
+        // As for an open: a main file that is not a database is refused before SQLite could
+        // take page 1 from a WAL beside it.
+        check_database_header(db_path)?;
         let db = connect(db_path, false, false)?;
         db.pragma_update(None, "query_only", true)
             .map_err(OfficeError::storage)?;

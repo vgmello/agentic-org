@@ -457,6 +457,39 @@ fn discard_refuses_databases_it_cannot_check() {
 }
 
 #[test]
+fn discard_refuses_a_garbage_main_file_beside_a_valid_wal_and_deletes_nothing() {
+    for name in ["org.db", "office.db"] {
+        let dir = TempDir::new().unwrap();
+        let folder = folder_of(&dir, ID);
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join(name);
+        let wal = folder.join(format!("{name}-wal"));
+        let store = Store::open(&path, Opening::New, &org_db::SCHEMA).unwrap();
+        store.run_sql_for_test("CREATE TABLE probe(x); INSERT INTO probe VALUES (1);");
+        // Committed frames, page 1 included, still in the log while the store is open.
+        let frames = fs::read(&wal).unwrap();
+        assert!(
+            !frames.is_empty(),
+            "{name}: the store must leave frames in its WAL"
+        );
+        let length = fs::metadata(&path).unwrap().len() as usize;
+        drop(store);
+        let junk = vec![0x5a; length.max(4096)];
+        fs::write(&path, &junk).unwrap();
+        fs::write(&wal, &frames).unwrap();
+        let _ = fs::remove_file(folder.join(format!("{name}-shm")));
+
+        assert!(matches!(
+            Office::discard(&folder, ID),
+            Err(OfficeError::Invalid(_))
+        ));
+        assert!(folder.exists(), "{name}: the folder was removed");
+        assert_eq!(fs::read(&path).unwrap(), junk, "{name}");
+        assert_eq!(fs::read(&wal).unwrap(), frames, "{name}");
+    }
+}
+
+#[test]
 fn discard_with_no_key_removes_only_a_folder_with_no_database_file() {
     let dir = TempDir::new().unwrap();
     let folder = folder_of(&dir, ID);
