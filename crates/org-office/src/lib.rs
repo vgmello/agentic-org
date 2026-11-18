@@ -46,6 +46,8 @@ mod store;
 pub use store::acceptance::{
     AcceptanceConfig, AcceptanceIdentity, JournalPosition, WriterAuthority,
 };
+/// The SQLite engine of the office store: the projection as one plain database file.
+pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};
 mod time;
 mod ulid;
 

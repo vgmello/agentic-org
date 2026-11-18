@@ -25,7 +25,7 @@ pub(crate) mod org;
 )]
 pub(crate) mod origin;
 pub(crate) mod owned_processes;
-mod sqlite;
+pub(crate) mod sqlite;
 pub(crate) mod status;
 mod sync;
 #[cfg_attr(

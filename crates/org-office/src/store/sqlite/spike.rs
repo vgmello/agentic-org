@@ -229,8 +229,10 @@ fn defer_foreign_keys_after_begin_lasts_the_transaction_and_no_longer() {
     assert_eq!(number(&db, "SELECT count(*) FROM offices"), 1);
 }
 
-/// The pragma issued before `BEGIN`, in autocommit, does not reach the transaction that
-/// follows... or does: this pins which, so the engine's `begin` is written to the answer.
+/// The pragma issued before `BEGIN`, in autocommit, carries into the transaction that
+/// follows: the flag is the connection's, and only `COMMIT` and `ROLLBACK` clear it.
+/// Pinned so a change in the bundled SQLite shows; the engine issues it after `BEGIN`, as
+/// the documentation states it.
 #[test]
 fn defer_foreign_keys_before_begin_is_pinned() {
     let db = open();
@@ -241,9 +243,6 @@ fn defer_foreign_keys_before_begin_is_pinned() {
     let early_row = run(&db, &office());
     must(&db, "ROLLBACK");
     assert!(!deferring(&db));
-    // Observed on the bundled SQLite: the flag is a connection flag that only COMMIT and
-    // ROLLBACK clear, so set in autocommit it does carry into the next transaction. The
-    // engine still issues it after BEGIN, as the documentation states it.
     assert_eq!(
         (before_begin, in_transaction, early_row.is_ok()),
         (true, true, true)
