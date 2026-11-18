@@ -51,6 +51,8 @@ pub(crate) struct Provisioning {
     driving: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// Set when the host stops: no attempt starts and no link is recorded afterwards.
     stopping: std::sync::atomic::AtomicBool,
+    /// How long [`Self::stop`] waits for the creation threads.
+    stop_wait: std::time::Duration,
     #[cfg(test)]
     drives_started: std::sync::atomic::AtomicUsize,
     /// While set, a creation thread holds its claim and creates nothing until the host
@@ -174,6 +176,7 @@ impl Provisioning {
             hq: std::sync::OnceLock::new(),
             driving: Arc::default(),
             stopping: std::sync::atomic::AtomicBool::new(false),
+            stop_wait: crate::Timings::default().shutdown_grace + STOP_MARGIN,
             #[cfg(test)]
             drives_started: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -182,6 +185,13 @@ impl Provisioning {
             #[cfg(test)]
             reservation_fault: std::sync::atomic::AtomicU8::new(0),
         }
+    }
+    /// The grace period the host's supervisor gives a server to stop: [`Self::stop`] waits
+    /// that long plus [`STOP_MARGIN`], so a creation whose server is killed at the end of
+    /// the grace period has ended before the wait does.
+    pub(crate) fn with_shutdown_grace(mut self, grace: std::time::Duration) -> Self {
+        self.stop_wait = grace + STOP_MARGIN;
+        self
     }
     /// Installs the offices this host creates in and continues every create that reserved
     /// its identity before the host last stopped. No client has to ask.
@@ -214,10 +224,11 @@ impl Provisioning {
     /// custody or the registry after the host stopped. The wait is bounded: a thread
     /// still running when it ends is logged, records no link (see [`Self::drive`]), but
     /// may still finish a custody or file write it had begun. Call after the offices
-    /// stopped: a creation waiting for its worker ends when the supervisor stops it.
+    /// stopped: a creation waiting for its worker ends when the supervisor stops it, and
+    /// the supervisor's shutdown returns only after that worker is gone.
     pub(crate) fn stop(&self) {
         self.halt();
-        let until = std::time::Instant::now() + STOP_WAIT;
+        let until = std::time::Instant::now() + self.stop_wait;
         while self.driving.lock().is_ok_and(|driving| !driving.is_empty()) {
             if std::time::Instant::now() >= until {
                 crate::host_log::log("an organization create did not end with the host");
@@ -924,8 +935,9 @@ const RESUME_ATTEMPTS: u32 = 3;
 /// The wait after a failed try at the start of the host, times the number of the try.
 const RESUME_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// How long a stopping host waits for its creation threads to end.
-const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long past the supervisor's grace period a stopping host waits for its creation
+/// threads to end: what a thread needs after its server was stopped or killed.
+const STOP_MARGIN: std::time::Duration = std::time::Duration::from_secs(5);
 const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// Whether a later try of the same creation can end differently. A refusal that states a

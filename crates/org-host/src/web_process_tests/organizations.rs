@@ -490,6 +490,52 @@ fn actual_host_stopped_in_the_middle_of_a_create_finishes_it_at_its_next_start_w
     assert!(linked_on_disk(&base, &operation));
 }
 
+/// A create whose worker ignores its closed stdin: the stopping host kills it at the end
+/// of the supervisor's grace period, and no process of it is left the moment the stop
+/// returns (nothing waits for it afterwards). The create stays reserved, unlinked.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_host_stop_leaves_no_create_worker_that_ignores_its_closed_stdin() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    // No office runs yet, so the next worker the host starts is the create's. It is this
+    // test binary's stand-in: it takes the real handoff, then never reports `created` and
+    // does not exit when its stdin closes.
+    let pid_file = base.join("create-worker.pid");
+    let worker = base.join("bin/agentic-org-office");
+    fs::remove_file(&worker).unwrap();
+    crate::supervisor::tests::write_create_server(&worker, &pid_file, true);
+    let operation = crate::ids::generate().unwrap();
+    let posted = browser.post(
+        "/api/v1/organizations",
+        &browser.body(&operation, "Example", "example"),
+    );
+    assert_eq!(posted.status, 202, "{}", posted.body);
+    let mut pid: Option<libc::pid_t> = None;
+    wait_until("the create's worker to start", || {
+        pid = fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.parse().ok());
+        pid.is_some()
+    });
+    let pid = pid.unwrap();
+    // SAFETY: signal 0 only checks the pid.
+    assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "the worker is running");
+    drop(host);
+    // SAFETY: signal 0 only checks the pid.
+    let left = unsafe { libc::kill(pid, 0) } == 0;
+    assert!(!left, "the create's worker outlived the host's stop");
+    assert!(!linked_on_disk(&base, &operation), "it never reported");
+    assert_no_process_left(&base);
+}
+
 #[test]
 #[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
 fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host_call() {

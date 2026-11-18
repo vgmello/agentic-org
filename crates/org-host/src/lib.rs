@@ -541,6 +541,7 @@ fn startup_protected_services(
     supervisor: Supervisor,
     keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
+    timings: &Timings,
 ) -> Result<ProtectedServices, HostError> {
     let io = |context| move |source| HostError::Io { context, source };
     let writers = match (instance, authentication) {
@@ -558,15 +559,18 @@ fn startup_protected_services(
     let provisioning = match (instance, authentication, &writers) {
         (Some(instance), Some(authentication), Some(writers)) => {
             let (db, custody) = authentication.provisioning_storage();
-            Some(Arc::new(provisioning::Provisioning::new(
-                db,
-                custody,
-                Arc::clone(keys),
-                Arc::clone(writers),
-                instance.id(),
-                instance.root(),
-                &layout.home,
-            )))
+            Some(Arc::new(
+                provisioning::Provisioning::new(
+                    db,
+                    custody,
+                    Arc::clone(keys),
+                    Arc::clone(writers),
+                    instance.id(),
+                    instance.root(),
+                    &layout.home,
+                )
+                .with_shutdown_grace(timings.shutdown_grace),
+            ))
         }
         _ => None,
     };
@@ -695,7 +699,14 @@ impl Host {
             writers: _writers,
             supervisor,
             provisioning,
-        } = startup_protected_services(&instance, &authentication, supervisor, &keys, &layout)?;
+        } = startup_protected_services(
+            &instance,
+            &authentication,
+            supervisor,
+            &keys,
+            &layout,
+            &config.timings,
+        )?;
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             &layout.home,
