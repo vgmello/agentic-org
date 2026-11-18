@@ -482,6 +482,48 @@ fn handoffs_carry_the_keys_and_name_their_descriptors() {
 }
 
 #[test]
+fn the_borrowing_discard_encoder_matches_the_owned_handoff() {
+    // Without a key: `null`, present, and no descriptors.
+    let none = encode_discard_handoff(None).unwrap();
+    assert_eq!(
+        line_value(&none),
+        json!({"v": 3, "op": "discard", "db_key": null, "fds": []})
+    );
+    assert_eq!(
+        none,
+        encode_handoff(&Handoff::Discard {
+            db_key: None,
+            fds: vec![],
+        })
+        .unwrap()
+    );
+    // With a borrowed key: byte for byte the owned encoding, and it decodes back.
+    let key = DbKey::from_bytes([0xcd; 32]);
+    let some = encode_discard_handoff(Some(&key)).unwrap();
+    assert_eq!(
+        line_value(&some),
+        json!({"v": 3, "op": "discard", "db_key": KEY_HEX, "fds": []})
+    );
+    assert_eq!(
+        some,
+        encode_handoff(&Handoff::Discard {
+            db_key: Some(DbKey::from_bytes([0xcd; 32])),
+            fds: vec![],
+        })
+        .unwrap()
+    );
+    let Handoff::Discard {
+        db_key: Some(back),
+        fds,
+    } = decode_handoff(&some[..some.len() - 1]).unwrap()
+    else {
+        panic!("not a keyed discard");
+    };
+    assert!(fds.is_empty());
+    assert_eq!(back.expose_bytes(), &[0xcd; 32]);
+}
+
+#[test]
 fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
     let wrong = Handoff::Start {
         db_key: DbKey::from_bytes([1; 32]),

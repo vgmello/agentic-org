@@ -836,6 +836,23 @@ pub fn encode_create_handoff(
     })
 }
 
+/// Borrow the host-held key (or `None` when the key store has none) for a discard. The key is
+/// present either way, as `null` when absent; `fds` is `[]`: no transfer socket and no marker
+/// follow. No owned secret copy; the caller zeroes the line on every path.
+pub fn encode_discard_handoff(db_key: Option<&DbKey>) -> Result<Vec<u8>, LaunchError> {
+    #[derive(Serialize)]
+    struct Discard<'a> {
+        op: &'static str,
+        db_key: Option<&'a DbKey>,
+        fds: [HandoffFd; 0],
+    }
+    encode_secret(&Discard {
+        op: "discard",
+        db_key,
+        fds: [],
+    })
+}
+
 fn encode_secret(handoff: &impl Serialize) -> Result<Vec<u8>, LaunchError> {
     let body = Line {
         v: LAUNCH_VERSION,
