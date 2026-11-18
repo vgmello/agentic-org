@@ -749,6 +749,7 @@ dependencies = [
  "libc",
  "org-platform",
  "security-framework",
+ "security-framework-sys",
  "tempfile",
 ]
 
