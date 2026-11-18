@@ -1145,9 +1145,10 @@ describe('gate manifest guard', () => {
 			violations,
 			'a file imported from another area (or from shared code) must be shared, owned by every importing category, or listed in allowedCoupling'
 		).toEqual([]);
-		expect([...used].sort(), 'every allowedCoupling entry must match a real, current edge').toEqual(
-			allowed.map((_, index) => index)
-		);
+		expect(
+			[...used].sort((a, b) => a - b),
+			'every allowedCoupling entry must match a real, current edge'
+		).toEqual(allowed.map((_, index) => index));
 	});
 });
 

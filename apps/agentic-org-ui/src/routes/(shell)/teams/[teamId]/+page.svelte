@@ -1,5 +1,5 @@
 <script lang="ts">
-	import NotBuilt from '$lib/components/NotBuilt.svelte';
+	import { TeamWork } from '$lib/modules/teams/features/team-page';
 </script>
 
-<NotBuilt title="Team page" place="Team" area="Teams" />
+<TeamWork />

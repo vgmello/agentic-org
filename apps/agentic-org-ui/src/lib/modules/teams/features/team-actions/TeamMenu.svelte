@@ -1,7 +1,7 @@
 <!--
   @component
-  A team row's menu on the Teams index (§7.2): Move, Rename, Change lead, Add team under, then Archive and
-  Delete apart, last. Every item opens its reviewed dialog.
+  A team's actions menu, on a Teams index row and in a team page's header (§7.2): Move, Rename, Change lead,
+  Add team under, then Archive and Delete apart, last. Every item opens its reviewed dialog (TeamDialogs).
 -->
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
@@ -12,13 +12,10 @@
 		DropdownMenuSeparator,
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
-	import type { TeamRow } from '../../types';
+	import type { TeamAction, TeamRow } from '../../types';
 
-	export type TeamRowAction = 'move' | 'rename' | 'lead' | 'add-team' | 'archive' | 'delete';
-	let {
-		team,
-		onaction
-	}: { team: TeamRow; onaction: (action: TeamRowAction, team: TeamRow) => void } = $props();
+	let { team, onaction }: { team: TeamRow; onaction: (action: TeamAction, team: TeamRow) => void } =
+		$props();
 </script>
 
 <DropdownMenu>

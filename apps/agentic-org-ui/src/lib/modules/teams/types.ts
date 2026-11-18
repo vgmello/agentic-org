@@ -1,14 +1,9 @@
 // What the Teams index and a team's page read (offices-and-teams-ux §7.2). Field names follow the team contract
 // (docs/design/organization-data/01-organization-structure.md): `number` gives the readable `TEAM-<n>` reference,
 // `max_members` the member limit. Counts are of active employees whose home team it is (TEAM-2).
-import type { MemberRef, PresenceId, TeamRef } from '$lib/modules/members/types';
+import type { MemberRef, PresenceId, TeamRef } from '$lib/modules/members';
 
-export type {
-	ActivityEntry,
-	ConversationRow,
-	ProcessRow,
-	WorkRow
-} from '$lib/modules/members/types';
+export type { ActivityEntry, ConversationRow, ProcessRow, WorkRow } from '$lib/modules/members';
 
 export interface TeamProject {
 	id: string;
@@ -63,3 +58,6 @@ export interface LeadCandidate {
 	name: string;
 	kind: 'agent' | 'person';
 }
+
+/** What a team's menu opens (§7.2): each is one reviewed dialog. */
+export type TeamAction = 'move' | 'rename' | 'lead' | 'add-team' | 'archive' | 'delete';
