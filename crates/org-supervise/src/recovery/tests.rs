@@ -14,20 +14,6 @@ mod capture_followups;
 mod failure;
 
 #[test]
-fn native_mark_identical_duplicates_count_once_on_each_platform() {
-    for bytes in [
-        b"ORG_SESSION_MARK=a\0ORG_SESSION_MARK=a\0".as_slice(),
-        b"ORG_SESSION_MARK=a\0OTHER=value\0ORG_SESSION_MARK=a\0ORG_SESSION_MARK=a\0",
-    ] {
-        assert_eq!(native_mark(bytes), MarkEvidence::Present("a".into()));
-    }
-    assert_eq!(
-        native_mark(b"ORG_SESSION_MARK=a\0ORG_SESSION_MARK=a\0ORG_SESSION_MARK=b\0"),
-        MarkEvidence::Unreadable
-    );
-}
-
-#[test]
 fn native_guards_recheck_the_exact_mark_before_direct_signals() {
     for evidence in [
         TargetEvidence::Marked,
@@ -64,15 +50,20 @@ fn native_guards_recheck_the_exact_mark_before_direct_signals() {
 }
 
 #[test]
-fn native_guards_quarantine_conflicting_duplicate_marks() {
+fn native_mark_counts_only_a_valid_session_mark_as_present() {
+    use org_platform::process::MarkEvidence as Native;
     assert_eq!(
-        native_mark(b"ORG_SESSION_MARK=a\0ORG_SESSION_MARK=b\0"),
-        MarkEvidence::Unreadable
-    );
-    assert_eq!(
-        native_mark(b"ORG_SESSION_MARK=a\0"),
+        native_mark(Native::Present("a".into())),
         MarkEvidence::Present("a".into())
     );
+    assert_eq!(native_mark(Native::Absent), MarkEvidence::Absent);
+    assert_eq!(native_mark(Native::Unreadable), MarkEvidence::Unreadable);
+    for invalid in [String::new(), "not a mark!".into(), "a".repeat(129)] {
+        assert_eq!(
+            native_mark(Native::Present(invalid)),
+            MarkEvidence::Unreadable
+        );
+    }
 }
 
 fn process(pid: u32, parent: u32, mark: MarkEvidence) -> ProcessObservation {

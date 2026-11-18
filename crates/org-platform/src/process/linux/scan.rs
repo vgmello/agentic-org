@@ -8,9 +8,9 @@ use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, Instant};
 
-use super::{
-    native_mark, sealed, valid_pid, MarkEvidence, ProcessIdentity, ProcessObservation,
-    RecoveryContext, RecoveryProcesses, RecoverySignal, SignalOutcome, VerifiedTarget,
+use crate::process::{
+    check_time, native_mark, valid_pid, JobObservation, MarkEvidence, ProcessIdentity,
+    ProcessObservation, RecoveryContext, RecoverySignal, SignalOutcome,
 };
 
 const PROC_RECORD_LIMIT: usize = 64 * 1024;
@@ -21,17 +21,19 @@ const ENVIRONMENT_LIMIT: usize = 2 * 1024 * 1024;
 
 /// Native Linux recovery operations. A snapshot retains pidfds for its live processes.
 /// Each signal is sent through the matching descriptor after revalidating the target.
-pub struct NativeRecovery {
+pub(in crate::process) struct RecoveryScan {
     procfs: File,
     procfs_mount_id: u64,
     context: RecoveryContext,
     pins: BTreeMap<u32, Pin>,
+    /// The mark variable's name followed by `=`.
+    mark_prefix: Vec<u8>,
 }
 
-impl NativeRecovery {
+impl RecoveryScan {
     /// Open the native adapter, checking the procfs namespace and kernel pidfd support.
-    pub fn new() -> io::Result<Self> {
-        crate::platform::validate()?;
+    pub(in crate::process) fn new(mark_prefix: Vec<u8>) -> io::Result<Self> {
+        crate::process::validate()?;
         let procfs = File::open("/proc").map_err(descriptor_error)?;
         let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
         // SAFETY: an open file descriptor and correctly sized output slot.
@@ -63,7 +65,12 @@ impl NativeRecovery {
             procfs_mount_id,
             context: RecoveryContext { uid, pid, boot },
             pins: BTreeMap::new(),
+            mark_prefix,
         })
+    }
+
+    pub(in crate::process) fn context(&self) -> &RecoveryContext {
+        &self.context
     }
 
     fn identity(&self, pid: u32, stat: Stat) -> ProcessIdentity {
@@ -74,11 +81,11 @@ impl NativeRecovery {
         }
     }
 
-    fn job_observation(
+    pub(in crate::process) fn job_observation(
         &self,
         identity: &ProcessIdentity,
         deadline: Instant,
-    ) -> io::Result<Option<super::job::JobObservation>> {
+    ) -> io::Result<Option<JobObservation>> {
         self.job_observation_with(identity, deadline, |directory| {
             Ok(directory.metadata()?.uid())
         })
@@ -89,7 +96,7 @@ impl NativeRecovery {
         identity: &ProcessIdentity,
         deadline: Instant,
         owner: impl FnOnce(&File) -> io::Result<u32>,
-    ) -> io::Result<Option<super::job::JobObservation>> {
+    ) -> io::Result<Option<JobObservation>> {
         let Some(pin) = self
             .pins
             .get(&identity.pid)
@@ -105,7 +112,7 @@ impl NativeRecovery {
             && credentials.safe(self.context.uid)
             && owner(&directory)? == self.context.uid
             && ordinary_exec(&directory, deadline)?;
-        Ok(Some(super::job::JobObservation {
+        Ok(Some(JobObservation {
             identity: self.identity(identity.pid, stat),
             order: (stat.started, 0),
             group: stat.group,
@@ -130,7 +137,7 @@ impl NativeRecovery {
             && directory.metadata()?.uid() == self.context.uid
             && ordinary_exec(&directory, deadline)?;
         let mark = if sample_mark_allowed(pin.stat, credentials_safe, pid, self.context.pid) {
-            read_mark(&directory, pid, pin.stat, deadline)?
+            read_mark(&directory, pid, pin.stat, &self.mark_prefix, deadline)?
         } else {
             MarkEvidence::Unreadable
         };
@@ -221,30 +228,11 @@ impl NativeRecovery {
     }
 }
 
-impl sealed::Processes for NativeRecovery {}
-
-impl RecoveryProcesses for NativeRecovery {
-    fn context(&mut self) -> io::Result<RecoveryContext> {
-        Ok(self.context.clone())
-    }
-
-    fn verify_recorded_job(
+impl RecoveryScan {
+    pub(in crate::process) fn snapshot(
         &mut self,
-        target: &ProcessIdentity,
-        leader: &crate::ChildIdentity,
         deadline: Instant,
-    ) -> io::Result<bool> {
-        super::job::verify(
-            target,
-            leader,
-            &self.context,
-            deadline,
-            Instant::now,
-            |id| self.job_observation(id, deadline),
-        )
-    }
-
-    fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>> {
+    ) -> io::Result<Vec<ProcessObservation>> {
         self.pins.clear();
         check_mount(&self.procfs, self.procfs_mount_id, deadline)?;
         let mut rows = Vec::new();
@@ -291,14 +279,15 @@ impl RecoveryProcesses for NativeRecovery {
         Ok(rows)
     }
 
-    fn signal_checked(
+    pub(in crate::process) fn signal_checked(
         &mut self,
-        target: &VerifiedTarget,
+        target: &ProcessIdentity,
+        mark_accepted: &dyn Fn(&MarkEvidence) -> bool,
         signal: RecoverySignal,
         deadline: Instant,
     ) -> io::Result<SignalOutcome> {
         check_time(deadline)?;
-        let identity = target.identity();
+        let identity = target;
         if !valid_pid(identity.pid)
             || identity.pid == self.context.pid
             || identity.boot != self.context.boot
@@ -317,8 +306,8 @@ impl RecoveryProcesses for NativeRecovery {
         };
         let verified = (|| {
             verify_signal_stat(stat, target)?;
-            let mark = read_mark(&directory, identity.pid, stat, deadline)?;
-            if !super::signal_mark_matches(target, &mark) {
+            let mark = read_mark(&directory, identity.pid, stat, &self.mark_prefix, deadline)?;
+            if !mark_accepted(&mark) {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "recovery mark changed or is unreadable",
@@ -358,7 +347,11 @@ impl RecoveryProcesses for NativeRecovery {
         }
     }
 
-    fn wait_exited(&mut self, identity: &ProcessIdentity, deadline: Instant) -> io::Result<bool> {
+    pub(in crate::process) fn wait_exited(
+        &mut self,
+        identity: &ProcessIdentity,
+        deadline: Instant,
+    ) -> io::Result<bool> {
         if identity.boot != self.context.boot {
             return Ok(true);
         }
@@ -386,14 +379,6 @@ impl RecoveryProcesses for NativeRecovery {
             return Ok(true);
         }
         exited(&pin.fd, deadline)
-    }
-
-    fn now(&mut self) -> Instant {
-        Instant::now()
-    }
-
-    fn wait_until(&mut self, deadline: Instant) -> io::Result<()> {
-        super::native_wait_until(deadline)
     }
 }
 
@@ -563,10 +548,12 @@ fn read_mark(
     directory: &File,
     pid: u32,
     stat: Stat,
+    mark_prefix: &[u8],
     deadline: Instant,
 ) -> io::Result<MarkEvidence> {
     read_mark_with(
         stat,
+        mark_prefix,
         |length| read_at(directory, c"environ", length, Some(deadline)),
         || read_stat(directory, pid, Some(deadline)),
     )
@@ -574,6 +561,7 @@ fn read_mark(
 
 fn read_mark_with(
     stat: Stat,
+    mark_prefix: &[u8],
     read: impl FnOnce(usize) -> io::Result<Vec<u8>>,
     current: impl FnOnce() -> io::Result<Stat>,
 ) -> io::Result<MarkEvidence> {
@@ -595,7 +583,7 @@ fn read_mark_with(
         if !environment_unchanged(stat, current) {
             return Ok(MarkEvidence::Unreadable);
         }
-        Ok(native_mark(&bytes))
+        Ok(native_mark(&bytes, mark_prefix))
     })();
     evidence_or(capture, MarkEvidence::Unreadable)
 }
@@ -648,8 +636,8 @@ fn sample_mark_allowed(stat: Stat, credentials_safe: bool, pid: u32, supervisor:
     !stat.zombie && credentials_safe && pid != supervisor
 }
 
-fn verify_signal_stat(stat: Stat, target: &VerifiedTarget) -> io::Result<()> {
-    if stat.started.to_string() != target.identity().started {
+fn verify_signal_stat(stat: Stat, target: &ProcessIdentity) -> io::Result<()> {
+    if stat.started.to_string() != target.started {
         return Err(invalid("pinned process start identity changed"));
     }
     if stat.zombie {
@@ -803,10 +791,6 @@ impl Drop for ProcDirectory {
         // SAFETY: the stream exclusively owns its fd and is closed exactly once.
         unsafe { libc::closedir(self.0.as_ptr()) };
     }
-}
-
-fn check_time(deadline: Instant) -> io::Result<()> {
-    super::failure::check_deadline(Instant::now(), deadline, "native recovery deadline elapsed")
 }
 
 fn open_at(directory: &File, name: &CStr, flags: libc::c_int, resolve: u64) -> io::Result<File> {
@@ -982,9 +966,17 @@ fn poll_until(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::tests::TestChild;
     use std::cell::Cell;
     use std::fs::File;
     use std::time::{Duration, Instant};
+
+    const MARK: &[u8] = b"ORG_SESSION_MARK=";
+
+    /// What a consumer asks for a target that carries the mark itself: the exact value.
+    fn exact_mark(mark: &MarkEvidence) -> bool {
+        *mark == MarkEvidence::Present("guard-mark".into())
+    }
 
     #[test]
     fn native_guards_require_the_exact_pid_namespace() {
@@ -1031,7 +1023,7 @@ mod tests {
         };
         assert!(ordinary_exec_with(|| Ok(auxv(&[(libc::AT_SECURE as usize, 0), (0, 0)]))).unwrap());
         assert_eq!(
-            read_mark_with(stat, |_| Ok(mark.to_vec()), || Ok(stat)).unwrap(),
+            read_mark_with(stat, MARK, |_| Ok(mark.to_vec()), || Ok(stat)).unwrap(),
             MarkEvidence::Present("guard-mark".into())
         );
         for code in [libc::EMFILE, libc::ENFILE] {
@@ -1040,11 +1032,12 @@ mod tests {
                 ordinary_exec_with(|| Err(fault())).unwrap_err(),
                 read_mark_with(
                     stat,
+                    MARK,
                     |_| Err(fault()),
                     || panic!("no stat read after environment failure"),
                 )
                 .unwrap_err(),
-                read_mark_with(stat, |_| Ok(mark.to_vec()), || Err(fault())).unwrap_err(),
+                read_mark_with(stat, MARK, |_| Ok(mark.to_vec()), || Err(fault())).unwrap_err(),
             ] {
                 assert!(error.to_string().contains("doctor:"), "{code}: {error}");
                 assert!(
@@ -1057,6 +1050,7 @@ mod tests {
         assert_eq!(
             read_mark_with(
                 stat,
+                MARK,
                 |_| Err(io::Error::from_raw_os_error(libc::EPERM)),
                 || panic!("no stat read")
             )
@@ -1103,15 +1097,11 @@ mod tests {
         parse_stat(&stat_row(b"42 (tool) S 13 41 44"), 42).unwrap()
     }
 
-    fn target() -> VerifiedTarget {
-        VerifiedTarget {
-            identity: ProcessIdentity {
-                pid: 42,
-                started: "789".into(),
-                boot: "boot".into(),
-            },
-            mark: "guard-mark".into(),
-            evidence: crate::recovery::TargetEvidence::Marked,
+    fn target() -> ProcessIdentity {
+        ProcessIdentity {
+            pid: 42,
+            started: "789".into(),
+            boot: "boot".into(),
         }
     }
 
@@ -1211,48 +1201,25 @@ mod tests {
 
     struct ProcessFixture {
         root: tempfile::TempDir,
-        child: crate::OwnedChild,
+        child: TestChild,
     }
 
     impl ProcessFixture {
         fn new() -> Self {
-            use crate::{Environment, PreparedSpawn, SearchPath, SessionMark, SpawnSpec};
-            let root = tempfile::tempdir().unwrap();
-            let search = SearchPath::new(
-                std::path::Path::new("/usr/bin"),
-                "/usr/bin:/bin".as_ref(),
-                &[root.path().to_owned()],
-            )
-            .unwrap();
-            let mut random = [0; 16];
-            File::open("/dev/urandom")
-                .unwrap()
-                .read_exact(&mut random)
-                .unwrap();
-            let spawned = PreparedSpawn::new(
-                SpawnSpec {
-                    program: "/bin/sleep".into(),
-                    args: vec!["20".into()],
-                    cwd: root.path().to_owned(),
-                    environment: Environment::new(search, &[]).unwrap(),
-                },
-                SessionMark::new(format!("guard-{:032x}", u128::from_ne_bytes(random))).unwrap(),
-            )
-            .unwrap()
-            .record_mark(|_| Ok(()))
-            .unwrap()
-            .spawn()
-            .unwrap()
-            .record_identity(|_| Ok(()))
-            .unwrap();
             Self {
-                root,
-                child: spawned.child,
+                root: tempfile::tempdir().unwrap(),
+                // Linux starts the child running. Its pipes close here, as the
+                // recovery fixtures never use them.
+                child: TestChild::spawn_piped(c"/bin/sleep", &[c"20"]).0,
             }
         }
 
+        fn pid(&self) -> u32 {
+            self.child.pid as u32
+        }
+
         fn directory(&self) -> std::path::PathBuf {
-            self.root.path().join(self.child.identity().pid.to_string())
+            self.root.path().join(self.pid().to_string())
         }
 
         fn reset(&self) {
@@ -1270,11 +1237,7 @@ mod tests {
         }
 
         fn stat(&self, state: u8, started: u64) {
-            let prefix = format!(
-                "{} (tool) {} 1 41 44",
-                self.child.identity().pid,
-                char::from(state)
-            );
+            let prefix = format!("{} (tool) {} 1 41 44", self.pid(), char::from(state));
             let bytes = String::from_utf8(stat_row(prefix.as_bytes()))
                 .unwrap()
                 .replace(" 789 ", &format!(" {started} "))
@@ -1288,10 +1251,11 @@ mod tests {
             std::fs::write(self.directory().join("status"), format!("Uid:\t{uid} {uid} {uid} {uid}\nGid:\t20 20 20 20\nCapPrm:\t{caps:x}\nCapEff:\t0\n")).unwrap();
         }
 
-        fn native(&self) -> NativeRecovery {
-            NativeRecovery {
+        fn native(&self) -> RecoveryScan {
+            RecoveryScan {
                 procfs: File::open(self.root.path()).unwrap(),
                 procfs_mount_id: 0,
+                mark_prefix: MARK.to_vec(),
                 // SAFETY: simple process and user identity getters.
                 context: RecoveryContext {
                     uid: unsafe { libc::getuid() },
@@ -1309,27 +1273,15 @@ mod tests {
         fixture.reset();
         let native = fixture.native();
         let deadline = Instant::now() + Duration::from_secs(2);
-        let row = native
-            .sample(fixture.child.identity().pid, deadline)
-            .unwrap()
-            .unwrap()
-            .0;
+        let row = native.sample(fixture.pid(), deadline).unwrap().unwrap().0;
         assert_eq!(row.mark, MarkEvidence::Present("guard-mark".into()));
         fixture.status(1);
-        let row = native
-            .sample(fixture.child.identity().pid, deadline)
-            .unwrap()
-            .unwrap()
-            .0;
+        let row = native.sample(fixture.pid(), deadline).unwrap().unwrap().0;
         assert!(!row.credentials_safe);
         assert_eq!(row.mark, MarkEvidence::Unreadable);
         fixture.reset();
         fixture.stat(b'Z', 789);
-        let row = native
-            .sample(fixture.child.identity().pid, deadline)
-            .unwrap()
-            .unwrap()
-            .0;
+        let row = native.sample(fixture.pid(), deadline).unwrap().unwrap().0;
         assert_eq!(row.mark, MarkEvidence::Unreadable);
         fixture.reset();
         std::fs::write(
@@ -1337,11 +1289,7 @@ mod tests {
             auxv(&[(libc::AT_SECURE as usize, 1), (0, 0)]),
         )
         .unwrap();
-        let row = native
-            .sample(fixture.child.identity().pid, deadline)
-            .unwrap()
-            .unwrap()
-            .0;
+        let row = native.sample(fixture.pid(), deadline).unwrap().unwrap().0;
         assert!(!row.credentials_safe);
         assert_eq!(row.mark, MarkEvidence::Unreadable);
     }
@@ -1350,16 +1298,13 @@ mod tests {
     fn native_signal_wiring_refuses_changes_after_the_snapshot() {
         let fixture = ProcessFixture::new();
         let mut target = target();
-        target.identity.pid = fixture.child.identity().pid;
+        target.pid = fixture.pid();
         for mutation in ["mark", "capabilities", "secure-exec", "zombie"] {
             fixture.reset();
             let mut native = fixture.native();
             let deadline = Instant::now() + Duration::from_secs(2);
-            let (_, pin) = native
-                .sample(fixture.child.identity().pid, deadline)
-                .unwrap()
-                .unwrap();
-            native.pins.insert(fixture.child.identity().pid, pin);
+            let (_, pin) = native.sample(fixture.pid(), deadline).unwrap().unwrap();
+            native.pins.insert(fixture.pid(), pin);
             match mutation {
                 "mark" => {
                     std::fs::write(
@@ -1379,7 +1324,7 @@ mod tests {
                 _ => fixture.stat(b'Z', 789),
             }
             let error = native
-                .signal_checked(&target, RecoverySignal::Terminate, deadline)
+                .signal_checked(&target, &exact_mark, RecoverySignal::Terminate, deadline)
                 .unwrap_err();
             assert_eq!(
                 error.kind(),
@@ -1389,9 +1334,7 @@ mod tests {
             if mutation == "zombie" {
                 assert!(error.to_string().contains("exited thread-group leader"));
             }
-            assert!(!native
-                .wait_exited(target.identity(), Instant::now())
-                .unwrap());
+            assert!(!native.wait_exited(&target, Instant::now()).unwrap());
         }
     }
 
@@ -1401,14 +1344,14 @@ mod tests {
         fixture.reset();
         let directory = File::open(fixture.directory()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
-        let before = read_stat(&directory, fixture.child.identity().pid, Some(deadline)).unwrap();
+        let before = read_stat(&directory, fixture.pid(), Some(deadline)).unwrap();
         assert_eq!(
-            read_mark(&directory, fixture.child.identity().pid, before, deadline).unwrap(),
+            read_mark(&directory, fixture.pid(), before, MARK, deadline).unwrap(),
             MarkEvidence::Present("guard-mark".into())
         );
         fixture.stat(b'S', 790);
         assert_eq!(
-            read_mark(&directory, fixture.child.identity().pid, before, deadline).unwrap(),
+            read_mark(&directory, fixture.pid(), before, MARK, deadline).unwrap(),
             MarkEvidence::Unreadable
         );
     }
@@ -1419,28 +1362,22 @@ mod tests {
         fixture.reset();
         let native = fixture.native();
         let deadline = Instant::now() + Duration::from_secs(2);
-        let (pin, _) = native
-            .pin(fixture.child.identity().pid, Some(deadline))
-            .unwrap()
-            .unwrap();
+        let (pin, _) = native.pin(fixture.pid(), Some(deadline)).unwrap().unwrap();
         assert!(native
-            .reopen(fixture.child.identity().pid, &pin, deadline)
+            .reopen(fixture.pid(), &pin, deadline)
             .unwrap()
             .is_some());
         fixture.stat(b'S', 790);
-        let error = native
-            .reopen(fixture.child.identity().pid, &pin, deadline)
-            .err()
-            .unwrap();
+        let error = native.reopen(fixture.pid(), &pin, deadline).err().unwrap();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         // SAFETY: the fixture still owns this unreaped child and its individual PID.
         assert_eq!(
-            unsafe { libc::kill(fixture.child.identity().pid as libc::pid_t, libc::SIGKILL) },
+            unsafe { libc::kill(fixture.pid() as libc::pid_t, libc::SIGKILL) },
             0
         );
         assert!(exited(&pin.fd, Some(deadline)).unwrap());
         assert!(native
-            .reopen(fixture.child.identity().pid, &pin, deadline)
+            .reopen(fixture.pid(), &pin, deadline)
             .unwrap()
             .is_none());
     }
@@ -1452,11 +1389,8 @@ mod tests {
         for variant in 0..9 {
             fixture.reset();
             let mut native = fixture.native();
-            let (pin, _directory) = native
-                .pin(fixture.child.identity().pid, Some(deadline))
-                .unwrap()
-                .unwrap();
-            let identity = native.identity(fixture.child.identity().pid, pin.stat);
+            let (pin, _directory) = native.pin(fixture.pid(), Some(deadline)).unwrap().unwrap();
+            let identity = native.identity(fixture.pid(), pin.stat);
             if variant != 1 {
                 native.pins.insert(identity.pid, pin);
             }
@@ -1498,11 +1432,8 @@ mod tests {
         }
         fixture.reset();
         let mut native = fixture.native();
-        let (pin, _) = native
-            .pin(fixture.child.identity().pid, Some(deadline))
-            .unwrap()
-            .unwrap();
-        let identity = native.identity(fixture.child.identity().pid, pin.stat);
+        let (pin, _) = native.pin(fixture.pid(), Some(deadline)).unwrap().unwrap();
+        let identity = native.identity(fixture.pid(), pin.stat);
         native.pins.insert(identity.pid, pin);
         assert!(
             !native
@@ -1611,27 +1542,5 @@ mod tests {
             }
         );
         assert!(parse_stat(&bytes, 43).is_err());
-    }
-}
-
-#[cfg(test)]
-mod failure_tests {
-    use super::*;
-    use crate::recovery::{RecoveryReport, ScanFailure, ScanFailureKind};
-
-    #[test]
-    fn native_deadline_failure_classification_preserves_io() {
-        check_time(Instant::now() + std::time::Duration::from_secs(3600)).unwrap();
-        let error = check_time(Instant::now() - std::time::Duration::from_nanos(1)).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert_eq!(error.to_string(), "native recovery deadline elapsed");
-        assert_eq!(
-            ScanFailure {
-                error,
-                report: RecoveryReport::default()
-            }
-            .kind(),
-            ScanFailureKind::DeadlineElapsed
-        );
     }
 }
