@@ -125,7 +125,7 @@ fn scalar(db: &Connection, pragma: &str) -> i64 {
 }
 
 #[test]
-fn encrypted_schema_metadata_tls_and_pragmas_survive_reopen() {
+fn plain_schema_metadata_tls_and_pragmas_survive_reopen() {
     let (home, secrets, db) = fixture();
     let c = db.connection.lock().unwrap();
     assert_eq!(scalar(&c, "user_version"), 3);
@@ -1082,7 +1082,7 @@ fn any_rollback_journal_is_refused_before_key_load_and_left_untouched() {
         }
         let before = fs::read(home.path().join(DB)).unwrap();
         let metadata = fs::symlink_metadata(&path).unwrap();
-        // No registry key: loading it before the journal guard would return KeyMissing.
+        // The journal guard refuses before anything opens the registry.
         assert!(
             matches!(
                 HostDb::open(home.path(), &Secrets::default()),

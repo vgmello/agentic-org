@@ -92,8 +92,9 @@ and WAL stand, and its durability rule stands as amended by
 ## Options considered for decision 3 (owner chose option 2)
 
 What exists today. Only the organization CA private key exists in code. It is the
-`private_pkcs8` column of the immutable `local_hq_creation` record in `office.db`,
-beside the public key and the escrow package. Nothing uses it to sign yet: its first
+`wrapped_ca_key` column of the immutable `local_hq_creation` record in `office.db`,
+beside the public key and the escrow package. The column holds an `org_pki::wrap`
+record sealed under the office secrets key, never the PKCS#8 DER. Nothing uses it to sign yet: its first
 use is issuing office certificates when satellite enrollment is built. The office TLS
 identity key and the invitation key are part of that unbuilt enrollment design. A
 satellite's TLS identity key must be usable unattended, every time the office starts.
