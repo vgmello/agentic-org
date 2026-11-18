@@ -77,6 +77,9 @@ trap cleanup EXIT
 # off by a reader that has seen enough (which `pipefail` would report as a failure).
 has() { grep -Eq -- "$1" <<<"$2"; }
 logs() { docker logs "$1" 2>&1; }
+# The last line a container wrote to its standard error: the refusal that ended it. (Its
+# standard output is another stream, which `docker logs` does not order against this one.)
+last_error() { docker logs "$1" 2>&1 >/dev/null | tail -n 1; }
 now() { date +%s.%N; }
 since() { awk -v a="$1" -v b="$(now)" 'BEGIN { printf "%.2f", b - a }'; }
 
@@ -293,7 +296,9 @@ say "5b. docker stop with a worker that does not act on the stop (X5 review V2)"
 docker start "$tag-a" >/dev/null
 wait_until "the instance to serve again" serving "$tag-a"
 wait_until "the office worker" worker_runs "$tag-a"
-worker=$(docker exec "$tag-a" sh -c 'for p in /proc/[0-9]*; do if tr "\0" " " < "$p/cmdline" 2>/dev/null | grep -q "agentic-org-office --office"; then basename "$p"; fi; done' || true)
+# The worker's own process: its command line begins with the worker's program (the shell
+# that asks carries the same words later in its own).
+worker=$(docker exec "$tag-a" sh -c 'for p in /proc/[0-9]*; do case "$(tr "\0" " " < "$p/cmdline" 2>/dev/null)" in /opt/agentic-org/bin/agentic-org-office\ --office*) basename "$p" ;; esac; done' || true)
 worker=${worker%%$'\n'*}
 [ -n "$worker" ] || fail "no worker process to stop"
 docker exec "$tag-a" sh -c "kill -STOP $worker"
@@ -330,7 +335,7 @@ lost_key() { has 'has no usable key in the host.s key store' "$(logs "$tag-c")" 
 wait_until "the host to notice the lost key" lost_key
 if exited "$tag-c"; then
     echo "the container ended with exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-c"):"
-    logs "$tag-c" | tail -n 2 | sed 's/^/  /'
+    last_error "$tag-c" | sed 's/^/  /'
     [ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-c")" != 0 ] || fail "it ended as if nothing was wrong"
 else
     grep -E 'no usable key' <<<"$(logs "$tag-c")" | sed 's/^/  /'
@@ -361,7 +366,7 @@ sed 's|"/secrets"|"/secret"|' "$here/setup.json" > "$scratch/typo.json"
 chmod 644 "$scratch/typo.json"
 run "$tag-v1a" -v "$tag-v1:/data" -v "$scratch/typo.json:/etc/agentic-org/setup.json:ro"
 wait_until "the mistyped container to end" exited "$tag-v1a"
-logs "$tag-v1a" | tail -n 1 | cut -c1-200 | sed 's/^/  /'
+last_error "$tag-v1a" | cut -c1-200 | sed 's/^/  /'
 [ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-v1a")" != 0 ] || fail "a mistyped credential directory started"
 left=$(docker run --rm -v "$tag-v1:/data" --entrypoint /bin/sh "$image" -c 'find /data -mindepth 1 \( -name instance -o -name "setup.v1.json" -o -name "instance.json" \)')
 [ -z "$left" ] || fail "the refused start left: $left"
@@ -374,7 +379,7 @@ say "8c. the secrets volume is judged at every start (X5 review V3)"
 docker rm -f "$tag-v1b" >/dev/null
 run "$tag-v3" -v "$tag-v1:/data" --tmpfs /secrets:uid=61000,gid=61000,mode=0700
 wait_until "the container on a memory filesystem to end" exited "$tag-v3"
-log=$(logs "$tag-v3" | tail -n 1)
+log=$(last_error "$tag-v3")
 echo "  ${log:0:260}"
 [ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-v3")" != 0 ] || fail "a memory filesystem as /secrets started"
 has 'credential directory' "$log" || fail "the refusal does not name the credential directory"
@@ -389,7 +394,7 @@ refused() {
     shift 2
     run "$name" "$@"
     wait_until "$name to end" exited "$name"
-    log=$(logs "$name" | tail -n 1)
+    log=$(last_error "$name")
     echo "  $log"
     [ "$(docker inspect -f '{{.State.ExitCode}}' "$name")" != 0 ] || fail "$name started"
     # The rule itself, without the foreground mode's general advice after it.
@@ -440,7 +445,7 @@ run "$tag-h" -v "$scratch/binds/agentic:/data" -v "$scratch/binds/agentic/secret
 settled() { exited "$tag-h" || serving "$tag-h"; }
 wait_until "that container to refuse or to serve" settled
 if exited "$tag-h"; then
-    log=$(logs "$tag-h" | tail -n 1)
+    log=$(last_error "$tag-h")
     echo "  $log"
     has 'data' "${log%%; in the foreground mode*}" || fail "the refusal does not name the data root"
 else
