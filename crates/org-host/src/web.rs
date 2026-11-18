@@ -344,8 +344,8 @@ pub(crate) fn admission<E>(
 }
 
 /// The refusal of a system on which the web process cannot be confined: fixed
-/// wording, then the adapter's reason (which call failed with which error, which
-/// ABI is too old, or that the system has no adapter).
+/// wording, then the adapter's reason (which call failed with which error, or that
+/// the system has no adapter).
 fn unconfinable(reason: io::Error) -> io::Error {
     io::Error::other(format!(
         "the web process requires process confinement, which is unavailable here: {}",

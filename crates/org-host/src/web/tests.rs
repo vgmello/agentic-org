@@ -1109,8 +1109,8 @@ fn the_supervisor_starts_only_where_the_web_process_can_be_confined() {
 
 #[test]
 fn a_confinement_refusal_keeps_the_adapters_reason_bounded_and_printable() {
-    let adapter = "gateway confinement unavailable: landlock_create_ruleset failed with EPERM: \
-                   the Landlock version query was refused";
+    let adapter = "gateway confinement unavailable: seccomp failed with EPERM: this kernel or \
+                   its profile has no seccomp filter that kills the process";
     assert_eq!(
         unconfinable(io::Error::other(adapter)).to_string(),
         format!(
@@ -1762,8 +1762,8 @@ fn runs_that_end_before_they_are_stable_count_as_failed_starts() {
 
 #[test]
 fn a_refusal_line_is_found_only_whole_printable_and_bounded() {
-    let reason = "gateway confinement unavailable: landlock_restrict_self failed with EPERM \
-                  (Operation not permitted (os error 1))";
+    let reason = "gateway confinement unavailable: seccomp failed with EPERM (Operation not \
+                  permitted (os error 1))";
     let line = format!("{REFUSAL_PREFIX}{reason}\n");
     assert_eq!(refusal_reason(line.as_bytes()), Some(reason));
     // After other lines, as a debug build's preload notice, and before more.
@@ -1932,7 +1932,7 @@ fn shell(script: &str) -> (Child, Arc<Stderr>, fs::File) {
 
 #[test]
 fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
-    let line = format!("{REFUSAL_PREFIX}landlock_restrict_self failed with EPERM");
+    let line = format!("{REFUSAL_PREFIX}seccomp failed with ENOMEM");
     let (mut child, captured, _stdin) = shell(&format!(
         "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; exit 1"
     ));
@@ -1945,7 +1945,7 @@ fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
     assert_eq!(
         error.to_string(),
         "web process start failed: the child exited before connecting (exit code 1); it \
-         reported that it cannot confine itself: landlock_restrict_self failed with EPERM"
+         reported that it cannot confine itself: seccomp failed with ENOMEM"
     );
 }
 

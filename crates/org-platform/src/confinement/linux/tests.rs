@@ -1821,6 +1821,8 @@ fn nothing_the_list_allows_is_stopped_by_landlock_alone() {
             send_descriptor(&stream, descriptor);
         }
         let (ended, report) = child.finish();
+        // For whoever reads this test's output: what this run measured.
+        println!("{way} {refused:?}:\n{report}");
         let (first, outcomes) = report.split_once('\n').unwrap_or((&report, ""));
         let confined = confined_line_under(refused);
         assert_eq!(

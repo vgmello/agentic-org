@@ -360,13 +360,13 @@ mod tests {
     #[test]
     fn a_confinement_refusal_is_reported_with_its_reason_on_one_bounded_line() {
         let refusal = io::Error::other(
-            "gateway confinement unavailable: landlock_restrict_self failed with EPERM \
-             (Operation not permitted (os error 1))",
+            "gateway confinement unavailable: seccomp failed with EPERM (Operation not \
+             permitted (os error 1))",
         );
         assert_eq!(
             startup_failure_line(&confinement_refused(refusal)),
             "agentic-org-web: startup refused: confinement: gateway confinement unavailable: \
-             landlock_restrict_self failed with EPERM (Operation not permitted (os error 1))"
+             seccomp failed with EPERM (Operation not permitted (os error 1))"
         );
         // Control characters, line breaks and anything outside ASCII never reach the
         // line, and a long reason is cut.
