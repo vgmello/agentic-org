@@ -314,7 +314,7 @@ CREATE TABLE documents (
   release_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (length(kind) > 0),
+  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*'),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -338,6 +338,7 @@ CREATE TABLE documents (
   CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),
   CHECK ((path IS NOT NULL) = (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL AND kind <> 'brief')),
   CHECK (path IS NOT NULL OR kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
+  CHECK (summary IS NULL OR path IS NOT NULL),
   CHECK ((version IS NULL) = (issued_revision IS NULL)),
   CHECK (version IS NULL OR (path IS NOT NULL AND issued_revision <= revision AND status <> 'draft')),
   CHECK ((feature_id IS NOT NULL) + (release_id IS NOT NULL) + (deployment_id IS NOT NULL) <= 1),
@@ -351,6 +352,8 @@ CREATE TABLE documents (
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, id, version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
@@ -2284,7 +2287,9 @@ CREATE TABLE process_packages (
 CREATE TABLE process_package_roles (
   organization_id TEXT NOT NULL,
   package_id TEXT NOT NULL,
-  key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'),
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'),
   position INTEGER NOT NULL CHECK (position >= 0),
   name TEXT NOT NULL,
   seed INTEGER NOT NULL DEFAULT 0 CHECK (seed IN (0, 1)),
@@ -2298,7 +2303,9 @@ CREATE TABLE process_package_roles (
 CREATE TABLE process_package_skills (
   organization_id TEXT NOT NULL,
   package_id TEXT NOT NULL,
-  key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'),
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'),
   position INTEGER NOT NULL CHECK (position >= 0),
   title TEXT NOT NULL,
   description TEXT NOT NULL CHECK (length(description) > 0),
@@ -2325,6 +2332,7 @@ CREATE TABLE process_package_kinds (
   package_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
     AND key NOT IN ('brief', 'decision', 'design', 'report', 'changelog')),
   title TEXT NOT NULL,
   versioned INTEGER NOT NULL DEFAULT 0 CHECK (versioned IN (0, 1)),

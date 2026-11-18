@@ -445,7 +445,7 @@ CREATE TABLE documents (
   release_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (length(kind) > 0),
+  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*'),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -469,6 +469,7 @@ CREATE TABLE documents (
   CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),
   CHECK ((path IS NOT NULL) = (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL AND kind <> 'brief')),
   CHECK (path IS NOT NULL OR kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
+  CHECK (summary IS NULL OR path IS NOT NULL),
   CHECK ((version IS NULL) = (issued_revision IS NULL)),
   CHECK (version IS NULL OR (path IS NOT NULL AND issued_revision <= revision AND status <> 'draft')),
   CHECK ((feature_id IS NOT NULL) + (release_id IS NOT NULL) + (deployment_id IS NOT NULL) <= 1),
@@ -482,6 +483,8 @@ CREATE TABLE documents (
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, id, version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),

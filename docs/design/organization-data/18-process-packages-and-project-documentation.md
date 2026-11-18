@@ -172,21 +172,21 @@ process-packages/<package-id>/
 └── templates/<kind-key>.md   # Optional starting body for a document kind
 ```
 
-The folder is named by the package's stable ID. Files inside it are named by their key, which is unique within the package: a package is one unit of identity, revision and transfer, and nothing outside a package refers to one of its parts by ID. A key is 1 to 64 lowercase ASCII letters, digits or hyphens. Files are regular Markdown or YAML blobs: no symlinks, submodules or traversal. A write to any file of the package advances the package's `revision`. A package belongs to the organization, like a role: HQ writes it and other offices replicate it.
+The folder is named by the package's stable ID. Files inside it are named by their key, which is unique within the package: a package is one unit of identity, revision and transfer, and nothing outside a package refers to one of its parts by ID. A key is 1 to 64 lowercase ASCII letters, digits or hyphens. Files are regular Markdown or YAML blobs: no symlinks, submodules or traversal. A write to any file of the package advances the package's `revision`. A package belongs to the organization, like a role: HQ writes it and other offices replicate it. Every manifest, role, skill and stage field is listed here; a field that is not is refused.
 
 ```yaml
 schema_version: 1
 id: 01930000-0000-7000-8000-0000000000d0
-key: dss
+key: dss-payments
 revision: 4
-name: Desired State Specification
+name: Desired State Specification (Payments)
 summary: >-
   Specify the product, then the system, as desired state. Plan, staff and build from
   the issued versions, and bring the code back in line whenever a version changes.
 version_label: "1.0"
 status: current
 owner_employee_id: 01930000-0000-7000-8000-000000000001
-copied_from_package_id: null
+copied_from_package_id: 01930000-0000-7000-8000-0000000000c0   # the built-in dss package
 roles:
   - key: product-lead
     name: Product Owner / Principal Designer
@@ -218,13 +218,16 @@ folders:
 stages:
   - key: specify
     title: Specify the product
+    summary: Talk with the person until the behaviour is clear, then issue it.
     lead_role: product-lead
 ```
+
+This is an organization's copy of the built-in `dss` package, shortened. A copy has its own key, because a key is unique in the organization.
 
 - **`roles[]`** are the roles the package needs. `seed: true` marks the few that start the project; the others are hired when the work calls for them. `hats` are labels for people, shown on the roster to say what a combined role covers; nothing reads them. Each role has a definition at `roles/<key>.md`, with the body headings of a [role record](../../specs/roles-ux.md).
 - **`kinds[]`** are document kinds the package adds to the built-in ones (`brief`, `decision`, `design`, `report`, `changelog`). A package cannot redefine a built-in kind. `versioned: true` means documents of that kind are [issued in versions](#issued-versions). A kind may have a template at `templates/<key>.md`.
 - **`folders[]`** are the sections a project's documentation starts with. `kinds` says what a folder is for; it guides and is not enforced.
-- **`stages[]`** describe the order of work for people and agents. Each entry is an object; `key` and `title` are required, and the product displays the rest as written. No code acts on a stage.
+- **`stages[]`** describe the order of work for people and agents. An entry has a `key`, a `title`, an optional `summary` and an optional `lead_role` naming a declared role. The product shows stages to people and includes them in an agent's instructions. No code acts on one.
 
 A skill is a Markdown file whose front matter says who it is for:
 
@@ -249,7 +252,7 @@ A package grants nothing. It cannot name tools, models, credentials, budgets, ap
 
 ### Roles the package needs, and the organization's roles
 
-An employee's role is still the organization's [role record](01-organization-structure.md) named by `employees.role_id`. A package role is matched to an organization role by `key`. When a package is chosen for a project, every package role whose key has no organization role yet gets one, created from the package's definition in the same accepted change. A key that already exists is left as it is: the organization's own definition of a role stands. An employee holds a package role when the key of its role equals the package role's key. The key of an organization role that a package in use refers to cannot be changed or removed; the refusal names the package.
+An employee's role is still the organization's [role record](01-organization-structure.md) named by `employees.role_id`. A package role is matched to an organization role by `key`. When a package is chosen for a project, every package role whose key has no organization role yet gets one, created from the package's definition in the same accepted change. A key that already exists is left as it is: the organization's own definition of a role stands, and the person choosing the package is shown which roles will be created and which existing ones will be used before confirming. An employee holds a package role when the key of its role equals the package role's key. The key of an organization role that a package in use refers to cannot be changed or removed; the refusal names the package.
 
 ## A project's process
 
@@ -261,7 +264,7 @@ process_package_id: 01930000-0000-7000-8000-0000000000d0
 
 Null means the project follows no package and behaves exactly as [document 02](02-project-structure.md) describes. The package must be `current` when it is chosen. A project follows the package's current content, not a pinned revision: a change to the package applies to its projects at each agent's next start, as a change to a process document does. A project that must not move copies the package.
 
-Choosing or changing a project's package is a change to the project, made by the organization's owner or by a person in the lead chain of the project's owning team. It never deletes, moves or renames a file, never changes a document's kind and never changes anyone's role. Sections the new package declares and the project lacks are added; everything already there stays.
+Choosing or changing a project's package is a change to the project, made by the organization's owner or by a person in the lead chain of the project's owning team. It never deletes, moves or renames a file, never changes a document's kind and never changes anyone's role. Sections the new package declares and the project lacks are added; everything already there stays. A document that has been issued keeps its versions whatever the project's package later declares; a new version can be issued only while the document's kind is `versioned` in the project's current package.
 
 ## Project documentation tree
 
@@ -280,9 +283,9 @@ projects/<project-id>/
 └── docs-history/<document-id>/<version>.md      # Issued versions, written once
 ```
 
-- **What is in the tree.** Every document whose scope is the project itself, except the brief: decisions, designs, reports and every package-defined kind. The brief stays at `projects/<project-id>/brief.md`. A document that belongs to a feature, a release or a deployment stays beside that record ([document 02](02-project-structure.md#project-feature-release-and-deployment-documents)), and so do changelogs.
-- **Paths are readable and can change.** A path is lowercase letters, digits, hyphens, dots and underscores in segments separated by `/`, at most 512 bytes and eight levels deep, never starting with a dot. A document ends in `.md`. Identity is the `id` in the document's front matter, never the path: moving or renaming a document keeps its ID, its revisions, its versions and every link to it.
-- **Sections** are the folders. A section has a title, a summary and an order. A project without a package starts with `decisions`, `designs` and `reports`. A project with a package starts with the folders its manifest declares. Agents and people add sections as the work needs them. A section exists as soon as the index lists it; Git shows the directory with its first file.
+- **What is in the tree.** Every document whose scope is the project itself, except the brief: decisions, designs, reports and every package-defined kind. `index.yaml` is the only other file at the tree's root and its name is reserved. The brief stays at `projects/<project-id>/brief.md`. A document that belongs to a feature, a release or a deployment stays beside that record ([document 02](02-project-structure.md#project-feature-release-and-deployment-documents)), and so do changelogs.
+- **Paths are readable and can change.** A path is segments separated by `/`, at most 512 bytes and eight levels deep. A folder name is lowercase letters, digits, hyphens and underscores. A file name may also contain single dots; it never starts with one. A document ends in `.md` and holds at most 512 KiB. Identity is the `id` in the document's front matter, never the path: moving or renaming a document keeps its ID, its revisions, its versions and every link to it.
+- **Sections** are the folders, each described in the index with a title, a summary and an order. A project without a package starts with `decisions`, `designs` and `reports`. A project with a package starts with the folders its manifest declares; any other section, those three included, is added when it is first needed. Agents and people add sections as the work needs them, and saving a file into a folder that has no section yet adds one, titled from the folder's name until someone gives it a better title. A section exists as soon as the index lists it; Git shows the directory with its first file.
 - **Media** are diagrams and images stored beside the documents: PNG, JPEG, WebP, GIF and SVG images, and diagram sources as text (Mermaid `.mmd`, `.drawio`, `.excalidraw`). A media file is at most 5 MiB and never ends in `.md`. It has no front matter; its identity and description are its index entry. The product shows an SVG as an image and never runs anything inside it.
 
 A tree document uses the envelope of every supporting document, with a path and an optional summary:
@@ -314,7 +317,7 @@ code_links:
 ## Purpose
 ```
 
-`kind` is `brief`, `decision`, `design`, `report`, `changelog` or a key the project's package declares. A document keeps its kind when the project changes package; a kind no current package declares is shown by its key and is never rejected on read.
+For a tree document `kind` is `decision`, `design`, `report` or a key the project's package declares. A document keeps its kind when the project changes package; a kind no current package declares is shown by its key and is never rejected on read.
 
 ### The index
 
@@ -347,22 +350,25 @@ sections:
     title: Technical documentation
     summary: How the system is built, with its diagrams and images.
     kinds: [technical-dss]
-    entries:
-      - id: 01930000-0000-7000-8000-0000000000e9
-        path: technical/diagrams/login-sequence.mmd
-        type: diagram
-        media_type: text/vnd.mermaid
-        bytes: 1840
-        sha256: 6b1f0c8d2a4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5061728394a5b6c7d8e
-        title: Login sequence
-        summary: Browser, web process and office during sign-in.
+    sections:
+      - path: technical/diagrams
+        title: Diagrams
+        entries:
+          - id: 01930000-0000-7000-8000-0000000000e9
+            path: technical/diagrams/login-sequence.mmd
+            type: diagram
+            media_type: text/vnd.mermaid
+            bytes: 1840
+            sha256: 6b1f0c8d2a4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5061728394a5b6c7d8e
+            title: Login sequence
+            summary: Browser, web process and office during sign-in.
 ```
 
 - **Who writes it.** Agents and people keep the index current by what they do: adding a section, saving a document with its title and summary, storing a diagram, moving a file. The office writes the file, in the same accepted change as the write that caused it, so the index and the tree cannot disagree. Nobody edits `index.yaml` by hand, and an agent has no file access to it ([non-negotiables](../../architecture-non-negotiables.md) 7 and 10).
-- **What is authored and what is copied.** Sections (title, summary, order, `kinds`) and media entries (title, summary) are authored in the index. A document's entry is copied from the document on every write: `id`, `path`, `kind`, `title`, `summary`, `status`, `version`. A media entry's `media_type`, `bytes` and `sha256` come from the stored file.
-- **One writer.** A project's tree and index have one writing office at a time. In v1 it is HQ. Another office forwards a write to it and serves reads from its replica.
-- **Repair.** If the tree and the index are found to differ, for example after a commit made outside the product, the difference is a visible problem on the project and the office repairs the copied fields from the files. It keeps the authored fields and never deletes a file to make the two agree.
-- **Size.** A tree holds at most 10,000 entries. The index is returned whole up to 256 KiB and by section beyond that.
+- **What is authored and what is copied.** For sections (title, summary, order, `kinds`) and for a media file's identity, title and summary, the index is the source: they are written nowhere else. A document's entry is a copy of the document, refreshed on every write: `id`, `path`, `kind`, `title`, `summary`, `status`, `version`. A media entry's `media_type`, `bytes` and `sha256` come from the stored file.
+- **One writer.** A project's tree and index have one writing office at a time, as a task has its transport writer ([offices design](../offices-hq-and-satellites.md#office-first-tasks-and-messages)). It starts as HQ and is handed to the office where the project's agents work. An agent in the writing office is acknowledged by its own office and waits for nothing else. An agent in another office reads from its office's replica; its write carries its operation ID and expected revision to the writer through HQ, like a cross-office edit of a task, and is acknowledged when the writer has accepted it.
+- **Repair.** If the tree and the index are found to differ, for example after a commit made outside the product, the difference is a visible problem on the project. The office refreshes the copied fields from the documents, adds an entry or a section for a file that has none, and marks an entry whose file is gone. It keeps what is authored in the index and never deletes a file to make the two agree.
+- **Size.** A tree holds at most 10,000 entries. The index is returned whole in one read while it is at most 256 KiB, which is about a thousand entries. Beyond that the read returns the sections without their entries, and each section's entries are read by its path.
 
 ### Issued versions
 
@@ -410,13 +416,13 @@ realizes:
 
 `realizes[]` is authored in the task's front matter. Each entry names an issued version of a tree document in the task's own project; the accepting service checks both. A task may realize several versions and a version may be realized by several tasks.
 
-Whether a version has been realized is derived, as a milestone's completion is ([document 02](02-project-structure.md#completion-of-milestones-and-releases)): a version is **converged** when at least one task realizes it and every task that realizes it is finished. A version with no task is not converged. A version that needs no code change is recorded with a task closed with that resolution. Nothing is stored, so reopening a task makes the version not converged again.
+Whether a version has been realized is derived, as a milestone's completion is ([document 02](02-project-structure.md#completion-of-milestones-and-releases)): a version is **converged** when at least one task realizes it and every task that realizes it is finished. A version with no task is not converged. A version that needs no code change is recorded with a task closed with that resolution. A cancelled task counts as finished, as it does for a milestone, so the version's page shows which of its tasks were cancelled. Nothing is stored, so reopening a task makes the version not converged again. `realizes[]` is part of the task: a deleted task's entries go with it into its tombstone and no longer count.
 
 ## Who may read and write a project's documentation
 
 People read and write the documentation of every project of their organization, like any other organization record.
 
-An agent reads and writes the documentation of **its own projects only**: a project whose owning team is its home team or an ancestor of it, a project one of whose contributing teams is, and a project in which it is the assignee of an open task. Any other project's index, listing and files are refused to it with `not_authorized` and the reason `other_project`, and the refusal names the project's lead so that the agent can ask. This is checked by the office from the agent's binding on every call. It is a boundary between projects, not a secrecy rule: what an agent needs from another project it asks that project's people and agents for.
+An agent reads and writes the documentation of **its own projects only**: a project whose owning team is its home team or an ancestor of it, a project one of whose contributing teams is, and a project in which it is the assignee of an open task. Assigning a task is itself an authorized act, so an agent cannot make a project its own. Any other project's index, listing and files are refused to it with `not_authorized` and the reason `other_project`, and the refusal names the project's lead so that the agent can ask. This is checked by the office from the agent's binding on every call. It is a boundary between projects, not a secrecy rule: what an agent needs from another project it asks that project's people and agents for.
 
 ## File to SQL mapping
 
@@ -480,7 +486,9 @@ CREATE TABLE process_packages (
 CREATE TABLE process_package_roles (
   organization_id TEXT NOT NULL,
   package_id TEXT NOT NULL,
-  key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'),
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'),
   position INTEGER NOT NULL CHECK (position >= 0),
   name TEXT NOT NULL,
   seed INTEGER NOT NULL DEFAULT 0 CHECK (seed IN (0, 1)),
@@ -494,7 +502,9 @@ CREATE TABLE process_package_roles (
 CREATE TABLE process_package_skills (
   organization_id TEXT NOT NULL,
   package_id TEXT NOT NULL,
-  key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'),
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'),
   position INTEGER NOT NULL CHECK (position >= 0),
   title TEXT NOT NULL,
   description TEXT NOT NULL CHECK (length(description) > 0),
@@ -521,6 +531,7 @@ CREATE TABLE process_package_kinds (
   package_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
     AND key NOT IN ('brief', 'decision', 'design', 'report', 'changelog')),
   title TEXT NOT NULL,
   versioned INTEGER NOT NULL DEFAULT 0 CHECK (versioned IN (0, 1)),
@@ -680,9 +691,9 @@ LEFT JOIN tasks t ON t.organization_id = r.organization_id AND t.id = r.task_id
 GROUP BY v.organization_id, v.document_id, v.version;
 ```
 
-`document_versions` has no foreign key to `documents`: an issued version is history and outlives the live row, resolved through `record_refs` like any historical reference. Its rows are written once; the two triggers refuse an update, a delete and a replace. A deleted task that is still listed is ignored by the progress view, as in a release's manifest.
+`document_versions` has no foreign key to `documents`: an issued version is history and outlives the live row, resolved through `record_refs` like any historical reference. The other direction is enforced: a document's `version` must be one of its issued versions. Version rows are written once; the two triggers refuse an update, a delete and a replace.
 
-Rules checked by the accepting service, not by SQL: a skill's `roles[]` name roles of its own package; a project's package is `current` when chosen; a document's kind is built in or declared by a package; a document of a kind that is not `versioned` is never issued; a version's sources and a task's `realizes[]` belong to the same project; a code link's repository is one of the project's; a document path and a media path are never the same file and stay inside `docs/`.
+Rules checked by the accepting service, not by SQL: a project's package is `current` when chosen; a stage's `lead_role` is a declared role; a document's kind is built in or declared by a package; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
 
 ## Acceptance criteria
 

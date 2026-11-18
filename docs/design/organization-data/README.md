@@ -24,13 +24,13 @@ This set owns the **data relationships, fields and canonical sources**. Where th
 | [Messaging and chat](15-messaging-and-chat.md) | Conversations, memberships, messages, recipient state, attachments, read markers and reactions; runtime ownership and routing rules merged from ADR-0003 | Transport/wake engines and external bridges |
 | [Recovery and office continuity](16-recovery-and-office-continuity.md) | Mutation receipts, origin streams, checkpoints, snapshots and process cleanup evidence | Automatic promotion, restore engines or backup automation |
 | [Budgets and controls](17-budgets-and-controls.md) | Task, agent and release policies, periods, threshold notices, extensions and holds | Budget service, automatic pausing or distributed admission implementation |
-| [Process packages and project documentation](18-process-packages-and-project-documentation.md) | Process packages; a project's package; the project documentation tree and index; issued versions, code links and realizing tasks | A process engine or triggers |
+| [Process packages and project documentation](18-process-packages-and-project-documentation.md) | Process packages; a project's package; the project documentation tree and index; issued versions, code links and realizing tasks | An engine or triggers |
 
 Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, including model profiles/execution and task assignment/history, into one shared draft containing 89 tables and 11 views plus indexes/triggers. Document 14 describes the provider and pool records and links to document 11 for their SQL. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
 
 ## Shared identity contract
 
-Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text ([document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). Code today: organization provisioning mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
+Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames (tree documents use paths, document 18). IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text ([document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). Code today: organization provisioning mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
 
 | Entity | Readable identifier | Uniqueness / counter scope |
 | --- | --- | --- |
@@ -134,7 +134,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Organization authority | The HQ office worker in v1: one role for numbering, slug/key registration, permits, placement generations, budget-control state and corrections; promotion deferred |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
 | Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md`. Project-wide documents live in the project's documentation tree with one index (document 18) |
-| Process packages | A project may follow one package: content, no engine (document 18) |
+| Process packages | A project may follow one: content, no engine (18) |
 | Accountability and lifecycle | Feature/document owners; active/archived teams; employees `active`, `paused` (agents) or `inactive` in one status field; draft/current/deprecated documents |
 | Task, milestone and release completion | Task status is the closed list `todo`, `in_progress`, `blocked`, `cancelled`, `done`; done or cancelled is finished. Milestones and releases store no status; done is derived from their tasks |
 | Compatibility before v1 ships | None. Nothing is deployed: no migration, import, alias or legacy shape is kept ([rule](#no-compatibility-obligations-before-v1-ships)) |
@@ -148,7 +148,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
 | Agent setup/execution | Document 11 defines model profiles, provider connections and execution data/behavior; memory consolidation and automatic scheduling remain separate pending work |
 | Subscription connections | One connection per provider subscription, reused by office-local bindings and profiles; shared quota remains attached to that connection |
-| Processes and standards | Content, scope and the override lock are selected, and so is resolution: the effective set for a task is the organization's entries, then the accountable team's chain, then the project's, and entries that may not be overridden are always given to the agent ([processes design](../processes.md)). Enforcement, approvals and checklist composition stay out of scope |
+| Processes and standards | Content, scope and the override lock are selected, and so is resolution: the effective set for a task is the organization's entries, then the accountable team's chain, then package skills, then the project's, and entries that may not be overridden are always given to the agent ([processes design](../processes.md)). Enforcement, approvals and checklist composition stay out of scope |
 | Areas | Removed: not part of v1; their code is deleted with the typed-task work |
 | Advanced checklist workflows, Undo, organization-wide event history, retrospectives | Not part of v1 |
 

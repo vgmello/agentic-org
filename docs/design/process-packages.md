@@ -34,8 +34,9 @@ runs.
    What to do with them, in what order and by whom is a package's content. No package
    name, role name or document kind appears in product code, and adding a methodology
    adds no code.
-2. **No engine.** A package's stages describe the order of work. Nothing in the
-   product reads a stage, starts work because a document changed, or blocks an action.
+2. **No engine.** A package's stages describe the order of work. The product shows
+   them to people and to agents. Nothing in the product acts on a stage, starts work
+   because a document changed, or blocks an action.
    An agent acts because a skill told it to and it has a turn
    ([process design](processes.md), decision 7).
 3. **A package is content in organization Git,** written through the product, with a
@@ -104,8 +105,9 @@ process-packages/<package-id>/
 - **Authoring.** A person creates a package, or copies one, and edits its manifest,
   roles, skills and templates in the product. A copy has a new ID and remembers what it
   was copied from. Every write names the expected revision and is attributed.
-- **Validation at every write.** Unknown manifest fields are refused, naming the field,
-  so that a package cannot smuggle a setting. A skill names only roles of its own
+- **Validation at every write.** The manifest, role, skill and stage fields are a
+  closed list ([document 18](organization-data/18-process-packages-and-project-documentation.md#durable-package-files));
+  any other field is refused, naming it, so that a package cannot smuggle a setting. A skill names only roles of its own
   package. A kind is not named like a built-in kind. Folder paths are valid and do not
   repeat. A `current` package has an owner, at least one role and at least one skill.
 - **A package in use.** A package that a project follows cannot be deleted. It can be
@@ -126,7 +128,10 @@ organization's owner or a person in the lead chain of the project's owning team.
 
 1. Sets `process_package_id` on the project.
 2. Creates an organization role, from the package's definition, for every package role
-   whose key the organization does not have yet. Existing roles are not touched.
+   whose key the organization does not have yet. Existing roles are not touched. Before
+   confirming, the person sees which roles will be created and which existing roles
+   the package will use, so that a role that merely shares a key is not matched by
+   surprise.
 3. Adds to the project's index every section the package declares and the project
    lacks. This is the eager layout: the sections are there, with their titles and
    summaries, before any document exists.
@@ -154,6 +159,11 @@ Nothing else happens. No agent is hired, started or told anything by the choice 
   that team's members already hold.
 - An open seed role blocks nothing. The project says "2 seed roles open" until they are
   filled.
+- **Who leads.** The project's team has one lead, appointed by the owner like any team
+  lead: a person, or one of the seed agents. An agent follows instructions from the
+  leads above it and treats anyone else's as a request
+  ([document 04](organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from)),
+  so with two seed leads the one that is not the team's lead directs by request.
 
 **Changing the package.** The new package's missing roles and sections are added as
 above. No file, document kind, role or employee changes. Agents receive the new
@@ -207,11 +217,15 @@ The lead then uses the product's hiring, as any agent may:
    ([hire flow](../specs/our-org-in-the-app.md), APPR-8).
 3. **Approval.** The proposal goes to the nearest person in the lead chain of the
    project's team, else to the owner. An agent never approves a hire.
-4. **Onboarding.** On approval the office provisions the agent in the project's team.
-   From its first start it receives the package's skills for its role. The requesting
-   lead is told when the hire completes or is rejected.
+4. **Onboarding.** On approval the office provisions the agent in the project's team,
+   so it is under that team's lead. The proposal suggests the requesting lead as the
+   new agent's reporting line, which the approver confirms or changes. From its first
+   start the agent receives the package's skills for its role. The requesting lead is
+   told when the hire completes or is rejected.
 
 A lead may ask for a role the package does not define; HR drafts it like any hire.
+Such an agent receives the skills written for everyone, so a package puts what every
+member must know in those.
 
 ## 6. The project documentation tree
 
@@ -223,7 +237,9 @@ What the design adds is how they are used.
 - **Finding.** `agent-os doc index` returns the project's index: one office-local read,
   with every section, document and media file, its path, kind, title, status and a
   line on what it is for. It is the first thing a skill tells an agent to read.
-  `agent-os doc ls [path]` lists a folder and exists as a fallback.
+  `agent-os doc ls [path]` lists one folder and exists as a fallback;
+  `agent-os doc list` filters by kind, status or scope across the project, including
+  the documents beside its features and releases. Both are the `doc.list` call.
 - **Reading.** `agent-os doc show <id | path>` prints a document. For a versioned
   document it prints the latest issued version and says how many unissued changes
   follow it; `--working` prints the working text and `--version <n>` an earlier one.
@@ -240,9 +256,16 @@ What the design adds is how they are used.
 - **Another project.** A call for a project that is not the agent's own is refused with
   `other_project` and the name of that project's lead. The agent asks, with a directed
   ask, and the other project's agent answers from its own index.
-- **Limits.** A document body is at most 8 MiB and a media file 5 MiB. A media file
-  larger than one frame is sent in parts under one operation ID
-  ([task design](tasks-projects-docs.md#4-the-contract)).
+- **Limits.** A document is at most 512 KiB, so that a write fits one frame
+  ([task design](tasks-projects-docs.md#4-the-contract)); a read pages with an offset.
+  A media file is at most 5 MiB. One larger than 512 KiB is first uploaded in numbered
+  parts to the office's temporary area (`doc.upload`), and the write that stores it
+  names the upload and its SHA-256. Nothing enters the tree before that write is
+  accepted, and an upload that no write claims is discarded.
+- **Offices.** A project's tree has one writing office at a time, handed over like a
+  task's writer. An agent in that office is acknowledged locally. From another office
+  a read is local and a write waits for the writer, as a cross-office edit of a task
+  does ([document 18](organization-data/18-process-packages-and-project-documentation.md#the-index)).
 - **The browser.** A project's Docs tab shows the tree from the index: sections,
   documents and media, with status, version and unissued changes. People create, edit,
   move and issue from there with the same rules.
@@ -262,8 +285,9 @@ operation ID and an expected revision ([task design](tasks-projects-docs.md#4-th
 | `project.seed_roster` | `project_id` | `{ rows: [{ role_key, name, hats, state, employee_id?, hire_request_id? }] }` | `not_found` |
 | `role.list`, `role.get` | `key?` | The role, and for `get` what a hire proposal needs | `not_found` |
 | `doc.index` | `project_id?`, `section?` | `{ index, revision, stale_since? }` | `not_authorized` (`other_project`), `unavailable` |
-| `doc.list` | `project_id?`, `path?` | `{ entries }` | as above |
-| `doc.read` | `document_id \| path`, `text?: issued \| working \| version { n }`, `offset?` | `{ document, content, unissued_changes, next_offset? }` | as above, `not_found` |
+| `doc.list` | `project_id?`, `path?`, `kind?`, `status?`, `scope?` | `{ entries }` | as above |
+| `doc.read` | `document_id \| media_id \| path`, `text?: issued \| working \| version { n }`, `offset?` | `{ document, content, unissued_changes, next_offset? }`; for a media file its entry and its bytes | as above, `not_found` |
+| `doc.upload` | `upload_id`, `seq`, `bytes`; then `finish { sha256 }` | `{ upload_id, received_bytes }` | `too_large`, `invalid_request`, `not_authorized` |
 | `doc.write` | Create or change a document, a section or a media file; move one | `{ id, revision, index_revision }` | `invalid_request`, `conflict`, `too_large`, `not_authorized`, `unavailable` |
 
 `project_id` defaults to the project of the agent's current work. `package.write`,
@@ -306,7 +330,7 @@ Built-in packages are files in the product's source, compiled into the office.
 | PKG-8 | A project document with a skill's key replaces that skill in that project only; `process why` shows the package layer and the replacement. |
 | PKG-9 | A skill whose key the organization marked not overridable is left out, with a problem naming the organization's document; that document is still delivered in full. |
 | PKG-10 | A lead agent's `hire request` for a package role produces a proposal for the project's team; nothing is provisioned before a person approves; the new agent's first instructions carry its role's skills. |
-| PKG-11 | `doc index` returns the whole tree in one call. After any accepted write it lists exactly what the tree holds. |
+| PKG-11 | `doc index` returns the whole index in one call while it is at most 256 KiB, and the section list with each section readable by path beyond that. After any accepted write it lists exactly what the tree holds. |
 | PKG-12 | An agent of another project is refused `doc index`, `doc ls`, `doc show` and every write, with `other_project` and the lead to ask; a person is not. |
 | PKG-13 | Changing a project's package removes no file, section, document or role, and the next start of each agent delivers the new package's skills. |
 | PKG-14 | With no package, a project's tree starts with `decisions`, `designs` and `reports`, and resolution is exactly the process design's. |
@@ -330,16 +354,18 @@ Built-in packages are files in the product's source, compiled into the office.
 ## 11. Delivery order
 
 Each step is usable on its own. Increments are in the
-[implementation plan](../implementation-plan.md) (L11 to L14).
+[implementation plan](../implementation-plan.md) (L11 to L15).
 
 1. **The tree and the index** for every project, with `agent-os doc` and the Docs tab
    (FC-173). It needs no package.
 2. **Packages and a project's process:** records, catalogue, select, seed roster, the
-   skill layer in resolution (FC-168, FC-169, FC-170). Needs the agent launch path
+   skill layer in resolution, and process and standard writes by agents of the
+   project's team (FC-168, FC-169, FC-170, FC-177). Needs the agent launch path
    and the one-chain resolution (C3, C5).
 3. **Hiring from a skill:** `role show` and the role on `hire request` (FC-171). Needs
    the hire flow (C2).
-4. **The DSS package** ([desired state design](desired-state-specifications.md)).
+4. **Issued versions, code links and realizing tasks** (FC-174, FC-175), then **the
+   DSS package** (FC-176) ([desired state design](desired-state-specifications.md)).
 5. **Moving a package between organizations** (FC-172).
 
 ## What the code does today

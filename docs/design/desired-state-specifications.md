@@ -91,11 +91,11 @@ stages:
 | `record-a-standard` | Technical lead | When a decision will be needed again, write or update a project standard. |
 | `plan-and-staff` | Both leads | Break both layers into tasks; decide the roles needed; ask HR. |
 | `answer-architecture-questions` | Technical lead | Answer engineers from the Technical DSS and standards; change the specification when the answer changes it. |
-| `build-from-the-specification` | Engineers | Read the versions a task realizes; ask the technical lead; keep code links current. |
+| `build-from-the-specification` | Everyone | Read the versions a task realizes; ask the technical lead; keep code links current. Written for everyone so that an engineer hired with any role receives it. |
 | `reconcile-a-new-version` | Both leads | When a version is issued over an earlier one, find what it changes and plan the work. |
 
-The two specialist roles are examples the package defines so that their skills exist;
-a lead may ask HR for any role.
+The two specialist roles are examples; a lead may ask HR for any role. The manifest
+above is shortened: stage summaries are left out.
 
 ## 2. The two layers
 
@@ -186,7 +186,9 @@ name.
     with that resolution, so that the record says someone looked.
 16. The Docs tab and `agent-os doc status` show, per document, the latest version, how
     many tasks realize it and how many are finished. When all are, the version is
-    converged. An earlier version that never converged is shown as superseded.
+    converged. An earlier version that never converged is shown as superseded. A
+    version whose tasks were all cancelled is converged by the rule, and its page says
+    that they were cancelled.
 
 ## 4. Standards as a byproduct
 
@@ -198,9 +200,11 @@ agent that works on the project as guidance, and the technical lead reads it fir
 next time the same question comes up.
 
 - The technical lead writes project standards with `agent-os process new` and
-  `process edit`, which the process design opens to agents for their own project.
-- An agent cannot mark a document not overridable and cannot write at team or
-  organization scope. A standard that should bind more than one project is proposed to
+  `process edit`, which the process design opens to agents of the project's own team
+  ([process design](processes.md), decision 8).
+- An agent adds standards and changes the project's own. It cannot replace one
+  inherited from the organization, a team or the package, cannot mark a document not
+  overridable and cannot write at team or organization scope. A standard that should bind more than one project is proposed to
   a person, who writes it at the level it belongs to.
 - A standard the organization or a team marked not overridable is a rule the Technical
   DSS must satisfy. The lead cites it and does not ask the person to decide against it.
@@ -240,9 +244,10 @@ These calls are general and belong to the documentation tree
 - **`realizes`** is a field of the task and is set through the task calls
   ([task design](tasks-projects-docs.md)). The service checks that each entry is an
   issued version of a document of the task's project.
-- **`agent-os`:** `doc issue`, `doc diff`, `doc versions`, `doc link add | remove`,
-  `doc links [--path <file>] [--check]`, `doc status`, and `task create | edit
-  --realizes <document>@<version>`.
+- **`agent-os`:** `doc issue`, `doc diff`, `doc versions`, `doc code-link add | remove`,
+  `doc code-links [--path <file>] [--check]`, `doc status`, and `task create | edit
+  --realizes <document>@<version>`. `doc link` stays the command for links between
+  records ([knowledge UX](../specs/decisions-and-tech-debt-ux.md), AUTH-5).
 
 ## 7. Acceptance criteria
 
@@ -282,5 +287,6 @@ they test the skills' text as much as the product.
 ## What the code does today
 
 Nothing of this exists. It needs the documentation tree and issued versions, process
-packages, the hire flow, asks and agent sessions, none of which is built
-([process package design](process-packages.md#what-the-code-does-today)).
+packages, the hire flow and agent sessions, none of which is built
+([process package design](process-packages.md#what-the-code-does-today)), and asks,
+which exist in part (FC-079).

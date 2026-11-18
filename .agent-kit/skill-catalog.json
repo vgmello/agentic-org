@@ -154,7 +154,7 @@
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "08dcdcbbbc1a9f0cd58f14209c6e7bff71bece547b48da9e1c8cb47d588a44c1"
+      "sha256": "ecf283308a8ba8778c8d94f2d3ff686c6e6c9f1940cf84e27968e34993bcac78"
     },
     {
       "path": "docs/design/project-structure.md",
@@ -182,7 +182,7 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "ff142e6ac2bd9077ab02ef3fccf4eb8173ab22a50a506fd0b06fc2f88d532bf6"
+      "sha256": "c93177d7847707cfa37874d71a06a52981fbc9a3d79c0ffac1c244d611b735a3"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",

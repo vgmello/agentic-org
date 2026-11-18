@@ -463,7 +463,7 @@ offices/
       <tr><td>Employees and execution config</td><td><code>agents|people/&lt;id&gt;/profile.md</code>, <code>agents/&lt;id&gt;/execution.md</code></td><td>HQ</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
       <tr><td>Projects, features, releases, deployments, flags, documents</td><td>Files under <code>projects/&lt;project-id&gt;/</code></td><td>HQ creates; offices edit features</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
       <tr><td>Process packages</td><td><code>process-packages/&lt;package-id&gt;/</code>: <code>package.yaml</code>, <code>roles/</code>, <code>skills/</code>, <code>templates/</code>. A built-in package comes from the product and has no file.</td><td>HQ</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
-      <tr><td>Project documentation tree and its index</td><td><code>projects/&lt;project-id&gt;/docs/</code>: documents, diagrams, images and <code>index.yaml</code></td><td>One writing office per tree; HQ in v1</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
+      <tr><td>Project documentation tree and its index</td><td><code>projects/&lt;project-id&gt;/docs/</code>: documents, diagrams, images and <code>index.yaml</code></td><td>One writing office per tree, handed over like a task's writer; HQ at first</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
       <tr><td>Issued document versions</td><td><code>projects/&lt;project-id&gt;/docs-history/&lt;document-id&gt;/&lt;version&gt;.md</code>, written once</td><td>The tree's writing office</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
       <tr><td>Tasks with comments, checklist, watchers, links</td><td><code>…/work/tasks/&lt;task-id&gt;.md</code> front matter</td><td>The task's one accepting writer</td><td>Yes</td><td><span class="st target">Designed</span> today <code>work_items</code> in <code>office.db</code></td></tr>
       <tr><td>Task history</td><td><code>work-history/tasks/&lt;task-id&gt;/&lt;revision&gt;.json</code>, append-only, hashed</td><td>Accepting writer</td><td>Yes, after publication; journal before</td><td><span class="st part">Built, not reachable</span> acceptance journal tables</td></tr>
@@ -891,7 +891,7 @@ offices/
       <tr><td class="k">project.set_process</td><td>The owner, or a person in the lead chain of the project's owning team</td><td>Sets <code>process_package_id</code>, creates the missing organization roles and adds the declared sections, in one accepted change. Starts no agent. Refused for a package that is not current.</td></tr>
       <tr><td class="k">project.seed_roster</td><td>People and agents</td><td>One row per seed role: open, hire requested or filled.</td></tr>
       <tr><td class="k">role.list · role.get</td><td>People and agents</td><td>A role's definition and what a hire proposal for it needs.</td></tr>
-      <tr><td class="k">doc.index · doc.list · doc.read</td><td>People; agents for their own projects</td><td>The whole index in one read; a folder listing as a fallback; a document as its latest issued version, its working text or an earlier version.</td></tr>
+      <tr><td class="k">doc.index · doc.list · doc.read</td><td>People; agents for their own projects</td><td>The whole index in one read while it is at most 256 KiB, by section beyond that; a folder or filtered listing as a fallback; a document as its latest issued version, its working text or an earlier version.</td></tr>
       <tr><td class="k">doc.write</td><td>People; agents for their own projects</td><td>Create, change or move a document, a section or a media file. The index is written in the same accepted change.</td></tr>
       <tr><td class="k">doc.issue</td><td>Whoever may write the document</td><td>Fixes the working text as the next version, with a note and the versions it was derived from. Refused when the kind is not versioned, nothing changed, or the document has no owner.</td></tr>
       <tr><td class="k">doc.diff · doc.versions · doc.status</td><td>Readers of the project</td><td>Differences between versions or the working text; the versions with their tasks and progress; per document, the latest version, unissued changes and convergence.</td></tr>
@@ -906,10 +906,10 @@ offices/
 
   <h3>One writing office, and limits</h3>
   <ul>
-    <li>A project's tree and its index have one writing office at a time. In v1 it is HQ. Another office forwards a write to it and serves reads from its replica.</li>
+    <li>A project's tree and its index have one writing office at a time, as a task has its writer. It starts as HQ and is handed to the office where the project's agents work. An agent in that office is acknowledged locally. From another office a read is local, and a write goes to the writer through HQ and is acknowledged when the writer accepts it, like a cross-office edit of a task.</li>
     <li>If the tree and the index are found to differ, for example after a commit made outside the product, the project shows a problem and the office repairs the copied fields from the files. It never deletes a file to make the two agree.</li>
     <li>An issued version is written once. The draft schema refuses an update, a delete and a replace of its row.</li>
-    <li>A document body is at most 8 MiB and a media file 5 MiB. A media file larger than one frame is sent in parts under one operation ID.</li>
+    <li>A document is at most 512 KiB, so a write fits one frame. A media file is at most 5 MiB; one larger than 512 KiB is uploaded in parts first (<code>doc.upload</code>), and the write that stores it names the upload and its SHA-256.</li>
     <li>A tree holds at most 10,000 entries. The index is returned whole up to 256 KiB and by section beyond that. A path is at most 512 bytes and eight levels deep.</li>
     <li>Skills count against the same 24 KiB cap as other overridable guidance.</li>
   </ul>
@@ -989,12 +989,12 @@ offices/
       <tr><td>Asking and waiting</td><td>10 minutes wait, 2 minutes grace. A required ask left unanswered suspends the agent; the answer resumes it.</td><td class="k">ADR-0020</td></tr>
       <tr><td>How a project works</td><td>A project follows at most one process package: content, not code. No engine reads it and it grants nothing. Its skills are one more layer of guidance, bound to roles by key. A project starts with the package's seed roles and hires the rest through HR, with a person's approval, when a skill says so. Project-wide documents live in one tree per project with one index, kept by the office from what agents and people do. An agent reads and writes the tree of its own projects only.</td><td class="k">REQ-07, process package design, document 18</td></tr>
       <tr><td>Desired state specifications</td><td>The first built-in package. A document is issued in versions and the desired state is the latest issued one. A Technical DSS version names the Product DSS versions it follows; a task names the versions it realizes; code links tie documents to code. Convergence is derived from tasks. The factory is agents following skills, not a pipeline in the product.</td><td class="k">REQ-06, desired state design</td></tr>
-      <tr><td>Agents writing guidance</td><td>An agent may write process and standard documents at the scope of its own project. It never writes at team or organization scope and never marks a document not overridable.</td><td class="k">process design</td></tr>
+      <tr><td>Agents writing guidance</td><td>An agent whose home team is a project's own team may add process and standard documents at that project's scope and change the project's own. It never replaces a document inherited from above, never writes at team or organization scope and never marks a document not overridable.</td><td class="k">process design</td></tr>
       <tr><td>Anything from before</td><td>Dropped. The former development team's earlier command-line tool and its message queue are not carried over, and no rule protects them. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td class="k">AGENTS.md</td></tr>
     </tbody>
   </table></div>
   <h3>Open with the owner</h3>
-  <p>Five points from REQ-06 and REQ-07 are not decided. Each has a recommendation in the requirement document, and the design works without the answer.</p>
+  <p>Six points from REQ-06 and REQ-07 are not decided. Each has a recommendation in the requirement document, and the design works without the answer.</p>
   <div class="tbl wide"><table>
     <thead><tr><th>Point</th><th>Today</th><th>Recommendation</th></tr></thead>
     <tbody>
@@ -1003,6 +1003,7 @@ offices/
       <tr><td>Features beside the Product DSS</td><td>Features are a record; the DSS package does not use them.</td><td>Keep features for projects whose process uses them.</td></tr>
       <tr><td>The word "process"</td><td>A single guidance document is called a process; a project's process is now a package.</td><td>Say "process package", "skill" and "process document", unless the existing documents are to be renamed.</td></tr>
       <tr><td>Packages between organizations</td><td>Selected as the last increment (L15).</td><td>Say if it is needed sooner or not in v1.</td></tr>
+      <tr><td>The Standards specification REQ-06 refers to</td><td>The process design already defines three levels, inheritance by key and the non-overridable lock, for processes and standards alike.</td><td>Say if a further requirement is coming, or if that design is the specification.</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>
@@ -1010,7 +1011,7 @@ offices/
 </section>
 
 <footer class="doc-foot">
-  Built from the repository branch <code>v1-integration</code>: the organization-data contracts (documents 01 to 18), ADRs 0001 to 0020, the design and UX documents, and a read of every crate and app. Section 15 and the rows that mention REQ-06 and REQ-07 were added on 2026-11-18 from the design documents; no code changed. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
+  Built from the repository branch <code>v1-integration</code>: the organization-data contracts (documents 01 to 18), ADRs 0001 to 0021, the design and UX documents, and a read of every crate and app. Section 15 and the rows that mention REQ-06 and REQ-07 were added on 2026-11-18 from the design documents; no code changed. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
 </footer>
 </main>
 </div>

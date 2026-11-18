@@ -3,8 +3,9 @@
 Status: **decided by the lead 2026-11-18** to place the owner's
 [REQ-06](../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) and
 [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md) in the
-selected architecture. Implementation pending. Five points are with the owner and are
-listed in REQ-07's alignment section; none of them changes the decisions below.
+selected architecture. Implementation pending. Six points are with the owner, five in
+REQ-07's alignment section and one in REQ-06's; none of them changes the decisions
+below.
 
 ## Context
 
@@ -56,7 +57,9 @@ Three rules already in force constrain how:
    agents and people do through the product. Project-wide decisions, designs and
    reports move into the tree; documents of a feature, a release or a deployment stay
    beside their record.
-6. **An agent reads and writes the documentation of its own projects only.**
+6. **An agent reads and writes the documentation of its own projects only.** A
+   project's tree has one writing office at a time, handed over like a task's writer;
+   a write from another office waits for it, as a cross-office edit of a task does.
 7. **The desired state of a versioned document is its latest issued version,** written
    once. Whether the code matches it is derived from the tasks that realize it.
 8. **DSS is the first built-in package** and proves the rule: it is delivered as

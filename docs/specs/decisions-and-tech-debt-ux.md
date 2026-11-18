@@ -117,7 +117,7 @@ Open tasks of every type are canonical organization-Git files; immutable task ac
  Context · Options considered · Decision · Consequences · Evidence
 ```
 
-ADR labels here are optional display keys; the record and its filename use a separate stable ID.
+ADR labels here are optional display keys; the record uses a separate stable ID, which is also the filename of a document beside a feature, a release or a deployment.
 
 - **By section:** a switch shows the project's documentation tree as its index lists it: sections with their titles and summaries, then the documents, diagrams and images in each, with status, latest issued version and unissued changes where the kind is versioned. A person adds, renames and reorders sections and moves documents between them here.
 - **Groups** by kind and scope, each with a count. Inside: optional display key, title and lifecycle badge (**Draft · Current · Deprecated**, icon plus word). Deprecated documents collapse under Older.
@@ -211,7 +211,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 **Docs and decisions (DEC)**
 - DEC-1 · The Docs tab groups kinds and scopes with counts and status, and one living project brief covers what, who, current behavior and version evidence. Capability requirements stay in feature.md; no duplicate Overview or PRD kind or per-release copy is created.
 - DEC-2 · Each document shows its front matter as a header card: kind, optional key, title, Draft/Current/Deprecated lifecycle, owner, scope, attribution and dates, and authored links. Stable ID and path are read-only, there is no document number field, and the section rail follows body headings.
-- DEC-3 · New Decision, Design or Evaluation opens the envelope and the right body template, derives the stable-ID file path and shows its scope; there is no numeric document counter and Save is explicit.
+- DEC-3 · New Decision, Design or Evaluation opens the envelope and the right body template, shows its scope and its place (the stable-ID file path beside a feature, a release or a deployment; the chosen section and name for a project-wide document); there is no numeric document counter and Save is explicit.
 - DEC-4 · Not in v1: Accept, Reject and Request changes on a proposed decision.
 - DEC-5 · Not in v1: proposed decisions in the owner's Needs you.
 - DEC-6 · Supersede drafts a new decision linked to the old stable record, with links both ways, and changes neither record's status; the old rationale is kept.
@@ -276,7 +276,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - TPL-5 · Not in v1: adding document kinds.
 - TPL-6 · Not in v1: template changes and their effect on existing documents.
 - TPL-7 · Withdrawn: documents are not imported, so there is no front-matter conversion.
-- TPL-8 · Every document has an immutable stable ID separate from its optional display key. IDs are UUIDv7. Title and key changes keep stable-ID filenames and relationships.
+- TPL-8 · Every document has an immutable stable ID separate from its optional display key. IDs are UUIDv7. Title and key changes keep stable-ID filenames and relationships; moving or renaming a project-wide document in the `docs/` tree keeps its ID and relationships.
 
 ## 7. Not in v1
 

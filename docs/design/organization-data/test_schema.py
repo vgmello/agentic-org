@@ -1164,6 +1164,35 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.refused(lambda: insert(self.db, "process_package_skill_roles", organization_id="org",
                                     package_id="dss", skill_key="write-product-dss", role_key="engineer"))
 
+    def test_package_keys_folders_and_descriptions_are_well_formed(self):
+        self.package()
+        self.db.commit()
+        role = dict(organization_id="org", package_id="dss", position=0, name="Lead")
+        skill = dict(organization_id="org", package_id="dss", position=0, title="Skill")
+        folder = dict(organization_id="org", package_id="dss", position=0, title="Folder")
+        insert(self.db, "process_package_folders", **folder, path="technical/diagrams")
+        self.db.commit()
+        for key in ("-lead", "Lead", "product lead", ""):
+            self.refused(lambda: insert(self.db, "process_package_roles", **role, key=key))
+            self.refused(lambda: insert(self.db, "process_package_skills", **skill, key=key,
+                                        description="Use when needed."))
+        self.refused(lambda: insert(self.db, "process_package_skills", **skill, key="empty",
+                                    description=""))
+        for path in ("technical/diagrams", "/technical", "technical/", "technical//diagrams",
+                     "technical/v1.2", "../technical", "Technical"):
+            self.refused(lambda: insert(self.db, "process_package_folders", **folder, path=path))
+
+    def test_sections_are_folders_of_one_project(self):
+        section = dict(organization_id="org", project_id="project", position=0, title="Product")
+        insert(self.db, "documentation_sections", **section, path="product")
+        insert(self.db, "documentation_sections", **section, path="product/identity-and-access")
+        self.db.commit()
+        for path in ("product", "product/", "/product", "product//billing", "product/v1.2",
+                     "product/spec.md", ".hidden"):
+            self.refused(lambda: insert(self.db, "documentation_sections", **section, path=path))
+        self.refused(lambda: insert(self.db, "documentation_sections", **dict(section, project_id="missing"),
+                                    path="technical"))
+
     def test_a_package_cannot_redefine_a_built_in_document_kind(self):
         self.package()
         insert(self.db, "process_package_kinds", organization_id="org", package_id="dss",
@@ -1192,7 +1221,15 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
     def test_a_package_kind_is_only_for_tree_documents(self):
         insert(self.db, "features", organization_id="org", id="feature", schema_version=1, revision=1,
                project_id="project", local_slug="sign-in", title="Sign in", status="planned")
+        insert(self.db, "releases", organization_id="org", id="release", schema_version=1, revision=1,
+               project_id="project", title="Release")
+        scoped = dict(organization_id="org", schema_version=1, revision=1, project_id="project",
+                      release_id="release", title="Scoped")
+        insert(self.db, "documents", **scoped, id="release-report", kind="report")
         self.db.commit()
+        # Beside a release only the built-in kinds are allowed, and a kind is a key.
+        self.refused(lambda: insert(self.db, "documents", **scoped, id="bad", kind="product-dss"))
+        self.refused(lambda: self.document("bad", kind="Product DSS!"))
         self.refused(lambda: insert(self.db, "documents", organization_id="org", id="scoped",
                                     schema_version=1, revision=1, project_id="project",
                                     feature_id="feature", kind="product-dss", title="Scoped"))
@@ -1202,13 +1239,26 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
                                     path="designs/scoped.md"))
 
     def test_only_an_issued_tree_document_carries_a_version(self):
-        self.document(status="current", owner_employee_id="reporter", revision=3, version=1,
+        issued = dict(status="current", owner_employee_id="reporter", revision=3, version=1,
                       issued_revision=2)
+        self.document(**issued)
+        self.issue(revision=2)
         self.db.commit()
-        self.refused(lambda: self.document("half", version=1))
-        self.refused(lambda: self.document("ahead", status="current", owner_employee_id="reporter",
-                                           revision=2, version=1, issued_revision=5))
-        self.refused(lambda: self.document("draft", version=1, issued_revision=1))
+        # The version a document carries must be one that was issued for it.
+        self.refused(lambda: self.document("unissued", **issued))
+        self.refused(lambda: self.db.execute("UPDATE documents SET version=2 WHERE id='spec'"))
+        for name, fields in (("half", dict(version=1)),
+                             ("ahead", dict(issued, revision=2, issued_revision=5)),
+                             ("draft", dict(version=1, issued_revision=1))):
+            self.issue(name)
+            self.refused(lambda: self.document(name, **fields))
+        # A document outside the tree is never versioned and has no summary.
+        self.issue("brief")
+        base = dict(organization_id="org", id="brief", schema_version=1, revision=1,
+                    project_id="project", kind="brief", title="Brief")
+        self.refused(lambda: insert(self.db, "documents", **base, status="current",
+                                    owner_employee_id="reporter", version=1, issued_revision=1))
+        self.refused(lambda: insert(self.db, "documents", **base, summary="What the project is."))
 
     def test_an_issued_version_is_written_once(self):
         self.document()
@@ -1226,6 +1276,7 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.document("technical", kind="technical-dss", path="technical/authentication.md")
         self.issue()
         self.issue("technical")
+        self.db.commit()
         insert(self.db, "document_version_sources", organization_id="org", document_id="technical",
                version=1, source_document_id="spec", source_version=1)
         self.db.commit()

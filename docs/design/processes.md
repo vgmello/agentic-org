@@ -26,8 +26,9 @@ more layer.
    (`draft`, `current` or `deprecated`), an optional accountable employee (required
    and active for `current`), common attribution and a revision. `team_id` or
    `project_id` gives its scope, never both; both null means the organization.
-4. **Resolution.** There are three levels: organization, team and project. Processes
-   and standards behave the same way.
+4. **Resolution.** Documents are written at three levels: organization, team and
+   project. Processes and standards behave the same way. A project's process package
+   adds its skills between the team and the project.
    - **What applies to a piece of work.** Start with the organization's current
      documents. Apply the accountable team's chain from the top team down to that
      team. Then apply the skills of the project's process package, if it follows one.
@@ -56,7 +57,7 @@ more layer.
      Overridable documents are guidance the agent applies with judgment: summaries
      first, with the full text retrievable, under the cap of §3.2.
    - **How to use the tools.** Guidance for the product's own commands ships with
-     the product as built-in skills, not as organization documents. Whether some of
+     the product as built-in guidance, not as organization documents. Whether some of
      it is also served as an MCP server is open.
    - **Field name.** The record field is `overridable`, default `true`.
 5. **Code branch bases.** Every project-repository association has a required
@@ -72,12 +73,16 @@ more layer.
    composition from processes, and a process execution engine. The product tells the
    agent what binds it; it does not block an action for breaking a process. A process
    package adds content, not an engine.
-8. **Agents write documents for their own project.** An agent may create and change
-   process and standard documents at the scope of a project it works in, so that
-   decisions taken while building become standards
+8. **Agents of a project's team add to its documents.** An agent whose home team is
+   the project's owning team, or a team beneath it, may create and change process and
+   standard documents at that project's scope, so that decisions taken while building
+   become standards
    ([desired state design](desired-state-specifications.md#4-standards-as-a-byproduct)).
-   It can never mark a document not overridable, and it cannot write at team or
-   organization scope; those stay with people.
+   It adds documents with new keys and changes the project's own. It cannot replace a
+   document inherited from the organization, a team or the package, cannot mark a
+   document not overridable, and cannot write at team or organization scope. Those
+   stay with people. An agent from another team that holds a task in the project
+   cannot write them.
 
 ## 1. Where each thing lives
 
@@ -279,16 +284,19 @@ write names the expected revision, and a change that lost a race is `conflict`.
 Authority comes from the authenticated caller, never from an owner or status field
 in the document.
 
-People write at every scope. An agent writes only at the scope of one of its own
-projects, with the same boundary as the project's documentation
-([document 18](organization-data/18-process-packages-and-project-documentation.md#who-may-read-and-write-a-projects-documentation)),
-and a write from an agent that sets `overridable: false`, or that names a team or the
-organization, is refused with `not_authorized`. A package's skills are changed by
-changing the package ([process package design](process-packages.md#2-the-package)).
+People write at every scope. An agent writes only at the scope of a project whose
+owning team is its home team or an ancestor of it (decision 8). This is narrower than
+the boundary for reading a project's documentation: holding a task in a project, or
+belonging to a contributing team, is not enough to change what every agent on the
+project is told. A write from an agent is refused with `not_authorized` when it names
+a team or the organization, sets `overridable: false`, or uses the key of a document
+inherited from the organization, a team or the package. A package's skills are changed
+by changing the package ([process package design](process-packages.md#2-the-package)).
 
 ## 6. The contract
 
-Reads, for any employee bound to the organization:
+The four reads are for any employee bound to the organization; the write follows
+section 5:
 
 | Call | Params | Result | Errors |
 | --- | --- | --- | --- |
@@ -301,8 +309,11 @@ Reads, for any employee bound to the organization:
 `for` is `current` (default), `project { project_id }` or `task { task_id }`. The
 `agent-os` commands `process list [--kind process | standard | skill]`, `process why`
 and `process show` call the reads; `process new` and `process edit` call the write for
-the agent's own project. Entries name their layer: organization, team, package or
-project. The local API version is 1 and these calls change in place until v1 ships.
+a project of the agent's own team. Entries name their layer: organization, team,
+package or project. A skill of a built-in package has no file: its `path` is null,
+`commit` is the product's version and `blob` is the hash of its text, so that what an
+agent has read is tracked the same way. The local API version is 1 and these calls
+change in place until v1 ships.
 
 The result of `task.set_status` names a branch left with unmerged work at a close
 (§4). `work.changed` gains the branch-record changes. Unknown values decode as `Unknown`.
@@ -323,7 +334,7 @@ share the rule as `org_proto::has_reserved_branch_prefix`.
   inside the work write.
 - **`org-git`:** repository reads, branch creation at a commit and cleanup.
 - **`agent-os`:** the `process` read commands, and `process new` and `process edit`
-  for the agent's own project.
+  for a project of the agent's own team.
 - **`apps/agentic-org-ui`:** the Processes views and the profile tab.
 
 ## 8. Tests that prove the rules
@@ -336,9 +347,11 @@ Each test fails without its rule.
   add nothing; drafts and deprecated documents never apply; a package's skills sit
   between the team chain and the project, filtered by the agent's role; a skill never
   displaces a non-overridable key.
-- **Writes by agents:** a project-scope write from an agent of that project is
-  accepted; one for another project, a team or the organization, or one that sets
-  `overridable: false`, is refused.
+- **Writes by agents:** a project-scope write that adds a key or changes a project
+  document is accepted from an agent of the project's team; it is refused from an
+  agent that only holds a task there or belongs to a contributing team, for another
+  project, a team or the organization, with `overridable: false`, and for a key
+  inherited from above.
 - **Delivery:** every non-overridable document is delivered in full whatever its
   size; a non-overridable set over the budget refuses the launch and names the
   documents; the overridable cap and order hold; a fresh context gets the manifest

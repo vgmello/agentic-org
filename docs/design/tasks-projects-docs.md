@@ -82,9 +82,8 @@ Paths are inside the organization repository, not this software repository.
 │   │   ├── designs/<document-id>.md
 │   │   ├── decisions/<document-id>.md
 │   │   └── reports/<document-id>.md
-│   ├── designs/<document-id>.md
-│   ├── decisions/<document-id>.md
-│   ├── reports/<document-id>.md
+│   ├── docs/                       # project-wide documents, diagrams and images, with index.yaml
+│   ├── docs-history/<document-id>/<version>.md
 │   ├── processes/<document-id>.md
 │   ├── standards/<document-id>.md
 │   ├── releases/<release-id>/

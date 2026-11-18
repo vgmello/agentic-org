@@ -63,16 +63,16 @@ Written by the lead on 2026-11-18. It adds no requirement; it places the owner's
 
 | Requirement | In the product |
 | --- | --- |
-| Product DSS, the root artifact, by product domain and area | Documents of kind `product-dss` in the project documentation tree, under `product/<domain>/`, listed in the project's index. |
+| Product DSS, the root artifact, by product domain, vertical and area | Documents of kind `product-dss` in the project documentation tree, under `product/`. Domains and verticals are nested sections, an area is a document, and all are listed in the project's index. |
 | Dialogue with the user | Chat with the product lead agent, with asks for the points that need a decision. |
 | Technical DSS, a system-wide change on record | Documents of kind `technical-dss` under `technical/`. Each issued version records the Product DSS versions it was derived from. |
 | "Ready", "finalized", "a new version is published" | **Issuing a version**: the working text is fixed as version N, written once. The desired state is the latest issued version. |
 | Autonomous mode | The technical lead's skill: read the standards that apply and the existing Technical DSS first, and ask only what neither answers. |
 | Interactive mode | Asks to the person, marked required when the work cannot continue. The answer is written into the Technical DSS, and into a standard when it will be needed again. |
-| Architecture Standards as a byproduct, versioned like code | Project standards (`projects/<project-id>/standards/`), the existing record. Agents may now write process and standard documents at the scope of their own project. |
+| Architecture Standards as a byproduct, versioned like code | Project standards (`projects/<project-id>/standards/`), the existing record. Agents of a project's team may now add process and standard documents at that project's scope. |
 | Task breakdown across both artifacts | Tasks whose `realizes` names the document versions they bring the code in line with. |
 | Execution agents consult the architect | A directed ask from the engineer to the technical lead, answered in the lead's own session, which holds its context. |
-| Traceability links | `code_links` on a document: repository, path and optional symbol. The reverse lookup answers "which documents speak about this file?". |
+| Traceability links (`links`) | `code_links` on a document: repository, path and optional symbol. The field is not called `links` because that name is taken by links between records. The reverse lookup answers "which documents speak about this file?". |
 | Code convergence | Derived, like a milestone's completion: a version is converged when every task that realizes it is finished. |
 
 **Points settled by the lead.**
@@ -83,7 +83,7 @@ Written by the lead on 2026-11-18. It adds no requirement; it places the owner's
 4. **Whether to ask the person before issuing is the skill's instruction, not a gate.** The DSS package tells the lead to confirm a version with the person through a required yes/no ask before issuing it. The product records who issued and does not check for an approval.
 5. **No line numbers in code links.** They drift with every edit. A link is a path and, where useful, a symbol.
 6. **Convergence is derived from tasks, not asserted.** Nobody marks a version "implemented".
-7. **Agents write standards for their own project only,** and never mark one not overridable. Organization and team standards stay with people.
+7. **Agents write standards for their own team's project only.** They add standards and change the project's own; they never replace one inherited from above and never mark one not overridable. Organization and team standards stay with people.
 
 **Points that need the owner.**
 
