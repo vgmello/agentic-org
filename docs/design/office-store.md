@@ -34,6 +34,10 @@ covers their entry, and the journal keeps every entry whose files are not yet sa
 idempotent). The projection is rebuilt from the files once the journal is materialized.
 Nothing rebuilds the journal: for the entries it still holds it is the only copy.
 
+Rejected: the files as the commit point (a change that spans several files cannot be
+atomic, and a durable change would need a flush per file); the projection as the commit
+point (a cache must be deletable, ADR-0014 decision 6).
+
 ```mermaid
 flowchart LR
   C[command] --> H[family handler<br/>authorize, fingerprint]
@@ -425,6 +429,10 @@ the predecessor head, if any. Segments are `segments/<first-ordinal>.log`, rolle
 file larger than 1 MiB is written first as a content-addressed blob, flushed, and the
 entry names its digest. Ordinals, origin positions, feed positions and task revisions
 stay distinct (ADR-0006).
+
+Rejected: one file per entry (section 8 measures it 25 times slower to write, and each
+needs its own flush); SQL row images in the entry, as today (they tie the journal to one
+engine and one projection schema).
 
 **States of an entry.**
 
