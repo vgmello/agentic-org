@@ -476,6 +476,12 @@ impl Running {
         };
         org_platform::confinement::verify_ready_report(&enforcement)
             .map_err(|error| failed(&error.to_string()))?;
+        // The report above carries the ABI only: a domain not enforced in full is refused here.
+        if ready.landlock.is_some_and(|status| {
+            status.enforcement != org_host_control::gateway::LandlockEnforcement::FullyEnforced
+        }) {
+            return Err(failed("the ready line reports landlock not fully enforced"));
+        }
         crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
             .map_err(|_| failed("the ready-line peer is not the admitted child"))?;
         config
