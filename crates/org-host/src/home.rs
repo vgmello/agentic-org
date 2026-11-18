@@ -84,7 +84,7 @@ impl Layout {
 }
 
 /// Checks `dir` is a directory (not a symlink) owned by us, and sets it to 0700.
-fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
+pub(crate) fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
     let meta = fs::symlink_metadata(dir).map_err(|source| HostError::Io {
         context: "reading the office home",
         source,
@@ -111,13 +111,6 @@ pub(crate) fn euid() -> u32 {
 
 /// Where the office home is inside an account's home folder (the shared rule's default).
 const OFFICE_HOME_IN_ACCOUNT: &str = "Library/Application Support/agentic.org";
-
-/// The office home of this process's user account: `<pw_dir>/Library/Application
-/// Support/agentic.org`, from the account database (`getpwuid_r`), never from the environment.
-/// `None` if the account has no absolute home folder.
-pub(crate) fn account_office_home() -> Option<PathBuf> {
-    account_dir().map(|dir| dir.join(OFFICE_HOME_IN_ACCOUNT))
-}
 
 /// This process's account home folder (`pw_dir`), if it is absolute.
 pub(crate) fn account_dir() -> Option<PathBuf> {
@@ -355,7 +348,7 @@ mod tests {
 
     #[test]
     fn the_account_office_home_comes_from_the_account_database() {
-        let Some(home) = account_office_home() else {
+        let Some(home) = account_dir().map(|dir| dir.join(OFFICE_HOME_IN_ACCOUNT)) else {
             // A uid with no account entry (some CI containers): nothing to compare.
             assert!(account_home(euid()).is_none());
             eprintln!("skipped: this uid has no account home folder");

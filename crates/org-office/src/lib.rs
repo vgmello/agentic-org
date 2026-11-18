@@ -7,12 +7,14 @@
 //!
 //! Knows nothing about sockets: callers hand it plain values and get plain values back.
 //! `Office::create` / `open` / `discard` are the three ways into a folder; the engine
-//! (`store.rs`: SQLCipher, one batching writer, keys, owner-only files) is private. The
+//! (`store.rs`: plain SQLite, one batching writer, owner-only files) is private. The
 //! organization's rules (`rules`) speak the wire contract's types (`org_proto::org`), because
 //! a satellite replays the very changes HQ logged.
 
 mod employees;
+pub mod hq_creation;
 mod organization;
+pub use organization::admission::{OwnerAccount, OwnerAuthority};
 pub use organization::{activity, directory};
 mod error;
 mod key;
@@ -25,6 +27,9 @@ mod private_fs;
 pub mod rules;
 mod status;
 mod store;
+pub use store::acceptance::{
+    AcceptanceConfig, AcceptanceIdentity, JournalPosition, WriterAuthority,
+};
 mod time;
 mod ulid;
 
@@ -36,4 +41,3 @@ pub use office::{Office, LOCK_WAIT};
 pub use owned_processes::{OwnedProcess, OwnedProcessKey, SavedIdentity, SavedLeader, SavedTarget};
 pub use status::presence_after_status;
 pub use store::org::{OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode};
-pub use store::sqlcipher_ready;

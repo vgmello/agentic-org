@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Mutex;
 
-use org_office_launch::is_plain_id;
-use org_proto::DbKey;
+use org_office_launch::is_storage_id;
+use org_proto::OfficeSecretsKey;
 
-use super::{KeyStore, KeyStoreError};
+use super::{KeyStoreError, OfficeSecretsKeys};
 use crate::sync::lock;
 
 /// A store operation, for faults and the call record.
@@ -42,23 +42,15 @@ impl Fault {
 /// Keys in a map, by office id.
 #[derive(Default)]
 pub(crate) struct MemoryKeys {
-    keys: Mutex<HashMap<String, DbKey>>,
+    keys: Mutex<HashMap<String, OfficeSecretsKey>>,
     faults: Mutex<HashMap<Op, Fault>>,
     calls: Mutex<Vec<(Op, String)>>,
-    /// How long `list` takes (it's recorded once done).
-    list_delay: Mutex<Option<std::time::Duration>>,
 }
 
 impl MemoryKeys {
     /// From now on, every `op` fails with `fault` (until [`MemoryKeys::clear_fault`]).
     pub(crate) fn fail(&self, op: Op, fault: Fault) {
         lock(&self.faults).insert(op, fault);
-    }
-
-    /// From now on, `list` takes `delay` (and is recorded in [`MemoryKeys::calls`] only once
-    /// it's done).
-    pub(crate) fn delay_list(&self, delay: std::time::Duration) {
-        *lock(&self.list_delay) = Some(delay);
     }
 
     pub(crate) fn clear_fault(&self, op: Op) {
@@ -76,7 +68,7 @@ impl MemoryKeys {
     }
 
     /// Whether the store holds exactly `key` for `office_id`.
-    pub(crate) fn holds(&self, office_id: &str, key: &DbKey) -> bool {
+    pub(crate) fn holds(&self, office_id: &str, key: &OfficeSecretsKey) -> bool {
         lock(&self.keys)
             .get(office_id)
             .is_some_and(|stored| *stored == *key)
@@ -84,7 +76,7 @@ impl MemoryKeys {
 
     fn begin(&self, op: Op, office_id: &str) -> Result<(), KeyStoreError> {
         lock(&self.calls).push((op, office_id.to_owned()));
-        if !is_plain_id(office_id) {
+        if !is_storage_id(office_id) {
             return Err(KeyStoreError::NotPlainId);
         }
         match lock(&self.faults).get(&op) {
@@ -94,13 +86,13 @@ impl MemoryKeys {
     }
 }
 
-/// A copy of `key` (test only: `DbKey` isn't `Clone`).
-fn copy(key: &DbKey) -> DbKey {
-    DbKey::from_bytes(*key.expose_bytes())
+/// A copy of `key` (test only: `OfficeSecretsKey` isn't `Clone`).
+fn copy(key: &OfficeSecretsKey) -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes(*key.expose_bytes())
 }
 
-impl KeyStore for MemoryKeys {
-    fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError> {
+impl OfficeSecretsKeys for MemoryKeys {
+    fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
         self.begin(Op::Create, office_id)?;
         let mut keys = lock(&self.keys);
         if keys.contains_key(office_id) {
@@ -110,7 +102,7 @@ impl KeyStore for MemoryKeys {
         Ok(())
     }
 
-    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError> {
+    fn load(&self, office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError> {
         self.begin(Op::Load, office_id)?;
         Ok(lock(&self.keys).get(office_id).map(copy))
     }
@@ -122,10 +114,6 @@ impl KeyStore for MemoryKeys {
     }
 
     fn list(&self) -> Result<Vec<String>, KeyStoreError> {
-        let delay = *lock(&self.list_delay);
-        if let Some(delay) = delay {
-            std::thread::sleep(delay);
-        }
         lock(&self.calls).push((Op::List, String::new()));
         if let Some(fault) = lock(&self.faults).get(&Op::List) {
             return Err(fault.error());
@@ -144,7 +132,10 @@ mod tests {
     #[test]
     fn create_only_adds_load_returns_it_and_delete_of_a_missing_key_is_ok() {
         let store = MemoryKeys::default();
-        let (one, two) = (DbKey::from_bytes([1; 32]), DbKey::from_bytes([2; 32]));
+        let (one, two) = (
+            OfficeSecretsKey::from_bytes([1; 32]),
+            OfficeSecretsKey::from_bytes([2; 32]),
+        );
         assert!(store.load(A).unwrap().is_none());
         store.delete(A).unwrap();
         store.create(A, &one).unwrap();
@@ -161,7 +152,7 @@ mod tests {
     #[test]
     fn faults_fail_their_operation_until_cleared_and_change_nothing() {
         let store = MemoryKeys::default();
-        let key = DbKey::from_bytes([3; 32]);
+        let key = OfficeSecretsKey::from_bytes([3; 32]);
         store.fail(Op::Create, Fault::Os(-25308));
         assert!(matches!(
             store.create(A, &key),

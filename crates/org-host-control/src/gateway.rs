@@ -8,7 +8,7 @@
 //! [`GatewayHandoff`] line, then one `sendmsg` carrying a 1-byte marker (`host.sock`'s,
 //! [`crate::ops::HOST_SOCK_MARKER`]: this framing follows its rule) and exactly the two
 //! descriptors it names: the transfer socket, then the browser listener. The same connection then
-//! becomes the control connection. Transfer-socket records are `org-office-launch`'s v3
+//! becomes the control connection. Transfer-socket records are `org-office-launch`'s
 //! `TransferRecord`.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -22,6 +22,66 @@ pub struct GatewayFirstLine {
     /// lets it connect to.
     pub rendezvous: String,
     pub instance_id: String,
+    /// Exact protected release pin. Missing only in explicit debug-build development
+    /// fixtures; production requires it before preload or secret handoff.
+    pub release: Option<WebRelease>,
+}
+
+/// Non-secret startup binding, independently checked against the web process's
+/// build-pinned publisher signature. This value alone confers no authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebRelease {
+    pub release_id: String,
+    pub manifest_sha256: String,
+    pub sequence: u64,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseWire {
+    version: u32,
+    release_id: String,
+    manifest_sha256: String,
+    sequence: u64,
+}
+impl Serialize for WebRelease {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        ReleaseWire {
+            version: 1,
+            release_id: self.release_id.clone(),
+            manifest_sha256: self.manifest_sha256.clone(),
+            sequence: self.sequence,
+        }
+        .serialize(s)
+    }
+}
+impl<'de> Deserialize<'de> for WebRelease {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let w = ReleaseWire::deserialize(d)?;
+        let id = w.release_id.as_bytes();
+        if w.version != 1
+            || id.is_empty()
+            || id.len() > 96
+            || !id[0].is_ascii_alphanumeric()
+            || !id
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            || w.sequence == 0
+            || w.manifest_sha256.len() != 64
+            || !w
+                .manifest_sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+        {
+            return Err(serde::de::Error::custom(
+                "invalid web process release binding",
+            ));
+        }
+        Ok(Self {
+            release_id: w.release_id,
+            manifest_sha256: w.manifest_sha256,
+            sequence: w.sequence,
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +90,8 @@ struct FirstLineWire<T> {
     v: u32,
     rendezvous: T,
     instance_id: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    release: Option<WebRelease>,
 }
 
 impl Serialize for GatewayFirstLine {
@@ -38,6 +100,7 @@ impl Serialize for GatewayFirstLine {
             v: API_VERSION,
             rendezvous: &self.rendezvous,
             instance_id: &self.instance_id,
+            release: self.release.clone(),
         }
         .serialize(s)
     }
@@ -47,11 +110,13 @@ impl<'de> Deserialize<'de> for GatewayFirstLine {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = FirstLineWire::<String>::deserialize(d)?;
         check_version::<D>(wire.v)?;
+        // Instance IDs are canonical lowercase UUIDv7 text. The plain form (1 to 64 ASCII
+        // letters and digits) is still read until the web gateway's own tests move to UUIDv7.
         let plain = (1..=64).contains(&wire.instance_id.len())
             && wire.instance_id.bytes().all(|b| b.is_ascii_alphanumeric());
-        if !plain {
+        if !org_proto::is_uuid_v7(&wire.instance_id) && !plain {
             return Err(serde::de::Error::custom(
-                "the instance id must be 1 to 64 ASCII letters and digits",
+                "the instance id must be canonical lowercase UUIDv7 text",
             ));
         }
         if !wire.rendezvous.starts_with('/') || wire.rendezvous.contains('\0') {
@@ -62,6 +127,7 @@ impl<'de> Deserialize<'de> for GatewayFirstLine {
         Ok(GatewayFirstLine {
             rendezvous: wire.rendezvous,
             instance_id: wire.instance_id,
+            release: wire.release,
         })
     }
 }
@@ -188,3 +254,6 @@ impl<'de> Deserialize<'de> for GatewayHandoff {
         Ok(GatewayHandoff)
     }
 }
+
+#[cfg(test)]
+mod release_tests;

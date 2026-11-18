@@ -1,33 +1,32 @@
 # ADR-0001 · The app is a client; offices serve organization data
 
-Status: accepted 2026-11-08; reconciled with the selected organization data model
-2026-11-15. Owner: ada. [ADR-0005](0005-standalone-server-v1.md) owns standalone
-deployment. The [authority map](../design/documentation-authority.md) separates
-selected target contracts from implemented protocols and deferred engines.
+Status: accepted. [ADR-0005](0005-standalone-server-v1.md) owns standalone
+deployment. The [authority map](../design/documentation-authority.md) names the
+owning document for each topic.
 
 ## The model
 
 - **An organization** owns a recursive team forest, employees, roles, projects,
   offices and repository registrations. Each employee has exactly one home team.
   A team lead is a direct member who manages that team's subtree; direct reporting
-  lines remain a separate relationship. A security principal's owner authority is
+  lines are a separate relationship. A security principal's owner authority is
   not derived from an employee record or its place in the chart.
 - **A project** has one required accountable owner team and optional contributing
   teams. It may use several organization-registered repositories; each association
   selects its integration branch. A project is not a repository or an office.
 - **A task** has a required accountable team and an optional project. A project
   task's accountable team is its project's owner. Current assigned team and
-  individual assignee are independent nullable fields. Task, bug and request are
-  types of the same task entity and use the same scoped T- sequence. Assigning
-  work changes neither its reporter nor its stable identity or number.
+  individual assignee are independent nullable fields. A task has a type; every
+  type uses the same `T-` reference. Assigning work changes neither its reporter
+  nor its stable identity or reference.
 - **An office** belongs to one organization. The organization has one HQ and may
-  have satellites. Offices place agents and execute work; they do not own teams,
-  projects or independent copies of numbering authority. People have employee
-  profiles but no execution placement. An agent's office placement is separate
-  from its home team and protected by durable execution generations.
+  have satellites. Offices place agents and execute work; they do not own teams or
+  projects. People have employee profiles but no execution placement. An agent's
+  office placement is separate from its home team and protected by durable
+  execution generations.
 - **The application** is a browser client of HQ over authenticated HTTP. Opening
   it neither installs an office nor enrolls a satellite. Instance setup, service
-  lifetime and browser sessions remain separate.
+  lifetime and browser sessions are separate.
 
 The owning relationships and field contracts are in organization-data documents
 [01](../design/organization-data/01-organization-structure.md),
@@ -41,48 +40,42 @@ The owning relationships and field contracts are in organization-data documents
 1. **One office is served by one worker process.** `agentic-org serve` composes
    the host library and supervises `agentic-org-office` workers through the
    private launch contract. The instance's `agentic-org-web` process terminates
-   browser HTTP separately from key custody. Setup/service registration and
-   production web handoff remain pending as recorded in
-   [executable migration](../design/executable-migration.md). Satellites connect
-   outward using their office identities; a certificate is not owner authority.
-2. **Canonical sources and indexed projections have different lifetimes.**
-   Selected definitions, task files, feature definitions and published task history
-   live in the remote organization Git repository, mirrored as durable local files.
-   Code repositories may be remote or local-only. Office SQLite projects shared
-   records and contains explicitly transient state; it is not the only durable
-   source of tasks, messages, accounting or authority. Protected messaging sources,
-   the usage archive, budget decisions, receipts and execution evidence survive
-   cache deletion outside Git. Author-private task notes use a separate durable
-   database and never enter shared task history. See
-   [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) for encryption, writer and
-   flush guarantees; its SQL boundary does not make ordinary files encrypted.
+   browser HTTP and holds no keys. [Executable migration](../design/executable-migration.md)
+   records which entry points exist today. Satellites connect outward using their
+   office identities; a certificate is not owner authority.
+2. **Files are the source; the database is a projection.** Definitions, task
+   files, feature definitions and published task history live in the remote
+   organization Git repository, mirrored as durable local files. Code repositories
+   may be remote or local-only. The office database indexes shared records and
+   holds explicitly transient state; it is not the only durable source of tasks,
+   messages, accounting or authority. Protected messaging sources, the usage
+   archive, budget decisions, receipts and execution evidence survive cache
+   deletion outside Git. Private task notes use a separate durable database
+   and never enter shared task history. [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)
+   owns the writer and flush guarantees.
 3. **Clients use authorized capabilities, never SQL files.** The browser uses
    HQ's HTTP API and agents use their bound office through `agent-os`. Domain
    authorization, private-note ownership and per-message visibility apply to
    queries, search, feeds and exports as well as writes. An office replica or a
    shared schema is not a grant to expose every record to every agent.
 4. **Creation and numbering authority are explicit.** HQ creates teams, projects,
-   releases and milestones. Any office can durably save tasks/features while
-   disconnected, with a stable ID and pending final number. The shared authority
-   allocates numbers and registers feature slugs; replicas never increment
-   counters independently. Acknowledged allocation evidence must survive loss of
-   a cache and cannot rely on hourly Git publication. New IDs use UUIDv7; old
-   stable IDs and explicit legacy reference mappings are preserved. Document
+   releases and milestones. Any office can durably save tasks and features while
+   disconnected. A task gets its final reference from the creating office at once
+   ([ADR-0019](0019-office-coded-task-numbers.md)). A feature has a stable ID and
+   a pending number until HQ allocates it and registers its slug. Acknowledged
+   allocation evidence survives loss of a cache and does not rely on hourly Git
+   publication. IDs are UUIDv7. Document
    [06](../design/organization-data/06-identity-and-numbering.md) owns the scopes.
-5. **Contracts remain intentionally versioned.** Existing local `org-proto`,
-   HTTP `/api/v1`, sync and private launch versions are distinct. The standalone
-   plan calls for local API_VERSION 2 when breaking app-only calls/home mutation
-   fields and changing authority; this documentation does not claim that transition
-   is deployed. Retained versions are additive-only. Update host, worker, client,
-   agent helpers and fixtures together and reject unsupported versions before
-   dispatch. The current HTTP mutation codec is documented in
-   [gateway-api-v1.md](../design/gateway-api-v1.md); target relationship changes
-   require explicit mappings, not reinterpretation of existing fields.
+5. **Contracts change in place until v1 ships.** The local `org-proto` API, HTTP
+   `/api/v1`, the sync contract and the launch contract are separate contracts.
+   Each has one current form; no older version, adapter or mapping is kept
+   ([pre-release rule](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
+   Host, worker, client, agent helpers and fixtures change together, and an
+   unsupported version is rejected before dispatch. The HTTP mutation codec is
+   documented in [web-api-v1.md](../design/web-api-v1.md).
 6. **The agent CLI stays small and office-first.** `agent-os` communicates with
-   its bound office; cross-office delivery is routed through HQ. Preserve live
-   Phase A spool asks, replies, deadlines and triage until the separately verified
-   [messaging cutover](0003-agent-messaging-office-first.md#live-phase-a-coordination-cutover-and-person-started-context).
-   An installed legacy CLI is not replaced merely because executable names changed.
+   its bound office; cross-office delivery is routed through HQ
+   ([ADR-0003](0003-agent-messaging-office-first.md)).
 7. **Repository layout:** `crates/` holds libraries and `apps/` holds runnable or
    shipped applications. Apps compose libraries; library code does not depend on
    applications. A table does not imply a crate, database or public API.
@@ -98,20 +91,8 @@ The owning relationships and field contracts are in organization-data documents
 - [Recovery](../design/organization-data/16-recovery-and-office-continuity.md):
   protected sources and loss boundaries. Git alone does not restore an office.
 
-## Earlier requirements and implementation evidence
+## Not in v1
 
-The [pre-reconciliation ADR](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/adr/0001-app-is-a-client-office-is-a-server.md)
-records the desktop/SMAppService design and earlier `org.db`/`office.db` split.
-Those names describe inspected storage and are not a migration accomplished by
-this decision. Existing protocol, key-custody and live coordination obligations
-remain until their replacements are implemented and verified. The absence of a
-deployed desktop population does not authorize deleting live coordination data.
-
-## Out of scope for now
-
-The selected data draft does not implement a migration, task mutation service,
-private-note access control, backup/restore engine or distributed budget control.
-Automatic HQ promotion and the optional Tauri shell remain later work. Areas,
-Undo, advanced checklist execution, retrospectives, automatic scheduling/memory
-and process resolution/execution remain unselected; structural process/standard
-records do not select those engines.
+Automatic HQ promotion. Undo, advanced checklist execution, retrospectives,
+automatic scheduling and memory, and process execution engines are not selected;
+structural process and standard records do not select those engines.

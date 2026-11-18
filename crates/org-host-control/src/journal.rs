@@ -42,10 +42,6 @@
 //!   no type for it. A **refused** create (`already_exists`, `invalid_name`, stored) produced no
 //!   hash and keeps no verifier: its refusal doesn't depend on the password, so a replay returns
 //!   it whatever password it carries.
-//! - A `bootstrap` replay checks the `login` and password as a sign-in instead, first: a `login`
-//!   and password that don't sign in are `not_authorized`. Then its fingerprint (the normalized
-//!   `login` and `hq_operation_id`, never the password or the TLS pair) and then the pair, by
-//!   [`crate::ops::TlsPair::fingerprint`] (see [`crate::ops::Bootstrap`]).
 //!
 //! **Logins are fingerprinted normalized** (X-02 §6.3; §6.2: NFC, case-folded), so `Admin` and
 //! `admin` are the same op. This crate doesn't normalize and adds no dependency to do it: callers
@@ -56,9 +52,8 @@ use org_proto::Call;
 use serde::Serialize;
 
 use crate::ops::{
-    AccountCreate, AccountCreateParams, Bootstrap, BootstrapParams, OfficeRestart,
-    OfficeRestartParams, OrganizationCreate, OrganizationCreateParams, TlsPairFingerprint, TlsSet,
-    TlsSetParams,
+    AccountCreate, AccountCreateParams, OfficeRestart, OfficeRestartParams, TlsPairFingerprint,
+    TlsSet, TlsSetParams,
 };
 
 /// A journaled op's params. Each implementation destructures its params exhaustively, so adding
@@ -91,28 +86,6 @@ pub fn fingerprint<J: Journaled>(params: &J) -> Result<[u8; 32], serde_json::Err
     Ok(Sha256::digest(fingerprint_input(params)?).into())
 }
 
-impl Journaled for OrganizationCreateParams {
-    const METHOD: &'static str = OrganizationCreate::METHOD;
-
-    fn operation_id(&self) -> &str {
-        &self.operation_id
-    }
-
-    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
-        #[derive(Serialize)]
-        struct Fields<'a> {
-            name: &'a str,
-        }
-        // Exhaustive, so a param added later must be fingerprinted or excluded here to compile.
-        let OrganizationCreateParams {
-            session: _,
-            operation_id: _,
-            name,
-        } = self;
-        serde_json::to_string(&Fields { name })
-    }
-}
-
 impl Journaled for OfficeRestartParams {
     const METHOD: &'static str = OfficeRestart::METHOD;
 
@@ -125,6 +98,7 @@ impl Journaled for OfficeRestartParams {
         struct Fields<'a> {
             office_id: &'a str,
         }
+        // Exhaustive, so a param added later must be fingerprinted or excluded here to compile.
         let OfficeRestartParams {
             session: _,
             operation_id: _,
@@ -169,42 +143,6 @@ impl Journaled for AccountCreateParams {
     }
 }
 
-impl Journaled for BootstrapParams {
-    const METHOD: &'static str = Bootstrap::METHOD;
-
-    fn operation_id(&self) -> &str {
-        &self.operation_id
-    }
-
-    /// `login` and `hq_operation_id` (X-02 §6.3). Never the password, which a replay checks as
-    /// a sign-in first, and never the TLS pair, which a replay compares after the fingerprint by
-    /// [`crate::ops::TlsPair::fingerprint`] (`tls_mismatch`; a pair the PEM reader refuses has no
-    /// fingerprint and is `tls_invalid`, unstored): so another `hq_operation_id` is
-    /// `operation_reused`, and another pair passes the fingerprint and gets `tls_mismatch` with
-    /// its guidance.
-    ///
-    /// `login` is used as given: callers pass it **normalized** (NFC, case-folded; X-02 §6.2,
-    /// §6.3), because this crate doesn't normalize.
-    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
-        #[derive(Serialize)]
-        struct Fields<'a> {
-            login: &'a str,
-            hq_operation_id: &'a str,
-        }
-        let BootstrapParams {
-            operation_id: _,
-            password: _,
-            tls: _,
-            login,
-            hq_operation_id,
-        } = self;
-        serde_json::to_string(&Fields {
-            login,
-            hq_operation_id,
-        })
-    }
-}
-
 impl Journaled for TlsSetParams {
     const METHOD: &'static str = TlsSet::METHOD;
 
@@ -217,8 +155,6 @@ impl Journaled for TlsSetParams {
     /// block's DER, each with a u32 big-endian length prefix, in order) and of the DER of `key`'s
     /// first `PRIVATE KEY`, `RSA PRIVATE KEY` or `EC PRIVATE KEY` block.
     /// Never the pair itself, so the journal holds no key and the stored result echoes neither.
-    /// It is the same implementation as [`crate::ops::TlsPair::fingerprint`], so a pair
-    /// fingerprints the same in `tls.set` and `bootstrap`.
     ///
     /// **An error means the pair has no fingerprint** (serializing the two hashes can't fail): a
     /// block that's missing, or one the PEM reader ([`crate::pem`]) refuses. It never quotes the

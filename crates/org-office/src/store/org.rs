@@ -525,7 +525,7 @@ fn submit_as(
             return Ok(Err(ApiError::new(
                 ErrorCode::Unavailable,
                 "organization writes require available HQ authority",
-            )))
+            )));
         }
     };
     let command_id = command.command_id();
@@ -838,6 +838,34 @@ pub(crate) fn snapshot(db: &Connection) -> Result<OrgSnapshot, OfficeError> {
     result.map_err(|_| OfficeError::storage(std::io::Error::other("a snapshot query failed")))
 }
 
+pub(crate) fn prepare_hq_genesis(
+    store: &super::Store,
+    info: &crate::OfficeInfo,
+    binding: &crate::hq_creation::Binding,
+) -> Result<(), OfficeError> {
+    let info = info.clone();
+    let owner = binding.owner_member_id.clone();
+    store.write(move|db| {
+        let invalid=||OfficeError::Invalid("HQ provisioning requires recovery");
+        let existing:Option<String>=db.query_row("SELECT value FROM meta WHERE key='organization_id'",[],|r|r.get(0)).optional().map_err(OfficeError::storage)?;
+        if let Some(org)=existing {
+            if org!=info.org_id {return Err(invalid());}
+            for (name,expected) in [("office_id",&info.office_id),("organization_name",&info.org_name),("created_at",&info.created_at)] {
+                let value:Option<String>=db.query_row("SELECT value FROM meta WHERE key=?1",[name],|r|r.get(0)).optional().map_err(OfficeError::storage)?;
+                if value.as_ref()!=Some(expected) {return Err(invalid());}
+            }
+            let member=OrgSql(db).member(&owner).ok_or_else(invalid)?;
+            if !member.owner || member.kind!=MemberKind::Person || last_position(db)?.is_none() {return Err(invalid());}
+            return Ok(((),None));
+        }
+        let occupied:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM events) OR EXISTS(SELECT 1 FROM members) OR EXISTS(SELECT 1 FROM meta)",[],|r|r.get(0)).map_err(OfficeError::storage)?;
+        if occupied {return Err(invalid());}
+        db.execute("INSERT INTO meta VALUES('office_id',?1)",[&info.office_id]).map_err(OfficeError::storage)?;
+        genesis(db,&Genesis {org_id:info.org_id.clone(),org_name:info.org_name.clone(),created_at:info.created_at.clone(),owner_id:owner.clone()})?;
+        Ok(((),None))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use org_proto::org::{
@@ -851,7 +879,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::key::Key;
+
     use crate::rules::memory::MemState;
     use crate::rules::{decide, OrgCommand};
     use crate::store::{Opening, Store};
@@ -861,13 +889,7 @@ mod tests {
 
     fn store() -> (TempDir, Store) {
         let dir = TempDir::new().unwrap();
-        let store = Store::open(
-            &dir.path().join("org.db"),
-            &Key::from_bytes([5; 32]),
-            Opening::New,
-            &SCHEMA,
-        )
-        .unwrap();
+        let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
         let genesis = Genesis {
             org_id: "ORG1".into(),
             org_name: "Acme".into(),
@@ -1444,13 +1466,7 @@ mod tests {
     #[test]
     fn an_org_db_from_before_the_log_with_its_identity_row_still_counts_as_committed() {
         let dir = TempDir::new().unwrap();
-        let store = Store::open(
-            &dir.path().join("org.db"),
-            &Key::from_bytes([5; 32]),
-            Opening::New,
-            &SCHEMA,
-        )
-        .unwrap();
+        let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
         assert!(
             !store.read(is_committed).unwrap(),
             "a schema alone is not an organization"
@@ -1471,13 +1487,7 @@ mod tests {
     #[test]
     fn a_snapshot_of_an_empty_log_is_not_found() {
         let dir = TempDir::new().unwrap();
-        let store = Store::open(
-            &dir.path().join("org.db"),
-            &Key::from_bytes([5; 32]),
-            Opening::New,
-            &SCHEMA,
-        )
-        .unwrap();
+        let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
         assert!(matches!(store.read(snapshot), Err(OfficeError::NotFound)));
     }
 

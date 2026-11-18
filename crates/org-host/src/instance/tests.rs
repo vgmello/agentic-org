@@ -54,6 +54,36 @@ impl Fixture {
 }
 
 #[test]
+fn read_only_routing_verifies_binding_while_the_writer_holds_root_lock() {
+    let fixture = Fixture::new();
+    let instance = fixture.reserve("default");
+    let before = fs::read(fixture.locator()).unwrap();
+    let (id, temp) = fixture
+        .registry
+        .locate(None, &fixture.root("default"))
+        .unwrap();
+    assert_eq!(id, instance.id());
+    assert_eq!(temp, instance.temp_folder());
+    assert_eq!(fs::read(fixture.locator()).unwrap(), before);
+    assert!(fixture
+        .registry
+        .reserve(None, &fixture.root("default"))
+        .is_err());
+    assert!(fixture
+        .registry
+        .locate(None, &fixture.root("different"))
+        .is_err());
+    fs::rename(fixture.root("default"), fixture.root("moved")).unwrap();
+    fs::create_dir(fixture.root("default")).unwrap();
+    fs::set_permissions(fixture.root("default"), fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(fixture
+        .registry
+        .locate(None, &fixture.root("default"))
+        .is_err());
+    assert_eq!(fs::read(fixture.locator()).unwrap(), before);
+}
+
+#[test]
 fn locator_writer_validates_the_same_rules_as_the_reader_before_publication() {
     for invalid in [
         "version",
@@ -177,7 +207,7 @@ fn rebind_rechecks_both_locator_binding_and_phase_after_confirmation() {
             let lock = fixture.registry.directory.lock_file(LOCK).unwrap();
             let (mut locator, previous) = fixture.registry.load().unwrap();
             if binding_change {
-                locator.entries[0].binding.id = crate::ids::generate().unwrap();
+                locator.entries[0].binding.id = crate::ids::uuid_v7().unwrap();
             } else {
                 locator.entries[0].phase = Phase::Reserved;
             }
@@ -453,7 +483,7 @@ fn reservation_is_private_durable_and_reopens_without_changing_identity() {
         .reserve(None, &fixture.root("default"))
         .unwrap();
     assert_eq!(instance.name(), "default");
-    assert!(org_proto::ulid_time_ms(instance.id()).is_some());
+    assert!(org_proto::is_uuid_v7(instance.id()));
     assert_eq!(instance.root(), fixture.root("default"));
     let id = instance.id().to_owned();
     let config = fs::read(instance.root().join(CONFIG)).unwrap();
@@ -1123,7 +1153,7 @@ fn a_crashed_owner_releases_its_lock_without_losing_identity() {
     let fixture = Fixture::new();
     let output = fixture.root("result");
     let mut owner = child(&fixture, "hold", &output);
-    until(|| fs::metadata(&output).is_ok_and(|metadata| metadata.len() == 26));
+    until(|| fs::metadata(&output).is_ok_and(|metadata| metadata.len() == 36));
     let id = fs::read_to_string(&output).unwrap();
     assert!(matches!(
         fixture.registry.reserve(Some("lab"), &fixture.root("lab")),
@@ -1132,4 +1162,23 @@ fn a_crashed_owner_releases_its_lock_without_losing_identity() {
     owner.0.kill().unwrap();
     owner.0.wait().unwrap();
     assert_eq!(fixture.reserve("lab").id(), id);
+}
+
+/// The host's one instance-ID format check accepts only canonical lowercase UUIDv7 text: a
+/// ULID (the earlier form), uppercase UUIDv7 and another UUID version are refused.
+#[test]
+fn instance_ids_are_canonical_lowercase_uuid_v7() {
+    let minted = crate::ids::uuid_v7().unwrap();
+    assert!(super::valid_instance_id(&minted));
+    assert!(super::valid_instance_id(
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182"
+    ));
+    for refused in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F607182",
+        "0190a5d2-7c3e-4a01-8b2c-3d4e5f607182",
+        "",
+    ] {
+        assert!(!super::valid_instance_id(refused), "{refused}");
+    }
 }

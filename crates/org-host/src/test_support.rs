@@ -6,8 +6,8 @@ use std::sync::{
 use std::time::Duration;
 
 use org_proto::{
-    ApiError, Call, Empty, ErrorCode, Event, ListOfficesResult, ListOrganizationsResult,
-    OfficeList, OrganizationCreate, OrganizationList, Request, Response, ServerMessage, Subscribe,
+    ApiError, Call, Empty, Event, ListOfficesResult, ListOrganizationsResult, OfficeList,
+    OrganizationList, Request, Response, ServerMessage, Subscribe,
 };
 use serde_json::Value;
 
@@ -34,18 +34,7 @@ impl Fixture {
         })
     }
     pub fn submit(self: &Arc<Self>, request: Request) {
-        if request.is::<OrganizationCreate>() {
-            match request.params::<OrganizationCreate>() {
-                Ok(params) => {
-                    if let Err(error) = self.offices.create_organization(&params.name, |org| {
-                        self.answer::<OrganizationCreate>(request.id, Ok(org.clone()))
-                    }) {
-                        self.answer::<OrganizationCreate>(request.id, Err(error));
-                    }
-                }
-                Err(_) => self.invalid(request.id),
-            }
-        } else if request.is::<OrganizationList>() {
+        if request.is::<OrganizationList>() {
             self.broadcast.snapshot(|| {
                 self.answer::<OrganizationList>(
                     request.id,
@@ -80,25 +69,11 @@ impl Fixture {
         };
         self.tx.send(ServerMessage::Response(response)).unwrap();
     }
-    fn invalid(&self, id: u64) {
-        self.tx
-            .send(ServerMessage::Response(Response::error(
-                id,
-                ApiError::new(ErrorCode::InvalidRequest, "invalid fixture params"),
-            )))
-            .unwrap();
-    }
     pub fn recv(&self, timeout: Duration) -> Option<ServerMessage> {
         lock(&self.rx).recv_timeout(timeout).ok()
     }
     pub fn offices(&self) -> Vec<org_proto::OfficeInfo> {
         self.offices.offices()
-    }
-    /// Obtain the typed token for native key assertions without exposing a wire method.
-    pub fn token(&self, id: &str) -> Result<org_proto::AppToken, ApiError> {
-        self.offices.app_token(id, |token| {
-            serde_json::from_value(serde_json::to_value(token).unwrap()).unwrap()
-        })
     }
     pub fn restart(&self, id: &str) -> Result<(), ApiError> {
         self.offices.restart_office(id)

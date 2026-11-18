@@ -8,8 +8,8 @@ import { NotDispatchedError } from './errors';
 const root = new URL('../../../../../../crates/org-proto/test-vectors/v2/', import.meta.url);
 const counts = {
 	'gateway-envelopes': 17, 'gateway-idempotency': 4, 'gateway-lookup-query': 18, 'gateway-lookups': 26,
-	'gateway-mutation-results': 44, 'gateway-outcomes': 35, 'gateway-paths': 17, 'gateway-resource-errors': 3,
-	'gateway-session': 8, 'gateway-stream': 15, 'gateway-views': 17
+	'gateway-mutation-results': 44, 'gateway-outcomes': 38, 'gateway-paths': 17, 'gateway-resource-errors': 3,
+	'gateway-session': 10, 'gateway-stream': 15, 'gateway-views': 18
 } as const;
 type Name = keyof typeof counts;
 type Case = Record<string, unknown> & { name: string; expect: Record<string, unknown> };
@@ -45,8 +45,8 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 		throw new Error('Unsupported gateway fixture contract_revision');
 	}
 	const pinned = revision === 2
-		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 205 }
-		: { counts, total: 204 };
+		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 211 }
+		: { counts, total: 210 };
 	for (const name of Object.keys(counts) as Name[]) {
 		expect(data[name].schema_version, `${name} schema_version`).toBe(1);
 		expect(data[name].cases, `${name} main cases`).toHaveLength(pinned.counts[name]);
@@ -55,7 +55,10 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 }
 
 it('pins core main cases and every landed gateway file', () => {
-	expect(readdirSync(root).filter((name) => /^gateway-.*\.json$/.test(name)).sort()).toEqual(Object.keys(counts).map((name) => `${name}.json`).sort());
+	// gateway-organizations is read by the Rust contract only until the create page lands its readers (A4.5); its count is pinned here.
+	const landed = { ...counts, 'gateway-organizations': 18 };
+	expect(readdirSync(root).filter((name) => /^gateway-.*\.json$/.test(name)).sort()).toEqual(Object.keys(landed).map((name) => `${name}.json`).sort());
+	expect(JSON.parse(readFileSync(new URL('gateway-organizations.json', root), 'utf8')).cases).toHaveLength(landed['gateway-organizations']);
 	assertCoreCounts(fixtures);
 });
 

@@ -16,13 +16,19 @@ org-host-control = { path = "../../crates/org-host-control" }
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
+org-platform = { path = "../org-platform" }
+org-release = { path = "../org-release" }
 serde.workspace = true
+zeroize = "=1.9.1"
 serde_json.workspace = true
 sha2.workspace = true
+hmac.workspace = true
 libc.workspace = true
 rusqlite.workspace = true
 caseless = "=0.2.2"
 unicode-normalization = "=0.1.26"
+tar = { version = "=0.4.46", default-features = false }
+flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The Data Protection keychain (the release key store, `src/keys/keychain.rs`) needs the
@@ -33,4 +39,9 @@ core-foundation.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+ring = "=0.17.14"
 syn = { version = "=2.0.119", features = ["full", "visit"] }
+
+[build-dependencies]
+org-release = { path = "../org-release" }
+cc = "=1.11.1"

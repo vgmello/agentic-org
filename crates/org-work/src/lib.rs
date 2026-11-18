@@ -23,11 +23,17 @@
 //!   step ticks only when its task is Done · Completed and unticks on a reopen (automatic,
 //!   undoable for an hour).
 //! - `work.comment` (questions to the owner open a waiting span), `work.watch`, `work.link` /
-//!   `work.unlink` (`relates_to`), `work.undo`, `work.delete` (a tombstone, app-only).
+//!   `work.unlink` (`relates_to`), `work.undo`, `work.delete` (a tombstone, grant-only).
 //! - Per-project `T-n` numbers, allocated in the create's transaction.
 //! - `change_id` idempotency (answers stored and replayed, refusals included, matched by a
 //!   params hash) and `expected_version` with per-field conflicts.
 //! - Time figures from events ([`time_figures`]).
+//!
+//! [`check_task_history_coverage`] separately checks selected task-history header coverage;
+//! payload verification and persistence remain the caller's responsibility.
+//! [`selected_assignment`] separately plans the selected complete team/employee assignment
+//! pair and its change payload; service authorization and recoverable acceptance remain the
+//! caller's responsibility. Legacy commands and storage ports retain their existing behavior.
 //!
 //! ## What phase 2 adds: bugs
 //! - `bug.report`, `bug.update`, `bug.triage`, `bug.assign`, `bug.mark_fixed`, `bug.verify`,
@@ -63,12 +69,16 @@ mod fail;
 mod feed;
 mod fixes;
 mod hash;
+mod history_coverage;
 mod ids;
 mod items;
 mod kpi;
 mod model;
 mod ports;
 mod refs;
+pub mod selected_assignment;
+pub mod selected_codec;
+pub mod selected_history;
 mod service;
 mod states;
 mod tasks;
@@ -83,9 +93,14 @@ pub mod testkit;
 pub use call::{Caller, WorkCall};
 pub use cascades::reconcile_bugs;
 pub use engine::{
-    execute, TxnOutput, CHANGE_ID_MAX_AGE_MS, CHANGE_ID_MAX_AHEAD_MS, CHANGE_RESULT_KEEP_MS,
+    execute, lookup_existing, TxnOutput, CHANGE_ID_MAX_AGE_MS, CHANGE_ID_MAX_AHEAD_MS,
+    CHANGE_RESULT_KEEP_MS,
 };
 pub use hash::{canonical_json, params_hash};
+pub use history_coverage::{
+    check_task_history_coverage, TaskHistoryCoverage, TaskHistoryCoverageError, TaskHistoryHeader,
+    TaskHistoryOrigin,
+};
 pub use ids::{is_ulid, short_id, ulid_from_parts, ulid_time_ms};
 pub use items::DOC_KEY_MAX_CHARS;
 pub use kpi::{time_figures, TimeTally};

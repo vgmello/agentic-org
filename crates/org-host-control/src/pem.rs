@@ -1,6 +1,6 @@
 //! The DER inside a PEM text (RFC 7468): the body of the first block with one of the wanted
-//! labels, base64-decoded strictly. It is the one PEM reader of X-02 (§6.2): `tls.set`'s and
-//! `bootstrap`'s pair fingerprint ([`crate::ops::TlsPair::fingerprint`]) reads the pair with it,
+//! labels, base64-decoded strictly. It is the one PEM reader of X-02 (§6.2): `tls.set`'s pair
+//! fingerprint ([`crate::ops::TlsPairFingerprint`]) reads the pair with it,
 //! and so does the host's own parse of the pair ([`all_blocks`] for the certificate chain,
 //! [`first_block`] for the key), so both frame a pair the same way.
 //!

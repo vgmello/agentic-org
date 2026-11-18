@@ -159,7 +159,7 @@ fn undo(w: &World, target: &str, version: u64) -> WorkCall {
 fn undo_restores_an_automatic_tick_and_is_not_re_applied_until_a_new_trigger() {
     let w = World::new();
     let (parent, step, task, v) = auto_ticked(&w);
-    w.ok(&app(), undo(&w, &parent, v));
+    w.ok(&owner_by_grant(), undo(&w, &parent, v));
     assert!(!w.step(&parent, &step).done);
     let e = w.last_event(&parent);
     assert_eq!(e.change, WorkEventKind::Undone { event_version: v });
@@ -168,7 +168,7 @@ fn undo_restores_an_automatic_tick_and_is_not_re_applied_until_a_new_trigger() {
     assert_eq!(e.cause.as_ref().map(|c| c.version), Some(v));
     // Already undone.
     assert_eq!(
-        w.code(&app(), undo(&w, &parent, v)),
+        w.code(&owner_by_grant(), undo(&w, &parent, v)),
         ErrorCode::InvalidRequest
     );
     // Nothing re-ticks it on its own; a new trigger (reopen, done again) does.
@@ -187,7 +187,7 @@ fn undo_is_refused_after_an_hour_after_a_later_change_and_for_a_manual_event() {
     let (parent, _, _, v) = auto_ticked(&w);
     w.clock.advance(HOUR + 1);
     assert_eq!(
-        w.code(&app(), undo(&w, &parent, v)),
+        w.code(&owner_by_grant(), undo(&w, &parent, v)),
         ErrorCode::InvalidRequest
     );
 
@@ -195,14 +195,26 @@ fn undo_is_refused_after_an_hour_after_a_later_change_and_for_a_manual_event() {
     let (parent, _, task, v) = auto_ticked(&w);
     // A later automatic untick (the task reopened) touched the same step.
     w.set(&task, Todo);
-    assert_eq!(w.code(&app(), undo(&w, &parent, v)), ErrorCode::Conflict);
+    assert_eq!(
+        w.code(&owner_by_grant(), undo(&w, &parent, v)),
+        ErrorCode::Conflict
+    );
 
     let w = World::new();
     let id = w.task();
     w.set(&id, InProgress);
-    assert_eq!(w.code(&app(), undo(&w, &id, 2)), ErrorCode::InvalidRequest);
-    assert_eq!(w.code(&app(), undo(&w, &id, 9)), ErrorCode::NotFound);
-    assert_eq!(w.code(&app(), undo(&w, &w.id(), 1)), ErrorCode::NotFound);
+    assert_eq!(
+        w.code(&owner_by_grant(), undo(&w, &id, 2)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        w.code(&owner_by_grant(), undo(&w, &id, 9)),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        w.code(&owner_by_grant(), undo(&w, &w.id(), 1)),
+        ErrorCode::NotFound
+    );
 }
 
 #[test]
@@ -218,7 +230,10 @@ fn undo_of_bookkeeping_is_refused() {
         w.last_event(&id).change,
         WorkEventKind::WaitingStarted { .. }
     ));
-    assert_eq!(w.code(&app(), undo(&w, &id, v)), ErrorCode::InvalidRequest);
+    assert_eq!(
+        w.code(&owner_by_grant(), undo(&w, &id, v)),
+        ErrorCode::InvalidRequest
+    );
 }
 
 #[test]
@@ -251,7 +266,7 @@ fn unlinking_or_deleting_the_made_task_makes_a_plain_step() {
     let (parent, step) = w.task_with_step(false);
     let (task, call) = w.make_task(&step);
     w.ok(&agent(), call);
-    let accepted = w.ok(&app(), w.delete(&task));
+    let accepted = w.ok(&owner_by_grant(), w.delete(&task));
     assert_eq!(accepted.items.len(), 2);
     assert_eq!(w.step(&parent, &step).task_id, None);
     assert!(matches!(
@@ -335,18 +350,18 @@ fn a_text_edit_and_a_tick_made_concurrently_are_both_kept() {
     let (id, step) = w.task_with_step(false);
     let seen = w.step(&id, &step).version;
     w.ok(&agent(), w.check(&step, true));
-    w.ok(&app(), edit(&w, &step, seen, "Write more tests"));
+    w.ok(&owner_by_grant(), edit(&w, &step, seen, "Write more tests"));
     let s = w.step(&id, &step);
     assert!(s.done);
     assert_eq!(s.text, "Write more tests");
     // A second edit from the same old version is stale: the content changed.
     assert_eq!(
-        w.code(&app(), edit(&w, &step, seen, "Other")),
+        w.code(&owner_by_grant(), edit(&w, &step, seen, "Other")),
         ErrorCode::Conflict
     );
     // A version above the step's is invalid.
     assert_eq!(
-        w.code(&app(), edit(&w, &step, s.version + 1, "Other")),
+        w.code(&owner_by_grant(), edit(&w, &step, s.version + 1, "Other")),
         ErrorCode::InvalidRequest
     );
 }
@@ -358,14 +373,20 @@ fn remove_after_a_make_task_is_conflict_and_ends_the_tasks_link_otherwise() {
     let seen = w.step(&id, &step).version;
     let (task, call) = w.make_task(&step);
     w.ok(&agent(), call);
-    assert_eq!(w.code(&app(), remove(&w, &step, seen)), ErrorCode::Conflict);
+    assert_eq!(
+        w.code(&owner_by_grant(), remove(&w, &step, seen)),
+        ErrorCode::Conflict
+    );
     let now = w.step(&id, &step).version;
-    w.ok(&app(), remove(&w, &step, now));
+    w.ok(&owner_by_grant(), remove(&w, &step, now));
     assert!(w.step(&id, &step).removed);
     assert_eq!(w.item(&id).summary().checklist.total, 0);
     assert!(w.item(&task).part_of().is_none());
     // A removed step is gone for every call; its id stays taken.
-    assert_eq!(w.code(&app(), w.check(&step, true)), ErrorCode::NotFound);
+    assert_eq!(
+        w.code(&owner_by_grant(), w.check(&step, true)),
+        ErrorCode::NotFound
+    );
     let add = WorkCall::ChecklistAdd(ChecklistAddParams {
         change_id: w.id(),
         item_id: id.clone(),
@@ -376,7 +397,7 @@ fn remove_after_a_make_task_is_conflict_and_ends_the_tasks_link_otherwise() {
         }],
         after_step_id: None,
     });
-    assert_eq!(w.code(&app(), add), ErrorCode::AlreadyExists);
+    assert_eq!(w.code(&owner_by_grant(), add), ErrorCode::AlreadyExists);
 }
 
 #[test]
@@ -385,7 +406,7 @@ fn a_tick_or_a_move_never_makes_a_remove_stale() {
     let (id, step) = w.task_with_step(false);
     let seen = w.step(&id, &step).version;
     w.ok(&agent(), w.check(&step, true));
-    w.ok(&app(), remove(&w, &step, seen));
+    w.ok(&owner_by_grant(), remove(&w, &step, seen));
 }
 
 fn add(w: &World, item: &str, texts: &[&str], after: Option<&str>) -> (Vec<String>, WorkCall) {
@@ -488,7 +509,7 @@ fn a_deleted_parent_gets_no_automatic_tick() {
     let (parent, step) = w.task_with_step(false);
     let (task, call) = w.make_task(&step);
     w.ok(&agent(), call);
-    w.ok(&app(), w.delete(&parent));
+    w.ok(&owner_by_grant(), w.delete(&parent));
     let n = w.events(&parent).len();
     let accepted = w.set(&task, Done);
     assert_eq!(accepted.items.len(), 1);
@@ -506,7 +527,10 @@ fn undoing_a_tick_is_stale_once_the_step_stopped_following_its_task() {
             step_id: step,
         }),
     );
-    assert_eq!(w.code(&app(), undo(&w, &parent, v)), ErrorCode::Conflict);
+    assert_eq!(
+        w.code(&owner_by_grant(), undo(&w, &parent, v)),
+        ErrorCode::Conflict
+    );
 }
 
 #[test]
@@ -707,7 +731,7 @@ fn b111_parent_cancel_and_other_transitions_keep_their_existing_semantics() {
     w.set(&parent, InProgress);
     let mut p = w.status(&parent, Done);
     p.resolution = Some(Resolution::Cancelled);
-    w.ok(&app(), WorkCall::TaskSetStatus(p));
+    w.ok(&owner_by_grant(), WorkCall::TaskSetStatus(p));
 }
 
 #[test]

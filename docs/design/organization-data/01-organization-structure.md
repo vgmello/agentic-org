@@ -1,10 +1,10 @@
 # Organization structure
 
-Structural draft for v1. Document revision 2.6. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Status: **selected** data contract, revision 2.8. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
-An organization contains independent offices, a team forest, projects, roles and repository registrations. HQ creates teams; replicas in other offices do not become independent team-creation authorities. Teams own child teams. Projects name their owning team. Offices locate execution; they do not own the team hierarchy.
+An organization contains independent offices, a team forest, projects, roles and repository registrations. HQ creates teams; other offices never do. Teams own child teams. Projects name their owning team. Offices locate execution; they do not own the team hierarchy.
 
 ```mermaid
 erDiagram
@@ -66,7 +66,7 @@ erDiagram
     teams {
         TEXT organization_id PK, FK "required"
         TEXT id PK, FK "required"
-        INTEGER number "optional"
+        INTEGER number "required"
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
@@ -74,6 +74,7 @@ erDiagram
         TEXT parent_team_id FK "optional"
         TEXT lead_employee_id FK "optional"
         TEXT status "required"
+        INTEGER max_members "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
         TEXT created_by_id FK "optional"
@@ -119,6 +120,22 @@ erDiagram
     }
 ```
 
+## Creating an organization
+
+Setup creates no account, organization or office. The server's administrator, registered through setup's one-time link ([what the host owns](STATUS.md#outside-this-set-what-the-host-owns)), creates the organization and becomes its owner ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). The request names the organization, its slug, the remote organization repository and the state branch. It asks for no team.
+
+Creation is one accepted transaction, the first of the organization's acceptance journal ([document 16](16-recovery-and-office-continuity.md#how-the-directory-begins)). It writes:
+
+1. the organization;
+2. its HQ office;
+3. one team with no parent, named after the organization;
+4. the creator's person record in that team, appointed its lead, and tied by the host to the creator's account;
+5. the built-in HR lead in that team ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)).
+
+Every record it writes is attributed to that person. A project's team is created with the project ([document 02](02-project-structure.md#creating-a-project)).
+
+## Team structure
+
 An employee has exactly one home team. Each team may have direct people, direct agents and child teams together. A team lead is an optional direct employee and manages all other employees in the team's entire subtree, including child-team leads. A TPM located in an ancestor team does not automatically manage descendants. A director/tribe/portfolio is a role or team name, not another entity type.
 
 ## Tracked organization repository content
@@ -131,12 +148,14 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── provider-connections/<connection-id>.yaml
 ├── model-profiles/<profile-id>.yaml
 ├── offices/<office-id>.yaml
+├── security/ca-escrow.v1.bin        # Public encrypted CA package, ADR-0007
 ├── roles/<role-id>.md
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
+├── development-processes/<id>/
 ├── teams/<team-id>/
 │   ├── team.yaml
-│   ├── work/tasks/<task-id>.md       # Team tasks of any type; project_id is null
+│   ├── work/tasks/<task-id>.md       # Team tasks; project_id is null
 │   ├── agents/<employee-id>/profile.md
 │   ├── people/<employee-id>/profile.md
 │   ├── processes/<document-id>.md
@@ -145,33 +164,52 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── projects/<project-id>/...       # Defined in document 02
 ├── identity/counters/<scope-kind>/<scope-id>/<entity-kind>.yaml
 ├── identity/allocations/<scope-kind>/<scope-id>/<entity-kind>/<number>.yaml
+├── identity/office-codes.yaml       # Office letter codes for task references, document 06
 ├── work-history/tasks/<task-id>/<revision>.json  # Immutable task activity, document 05
 └── tombstones/<kind>/<id>.yaml
 ```
 
-`team.yaml` explicitly stores `parent_team_id`; null identifies a root team. The employee profile explicitly stores `home_team_id`. Folders must match those fields. Moves update both the fields and their paths while preserving IDs. There is no top-level members folder. Teams have `status: active | archived`; archiving preserves their IDs and historical references. Common creator/update attribution follows [record contracts](08-record-contracts.md).
+`team.yaml` explicitly stores `parent_team_id`; null identifies a root team. The employee profile explicitly stores `home_team_id`. Folders must match those fields. Moves update both the fields and their paths while preserving IDs. There is no top-level members folder. Teams have `status: active | archived`; archiving preserves their IDs and the records that refer to them. Common creator/update attribution follows [record contracts](08-record-contracts.md).
 
 [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns the connection/profile definitions in this same organization repository. Shared definitions contain references and policy, while office-local auth bindings/credentials stay outside Git.
 
 An office file stores its stable ID, slug, name, revision and `role: hq` or `satellite`. The schema allows one HQ per organization and any number of satellites. Endpoint selection, enrollment, current connectivity and credentials belong to local configuration/operations, not the team hierarchy. Office definitions survive runtime deletion; the current agent placement can be rebuilt separately.
 
+`security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
+package from [ADR-0007](../../adr/0007-hq-creation-escrow.md). The usable CA key is
+an HQ-local record wrapped by the host-held office secrets key
+([ADR-0016](../../adr/0016-no-application-level-data-encryption.md)), excluded from copied organization projections and
+all selected journals/history. The delivery code stays in protected host custody
+until acknowledged; neither secret is organization Git content. The public
+package alone supplies no account, epoch or writer authority.
+
+The protected creation context supplies an explicit absolute canonical state
+root, separate from the private office directory. Creation freezes that location
+with its original operation. Before create completion, the worker publishes the
+exact committed package at that root's `security/ca-escrow.v1.bin`, using immutable
+publication and the required file/parent flushes. A missing copy is repairable
+from committed bytes on reopen; a different copy is retained and refused, never
+overwritten. The binary envelope is the versioned copied record; the organization snapshot codec
+does not acquire secret or escrow fields implicitly. Copies in Git keep this public
+file verbatim.
+
 ## Repository types
 
 ```yaml
 repositories:
-  - id: 01J00000000000000000000001
+  - id: 01930000-0000-7000-8000-000000000001
     key: organization
     schema_version: 1
     revision: 1
     kind: remote
     remote_url: https://example.com/restaurant-saas/organization.git
-  - id: 01J00000000000000000000002
+  - id: 01930000-0000-7000-8000-000000000002
     key: infrastructure
     schema_version: 1
     revision: 1
     kind: remote
     remote_url: https://example.com/restaurant-saas/infrastructure.git
-  - id: 01J00000000000000000000003
+  - id: 01930000-0000-7000-8000-000000000003
     key: kitchen-prototype
     schema_version: 1
     revision: 1
@@ -223,10 +261,10 @@ Common fields and organization scoping follow [shared contracts](README.md).
 | --- | --- |
 | `organizations` | Same-named keys in `organization.yaml`; the selected organization repository must be remote. |
 | `repositories` | Entries of `repositories.yaml.repositories[]`, including `kind` and nullable `remote_url`. |
-| `roles` | Front matter and body of `roles/<id>.md`; agent-specific setup is pending document 04. |
+| `roles` | Front matter and body of `roles/<id>.md`. |
 | `teams` | Same-named fields in `team.yaml`, including `number`, `status` and common attribution, nullable `parent_team_id` and `lead_employee_id`; `key` is derived as `TEAM-<number>`. |
 | `offices` | Same-named keys in `offices/<id>.yaml`; durable organization structure. |
-| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content only; no process engine is specified. |
+| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content. Which documents apply to a piece of work is the v1 resolution rule in the [processes design](../processes.md), decision 4 (organization, then the accountable team's chain, then the project; `overridable: false` cannot be replaced below). No enforcement engine is specified. |
 | `local_repository_locations` | Local durable office/repository binding file: `office_id`, `repository_id`, `origin_path`; never organization Git content. |
 | `repository_caches` | Runtime-only `office_id`, `repository_id`, `bare_path`; not authored in durable organization files. |
 
@@ -242,10 +280,10 @@ CREATE TABLE organizations (
   organization_repository_id TEXT NOT NULL,
   state_branch TEXT NOT NULL,
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   FOREIGN KEY (id, organization_repository_id) REFERENCES repositories(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
@@ -264,10 +302,10 @@ CREATE TABLE repositories (
 kind TEXT NOT NULL CHECK (kind IN ('remote', 'local')),
   remote_url TEXT,
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, key),
@@ -287,10 +325,10 @@ CREATE TABLE roles (
 name TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, key),
@@ -303,7 +341,7 @@ UNIQUE (organization_id, key),
 CREATE TABLE teams (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'TEAM-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
@@ -311,11 +349,12 @@ name TEXT NOT NULL,
   parent_team_id TEXT,
   lead_employee_id TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  max_members INTEGER NOT NULL DEFAULT 6 CHECK (max_members >= 1),
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
@@ -339,10 +378,10 @@ CREATE TABLE offices (
 name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('hq', 'satellite')),
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, slug),
@@ -367,10 +406,10 @@ kind TEXT NOT NULL CHECK (kind IN ('process', 'standard')),
   overridable INTEGER NOT NULL DEFAULT 1 CHECK (overridable IN (0, 1)),
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),

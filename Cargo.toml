@@ -2,8 +2,10 @@
 resolver = "2"
 members = [
   "crates/org-proto",
+  "crates/org-pki",
   "crates/org-host-control",
   "crates/org-client",
+  "crates/org-command",
   "crates/org-office",
   "crates/org-office-launch",
   "crates/org-spool",
@@ -15,6 +17,8 @@ members = [
   "crates/org-runtime",
   "crates/org-supervise",
   "crates/org-socket",
+  "crates/org-release",
+  "crates/org-platform",
   "crates/org-sync",
   "crates/org-sync-proto",
   "apps/agentic-org-office",
@@ -26,8 +30,10 @@ members = [
 # Root checks cover every retained server, CLI and domain member.
 default-members = [
   "crates/org-proto",
+  "crates/org-pki",
   "crates/org-host-control",
   "crates/org-client",
+  "crates/org-command",
   "crates/org-office",
   "crates/org-office-launch",
   "crates/org-spool",
@@ -39,6 +45,8 @@ default-members = [
   "crates/org-runtime",
   "crates/org-supervise",
   "crates/org-socket",
+  "crates/org-release",
+  "crates/org-platform",
   "crates/org-sync",
   "crates/org-sync-proto",
   "apps/agentic-org-office",
@@ -56,13 +64,13 @@ publish = false
 repository = "https://github.com/vgmello/agentic-org"
 
 [workspace.dependencies]
-argon2 = { version = "=0.5.3", default-features = false, features = ["password-hash"] }
+argon2 = { version = "=0.5.3", default-features = false, features = ["password-hash", "alloc", "zeroize"] }
 # Pin exact versions here; crates opt in with `x.workspace = true`.
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 # YAML front matter (org-docs only). Vetted 2026-11-12; 0.3.4 deliberately not yet (ada).
 saphyr-parser = "=0.3.3"
-rusqlite = { version = "=0.42.0", features = ["bundled-sqlcipher"] }
+rusqlite = { version = "=0.42.0", features = ["bundled"] }
 tempfile = "=3.27.0"
 sha2 = "=0.10.9"
 hmac = "=0.12.1"
@@ -82,6 +90,15 @@ security-framework = { version = "=3.7.0", features = ["OSX_10_15"] }
 security-framework-sys = { version = "=2.17.0", features = ["OSX_10_15"] }
 # security-framework's code-signing API takes Core Foundation types (the peer's audit token).
 core-foundation = "=0.10.1"
+
+# Password hashing is Argon2id at 64 MiB: unoptimized it takes seconds per hash, more under
+# load, and a sign-in then overruns the web process's 5 s host-call deadline (a 503). Only
+# these two crates are optimized in debug builds; release is unaffected.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

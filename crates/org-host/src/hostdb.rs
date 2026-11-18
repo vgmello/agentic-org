@@ -1,15 +1,18 @@
-//! Private registry persistence. Callers must hold host.lock and serialize bootstrap.
-//! No production caller creates a registry until 2b.3 accepts bootstrap.
+//! Private registry persistence. Callers must hold host.lock and the instance lock.
+//! The registry is the host's own database (decision D1) and holds no account
+//! until setup registers the first administrator. The registered start
+//! (`crate::registered`) creates it once per instance and refuses to recreate it.
 
 pub(crate) mod accounts;
+mod administrator;
 mod clock;
-mod first_account;
-mod verifier;
-pub(crate) use first_account::FirstAccount;
 pub(crate) mod journal;
+pub(crate) mod links;
 pub(crate) mod lockout;
+pub(crate) mod provisioning;
+pub(crate) mod recovery;
 mod schema;
-mod sqlcipher;
+pub(crate) mod sessions;
 #[cfg(test)]
 mod tests;
 
@@ -19,11 +22,13 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::host_secrets::{HostSecrets, Name, Value};
+use crate::host_secrets::HostSecrets;
 use rusqlite::{config::DbConfig, Connection, OpenFlags, TransactionBehavior};
 
 const DB: &str = "host-registry.db";
 const TMP: &str = "host-registry.db.tmp";
+/// The registry schema version. There is no migration from earlier registries.
+const SCHEMA_VERSION: i64 = 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Error {
@@ -32,16 +37,22 @@ pub(crate) enum Error {
     ClockSkew,
     OperationReused,
     Conflict,
+    /// The account is not a live instance administrator.
+    NotAdministrator,
     Unsafe,
     Exists,
     Empty,
-    KeyMissing,
-    KeyLength,
-    NoCipher,
     Version,
+    /// The registry predates a table this build needs and holds a different one.
+    Outdated,
     Io(io::ErrorKind),
     Sql(rusqlite::ErrorCode),
     Secret(crate::host_secrets::Error),
+}
+impl From<crate::accounts::verifier::InvalidVerifier> for Error {
+    fn from(_: crate::accounts::verifier::InvalidVerifier) -> Self {
+        Self::Unsafe
+    }
 }
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
@@ -62,86 +73,134 @@ impl From<crate::host_secrets::Error> for Error {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BootstrapRecord {
-    pub(crate) operation_id: String,
-    pub(crate) hq_operation_id: String,
-    pub(crate) fingerprint: String,
-    pub(crate) account: String,
-    pub(crate) finished: bool,
-}
-pub(crate) struct TlsPair {
-    pub(crate) cert_pem: String,
-    pub(crate) pair_fp: [u8; 32],
-    pub(crate) set_at_ms: i64,
-    pub(crate) key: Value,
-}
-/// Already validated by bootstrap, including TLS parsing/matching/coverage.
+/// What a new registry records. Accounts arrive later, through a one-time link.
 pub(crate) struct HostDbInit {
     pub(crate) instance_id: String,
     pub(crate) clock_high_ms: i64,
-    pub(crate) bootstrap: BootstrapRecord,
-    pub(crate) first_account: FirstAccount,
-    pub(crate) tls_pair: Option<TlsPair>,
 }
 pub(crate) struct HostDb {
     connection: Mutex<Connection>,
+    instance_id: String,
 }
+fn cleanup_uncommitted_registry(home: &Path) -> Result<(), Error> {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let path = home.join(format!("{DB}{suffix}"));
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        if !metadata.is_file() || metadata.uid() != crate::home::euid() {
+            return Err(Error::Unsafe);
+        }
+        fs::remove_file(path)?;
+        crate::host_log::log(&format!("removed orphan host registry sidecar {suffix}"));
+    }
+    // Interrupted creates leave only temps; no installed registry needs rollback recovery.
+    for name in [
+        TMP,
+        "host-registry.db.tmp-journal",
+        "host-registry.db.tmp-wal",
+        "host-registry.db.tmp-shm",
+    ] {
+        match fs::remove_file(home.join(name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 impl HostDb {
+    /// Protected provisioning only. Recheck administrator authority inside the
+    /// transaction; a legacy/member profile cannot establish organization ownership.
+    pub(crate) fn establish_organization_owner(
+        &self,
+        administrator: &accounts::Account,
+        org: &str,
+        member: &str,
+    ) -> Result<(), Error> {
+        if !org_office_launch::is_storage_id(org) || !org_proto::is_valid_member_id(member) {
+            return Err(Error::Unsafe);
+        }
+        let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id = administrator.account_id();
+        let admin: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 AND admin=1 AND revoked_at_ms IS NULL)", [id], |r|r.get(0))?;
+        if !admin {
+            return Err(Error::Unsafe);
+        }
+        tx.execute(
+            "INSERT INTO org_owners VALUES(?1,?2,?3) ON CONFLICT(org_id) DO NOTHING",
+            (org, id, member),
+        )?;
+        tx.execute(
+            "INSERT INTO account_links VALUES(?1,?2,?3) ON CONFLICT(account_id,org_id) DO NOTHING",
+            (id, org, member),
+        )?;
+        let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM org_owners o JOIN account_links l ON l.account_id=o.account AND l.org_id=o.org_id AND l.member_id=o.owner_member_id WHERE o.org_id=?1 AND o.account=?2 AND o.owner_member_id=?3)", (org,id,member), |r|r.get(0))?;
+        if !valid {
+            return Err(Error::Conflict);
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    pub(crate) fn verify_selected_owner(
+        &self,
+        org: &str,
+        account: &str,
+        member: &str,
+    ) -> Result<(), Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let valid: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM org_owners o JOIN accounts a ON a.account_id=o.account JOIN account_links l ON l.account_id=a.account_id AND l.org_id=o.org_id WHERE o.org_id=?1 AND o.account=?2 AND o.owner_member_id=?3 AND l.member_id=o.owner_member_id AND a.revoked_at_ms IS NULL)", (org,account,member), |r|r.get(0))?;
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::Unsafe)
+        }
+    }
+    pub(crate) fn verify_instance(&self, instance: &str) -> Result<(), Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let recorded: String =
+            db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
+                r.get(0)
+            })?;
+        if recorded != instance {
+            return Err(Error::Unsafe);
+        }
+        Ok(())
+    }
+
     pub(crate) fn create(
         home: &Path,
         secrets: &dyn HostSecrets,
         init: &HostDbInit,
     ) -> Result<Self, Error> {
-        if init.first_account.account_id() != init.bootstrap.account {
-            return Err(Error::Unsafe);
+        if !crate::instance::registry::valid_instance_id(&init.instance_id) {
+            return Err(Error::InvalidId);
         }
         let home = checked_home(home)?;
         absent(&home.join(DB), Error::Exists)?;
-        for suffix in ["-wal", "-shm", "-journal"] {
-            let path = home.join(format!("{DB}{suffix}"));
-            let metadata = match fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e.into()),
-            };
-            if !metadata.is_file() || metadata.uid() != crate::home::euid() {
-                return Err(Error::Unsafe);
-            }
-            fs::remove_file(path)?;
-            crate::host_log::log(&format!("removed orphan host registry sidecar {suffix}"));
+        let names = secrets.list()?;
+        // Pending recovery custody can precede writer reservation. Its presence,
+        // even if malformed, requires forward repair before any cleanup/reset.
+        if names.iter().any(|name| {
+            let name = name.as_str();
+            name == "writer-device" || name.starts_with("writer.") || name.starts_with("recovery.")
+        }) {
+            return Err(Error::Unsafe);
         }
-        // Interrupted creates leave only temps; no installed registry needs rollback recovery.
-        for name in [
-            TMP,
-            "host-registry.db.tmp-journal",
-            "host-registry.db.tmp-wal",
-            "host-registry.db.tmp-shm",
-        ] {
-            match fs::remove_file(home.join(name)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
+        cleanup_uncommitted_registry(&home)?;
         // A .put.* temp left when put's own cleanup failed is invisible to list/delete;
         // DevSecrets::open removes it on the next open (Rowan's accepted residual).
-        for name in secrets.list()? {
+        for name in names {
             secrets.delete(&name)?;
         }
         checkpoint(1)?;
-        if let Some(tls) = &init.tls_pair {
-            secrets.put(
-                &Name::parse(&format!("tls.{}", hex(&tls.pair_fp)))?,
-                &tls.key,
-            )?;
-        }
         checkpoint(2)?;
-        let generated = crate::secrets::generate_db_key()?;
-        let key = Value::new(generated.expose_bytes().to_vec())?;
-        drop(generated);
-        secrets.put(&Name::parse("registry")?, &key)?;
+        // The registry is plain SQLite protected by the account and file permissions
+        // (ADR-0016); no database key is generated or stored.
         checkpoint(3)?;
         let path = home.join(TMP);
         let file = OpenOptions::new()
@@ -152,36 +211,20 @@ impl HostDb {
             .open(&path)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         drop(file); // A later close on this inode would cancel SQLite's POSIX locks.
-        let mut db = connect(&path, &key)?;
+        let mut db = connect(&path)?;
         db.pragma_update(None, "journal_mode", "DELETE")?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(schema::DDL)?;
-        tx.pragma_update(None, "user_version", 1)?;
-        let bootstrap = serde_json::to_string(&init.bootstrap).map_err(|_| Error::Unsafe)?;
+        tx.execute_batch(provisioning::DDL)?;
+        tx.execute_batch(recovery::DDL)?;
+        tx.execute_batch(links::DDL)?;
+        sessions::create_schema(&tx)?;
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         for (name, value) in [
             ("instance_id", init.instance_id.clone()),
             ("clock_high_ms", init.clock_high_ms.to_string()),
-            ("bootstrap", bootstrap),
         ] {
             tx.execute("INSERT INTO meta(key,value) VALUES (?1,?2)", (name, value))?;
-        }
-        #[cfg(test)]
-        tests::first_account::before_insert(&tx)?;
-        tx.execute(
-            "INSERT INTO accounts VALUES (?1,?2,?3,?4,1,?5,?5,NULL)",
-            (
-                init.first_account.account_id(),
-                init.first_account.login_key(),
-                init.first_account.login(),
-                init.first_account.verifier().expose(),
-                init.clock_high_ms,
-            ),
-        )?;
-        if let Some(tls) = &init.tls_pair {
-            tx.execute(
-                "INSERT INTO tls_pair VALUES (1,?1,?2,?3)",
-                (&tls.cert_pem, &tls.pair_fp, tls.set_at_ms),
-            )?;
         }
         checkpoint(7)?; // A failure before COMMIT must roll back DDL and metadata together.
         tx.commit()?;
@@ -197,16 +240,19 @@ impl HostDb {
         checked_file(&path, false)?
             .ok_or(Error::Empty)?
             .sync_all()?;
-        checkpoint(9)?; // Immediately before publishing the registry and its first account.
+        checkpoint(9)?; // Immediately before publishing the registry.
         install(&path, &home.join(DB))?;
-        checkpoint(10)?; // Process death after rename must reopen exactly one first admin.
+        checkpoint(10)?; // Process death after rename must reopen the published registry.
         File::open(&home)?.sync_all()?;
         checkpoint(5)?;
         let opened = Self::open(&home, secrets)?;
         checkpoint(6)?;
         Ok(opened)
     }
-    pub(crate) fn open(home: &Path, secrets: &dyn HostSecrets) -> Result<Self, Error> {
+    /// Opens the plain-SQLite registry. `_custody` is not consulted: the registry
+    /// has no database key (ADR-0016). The parameter remains only until the
+    /// service caller drops it with the launch-contract cleanup.
+    pub(crate) fn open(home: &Path, _custody: &dyn HostSecrets) -> Result<Self, Error> {
         let home = checked_home(home)?;
         absent(&home.join("host-registry.db-journal"), Error::Unsafe)?;
         let path = home.join(DB);
@@ -221,19 +267,86 @@ impl HostDb {
             }
         }
         checkpoint(8)?; // Test the SQLite no-follow fence after validation.
-        let key = secrets
-            .load(&Name::parse("registry")?)?
-            .ok_or(Error::KeyMissing)?;
-        let db = connect(&path, &key)?;
+        let mut db = connect(&path)?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version != 1 {
+        if version != SCHEMA_VERSION {
             return Err(Error::Version);
         }
+        for ddl in [schema::DDL, provisioning::DDL, recovery::DDL, links::DDL] {
+            require_schema(&db, ddl)?;
+        }
+        recovery::verify_all(&db)?;
+        let instance_id: String =
+            db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
+                r.get(0)
+            })?;
+        // Every digest is bound to this ID, so a tampered value is refused rather
+        // than used.
+        if !crate::instance::registry::valid_instance_id(&instance_id) {
+            return Err(Error::InvalidId);
+        }
+        sessions::ensure_schema(&mut db)?;
         enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         Ok(Self {
             connection: Mutex::new(db),
+            instance_id,
         })
+    }
+}
+
+/// A version number alone is not evidence that an unknown or corrupt database is
+/// this host's registry: every table and index must match its source DDL.
+fn require_schema(db: &Connection, source: &str) -> Result<(), Error> {
+    for ddl in source.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        let words: Vec<_> = ddl.split_whitespace().collect();
+        let (kind, name) = match words.get(1..3) {
+            Some(["TABLE", name]) => ("table", name),
+            Some(["INDEX", name]) => ("index", name),
+            Some(["UNIQUE", "INDEX"]) => ("index", words.get(3).ok_or(Error::Unsafe)?),
+            _ => return Err(Error::Unsafe),
+        };
+        let actual: String = db
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type=?1 AND name=?2",
+                (kind, name),
+                |r| r.get(0),
+            )
+            .map_err(|_| Error::Unsafe)?;
+        if actual.split_whitespace().ne(ddl.split_whitespace()) {
+            return Err(Error::Unsafe);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+impl HostDb {
+    /// Tests only: an account as a redeemed registration link will create it (A3).
+    pub(crate) fn seed_account(
+        &self,
+        account_id: &str,
+        login: &str,
+        verifier: &journal::Verifier,
+        admin: bool,
+        at_ms: i64,
+    ) -> Result<(), Error> {
+        use crate::accounts::identity::{AccountId, LoginKey};
+        let id = AccountId::parse(account_id).map_err(|_| Error::InvalidId)?;
+        let key = LoginKey::new(login).map_err(|_| Error::Unsafe)?;
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        db.execute(
+            "INSERT INTO accounts VALUES (?1,?2,?3,?4,?5,?6,?6,NULL)",
+            (
+                id.as_str(),
+                key.as_str(),
+                login,
+                verifier.expose(),
+                i64::from(admin),
+                at_ms,
+            ),
+        )?;
+        Ok(())
     }
 }
 
@@ -286,45 +399,41 @@ fn checked_file(path: &Path, empty_ok: bool) -> Result<Option<File>, Error> {
     }
     Ok(Some(file))
 }
-fn connect(path: &Path, key: &Value) -> Result<Connection, Error> {
-    if key.expose().len() != 32 {
-        return Err(Error::KeyLength);
+/// The first 16 bytes of every SQLite database file.
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+/// Refuses a main file that is not empty and not a SQLite database before SQLite opens it.
+/// With a WAL beside it, SQLite reads page 1 from the log and would accept a main file that
+/// is not a database; a later checkpoint would then write the log into that file. An empty
+/// file passes: only `create` connects to one (its fresh temporary file), and `open` refuses
+/// an empty registry through `checked_file` first.
+fn check_database_header(path: &Path) -> Result<(), Error> {
+    use std::io::Read;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)?;
+    let mut header = Vec::with_capacity(SQLITE_HEADER.len());
+    file.take(SQLITE_HEADER.len() as u64)
+        .read_to_end(&mut header)?;
+    if header.is_empty() || header == SQLITE_HEADER {
+        Ok(())
+    } else {
+        Err(Error::Sql(rusqlite::ErrorCode::NotADatabase))
     }
-    sqlcipher::ready()?;
-    #[allow(clippy::disallowed_methods)] // The sole durable opener crosses the fence.
+}
+fn connect(path: &Path) -> Result<Connection, Error> {
+    check_database_header(path)?;
     let db = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
-    let mut pragma = Vec::with_capacity(83);
-    pragma.extend_from_slice(b"PRAGMA key = \"x'");
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for b in key.expose() {
-        pragma.extend_from_slice(&[HEX[(b >> 4) as usize], HEX[(b & 15) as usize]]);
-    }
-    pragma.extend_from_slice(b"'\";");
-    // Wipe this owned copy on every exit; SQLite's own statement allocation is outside
-    // this best-effort guarantee (as in org-office's raw-key connection).
-    let pragma = Value::new(pragma)?;
-    db.execute_batch(std::str::from_utf8(pragma.expose()).expect("ASCII key pragma"))?;
-    drop(pragma);
     db.pragma_update(None, "busy_timeout", 5000)?;
-    let cipher: String = db
-        .query_row("PRAGMA cipher_version", [], |r| r.get(0))
-        .unwrap_or_default();
-    require_cipher(&cipher)?;
     db.query_row("SELECT count(*) FROM sqlite_schema", [], |r| {
         r.get::<_, i64>(0)
     })?;
     db.execute_batch("PRAGMA synchronous=FULL; PRAGMA fullfsync=ON; PRAGMA checkpoint_fullfsync=ON; PRAGMA foreign_keys=ON;")?;
     Ok(db)
-}
-fn require_cipher(version: &str) -> Result<(), Error> {
-    if version.is_empty() {
-        return Err(Error::NoCipher);
-    }
-    Ok(())
 }
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

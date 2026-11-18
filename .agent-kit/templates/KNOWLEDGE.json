@@ -1,0 +1,7 @@
+{
+  "title": "A specific reusable project fact or decision",
+  "kind": "learning",
+  "summary": "What the next agent needs to know; do not copy a whole conversation",
+  "rationale": "Why this is valid, where it applies and any relevant limits",
+  "sources": ["path/to/current/source.py"]
+}

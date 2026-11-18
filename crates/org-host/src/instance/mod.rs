@@ -14,6 +14,7 @@
 
 mod directory;
 pub(crate) mod registry;
+pub(crate) mod setup;
 mod temp;
 
 use std::fmt;

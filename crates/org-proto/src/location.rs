@@ -66,6 +66,15 @@ pub fn office_socket_in(runtime_dir: &Path, office_id: &str) -> Option<PathBuf> 
     Some(runtime_dir.join(format!("{handle}.sock")))
 }
 
+/// Additive selected carrier only. Legacy `office_socket_in` retains its exact
+/// validator; callers must already have admitted this entity's selected profile.
+pub fn selected_office_socket_in(runtime_dir: &Path, office_id: &str) -> Option<PathBuf> {
+    crate::is_uuid_v7(office_id).then(|| {
+        let handle = &office_id[office_id.len() - OFFICE_SOCKET_HANDLE_CHARS..];
+        runtime_dir.join(format!("{handle}.sock"))
+    })
+}
+
 /// Whether an office id is plain: 1..=[`MAX_OFFICE_ID_CHARS`] ASCII letters and digits. It
 /// checks the shape only, not that the office exists, and doesn't require a ULID.
 fn is_plain_office_id(office_id: &str) -> bool {
@@ -218,5 +227,44 @@ mod tests {
         );
         assert_eq!(office_home_from(None, Some("me".into())), None);
         assert_eq!(office_home_from(Some("o1".into()), Some("me".into())), None);
+    }
+}
+
+#[cfg(test)]
+mod selected_socket_tests {
+    use super::*;
+    #[test]
+    fn selected_carrier_preserves_exact_identity_and_legacy_refusals() {
+        let root = Path::new("/private/tmp/runtime");
+        let id = "019a8928-1337-7456-8456-0123456789ac";
+        assert_eq!(
+            selected_office_socket_in(root, id),
+            Some(root.join("0123456789ac.sock"))
+        );
+        assert!(office_socket_in(root, id).is_none());
+        for bad in [
+            id.to_uppercase(),
+            id.replace("-7456-", "-4456-"),
+            id.replace("-8456-", "-7456-"),
+            format!("../{id}"),
+            format!("{id}/x"),
+            format!("{id} "),
+            id[..35].to_owned(),
+            "opaqueLegacy123".into(),
+        ] {
+            assert!(selected_office_socket_in(root, &bad).is_none(), "{bad}");
+        }
+        assert_eq!(
+            office_socket_in(root, "opaqueLegacy123"),
+            Some(root.join("queLegacy123.sock"))
+        );
+        let name = "0123456789ac.sock";
+        let exact = PathBuf::from(format!(
+            "/{}",
+            "x".repeat(MAX_SOCKET_PATH_BYTES - name.len() - 2)
+        ));
+        assert!(check_socket_path(&selected_office_socket_in(&exact, id).unwrap()).is_ok());
+        let over = PathBuf::from(format!("{}x", exact.display()));
+        assert!(check_socket_path(&selected_office_socket_in(&over, id).unwrap()).is_err());
     }
 }

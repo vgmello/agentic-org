@@ -5,11 +5,18 @@ import { readEstablishedSession, readResponse, readSession, readVersion, WireDec
 export class SessionRequestError extends Error {
 	readonly retryAfterMs: number | undefined;
 	readonly sessionReason: GatewayError['session_reason'];
+	readonly code: string;
+	readonly field: GatewayError['field'];
+	readonly rule: GatewayError['rule'];
 	constructor(readonly status: number, error: GatewayError) {
 		super('Session request failed');
 		this.name = 'SessionRequestError';
 		this.retryAfterMs = error.retry_after_ms;
 		this.sessionReason = error.session_reason;
+		// Stable machine fields only; the server's message text never reaches the page.
+		this.code = error.code;
+		this.field = error.field;
+		this.rule = error.rule;
 	}
 }
 export type SessionView = ReturnType<typeof readSession>;
@@ -32,6 +39,7 @@ export function createSessionGateway(publicHttp: ReturnType<typeof createGateway
 	return Object.freeze({
 		version: (signal?: AbortSignal) => result(publicHttp.version(signal), readVersion),
 		signIn: (credentials: unknown, signal?: AbortSignal) => result(publicHttp.signIn(credentials, signal), readEstablishedSession),
+		register: (request: unknown, signal?: AbortSignal) => result(publicHttp.register(request, signal), readEstablishedSession),
 		get: (proof: string, signal?: AbortSignal) => result(protectedHttp({ method: 'GET', path: '/api/v1/session', proof, signal }), readSession),
 		refresh: (proof: string, signal?: AbortSignal) => result(protectedHttp({ method: 'POST', path: '/api/v1/session/refresh', body: {}, proof, signal }), readEstablishedSession),
 		signOut: (proof: string, signal?: AbortSignal) => result(protectedHttp({ method: 'POST', path: '/api/v1/session/sign-out', body: {}, proof, signal }), emptySessionResult)

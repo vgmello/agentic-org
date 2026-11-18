@@ -31,7 +31,7 @@ jobs:
           - os: ubuntu-26.04
             # The extracted org-host library has items only its macOS code uses (code-signature peer checks,
             # Keychain key store), so on Linux clippy's dead-code and unused-import lints fail, and
-            # the host integration tests in agentic-org cannot start every worker path yet. Until B2-06 (Linux host bring-up) gates those items
+            # the host integration tests in agentic-org cannot start every worker path yet. Until the Linux host bring-up (implementation plan X1) gates those items
             # by target, it's excluded here and linted by the `clippy (Linux host)` step with only
             # those two lints allowed; its tests stay excluded.
             clippy-flags: --exclude org-host --exclude agentic-org
@@ -67,11 +67,19 @@ jobs:
 
       - name: clippy (Linux host)
         if: runner.os == 'Linux'
-        run: cargo clippy --locked -p org-host -p agentic-org --all-targets -- -D warnings -A dead_code -A unused_imports
+        # `-A dead_code` leaves every `expect(dead_code)` in these crates unfulfilled, so that lint is
+        # allowed here too; the macOS job still checks each expectation.
+        run: cargo clippy --locked -p org-host -p agentic-org --all-targets -- -D warnings -A dead_code -A unused_imports -A unfulfilled_lint_expectations
 
       - name: CLI migration checks (Linux)
         if: runner.os == 'Linux'
         run: cargo test --locked -p agentic-org --lib --test cli
+
+      # agentic-org-web's dependency-closure test reads the locked graph for every platform with
+      # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest
+      # are fetched here; without this step the test fails on a runner with a cold cache.
+      - name: cargo fetch (every platform's locked packages)
+        run: cargo fetch --locked
 
       - name: cargo test
         run: cargo test --locked --workspace ${{ matrix.test-flags }}

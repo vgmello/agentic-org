@@ -198,7 +198,7 @@ fn the_engines_events_give_the_figures() {
     let mut a = w.comment(&id, "Stripe");
     a.comment_kind = Some(CommentKind::Answer);
     a.answers = Some(q_id);
-    w.ok(&app(), WorkCall::Comment(a));
+    w.ok(&owner_by_grant(), WorkCall::Comment(a));
     w.clock.advance(HOUR);
     w.set(&id, Blocked);
     w.clock.advance(HOUR);

@@ -59,6 +59,14 @@ Prefer `application -> domain module -> feature/use case` for business behavior.
 - Keep reusable visual primitives and design tokens in a shared UI foundation.
 - Apply these boundaries incrementally while preserving behavior.
 
+# Independent Delivery and Dependency Boundaries
+
+The [independent delivery and dependency rules](independent-delivery.md) are a
+required part of this architecture. Apply them when scoping, implementing,
+delegating and reviewing increments. They define usable acceptance/merge units,
+stable prerequisite contracts, early production-path verification and escalation
+of unexpected coupling. The author validation, testing and review gates still apply.
+
 # Shared Code and Ownership
 
 Place shared behavior at the narrowest scope that owns its meaning:
@@ -179,14 +187,14 @@ Examples include:
 
 However:
 
-> The higher the Ca, the greater the required stability and backward compatibility.
+> The higher the Ca, the greater the required stability.
 
 When modifying a high-Ca component:
 
 - Evaluate the blast radius before making the change.
 - Prefer additive changes over breaking changes.
 - Avoid leaking implementation details into its public contract.
-- Preserve backward compatibility whenever practical.
+- Change a breaking contract and every consumer in the same change. Until the owner declares v1 shipped, keep no compatibility layer for the old form ([non-negotiable 14](architecture-non-negotiables.md)).
 - Explicitly identify downstream consumers when making a breaking change.
 - Be especially cautious about adding volatile responsibilities to highly depended-upon components.
 
@@ -435,6 +443,34 @@ Examples of behavior that commonly benefits from replaceability include:
 - feature evaluation,
 - file handling,
 - infrastructure-specific behavior.
+
+## Planned Variation Goes Behind an Adapter From Day One
+
+When a variation is already planned, even if only one implementation ships now, put the contract in place from the
+first implementation. Planned variation includes another operating system (ADR-0017), another vendor or provider,
+another storage engine (ADR-0018) or another deployment form.
+
+- Define the contract the consumer needs, owned by the consumer. The exception is an
+  operating-system capability shared by several executables: its contract and
+  adapters live together in `org-platform` ([ADR-0017](adr/0017-linux-and-container-hosting.md)
+  decision 6), and each consumer keeps its policy.
+- Put the current implementation (for example the macOS adapter) behind it.
+- Every operating system other than the implemented ones gets an adapter that exists and fails closed with a clear,
+  reported reason, including build targets nobody planned. An unimplemented adapter never falls back to another
+  platform's behavior.
+- A planned provider or storage engine that the release does not build needs no stub: selecting it
+  is refused at composition, and the seam is proven by a second implementation such as an in-memory or test adapter
+  (ADR-0018 ENG-2).
+- Compile-time platform conditionals (`#[cfg(target_os = "...")]`) stay inside the adapter modules: each module
+  exports the implementation for the build target, or the refusing fallback, behind one non-conditional constructor
+  (ADR-0017 LNX-5).
+- A runtime choice of provider or engine (by configuration) is made once, in the composition root. Consuming code
+  never branches on the platform, provider or engine.
+- Adding or replacing an implementation then changes only its adapter and the composition root, not the consuming
+  code.
+
+This is not over-abstraction: the variation is a decided requirement, not a theoretical one. Without a decided
+variation, "Do Not Over-Abstract" below applies.
 
 ---
 

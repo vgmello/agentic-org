@@ -291,30 +291,35 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let folder = dir.path().join("offices").join("OFFICE1");
         drop(office(&dir));
-        // Put office.db back as version 2 made it: no status or work tables.
+        // Build the released v2 schema independently; lowering the current version
+        // would leave newer tables behind and would not exercise a v2 migration.
         let key = Key::from_bytes([5; 32]);
+        std::fs::remove_file(folder.join("office.db")).unwrap();
+        for sidecar in ["office.db-wal", "office.db-shm"] {
+            let _ = std::fs::remove_file(folder.join(sidecar));
+        }
+        let old = crate::store::Schema {
+            admit: None,
+            version: 2,
+            create: |tx| tx.execute_batch(include_str!("store/work/tests/fixtures/office-v2.sql")),
+            upgrade: |_, _| unreachable!("a newly created v2 fixture needs no migration"),
+        };
         {
-            let store = Store::open(
-                &folder.join("office.db"),
-                &key,
-                Opening::Existing,
-                &crate::office::OFFICE_SCHEMA,
-            )
-            .unwrap();
+            let store = Store::open(&folder.join("office.db"), Opening::New, &old).unwrap();
             store
                 .write(|db| {
-                    db.execute_batch(
-                        "DROP TABLE work_change_results; DROP TABLE work_number_counters; DROP TABLE work_clock;
-                         DROP TABLE work_events; DROP TABLE work_ids; DROP TABLE work_items;
-                         DROP TABLE work_origin_log; DROP TABLE work_origin_counter;
-                         DROP TABLE work_feed; DROP TABLE member_status; DROP TABLE owned_processes;
-                         PRAGMA user_version = 2;",
-                    )
-                    .map_err(crate::error::OfficeError::storage)?;
+                    db.execute("INSERT INTO meta VALUES ('office_id', 'OFFICE1')", [])
+                        .map_err(crate::error::OfficeError::storage)?;
+                    assert_eq!(
+                        db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                            .unwrap(),
+                        2
+                    );
                     assert_eq!(
                         db.query_row(
                             "SELECT count(*) FROM sqlite_master WHERE type='table'
-                             AND (name='member_status' OR name LIKE 'work_%')",
+                             AND (name IN ('member_status', 'owned_processes')
+                                  OR name LIKE 'work_%' OR name LIKE 'selected_%')",
                             [],
                             |row| row.get::<_, i64>(0),
                         )
@@ -328,6 +333,28 @@ mod tests {
         let office = Office::open(&folder, key).unwrap();
         let member = owner_id(&office);
         office.set_status(&member, &text("back")).unwrap().unwrap();
+        assert_eq!(card_status(&office).as_deref(), Some("back"));
+        office
+            .local_store()
+            .read(|db| {
+                assert_eq!(
+                    db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                        .unwrap(),
+                    crate::office::OFFICE_SCHEMA.version
+                );
+                assert_eq!(
+                    db.query_row("SELECT value FROM meta WHERE key='office_id'", [], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .unwrap(),
+                    "OFFICE1"
+                );
+                Ok(())
+            })
+            .unwrap();
+        drop(office);
+        let office = Office::open(&folder, Key::from_bytes([5; 32])).unwrap();
+        assert_eq!(owner_id(&office), member);
         assert_eq!(card_status(&office).as_deref(), Some("back"));
     }
 

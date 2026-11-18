@@ -168,7 +168,6 @@ const REASON_COPY: Record<Exclude<OfficeStatusReason, 'unsupported_version'>, st
 	restarts_exhausted: "It kept stopping, so it won't restart on its own",
 	storage_error: "It can't read or write its data on this Mac",
 	in_use: 'Its data is still in use by another Agentic Org process',
-	key_missing: "This office's key isn't available on this Mac, so its data can't be opened",
 	stopped_by_owner: 'You stopped it',
 	invalid_request: "It couldn't start because of an internal error",
 	unknown: "It stopped for a reason this version doesn't know"
@@ -258,7 +257,7 @@ export function copyDetails(o: OfficeInfo, statusLabel: string, now: Date, appVe
 
 /** What can be done about a stopped office (spec §3.3): the button's words, or why there is none. */
 export interface RestartAction {
-	/** "Restart office", "Try again" or "Start office"; absent when the contract refuses a restart for this reason. */
+	/** "Restart office" or "Start office"; absent when the contract refuses a restart for this reason. */
 	label?: string;
 	/** A line instead of a button (a host that can't restart from here). */
 	note?: string;
@@ -269,7 +268,6 @@ export function restartAction(o: Pick<OfficeInfo, 'status' | 'status_reason'>, c
 	// The contract refuses a restart only for these two reasons.
 	if (o.status_reason === 'unsupported_version' || o.status_reason === 'invalid_request') return {};
 	if (capabilities && !capabilities.includes('office.restart')) return { note: 'Update Agentic Org to restart offices from here' };
-	if (o.status_reason === 'key_missing') return { label: 'Try again' };
 	if (o.status_reason === 'stopped_by_owner') return { label: 'Start office' };
 	return { label: 'Restart office' };
 }

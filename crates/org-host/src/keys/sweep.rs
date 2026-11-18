@@ -45,10 +45,10 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use org_office_launch::is_plain_id;
+use org_office_launch::is_storage_id;
 use serde::{Deserialize, Serialize};
 
-use super::KeyStore;
+use super::OfficeSecretsKeys;
 use crate::host_log;
 
 /// The orphan record's file name, in the office home.
@@ -111,7 +111,7 @@ pub(crate) fn decide(
 /// unmarks keys whose office came back, deletes keys orphaned for [`ORPHAN_GRACE`] or more, and
 /// saves the record. Returns the ids it deleted.
 pub(crate) fn sweep_orphans(
-    store: &dyn KeyStore,
+    store: &dyn OfficeSecretsKeys,
     home: &Path,
     find_orphans: impl FnOnce(&[String]) -> Result<Vec<String>, String>,
     now: SystemTime,
@@ -234,7 +234,7 @@ fn load_record(path: &Path) -> Result<OrphanRecord, String> {
     if stored.v != RECORD_VERSION {
         return Err(format!("its version {} isn't {RECORD_VERSION}", stored.v));
     }
-    if !stored.first_seen_ms.keys().all(|id| is_plain_id(id)) {
+    if !stored.first_seen_ms.keys().all(|id| is_storage_id(id)) {
         return Err("it names an office id that isn't plain".into());
     }
     Ok(OrphanRecord {
@@ -277,7 +277,7 @@ mod tests {
     use super::*;
     use crate::keys::memory::{Fault, MemoryKeys, Op};
     use org_office_launch::{OFFICES_DIR_NAME, OFFICE_FILE_NAME, REFUSED_DIR_NAME};
-    use org_proto::DbKey;
+    use org_proto::OfficeSecretsKey;
     use std::os::unix::fs::PermissionsExt;
 
     const ORPHAN: &str = "01ORPHANORPHANORPHANORPHAN";
@@ -327,7 +327,8 @@ mod tests {
         .unwrap();
         let keys = MemoryKeys::default();
         for id in [ORPHAN, STORED, UNFINISHED, REFUSED, REFUSED_AGAIN] {
-            keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
+            keys.create(id, &OfficeSecretsKey::from_bytes([1; 32]))
+                .unwrap();
         }
         keys
     }
@@ -345,13 +346,13 @@ mod tests {
     }
 
     /// Sweeps as the host does, with the catalog finding the orphans in `home`.
-    fn sweep_orphans(store: &dyn KeyStore, home: &Path, now: SystemTime) -> Vec<String> {
+    fn sweep_orphans(store: &dyn OfficeSecretsKeys, home: &Path, now: SystemTime) -> Vec<String> {
         super::sweep_orphans(store, home, |ids| crate::catalog::orphans(home, ids), now)
     }
 
     /// Sweeps at t0 (which must only mark) and again 7 days later: what that second sweep
     /// deleted.
-    fn sweep_a_week_apart(store: &dyn KeyStore, home: &Path) -> Vec<String> {
+    fn sweep_a_week_apart(store: &dyn OfficeSecretsKeys, home: &Path) -> Vec<String> {
         assert!(
             sweep_orphans(store, home, t0()).is_empty(),
             "deleted on first sight"
@@ -597,13 +598,15 @@ mod tests {
         fs::create_dir_all(&stayed).unwrap();
         write_office(&stayed, MISPLACED);
         for id in [RENAMED, MISPLACED] {
-            keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
+            keys.create(id, &OfficeSecretsKey::from_bytes([1; 32]))
+                .unwrap();
         }
         assert_eq!(sweep_a_week_apart(&keys, dir.path()), [ORPHAN]);
         assert!(keys.has(RENAMED) && keys.has(MISPLACED));
 
         // An office.json there that can't be read: nothing is swept, or marked.
-        keys.create(ORPHAN, &DbKey::from_bytes([1; 32])).unwrap();
+        keys.create(ORPHAN, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
         fs::write(moved.join(OFFICE_FILE_NAME), b"{not an office").unwrap();
         assert!(sweep_orphans(&keys, dir.path(), t0() + 30 * DAY).is_empty());
         assert!(keys.has(ORPHAN));
@@ -619,7 +622,8 @@ mod tests {
         // No offices/ at all.
         let dir = tempfile::tempdir().unwrap();
         let keys = MemoryKeys::default();
-        keys.create(ORPHAN, &DbKey::from_bytes([1; 32])).unwrap();
+        keys.create(ORPHAN, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
         assert!(week_apart(&keys, dir.path()));
         assert!(keys.has(ORPHAN));
 
@@ -665,7 +669,9 @@ mod tests {
         let memory = setup(&home);
         let store = crate::keys::dev::DevKeys::new(dir.path().join("k"));
         for id in memory.list().unwrap() {
-            store.create(&id, &DbKey::from_bytes([2; 32])).unwrap();
+            store
+                .create(&id, &OfficeSecretsKey::from_bytes([2; 32]))
+                .unwrap();
         }
         assert_eq!(sweep_a_week_apart(&store, &home), [ORPHAN]);
         assert_eq!(

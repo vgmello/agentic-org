@@ -1,6 +1,6 @@
 //! Reading and checking code signatures, for the host's checks of the programs it trusts with
-//! secrets: the desktop app (`app_auth`, an app token) and its office servers (`server_check`,
-//! a database key), and of its own entitlements (`keys`, its Keychain access group).
+//! secrets: the desktop app (`app_auth`, its `admin` and `recovery` calls) and its office servers (`server_check`,
+//! an office secrets key), and of its own entitlements (`keys`, its Keychain access group).
 //!
 //! Everything here fails closed: an error is "no".
 
@@ -81,7 +81,7 @@ pub(crate) struct Signing {
 #[cfg(target_os = "macos")]
 pub(crate) const KEYCHAIN_ACCESS_GROUPS: &str = "keychain-access-groups";
 
-/// Whether signed code may get a secret (an app token, a database key): it runs with the hardened runtime and has none of
+/// Whether signed code may get a secret (an office secrets key): it runs with the hardened runtime and has none of
 /// the [`REJECTED_ENTITLEMENTS`] (one that's present with any value but `false` counts). Missing
 /// flags fail closed.
 pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {
@@ -153,6 +153,7 @@ extern "C" {
     ) -> i32;
     static kSecCodeInfoFlags: core_foundation::string::CFStringRef;
     static kSecCodeInfoEntitlementsDict: core_foundation::string::CFStringRef;
+    static kSecCodeInfoUnique: core_foundation::string::CFStringRef;
 }
 
 /// `code`'s signing information: its flags and entitlements (`SecCodeCopySigningInformation`).
@@ -185,6 +186,37 @@ pub(crate) fn signing(
     let information: CFDictionary<CFString, CFType> =
         unsafe { CFDictionary::wrap_under_create_rule(information) };
     parse_signing(&information)
+}
+
+/// Static signed-file information, never evidence of the image a process loaded.
+/// The caller must use the separate kernel/audit-token adapter for that purpose.
+#[cfg(target_os = "macos")]
+pub(crate) fn static_signing(
+    code: &security_framework::os::macos::code_signing::SecStaticCode,
+) -> Option<(Signing, [u8; 20])> {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::data::CFData;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::string::CFString;
+    let mut information: CFDictionaryRef = std::ptr::null();
+    // SAFETY: a live static code object and create-rule dictionary out-pointer.
+    let status = unsafe {
+        SecCodeCopySigningInformation(
+            code.as_concrete_TypeRef().cast(),
+            (1 << 1) | (1 << 2),
+            &mut information,
+        )
+    };
+    if status != 0 || information.is_null() {
+        return None;
+    }
+    let information: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_create_rule(information) };
+    // SAFETY: the Security framework owns this process-lifetime constant.
+    let key = unsafe { CFString::wrap_under_get_rule(kSecCodeInfoUnique) };
+    let hash = information.find(&key)?.downcast::<CFData>()?;
+    let hash: [u8; 20] = hash.bytes().try_into().ok()?;
+    Some((parse_signing(&information)?, hash))
 }
 
 /// What the host reads from a signing-information dictionary. Fails closed: an entitlements
@@ -295,8 +327,8 @@ mod tests {
     #[test]
     fn a_developer_id_requirement_names_the_identifier_and_team() {
         assert_eq!(
-            developer_id_requirement("com.ellosoft.agentic-org.org-server", "AB12CD34EF").unwrap(),
-            "identifier \"com.ellosoft.agentic-org.org-server\" and anchor apple generic \
+            developer_id_requirement("com.vgmello.agentic-org.office", "AB12CD34EF").unwrap(),
+            "identifier \"com.vgmello.agentic-org.office\" and anchor apple generic \
              and certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
              certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""

@@ -2,7 +2,6 @@ use super::{event_records, get, owner_of, put_item};
 use crate::office::OFFICE_SCHEMA;
 use crate::store::origin;
 use crate::store::{Opening, Schema, Store};
-use crate::Key;
 
 mod call;
 mod keys;
@@ -22,13 +21,7 @@ pub(super) fn fixture() -> (tempfile::TempDir, Store) {
 
 fn fixture_for_schema(schema: &Schema) -> (tempfile::TempDir, Store) {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
-        Opening::New,
-        schema,
-    )
-    .unwrap();
+    let store = Store::open(&root.path().join("office.db"), Opening::New, schema).unwrap();
     (root, store)
 }
 
@@ -58,7 +51,7 @@ fn core_task(seed: u128, with_step: bool) -> (Arc<MemStore>, WorkService<Arc<Mem
     let service = WorkService::new(Arc::clone(&store), TestClock::at(T0), "OFFICE1");
     let output = service
         .call(
-            Caller::app("owner1"),
+            Caller::grant_bound("owner1"),
             WorkCall::TaskCreate(TaskCreateParams {
                 change_id: org_work::ulid_from_parts(T0, seed * 10),
                 item_id: id.clone(),
@@ -104,7 +97,6 @@ pub(super) fn task_fixture(seed: u128, with_step: bool) -> (StoredItem, Vec<Work
 pub(super) fn reopen(root: &tempfile::TempDir) -> Store {
     Store::open(
         &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
         Opening::Existing,
         &OFFICE_SCHEMA,
     )
@@ -269,7 +261,7 @@ fn history() -> History {
     ];
     for (n, call) in calls.into_iter().enumerate() {
         assert!(matches!(
-            service.call(Caller::app("owner1"), call).unwrap(),
+            service.call(Caller::grant_bound("owner1"), call).unwrap(),
             TxnOutput::Committed { .. }
         ));
         capture(if n == 0 { &target } else { &source }, &mut states);
@@ -287,7 +279,7 @@ fn history() -> History {
     });
     for call in [remove, unlink] {
         assert!(matches!(
-            service.call(Caller::app("owner1"), call).unwrap(),
+            service.call(Caller::grant_bound("owner1"), call).unwrap(),
             TxnOutput::Committed { .. }
         ));
         capture(&source, &mut states);
@@ -298,7 +290,7 @@ fn history() -> History {
         expected_version: store.snapshot().items[&source].version,
     });
     assert!(matches!(
-        service.call(Caller::app("owner1"), delete).unwrap(),
+        service.call(Caller::grant_bound("owner1"), delete).unwrap(),
         TxnOutput::Committed { .. }
     ));
     capture(&source, &mut states);
@@ -1164,7 +1156,7 @@ fn native_work_v3_upgrade_and_reopen_preserve_existing_message_metadata() {
             assert_eq!(
                 db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                     .unwrap(),
-                6
+                OFFICE_SCHEMA.version
             );
             assert_eq!(
                 db.query_row(
@@ -1196,19 +1188,12 @@ fn native_work_failed_upgrade_rolls_back_new_tables_and_version() {
     assert!(matches!(
         Store::open(
             &root.path().join("office.db"),
-            &Key::from_bytes([42; 32]),
             Opening::Existing,
             &OFFICE_SCHEMA
         ),
         Err(OfficeError::Storage(_))
     ));
-    let old = Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
-        Opening::Existing,
-        &V3,
-    )
-    .unwrap();
+    let old = Store::open(&root.path().join("office.db"), Opening::Existing, &V3).unwrap();
     old.read(|db|{
         assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),3);
         assert_eq!(db.query_row("SELECT sentinel FROM work_events",[],|r|r.get::<_,String>(0)).unwrap(),"keep");
@@ -1619,7 +1604,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
     let (started, ready) = mpsc::channel();
     let (release, held) = mpsc::channel();
     queue
-        .send(WriteJob {
+        .send(crate::store::WriterJob::Batch(WriteJob {
             attempt: Box::new(move |_| {
                 started.send(()).map_err(OfficeError::storage)?;
                 held.recv_timeout(Duration::from_secs(5))
@@ -1628,7 +1613,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
             }),
             abort_batch: |_| false,
             reply: Box::new(|result| result.unwrap()),
-        })
+        }))
         .unwrap();
     ready.recv_timeout(Duration::from_secs(5)).unwrap();
     let attempts = Arc::new(AtomicUsize::new(0));
@@ -1639,7 +1624,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
         let (attempts, replied) = (Arc::clone(&attempts), replied.clone());
         let (item, events) = task_fixture(id, true);
         queue
-            .send(WriteJob {
+            .send(crate::store::WriterJob::Batch(WriteJob {
                 attempt: Box::new(move |db| {
                     if id == 2 {
                         db.execute_batch("ROLLBACK").map_err(OfficeError::storage)?;
@@ -1666,7 +1651,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
                 reply: Box::new(move |result| {
                     replied.send((id, result)).unwrap();
                 }),
-            })
+            }))
             .unwrap();
     }
     release.send(()).unwrap();

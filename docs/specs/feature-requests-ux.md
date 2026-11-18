@@ -1,40 +1,34 @@
 ---
 kind: spec
 title: "Capture requests and route them to whoever should scope them (UX)"
-status: for-review
-revision: 7
-owner: ac-product-designer-eden
+status: current
+owner: lead
 created: "2026-11-08"
-updated: "2026-11-15"
+updated: "2026-11-17"
 requested_by: owner
-reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [work-items-ux, decisions-and-tech-debt-ux, agent-run-modes-ux]
 ---
 
 # Spec · Capture requests and route them to whoever should scope them (UX)
 
-Selected target UX, revision 7. [Organization-data 03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the typed task, durable metadata, references, provenance and assignment contracts. This spec describes capture and queue presentation; it does not implement target services or select all prior request-lifecycle engines. The [authority map](../design/documentation-authority.md) and [W7 current-contract mapping](../design/tasks-projects-docs.md#32-the-ports-org-work-defines) distinguish existing APIs from adaptation work.
-
-**Revision 7 (2026-11-15):** clarifies accessible leading-mention completion, unresolved-prefix routing and exact preservation of request text.
-
-**Revision 6 (2026-11-15):** rewrites capture, queue, assignment, reference/storage examples and RQS criteria around `type: request`, required accountability, optional project, scoped T- references, atomic team/individual assignment, durable history and separate private notes. Earlier `REQ-`/`FEAT-` sequences, office-only persistence and automatic approval/wake claims are retired from target guidance. [Revision 5](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/specs/feature-requests-ux.md) preserves the detailed earlier lifecycle proposal. Stable RQS IDs are retained; deferred criteria are labeled individually.
+[Organization-data 03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the typed task, durable metadata, references, provenance and assignment. This spec describes capture and queue presentation. The [task ports](../design/tasks-projects-docs.md#32-the-ports-org-work-defines) describe the domain interface.
 
 ## The request (the user, 2026-11-08)
 
-Capture an idea quickly in the browser and route it to someone who can scope it, retaining why it was requested. Keep capture light and show routing reasons. Native/global capture remains a later feature; a browser draft is not a background outbox.
+Capture an idea quickly in the browser and route it to someone who can scope it, keeping why it was requested. Keep capture light and show routing reasons. A browser draft is not a background outbox.
 
 ## 0. Decisions
 
-1. **A request is a task with `type: request`.** It shares identity, comments, checklists, assignment and immutable task history with every other type. Type changes keep stable ID/number/relationships.
-2. **Every request has an accountable team; project is optional.** Project capture derives the project's owner team. Projectless capture requires a valid team. Never invent a default team or a dummy project to save a request.
-3. **All types use scoped T- references.** A project request is T-43 inside P-8, P-8/T-43 elsewhere. A team request is TEAM-12/T-43 outside the team scope. The word/icon Request identifies the type; it is not a separate REQ counter. Old stable IDs/readable references require an explicit import mapping, never blind prefix substitution.
-4. **Capture may need only text when scope is already valid.** Show the chosen project/team, derive accountability visibly, and require team selection when context provides none. Browser-unsent text remains a draft; accepted local content is saved even when number registration is pending.
-5. **Routing is an explicit assignment choice.** `assigned_team_id` and `assignee_id` are nullable independent fields; either, both or neither is valid. Assignment changes neither accountability nor number. Suggestions have reasons; the user decides. Just save clears the desired pair explicitly rather than inferring from employee membership.
-6. **Reporter is immutable.** The admitted actor is the original requester; rerouting/scoping/approval never overwrites it. Latest updater, current scoper and recorded outcome actor are distinct facts.
-7. **Scoping is a retained workflow proposal.** The earlier New → Routed → Scoping → Scoped → Approved, Declined/Merged flow remains useful UX intent, but target transition/approval/bulk creation and notification/wake handlers need an explicit lifecycle/API decision. Outcome data is already selected under details.request_outcome in document 03. Data selection alone does not deploy them.
-8. **Definitions and shared knowledge live in organization Git.** A scoped feature uses F-6 and `projects/<project-id>/features/<feature-id>/feature.md`; designs/decisions/reports have stable-ID supporting documents with required project and at most one same-project feature/release/deployment scope. No code repository is required.
-9. **Shared and private differ.** Request conversation is shared task metadata. Private notes require author-only CRUD in the separate durable store, have no administrator exception and cannot leak existence metadata into queue/search/activity. Existing note comments remain shared.
-10. **No automatic execution from assignment.** Suggestions can consider actual availability; assignment is not permission, wake acknowledgment, session start or a transfer of accepting-writer authority. Execution and budgets follow their owning contracts.
+1. **A request is a task with `type: request`.** It shares identity, comments, checklists, assignment and immutable task history with every other type. Changing the type keeps the stable ID, reference and relationships.
+2. **Every request has an accountable team; project is optional.** Capturing in a project derives the project's owner team. Projectless capture requires a valid team. No default team or dummy project is invented to save a request.
+3. **All types use the same `T-` references.** A request is `T-A43` everywhere; the creating office mints the reference, and it needs no project or team in front. The word and icon Request identify the type.
+4. **Capture may need only text when scope is already valid.** The dialog shows the chosen project or team, shows the derived accountability, and requires a team when the context provides none. Text not yet sent from the browser is a draft.
+5. **Routing is an explicit assignment choice.** `assigned_team_id` and `assignee_id` are independent nullable fields; either, both or neither is valid. Assignment changes neither accountability nor reference. Suggestions have reasons; the person decides. Just save clears the pair explicitly rather than inferring it from employee membership.
+6. **Reporter is immutable.** The admitted actor is the original requester; rerouting, scoping or approval never overwrites it. Latest updater, current scoper and recorded outcome actor are distinct facts.
+7. **Scoping is a person's or agent's review, then an approval.** The person or agent the request is assigned to scopes it and records the outcome in `details.request_outcome` (document 03): a new or extended feature, documents, draft tasks and an estimate. The request uses the ordinary five task statuses; scoping is shown from the recorded outcome and history, not from a status of its own. **Approve and create** creates exactly the previewed records and links them to the request. **Decline** requires a reason (`decline_reason`) and closes the request as Cancelled; **Merge into…** names another open request (`merged_into_task_id`) and closes this one as Cancelled. Each step is a history event with actor and time. There is no automatic scoping engine.
+8. **Definitions and shared knowledge live in organization Git.** A scoped feature uses F-6 and `projects/<project-id>/features/<feature-id>/feature.md`; designs, decisions and reports are stable-ID supporting documents with a required project and at most one same-project feature, release or deployment scope. No code repository is required.
+9. **Shared and private differ.** Request conversation is shared task metadata. Private task notes are in the separate durable store. Only the author edits or deletes one; the author and people who can read the request read it; another agent never does. They leak no existence metadata into queue, search or activity.
+10. **Assignment does not start work.** Suggestions can consider actual availability; assignment is not permission, a wake, a session start or a transfer of accepting-writer authority. Execution and budgets follow their owning contracts.
 
 ## 1. Flow 1 · Capture
 
@@ -44,112 +38,113 @@ Capture an idea quickly in the browser and route it to someone who can scope it,
  Project [Reservations P-8 ▾]   Accountable team Payments (from project)
  Type Request                  Priority Normal
  Assigned team [No assigned team ▾]
- Scope with    [Eden ▾]  Product designer: a new user-facing flow
-               Alternatives: ada · architecture; Ana · booking expertise
- [Just save]  [Message instead]                           [Send to Eden ⌘↵]
+ Scope with    [Mira ▾]  Product designer: a new user-facing flow
+               Alternatives: sam · architecture; Ana · booking expertise
+ [Just save]  [Message instead]                           [Send to Mira ⌘↵]
 ```
 
-The dialog names the selected authorized organization. Its text field gets initial focus, grows to twelve lines then scrolls. ⌘Enter sends when text and accountable scope are valid. Optional project, priority, work classification and routing do not require extra typing when context supplies a valid scope; the chosen team remains visible. With no project/team context show **Accountable team — Choose team** and explain why Save needs it. Changing project derives its owner; removing project asks the user to confirm a valid accountable team rather than silently changing scope.
+The dialog names the selected authorized organization. Its text field gets initial focus, grows to twelve lines then scrolls. ⌘Enter sends when text and accountable scope are valid. Project, priority, work classification and routing need no extra typing when the context supplies a valid scope; the chosen team stays visible. With no project or team context the dialog shows **Accountable team — Choose team** and explains why Save needs it. Changing the project derives its owner; removing the project asks the person to confirm a valid accountable team rather than silently changing scope.
 
-Suggestions appear after about one second without typing. A small Suggesting… indicates asynchronous work; once the user selects something later suggestions cannot overwrite it. Show suggested agent plus up to two valid alternatives, with role and a one-line reason. A suggested team without an individual is a valid route. A direct individual route may leave assigned team null. Do not populate assigned team from that employee's home team. The individual need not be a contributor or belong to the assigned team. Only active same-organization teams/employees can receive new assignments.
+Suggestions appear about one second after typing stops. A small Suggesting… marks the work; once the person has chosen, later suggestions cannot overwrite the choice. The dialog shows a suggested agent plus up to two valid alternatives, each with role and a one-line reason. A suggested team without an individual is a valid route. A direct individual route may leave the assigned team null; the assigned team is never filled from that employee's home team. The individual need not be a contributor or belong to the assigned team. Only active same-organization teams and employees can receive new assignments.
 
-Without a copilot, an available configured rule may suggest the product designer for capability changes, staff engineer for technical questions or an explicitly configured project contact. Mark **Suggested by rule**. Missing role/contact leaves it unrouted with Choose who scopes it; do not invent a project lead field or automatic fallback. Suggestions do not promise an installed routing service.
+Without a copilot, a configured rule may suggest the product designer for capability changes, the staff engineer for technical questions, or an explicitly configured project contact, marked **Suggested by rule**. With no matching role or contact the request stays unrouted with Choose who scopes it; no project-lead field or automatic fallback is invented.
 
-Esc/close with text asks **Keep as a draft?** Keep retains the open-page draft (or explicitly saves an unrouted request only when valid scope and durable acceptance are available); Discard removes it; Back returns to editing. A draft has no number or shared task history. The UI must distinguish Keep draft from Just save.
+Esc or close with text asks **Keep as a draft?** Keep keeps the open-page draft; Discard removes it; Back returns to editing. A draft has no reference and no shared task history. Keep draft and Just save are distinct.
 
-Submit uses a stable creation ID and durable operation identity. Success requires durable task snapshot/event/receipt acceptance; it may say “Request saved · Pending number” before organization registration. After registration: “P-8/T-43 sent to Eden · Open.” A transient banner lasts about three seconds without taking focus. A lost response remains uncertain and resolves by querying/retrying the same operation, never a second request. The target mutation/registration service remains implementation work.
+Submit uses a stable creation ID and a durable operation identity. Success means the task snapshot, event and receipt are accepted; the dialog says "T-A43 sent to Mira · Open." at once, online or offline, because the creating office numbers the task. A transient banner lasts about three seconds without taking focus. A lost response stays uncertain and is resolved by looking up or retrying the same operation, never by creating a second request.
 
-### 1.1 Capture details *(rev 3)*
+### 1.1 Capture details
 
-- **@name routing:** only at the start, typing @ opens an accessible active-agent combobox/listbox with display name, handle, role and actual availability. Expanded state and the active option are exposed to assistive technology. ↑↓ navigates, Enter/Tab selects, Esc closes; moving the caret out of the leading mention dismisses the popup. Selection chooses the individual without inferring assigned team and removes the full selected mention span, including a multiword name; preserve the remaining text and punctuation outside its explicit separator. An unresolved leading prefix disables Send with a described field error and cannot silently fall back to a rule/copilot route. A different explicit route visibly reconciles that prefix rather than merely hiding its error. An @ elsewhere is ordinary text. Later role changes do not rewrite the saved original requester.
-- **Assignment controls:** allow team-only, individual-only, both and unrouted states. On an existing request save the complete pair with explicit nulls and expected revision. On conflict show current versus desired pair and actor/time; retain draft and require explicit retry. Clearing individual returns it to a retained team queue; clearing team never infers another.
-- **Message instead:** uses the chosen recipient and ordinary chat authorization, disabled with Choose who to message when none exists and a connection reason when unavailable. It does not create a request. Protected messaging storage/visibility remains governed by document 15; task history does not become chat storage. Confirmation links to Chat only after delivery acceptance.
-- **Bug hint:** copilot or simple terms such as crash/error/broken can offer **Report a bug instead · Not a bug**. Carry text/project/accountability into bug capture; with no project allow a valid projectless bug. No area/General picker is inserted. Not a bug hides the hint for this capture.
-- **Similar requests:** up to two accessible request-typed tasks matching title/body in permitted scopes show qualified references, e.g. “Looks like TEAM-12/T-9”. **Add to…** appends an explicitly shared comment and preserves the existing reporter. Do not include private notes, protected chat or private metadata in suggestions. Current `work.list` filter availability must be checked before claiming full-body search; target indexing remains adaptation work.
-- **Attachments:** hidden until storage is designed. Pasted text is accepted; an image-only paste reports that images are unsupported rather than silently claiming an attachment was saved.
-- **Unreachable service:** keep text in the open page, visibly Unsaved, with Copy draft and Retry. No native window, global shortcut, tray, background browser outbox or promised persistence through browser closure is required. An accepted locally saved task is different from a draft and can await number/publication independently.
-- **Numbering:** any office may save local tasks/features. Its replicated counter is not an allocator; the shared organization authority assigns final references. A browser success does not require a final HQ number but does require an available accepting service. Creation of a project itself remains HQ-only.
+- **@name routing:** only at the start of the text, typing @ opens an accessible active-agent combobox with display name, handle, role and actual availability. Expanded state and the active option are exposed to assistive technology. ↑↓ navigates, Enter or Tab selects, Esc closes; moving the caret out of the leading mention dismisses the popup. Selection chooses the individual without inferring an assigned team and removes the whole selected mention span, including a multiword name, keeping the remaining text and punctuation outside its separator. An unresolved leading prefix disables Send with a described field error and never falls back to a rule or copilot route. Choosing a different route explicitly reconciles that prefix rather than hiding its error. An @ elsewhere is ordinary text. Later role changes do not rewrite the original requester.
+- **Assignment controls:** team-only, individual-only, both and unrouted states are allowed. On an existing request the complete pair is saved with explicit nulls and the expected revision. On conflict the dialog shows current versus desired pair with actor and time, keeps the draft and requires an explicit retry. Clearing the individual returns the request to its team's queue; clearing the team never infers another.
+- **Message instead:** uses the chosen recipient and ordinary chat authorization. It is disabled with Choose who to message when there is no recipient, and with a connection reason when chat is unavailable. It creates no request. The confirmation links to Chat only after the message is accepted.
+- **Bug hint:** a copilot or simple terms such as crash, error or broken can offer **Report a bug instead · Not a bug**. Text, project and accountability carry into bug capture; with no project a projectless bug is valid. Not a bug hides the hint for this capture.
+- **Similar requests:** up to two accessible request-typed tasks matching title or body in permitted scopes show their references, for example "Looks like T-A9". **Add to…** appends an explicitly shared comment and keeps the existing reporter. Private notes, protected chat and private metadata never appear in suggestions. Where search covers titles only, the dialog says so.
+- **Attachments:** hidden until attachment storage exists. Pasted text is accepted; an image-only paste reports that images are unsupported.
+- **Unreachable service:** text stays in the open page, visibly Unsaved, with Copy draft and Retry. Nothing promises to keep it after the browser closes. An accepted task is different from a draft.
+- **Numbering:** any office creates tasks and numbers them itself ([ADR-0019](../adr/0019-office-coded-task-numbers.md)). Creating a project is an HQ operation.
 
 ## 2. Flow 2 · The queue (Work › Requests)
 
-Work › Requests filters the common task projection by `type: request`. Project overview can link to its filtered view; team views include projectless requests. Rows use the scoped reference, title, optional project, accountable team, assigned team, individual, reporter/time, recorded status and supported next action.
+Work › Requests filters the common task list by `type: request`. A project overview links to its filtered view; team views include projectless requests. Rows show reference, title, optional project, accountable team, assigned team, individual, reporter and time, status and the next available action.
 
 ```
  Requests  [Status ▾] [Accountable team ▾] [Assigned team ▾] [People ▾]
            [Project / No project ▾] [Search]                  [New request]
- P-8/T-43       Adjacent table booking     Payments | Platform | Eden
- TEAM-12/T-9    Review onboarding         People   | —        | Ana
- TEAM-12/T-44   New starter guide         People   | People   | Unassigned
+ T-A43   Adjacent table booking    Payments | Platform | Mira
+ T-A9    Review onboarding         People   | —        | Ana
+ T-A44   New starter guide         People   | People   | Unassigned
 ```
 
-Saved filters distinguish **Owned by my team**, **Assigned to my team**, **Assigned to me** and **Raised by me**. Selecting a team queue does not hide directly assigned individuals from their own queues. Same local T- numbers can occur in different project/team scopes; search resolves the qualified reference rather than treating T-43 as globally unique.
+Saved filters distinguish **Owned by my team**, **Assigned to my team**, **Assigned to me** and **Raised by me**. Selecting a team queue does not hide directly assigned individuals from their own queues. A task reference is unique in the organization, so searching by reference finds one task or none.
 
-When a selected lifecycle adapter supports them, retain grouped **Needs you**, **With agents**, **Not routed**, **Approved**, **Declined and merged** presentation. Without it, group by recorded status/assignment; do not synthesize routed/accepted states from one non-null assignee. A team-only assignment is queued for that team, not necessarily accepted by a person. The old “Sent to Eden · not accepted yet” and “Eden is scoping” distinction requires actual acceptance evidence.
+The queue groups by status and assignment. It never synthesizes "routed" or "accepted" from a non-null assignee: a team-only assignment is queued for that team, not accepted by a person.
 
-Search matches permitted shared title/body and selected references when supported; a title-only implementation declares that limitation. Remember filters. Loading shows skeleton rows; empty says “No requests yet. Capture what you need and choose an accountable team”; no match offers Clear filters; failure retains the last list with Retry; stopped/disconnected state is read-only with explicit stale/unsaved labels. No-project work remains available even when the organization has no projects.
+Search matches permitted shared titles and bodies and references; an implementation that searches titles only says so. Filters are remembered. Loading shows skeleton rows; empty says "No requests yet. Capture what you need and choose an accountable team"; no match offers Clear filters; a failure keeps the last list with Retry; a stopped or disconnected office is read-only with explicit stale or unsaved labels. Work without a project stays available when the organization has no projects.
 
 ## 3. Flow 3 · A request's page
 
-Main column shows original `details.request_text` and shared conversation: questions, answers and activity with actors/times. Immutable reporter remains separate from later editor/scoper. Shared owner questions reference the actual question/answer comments; waiting spans retain start/end and explicit recipient rather than being inferred from current assignment. Closure cannot silently discard an unresolved question/span.
+The main column shows the original `details.request_text` and the shared conversation: questions, answers and activity with actors and times. The immutable reporter stays separate from later editors and scopers. Owner questions refer to the actual question and answer comments; waiting spans keep their start, end and explicit recipient rather than being inferred from current assignment. Closing a request never silently discards an unresolved question or span.
 
-Side column shows type/reference, accountable team, optional project/feature/milestone, assigned team/individual, original requester/time and latest updater. Assignment changes use the same expected-revision atomic pair as every task. Queue/history include previous pairs; home-team or placement changes never rewrite them. Project ownership changes use the recoverable owning-team update contract and preserve assignment.
+The side column shows type and reference, accountable team, optional project, feature and milestone, assigned team and individual, original requester and time, and latest updater. Assignment changes use the same expected-revision atomic pair as every task. Queue and history include previous pairs; home-team or placement changes never rewrite them. A project ownership change uses the recoverable owning-team update and keeps assignment.
 
-**Outcome data is selected:** `details.request_outcome` retains feature new/extends with stable feature_id, docs with project_id/doc_key, draft tasks with draft_id/title and optional description/assignee_id/team_id/priority, and estimate with effort/cost_usd_cents_min/cost_usd_cents_max. Show canonical feature definition F-6, supporting designs/decisions, editable task proposals and an explicitly attributed estimate/range. Missing/unknown cost information stays unknown; Build/Run is separate classification. A project-scoped feature needs a project; a projectless request may stay a team task rather than being forced into a feature. Before any explicitly selected Approve/Create workflow, pick/confirm project for the feature, preview each new task's accountability/type/assignment, allow removal/editing, and show exactly what is created. Document 03 validates nested references/variant tags and nonnegative estimate bounds with min≤max. Draft IDs remain proposals, not accepted task IDs. Bulk creation atomicity/retry and lifecycle handlers still need an approved mutation contract; this spec invents no new command.
+**Outcome data:** `details.request_outcome` holds the feature (new or extends, with a stable `feature_id`), documents (`project_id`, `doc_key`), draft tasks (`draft_id`, title, and optional description, `assignee_id`, `team_id`, priority) and an estimate (effort, `cost_usd_cents_min`, `cost_usd_cents_max`). The page shows the canonical feature definition F-6, supporting designs and decisions, editable task proposals and an explicitly attributed estimate range. Unknown cost stays unknown; Build/Run is separate classification. A feature needs a project; a projectless request may stay a team task. Document 03 validates nested references, variant tags and non-negative estimate bounds with min ≤ max. Draft IDs are proposals, not task IDs.
 
-Link origin through stable registered identities and retained task history/relates_to evidence; do not author unsupported `requests: [REQ-n]` or `from_request` target fields. Preserve original words and context in the request's canonical task/history. A feature can explain rationale and link to that request; it does not duplicate the request as its only durable source. New tasks created by an admitted actor have that actor as immutable creator; originating-request identity is a separate relationship, not a fabricated reporter.
+The request's origin is linked through stable identities and task relationships (`relates_to`). The original words and context stay in the request's own task and history. A feature can explain its rationale and link to the request; it does not replace the request as the durable source. A task created from a request has its admitted creator as immutable reporter; the originating request is a separate relationship.
 
-**Private notes:** separate author-only pane, multiple notes with revision-aware CRUD, explicit publish preview and no implicit admin/team-lead access. A normal shared note comment is never presented as private. Publishing creates a shared comment only after author confirmation and normal task-post authorization; private original retains visibility. No private body/ID/count/author association enters shared task events, queue/search/export, and request reassignment does not expose the note. See PN-01–06 in document 05.
+**Private task notes:** a separate pane holds the author's notes with revision-aware create, edit and delete and an explicit publish preview. A person who can read the request also sees other authors' notes there, read-only. Agents see only their own notes, whatever their assignment or leadership. Publishing creates a shared comment only after the author confirms and normal task-post authorization passes; the private original stays private. No private body, ID, count or author association enters shared task events, queue, search or export, and reassigning the request does not expose a note. See PN-01 to PN-06 in document 05.
 
-**Retained lifecycle controls:** Route/Change assignment is supported only through an actual adapter. Accept/scoping, Ask for changes, Approve and create tasks, Decline with reason and Merge into another open request are earlier workflow requirements whose transitions, authorization, outcomes and notification handling remain pending selection. Existing `request.*` wire/handlers remain pre-migration implementation evidence in W7 §4; exact current executable/command support follows [executable migration](../design/executable-migration.md). Do not publish invented target CLI examples. Automatic wake/scheduling is not selected by routing a request.
+**Controls:** Change assignment uses the task assignment operation. **Ask for changes** returns the outcome to the scoper with a comment; **Approve and create**, **Decline…** and **Merge into…** follow decision 7. Approval is by the owner or a person with authority over the request's accountable team, checked by the service; the scoper never approves its own outcome. The same actions are `agent-os` request commands for agents with authority. Routing a request never wakes or schedules an agent. Closing a request with an unresolved owner question asks what to do with the question first.
 
 ## 4. States and edge cases
 
 | Case | Behavior |
 | --- | --- |
-| Context has no team | Retain draft; require a valid accountable team or select a project deriving its owner before save |
-| Assigned employee belongs to another team | Valid if active/same organization; do not rewrite either assignment field from home membership |
-| Chosen agent asleep, paused or disconnected | Show actual availability; assigning does not promise a wake or session. Execution admission/budget controls own any later wake |
-| Chosen team archived or employee inactive | Refuse new assignment with a field error and retain text; preserve historical assignments/actor evidence |
-| Request rerouted | Atomically record full old/new pair, actor/time and revision; original requester and number remain unchanged; retain route_reason/routing_source separately from assignment |
-| Assignment conflict | Change neither field; show current state and retained desired state, allow explicit retry |
-| Lost create/assignment response | Resolve using durable operation identity; show unknown/pending outcome until known, never duplicate the operation |
-| Number unavailable | Accepted locally saved task remains usable by stable ID with Pending number; do not allocate from the replica |
-| Unsupported lifecycle control | Preserve recorded state/outcome and explain unavailable action; never synthesize approval/acceptance |
-| Import has only a snapshot | Show history baseline and earlier history unavailable; preserve selected request outcomes through details/task_details, old events through history, and unknown unsupported values in staging |
-| No code repository | Organization Git request/feature/supporting knowledge remains available |
-| Browser closes before save | No background capture guarantee; open-page text was explicitly Unsaved |
-| Private store unavailable | Private save fails privately; never fall back to shared comment/history |
+| Context has no team | Keep the draft; require a valid accountable team or a project that derives its owner before save |
+| Assigned employee belongs to another team | Valid if active and in the same organization; neither assignment field is rewritten from home membership |
+| Chosen agent asleep, paused or disconnected | Show actual availability; assigning promises no wake or session |
+| Chosen team archived or employee inactive | Refuse the new assignment with a field error and keep the text; historical assignments and actors are preserved |
+| Request rerouted | Record the full old and new pair, actor, time and revision atomically; original requester and reference are unchanged; `route_reason` and `routing_source` are kept separately from assignment |
+| Assignment conflict | Change neither field; show the current state and keep the desired state; allow an explicit retry |
+| Lost create or assignment response | Resolve by the durable operation identity; show the outcome as unknown until known; never duplicate the operation |
+| Office cannot prove its task sequence (for example after a restore) | Creation is refused with the reason until HQ issues the office a new code |
+| Control without a handler | Keep the recorded state and explain that the action is unavailable; never synthesize approval or acceptance |
+| No code repository | Organization Git requests, features and supporting knowledge stay available |
+| Browser closes before save | No background capture; the open-page text was explicitly Unsaved |
+| Private store unavailable | The private save fails privately; it never falls back to a shared comment or history |
 
 ## 5. UX acceptance criteria (RQS)
 
-RQS IDs are criterion identities; requests themselves use scoped T- references. **Deferred** preserves earlier workflow requirements without selecting their engines.
+RQS IDs are criterion identities; requests themselves use T- references.
 
-- RQS-1 · New request opens an accessible in-page dialog naming the authorized organization from navigation/command palette. No native/global shortcut or separate capture window is required.
-- RQS-2 · With valid project/team context, text plus ⌘Enter saves a request. Accountable team is always required; absent context asks for one. Project/assignment/classification remain optional. Project selection derives its accountable team.
-- RQS-3 · Suggestions show a valid agent/team and up to two available alternatives with reasons; the user may choose another or save unrouted. Suggestions never silently overwrite explicit assignment or infer assigned team from employee membership.
-- RQS-4 · Leading @ has accessible combobox/listbox keyboard completion, active-option/expanded state and caret dismissal. Selecting a multiword name removes the complete selected span, preserves all remaining request text and leaves assigned team unchanged. An unresolved prefix blocks Send without rule fallback; an interior @ is ordinary text. Message instead has explicit recipient/connection errors and confirms accepted ordinary messaging separately from task creation.
-- RQS-5 · Available rule suggestions are labeled Suggested by rule; absent configuration leaves a visible choice rather than inventing a project lead or automatic owner fallback.
-- RQS-6 · A bug hint carries text and valid scope into type bug capture, allows projectless bugs, inserts no mandatory area and can be dismissed for this capture.
-- RQS-7 · Requests is a type-filtered task view across project/team scopes, with clear ownership/assignment columns. **Deferred:** Needs you/With agents/Approved/Declined-Merged grouping requires actual lifecycle/acceptance evidence.
-- RQS-8 · Assignment shows actual availability and never promises an automatic wake. **Deferred:** on-call wake/inbox delivery, failed-wake escalation and associated execution admission require their own selected services.
-- RQS-9 · **Deferred:** scoped outcomes/approval/bulk creation preserve editable proposals, estimates and explicit review. A feature requires a project, while the request itself may remain projectless; no task creation or feature transition is inferred from a status field.
-- RQS-10 · Accepted assignment/content/shared-question changes have durable immutable task history with actors/times. **Deferred:** reroute acceptance, decline/merge and approval-specific transitions need lifecycle contracts; unknown imported history is labeled honestly.
-- RQS-11 · Request text/identity/history persist canonically in organization Git plus the unpublished durable journal. Feature definitions/supporting docs use their selected stable-ID scope contracts; rationale links do not replace request history or add unsupported requests front matter.
-- RQS-12 · Existing request wire/CLI behavior remains versioned current-contract evidence; target capture/assignment/private-note APIs require explicit adaptation. **Deferred:** universal target accept/ask/reroute/scope/approve/decline/merge command parity is not claimed.
-- RQS-13 · Up to two similar permitted shared requests show qualified references; Add to explicitly appends a shared comment without changing reporter or creating a new record. Private notes never participate.
-- RQS-14 · **Deferred:** Sent but not accepted versus Scoping requires a recorded acceptance event/state; assignment alone does not prove acceptance. Team-only routing stays a team queue without invented individual ownership.
-- RQS-15 · Queue filters separate accountable team, assigned team, assignee, reporter and project/no project, remember choices, and declare actual search coverage. Loading/empty/no-match/retry/read-only states preserve last data. Project/team links open the correct scope.
-- RQS-16 · Origin links use stable task/feature/document identities and permitted relationships; shared T- references are scope-qualified outside context. **Deferred:** open-only merge/decline rules and automatic From-request task creation require a selected lifecycle schema.
-- RQS-17 · Disconnection retains open-page text labeled Unsaved with Copy draft. Accepted local save, pending number and pending publication are distinct; success requires recoverable task/events/receipt. Lost responses resolve by the same operation identity, without duplicate creation or an invented browser outbox.
-- RQS-18 · Accepted Send/Save/Add-to uses a quiet three-second confirmation with scoped reference or Pending number and Open, without stealing focus. Attachments stay hidden until storage design; image-only paste reports unsupported content.
-- RQS-19 · Every request supports all four nullable assignment-pair states at expected revision. Assignment changes neither owning scope, number, original creator nor canonical file; home-team moves do not rewrite assignments.
-- RQS-20 · All task types use one project/team-scoped T- allocation, new UUIDv7 stable IDs and preserved old IDs. Old REQ/B references need explicit import mappings and collision resolution, never prefix replacement.
-- RQS-21 · Private request notes satisfy PN-01–06 in document 05: exclusive author access including against admins, separate durable recovery, no shared existence metadata, explicit publish, revision conflicts and retention/deletion. Existing shared note comments remain shared; private runtime/API/UI remain unimplemented.
+- RQS-1 · New request opens an accessible in-page dialog, naming the authorized organization, from navigation or the command palette.
+- RQS-2 · With valid project or team context, text plus ⌘Enter saves a request. An accountable team is always required; with no context the dialog asks for one. Project, assignment and classification are optional. Selecting a project derives its accountable team.
+- RQS-3 · Suggestions show a valid agent or team and up to two available alternatives with reasons; the person may choose another or save unrouted. Suggestions never overwrite an explicit assignment or infer an assigned team from employee membership.
+- RQS-4 · A leading @ has accessible combobox keyboard completion, active-option and expanded state, and caret dismissal. Selecting a multiword name removes the complete selected span, keeps all remaining request text and leaves the assigned team unchanged. An unresolved prefix blocks Send with no rule fallback; an interior @ is ordinary text. Message instead has explicit recipient and connection errors and confirms an accepted message separately from task creation.
+- RQS-5 · Rule suggestions are labelled Suggested by rule; without configuration a visible choice remains and no project lead or automatic owner is invented.
+- RQS-6 · A bug hint carries text and valid scope into bug capture, allows projectless bugs and can be dismissed for this capture.
+- RQS-7 · Requests is a type-filtered task view across project and team scopes, with clear ownership and assignment columns. Grouping never synthesizes acceptance from an assignment.
+- RQS-8 · Assignment shows actual availability and never promises an automatic wake.
+- RQS-9 · Approving a scoped outcome shows exactly what will be created (feature, documents and tasks with their accountability, type and assignment), lets the approver edit or remove drafts, then creates those records and links them to the request in one recoverable operation. A feature requires a project; the request itself may stay projectless. No task creation or feature change is inferred from a status field.
+- RQS-10 · Accepted assignment, content and shared-question changes have durable immutable task history with actors and times.
+- RQS-11 · Request text, identity and history persist in organization Git plus the unpublished durable journal. Feature definitions and supporting documents use their stable-ID scopes; rationale links do not replace request history.
+- RQS-12 · Scope, ask for changes, approve, decline (with a reason) and merge (into another open request) work the same in the app and in `agent-os`, with actor, time and reason in the request's history; the scoper never approves its own outcome.
+- RQS-13 · Up to two similar permitted shared requests show their references; Add to appends a shared comment without changing the reporter or creating a record. Private notes never take part.
+- RQS-14 · A team-only route stays in the team's queue with no invented individual owner; assignment alone is never shown as acceptance.
+- RQS-15 · Queue filters separate accountable team, assigned team, assignee, reporter and project or no project, remember choices and state actual search coverage. Loading, empty, no-match, retry and read-only states keep the last data. Project and team links open the correct scope.
+- RQS-16 · Origin links use stable task, feature and document identities and permitted relationships; `T-` references are complete on their own.
+- RQS-17 · Disconnection keeps open-page text labelled Unsaved with Copy draft. An accepted save and pending publication are distinct; success requires the recoverable task, events and receipt. A lost response resolves by the same operation identity, with no duplicate and no browser outbox.
+- RQS-18 · An accepted Send, Save or Add to shows a quiet three-second confirmation with the reference and Open, without taking focus. Attachments stay hidden; an image-only paste reports unsupported content.
+- RQS-19 · Every request supports all four assignment-pair states at the expected revision. Assignment changes neither owning scope, reference, original creator nor canonical file; home-team moves do not rewrite assignments.
+- RQS-20 · All task types use one `T-` sequence per creating office and the same stable-ID rule.
+- RQS-21 · Private request notes satisfy PN-01 to PN-06 in document 05: exclusive author access including against administrators, separate durable recovery, no shared existence metadata, explicit publish, revision conflicts and retention and deletion.
 
 ## 6. Open questions
 
-- A29: selected entity decision is one typed task with required accountability; earlier separate request model/counter is retired. Target approval/outcome/merge transition semantics remain a separate lifecycle decision.
-- A30/U21: native/global capture remains deferred. The earlier preference for approval before proposed work is created is retained UX intent; it does not implement bulk task creation or force projectless requests into a project.
-- C22/A76: suggestion quality and full-body shared search require explicit implementation; declare real capability. Attachment storage remains deferred. Rule suggestions require actual valid configuration.
-- Target APIs must cover atomic assignment, durable acceptance/numbering and honest offline states without changing current command codecs. Selected request fields/outcomes map through details/task_details, including routing_source (old routed_by), optional independently known routing actor, merge target and decline reason. Unsupported link kinds/unknown variants remain in controlled import staging until explicitly mapped.
-- Closure/merge handling for unresolved questions/waits, authorization and notification delivery require lifecycle decisions. Author-private notes are selected required data but remain runtime/store/access/UI implementation work.
+- Suggestion quality: how the copilot ranks agents and teams is still open.
+
+## 7. Not in v1
+
+- Request-specific statuses; a request uses the five task statuses.
+- Waking an agent when a request is routed to it.
+- Attachments on a request. Chat attachments are v1 ([chat UX](chat-ux.md)).

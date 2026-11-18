@@ -1,41 +1,64 @@
-# Executable migration from v1
+# Executables and entry points
 
-This change migrates implemented executable responsibilities. Application directories, Cargo packages and executable names use the same names. Reusable domain/protocol libraries retain their existing org-* names. It does not complete the separate standalone installer, production web authentication or agent execution/pool designs.
+Agentic Org ships four executables. Application directories, Cargo packages and
+executable names are the same. Reusable domain and protocol libraries keep their
+`org-*` names. What each program is responsible for is fixed by the
+[architecture non-negotiables](../architecture-non-negotiables.md) (rule 7).
 
-| Executable | Source/package | Implementation status |
+| Executable | Source | Job |
 | --- | --- | --- |
-| agentic-org | apps/agentic-org / agentic-org | Human CLI dispatch and serve run the existing host library. setup is reserved for HQ-only onboarding but explicitly unavailable until protected bootstrap and service registration land. |
-| agentic-org-office | apps/agentic-org-office / agentic-org-office | Existing office daemon, unchanged launch/state protocol and storage. |
-| agentic-org-web | apps/agentic-org-web / agentic-org-web | Existing HTTP/assets/TLS library retained; new executable supports help/version and refuses production startup until authenticated host handoff and backend composition land. |
-| agent-os | apps/agent-os / agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
+| `agentic-org` | `apps/agentic-org` | The person's command line. `setup` creates the instance and prints a one-time registration link; `serve` runs the host, which owns accounts, sessions and secrets and starts the offices and the web process. |
+| `agentic-org-office` | `apps/agentic-org-office` | One office worker: every domain rule, the only writer of organization data, and the supervisor of the office's agents. |
+| `agentic-org-web` | `apps/agentic-org-web` | Serves the static UI and `/api/v1` to browsers. Holds no keys and opens no database. |
+| `agent-os` | `apps/agent-os` | The only way an agent reaches the product. |
 
-The static browser application is `apps/agentic-org-ui`, frontend package
-`agentic-org-ui`. CI, build scripts and licensed UI containment use that path. It
-produces static assets served by `agentic-org-web`, not another executable or
-JavaScript service.
+The static browser application is `apps/agentic-org-ui` (package `agentic-org-ui`).
+It builds to static assets that `agentic-org-web` serves; it is not another
+executable or JavaScript service.
 
-## Host extraction
+## Host composition
 
-Host behavior lives in crates/org-host as a library, preserving its build guard. The human CLI in apps/agentic-org composes this library; it is not another executable, and there is no app-to-app dependency or extra host daemon. Production startup is explicit through agentic-org serve. Plain agentic-org displays help and never starts a host implicitly. Service managers must use serve when their registration implementation lands.
+Host behaviour lives in the library `crates/org-host`. `agentic-org serve` composes
+it; there is no separate host executable and no app-to-app dependency. Plain
+`agentic-org` prints help and never starts a host. Service registration invokes the
+pinned `agentic-org` with `serve` and an optional instance name; the saved setup
+state supplies its root, listener and release identity.
 
-Existing host integration tests and test-only fake/fixture binaries live in agentic-org alongside the composition they exercise. Test-support features keep fixtures out of a normal production build. Host unit tests remain beside the library. Tracked-source SQLCipher/build-opener and UID-ownership audits follow the moved files; they are not disabled.
+Host integration tests and test-only fixture binaries live in `apps/agentic-org`
+beside the composition they exercise. Test-support features keep fixtures out of a
+production build. The host finds the worker as the sibling executable
+`agentic-org-office`.
 
-The host's sibling executable discovery now selects agentic-org-office. Code-signing identifiers, entitlement requirements, private launch framing, environment restrictions and key-store namespaces remain stable independently of filenames. Signing/release tooling must sign the new filenames with the existing required identities. This branch does not relax platform validation or ship a plaintext release credential fallback.
+Code-signing identifiers, entitlement requirements, launch framing and key-store
+namespaces are persisted identities. They do not follow file names, and release
+tooling signs the four executables with those identities.
 
-## State and live tooling
+## Where the entry points stand (2026-11-18)
 
-No database migration, ID change, spool move, namespace reset, service installation or interaction with a running user's organization is performed by this source migration. The previously installed live CLI remains untouched until a separately verified cutover. New build/test invocations use agent-os. CLI help and generated messaging/process hints use the new name while wire field names, ORG_AGENT/ORG_OFFICE bindings and deduplication semantics stay unchanged.
+This section is what the code does today. Each statement was checked against the
+source; recheck it against the commit you work on.
 
-Superseded application directories and package/executable aliases are removed. Cargo build/test commands select the same name as the application directory and production binary. org-host is library-only. Test-only fixture names and the legacy relay dispatch behavior are not new production service executables.
+| Executable | What works |
+| --- | --- |
+| `agentic-org` | On macOS: `setup [--name N] [--port P]` creates the instance, registers and starts its launchd user service and prints one registration link when the output is a terminal ([`crates/org-host/src/setup_flow.rs`](../../crates/org-host/src/setup_flow.rs)); `admin reset [--name N]` issues a new registration link after local presence and the system dialog (its set-new-password branch answers `unavailable` until A3); `service start\|stop\|status [--name N]`; `serve --name N` runs a registered instance from its frozen setup record and creates the host registry at first start. Help and version. Setup on other systems refuses before any change. A release build of `setup` and `serve --name` refuses until it carries a pinned runtime release (SRV-1). Debug builds keep the legacy `serve --home` entry for integration tests. The host socket answers `hello`, `instance.status` (with `administrator`), `admin.link.initial` and `admin.reset` (`crates/org-host/src/service/mod.rs`, `crates/org-host/src/admin.rs`). |
+| `agentic-org-office` | Runs when the host starts it, on macOS only (`crates/org-host/src/spawn.rs`). The host launches it only over the registered instance's verified rendezvous; a host with no registered instance starts no office. Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls yet. The host no longer sends the name-only non-HQ `organization.create`; the worker's v2 create arm and the v2 wire types are removed in A1.5. |
+| `agentic-org-web` | Help and version. `--serve` runs only after a verified host handoff and otherwise refuses without opening a listener ([`apps/agentic-org-web/src/main.rs`](../../apps/agentic-org-web/src/main.rs)); the host starts it only in debug/test instance composition, and it serves only `GET /api/v1/version`. |
+| `agent-os` | Messaging, directory and work calls against a running office when one is named; with none it writes to a file queue, which is deleted (implementation plan B6). |
 
-## Pending standalone integration
+Libraries that exist and are not yet reachable from any command: release
+verification (`org-release`), socket admission and confinement primitives
+(`org-socket`), the work-file codec and the office's acceptance journal, recovery
+escrow (`org-pki`), protected HQ creation and recovery delivery in `org-host`.
 
-Initial agentic-org setup must create HQ only, automatically install/register/start its service and expose no satellite choice. Satellite onboarding is a separate HQ-initiated flow. Neither workflow is fabricated here: v1 has no wired protected bootstrap/service registration to migrate. The command returns failure before any provisioning and rejects satellite join flags with HQ guidance.
-
-Likewise, the web executable must receive the authenticated listener/control handoff and real browser authorization backend before production startup. A test-only loopback harness or UnavailableApi cannot establish that boundary. The new executable fails closed instead of exposing that harness as production. Installer downloads, signed offline bundles, update activation and production macOS/Linux service registration remain integration work, not claimed working functionality.
+The order in which these become usable is the
+[implementation plan](../implementation-plan.md).
 
 ## Verification
 
-Use the pinned Rust toolchain and locked dependencies. Run format, workspace clippy/tests and the existing platform-specific host checks. Linux retains v1 CI's host exclusions and lint exceptions pending platform bring-up, now covering the new host composition package; CLI-only migration tests still run there. macOS CI continues to exercise the complete host integration suite.
-
-New tests verify the four production targets, absence of a standalone host binary, help/version without state creation, setup refusal without partial provisioning, and web startup refusal without opening a listener. Existing office, agent CLI, messaging and source-security tests follow the new executable paths. Tests use disposable roots and never install into or change a user's live organization.
+Run format, workspace Clippy and tests with the pinned toolchain. Tests check the
+four production targets, that no standalone host binary exists, that help and
+version create no state, that `setup` refuses satellite flags and unknown arguments
+without partial provisioning, that `setup` run twice changes nothing (with a
+child-process service manager; no test touches launchd unless opted in), and
+that web startup refuses without opening a listener until the handoff is wired.
+Tests use temporary roots and never touch a real organization.

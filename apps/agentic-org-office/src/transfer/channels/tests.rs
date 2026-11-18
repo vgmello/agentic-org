@@ -10,24 +10,23 @@ fn registry_rejects_each_identity_fault_and_tracks_only_live_opaque_ids() {
         assert!(register(&registry, id, ChannelKind::Local, &socket).is_err());
         assert!(registry.lock().unwrap().is_empty());
     }
-    let first = register(&registry, "opaque/Exact:id", ChannelKind::Gateway, &socket).unwrap();
+    let first = register(&registry, "opaque/Exact:id", ChannelKind::Web, &socket).unwrap();
     assert!(register(&registry, "opaque/Exact:id", ChannelKind::Local, &socket).is_err());
-    let case_distinct =
-        register(&registry, "OPAQUE/Exact:id", ChannelKind::Gateway, &socket).unwrap();
+    let case_distinct = register(&registry, "OPAQUE/Exact:id", ChannelKind::Web, &socket).unwrap();
     drop(first);
     assert!(!registry.lock().unwrap().contains_key("opaque/Exact:id"));
     let reused = register(&registry, "opaque/Exact:id", ChannelKind::Local, &socket).unwrap();
     let entries = registry.lock().unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries["opaque/Exact:id"].0, ChannelKind::Local);
-    assert_eq!(entries["OPAQUE/Exact:id"].0, ChannelKind::Gateway);
+    assert_eq!(entries["OPAQUE/Exact:id"].0, ChannelKind::Web);
     drop(entries);
     drop((reused, case_distinct));
     assert!(registry.lock().unwrap().is_empty());
 }
 
 #[test]
-fn total_and_gateway_bounds_are_independent_and_release_on_drop() {
+fn total_and_web_bounds_are_independent_and_release_on_drop() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, _peer) = UnixStream::pair().unwrap();
     for local in [true, false] {
@@ -41,7 +40,7 @@ fn total_and_gateway_bounds_are_independent_and_release_on_drop() {
                     if local {
                         ChannelKind::Local
                     } else {
-                        ChannelKind::Gateway
+                        ChannelKind::Web
                     },
                     &socket,
                 )
@@ -49,13 +48,13 @@ fn total_and_gateway_bounds_are_independent_and_release_on_drop() {
             );
         }
         if !local {
-            assert!(register(&registry, "eighth-gateway", ChannelKind::Gateway, &socket).is_err());
+            assert!(register(&registry, "eighth-web", ChannelKind::Web, &socket).is_err());
         }
         slots.push(register(&registry, "eighth-local", ChannelKind::Local, &socket).unwrap());
         assert!(register(&registry, "ninth-local", ChannelKind::Local, &socket).is_err());
-        assert!(register(&registry, "ninth-gateway", ChannelKind::Gateway, &socket).is_err());
+        assert!(register(&registry, "ninth-web", ChannelKind::Web, &socket).is_err());
         slots.remove(0);
-        slots.push(register(&registry, "replacement", ChannelKind::Gateway, &socket).unwrap());
+        slots.push(register(&registry, "replacement", ChannelKind::Web, &socket).unwrap());
         assert_eq!(registry.lock().unwrap().len(), 8);
         drop(slots);
         assert!(registry.lock().unwrap().is_empty());
@@ -128,30 +127,51 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             mailbox,
             directory,
         },
-        org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]),
+        crate::test_support::grant_key(),
     ))
 }
+fn office_fixture() -> (tempfile::TempDir, Arc<org_office::Office>) {
+    let root = tempfile::TempDir::new().unwrap();
+    let office = org_office::Office::create(
+        root.path().join("OFFICE1"),
+        &org_office::NewOffice {
+            office_id: "OFFICE1".into(),
+            office_name: "HQ".into(),
+            org_id: "ORG1".into(),
+            org_name: "Acme".into(),
+            role: org_office::OfficeRole::Hq,
+        },
+        org_office::Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([17; 32])),
+    )
+    .unwrap();
+    (root, Arc::new(office))
+}
+
 fn manager() -> (
     Channels,
     UnixStream,
     Arc<serve::Shared>,
     Arc<Mutex<Revocations>>,
+    tempfile::TempDir,
 ) {
     let (out, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .unwrap();
     let shared = shared_fixture();
     let revocations = Arc::default();
+    let (root, office) = office_fixture();
     let channels = Channels::new(
         shared.clone(),
+        office,
         "verified-instance".into(),
         Arc::new(Mutex::new(out)),
         Arc::clone(&revocations),
     );
-    (channels, peer, shared, revocations)
+    (channels, peer, shared, revocations, root)
 }
 fn owned_channel(stream: UnixStream, office: &str, id: &str) -> Channel {
     Channel {
+        recovery: false,
         kind: ChannelKind::Local,
         office_id: office.into(),
         channel_id: id.into(),
@@ -163,7 +183,7 @@ fn owned_admission_rejects_wrong_office_and_datagram_without_registration_or_ack
     let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     use std::io::Read;
-    let (mut channels, events, _, _) = manager();
+    let (mut channels, events, _, _, _office_root) = manager();
     let (stream, mut peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .unwrap();
@@ -178,6 +198,7 @@ fn owned_admission_rejects_wrong_office_and_datagram_without_registration_or_ack
     let (socket, peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
     assert!(channels
         .open(Channel {
+            recovery: false,
             kind: ChannelKind::Local,
             office_id: OFFICE_ID.into(),
             channel_id: "datagram".into(),
@@ -197,7 +218,7 @@ fn owned_admission_rejects_wrong_office_and_datagram_without_registration_or_ack
 fn admission_ack_keeps_owned_stream_registry_thread_and_shared_policy_until_joined_shutdown() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
-    let (mut channels, events, shared, policy) = manager();
+    let (mut channels, events, shared, policy, _office_root) = manager();
     let (stream, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .unwrap();
@@ -213,7 +234,7 @@ fn admission_ack_keeps_owned_stream_registry_thread_and_shared_policy_until_join
     );
     let mut events = std::io::BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived { of: "live".into() })
     );
     let mut peer = std::io::BufReader::new(peer);
@@ -240,7 +261,7 @@ fn admission_ack_keeps_owned_stream_registry_thread_and_shared_policy_until_join
 fn event_write_failure_propagates_after_ownership_then_shutdown_releases_all_handles() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
-    let (mut channels, _events, _, policy) = manager();
+    let (mut channels, _events, _, policy, _office_root) = manager();
     channels
         .out
         .lock()
@@ -253,11 +274,8 @@ fn event_write_failure_propagates_after_ownership_then_shutdown_releases_all_han
     assert!(channels
         .open(owned_channel(stream, OFFICE_ID, "unacknowledged"))
         .is_err());
-    assert!(channels
-        .registry
-        .lock()
-        .unwrap()
-        .contains_key("unacknowledged"));
+    assert!(channels.registry.lock().unwrap().is_empty());
+    assert!(channels.threads.is_empty());
     drop(channels);
     let mut peer = std::io::BufReader::new(peer);
     assert!(org_proto::frame::read_line(&mut peer).unwrap().is_none());
@@ -298,7 +316,7 @@ fn thread_creation_refusal_drops_owned_closure_registration_and_fd_before_any_ac
     let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     use std::io::Read;
-    let (mut channels, events, shared, policy) = manager();
+    let (mut channels, events, shared, policy, _office_root) = manager();
     let (socket, mut peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .unwrap();
@@ -362,7 +380,7 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
     .unwrap();
     let hello: Value = frame::read_message(&mut office_peer).unwrap().unwrap();
     assert_eq!(hello["result"]["api_version"], 1);
-    frame::write_message(office_peer.get_mut(), &json!({"id":2,"method":"msg.bind","params":{"app_token":org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])}})).unwrap();
+    frame::write_message(office_peer.get_mut(), &json!({"id":2,"method":"msg.bind","params":{"member":org_mailbox::testkit::fixture::ADA_HANDLE}})).unwrap();
     let bound: Value = frame::read_message(&mut office_peer).unwrap().unwrap();
     assert!(bound.get("result").is_some(), "{bound}");
     frame::write_message(
@@ -383,8 +401,10 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
     events
         .set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .unwrap();
+    let (_office_root, office) = office_fixture();
     let mut channels = Channels::new(
         Arc::clone(&shared),
+        office,
         "verified-instance".into(),
         Arc::new(Mutex::new(out)),
         Arc::clone(&policy),
@@ -399,28 +419,26 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
         move |channel| channels.open(channel),
     )
     .unwrap();
-    let revoked = org_office_launch::v3::encode_transfer_record(
-        &org_office_launch::v3::TransferRecord::Revoked {
+    let revoked =
+        org_office_launch::encode_transfer_record(&org_office_launch::TransferRecord::Revoked {
             session_ids: vec!["fifo-tombstone".into()],
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     super::super::tests::send_rights(&host, &revoked, &[]);
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .unwrap();
-    let record = org_office_launch::v3::encode_transfer_record(
-        &org_office_launch::v3::TransferRecord::Channel {
+    let record =
+        org_office_launch::encode_transfer_record(&org_office_launch::TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: OFFICE_ID.into(),
             channel_id: "independent".into(),
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
     let mut events = BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived {
             of: "independent".into()
         })
@@ -458,13 +476,13 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
 }
 
 #[test]
-fn blocked_ack_writer_observes_registry_and_a_serving_owner_before_ack_is_possible() {
+fn blocked_ack_writer_owns_registration_but_gates_serving_until_ack() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     use org_proto::frame;
     use std::io::BufReader;
     use std::time::{Duration, Instant};
-    let (mut channels, events, _, _) = manager();
+    let (mut channels, events, _, _, _office_root) = manager();
     let registry = Arc::clone(&channels.registry);
     let writer = Arc::clone(&channels.out);
     let locked = writer.lock().unwrap();
@@ -487,25 +505,27 @@ fn blocked_ack_writer_observes_registry_and_a_serving_owner_before_ack_is_possib
         );
         std::thread::yield_now();
     }
-    // ACK is impossible while this exact writer lock is held. The peer's answer
-    // therefore proves a spawned serving owner already exists before the ACK.
+    // The thread owns registration before ACK, but cannot serve or publish closure yet.
     let mut peer = BufReader::new(peer);
     frame::write_message(
         peer.get_mut(),
         &serde_json::json!({"id":1,"method":"hello","params":{"api":{"min":2,"max":2}}}),
     )
     .unwrap();
-    let answer: serde_json::Value = frame::read_message(&mut peer).unwrap().unwrap();
-    assert_eq!(answer["result"]["api_version"], 2);
+    assert!(
+        !org_socket::poll_readable(peer.get_ref().as_raw_fd(), Duration::from_millis(20)).unwrap()
+    );
     assert!(!org_socket::poll_readable(events.as_raw_fd(), Duration::from_millis(10)).unwrap());
     drop(locked);
     let mut events = BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived {
             of: "before-ack".into()
         })
     );
+    let answer: serde_json::Value = frame::read_message(&mut peer).unwrap().unwrap();
+    assert_eq!(answer["result"]["api_version"], 2);
     let channels = admission.join().unwrap();
     assert_eq!(channels.threads.len(), 1);
     drop(channels);
@@ -514,7 +534,7 @@ fn blocked_ack_writer_observes_registry_and_a_serving_owner_before_ack_is_possib
 #[test]
 fn poisoned_registry_refuses_registration_and_ack_while_cleanup_still_recovers() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    let (mut channels, events, _, _) = manager();
+    let (mut channels, events, _, _, _office_root) = manager();
     let registry = Arc::clone(&channels.registry);
     assert!(std::thread::spawn(move || {
         let _lock = registry.lock().unwrap();
@@ -547,7 +567,7 @@ fn nonblocking_source_delivers_a_complete_reply_larger_than_its_send_buffer() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use std::io::Write;
     use std::time::Duration;
-    let (mut channels, _events, _, _) = manager();
+    let (mut channels, _events, _, _, _office_root) = manager();
     channels.hello.server_version = "x".repeat(org_proto::MAX_FRAME_BYTES / 2);
     let (entered, at_exit) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel();
@@ -604,7 +624,7 @@ fn shutdown_interrupts_a_channel_blocked_writing_before_joining_it() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use std::io::Write;
     use std::time::Duration;
-    let (mut channels, _events, _, _) = manager();
+    let (mut channels, _events, _, _, _office_root) = manager();
     channels.hello.server_version = "x".repeat(org_proto::MAX_FRAME_BYTES / 2);
     let (socket, mut peer) = UnixStream::pair().unwrap();
     let small: libc::c_int = 4096;
@@ -654,7 +674,7 @@ fn shutdown_interrupts_a_channel_blocked_writing_before_joining_it() {
 fn channel_drop_waits_for_the_actual_thread_exit_even_after_its_captures_are_gone() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use std::time::Duration;
-    let (mut channels, _events, _, _) = manager();
+    let (mut channels, _events, _, _, _office_root) = manager();
     let (entered, at_exit) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel();
     HOLD_THREAD_EXIT.with(|gate| *gate.borrow_mut() = Some((entered, released)));
@@ -693,7 +713,7 @@ fn channel_drop_waits_for_the_actual_thread_exit_even_after_its_captures_are_gon
 #[test]
 fn stream_validation_precedes_even_a_poisoned_registry_refusal() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    let (mut channels, _events, _, _) = manager();
+    let (mut channels, _events, _, _, _office_root) = manager();
     let registry = Arc::clone(&channels.registry);
     assert!(std::thread::spawn(move || {
         let _guard = registry.lock().unwrap();
@@ -704,6 +724,7 @@ fn stream_validation_precedes_even_a_poisoned_registry_refusal() {
     let (datagram, _peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
     let error = channels
         .open(Channel {
+            recovery: false,
             kind: ChannelKind::Local,
             office_id: org_mailbox::testkit::fixture::OFFICE_ID.into(),
             channel_id: "invalid-before-registry".into(),
@@ -719,7 +740,7 @@ fn stream_validation_precedes_even_a_poisoned_registry_refusal() {
 #[test]
 fn already_closed_peer_is_adopted_and_acknowledged_then_reaped_normally() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    let (mut channels, events, _, _) = manager();
+    let (mut channels, events, _, _, _office_root) = manager();
     let (socket, peer) = UnixStream::pair().unwrap();
     peer.shutdown(std::net::Shutdown::Both).unwrap();
     drop(peer);
@@ -732,7 +753,7 @@ fn already_closed_peer_is_adopted_and_acknowledged_then_reaped_normally() {
         .unwrap();
     let mut events = std::io::BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived {
             of: "peer-already-gone".into()
         })
@@ -743,7 +764,7 @@ fn already_closed_peer_is_adopted_and_acknowledged_then_reaped_normally() {
 fn admission_reaps_finished_handles_but_retains_every_still_live_thread() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use std::time::{Duration, Instant};
-    let (mut channels, _events, _, _) = manager();
+    let (mut channels, _events, _, _, _office_root) = manager();
     let (socket, peer) = UnixStream::pair().unwrap();
     channels
         .open(owned_channel(
@@ -787,4 +808,206 @@ fn admission_reaps_finished_handles_but_retains_every_still_live_thread() {
     );
     drop((first, second));
     drop(channels);
+}
+
+#[test]
+fn ordinary_capacity_refusal_keeps_existing_rpc_and_transfer_manager_live() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use org_mailbox::testkit::fixture::OFFICE_ID;
+    use org_proto::frame;
+    use serde_json::{json, Value};
+    use std::io::{BufReader, Read};
+    let (mut channels, events, _, _, _office_root) = manager();
+    let mut events = BufReader::new(events);
+    let mut held = Vec::new();
+    for n in 0..8 {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        channels
+            .open(owned_channel(stream, OFFICE_ID, &format!("held-{n}")))
+            .unwrap();
+        let event: Value = frame::read_message(&mut events).unwrap().unwrap();
+        assert_eq!(event["event"], "fds_received");
+        held.push(peer);
+    }
+    let (stream, mut refused) = UnixStream::pair().unwrap();
+    refused
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    assert!(
+        channels
+            .open(owned_channel(stream, OFFICE_ID, "capacity"))
+            .is_ok(),
+        "ordinary capacity must not kill transfer service"
+    );
+    assert_eq!(refused.read(&mut [0]).unwrap(), 0);
+    let event: Value = frame::read_message(&mut events).unwrap().unwrap();
+    assert_eq!(
+        event,
+        json!({"v":1,"event":"fds_refused","of":"capacity","reason":"capacity"})
+    );
+    let mut live = BufReader::new(held.pop().unwrap());
+    frame::write_message(
+        live.get_mut(),
+        &json!({"id":1,"method":"hello","params":{"api":{"min":2,"max":2}}}),
+    )
+    .unwrap();
+    let response: Value = frame::read_message(&mut live).unwrap().unwrap();
+    assert_eq!(response["result"]["instance_id"], "verified-instance");
+    assert_eq!(channels.registry.lock().unwrap().len(), 8);
+}
+
+#[test]
+fn immediate_eof_is_acknowledged_before_exactly_one_close_and_recovery_releases_local_slot() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use org_mailbox::testkit::fixture::OFFICE_ID;
+    let (mut channels, events, _, _, _office_root) = manager();
+    let mut events = std::io::BufReader::new(events);
+    for recovery in [false, true] {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let id = if recovery {
+            "recovery-eof"
+        } else {
+            "immediate-eof"
+        };
+        let mut channel = owned_channel(stream, OFFICE_ID, id);
+        channel.recovery = recovery;
+        channels.open(channel).unwrap();
+        assert_eq!(
+            org_office_launch::read_server_event(&mut events).unwrap(),
+            Some(RendezvousEvent::FdsReceived { of: id.into() })
+        );
+        assert_eq!(
+            org_office_launch::read_server_event(&mut events).unwrap(),
+            Some(RendezvousEvent::ChannelClosed { of: id.into() })
+        );
+        assert!(channels.registry.lock().unwrap().is_empty());
+    }
+    drop(channels);
+    assert!(org_office_launch::read_server_event(&mut events)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn lifecycle_write_failure_ends_rendezvous_after_dropping_channel_ownership() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use org_mailbox::testkit::fixture::OFFICE_ID;
+    use std::io::Read;
+    let (mut channels, events, _, _, _office_root) = manager();
+    let (stream, peer) = UnixStream::pair().unwrap();
+    channels
+        .open(owned_channel(stream, OFFICE_ID, "closing-write-fails"))
+        .unwrap();
+    let mut events = std::io::BufReader::new(events);
+    assert!(matches!(
+        org_office_launch::read_server_event(&mut events).unwrap(),
+        Some(RendezvousEvent::FdsReceived { .. })
+    ));
+    drop(events);
+    drop(peer);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !channels.threads[0].is_finished() {
+        assert!(std::time::Instant::now() < until);
+        std::thread::yield_now();
+    }
+    assert!(channels.registry.lock().unwrap().is_empty());
+    let mut out = channels.out.lock().unwrap();
+    assert_eq!(out.read(&mut [0]).unwrap(), 0);
+}
+
+#[test]
+fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_existing_hello() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use org_mailbox::testkit::fixture::OFFICE_ID;
+    use org_office_launch::TransferRecord;
+    use org_proto::frame;
+    use serde_json::{json, Value};
+    use std::io::{BufReader, Read};
+    use std::os::fd::AsRawFd;
+    let (mut channels, events, _, policy, _office_root) = manager();
+    let (host, child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+    let service = super::super::Service::start(
+        startup::Transfer {
+            receiver: org_socket::rights::DatagramReceiver::new(child),
+            fence: Arc::default(),
+        },
+        Arc::clone(&policy),
+        move |channel| channels.open(channel),
+    )
+    .unwrap();
+    let mut events = BufReader::new(events);
+    let mut held = Vec::new();
+    for n in 0..9 {
+        let (source, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
+            kind: ChannelKind::Local,
+            office_id: OFFICE_ID.into(),
+            channel_id: format!("actual-{n}"),
+        })
+        .unwrap();
+        super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
+        let event = org_office_launch::read_server_event(&mut events)
+            .unwrap()
+            .unwrap();
+        if n < 8 {
+            assert_eq!(
+                event,
+                RendezvousEvent::FdsReceived {
+                    of: format!("actual-{n}")
+                }
+            );
+            held.push(peer);
+        } else {
+            assert_eq!(
+                event,
+                RendezvousEvent::FdsRefused {
+                    of: format!("actual-{n}"),
+                    reason: org_office_launch::RefusalReason::Capacity
+                }
+            );
+            drop(source);
+            assert_eq!((&peer).read(&mut [0]).unwrap(), 0);
+            continue;
+        }
+        drop(source);
+    }
+    let revoked = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
+        session_ids: vec!["after-capacity".into()],
+    })
+    .unwrap();
+    super::super::tests::send_rights(&host, &revoked, &[]);
+    // A later negative ACK proves the FIFO reader passed that revocation and survived.
+    let (source, mut peer) = UnixStream::pair().unwrap();
+    let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
+        kind: ChannelKind::Local,
+        office_id: OFFICE_ID.into(),
+        channel_id: "after-revoked".into(),
+    })
+    .unwrap();
+    super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
+    assert_eq!(
+        org_office_launch::read_server_event(&mut events).unwrap(),
+        Some(RendezvousEvent::FdsRefused {
+            of: "after-revoked".into(),
+            reason: org_office_launch::RefusalReason::Capacity
+        })
+    );
+    drop(source);
+    assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+    assert!(policy.lock().unwrap().contains("after-capacity"));
+    let mut live = BufReader::new(held.pop().unwrap());
+    frame::write_message(
+        live.get_mut(),
+        &json!({"id":1,"method":"hello","params":{"api":{"min":2,"max":2}}}),
+    )
+    .unwrap();
+    let result: Value = frame::read_message(&mut live).unwrap().unwrap();
+    assert_eq!(result["result"]["instance_id"], "verified-instance");
+    drop(service);
+    assert!(frame::read_line(&mut live).unwrap().is_none());
 }

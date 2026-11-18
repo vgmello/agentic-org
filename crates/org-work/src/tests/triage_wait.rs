@@ -131,21 +131,21 @@ fn rerouting_moves_the_span_with_the_suggested_triager() {
     let v = w.version(&id);
     let mut p = w.bug_update(&id);
     p.area_id = Some(AREA_PAY.into());
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
     assert!(!waiting(&w, &id), "riley leads there now");
     assert_eq!(w.kinds_after(&id, v), ["fields_changed", "waiting_ended"]);
     assert_eq!(w.item(&id).status, ItemStatus::New, "nothing else changes");
 
     let mut p = w.bug_update(&id);
     p.area_id = Some(GENERAL.into());
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
     assert!(waiting(&w, &id));
 
     // Rerouting between two areas with the same triager writes no bookkeeping.
     let v = w.version(&id);
     let mut p = w.bug_update(&id);
     p.area_id = Some(AREA_UI.into());
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
     assert_eq!(w.kinds_after(&id, v), ["fields_changed"]);
     assert!(waiting(&w, &id));
 }
@@ -163,24 +163,24 @@ fn triage_close_and_a_reopen_to_new_keep_the_span_right() {
     // Closing a new bug ends it with the round.
     let id = w.bug_in(None);
     let p = w.wont_fix_params(&id);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     assert!(!waiting(&w, &id));
 
     // Reopening a duplicate goes to New and the span holds again; a plain reopen doesn't.
     let original = w.bug_in(Some(AREA_PAY));
     let dup = w.bug_in(None);
     let p = w.duplicate_params(&dup, &original);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     assert!(!waiting(&w, &dup));
     let p = w.reopen_params(&dup);
-    w.ok(&app(), WorkCall::BugReopen(p));
+    w.ok(&owner_by_grant(), WorkCall::BugReopen(p));
     assert!(waiting(&w, &dup));
     let kinds = w.kinds_after(&dup, 0);
     assert_eq!(&kinds[kinds.len() - 2..], ["reopened", "waiting_started"]);
 
     let closed = w.bug_at(ItemStatus::Closed);
     let p = w.reopen_params(&closed);
-    w.ok(&app(), WorkCall::BugReopen(p));
+    w.ok(&owner_by_grant(), WorkCall::BugReopen(p));
     assert!(!waiting(&w, &closed));
 }
 
@@ -192,7 +192,7 @@ fn a_waiting_event_never_makes_an_edit_stale() {
     let mut p = w.bug_update(&id);
     p.expected_version = 1;
     p.title = Some("A clearer title".into());
-    w.ok(&app(), WorkCall::BugUpdate(p));
+    w.ok(&owner_by_grant(), WorkCall::BugUpdate(p));
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn the_office_bookkeeping_is_never_undone() {
     let w = World::new();
     let id = w.bug_in(None);
     assert_eq!(
-        w.code(&app(), undo(&w, &id, 2)),
+        w.code(&owner_by_grant(), undo(&w, &id, 2)),
         org_proto::ErrorCode::InvalidRequest
     );
 }
@@ -242,7 +242,7 @@ fn a_bug_closed_while_waiting_stops_counting_there() {
     let id = w.bug_in(None);
     w.clock.advance(3 * HOUR);
     let p = w.wont_fix_params(&id);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     w.clock.advance(100 * HOUR);
     let t = read(&w, &id).time;
     assert_eq!(
@@ -278,7 +278,7 @@ fn a_reopened_bug_has_two_rounds_and_a_cycle_each() {
     w.ok(&pat(), WorkCall::BugReopen(p));
     w.clock.advance(2 * HOUR);
     let p = w.fixed_params(&id);
-    w.ok(&app(), WorkCall::BugMarkFixed(p)); // fixed by hand: its cycle starts and ends here
+    w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p)); // fixed by hand: its cycle starts and ends here
     w.clock.advance(HOUR);
     let p = w.verify_params(&id, VerifyOutcome::Fixed);
     w.ok(&pat(), WorkCall::BugVerify(p));
@@ -295,11 +295,11 @@ fn the_wait_for_verification_is_the_owners_when_the_owner_reported_the_bug() {
     let mut p = w.report_params(PROJECT);
     p.area_id = Some(AREA_PAY.into());
     let id = p.item_id.clone();
-    w.ok(&app(), WorkCall::BugReport(p));
+    w.ok(&owner_by_grant(), WorkCall::BugReport(p));
     w.triage(&id);
     w.clock.advance(HOUR);
     let p = w.fixed_params(&id);
-    w.ok(&app(), WorkCall::BugMarkFixed(p));
+    w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
     w.clock.advance(3 * HOUR);
     let t = read(&w, &id).time;
     assert_eq!(t.lead_ms, 4 * HOUR);
@@ -311,7 +311,7 @@ fn the_wait_for_verification_is_the_owners_when_the_owner_reported_the_bug() {
 
     // Sent back: it is not waiting on the owner any more.
     let p = w.verify_params(&id, VerifyOutcome::StillHappens);
-    w.ok(&app(), WorkCall::BugVerify(p));
+    w.ok(&owner_by_grant(), WorkCall::BugVerify(p));
     w.clock.advance(HOUR);
     let t = read(&w, &id).time;
     assert_eq!(
@@ -323,7 +323,7 @@ fn the_wait_for_verification_is_the_owners_when_the_owner_reported_the_bug() {
     let other = w.bug_in(Some(AREA_PAY));
     w.triage(&other);
     let p = w.fixed_params(&other);
-    w.ok(&app(), WorkCall::BugMarkFixed(p));
+    w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
     w.clock.advance(2 * HOUR);
     assert_eq!(read(&w, &other).time.waiting_on_owner_ms, 0);
 }
@@ -334,13 +334,13 @@ fn undoing_an_automatic_fix_stops_the_verification_wait() {
     let mut p = w.report_params(PROJECT);
     p.area_id = Some(AREA_PAY.into());
     let id = p.item_id.clone();
-    w.ok(&app(), WorkCall::BugReport(p));
+    w.ok(&owner_by_grant(), WorkCall::BugReport(p));
     w.triage(&id);
     let task = w.fix_task(&id);
     w.set(&task, ItemStatus::Done);
     let auto = w.version(&id);
     w.clock.advance(HOUR);
-    w.ok(&app(), undo(&w, &id, auto));
+    w.ok(&owner_by_grant(), undo(&w, &id, auto));
     w.clock.advance(2 * HOUR);
     let t = read(&w, &id).time;
     assert_eq!(t.lead_ms, 3 * HOUR);
@@ -388,10 +388,10 @@ fn bug_figures_are_the_same_however_the_events_are_batched() {
     w.ok(&pat(), WorkCall::BugVerify(p));
     w.clock.advance(HOUR);
     let p = w.wont_fix_params(&id);
-    w.ok(&app(), WorkCall::BugClose(p));
+    w.ok(&owner_by_grant(), WorkCall::BugClose(p));
     w.clock.advance(HOUR);
     let p = w.reopen_params(&id);
-    w.ok(&app(), WorkCall::BugReopen(p));
+    w.ok(&owner_by_grant(), WorkCall::BugReopen(p));
     w.clock.advance(HOUR);
 
     let events = w.events(&id);

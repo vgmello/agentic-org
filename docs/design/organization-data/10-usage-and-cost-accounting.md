@@ -1,6 +1,6 @@
 # Usage, token accounting and cost attribution
 
-Structural draft for v1. Document revision 2.7. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns routing/execution records; its attempts supply actual selected connection/model and consumer context for this ledger. Configuration and observations are integrated in the same schema, while immutable usage remains authoritative for accounting.
+Status: **selected** data contract, revision 2.8. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns routing/execution records; its attempts supply actual selected connection/model and consumer context for this ledger. Configuration and observations are integrated in the same schema, while immutable usage remains authoritative for accounting.
 
 ## v1 evidence and selected port
 
@@ -8,7 +8,7 @@ At v1 commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`, [the runtime usage cont
 
 ## One ledger; derived totals
 
-Each accepted normalized report is one immutable `usage_records` event. The record identifies the actual consuming agent or one-off invocation, runtime/model, occurrence time and origin. A run can span several tasks; its identifier is an opaque correlation field, not a foreign key into transient session state. Several agents may contribute to the same task, including reviewers/helpers. Their costs belong to the actual consumers rather than the task's current assignee.
+Each accepted normalized report is one immutable `usage_records` event. The record identifies the actual consuming agent, or a one-off invocation, with the runtime/model, occurrence time and origin. A one-off invocation (`actor_kind: one_off`, no employee) is a model call the product makes itself, such as a drafting feature; it is not an agent, and no agent runs outside an employee record. A run can span several tasks; its identifier is an opaque correlation field, not a foreign key into transient session state. Several agents may contribute to the same task, including reviewers/helpers. Their costs belong to the actual consumers rather than the task's current assignee.
 
 `effective_usage_records` selects records without a replacement. Task, agent and project total views aggregate that same effective set, never independently increment totals on parent entities. Task views sum all contributing agents; agent views include task work and overhead across projects; project views include task work and explicitly attributed project overhead. One-off usage still contributes to task/project/organization totals even when no agent profile exists.
 
@@ -26,11 +26,11 @@ Counters are nullable nonnegative integers: null means unknown, while zero means
 
 Compute a token estimate with exact integer/decimal intermediate arithmetic, sum category charges, then round half up once per usage record to integer `cost_micro_usd`. Avoid overflowing a SQLite integer multiplication or using binary floats for stored ledger amounts. A zero-count category does not need a rate; a nonzero/unknown category with no rate makes the valuation incomplete. The included example's $1/M input, $2/M output and $0.50/M cache-read yield 1650 micro-USD, or $0.001650.
 
-`cost_basis` distinguishes runtime_estimate, token_estimate, unpriced and unknown. V1's runtime-reported list-price estimate remains an estimate, even where an older UX table calls it Reported. Existing events are never automatically repriced when model prices change. Actual invoices, currency conversion and billing reconciliation are not represented here.
+`cost_basis` distinguishes runtime_estimate, token_estimate, unpriced and unknown. A runtime-reported list-price estimate is an estimate, even where a UX table calls it Reported. Existing events are never automatically repriced when model prices change. Actual invoices, currency conversion and billing reconciliation are not represented here.
 
 ## Historical attribution and corrections
 
-Capture `scope_kind`, task/project/team/feature/milestone/release IDs, task type and Build/Run classification at consumption time. A project task records its then-owning team; a team task has no project. Project/team context can also capture overhead, and genuinely unknown context stays at organization scope. New capture validates known task/project/team relationships at that time. Legacy imports may preserve unknown team/classification fields rather than reconstructing a fictional past from today's organization.
+Capture `scope_kind`, task/project/team/feature/milestone/release IDs, task type and Build/Run classification at consumption time. A project task records its then-owning team; a team task has no project. Project/team context can also capture overhead, and genuinely unknown context stays at organization scope. New capture validates known task/project/team relationships at that time.
 
 The captured `team_id` is ownership attribution. The task's current `assigned_team_id`, individual assignee and the consumer's home team can all differ; they must not be substituted for it. Assignment history is retained separately in [task events](05-operational-data.md#task-activity-history). Reassignment does not move past spend or change the actual consuming employee.
 
@@ -58,9 +58,9 @@ An attribution correction requires owner authority or project-manager authority 
 
 JSON Lines avoids a Markdown file or Git commit for every reported event. Each stream is append-only with one stable producer epoch, sequence starting at 1 and monotonically increasing, and source event IDs preserved across delivery retries. Event `organization_id` and `origin_office_id` must match their containing stream. Associate an event with the UTC date of `recorded_at`, preserving its original `occurred_at` when it arrives late. Replication copies event IDs; it never creates new billable events.
 
-`payload_sha256` is SHA-256 of UTF-8 JSON with lexically sorted keys, compact separators, no ASCII escaping, and the checksum field omitted. Before hashing, expand nullable fields to explicit nulls and documented defaults (including fixed `task_kind: task`). Canonical event scalars use the table's names/types, including `_json` fields as compact JSON strings; floats/NaN are not ledger numeric values. SQL `task_kind` is fixed to task and needs no separately chosen authored value. Before acknowledging capture, durably append the event and publish its producer checkpoint; recovery can advance a stale checkpoint from complete appended records. A checkpoint must never promise an event not durably recorded. The collection protocol must satisfy this contract before implementation ships.
+`payload_sha256` is SHA-256 of UTF-8 JSON with lexically sorted keys, compact separators, no ASCII escaping, and the checksum field omitted (codec `sorted-compact-json/1` in the [hash codec registry](08-record-contracts.md#hash-codec-registry)). Before hashing, expand nullable fields to explicit nulls and documented defaults (including fixed `task_kind: task`). Canonical event scalars use the table's names/types, including `_json` fields as compact JSON strings; floats/NaN are not ledger numeric values. SQL `task_kind` is fixed to task and needs no separately chosen authored value. A captured event is accepted as an entry of the office's one acceptance journal, which carries the appended line and the producer checkpoint as file changes, and capture is acknowledged at that entry like any other change ([document 16](16-recovery-and-office-continuity.md#selected-immutable-acceptance-journal)); the stream file is written after it and rebuilt from the journal if the write was interrupted. Recovery can advance a stale checkpoint from complete appended records. A checkpoint must never promise an event not durably recorded. The collection protocol must satisfy this contract before implementation ships. **The writer is named:** the office worker that ran the turn is the producer for its stream and the only process that appends to it; HQ registers corrections. No other office, the web process or an agent writes a usage stream.
 
-Register a sequence-zero checkpoint before accepting a producer's first capture. Checkpoint `high_water_sequence`, last event hash, open/sealed state and time are durable JSON fields with inherited organization/office/producer IDs. Coverage is as of the last known checkpoint, not a claim of real-time visibility into a disconnected office. A replicated checkpoint can arrive before events; cache projections retain it without a foreign key to a missing last event so they can detect gaps. Compare expected sequence coverage and head hash, report missing/corrupt/replayed data, and never treat an incomplete archive as complete zero spend. Checkpoints cannot regress or change the hash at the same sequence. Seal a producer stream when its reporting epoch ends; sealed checkpoints cannot reopen or advance. Never recycle a producer ID after cache deletion.
+Register a sequence-zero checkpoint before accepting a producer's first capture. Checkpoint `high_water_sequence`, last event hash, open/sealed state and time are durable JSON fields with inherited organization/office/producer IDs. Coverage is as of the last known checkpoint, not a claim of real-time visibility into a disconnected office. A replicated checkpoint can arrive before events; cache projections retain it without a foreign key to a missing last event so they can detect gaps. Compare expected sequence coverage and head hash, report missing/corrupt/replayed data, and never treat an incomplete archive as complete zero spend. Checkpoints cannot regress or change the hash at the same sequence. Seal a producer stream when its reporting epoch ends; sealed checkpoints cannot reopen or advance. Never recycle a producer ID after cache deletion. A restore from a backup seals the restored producer's stream at its restored high-water and opens a new producer ID, as a new incarnation does for origin streams (document 16), so a sequence HQ already holds is never issued again.
 
 An identical ID/source-key retry returns the original event only after comparing its canonical payload hash. The same identity with different content is a conflict, not an ignored insert. Replays from two offices do not increase totals. Batches can replicate asynchronously; include freshness and checkpoint coverage when reporting organization-wide totals.
 
@@ -75,7 +75,7 @@ Price version YAML (sample rates only):
 ```yaml
 schema_version: 1
 organization_id: existing-v1-org-id
-id: 01J00000000000000000000300
+id: 01930000-0000-7000-8000-000000000300
 provider: example-provider
 model: example-model
 effective_from: "2026-11-01T00:00:00Z"
@@ -85,8 +85,8 @@ output_micro_usd_per_million: 2000000
 cache_read_micro_usd_per_million: 500000
 cache_write_micro_usd_per_million: 1250000
 created_at: "2026-10-31T12:00:00Z"
-created_by_kind: owner
-created_by_id: null
+created_by_kind: employee
+created_by_id: 01930000-0000-7000-8000-000000000031
 ```
 
 One usage event, formatted for reading (each JSONL event is one line on disk):
@@ -94,16 +94,16 @@ One usage event, formatted for reading (each JSONL event is one line on disk):
 ```json
 {
   "organization_id": "existing-v1-org-id",
-  "id": "01J00000000000000000000301",
+  "id": "01930000-0000-7000-8000-000000000301",
   "schema_version": 1,
-  "origin_office_id": "01J00000000000000000000081",
+  "origin_office_id": "01930000-0000-7000-8000-000000000081",
   "producer_id": "producer-reservations-1",
   "source_event_id": "turn-1/final-usage",
   "source_sequence": 1,
-  "execution_office_id": "01J00000000000000000000081",
+  "execution_office_id": "01930000-0000-7000-8000-000000000081",
   "run_id": "opaque-runtime-run-1",
   "actor_kind": "agent",
-  "employee_id": "01J00000000000000000000030",
+  "employee_id": "01930000-0000-7000-8000-000000000030",
   "runtime": "example-runtime",
   "provider": "example-provider",
   "model": "example-model",
@@ -120,19 +120,19 @@ One usage event, formatted for reading (each JSONL event is one line on disk):
   "reasoning_tokens": 50,
   "token_status": "complete",
   "token_issue": null,
-  "price_id": "01J00000000000000000000300",
+  "price_id": "01930000-0000-7000-8000-000000000300",
   "cost_micro_usd": 1650,
   "cost_basis": "token_estimate",
   "cost_status": "complete",
   "cost_issue": null,
   "scope_kind": "task",
-  "task_id": "01J00000000000000000000040",
+  "task_id": "01930000-0000-7000-8000-000000000040",
   "task_kind": "task",
-  "project_id": "01J00000000000000000000010",
-  "team_id": "01J00000000000000000000020",
-  "feature_id": "01J00000000000000000000034",
-  "milestone_id": "01J00000000000000000000033",
-  "release_id": "01J00000000000000000000032",
+  "project_id": "01930000-0000-7000-8000-000000000010",
+  "team_id": "01930000-0000-7000-8000-000000000020",
+  "feature_id": "01930000-0000-7000-8000-000000000034",
+  "milestone_id": "01930000-0000-7000-8000-000000000033",
+  "release_id": "01930000-0000-7000-8000-000000000032",
   "task_type_snapshot": "request",
   "work_type": "build",
   "attribution_basis": "work_for",
@@ -261,7 +261,7 @@ CREATE TABLE model_prices (
   cache_read_micro_usd_per_million INTEGER CHECK (cache_read_micro_usd_per_million >= 0),
   cache_write_micro_usd_per_million INTEGER CHECK (cache_write_micro_usd_per_million >= 0),
   created_at TEXT NOT NULL,
-  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, provider, model, effective_from),
@@ -287,7 +287,7 @@ CREATE TABLE usage_records (
   model TEXT,
   occurred_at TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
-  recorded_by_kind TEXT NOT NULL CHECK (recorded_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  recorded_by_kind TEXT NOT NULL CHECK (recorded_by_kind IN ('employee', 'system', 'unknown')),
   recorded_by_id TEXT,
   normalization_version INTEGER NOT NULL CHECK (normalization_version >= 1),
   source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
@@ -314,7 +314,7 @@ CREATE TABLE usage_records (
   release_id TEXT,
   task_type_snapshot TEXT,
   work_type TEXT CHECK (work_type IN ('build', 'run')),
-  attribution_basis TEXT NOT NULL CHECK (attribution_basis IN ('work_for', 'current_task', 'explicit_context', 'unattributed', 'manual_correction', 'legacy')),
+  attribution_basis TEXT NOT NULL CHECK (attribution_basis IN ('work_for', 'current_task', 'explicit_context', 'unattributed', 'manual_correction')),
   supersedes_id TEXT,
   correction_kind TEXT CHECK (correction_kind IN ('usage', 'attribution')),
   correction_reason TEXT,

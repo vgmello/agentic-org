@@ -3,13 +3,21 @@
 version = 4
 
 [[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
 name = "agent-os"
 version = "0.0.0"
 dependencies = [
  "agentic-org-office",
  "org-client",
+ "org-office",
  "org-office-launch",
  "org-proto",
+ "org-socket",
  "org-spool",
  "serde",
  "serde_json",
@@ -25,6 +33,7 @@ dependencies = [
  "org-host",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-socket",
  "serde",
@@ -37,12 +46,14 @@ dependencies = [
 name = "agentic-org-office"
 version = "0.0.0"
 dependencies = [
+ "agentic-org-office",
  "hmac",
  "libc",
  "org-client",
  "org-mailbox",
  "org-office",
  "org-office-launch",
+ "org-pki",
  "org-proto",
  "org-socket",
  "org-supervise",
@@ -54,6 +65,7 @@ dependencies = [
  "sha2",
  "syn 2.0.119",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -66,12 +78,18 @@ dependencies = [
  "hyper-util",
  "org-host-control",
  "org-proto",
+ "org-release",
+ "org-socket",
+ "ring",
+ "rustix",
  "scraper",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
  "tokio-rustls",
+ "zeroize",
 ]
 
 [[package]]
@@ -84,6 +102,7 @@ dependencies = [
  "blake2",
  "cpufeatures",
  "password-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -188,6 +207,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crc32fast"
+version = "1.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
@@ -305,10 +333,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "filetime"
+version = "0.2.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1255e7a9f1902190d4c10a75f2f7f495d3d3ce13e9ba26e6c48683a0f4dbed7"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
+
+[[package]]
+name = "flate2"
+version = "1.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "626d4928326b646e70f65ed36fc7cf9f206bdb68a0019ee7c6b4709da4e084c4"
+dependencies = [
+ "crc32fast",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "foldhash"
@@ -490,7 +538,6 @@ checksum = "b06e69070b7e12262b0cd90832f0a7396f142a2b330181255562decf9f0c6215"
 dependencies = [
  "cc",
  "pkg-config",
- "sqlcipher-src",
  "vcpkg",
 ]
 
@@ -533,6 +580,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+ "simd-adler32",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -568,6 +625,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-command"
+version = "0.0.0"
+dependencies = [
+ "org-command",
+ "org-docs",
+ "org-proto",
+ "serde_json",
+]
+
+[[package]]
 name = "org-copilot"
 version = "0.0.0"
 dependencies = [
@@ -589,12 +656,18 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "caseless",
+ "cc",
  "core-foundation",
+ "flate2",
+ "hmac",
  "libc",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
+ "org-release",
  "org-socket",
+ "ring",
  "rusqlite",
  "security-framework",
  "security-framework-sys",
@@ -602,8 +675,10 @@ dependencies = [
  "serde_json",
  "sha2",
  "syn 2.0.119",
+ "tar",
  "tempfile",
  "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
@@ -629,19 +704,19 @@ dependencies = [
 name = "org-office"
 version = "0.0.0"
 dependencies = [
+ "libc",
+ "org-docs",
  "org-mailbox",
  "org-proto",
  "org-sync",
  "org-sync-proto",
  "org-work",
- "proc-macro2",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
- "sqlcipher-src",
- "syn 2.0.119",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -651,6 +726,23 @@ dependencies = [
  "org-proto",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "org-pki"
+version = "0.0.0"
+dependencies = [
+ "argon2",
+ "ring",
+ "zeroize",
+]
+
+[[package]]
+name = "org-platform"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "tempfile",
 ]
 
 [[package]]
@@ -667,6 +759,18 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "org-release"
+version = "0.0.0"
+dependencies = [
+ "caseless",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -1116,6 +1220,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "simd-adler32"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
+
+[[package]]
 name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1138,12 +1248,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlcipher-src"
-version = "420.0.0+sqlcipher-4.20.0-sqlite-3.54.1-libtomcrypt-1.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd6b5280ed2593d07b2816ec531821c15c306903bcca224716f1fbcc2bbfedfe"
-
-[[package]]
 name = "sqlite-wasm-rs"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1151,7 +1255,6 @@ checksum = "a6cd504cecbfe7eef649988840f9a6cb768d11085efec138f8e99f160632d867"
 dependencies = [
  "cc",
  "rsqlite-vfs",
- "sqlcipher-src",
 ]
 
 [[package]]
@@ -1210,6 +1313,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
 ]
 
 [[package]]

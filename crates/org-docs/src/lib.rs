@@ -5,7 +5,8 @@
 //! The YAML is read as YAML 1.2 core schema, typed here rather than by the parser: `no`, `yes`,
 //! `on` and `off` are strings, `0777` is the integer 777, `1_000` is a string. Anchors, aliases,
 //! tags and `<<` merge keys are refused, as are duplicate or non-string keys, a root that isn't
-//! a mapping and a second document. Pure: no I/O.
+//! a mapping and a second document. Pure: no I/O. [`parse_mapping`] reads a text that is one
+//! bare YAML mapping the same way.
 //!
 //! It also holds the shared check for text that one-line fields must not contain
 //! ([`is_invisible_or_break`]).
@@ -16,6 +17,9 @@ use std::fmt;
 
 use saphyr_parser::{Event, Parser, ScalarStyle, ScanError};
 use serde_json::{Map, Number, Value};
+
+mod source;
+pub use source::{RootScalarEdit, ScalarValue, SourceDoc, SourceError, MAX_SOURCE_BODY_BYTES};
 
 /// The largest front matter read, in bytes.
 pub const MAX_FRONT_MATTER_BYTES: usize = 64 * 1024;
@@ -157,6 +161,24 @@ pub fn parse(text: &str) -> Result<Doc<'_>, FrontMatterError> {
         front_matter: Some(front_matter),
         body,
     })
+}
+
+/// Parses `yaml` as one bare YAML mapping: a whole text that is YAML, with no front-matter fence
+/// and no Markdown body. The same strict reading and the same bounds as front matter: at most
+/// [`MAX_FRONT_MATTER_BYTES`], one document, a mapping at the root. A leading byte-order mark is
+/// stripped; a `---` document marker and a `...` end marker are YAML's own and are read. A blank
+/// text is an empty mapping, as blank front matter is.
+pub fn parse_mapping(yaml: &str) -> Result<Map<String, Value>, FrontMatterError> {
+    let yaml = yaml.strip_prefix('\u{feff}').unwrap_or(yaml);
+    if yaml.len() > MAX_FRONT_MATTER_BYTES {
+        return Err(error(&[], Reason::TooLarge));
+    }
+    Walk {
+        parser: Parser::new_from_str(yaml),
+        events: 0,
+        path: vec![],
+    }
+    .document()
 }
 
 fn strip_fence(text: &str) -> Option<&str> {

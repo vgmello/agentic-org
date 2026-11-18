@@ -1,0 +1,15 @@
+[package]
+name = "org-release"
+description = "Pure authenticated complete-release manifest and streaming payload verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ring = "=0.17.14"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+caseless = "=0.2.2"
+unicode-normalization = "=0.1.26"

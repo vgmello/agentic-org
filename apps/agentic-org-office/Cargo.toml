@@ -18,7 +18,13 @@ path = "tests/launch.rs"
 name = "owned_recovery"
 path = "tests/owned_recovery.rs"
 
+[features]
+# Test helpers shared with the binary suite: the test grant signer and a host-channel caller.
+test-support = []
+
 [dependencies]
+org-pki = { path = "../../crates/org-pki" }
+zeroize = "=1.9.1"
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
@@ -33,6 +39,7 @@ hmac.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+agentic-org-office = { path = ".", features = ["test-support"] }
 org-sync = { path = "../../crates/org-sync" }
 org-office = { path = "../../crates/org-office", features = ["testkit"] }
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }

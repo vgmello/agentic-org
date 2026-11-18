@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use http_body_util::Full;
 use hyper::body::{Body, Bytes, Incoming};
+use hyper::header::{HeaderName, HeaderValue, ALLOW};
 use hyper::http::request::Parts;
 use hyper::{Method, Request, Response, StatusCode};
 use org_host_control::listen::ListenOrigin;
@@ -22,7 +23,7 @@ use crate::blocking::BlockingPool;
 use crate::body::{
     read_business_body, BodyError, BusinessBody, BODY_READ_TIMEOUT, MAX_BUSINESS_BODY_BYTES,
 };
-use crate::ingress::RequestAdmission;
+use crate::ingress::{ApiRefusal, RequestAdmission};
 use crate::path::RequestPath;
 use crate::static_ui::response;
 use crate::transport::{try_run_http, HttpLimits, ListenMode};
@@ -32,8 +33,8 @@ use crate::{Hsts, StaticUi};
 mod admission_tests;
 
 /// Routing and preparation perform no native I/O. Routing must authorize before
-/// returning a business route. Credential routes use
-/// their own zeroed ingress in B1-06 and must not enter this business-body path.
+/// returning a business route. Every body arrives in a zeroizing buffer
+/// ([`BusinessBody`]), so credential routes decode secrets straight from it.
 pub trait ApiBackend: Send + Sync + 'static {
     type Route: Send;
     type Call: Send + 'static;
@@ -51,6 +52,7 @@ pub trait ApiBackend: Send + Sync + 'static {
 pub struct ApiReply {
     status: StatusCode,
     body: Bytes,
+    headers: Vec<(HeaderName, HeaderValue)>,
 }
 
 impl ApiReply {
@@ -58,7 +60,15 @@ impl ApiReply {
         Self {
             status,
             body: Bytes::from(serde_json::to_vec(&value).expect("JSON value serializes")),
+            headers: Vec::new(),
         }
+    }
+
+    /// Adds a response header (`Set-Cookie`, `Allow`). `Access-Control-*` is
+    /// stripped from every response regardless.
+    pub fn with_header(mut self, name: HeaderName, value: HeaderValue) -> Self {
+        self.headers.push((name, value));
+        self
     }
 
     pub fn error(status: StatusCode, code: GatewayErrorCode, message: &'static str) -> Self {
@@ -70,13 +80,38 @@ impl ApiReply {
     }
 
     fn into_http(self, head: bool) -> Response<Full<Bytes>> {
-        response(
+        let mut response = response(
             self.status,
             self.body,
             head,
             "application/json; charset=utf-8",
             "no-store",
-        )
+        );
+        for (name, value) in self.headers {
+            response.headers_mut().append(name, value);
+        }
+        response
+    }
+
+    fn refusal(refusal: ApiRefusal) -> Self {
+        match refusal {
+            ApiRefusal::Options => Self::error(
+                StatusCode::METHOD_NOT_ALLOWED,
+                GatewayErrorCode::InvalidRequest,
+                "Method not allowed.",
+            )
+            .with_header(ALLOW, HeaderValue::from_static("GET, HEAD, POST")),
+            ApiRefusal::CrossSite | ApiRefusal::Origin => Self::error(
+                StatusCode::FORBIDDEN,
+                GatewayErrorCode::NotAuthorized,
+                "Request origin is not authorized.",
+            ),
+            ApiRefusal::MediaType => Self::error(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                GatewayErrorCode::InvalidRequest,
+                "Content-Type must be application/json.",
+            ),
+        }
     }
 }
 
@@ -206,7 +241,7 @@ pub struct GatewayConfig {
     pub api: ApiLimits,
 }
 
-struct Gateway<B> {
+pub(crate) struct Gateway<B> {
     ui: StaticUi,
     admission: RequestAdmission,
     backend: Arc<B>,
@@ -215,7 +250,7 @@ struct Gateway<B> {
 }
 
 impl<B: ApiBackend> Gateway<B> {
-    fn new(
+    pub(crate) fn new(
         ui: StaticUi,
         backend: B,
         limits: ApiLimits,
@@ -231,7 +266,7 @@ impl<B: ApiBackend> Gateway<B> {
         })
     }
 
-    async fn respond<T>(&self, request: Request<T>) -> Response<Full<Bytes>>
+    pub(crate) async fn respond<T>(&self, request: Request<T>) -> Response<Full<Bytes>>
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -261,21 +296,32 @@ impl<B: ApiBackend> Gateway<B> {
                     "Invalid request path.",
                 )
                 .into_http(head),
-                Ok(path) if path.is_api() && !self.admission.accepts_api_origin(&parts) => {
-                    ApiReply::error(
-                        StatusCode::FORBIDDEN,
-                        GatewayErrorCode::NotAuthorized,
-                        "Request origin is not authorized.",
+                Ok(path) if path.is_api() => match self.admission.check_api(&parts) {
+                    Err(refusal) => ApiReply::refusal(refusal).into_http(head),
+                    Ok(()) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
+                        self.api_response(&parts, path, body).await.into_http(head)
+                    }
+                    Ok(()) => ApiReply::error(
+                        StatusCode::NOT_FOUND,
+                        GatewayErrorCode::NotFound,
+                        "Not found.",
                     )
-                    .into_http(head)
-                }
-                Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
-                    self.api_response(&parts, path, body).await.into_http(head)
-                }
+                    .into_http(head),
+                },
                 Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
             }
         };
         self.ui.finish_response(&parts.headers, &mut response);
+        // No response from the web process carries a CORS grant (web-api-v1 §2).
+        let cors: Vec<HeaderName> = response
+            .headers()
+            .keys()
+            .filter(|name| name.as_str().starts_with("access-control-"))
+            .cloned()
+            .collect();
+        for name in cors {
+            response.headers_mut().remove(name);
+        }
         if unsupported_version {
             *response.version_mut() = parts.version;
             response.headers_mut().insert(
@@ -382,6 +428,23 @@ where
     B: ApiBackend,
     S: Future<Output = ()>,
 {
+    run_web_reporting(listener, config, files, initialize, || Ok(()))
+}
+
+/// [`run_gateway`], calling `serving` once after the runtime, listener
+/// registration, backend and web process service are initialized and before the
+/// first accept. Its error stops the web process before it serves any request.
+pub fn run_web_reporting<B, S>(
+    listener: TcpListener,
+    config: GatewayConfig,
+    files: BuildFiles,
+    initialize: impl FnOnce() -> io::Result<(B, S)>,
+    serving: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()>
+where
+    B: ApiBackend,
+    S: Future<Output = ()>,
+{
     config.api.validate()?;
     try_run_http(
         listener,
@@ -393,6 +456,7 @@ where
             let admission = RequestAdmission::new(config.origin.clone());
             let ui = StaticUi::new(files, config.origin, config.hsts);
             let service = Arc::new(Gateway::new(ui, backend, config.api, admission)?);
+            serving()?;
             let handler = move |request: Request<Incoming>| {
                 let service = Arc::clone(&service);
                 async move { Ok::<_, Infallible>(service.respond(request).await) }

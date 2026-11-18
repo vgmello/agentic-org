@@ -163,19 +163,13 @@ pub(crate) fn projection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::office::OFFICE_SCHEMA;
     use crate::store::{Opening, Store};
-    use crate::{office::OFFICE_SCHEMA, Key};
     const EARLY: &str = "2026-11-11T10:00:00.000Z";
     const EXPIRY: &str = "2026-11-11T11:00:00.000Z";
     const LATER: &str = "2026-11-11T12:00:00.000Z";
     fn open(dir: &tempfile::TempDir, opening: Opening) -> Store {
-        Store::open(
-            &dir.path().join("office.db"),
-            &Key::from_bytes([42; 32]),
-            opening,
-            &OFFICE_SCHEMA,
-        )
-        .unwrap()
+        Store::open(&dir.path().join("office.db"), opening, &OFFICE_SCHEMA).unwrap()
     }
     fn edit(store: &Store, f: impl Fn(&Connection) -> Result<(), OfficeError> + Send + 'static) {
         store

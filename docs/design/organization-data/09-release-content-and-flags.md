@@ -1,6 +1,6 @@
 # Release content, changelogs and feature flags
 
-Structural draft for v1. Document revision 2.6. This document owns release membership and flag data; [project documents](02-project-structure.md) owns document records and [deployment records](07-release-deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
+Status: **selected** data contract, revision 2.7. This document owns release membership and flag data; [project documents](02-project-structure.md) owns document records and [deployment records](07-release-deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
 
 ## Product release knowledge and technical deployment knowledge
 
@@ -37,15 +37,15 @@ Example release changelog at release `changelog.md` (selected fields):
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000110
+id: 01930000-0000-7000-8000-000000000110
 revision: 1
-project_id: 01J00000000000000000000010
+project_id: 01930000-0000-7000-8000-000000000010
 feature_id: null
-release_id: 01J00000000000000000000032
+release_id: 01930000-0000-7000-8000-000000000032
 deployment_id: null
 kind: changelog
 status: draft
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 title: R-3 product changes
 ---
 ## Added
@@ -63,15 +63,15 @@ Example technical changelog at deployment `changelog.md` (selected fields):
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000111
+id: 01930000-0000-7000-8000-000000000111
 revision: 1
-project_id: 01J00000000000000000000010
+project_id: 01930000-0000-7000-8000-000000000010
 feature_id: null
 release_id: null
-deployment_id: 01J00000000000000000000090
+deployment_id: 01930000-0000-7000-8000-000000000090
 kind: changelog
 status: draft
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 title: Production deployment technical changes
 ---
 ## Technical changes
@@ -91,7 +91,7 @@ Availability checks passed. Rollback must restore the recorded prior configurati
 
 `release.md` front matter contains `feature_ids: []` and `task_ids: []`, in addition to its existing fields. These are explicit membership selections, not an inference that every task in a milestone shipped. Each reference must belong to the release's project; projectless team tasks cannot be listed as project release content. Released membership describes included work, while the changelog explains product impact and flags explain availability.
 
-Retain release notes and selected membership when tasks close; links can resolve to retained tombstones if an archived task's active file is removed. `release_tasks` therefore references the stable task lookup registry as well as its project, and import validation checks the live task or tombstone's project. Before archiving a selected task, preserve its project and release references; do not silently delete the release manifest entry. Published release content is versioned knowledge; corrections are explicit revisions. Deployment snapshots retain the actual attempt even if release prose is corrected later.
+Retain release notes and selected membership when tasks close; links can resolve to retained tombstones if an archived task's active file is removed. `release_tasks` therefore references the stable task lookup registry as well as its project, and validation checks the live task or tombstone's project. Before archiving a selected task, preserve its project and release references; do not silently delete the release manifest entry. Published release content is versioned knowledge; corrections are explicit revisions. Deployment snapshots retain the actual attempt even if release prose is corrected later.
 
 ## Flag definitions and intended settings
 
@@ -100,13 +100,13 @@ Flags belong to a project and can span releases. Project/key uniqueness is regis
 Canonical definition front matter uses `default_value` as a typed YAML value; SQLite projects it into `default_value_json`. Flags have no additional numeric counter. A flag definition's `default_value` is not a historical release or deployment snapshot.
 
 ```yaml
-id: 01J00000000000000000000100
+id: 01930000-0000-7000-8000-000000000100
 schema_version: 1
 revision: 1
-project_id: 01J00000000000000000000010
-feature_id: 01J00000000000000000000034
+project_id: 01930000-0000-7000-8000-000000000010
+feature_id: 01930000-0000-7000-8000-000000000034
 key: table-booking
-owner_employee_id: 01J00000000000000000000030
+owner_employee_id: 01930000-0000-7000-8000-000000000030
 status: active
 value_type: boolean
 default_value: false
@@ -115,10 +115,10 @@ default_value: false
 The release's `flag-settings.yaml` stores intent. Every entry selects an environment and target explicitly; there are no implicit wildcard/default merges in this draft:
 
 ```yaml
-project_id: 01J00000000000000000000010
-release_id: 01J00000000000000000000032
+project_id: 01930000-0000-7000-8000-000000000010
+release_id: 01930000-0000-7000-8000-000000000032
 settings:
-  - flag_id: 01J00000000000000000000100
+  - flag_id: 01930000-0000-7000-8000-000000000100
     environment: production
     target: primary
     value: true
@@ -135,7 +135,7 @@ settings:
 
 ```yaml
 flag_settings:
-  - flag_id: 01J00000000000000000000100
+  - flag_id: 01930000-0000-7000-8000-000000000100
     value: true
     rollout_rules:
       percentage: 10
@@ -270,10 +270,10 @@ CREATE TABLE feature_flags (
   default_value_json TEXT NOT NULL CHECK (json_valid(default_value_json)),
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, project_id, key),
@@ -324,4 +324,4 @@ CREATE TABLE deployment_flag_settings (
 ) STRICT;
 ```
 
-The consolidated schema validates flag values both when settings arrive and when a deferred definition arrives, so import order cannot bypass type checks. Used flag identity cannot be deleted or replaced. Every write connection enables recursive triggers so SQL replacement operations run the deletion guards.
+The consolidated schema validates flag values both when settings arrive and when a deferred definition arrives, so projection order cannot bypass type checks. Used flag identity cannot be deleted or replaced. Every write connection enables recursive triggers so SQL replacement operations run the deletion guards.

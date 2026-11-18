@@ -3,7 +3,7 @@
 //! on drop. Decode errors never quote the value. Zeroing covers this copy only: on the wire every
 //! one of them also passes through the envelope's raw `serde_json::Value` (a request's `params`,
 //! a response's result; §6.5's raw-JSON exception, see the crate docs), and copies in serde's and
-//! the transport's buffers survive; see `org_proto`'s `AppToken` docs.
+//! the transport's buffers survive; see `org_proto`'s `token` module docs.
 
 use org_proto::gateway::SecretText;
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,7 @@ macro_rules! secret_text {
 
 secret_text!(
     /// A password, as typed: `account.verify`, `account.set_password`,
-    /// `account.reset_password`, `account.create` and `bootstrap`. The host keeps only its
+    /// `account.reset_password` and `account.create`. The host keeps only its
     /// Argon2id hash, and for `account.create` the journal row's create-time verifier (a copy of
     /// that Argon2id PHC string, X-02 §6.3); never the password, a fast hash or a separate key.
     Password
@@ -54,4 +54,15 @@ secret_text!(
     /// The TLS private key (PEM), in `tls.fetch`'s result and `tls.set`'s params. The host keeps it
     /// in its credential provider, never on disk in the clear.
     TlsPrivateKey
+);
+
+secret_text!(
+    /// A one-time link's full URL (`<origin>/register#<token>`), in `admin.link.initial`'s and
+    /// `admin.reset`'s results. The part after `#` is the secret; the host keeps only its digest.
+    OneTimeLinkUrl
+);
+secret_text!(
+    /// A one-time link's secret: the part after `#`, which the web process forwards to the host
+    /// in `link.register`. The host keeps only its digest.
+    LinkToken
 );

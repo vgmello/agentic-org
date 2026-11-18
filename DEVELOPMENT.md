@@ -16,6 +16,13 @@ cargo deny --locked check
 gitleaks git --redact
 ```
 
+On Linux, CI runs workspace Clippy and tests with `--exclude org-host --exclude
+agentic-org`, lints those two packages separately with `dead_code` and
+`unused_imports` allowed, and runs only `cargo test -p agentic-org --lib --test cli`
+for them (`.github/workflows/ci.yml`). The host runs office workers only on macOS
+today; increment X1 of the [implementation plan](docs/implementation-plan.md) brings
+it to Linux and containers.
+
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, for example through Homebrew.
 CI pins the cargo-deny action by commit and verifies the Gitleaks binary checksum.
 `deny.toml` checks advisories, licenses, wildcard dependencies and dependency
@@ -53,11 +60,10 @@ automatically detectable WCAG A/AA issues; keyboard tests remain necessary.
 `bun run audit` reports all advisory severities. `audit:check` fails at moderate
 and above, including development dependencies. Four low-severity findings in the
 existing SvelteKit/cookie/deepmerge dependency graph remain visible in the full
-report; this tooling change does not migrate the application to SvelteKit 3.
-The scoped minimatch override patches GHSA-g3hv-75wg-m249 without replacing the
+report. The scoped minimatch override patches GHSA-g3hv-75wg-m249 without replacing the
 older minimatch 3 API used by other tools.
 
-## Lint and formatting rollout
+## Lint and formatting
 
 ESLint runs the recommended JavaScript, TypeScript and Svelte rules. Its
 `eslint-suppressions.json` records existing per-file/rule debt. Additional findings
@@ -65,7 +71,8 @@ fail, and obsolete suppressions must be pruned with `eslint --prune-suppressions
 Do not use `--suppress-all` during normal development.
 
 `format:check` checks every supported tracked or untracked UI file. Only files
-whose contents exactly match the SHA-256 legacy baseline can skip formatting.
+whose contents exactly match a SHA-256 entry in `scripts/format-baseline.json` can
+skip formatting.
 New or edited files must pass Prettier. Format individual files with
 `bunx --no-install prettier --write <files>`; `bun run format` formats the whole UI.
 The Playwright configuration preserves its literal layout because existing gate
@@ -74,8 +81,8 @@ regenerate `scripts/format-baseline.json` to make a failing check pass.
 
 ## AI tools
 
-Codex discovers the committed skills in `.agents/skills`: shadcn-svelte and
-Microsoft's Playwright CLI. `skills-lock.json` records their sources. The existing
+Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte
+and Microsoft's Playwright CLI. `skills-lock.json` records their sources. The existing
 Svelte plugin supplies Svelte skills and MCP tools; the Rust LSP MCP supplies
 rust-analyzer navigation, types, references and rename edits. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.
@@ -94,11 +101,32 @@ change the application's test runner. Install its pinned version:
 bun add --global --exact @playwright/cli@0.1.24
 ```
 
-Ensure Bun's global bin directory is on `PATH`. Start the app in its documented
-test mode to exercise fake-backed flows; normal development deliberately leaves
-unimplemented production areas unavailable. Browser-agent snapshots and local
+Ensure Bun's global bin directory is on `PATH`. Start the app in its test mode
+(`vite dev --mode e2e`, as the Playwright configuration does) to exercise
+fake-backed flows; normal development shows areas without a server adapter as
+unavailable. Browser-agent snapshots and local
 session state belong in ignored `.playwright-cli/` or `.playwright/` directories.
-Newly installed skills are available to Codex on the next turn.
+Newly installed skills are available to an agent from its next turn.
 
 `cargo-nextest` is optional for local test selection and reporting. It does not
 replace the repository's required `cargo test --workspace` gate.
+
+### The principal designer agent
+
+For a new or changed screen, component or flow in `apps/agentic-org-ui`, and for UX
+reviews, a lead may dispatch the `principal-designer` agent when it is useful. It is defined
+for both tools:
+`.claude/agents/principal-designer.md` for Claude Code and
+`.codex/agents/principal-designer.toml` for Codex. Both are thin: they point at one persona,
+`.agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
+place. The assignment names the job: design (propose), implement (build) or review
+(read-only). The agent sorts what a screen shows by what the data is worth to the person,
+weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect while building,
+and runs a measured consistency audit before handing over. Product specs outrank it. The
+lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
+
+The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
+checkout (`.claude/skills/`, ignored by Git). It is optional and nothing depends on it.
+Installing it is a lead's decision: the installer adds six other, uninspected skills that
+must be removed, and whatever is left is offered to every Claude session in that checkout.
+The persona file gives the pinned command and the limits.

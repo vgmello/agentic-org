@@ -1,8 +1,8 @@
 use super as origin;
 use super::{OriginEntry, OriginRef};
+use crate::office::OFFICE_SCHEMA;
 use crate::store::{messages, status, Opening, Schema, Store, Undo};
 use crate::OfficeError;
-use crate::{office::OFFICE_SCHEMA, Key};
 use org_proto::Position;
 
 fn original_incarnation() -> String {
@@ -15,13 +15,7 @@ fn fixture() -> (tempfile::TempDir, Store) {
 
 fn fixture_for_schema(schema: &Schema) -> (tempfile::TempDir, Store) {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([34; 32]),
-        Opening::New,
-        schema,
-    )
-    .unwrap();
+    let store = Store::open(&root.path().join("office.db"), Opening::New, schema).unwrap();
     store
         .write(|db| {
             db.execute("INSERT INTO meta VALUES ('office_id', 'OFFICE1')", [])
@@ -137,7 +131,7 @@ fn origin_writer_replay_allocates_each_committed_range_once() {
     let (started, ready) = mpsc::channel();
     let (release, held) = mpsc::channel();
     queue
-        .send(WriteJob {
+        .send(crate::store::WriterJob::Batch(WriteJob {
             attempt: Box::new(move |_| {
                 started.send(()).map_err(OfficeError::storage)?;
                 held.recv_timeout(Duration::from_secs(5))
@@ -146,7 +140,7 @@ fn origin_writer_replay_allocates_each_committed_range_once() {
             }),
             abort_batch: |_| false,
             reply: Box::new(|result| result.unwrap()),
-        })
+        }))
         .unwrap();
     ready.recv_timeout(Duration::from_secs(5)).unwrap();
     let attempts = Arc::new(AtomicUsize::new(0));
@@ -155,7 +149,7 @@ fn origin_writer_replay_allocates_each_committed_range_once() {
     for id in 1..=3 {
         let (attempts, replied) = (Arc::clone(&attempts), replied.clone());
         queue
-            .send(WriteJob {
+            .send(crate::store::WriterJob::Batch(WriteJob {
                 attempt: Box::new(move |db| {
                     if id == 2 {
                         db.execute_batch("ROLLBACK").map_err(OfficeError::storage)?;
@@ -175,7 +169,7 @@ fn origin_writer_replay_allocates_each_committed_range_once() {
                 reply: Box::new(move |result| {
                     replied.send((id, result)).unwrap();
                 }),
-            })
+            }))
             .unwrap();
     }
     release.send(()).unwrap();
@@ -578,8 +572,7 @@ const V3: Schema = Schema {
 fn origin_upgrade_failure_preserves_the_prior_schema() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("office.db");
-    let key = Key::from_bytes([35; 32]);
-    let old = Store::open(&path, &key, Opening::New, &V3).unwrap();
+    let old = Store::open(&path, Opening::New, &V3).unwrap();
     old.write(|db| {
         db.execute_batch("CREATE TABLE work_origin_log (sentinel TEXT); INSERT INTO work_origin_log VALUES ('keep');
                           INSERT INTO meta VALUES ('message_sequence', '41');").map_err(OfficeError::storage)?;
@@ -587,10 +580,10 @@ fn origin_upgrade_failure_preserves_the_prior_schema() {
     }).unwrap();
     drop(old);
     assert!(matches!(
-        Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA),
+        Store::open(&path, Opening::Existing, &OFFICE_SCHEMA),
         Err(OfficeError::Storage(_))
     ));
-    let old = Store::open(&path, &key, Opening::Existing, &V3).unwrap();
+    let old = Store::open(&path, Opening::Existing, &V3).unwrap();
     old.read(|db| {
         assert_eq!(db.pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0)).unwrap(), 3);
         assert_eq!(db.query_row("SELECT sentinel FROM work_origin_log", [], |row| row.get::<_, String>(0)).unwrap(), "keep");
@@ -604,8 +597,7 @@ fn origin_upgrade_failure_preserves_the_prior_schema() {
 fn origin_upgrade_preserves_message_counter_and_shared_incarnation() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("office.db");
-    let key = Key::from_bytes([32; 32]);
-    let old = Store::open(&path, &key, Opening::New, &V3).unwrap();
+    let old = Store::open(&path, Opening::New, &V3).unwrap();
     let incarnation = old
         .write(|db| {
             db.execute("INSERT INTO meta VALUES ('message_sequence', '41')", [])
@@ -615,7 +607,7 @@ fn origin_upgrade_preserves_message_counter_and_shared_incarnation() {
         .unwrap();
     drop(old);
     for _ in 0..2 {
-        let store = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA).unwrap();
+        let store = Store::open(&path, Opening::Existing, &OFFICE_SCHEMA).unwrap();
         let expected = incarnation.clone();
         store
             .write(move |db| {
@@ -623,7 +615,7 @@ fn origin_upgrade_preserves_message_counter_and_shared_incarnation() {
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    6
+                    OFFICE_SCHEMA.version
                 );
                 assert_eq!(
                     db.query_row(
@@ -661,13 +653,7 @@ fn origin_upgrade_preserves_message_counter_and_shared_incarnation() {
 #[test]
 fn origin_schema_refuses_invalid_sequences_and_missing_feed_rows() {
     let root = tempfile::tempdir().unwrap();
-    let store = Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([33; 32]),
-        Opening::New,
-        &OFFICE_SCHEMA,
-    )
-    .unwrap();
+    let store = Store::open(&root.path().join("office.db"), Opening::New, &OFFICE_SCHEMA).unwrap();
     store
         .write(|db| {
             db.execute("INSERT INTO work_feed (seq, targets) VALUES (1, '[]')", [])
@@ -716,9 +702,8 @@ fn origin_schema_refuses_invalid_sequences_and_missing_feed_rows() {
 fn origin_ledger_survives_reopen() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("office.db");
-    let key = Key::from_bytes([31; 32]);
     for opening in [Opening::New, Opening::Existing] {
-        let store = Store::open(&path, &key, opening, &OFFICE_SCHEMA).unwrap();
+        let store = Store::open(&path, opening, &OFFICE_SCHEMA).unwrap();
         let count = store
             .read(|db| {
                 db.query_row(
@@ -732,7 +717,7 @@ fn origin_ledger_survives_reopen() {
             .unwrap();
         assert_eq!(count, 3, "all three origin ledger tables must persist");
     }
-    let store = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA).unwrap();
+    let store = Store::open(&path, Opening::Existing, &OFFICE_SCHEMA).unwrap();
     store
         .write(|db| {
             db.execute("INSERT INTO meta VALUES ('office_id', 'OFFICE1')", [])
@@ -748,7 +733,7 @@ fn origin_ledger_survives_reopen() {
     assert_eq!(commit(&store, vec![target(1, 0), target(1, 1)]), 1..=2);
     let before = state(&store);
     drop(store);
-    let reopened = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA).unwrap();
+    let reopened = Store::open(&path, Opening::Existing, &OFFICE_SCHEMA).unwrap();
     assert_eq!(state(&reopened), before);
     assert_eq!(commit(&reopened, vec![target(2, 0)]), 3..=3);
 }
@@ -808,10 +793,9 @@ fn origin_duplicate_across_appends_rolls_back_feed_prefix_and_counter_after_reop
             &OFFICE_SCHEMA
         });
         let path = root.path().join("office.db");
-        let key = Key::from_bytes([34; 32]);
         if source == "upgrade" {
             drop(store);
-            store = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA).unwrap();
+            store = Store::open(&path, Opening::Existing, &OFFICE_SCHEMA).unwrap();
         }
         assert_eq!(commit(&store, vec![target(1, 0)]), 1..=1);
         let active_incarnation = if source == "rotated" {
@@ -866,7 +850,7 @@ fn origin_duplicate_across_appends_rolls_back_feed_prefix_and_counter_after_reop
             "{source}: rollback must retain prior rows and feed"
         );
         drop(store);
-        let store = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA).unwrap();
+        let store = Store::open(&path, Opening::Existing, &OFFICE_SCHEMA).unwrap();
         assert_eq!(
             state(&store),
             before,
@@ -894,7 +878,7 @@ fn origin_duplicate_across_appends_rolls_back_feed_prefix_and_counter_after_reop
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    6
+                    OFFICE_SCHEMA.version
                 );
                 Ok(())
             })
@@ -939,7 +923,6 @@ fn origin_unique_triple_allows_distinct_targets_generations_and_versions() {
     drop(store);
     let reopened = Store::open(
         &root.path().join("office.db"),
-        &Key::from_bytes([34; 32]),
         Opening::Existing,
         &OFFICE_SCHEMA,
     )

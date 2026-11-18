@@ -22,13 +22,7 @@ fn at(ms: u64) -> String {
 
 fn store() -> (TempDir, Store) {
     let dir = TempDir::new().unwrap();
-    let store = Store::open(
-        &dir.path().join("org.db"),
-        &Key::from_bytes([5; 32]),
-        Opening::New,
-        &SCHEMA,
-    )
-    .unwrap();
+    let store = Store::open(&dir.path().join("org.db"), Opening::New, &SCHEMA).unwrap();
     let genesis_row = Genesis {
         org_id: "ORG1".into(),
         org_name: "Acme".into(),
@@ -535,14 +529,12 @@ fn an_installed_snapshot_truncates_the_history() {
     satellite
         .bind_replication_satellite(hq_id, Digest::ZERO, one, Digest::ZERO)
         .unwrap();
-    let transport = Key::from_bytes([8; 32]);
-    let exported = hq.export_replication_snapshot(&transport, MAX).unwrap();
+    let exported = hq.export_replication_snapshot(MAX).unwrap();
     let staged = satellite
         .stage_replication_snapshot(
             &Hq,
             &exported.manifest,
-            &transport,
-            exported.ciphertext.as_slice(),
+            exported.artifact.as_slice(),
             MAX,
             SnapshotStageMode::Normal,
         )

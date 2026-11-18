@@ -8,32 +8,27 @@
 //!
 //! The unfinished folders found at startup are discarded in the background, a few at a time,
 //! so the host answers at once; only the calls that need a settled catalog wait for them
-//! (`organization.create`, `office.restart`, and `office.app_token` for an office still being
-//! discarded).
+//! (`organization.create` and `office.restart`).
 //!
 //! Every change of an office's state is announced as `office.status_changed` through the
 //! [`Broadcast`], in order with the list answers.
 
 use std::collections::{HashSet, VecDeque};
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use org_office_launch::{office_dir, CreateOffice, FailCode, OfficeFile, OFFICE_FILE_NAME};
+use org_office_launch::{FailCode, OfficeFile};
 use org_proto::{
-    ApiError, AppToken, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged,
-    OfficeStatusChangedData, OfficeStatusReason, Organization, OrganizationCreated,
-    OrganizationName,
+    ApiError, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged, OfficeStatusChangedData,
+    OfficeStatusReason, Organization, OrganizationCreated,
 };
 
 use crate::broadcast::Broadcast;
-use crate::catalog::{self, Catalog, CreatePlan, OrganizationEntry, PlanError};
+use crate::catalog::{self, Catalog, OrganizationEntry};
 use crate::clock;
 use crate::host_log;
-use crate::ids;
-use crate::secrets;
 use crate::supervisor::{
     CreateOutcome, CreateStartError, DiscardOutcome, OfficeState, RestartOutcome, StatusObserver,
     Supervisor,
@@ -76,6 +71,12 @@ pub(crate) struct Offices {
 }
 
 impl Offices {
+    pub(crate) fn endpoint(
+        &self,
+        office: &str,
+    ) -> Option<Arc<crate::supervisor::channels::Endpoint>> {
+        self.supervisor.endpoint(office)
+    }
     /// Moves the folders holding another office's `office.json` to `offices/.refused/`, starts
     /// supervising every office in `catalog`, and discards the `unfinished` office folders in
     /// the background, [`STARTUP_DISCARDS_AT_ONCE`] at a time.
@@ -203,43 +204,6 @@ impl Offices {
         Ok(CreateSlot(self))
     }
 
-    /// `office.app_token`: runs `use_token` with a running office's app token (it's written
-    /// straight into the response, never copied). Errors: `not_found` (no such office here),
-    /// `not_ready` (the office is still being created, or still being discarded at startup
-    /// after waiting [`Timings::create_wait`]), `unavailable` (the office isn't running). The
-    /// caller's code signature is checked before this.
-    #[cfg_attr(
-        not(all(feature = "test-support", debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.3 CLI")
-    )]
-    pub(crate) fn app_token<R>(
-        &self,
-        office_id: &str,
-        use_token: impl FnOnce(&AppToken) -> R,
-    ) -> Result<R, ApiError> {
-        if lock(&self.discarding).contains(office_id) {
-            self.wait_for_startup(Instant::now() + self.create_wait)?;
-        }
-        self.settled_office(office_id)?;
-        let running = self.supervisor.state(office_id).is_some_and(|state| {
-            matches!(state.status, OfficeStatus::Starting | OfficeStatus::Active)
-        });
-        if !running {
-            return Err(ApiError::new(
-                ErrorCode::Unavailable,
-                "the office isn't running, so it has no app token",
-            ));
-        }
-        self.supervisor
-            .with_app_token(office_id, use_token)
-            .ok_or_else(|| {
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "the office isn't running, so it has no app token",
-                )
-            })
-    }
-
     /// `office.restart`: starts an `offline` or `unavailable` office again now (see
     /// [`Supervisor::restart`]). Waits for the startup discards first, like a create. The
     /// caller's code signature is checked before this.
@@ -321,6 +285,11 @@ impl Offices {
             .collect()
     }
 
+    /// One organization with its offices on this Mac (HQ first), if the catalog holds it.
+    pub(crate) fn organization_by_id(&self, id: &str) -> Option<Organization> {
+        self.organizations().into_iter().find(|o| o.id == id)
+    }
+
     /// Every office on this Mac, in the order of [`Offices::organizations`].
     pub(crate) fn offices(&self) -> Vec<OfficeInfo> {
         self.organizations()
@@ -329,175 +298,80 @@ impl Offices {
             .collect()
     }
 
-    /// `organization.create`: makes the organization and its HQ office (with a new database key,
-    /// stored before its server starts), and leaves the HQ's server running under supervision.
-    /// On failure the unfinished office is discarded with its key, and the key is deleted only
-    /// once the discard reports `discarded` (a discard that fails is tried again at the next
-    /// start, which finds the folder). After `already_exists` (a folder that isn't ours) nothing
-    /// is discarded and the key is kept. A created office other than the one asked for is refused
-    /// and moved aside (`move_refused`), keeping its key. The error never holds a path. On
-    /// success, `respond` queues the answer, inside the critical section that adds the
-    /// organization (see [`Offices::add_created`]).
-    #[cfg_attr(
-        not(any(test, all(feature = "test-support", debug_assertions))),
-        expect(dead_code, reason = "activated by 2b.3 CLI")
-    )]
-    pub(crate) fn create_organization(
+    /// Actual selected create on the existing supervisor. A lost/failed attempt
+    /// retains all intent, data and custody; no legacy discard or key sweep runs.
+    pub(crate) fn provision_hq(
         &self,
-        raw_name: &str,
-        respond: impl FnOnce(&Organization),
+        first: org_office_launch::CreateLine,
+        recovery: org_proto::RecoveryCode,
     ) -> Result<(), ApiError> {
-        let name = OrganizationName::parse(raw_name)
-            .map_err(|e| ApiError::new(ErrorCode::InvalidName, e.message()))?;
-        // One budget for both waits.
         let deadline = Instant::now() + self.create_wait;
         self.wait_for_startup(deadline)?;
-        // A taken name is answered at once, not after waiting for a slot. (`plan_create` checks
-        // again, under the same lock as the reservation.)
-        if lock(&self.catalog).has_organization_named(&name) {
-            return Err(already_exists());
-        }
-        let _slot = self.create_slot(deadline)?;
-        // The catalog mutex is held only for this statement.
-        let plan = lock(&self.catalog)
-            .plan_create(&name, ids::generate)
-            .map_err(|e| match e {
-                PlanError::NameTaken => already_exists(),
-                PlanError::Ids(e) => {
-                    host_log::log(&format!("couldn't make ids: {e}"));
-                    storage_error()
-                }
-            })?;
-        let _reserved = Reserved {
-            catalog: &self.catalog,
-            home: &self.home,
-            office_id: &plan.office_id,
-        };
-        let create = create_message(&plan).map_err(|e| {
-            host_log::log(&format!("couldn't make the new office's secrets: {e}"));
-            storage_error()
-        })?;
-        let pending = match self.supervisor.begin_create(create) {
-            Ok(pending) => pending,
-            Err(e) => {
-                host_log::log(&format!(
-                    "couldn't start the server of new office {}: {e}",
-                    plan.office_id
-                ));
-                if let CreateStartError::KeyStored(_) = e {
-                    // Its key is stored: discarded like any unfinished create, so it's deleted
-                    // only after `discarded` (a folderless office is reported discarded at once).
-                    // If the discard can't start either, the key stays and, with no folder, the
-                    // next start's scan never finds it: an orphan until the (deferred) orphan-key
-                    // sweep.
-                    self.clean_up(&plan.office_id);
-                }
+        let p = first
+            .hq_creation
+            .as_ref()
+            .and_then(|c| c.bootstrap.as_ref())
+            .ok_or_else(storage_error)?;
+        let office = p.office_id.clone();
+        let stored = lock(&self.catalog).office(&office).cloned();
+        if let Some(stored) = stored {
+            if stored.org_id != p.organization_id
+                || stored.org_name != p.plan.name
+                || stored.version() != 2
+            {
                 return Err(storage_error());
             }
-        };
+            // Completion is the durable identity: the worker reported `created` and the
+            // host adopted the office, whatever its status is now.
+            return Ok(());
+        }
+        lock(&self.catalog)
+            .reserve_selected(p)
+            .map_err(|_| already_exists())?;
+        let _slot = self.create_slot(deadline)?;
+        let org = first.org_id.clone();
+        let name = first.org_name.clone();
+        let pending = self
+            .supervisor
+            .begin_hq_create(first, recovery)
+            .map_err(|error| {
+                let phase = match error {
+                    CreateStartError::NotStarted(_) => "selected HQ launch preparation refused",
+                    CreateStartError::KeyStored(_) => "selected HQ admitted launch/handoff failed",
+                };
+                host_log::log(phase);
+                selected_create_unresolved()
+            })?;
         match pending.wait(self.create_timeout) {
             CreateOutcome::Created(adoptable) => {
-                if !matches_plan(&adoptable.office, &plan) {
-                    let reported = &adoptable.office.office_id;
-                    if *reported == plan.office_id {
-                        host_log::log(
-                            "an office server created an office other than the one asked for",
-                        );
-                    } else {
-                        // A plain id: the contract refuses any other in `created`.
-                        host_log::log(&format!(
-                            "an office server created office {reported}, not the one asked for"
-                        ));
-                    }
+                let file = &adoptable.office;
+                if file.office_id != office
+                    || file.org_id != org
+                    || file.org_name != name
+                    || file.role != org_proto::OfficeRole::Hq
+                    || file.version() != 2
+                {
+                    host_log::log("selected HQ returned mismatched office metadata");
                     adoptable.stop();
-                    move_refused(&self.home, &plan.office_id, "a refused create");
-                    return Err(storage_error());
+                    return Err(selected_create_unresolved());
                 }
-                let office = adoptable.office.clone();
+                let file = file.clone();
                 self.supervisor.adopt(*adoptable);
-                self.add_created(&office, respond);
+                self.add_created(&file, |_| {});
                 Ok(())
             }
-            // The folder existed before this create, so it isn't ours to discard. The new key
-            // stays: keys are deleted only after `discarded` (the next start discards the folder
-            // with it, if it is unfinished).
-            CreateOutcome::Failed(FailCode::AlreadyExists) => Err(already_exists()),
-            // A server that failed after storing the office still made it: the same as one that
-            // ended without reporting.
-            CreateOutcome::Failed(_) if catalog::is_stored(&self.home, &plan.office_id) => {
-                self.finish_unreported(&plan, respond)
-            }
-            CreateOutcome::Failed(code) => {
-                self.clean_up(&plan.office_id);
-                Err(match code {
-                    FailCode::InvalidName => ApiError::new(
-                        ErrorCode::InvalidName,
-                        "the organization name isn't allowed",
-                    ),
-                    _ => storage_error(),
-                })
-            }
-            CreateOutcome::Crashed | CreateOutcome::TimedOut => {
-                self.finish_unreported(&plan, respond)
-            }
-            CreateOutcome::Stopped => {
-                self.clean_up(&plan.office_id);
-                Err(ApiError::new(
-                    ErrorCode::StorageError,
-                    "the organization couldn't be created: this Mac's office service is stopping",
-                ))
-            }
-        }
-    }
-
-    /// A create whose server ended without `created`: it crashed, was killed when it timed out,
-    /// or reported `failed` after storing the office. `office.json` is written last, so if the
-    /// server stored it, the create happened: when the stored office is the one asked for, the
-    /// create succeeds after all (its server is started with `--office`, status `starting`);
-    /// another office is a refused create (moved to `.refused/`). With no `office.json` the create is unfinished and is discarded;
-    /// one that can't be read is left alone, its name still taken (see [`Reserved`]).
-    fn finish_unreported(
-        &self,
-        plan: &CreatePlan,
-        respond: impl FnOnce(&Organization),
-    ) -> Result<(), ApiError> {
-        let stored = office_dir(&self.home, &plan.office_id)
-            .ok_or_else(storage_error)
-            .map(|dir| catalog::read_office_file(&dir.join(OFFICE_FILE_NAME)))?;
-        match stored {
-            Ok(None) => {
-                self.clean_up(&plan.office_id);
-                Err(storage_error())
-            }
-            Ok(Some(office)) if matches_plan(&office, plan) => {
-                host_log::log(&format!(
-                    "office {} was stored, but its server ended without reporting it created; \
-                     starting it",
-                    office.office_id
-                ));
-                if let Err(e) = self.supervisor.start_office(&office.office_id) {
-                    host_log::log(&format!(
-                        "couldn't supervise office {}: {e}",
-                        office.office_id
-                    ));
-                }
-                self.add_created(&office, respond);
-                Ok(())
-            }
-            Ok(Some(_)) => {
-                host_log::log(&format!(
-                    "office {} was stored as an office other than the one asked for",
-                    plan.office_id
-                ));
-                move_refused(&self.home, &plan.office_id, "a refused create");
-                Err(storage_error())
-            }
-            Err(why) => {
-                host_log::log(&format!(
-                    "kept office {}: its server ended without reporting it created, and {why}",
-                    plan.office_id
-                ));
-                Err(storage_error())
+            // Published effects may exist after every such outcome. The caller
+            // retains its original operation and reconciles; never a rejection.
+            outcome => {
+                let phase = match outcome {
+                    CreateOutcome::Failed => "selected HQ worker reported creation failure",
+                    CreateOutcome::Crashed => "selected HQ worker closed before created",
+                    CreateOutcome::TimedOut => "selected HQ worker creation timed out",
+                    CreateOutcome::Stopped => "selected HQ creation interrupted by host stop",
+                    CreateOutcome::Created(_) => unreachable!(),
+                };
+                host_log::log(phase);
+                Err(selected_create_unresolved())
             }
         }
     }
@@ -534,10 +408,6 @@ impl Offices {
         if let Some(startup) = lock(&self.startup).take() {
             let _ = startup.join();
         }
-    }
-
-    fn clean_up(&self, office_id: &str) {
-        discard_unfinished(&self.home, &self.supervisor, office_id);
     }
 
     fn organization(&self, org: OrganizationEntry<'_>) -> Organization {
@@ -675,20 +545,6 @@ pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id
     }
 }
 
-/// The create message for `plan`, with a fresh app token (the office's for this host run) and a
-/// fresh database key (the office's for good, stored before its server starts).
-fn create_message(plan: &CreatePlan) -> io::Result<CreateOffice> {
-    Ok(CreateOffice {
-        org_id: plan.org_id.clone(),
-        org_name: plan.org_name.clone(),
-        office_id: plan.office_id.clone(),
-        office_name: plan.office_name.clone(),
-        role: plan.role,
-        app_token: secrets::generate_app_token()?,
-        db_key: secrets::generate_db_key()?,
-    })
-}
-
 /// A create slot, freed when dropped.
 struct CreateSlot<'a>(&'a Offices);
 
@@ -697,47 +553,6 @@ impl Drop for CreateSlot<'_> {
         *lock(&self.0.creates) -= 1;
         self.0.create_slot_freed.notify_one();
     }
-}
-
-/// A create's reservation of its name and handle in the catalog. Dropping it ends the
-/// reservation after a failed create (once its cleanup is done), unless the failed create left
-/// a stored office outside the catalog (an `office.json` that couldn't be read, or a create
-/// stopped by the shutdown): that office is listed from the next start on, so its name and
-/// handle stay reserved for the rest of this run. After a successful create there is nothing left to end: inserting the office into
-/// the catalog already did.
-struct Reserved<'a> {
-    catalog: &'a Mutex<Catalog>,
-    home: &'a Path,
-    office_id: &'a str,
-}
-
-impl Drop for Reserved<'_> {
-    fn drop(&mut self) {
-        let mut catalog = lock(self.catalog);
-        if !catalog::is_stored(self.home, self.office_id) {
-            catalog.release(self.office_id);
-        } else if !catalog
-            .offices()
-            .iter()
-            .any(|o| o.office_id == self.office_id)
-        {
-            host_log::log(&format!(
-                "office {} was stored but never reported; its name stays taken until the next \
-                 start lists it",
-                self.office_id
-            ));
-        }
-    }
-}
-
-/// Whether the server created exactly the office it was asked for: the same ids, the names as
-/// they were sent (already trimmed), and the role (HQ).
-fn matches_plan(office: &OfficeFile, plan: &CreatePlan) -> bool {
-    office.office_id == plan.office_id
-        && office.org_id == plan.org_id
-        && office.org_name == plan.org_name
-        && office.office_name == plan.office_name
-        && office.role == plan.role
 }
 
 fn already_exists() -> ApiError {
@@ -754,11 +569,19 @@ fn storage_error() -> ApiError {
     )
 }
 
+fn selected_create_unresolved() -> ApiError {
+    ApiError::new(
+        ErrorCode::Unavailable,
+        "HQ creation is unresolved; retry the original operation",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::keys::memory::MemoryKeys;
     use crate::supervisor::SupervisorConfig;
+    use org_office_launch::OFFICE_FILE_NAME;
     use std::fs;
     #[cfg(target_os = "macos")]
     use std::os::unix::fs::PermissionsExt;
@@ -766,8 +589,13 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_stored_folder_is_never_handed_to_discard() {
-        let dir = tempfile::tempdir().unwrap();
+        // Under /tmp, with `run/`: the launch rendezvous path must fit a socket address.
+        let dir = tempfile::Builder::new()
+            .prefix("of")
+            .tempdir_in("/tmp")
+            .unwrap();
         let home = dir.path();
+        fs::create_dir(home.join("run")).unwrap();
         // A server that never refuses: it records each run and exits. Only the host's own check
         // can keep a stored folder from it.
         let script = home.join("server");
@@ -777,17 +605,20 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-        let supervisor = Supervisor::new(SupervisorConfig {
-            program: script,
-            home: home.to_path_buf(),
-            runtime_dir: None,
-            logs_dir: home.join("logs"),
-            log_max_bytes: 1024,
-            timings: Timings::default(),
-            keys: Arc::new(MemoryKeys::default()),
-            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
-            sweep_orphans: false,
-        });
+        let supervisor = Supervisor::new(
+            SupervisorConfig {
+                program: script,
+                home: home.to_path_buf(),
+                runtime_dir: None,
+                logs_dir: home.join("logs"),
+                log_max_bytes: 1024,
+                timings: Timings::default(),
+                keys: Arc::new(MemoryKeys::default()),
+                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+                sweep_orphans: false,
+            },
+            INSTANCE,
+        );
         for (id, stored) in [("STORED", true), ("UNFINISHED", false)] {
             let folder = home.join("offices").join(id);
             fs::create_dir_all(&folder).unwrap();
@@ -801,6 +632,7 @@ mod tests {
     }
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+    const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 
     fn hq() -> OfficeFile {
         OfficeFile::new(
@@ -816,17 +648,20 @@ mod tests {
     /// Offices over `catalog` in `home`, whose server program doesn't exist (nothing here needs
     /// it to run). With `stopped`, the supervisor is shut down first, so it can't start anything.
     fn offices(home: &Path, catalog: Catalog, stopped: bool) -> Arc<Offices> {
-        let supervisor = Supervisor::new(SupervisorConfig {
-            program: home.join("no-such-server"),
-            home: home.to_path_buf(),
-            runtime_dir: None,
-            logs_dir: home.join("logs"),
-            log_max_bytes: 1024,
-            timings: Timings::default(),
-            keys: Arc::new(MemoryKeys::default()),
-            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
-            sweep_orphans: false,
-        });
+        let supervisor = Supervisor::new(
+            SupervisorConfig {
+                program: home.join("no-such-server"),
+                home: home.to_path_buf(),
+                runtime_dir: None,
+                logs_dir: home.join("logs"),
+                log_max_bytes: 1024,
+                timings: Timings::default(),
+                keys: Arc::new(MemoryKeys::default()),
+                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+                sweep_orphans: false,
+            },
+            INSTANCE,
+        );
         if stopped {
             supervisor.shutdown();
         }
@@ -846,8 +681,8 @@ mod tests {
     /// is only marked, and a key whose folder exists is always kept.
     #[test]
     fn the_startup_sweeps_orphan_keys_only_when_allowed() {
-        use crate::keys::KeyStore;
-        use org_proto::DbKey;
+        use crate::keys::OfficeSecretsKeys;
+        use org_proto::OfficeSecretsKey;
         const ORPHAN: &str = "01ORPHANORPHANORPHANORPHAN";
         const NEW_ORPHAN: &str = "01NEWORPHANNEWORPHANNEWORP";
         for sweep in [false, true] {
@@ -864,23 +699,27 @@ mod tests {
                 fs::create_dir_all(home.join("offices").join(id)).unwrap();
             }
             for id in LIVE.into_iter().chain([ORPHAN, NEW_ORPHAN]) {
-                keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
+                keys.create(id, &OfficeSecretsKey::from_bytes([1; 32]))
+                    .unwrap();
             }
             // ORPHAN was marked long ago; NEW_ORPHAN never was.
             let record = home.join("orphan-keys.json");
             let marked = format!("{{\"v\":1,\"first_seen_ms\":{{\"{ORPHAN}\":1000}}}}");
             fs::write(&record, &marked).unwrap();
-            let supervisor = Supervisor::new(SupervisorConfig {
-                program: home.join("no-such-server"),
-                home: home.to_path_buf(),
-                runtime_dir: None,
-                logs_dir: home.join("logs"),
-                log_max_bytes: 1024,
-                timings: Timings::default(),
-                keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
-                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
-                sweep_orphans: sweep,
-            });
+            let supervisor = Supervisor::new(
+                SupervisorConfig {
+                    program: home.join("no-such-server"),
+                    home: home.to_path_buf(),
+                    runtime_dir: None,
+                    logs_dir: home.join("logs"),
+                    log_max_bytes: 1024,
+                    timings: Timings::default(),
+                    keys: Arc::clone(&keys) as Arc<dyn OfficeSecretsKeys>,
+                    server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+                    sweep_orphans: sweep,
+                },
+                INSTANCE,
+            );
             let offices = Offices::start(
                 home,
                 Catalog::default(),
@@ -903,56 +742,6 @@ mod tests {
             }
             offices.shutdown();
         }
-    }
-
-    /// L-d: the startup sweep runs before creates are let in, so it never sees a create's key
-    /// (stored before its folder exists): a create waits behind a slow sweep.
-    #[test]
-    fn a_create_waits_for_the_startup_sweep() {
-        use crate::keys::memory::Op;
-        use crate::keys::KeyStore;
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path();
-        let keys = Arc::new(MemoryKeys::default());
-        keys.delay_list(Duration::from_millis(500));
-        let supervisor = Supervisor::new(SupervisorConfig {
-            program: home.join("no-such-server"),
-            home: home.to_path_buf(),
-            runtime_dir: None,
-            logs_dir: home.join("logs"),
-            log_max_bytes: 1024,
-            timings: Timings::default(),
-            keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
-            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
-            sweep_orphans: true,
-        });
-        let offices = Offices::start(
-            home,
-            Catalog::default(),
-            Vec::new(),
-            supervisor,
-            Arc::new(Broadcast::default()),
-            &Timings::default(),
-        );
-        // At once, while the sweep is still listing: the create waits for it. (It then fails:
-        // there's no server program, and its key stays.)
-        let err = offices.create_organization("Acme", |_| {}).unwrap_err();
-        assert_eq!(err.code, ErrorCode::StorageError);
-        let calls = keys.calls();
-        let listed = calls.iter().position(|(op, _)| *op == Op::List).unwrap();
-        let (created, (_, new_id)) = calls
-            .iter()
-            .enumerate()
-            .find(|(_, (op, _))| *op == Op::Create)
-            .unwrap();
-        assert!(
-            listed < created,
-            "the create stored its key during the sweep: {calls:?}"
-        );
-        assert!(keys.has(new_id));
-        let record = fs::read_to_string(home.join("orphan-keys.json")).unwrap_or_default();
-        assert!(!record.contains(new_id.as_str()), "{record}");
-        offices.shutdown();
     }
 
     /// `office.restart` on an office the host couldn't supervise, when it still can't: listed

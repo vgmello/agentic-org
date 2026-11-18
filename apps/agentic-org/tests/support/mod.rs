@@ -310,30 +310,21 @@ impl TestHome {
             .collect()
     }
 
-    /// The fingerprints of the app tokens the fake's runs for `key` got, in order (one per run
-    /// that accepted its first line).
-    pub fn token_fingerprints(&self, key: &str) -> Vec<String> {
-        self.log_fields("token", key)
+    /// The fingerprints of the grant keys the fake's launch runs for `key` got over the rendezvous,
+    /// in order (one per run whose handoff carried one).
+    pub fn grant_fingerprints(&self, key: &str) -> Vec<String> {
+        self.log_fields("grant", key)
             .iter()
             .map(|f| f[3].clone())
             .collect()
     }
 
-    /// The fingerprints of the database keys the fake's runs for `key` ("create" or an office
+    /// The fingerprints of the office secrets keys the fake's runs for `key` ("create" or an office
     /// id) got, in order (`null` for none).
-    pub fn db_key_fingerprints(&self, key: &str) -> Vec<String> {
-        self.log_fields("dbkey", key)
+    pub fn office_secrets_key_fingerprints(&self, key: &str) -> Vec<String> {
+        self.log_fields("secrets-key", key)
             .iter()
             .map(|f| f[3].clone())
-            .collect()
-    }
-
-    /// The `--discard` runs that read their first line, in order: the office id and the
-    /// fingerprint of the key the line carried (`null` for none).
-    pub fn discard_keys(&self) -> Vec<(String, String)> {
-        self.log_fields("dbkey", "discard")
-            .iter()
-            .map(|f| (f[4].clone(), f[3].clone()))
             .collect()
     }
 
@@ -404,8 +395,8 @@ impl TestHome {
             .collect()
     }
 
-    /// Asserts no log holds an app token's wire form: 64 lowercase hex digits in a row. Tests
-    /// never see the tokens, so this looks for any such run.
+    /// Asserts no log holds a secret's wire form: 64 lowercase hex digits in a row. Tests
+    /// never see every secret, so this looks for any such run.
     pub fn assert_no_token_in_logs(&self) {
         // An environment variable that already looks like a token in the tests' own environment
         // (e.g. a SHA-256 digest set by CI) reached the fake through inheritance, not the host.
@@ -431,7 +422,7 @@ impl TestHome {
         }
     }
 
-    /// Asserts no secret (an app token or a database key: 64 lowercase hex digits in a row) is
+    /// Asserts no secret (an office secrets key or a grant key: 64 lowercase hex digits in a row) is
     /// in any file in the office home (its logs, the offices' folders, `.refused/`, the fake's
     /// files), and no stored key's hex is either: keys live only in the key folder, outside the
     /// home. Also checks the logs as [`TestHome::assert_no_token_in_logs`] does.
@@ -489,14 +480,18 @@ pub fn has_hex_run(text: &str, len: usize) -> bool {
     false
 }
 
-/// The fingerprint the fake records for a token (64-bit FNV-1a of its 32 bytes, as hex), so a
-/// test can match a token the host hands out with the one a server got.
-pub fn fingerprint(token: &org_proto::AppToken) -> String {
-    let json = serde_json::to_string(token).unwrap();
-    fingerprint_hex(json.trim_matches('"'))
+/// The retired `office.app_token` call. No build defines it; tests send it to check that the
+/// host refuses it.
+pub struct RetiredOfficeToken;
+
+impl org_proto::Call for RetiredOfficeToken {
+    const METHOD: &'static str = "office.app_token";
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
 }
 
-/// The fingerprint of a secret given as 64 hex digits (see [`fingerprint`]).
+/// The fingerprint the fake records for a secret given as 64 hex digits (64-bit FNV-1a of its
+/// 32 bytes, as hex).
 pub fn fingerprint_hex(hex: &str) -> String {
     let hex = hex.to_lowercase();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -589,7 +584,20 @@ pub struct Client {
 
 impl Client {
     pub fn connect(path: &Path) -> Self {
-        let stream = UnixStream::connect(path).unwrap();
+        // Under parallel test load a full listen backlog answers ECONNREFUSED on macOS; that
+        // is a busy host, not a missing one, so retry for a bounded time.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let stream = loop {
+            match UnixStream::connect(path) {
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::ConnectionRefused
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                other => break other.unwrap(),
+            }
+        };
         stream
             .set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();

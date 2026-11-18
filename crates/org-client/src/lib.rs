@@ -1,8 +1,7 @@
 //! # org-client: connect to the host and its offices
 //!
 //! Opens a connection to this machine's host or to an office server (local Unix sockets,
-//! found through `org_proto::location`) and speaks `org-proto`. Used by the desktop app's
-//! Tauri shell and by `agent-os`. Knows nothing about how an office stores its data.
+//! found through `org_proto::location`) and speaks `org-proto`. Used by `agent-os`. Knows nothing about how an office stores its data.
 //!
 //! A [`Client`] is one long-lived connection that many threads may share. Calls are
 //! numbered from 1 and answered by `id`, several may be in flight at once, and every call
@@ -54,10 +53,10 @@ use org_proto::frame;
 use org_proto::location::{self, check_socket_path};
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
-    salvage_id, ApiRange, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
+    salvage_id, ApiRange, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
     ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, Organization,
-    OrganizationCreate, OrganizationCreateParams, OrganizationList, Position, Request, Response,
-    ServerMessage, Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
+    OrganizationList, Position, Request, Response, ServerMessage, Subscribe, SubscribeParams,
+    API_VERSION, MAX_FRAME_BYTES,
 };
 
 pub use error::ClientError;
@@ -65,20 +64,12 @@ pub use error::ClientError;
 /// How long a call waits for its answer unless told otherwise.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What `organization.create` gets by default. The host may hold a create up to 30 s while it
-/// starts up (and answers `not_ready` when it would take longer), so the short default would give
-/// up on a call that is going to succeed.
-pub const CREATE_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// The timeout [`Client::call`] gives a call by default: [`CREATE_TIMEOUT`] for
-/// `organization.create` (the one call that is slow by nature), [`DEFAULT_TIMEOUT`] for every
-/// other. A caller that knows better
-/// uses [`Client::call_with_timeout`].
-pub fn default_timeout(method: &str) -> Duration {
-    match method {
-        "organization.create" => CREATE_TIMEOUT,
-        _ => DEFAULT_TIMEOUT,
-    }
+/// The timeout [`Client::call`] gives a call by default: [`DEFAULT_TIMEOUT`] for every
+/// method. No call this client makes is slow by nature (an organization is created
+/// through the browser API, not through this client). A caller that knows better uses
+/// [`Client::call_with_timeout`].
+pub fn default_timeout(_method: &str) -> Duration {
+    DEFAULT_TIMEOUT
 }
 
 /// Events waiting to be read. A reader that falls this far behind loses the connection
@@ -648,7 +639,7 @@ impl Client {
                 "the offered API range is invalid".into(),
             ));
         }
-        if org_proto::ulid_time_ms(expected_instance_id).is_none() {
+        if !org_proto::is_uuid_v7(expected_instance_id) {
             return Err(ClientError::Protocol(
                 "the expected instance id is invalid".into(),
             ));
@@ -668,7 +659,7 @@ impl Client {
                 ));
             }
             let instance = match hello.instance_id.as_deref() {
-                Some(id) if org_proto::ulid_time_ms(id).is_some() => id,
+                Some(id) if org_proto::is_uuid_v7(id) => id,
                 _ => {
                     return Err(ClientError::Protocol(
                         "the server's instance id is missing or malformed".into(),
@@ -686,21 +677,11 @@ impl Client {
         outcome
     }
 
-    /// `msg.bind` as the app (an office): binds THIS connection with the office's `app_token`
-    /// and no member. The office answers organization commands and `org.snapshot` only to a
-    /// bound connection, so call this right after `connect` (a binding belongs to the connection,
-    /// and a failed bind leaves it unbound). A wrong token is `not_authorized`.
-    pub fn bind_app(&self, app_token: AppToken) -> Result<MsgBindResult, ClientError> {
-        self.call::<MsgBind>(&MsgBindParams {
-            member: None,
-            app_token: Some(app_token),
-        })
-    }
-
     /// `msg.bind` as a member, with no token: how an agent run by hand binds (ADR-0003 M-A).
     /// `member` is a handle or member id; the result names the member it resolved to. The
     /// office refuses (`not_authorized`) a member that isn't an active or paused agent placed
-    /// in it, and a person, the owner or an office-run agent, which need a credential. A
+    /// in it, and a person or the owner (they act through a grant on a host channel) or an
+    /// office-run agent. A
     /// binding belongs to the connection, and a failed bind leaves it unbound.
     pub fn bind_member(&self, member: &str) -> Result<MsgBindResult, ClientError> {
         self.bind_member_with_timeout(member, DEFAULT_TIMEOUT)
@@ -712,13 +693,7 @@ impl Client {
         member: &str,
         timeout: Duration,
     ) -> Result<MsgBindResult, ClientError> {
-        self.call_with_timeout::<MsgBind>(
-            &MsgBindParams {
-                member: Some(member.to_owned()),
-                app_token: None,
-            },
-            timeout,
-        )
+        self.call_with_timeout::<MsgBind>(&MsgBindParams::member(member), timeout)
     }
 
     /// [`Client::call_with_timeout`] that gives up early once `stop()` returns true, for a call
@@ -750,14 +725,6 @@ impl Client {
                 std::thread::sleep(STOP_POLL);
             }
         })
-    }
-
-    /// `organization.create` (host): creates an organization and starts its HQ office, waiting
-    /// up to [`CREATE_TIMEOUT`] (the host may hold a create while it starts up). Check
-    /// the HQ office's `status` in the result: the organization exists even if its server
-    /// hasn't started.
-    pub fn create_organization(&self, name: &str) -> Result<Organization, ClientError> {
-        self.call::<OrganizationCreate>(&OrganizationCreateParams { name: name.into() })
     }
 
     /// `organization.list` (host): every organization with an office on this machine.
@@ -1056,6 +1023,19 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use super::*;
+    use org_proto::OfficeRestartParams;
+
+    /// A call of these tests' own: one string in (`office_id`, the
+    /// contract's one-string params), an organization out. What is tested here is the
+    /// connection (framing, queueing, timeouts), not a method the host serves.
+    struct Named;
+    type NamedParams = OfficeRestartParams;
+
+    impl Call for Named {
+        const METHOD: &'static str = "test.named";
+        type Params = NamedParams;
+        type Result = Organization;
+    }
 
     #[test]
     fn ticked_reader_stops_on_a_closed_client_after_one_idle_tick() {
@@ -1270,13 +1250,12 @@ mod tests {
     }
 
     #[test]
-    fn a_request_has_ten_seconds_unless_its_kind_is_slow_by_nature() {
+    fn every_request_has_ten_seconds_by_default() {
         assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(10));
         assert_eq!(default_timeout("hello"), DEFAULT_TIMEOUT);
         assert_eq!(default_timeout("organization.list"), DEFAULT_TIMEOUT);
-        assert_eq!(default_timeout(OrganizationCreate::METHOD), CREATE_TIMEOUT);
-        // The host may hold a create 30 s at startup.
-        assert!(CREATE_TIMEOUT >= Duration::from_secs(45));
+        // The retired name-only create has no special case left.
+        assert_eq!(default_timeout("organization.create"), DEFAULT_TIMEOUT);
     }
 
     #[test]
@@ -1291,8 +1270,8 @@ mod tests {
                 let client = Arc::clone(&client);
                 let name = name.clone();
                 std::thread::spawn(move || {
-                    client.call_with_timeout::<OrganizationCreate>(
-                        &OrganizationCreateParams { name },
+                    client.call_with_timeout::<Named>(
+                        &NamedParams { office_id: name },
                         Duration::from_secs(60),
                     )
                 })

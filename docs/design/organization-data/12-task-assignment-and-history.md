@@ -1,6 +1,8 @@
 # Task ownership, assignment, reporter and activity history
 
-Structural draft for v1. Document revision 4. This selects task activity history and separate team/individual assignment for the proposed data model. Private task notes are required operational data owned by document 05. It changes documentation and draft SQL only; the application migration, command handlers and UI remain implementation work. The private-note data structure is defined in [operational data](05-operational-data.md#private-notes-attached-to-tasks) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+Status: **selected** data contract, revision 6. This document owns task activity history and separate team and individual assignment. Private task notes are owned by [document 05](05-operational-data.md#private-notes-attached-to-tasks). It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+
+Code today: tasks have individual assignment only. The acceptance journal that this contract's writes go through exists as an internal foundation ([executable migration](../executable-migration.md#where-the-entry-points-stand-2026-11-18)); no command reaches it yet. The selected model replaces the code's task model.
 
 ## Ownership and current responsibility
 
@@ -14,7 +16,7 @@ Structural draft for v1. Document revision 4. This selects task activity history
 | Latest updater | `updated_by_kind`, `updated_by_id`, `updated_at` | Actor/time of the latest accepted change |
 | Previous assignments and changes | `task_events` | Immutable ordered facts, including actors, times and previous/new values |
 
-Example: Payments owns project P-8 and task T-42; Platform is assigned to resolve it, with Ana as the individual assignee. Payments remains accountable. Platform's queue includes it through `assigned_team_id`, Ana's queue through `assignee_id`, and Payments' owned backlog through `team_id`.
+Example: Payments owns project P-8 and task T-A42; Platform is assigned to resolve it, with Ana as the individual assignee. Payments remains accountable. Platform's queue includes it through `assigned_team_id`, Ana's queue through `assignee_id`, and Payments' owned backlog through `team_id`.
 
 All task types use these fields. A projectless task has the same assignment choices. Team-only, individual-only, both and completely unassigned are valid states. New assigned teams and employees must be active and in the same organization. An individual need not have the assigned team as their home team. Assigning work does not grant tools/repository permissions, change project contribution membership, alter the reporter, move the canonical file or allocate another readable number. Home-team changes never silently rewrite current task assignment.
 
@@ -24,7 +26,7 @@ Project ownership changes update affected project tasks' owning `team_id` togeth
 
 ## Reporter and resolution actors
 
-V1 uses the bound creator as the reporter: `StoredItem.created_by` is separate from `assignee_id`, and normal commands cannot supply another actor. Preserve that meaning as `created_by_kind`/`created_by_id`; no second mutable reporter field is introduced. For bugs this is the reporter, for requests the requester, and for other tasks the originator. An owner is represented with kind `owner` and no employee ID. Import preserves genuine unknown provenance rather than inventing a reporter. Reporting on behalf of another person would need a separate future contract.
+The bound creator is the reporter, recorded as `created_by_kind`/`created_by_id` and separate from `assignee_id`; normal commands cannot supply another actor. There is no second, mutable reporter field. For bugs this is the reporter, for requests the requester, and for other tasks the originator. A person who signs in, the organization owner included, is recorded as kind `employee` with their person record's ID. Reporting on behalf of another person is not part of this contract.
 
 A `status_changed`, verification or closure event records who reported that transition and when. That actor, the current assignee and the actual people/agents who contributed can differ. Show the recorded facts separately; do not label the latest assignee as the historical fixer. [Usage accounting](10-usage-and-cost-accounting.md) remains the source of actual consuming agents, including reviewers/helpers.
 
@@ -32,26 +34,45 @@ A `status_changed`, verification or closure event records who reported that tran
 
 [Operational data — task activity history](05-operational-data.md#task-activity-history) owns the immutable event data, assignment-change payload, durable storage and accepted-write/rebuild contract. Assignment commands use that contract; task ownership and assignment do not confer mutation authority.
 
-## Verified v1 behavior and migration boundary
+Task acceptance ([ADR-0006](../../adr/0006-selected-task-acceptance.md)) checks the
+authority of the signed-in account live, at the host, and keeps the stable account
+binding in protected receipts. The actor recorded is the account's person record
+(`actor_kind: employee`). Instance-administrator authority for provisioning is a
+separate check. Assignment grants neither authority nor capabilities. Any active employee of the organization, person or agent, may create, edit, assign and move tasks ([ADR-0031](../../adr/0031-any-employee-changes-tasks.md)); an agent's call is authorized by its run's binding as that employee, and a paused, offboarded or deactivated employee is refused. Resolve task, desired active
+targets and authorization against one writer-ordered directory generation.
 
-Inspected `v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**:
+`task.set_assignment` replaces the code's `task.assign`. Its command contains
+exactly the complete pair and positive i64 `expected_revision`; the browser adapter
+uses canonical decimal revision strings through `9223372036854775807`. Decode raw
+wrappers/scope/commands before map conversion and reject duplicate keys. Fingerprint
+validated typed intent (method/version/scope/task/revision/pair), separately from
+codec-2 event token identity. Matching account-bound receipts return the original
+authorized outcome before fresh revision/target validation; changed intent or
+account conflicts. Even an equal pair validates requested targets and emits a new
+revision/event. Exhaustion rejects before mutation.
 
-| Capability | Source evidence | Proposed-model treatment |
+Selected assignment fingerprint version 1 is SHA-256 over codec-2 canonical JSON
+containing exactly `fingerprint_version: 1`, `method: task.set_assignment`,
+`instance_id`, `organization_id`, `office_id`, `task_id`, integer
+`expected_revision`, `assigned_team_id` and `assignee_id`. Scope comes from checked
+channel/registry context; nullable IDs are explicit. The revision is encoded from
+the validated i64, independently of its browser string representation. Operation
+ID selects the receipt and is not hashed into the intent; actor/account binding
+is protected metadata alongside it.
+
+## What the code does today
+
+These facts hold in the code; the selected model keeps their meaning and replaces the storage.
+
+| Capability | Code | In the selected model |
 | --- | --- | --- |
-| Reporter and current individual assignment | [`StoredItem`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/model.rs#L26) has `created_by` and `assignee_id`; [command identity](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L15) comes from the bound actor | Retain those meanings; add a separately assigned team |
-| Assignment history | [`task.assign`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/tasks.rs#L292) records `Assigned { from, to }` | Retain prior individual assignments; record both assignment fields for new changes |
-| Activity history | [`WorkEvent`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L758) includes version, actor, time, cause and typed change | Preserve events and their original order/provenance |
-| Durable immutable events | [`work_events` storage](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-office/src/store/work.rs#L33) rejects replacement, update and deletion; current state/events share the office write | Carry the invariant into the proposed file/journal projection |
-
-This is implemented domain/store behavior in v1, not a claim that every standalone browser/CLI workflow is wired. The new data model still requires its own application migration.
-
-An eventual approved import keeps original task IDs, event versions, timestamps and actors. Map v1 bug/request history to `task_kind: task`. Preserve the entire original `WorkEvent` object, including `auto`, `cause` and `org_position`, in `source_metadata.legacy_event`; retain its original `change` payload. New events use document 05's explicit assignment pair. Historical v1 `assigned` events describe an individual change only; do not infer a past assigned team from today's membership. Legacy current tasks default `assigned_team_id` to null unless the source explicitly records it.
-
-Where only a snapshot survives, retain it with an explicit `history_baseline` event at its current revision, capturing the import time and source provenance. Mark earlier history unavailable; do not fabricate a sequence of past assignments or backdate the baseline as a user action. A baseline permits subsequent history but never makes the earlier period complete. Preserve v1 events for unselected features/workflows in staging until an explicit disposition is chosen. Selecting task history does not automatically select Undo, every old transition engine, or organization-wide event sourcing.
+| Reporter and current individual assignment | `StoredItem` in `crates/org-work/src/model.rs` has `created_by` and `assignee_id`, taken from the bound actor | Same meaning, plus a separate assigned team |
+| Assignment history | `task.assign` (`crates/org-work/src/tasks.rs`) records `Assigned { from, to }` | Each change records both assignment fields |
+| Durable immutable events | the `work_events` table in `crates/org-office/src/store/work.rs` refuses replacement, update and deletion | The same invariant, in the file and journal projection |
 
 ## Private notes attached to tasks
 
-Private task notes belong to [operational data](05-operational-data.md#private-notes-attached-to-tasks). Document 05 owns their requirements (PN-01–06), v1 implementation evidence, data structure and private storage contract. Shared task events must not contain private note bodies, IDs or author associations; only an explicitly published shared comment enters this history.
+Private task notes belong to [operational data](05-operational-data.md#private-notes-attached-to-tasks). Document 05 owns their requirements (PN-01–06), data structure and private storage contract. Shared task events must not contain private note bodies, IDs or author associations; only an explicitly published shared comment enters this history.
 
 ## Relationships
 

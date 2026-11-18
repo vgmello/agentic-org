@@ -2,8 +2,10 @@
 
 Status: **in progress**. This checkpoint verifies the local protocol and standalone
 sandboxed commands. It does not complete S0 or verify a model-driven tool turn.
-The brief is ada's `docs/design/agent-sessions.md` on `ada/agent-sessions`, with
-the source research in `docs/research/agent-runtimes-control.md`.
+The brief is [agent sessions](../../docs/design/agent-sessions.md), with the source
+research in [agent runtimes](../../docs/research/agent-runtimes-control.md). The
+sign-in spike for private agent homes is increment C1 of the
+[implementation plan](../../docs/implementation-plan.md).
 
 ## Run the offline probe
 

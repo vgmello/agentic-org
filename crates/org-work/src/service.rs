@@ -42,9 +42,23 @@ impl<S: WorkStore> WorkService<S> {
     pub fn call(&self, caller: Caller, call: WorkCall) -> Result<TxnOutput, StoreError> {
         let clock = Arc::clone(&self.clock);
         let office_id = self.office_id.clone();
-        self.store.transact(Arc::new(move |org, txn| {
-            execute(org, txn, clock.as_ref(), &office_id, &caller, &call)
-        }))
+        // Bind the typed metadata and fallback to exactly the same inputs.
+        let bound_caller = caller.clone();
+        let bound_call = call.clone();
+        self.store.transact_command(
+            &caller,
+            &call,
+            Arc::new(move |org, txn| {
+                execute(
+                    org,
+                    txn,
+                    clock.as_ref(),
+                    &office_id,
+                    &bound_caller,
+                    &bound_call,
+                )
+            }),
+        )
     }
 
     /// Runs the bug cascades of [`crate::reconcile_bugs`] as one write request. The office

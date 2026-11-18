@@ -48,7 +48,7 @@
 use std::path::{Path, PathBuf};
 
 /// The desktop app's bundle id.
-pub const APP_BUNDLE_ID: &str = "com.ellosoft.agentic-org";
+pub const APP_BUNDLE_ID: &str = "com.vgmello.agentic-org";
 
 pub(crate) use crate::peer::AuditToken;
 
@@ -58,7 +58,6 @@ use crate::code_signing::developer_id_requirement;
 
 /// What the policy needs to know about a caller. The real one asks the kernel and the Security
 /// framework about a connection; tests use fakes.
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) trait Peer {
     /// Whether the request was sent after the connection was accepted (its line starts at or
     /// after the bytes already buffered then).
@@ -83,7 +82,6 @@ pub(crate) trait Peer {
 
 /// Which check let a caller in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 enum Grant {
     /// The app's code signature.
     Signed,
@@ -146,7 +144,6 @@ impl AppPolicy {
     }
 
     /// Whether `peer` may use the app-only calls.
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     pub(crate) fn allows(&self, peer: &impl Peer) -> bool {
         let Some(grant) = self.grant(peer) else {
             return false;
@@ -166,7 +163,6 @@ impl AppPolicy {
     }
 
     /// Which check lets `peer` in, the final re-check included: `None` refuses the call.
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     fn grant(&self, peer: &impl Peer) -> Option<Grant> {
         let grant = self.decide(peer)?;
         // Nothing may have happened while it was decided either: nothing arrived after the
@@ -178,7 +174,6 @@ impl AppPolicy {
     }
 
     /// Which check would let `peer` in, before the final re-check in [`Self::grant`].
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     fn decide(&self, peer: &impl Peer) -> Option<Grant> {
         // Sent after the accept, with nothing after it, by the process the host accepted (see
         // the module docs).
@@ -250,7 +245,6 @@ pub(crate) fn designated_requirement(bundle_id: &str, team_id: &str) -> Result<S
 
 /// The caller on a `host.sock` connection, as the kernel and the Security framework see it.
 #[cfg(target_os = "macos")]
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) struct SocketPeer<'a> {
     pub(crate) stream: &'a std::os::unix::net::UnixStream,
     /// What the host noted when it accepted the connection.
@@ -373,7 +367,7 @@ mod tests {
     fn the_requirement_names_the_bundle_and_team() {
         assert_eq!(
             designated_requirement(APP_BUNDLE_ID, "AB12CD34EF").unwrap(),
-            "identifier \"com.ellosoft.agentic-org\" and anchor apple generic and \
+            "identifier \"com.vgmello.agentic-org\" and anchor apple generic and \
              certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
              certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""

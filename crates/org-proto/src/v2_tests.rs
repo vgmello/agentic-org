@@ -228,9 +228,10 @@ fn hello_result_carries_instance_id_only_when_set() {
         .unwrap()
         .get("instance_id")
         .is_none());
-    let v2 = HelloResult::host("0.0.0", "This Mac").with_instance_id("01M72N8MG00000000000000I01");
+    let v2 = HelloResult::host("0.0.0", "This Mac")
+        .with_instance_id("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1");
     let wire = serde_json::to_value(&v2).unwrap();
-    assert_eq!(wire["instance_id"], "01M72N8MG00000000000000I01");
+    assert_eq!(wire["instance_id"], "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1");
     assert_eq!(serde_json::from_value::<HelloResult>(wire).unwrap(), v2);
 }
 
@@ -506,8 +507,8 @@ fn agent_profile_input_serializes_byte_identically_to_the_v1_profile() {
 
 // ---- §4.3 retired fields -------------------------------------------------------------------
 
-/// The retired fields of `member.update_agent` and `msg.bind`, as move 2a will declare them on
-/// those params. Other fields are ignored, as every params type does.
+/// The retired fields of `member.update_agent`, as move 2a will declare them on those params.
+/// Other fields are ignored, as every params type does. `msg.bind` decodes into its real params.
 #[derive(Debug, Deserialize)]
 struct UpdateAgentRetired {
     #[serde(default, deserialize_with = "retired::home")]
@@ -518,13 +519,6 @@ struct UpdateAgentRetired {
     clear_home: Option<Retired>,
 }
 
-#[derive(Debug, Deserialize)]
-struct BindRetired {
-    #[serde(default, deserialize_with = "retired::app_token")]
-    #[allow(dead_code)]
-    app_token: Option<Retired>,
-}
-
 fn decode_retired(method: &str, params: &Value) -> Result<(), String> {
     let result = match method {
         "member.update_agent" => serde_json::from_value::<UpdateAgentRetired>(params.clone())
@@ -533,7 +527,7 @@ fn decode_retired(method: &str, params: &Value) -> Result<(), String> {
         "member.add_agent" => serde_json::from_value::<MemberAddAgentParamsV2>(params.clone())
             .map(drop)
             .map_err(|e| e.to_string()),
-        "msg.bind" => serde_json::from_value::<BindRetired>(params.clone())
+        "msg.bind" => serde_json::from_value::<crate::msg::MsgBindParams>(params.clone())
             .map(drop)
             .map_err(|e| e.to_string()),
         other => panic!("no retired fields on {other}"),

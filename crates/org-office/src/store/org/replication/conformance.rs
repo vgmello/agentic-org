@@ -1,4 +1,4 @@
-//! Real SQLCipher adapter contract, including durable writer COMMIT failures.
+//! Real SQLite adapter contract, including durable writer COMMIT failures.
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex,
@@ -33,7 +33,7 @@ impl VerifiedPeer for HqAt {
 }
 
 #[derive(Clone)]
-struct SqlCipherHarness {
+struct SqliteHarness {
     directory: Arc<TempDir>,
     local: &'static str,
     office: Arc<Mutex<Option<Office>>>,
@@ -41,7 +41,7 @@ struct SqlCipherHarness {
     fail_commit: Arc<AtomicBool>,
 }
 
-impl SqlCipherHarness {
+impl SqliteHarness {
     fn new(local: &'static str) -> Self {
         let directory = Arc::new(TempDir::new().unwrap());
         let office = Office::create(
@@ -78,7 +78,7 @@ impl SqlCipherHarness {
     }
 }
 
-impl OrgStore for SqlCipherHarness {
+impl OrgStore for SqliteHarness {
     fn transact(&self, attempt: Arc<OrgAttempt>) -> Result<OrgOutput, SyncError> {
         let guard = self.office.lock().unwrap();
         let store = guard.as_ref().unwrap().org_store();
@@ -96,7 +96,7 @@ impl OrgStore for SqlCipherHarness {
     }
 }
 
-impl OrganizationHarness for SqlCipherHarness {
+impl OrganizationHarness for SqliteHarness {
     fn publish_fixture(&self, tag: u8) -> OrgEvent {
         let guard = self.office.lock().unwrap();
         let office = guard.as_ref().unwrap();
@@ -183,14 +183,13 @@ impl OrganizationHarness for SqlCipherHarness {
     }
 
     fn stage_snapshot(&self, source: &Self) -> ValidatedSnapshot {
-        let transport_key = Key::from_bytes([9; 32]);
         let exported = source
             .office
             .lock()
             .unwrap()
             .as_ref()
             .unwrap()
-            .export_replication_snapshot(&transport_key, LIMIT)
+            .export_replication_snapshot(LIMIT)
             .unwrap();
         self.office
             .lock()
@@ -200,8 +199,7 @@ impl OrganizationHarness for SqlCipherHarness {
             .stage_replication_snapshot(
                 &HqAt(exported.manifest.position.epoch),
                 &exported.manifest,
-                &transport_key,
-                &*exported.ciphertext,
+                &*exported.artifact,
                 LIMIT,
                 SnapshotStageMode::Normal,
             )
@@ -295,6 +293,6 @@ impl OrgTxn for FixtureTxn<'_> {
 }
 
 #[test]
-fn sqlcipher_implements_the_organization_adapter_contract() {
-    organization_adapter(&SqlCipherHarness::new("HQ"), &SqlCipherHarness::new("SAT"));
+fn sqlite_implements_the_organization_adapter_contract() {
+    organization_adapter(&SqliteHarness::new("HQ"), &SqliteHarness::new("SAT"));
 }

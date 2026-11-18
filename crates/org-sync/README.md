@@ -1,6 +1,6 @@
 # org-sync
 
-Storage-independent organization replication for X-05. The core decides event order,
+Storage-independent organization replication between offices. The core decides event order,
 authority changes, and whether a snapshot is required. The office adapter owns native
 payload meaning, durable storage, and snapshot validation. The connection adapter supplies
 immutable authenticated peer facts. Neither replication crate performs filesystem or network I/O.
@@ -12,17 +12,13 @@ The event tests assert the frozen SHA-256 answers; the authority-record tests al
 assert the complete signing preimage. See the protocol crate's
 [test-vector notes](../org-sync-proto/test-vectors/README.md) for the exact coverage.
 
-## Selected data and recovery integration
-
-The contracts below describe implemented replication core behavior, including exact v1 codecs and authority signatures. They do not establish that organization-data source adapters or full services have shipped. [Messaging](../../docs/design/organization-data/15-messaging-and-chat.md), [accounting](../../docs/design/organization-data/10-usage-and-cost-accounting.md) and [recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md) own the selected durable-source mapping.
-
-- Native message fingerprints stay unchanged. A target importer retains the original seven-field `v1_lenprefixed_sha256` hash/envelope separately from normalized RFC 8785 message hashes. Directed-thread participant unions never grant access to another sender/recipient pair; filter summaries and delayed delivery by the original per-message rights.
-- Protected conversation/membership/message envelopes and attachments are not shared Git organization data. SQL indexes and queues cannot be the sole recoverable copy of acknowledged unresolved asks/handoffs/deliveries. Durable actor/fingerprint receipts and source journal evidence must commit recoverably before ACK; receipt results retain the original actor/scope checks.
-- Recovery retains the native message content/state shared incarnation allocator and high-water; Work keeps its independent stream. Do not reset/reuse sequence identities after cache deletion or infer authority from an imported checkpoint. Snapshot/replay retains original codecs and signed authority pins.
-- Accounting replication copies immutable usage IDs and producer sequences; it never creates new consumption events. Durable JSONL/checkpoints, correction chains and price versions survive cache loss; totals report gaps/freshness, partial counts and unknown values. This core does not implement the accounting collector or totals service.
-- Budget policy/history, one-time extensions, notices and independent `stop_pending`/`held`/`released` holds are protected durable data (document 17), not reconstructed from replicated spending alone. No automatic evaluator, pause engine or new codec is introduced here.
-
-Organization Git alone cannot restore protected operational sources, command outcomes, authority or local credentials. Recovery must verify source coverage/digests and marked-process cleanup before execution; office-local state preservation during a snapshot is not permission to discard its only durable evidence.
+Replication between offices is milestone two (increment S1 of the
+[implementation plan](../../docs/implementation-plan.md)); today nothing enrols a second
+office. The durable sources that replication carries are defined by the data contract:
+[messaging](../../docs/design/organization-data/15-messaging-and-chat.md),
+[accounting](../../docs/design/organization-data/10-usage-and-cost-accounting.md) and
+[recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md).
+Where this core and those documents differ, the documents win and S1 changes the code.
 
 ## Writer contract
 
@@ -56,7 +52,7 @@ frame limit and leaves room for base64 and metadata.
 
 Protocol negotiation uses the replicated organization level. Raising that level requires
 the current registry, including HQ, and support from every office active in the last
-30 days. An older returning office must upgrade before it can resume. The published profile table
+30 days. A returning office on an older level must upgrade before it can resume. The published profile table
 fixes each level's wire/schema and codec bounds. Production has only level 1, wire/schema
 1, and the two native v1 codecs; injected level 2 is confined to test fixtures.
 
@@ -95,7 +91,7 @@ Local expiry retains its notice and identity; it does not establish remote non-d
 A later authenticated delivered receipt can correct that notice atomically. Backward clocks
 cannot revive expired traffic. The test adapter injects individual read/write failures,
 commit failures and reopen; the guard matrix checks exact refusals and unchanged state.
-Real message-storage and framing adapters are separate slices.
+Real message-storage and framing adapters do not exist yet.
 
 Initial expiry also retains immutable identity. Sender-side expiry uses a local
 undelivered notice; receiver-side expiry has a separate rejected-identity record,
@@ -104,7 +100,7 @@ A matching receiver retry remains Expired without an ACK. A conflicting live int
 divergence. The identity and clock commit together, including on the first refusal; expiry
 writes preserve the first immutable identity and never downgrade a delivered receipt.
 
-`MAX_MESSAGE_TTL_MS` is 30 days, matching X-05's outdated-office cutoff. Enqueue and receive
+`MAX_MESSAGE_TTL_MS` is 30 days, matching the 30-day window after which an office counts as outdated. Enqueue and receive
 refuse a deadline more than that interval beyond `max(now_ms, clock_high_ms)`. `deadline_ms`
 is the effective transport deadline with any native skew grace already folded in. Expiry
 is checked before receipt or rejected-identity lookup: delivery or replay at or after that
@@ -163,4 +159,4 @@ alone emits the existing `divergence` wire code before closing. Local refusal co
 be sent as receipt acknowledgments. Receipt application keeps immutable proof, outcomes and
 the durable floor in one transaction; retries re-read that state rather than reusing a plan.
 
-HQ ingestion, transport encoding/credit, delivery scopes and recovery are separate slices.
+HQ ingestion, transport encoding/credit, delivery scopes and recovery are not implemented.

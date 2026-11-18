@@ -2,20 +2,21 @@
 //!
 //! These are wire types, not a running HTTP adapter or an authorization service. The host
 //! owns accounts/sessions, the worker owns domain authorization, and the gateway owns the
-//! cookie/proof mapping. See `docs/design/gateway-api-v1.md`. Shared conformance fixtures live
+//! cookie/proof mapping. See `docs/design/web-api-v1.md`. Shared conformance fixtures live
 //! in `crates/org-proto/test-vectors/v2/gateway-*.json`; they never enter production UI imports.
 
 use serde::{Deserialize, Serialize};
 
 pub mod org_mutations;
+pub mod organizations;
 mod outcome;
 mod session;
 mod stream;
 mod views;
 
 pub use outcome::{
-    CommandEnvelope, CreateState, GatewayError, GatewayErrorCode, MutationOutcome, OperationId,
-    OperationLookup, ReadResponse, ResourceAccess,
+    CommandEnvelope, CreateState, CredentialField, CredentialRule, GatewayError, GatewayErrorCode,
+    MutationOutcome, OperationId, OperationLookup, ReadResponse, ResourceAccess,
 };
 pub use session::{
     AccountView, OrganizationLink, SecretText, SessionEstablished, SessionProof, SessionView,
@@ -272,8 +273,12 @@ impl TryFrom<LookupQueryFields> for LookupQuery {
             .chain(fields.org_id.iter())
             .chain(fields.office_id.iter())
         {
-            if !(1..=64).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
-                return Err("lookup IDs must be 1..64 ASCII letters or digits");
+            // Letters, digits and the hyphen of a canonical UUID: instance, organization
+            // and office ids are UUIDv7 (`0193a5c0-0000-7000-8000-000000000009`).
+            if !(1..=64).contains(&id.len())
+                || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            {
+                return Err("lookup IDs must be 1..64 ASCII letters, digits or hyphens");
             }
         }
         Ok(Self {
@@ -359,7 +364,6 @@ pub enum OperationKind {
     Msg,
 }
 
-pub type OrganizationCreateRequest = CommandEnvelope<crate::OrganizationCreateParams>;
 pub type OfficeRestartRequest = CommandEnvelope<crate::Empty>;
 pub type OrganizationCreateOutcome = MutationOutcome<OrganizationView>;
 pub type OrganizationCreateLookup = OperationLookup<OrganizationView>;

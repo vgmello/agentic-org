@@ -11,9 +11,9 @@
 //! Organization content stays in office databases: the catalog is the folders under `<home>/offices/` that hold
 //! a valid `office.json` (`catalog`). It talks to its servers only through
 //! `org-office-launch`, and never depends on `org-office`. The private `hostdb` stores the
-//! host's registry in SQLCipher; organization databases remain in office servers.
+//! host's registry in plain SQLite; organization databases remain in office servers.
 //!
-//! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
+//! It holds every office's secrets key (`keys`): it creates each one, keeps it in its key store
 //! (the Data Protection keychain in release builds, a development folder in debug builds) and
 //! hands it to the office's server on the launch pipe. Its servers never touch a key store.
 //!
@@ -37,8 +37,8 @@ compile_error!(
      development app, the trust-changing arguments). Build it without debug assertions."
 );
 
-#[cfg_attr(not(test), expect(dead_code, reason = "2b.3 account activation"))]
 mod accounts;
+mod admin;
 mod app_auth;
 mod broadcast;
 mod catalog;
@@ -51,10 +51,25 @@ mod host_log;
 mod host_secrets;
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "2b.3 activates hostdb after accepted bootstrap")
+    expect(
+        dead_code,
+        reason = "A2 B3 composes the registry into service start and setup"
+    )
 )]
 mod hostdb;
+pub mod human;
 mod ids;
+// Composed into `admin.link.initial` and `admin.reset` by A2 B3.
+#[cfg_attr(not(test), allow(dead_code))]
+mod links;
+pub mod release;
+mod web;
+
+// Real-process tests (debug builds only).
+#[cfg(all(test, debug_assertions))]
+mod enc1_process_tests;
+#[cfg(all(test, debug_assertions))]
+mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[cfg_attr(not(test), expect(dead_code, reason = "B2-01.2 wires the host"))]
@@ -63,14 +78,25 @@ mod keys;
 mod logs;
 mod offices;
 mod peer;
+mod provisioning;
+mod recovery;
+mod registered;
 mod secrets;
 mod server_check;
 mod service;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "A3 B4 wires browser sessions into the host ops")
+)]
+mod sessions;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub mod setup_flow;
 pub mod signals;
 mod spawn;
 mod supervisor;
 mod sync;
 mod timings;
+mod writer;
 
 use std::fs;
 use std::io;
@@ -92,12 +118,13 @@ use crate::supervisor::{Supervisor, SupervisorConfig};
 pub mod test_support;
 
 pub use crate::app_auth::APP_BUNDLE_ID;
-pub use crate::server_check::SERVER_SIGNING_ID;
+pub use crate::server_check::OFFICE_SIGNING_ID;
+pub use crate::server_check::WEB_SIGNING_ID;
 
 /// The host's own signing identifier (ADR-0003 §2.1), for the bundle's signing of
 /// the agentic-org executable in host mode. The signing identifier remains stable
 /// across the executable migration; agent-os must never receive this entitlement.
-pub const HOST_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-office-host";
+pub const HOST_SIGNING_ID: &str = "com.vgmello.agentic-org.org-office-host";
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
@@ -122,6 +149,7 @@ pub const APP_TEAM_ID: Option<&str> = option_env!("ORG_APP_TEAM_ID");
 /// development fields) exist in debug builds only. The timings and limits stay settable.
 #[derive(Debug, Clone)]
 pub struct Config {
+    runtime_release: Option<release::RuntimeRelease>,
     /// The office home (absolute).
     home: PathBuf,
     /// The office server program (see [`default_server_program`]).
@@ -142,7 +170,7 @@ pub struct Config {
     #[cfg(debug_assertions)]
     pub dev_app_path: Option<PathBuf>,
     /// Debug builds only (release builds don't have the field): the folder (absolute) where the
-    /// host keeps the offices' database keys, as plain files, instead of the Keychain. A debug
+    /// host keeps the offices' secrets keys, as plain files, instead of the Keychain. A debug
     /// host without it refuses to start ([`HostError::NoDevKeyDir`]), so it never writes a real
     /// Keychain item. The binary takes it from `ORG_OFFICE_DEV_KEY_DIR`; tests set it directly.
     /// It must not be inside the office home, and two homes must not share one.
@@ -170,6 +198,7 @@ impl Config {
 
     fn with(home: PathBuf, server_program: PathBuf, app_team_id: Option<&str>) -> Self {
         Self {
+            runtime_release: None,
             home,
             server_program,
             timings: Timings::default(),
@@ -198,6 +227,35 @@ impl Config {
     /// The office home.
     pub fn home(&self) -> &Path {
         &self.home
+    }
+    /// Bind registered host/bootstrap composition to an independently verified
+    /// current release. There is no unverified root/key/version setter.
+    pub fn with_runtime_release(
+        mut self,
+        release: release::RuntimeRelease,
+    ) -> Result<Self, HostError> {
+        self.runtime_release = Some(release);
+        self.admit_runtime()?;
+        Ok(self)
+    }
+    fn admit_runtime(&mut self) -> Result<(), HostError> {
+        let fail = |e| HostError::Io {
+            context: "admitting the complete runtime release before custody",
+            source: io::Error::other(e),
+        };
+        if let Some(release) = &self.runtime_release {
+            release.check_self().map_err(fail)?;
+            self.server_program = release.office_program();
+            return Ok(());
+        }
+        // Named development custody is already debug-only and cannot be present
+        // in a release Config. It establishes no production signing evidence.
+        #[cfg(debug_assertions)]
+        if self.dev_key_dir.is_some() {
+            host_log::log("explicit debug development custody: unpinned fixture runtime; no production release admission");
+            return Ok(());
+        }
+        Err(fail(release::Error::MissingBuildTrust))
     }
 }
 
@@ -238,60 +296,6 @@ fn trusted_office_home() -> Result<PathBuf, String> {
     )
 }
 
-/// Whether this host may sweep the keys of offices with no folder at startup
-/// (`keys::sweep_orphans`, which deletes one only once it has stayed orphaned for 7 days). That
-/// is safe only when the key store belongs to this office home alone:
-/// - a release build: yes. Its Keychain group is shared by every release host of this account,
-///   but every release host serves the account's one office home ([`trusted_office_home`]), so
-///   no host can take another home's keys for orphans. Checked again here: a release host on
-///   any other home doesn't sweep;
-/// - a debug build: never, since its development key folder may be shared by several homes.
-///
-/// Logged either way.
-fn may_sweep_orphan_keys(home: &Path) -> bool {
-    let reason = sweep_refusal(
-        cfg!(debug_assertions),
-        home::account_office_home().as_deref(),
-        home,
-        home::same_path,
-    );
-    match reason {
-        Some(reason) => {
-            host_log::log(&format!(
-                "no orphan-key sweep for {}: {reason}",
-                home.display()
-            ));
-            false
-        }
-        None => {
-            host_log::log(&format!(
-                "orphan-key sweep on for {}: a key whose office has no folder is marked, and \
-                 deleted once it has stayed so for 7 days",
-                home.display()
-            ));
-            true
-        }
-    }
-}
-
-/// Why a host may not sweep orphan keys (see [`may_sweep_orphan_keys`]), or `None` if it may: a
-/// release build (`debug` false) serving its account's own office home `own`. Pure: `same`
-/// compares paths.
-fn sweep_refusal(
-    debug: bool,
-    own: Option<&Path>,
-    home: &Path,
-    same: impl Fn(&Path, &Path) -> bool,
-) -> Option<&'static str> {
-    if debug {
-        Some("a debug build's development key folder may be shared by several homes")
-    } else if own.is_some_and(|own| same(own, home)) {
-        None
-    } else {
-        Some("it isn't this account's office home")
-    }
-}
-
 /// `agentic-org-office` next to this executable (both live in the app bundle), found through the
 /// executable's canonical path (symlinks resolved). Defence in depth only: a hard link or a
 /// copied bundle still puts another server next to the host, which is why a release host checks
@@ -306,28 +310,289 @@ pub fn default_server_program() -> io::Result<PathBuf> {
 
 /// A running host. [`Host::shutdown`] (or dropping it) stops it.
 pub struct Host {
+    _runtime_release: Option<release::RuntimeRelease>,
     layout: Layout,
     offices: Arc<Offices>,
     listener: Option<Listener>,
     lock: Option<HostLock>,
     instance: Option<instance::registry::Instance>,
+    authentication_lifecycle: Option<service::authentication::Lifecycle>,
+    web: Option<web::Supervisor>,
+    service: Arc<Service>,
+    /// Organization creation, kept to end its threads when the host stops.
+    creating: Option<Arc<provisioning::Provisioning>>,
+}
+
+fn startup_server_check(config: &Config) -> Result<ServerCheck, HostError> {
+    let server_check =
+        ServerCheck::for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
+            .map_err(|why| HostError::InvalidAppIdentity { why })?;
+    let server_check =
+        match &config.runtime_release {
+            Some(release) => {
+                server_check.pinned(release.cdhash(SERVER_PROGRAM_NAME).map_err(|e| {
+                    HostError::Io {
+                        context: "binding office image",
+                        source: io::Error::other(e),
+                    }
+                })?)
+            }
+            None => server_check,
+        };
+    host_log::log(&server_check.describe());
+    Ok(server_check)
+}
+
+fn startup_listener(
+    bound: std::os::unix::net::UnixListener,
+    service: &Arc<Service>,
+    offices: &Offices,
+    max_connections: usize,
+) -> Result<Listener, HostError> {
+    let listener = {
+        let config = ListenerConfig {
+            max_connections,
+            max_in_flight: MAX_IN_FLIGHT_PER_CONNECTION,
+            expected_uid: org_socket::effective_uid(),
+        };
+        Listener::start(bound, config, service.clone()).map_err(|source| HostError::Io {
+            context: "starting the listener",
+            source,
+        })
+    };
+    let listener = match listener {
+        Ok(listener) => listener,
+        Err(e) => {
+            offices.shutdown();
+            return Err(e);
+        }
+    };
+    Ok(listener)
+}
+
+fn startup_keys(
+    config: &Config,
+    instance: &Option<instance::registry::Instance>,
+    dev_key_dir: Option<&Path>,
+) -> Result<Arc<dyn keys::OfficeSecretsKeys>, HostError> {
+    let keys = keys::store_for(
+        dev_key_dir,
+        instance
+            .as_ref()
+            .map_or(config.home.as_path(), |i| i.root()),
+        instance.as_ref().map(|i| i.id()),
+        code_signing::own_signing,
+    )
+    .map_err(|e| match e {
+        keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
+        keys::StoreError::NoKeychainGroup => HostError::NoKeychainGroup,
+        keys::StoreError::KeychainGroupNotEntitled { group } => {
+            HostError::KeychainGroupNotEntitled { group }
+        }
+        keys::StoreError::NotHardened => HostError::NotHardened,
+    })?;
+    Ok(keys)
+}
+
+fn startup_app_policy(config: &Config, selected: bool) -> Result<AppPolicy, HostError> {
+    // Registered selected instances admit the same human CLI/host image as
+    // protected reverse bootstrap. Keep the retired desktop requirement
+    // only on the legacy, unregistered host entry.
+    let app = AppPolicy::new(
+        if selected {
+            HOST_SIGNING_ID
+        } else {
+            APP_BUNDLE_ID
+        },
+        config.app_team_id.as_deref(),
+    );
+    #[cfg(debug_assertions)]
+    let app = app.and_then(|app| match &config.dev_app_path {
+        Some(path) => app.with_dev_app(path),
+        None => Ok(app),
+    });
+    let app = app.map_err(|why| HostError::InvalidAppIdentity { why })?;
+    for line in app.describe() {
+        host_log::log(&line);
+    }
+    Ok(app)
+}
+
+fn startup_authentication(
+    layout: &Layout,
+    instance: &Option<instance::registry::Instance>,
+    custody: &mut Option<Arc<dyn host_secrets::HostSecrets>>,
+    dev_key_dir: Option<&Path>,
+) -> Result<Option<Arc<service::authentication::Authentication>>, HostError> {
+    let authentication = if let Some(instance) = instance {
+        match fs::symlink_metadata(layout.home.join("host-registry.db")) {
+            Ok(_) => {
+                let custody = match custody.take() {
+                    Some(custody) => custody,
+                    None => host_secrets::store_for(
+                        dev_key_dir,
+                        instance.root(),
+                        instance.id(),
+                        code_signing::own_signing,
+                    )
+                    .map_err(|_| HostError::Io {
+                        context: "opening protected account custody",
+                        source: io::Error::other("protected custody unavailable"),
+                    })?,
+                };
+                Some(Arc::new(
+                    service::authentication::Authentication::open(
+                        &layout.home,
+                        custody,
+                        instance.id(),
+                    )
+                    .map_err(|_| HostError::Io {
+                        context: "opening protected account registry",
+                        source: io::Error::other("protected registry unavailable"),
+                    })?,
+                ))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(HostError::Io {
+                    context: "checking protected account registry",
+                    source,
+                })
+            }
+        }
+    } else {
+        None
+    };
+    Ok(authentication)
+}
+
+fn startup_catalog(
+    layout: &Layout,
+    authentication: &Option<Arc<service::authentication::Authentication>>,
+) -> Result<(Catalog, std::collections::BTreeSet<String>, Vec<String>), HostError> {
+    let catalog = Catalog::scan(&layout.home).map_err(|source| HostError::Io {
+        context: "reading the office folders",
+        source,
+    })?;
+    let protected_offices = match authentication {
+        Some(auth) => auth
+            .provisioning_storage()
+            .0
+            .provisioning_offices()
+            .map_err(|_| HostError::Io {
+                context: "reading protected provisioning reservations",
+                source: io::Error::other("provisioning recovery required"),
+            })?,
+        None => std::collections::BTreeSet::new(),
+    };
+    let mut unfinished =
+        catalog::unfinished_folders(&layout.home).map_err(|source| HostError::Io {
+            context: "reading the office folders",
+            source,
+        })?;
+    unfinished.retain(|office| !protected_offices.contains(office));
+    Ok((catalog, protected_offices, unfinished))
+}
+
+fn startup_web(
+    config: &Config,
+    instance: &Option<instance::registry::Instance>,
+    layout: &Layout,
+    dev_key_dir: Option<&Path>,
+) -> Result<Option<web::Configuration>, HostError> {
+    let Some(instance) = instance else {
+        return Ok(None);
+    };
+    let Some(listen) = instance.browser().map_err(instance_error)? else {
+        return Ok(None);
+    };
+    let (check, release) = web::admission(
+        cfg!(debug_assertions),
+        config.app_team_id.as_deref(),
+        config
+            .runtime_release
+            .as_ref()
+            .map(|release| (release.cdhash("agentic-org-web"), release.web_binding())),
+    );
+    let mut critical_paths = vec![layout.home.clone(), instance.root().to_owned()];
+    if let Some(dir) = dev_key_dir {
+        critical_paths.push(dir.to_owned());
+    }
+    Ok(Some(web::Configuration {
+        release,
+        program: config.server_program.with_file_name("agentic-org-web"),
+        instance: instance.id().into(),
+        runtime: layout.run.clone(),
+        listen,
+        check,
+        critical_paths,
+    }))
+}
+
+struct ProtectedServices {
+    writers: Option<Arc<writer::Writers>>,
+    supervisor: Supervisor,
+    provisioning: Option<Arc<provisioning::Provisioning>>,
+}
+
+fn startup_protected_services(
+    instance: &Option<instance::registry::Instance>,
+    authentication: &Option<Arc<service::authentication::Authentication>>,
+    supervisor: Supervisor,
+    keys: &Arc<dyn keys::OfficeSecretsKeys>,
+    layout: &Layout,
+    timings: &Timings,
+) -> Result<ProtectedServices, HostError> {
+    let io = |context| move |source| HostError::Io { context, source };
+    let writers = match (instance, authentication) {
+        (Some(instance), Some(authentication)) => Some(
+            authentication
+                .writers(instance.id(), instance.root())
+                .map_err(io("opening protected writer authority"))?,
+        ),
+        _ => None,
+    };
+    let supervisor = match &writers {
+        Some(writers) => supervisor.with_writers(Arc::clone(writers)),
+        None => supervisor,
+    };
+    let provisioning = match (instance, authentication, &writers) {
+        (Some(instance), Some(authentication), Some(writers)) => {
+            let (db, custody) = authentication.provisioning_storage();
+            Some(Arc::new(
+                provisioning::Provisioning::new(
+                    db,
+                    custody,
+                    Arc::clone(keys),
+                    Arc::clone(writers),
+                    instance.id(),
+                    instance.root(),
+                    &layout.home,
+                )
+                .with_shutdown_grace(timings.shutdown_grace),
+            ))
+        }
+        _ => None,
+    };
+    Ok(ProtectedServices {
+        writers,
+        supervisor,
+        provisioning,
+    })
 }
 
 impl Host {
     /// Starts the host: chooses its key store, checks the socket paths fit, makes the office
-    /// home owner-only, takes `host.lock`, binds `host.sock`, starts a server for every office in
-    /// the catalog and discards unfinished folders in the background. This legacy entry has no
-    /// registered instance and refuses every valid `host.sock` request; run setup. Registered
+    /// home owner-only, takes `host.lock` and binds `host.sock`. This legacy entry has no
+    /// registered instance: it starts and discards no office server, logs that setup must run
+    /// first and refuses every valid `host.sock` request. Registered
     /// entry points serve only hello and count-only status, with hello required first.
     pub fn start(config: Config) -> Result<Self, HostError> {
         Self::start_inner(config, None)
     }
 
-    /// Private composition entry until agentic-org owns the reviewed CLI boundary.
-    #[cfg_attr(
-        not(all(feature = "test-support", debug_assertions)),
-        expect(dead_code, reason = "setup CLI is gated on F1-03")
-    )]
+    /// Private composition entry for the matching debug test-support adapter.
+    #[cfg(all(feature = "test-support", debug_assertions))]
     fn start_instance(
         config: Config,
         registry: &instance::registry::Registry,
@@ -340,9 +605,20 @@ impl Host {
     }
 
     fn start_inner(
-        mut config: Config,
+        config: Config,
         instance: Option<instance::registry::Instance>,
     ) -> Result<Self, HostError> {
+        Self::start_prepared(config, instance, None)
+    }
+
+    fn start_prepared(
+        mut config: Config,
+        instance: Option<instance::registry::Instance>,
+        prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
+    ) -> Result<Self, HostError> {
+        if instance.is_some() {
+            config.admit_runtime()?;
+        }
         let layout = match &instance {
             Some(instance) => {
                 let paths = instance.prepare_layout().map_err(instance_error)?;
@@ -355,51 +631,42 @@ impl Host {
         if !config.home.is_absolute() {
             return Err(HostError::RelativeHome { path: config.home });
         }
-        let app = AppPolicy::new(APP_BUNDLE_ID, config.app_team_id.as_deref());
-        #[cfg(debug_assertions)]
-        let app = app.and_then(|app| match &config.dev_app_path {
-            Some(path) => app.with_dev_app(path),
-            None => Ok(app),
-        });
-        let app = app.map_err(|why| HostError::InvalidAppIdentity { why })?;
-        for line in app.describe() {
-            host_log::log(&line);
-        }
+        let app = startup_app_policy(&config, instance.is_some())?;
         // Before anything is made on disk or started: no office runs without its key store.
         #[cfg(debug_assertions)]
         let dev_key_dir = config.dev_key_dir.as_deref();
         #[cfg(not(debug_assertions))]
         let dev_key_dir = None;
-        let keys = keys::store_for(
-            dev_key_dir,
-            &config.home,
-            instance.as_ref().map(|i| i.id()),
-            code_signing::own_signing,
-        )
-        .map_err(|e| match e {
-            keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
-            keys::StoreError::NoKeychainGroup => HostError::NoKeychainGroup,
-            keys::StoreError::KeychainGroupNotEntitled { group } => {
-                HostError::KeychainGroupNotEntitled { group }
-            }
-            keys::StoreError::NotHardened => HostError::NotHardened,
-        })?;
+        let keys = startup_keys(&config, &instance, dev_key_dir)?;
         layout.check_socket_paths()?;
         layout.prepare()?;
-        let lock = HostLock::acquire(&layout)?;
-        // Decided only by the host that holds the home.
-        let sweep_orphans = match &instance {
-            Some(_) => true, // the key store and orphan record both belong to this instance
-            None => may_sweep_orphan_keys(&layout.home),
+        let (held, mut custody) = prepared.unzip();
+        let lock = match held {
+            Some(lock) => lock,
+            None => HostLock::acquire(&layout)?,
         };
-        let server_check =
-            ServerCheck::for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
-                .map_err(|why| HostError::InvalidAppIdentity { why })?;
-        host_log::log(&server_check.describe());
+        // Decided only by the host that holds the home.
+        // An unregistered host reads no catalog, so it may never judge a key an orphan.
+        let sweep_orphans = instance.is_some();
+        let server_check = startup_server_check(&config)?;
         let io = |context| move |source| HostError::Io { context, source };
-        let catalog = Catalog::scan(&layout.home).map_err(io("reading the office folders"))?;
-        let unfinished =
-            catalog::unfinished_folders(&layout.home).map_err(io("reading the office folders"))?;
+        let authentication = startup_authentication(&layout, &instance, &mut custody, dev_key_dir)?;
+        let authentication_lifecycle = authentication
+            .as_ref()
+            .map(service::authentication::Lifecycle::start)
+            .transpose()
+            .map_err(io("starting session lifecycle"))?;
+        // An unregistered host starts and discards no office server: setup must run first.
+        let (catalog, protected_offices, unfinished) = match &instance {
+            Some(_) => startup_catalog(&layout, &authentication)?,
+            None => {
+                host_log::log(
+                    "no registered instance on this host: setup must run first; no office \
+                     server is started or discarded",
+                );
+                Default::default()
+            }
+        };
         // Bound first, so nothing has started when binding fails; clients that connect before
         // the listener starts (moments later) wait in the backlog.
         let bound = listener::bind(&layout.host_socket).map_err(|e| match e {
@@ -412,17 +679,34 @@ impl Host {
             },
         })?;
 
-        let supervisor = Supervisor::new(SupervisorConfig {
+        let supervisor_config = SupervisorConfig {
             program: config.server_program.clone(),
             home: layout.home.clone(),
             runtime_dir: Some(layout.run.clone()),
             logs_dir: layout.logs.clone(),
             log_max_bytes: config.log_max_bytes,
             timings: config.timings.clone(),
-            keys,
+            keys: Arc::clone(&keys),
             server_check: Arc::new(server_check),
             sweep_orphans,
-        });
+        };
+        let supervisor = match &instance {
+            Some(instance) => Supervisor::new(supervisor_config, instance.id()),
+            None => Supervisor::unregistered(supervisor_config),
+        }
+        .with_protected_offices(protected_offices);
+        let ProtectedServices {
+            writers: _writers,
+            supervisor,
+            provisioning,
+        } = startup_protected_services(
+            &instance,
+            &authentication,
+            supervisor,
+            &keys,
+            &layout,
+            &config.timings,
+        )?;
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             &layout.home,
@@ -433,38 +717,82 @@ impl Host {
             &config.timings,
         );
 
-        let listener = {
-            let config = ListenerConfig {
-                max_connections: config.max_connections,
-                max_in_flight: MAX_IN_FLIGHT_PER_CONNECTION,
-                expected_uid: org_socket::effective_uid(),
-            };
-            let service = Arc::new(Service::new(
+        let gateway_state = Arc::new(std::sync::Mutex::new(
+            org_host_control::GatewayState::NotConfigured,
+        ));
+        let web_config = startup_web(&config, &instance, &layout, dev_key_dir)?;
+        let recovery = match (&instance, &authentication) {
+            (Some(instance), Some(authentication)) => Some(Arc::new(recovery::Recovery::new(
+                Arc::clone(authentication),
+                Arc::clone(&offices),
+                Arc::clone(&broadcast),
+                instance.id(),
+                app,
+            ))),
+            _ => None,
+        };
+        let creating = provisioning.clone();
+        let service = Arc::new(
+            Service::new(
                 Arc::clone(&offices),
                 broadcast,
                 instance.as_ref().map(|i| i.id().to_owned()),
-            ));
-            Listener::start(bound, config, service).map_err(io("starting the listener"))
-        };
-        let listener = match listener {
-            Ok(listener) => listener,
-            Err(e) => {
-                offices.shutdown();
-                return Err(e);
+            )
+            .with_authentication(authentication)
+            .with_provisioning(provisioning)
+            .with_recovery(recovery)
+            .with_gateway_state(Arc::clone(&gateway_state)),
+        );
+        let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
+        // A create that reserved its identity before the host last stopped continues now,
+        // with no client asking; later ones start from the browser's request. This follows
+        // the last step of the start that can fail: a start that is refused has started no
+        // creation thread, so none outlives the refusal. Until this line a create or a
+        // lookup that arrives on the new listener is answered `unavailable` and asked again.
+        if let Some(provisioning) = &creating {
+            provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
+        }
+        let web = web_config.and_then(|web_config| {
+            match web::Supervisor::start(
+                web_config,
+                service.clone(),
+                Arc::clone(&gateway_state),
+                service.web_eligibility(),
+            ) {
+                Ok(web) => Some(web),
+                Err(error) => {
+                    *sync::lock(&gateway_state) = org_host_control::GatewayState::Failed;
+                    host_log::log(&format!(
+                        "browser service not started: {}",
+                        host_log::untrusted(&error.to_string())
+                    ));
+                    None
+                }
             }
-        };
+        });
         Ok(Self {
+            _runtime_release: config.runtime_release,
             layout,
             offices,
             listener: Some(listener),
             lock: Some(lock),
             instance,
+            authentication_lifecycle,
+            web,
+            service,
+            creating,
         })
     }
 
     /// The office home this host serves.
     pub fn home(&self) -> &Path {
         &self.layout.home
+    }
+
+    /// Whether the web process is serving: host authentication is present, HQ is
+    /// Active and an admitted web process's control connection is live.
+    pub fn web_ready(&self) -> bool {
+        self.service.web_ready()
     }
 
     /// `host.sock`, where clients connect.
@@ -483,10 +811,21 @@ impl Host {
             return;
         };
         listener.close();
+        // Ends the web process control connection (and its sessions), then kills/reaps it.
+        self.web.take();
+        // No creation attempt starts from here on, and none records a link.
+        if let Some(creating) = &self.creating {
+            creating.halt();
+        }
         // Before joining the listener: a create still running answers as soon as the
         // supervisor stops its server.
         self.offices.shutdown();
         listener.join();
+        // Nothing of a create writes custody or the registry after this.
+        if let Some(creating) = self.creating.take() {
+            creating.stop();
+        }
+        self.authentication_lifecycle.take();
         if let Ok(meta) = fs::symlink_metadata(&self.layout.host_socket) {
             if meta.file_type().is_socket() {
                 let _ = fs::remove_file(&self.layout.host_socket);
@@ -500,20 +839,5 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_a_release_host_on_its_accounts_office_home_sweeps() {
-        let lexical = |a: &Path, b: &Path| a == b;
-        let own = Path::new("/Users/me/Library/Application Support/agentic.org");
-        assert_eq!(sweep_refusal(false, Some(own), own, lexical), None);
-        assert!(sweep_refusal(true, Some(own), own, lexical).is_some());
-        assert!(sweep_refusal(false, Some(own), Path::new("/tmp/h"), lexical).is_some());
-        assert!(sweep_refusal(false, None, own, lexical).is_some());
     }
 }

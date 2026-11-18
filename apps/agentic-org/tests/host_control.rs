@@ -193,6 +193,11 @@ fn every_non_open_operation_is_refused_before_valid_or_invalid_params() {
         "office.app_token",
         "office.restart",
         "account.verify",
+        "session.renew",
+        "session.end",
+        "session.grant",
+        "session.inspect",
+        "office.open_channel",
         "bootstrap",
         "exit",
         "future.method",
@@ -263,10 +268,11 @@ fn status_counts_observed_office_states_without_revealing_ids() {
     const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
     const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
     const C: &str = "01CCCCCCCCCCCCCCCCCCCCCCCC";
-    for (id, name) in [(A, "Alpha"), (B, "Beta"), (C, "Missing")] {
+    for (id, name) in [(A, "Alpha"), (B, "Beta"), (C, "Failing")] {
         home.write_office(&support::hq(id, id, name, "2026-11-11T00:00:00.000Z"));
     }
-    home.remove_key(C);
+    // A fatal server failure leaves C `unavailable` (a missing key no longer does: it starts).
+    home.script(serde_json::json!({ C: {"do": "fail", "code": "invalid_request"} }));
     let host = home.start(home.config()).unwrap();
     let running_status = if cfg!(target_os = "macos") {
         org_proto::OfficeStatus::Active
@@ -366,9 +372,7 @@ fn even_a_development_app_peer_cannot_use_retired_wire_calls() {
         .unwrap();
     assert_eq!(
         client
-            .call::<org_proto::OfficeAppToken>(&org_proto::OfficeAppTokenParams {
-                office_id: A.into()
-            })
+            .call::<support::RetiredOfficeToken>(&serde_json::json!({"office_id": A}))
             .unwrap_err()
             .code,
         ErrorCode::NotAuthorized

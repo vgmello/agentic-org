@@ -1,11 +1,26 @@
-# apps/agentic-org-ui: Agentic Org
+# apps/agentic-org-ui
 
-The retained browser application uses Svelte 5, static SvelteKit 2, TypeScript and Tailwind v4, managed with Bun. Licensed UI stays inside this product application.
+The browser application of Agentic Org: a static SvelteKit 2 application with
+Svelte 5, TypeScript and Tailwind CSS 4, built with shadcn-svelte on Bits UI and
+managed with Bun. It builds to static assets that `agentic-org-web` serves; it has no
+server of its own. Licensed Tailwind Plus components stay inside this application.
 
-The Tauri shell, native installation/login controls and existing-team import are removed. Canonical domain fixtures and readers remain in `crates/org-office`, `crates/org-work` and `crates/org-proto`; `src/lib/office/wire-shapes.test.ts` retains the independent TypeScript wire gate.
+## What it does today
 
-Production and ordinary `bun run dev` show an explicit unavailable state for areas without a gateway adapter. No real HTTP routes or sign-in/setup behavior are claimed yet; those follow the approved gateway contract. Office, organization and work imports have no automatic browser mock fallback.
-Other gated features retain sample factories until their scheduled module cutovers; the shell keeps those areas unavailable.
+No screen talks to a real server yet: `agentic-org-web` does not open a listener
+(increment A3 of the [implementation plan](../../docs/implementation-plan.md)).
+
+- A production build, and ordinary `bun run dev`, show every area without a server
+  adapter as unavailable. No flag, query parameter or stored value enables test data
+  in a production build.
+- The screens and flows exist and run against test fakes, which only the explicit
+  `e2e` dev mode composes (`e2e/vite-composition.ts`). Each increment connects its
+  screens to `/api/v1`.
+
+See [TECH-STACK.md](TECH-STACK.md) for the stack and screenshot conventions, and
+[AGENTS.md](AGENTS.md) for the Svelte rules that apply here.
+
+## Checks
 
 ```sh
 bun install --frozen-lockfile
@@ -16,32 +31,47 @@ bun run build
 bun run test:e2e
 ```
 
-Playwright starts an explicitly composed test-only fake server plus a separate static production build. Retained UI workflows run against the test fakes; production checks prove unserved areas stay unavailable and browser flags cannot enable fakes. Screenshots and reports stay ignored under `test-results/` and `playwright-report/`.
+Playwright starts the fake-backed dev server and a separate static production build.
+Product flows run against the fakes; the production project proves that unserved
+areas stay unavailable. Screenshots and reports stay in the ignored `test-results/`
+and `playwright-report/`. [The tiered UI gate](e2e/README-gate.md) selects which
+browser tests a change needs.
 
-See [TECH-STACK.md](TECH-STACK.md), the [standalone design](../../docs/design/standalone-server.md), [project structure](../../docs/design/project-structure.md) and [removal inventory](../../docs/design/standalone-server-removal-inventory.md). Server setup and release packaging remain separate work.
+## Content security policy checks
 
+The production build keeps assets external and refuses data URIs in emitted CSS and
+JavaScript, and any test-only CSP report directive, collector route or middleware
+marker in the built output. `bun run check:build-assets` runs that check on its own
+and fails when `build/` is missing.
 
-## Gateway CSP browser gate (Part A)
-
-The production build keeps assets external and checks emitted CSS and JavaScript for data URIs. It also refuses test CSP report directives, collector routes or middleware markers in built HTML, CSS and JavaScript. `bun run check:build-assets` also runs that check independently and fails when `build/` is missing. SSE parsing strings such as `data:` remain allowed.
+**Against the web server** (`test:e2e:csp-gateway`):
 
 ```sh
 bunx playwright install chromium webkit firefox
 CSP_GW_PORT=4273 bun run test:e2e:csp-gateway --workers=1
 ```
 
-This command builds the gateway's `csp_harness` example, reads its executable path from Cargo JSON, builds the UI, and runs Chromium, WebKit and Firefox against `http://127.0.0.1:<CSP_GW_PORT>`. Custom `CARGO_TARGET_DIR` values are supported. The harness uses the production HTTP service with an unavailable API backend. Each browser checks fresh routes and reload, exact CSP headers and bootstrap execution; deliberately blocked scripts prove capture works across documents and pages.
+It builds the `csp_harness` example of `apps/agentic-org-web`, builds the UI, and
+runs Chromium, WebKit and Firefox against `http://127.0.0.1:<CSP_GW_PORT>`. The
+harness uses the production HTTP service with a backend that refuses every API call.
+Each browser checks fresh routes and reload, the exact CSP headers and the bootstrap
+script; deliberately blocked scripts prove that violations are captured. Output stays
+in the ignored `test-results-csp-gateway/`.
 
-Capture screenshots stay ignored in `test-results-csp-gateway/`. Run this command, `test:e2e` and other builds sequentially within one worktree because they share build output. Part B runs the full interactive CSP sweep separately.
-
-## Interactive CSP gate (Part B)
+**Interactive** (`test:e2e:csp`):
 
 ```sh
 CSP_PW_PORT=4373 bun run test:e2e:csp --workers=1
 ```
 
-The separate CSP config runs the existing Chromium UI suite against its own `vite dev --mode e2e` server, plus a route/dialog/sheet/toast smoke in Chromium, native WebKit and Firefox. Each browser's setup project first proves that a blocked inline script does not execute and reaches the report collector. The ordinary `test:e2e` configuration stays unchanged.
+It runs the Chromium UI suite against its own `vite dev --mode e2e` server, plus a
+route, dialog, sheet and toast smoke test in Chromium, WebKit and Firefox. Each
+browser first proves that a blocked inline script does not run and reaches the
+report collector. Only this server's `ORG_UI_CSP=1` enables the test-only policy
+middleware, which reads the shared production policy files and relaxes no directive.
+Output stays in the ignored `test-results-csp/`.
 
-Only this server's explicit `ORG_UI_CSP=1` flag enables the serve-only policy middleware. It reads the shared production policy files, hashes each HTML response's inline scripts after normalizing line endings, strips conditional request headers, and adds the test-only report URI and script sampling. Non-HTML responses, including worker scripts, receive their own policy. No directive is relaxed. The server uses `node_modules/.vite-csp`; its screenshots stay ignored under `test-results-csp/`, and both CSP output directories are excluded from Vite's watcher.
-
-Smoke tests wait for one quiet second before closing their browser. Teardown waits three seconds and fails for any remaining violation, collector error or HTML response without a policy header. Only reports matching a setup control's unique marker are cleared. Parts A and B are both required for UI changes after this companion lands; gateway changes also run Part A. These gates prove CSP behavior, with sign-in/Origin and worker execution coverage owned by their following features.
+Teardown fails on any remaining violation, collector error or HTML response without a
+policy header. UI changes run both; changes to `apps/agentic-org-web` run the first.
+Run them, `test:e2e` and builds one at a time within a worktree: they share build
+output.

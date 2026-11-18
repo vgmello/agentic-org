@@ -66,9 +66,11 @@ fn memory_obeys_the_operation_matrix() {
     conformance(&Memory::default());
 }
 #[test]
-fn names_accept_only_the_three_frozen_forms() {
+fn names_accept_only_the_versioned_custody_forms() {
     for valid in [
         "registry".to_owned(),
+        "writer-device".to_owned(),
+        format!("writer.{}", "a".repeat(64)),
         format!("tls.{}", "0123456789abcdef".repeat(4)),
         format!("recovery.{}", "Z".repeat(64)),
         "recovery.a".into(),
@@ -101,7 +103,8 @@ fn names_accept_only_the_three_frozen_forms() {
     }
 }
 #[test]
-fn only_tls_names_are_add_only() {
+fn tls_and_device_identity_are_add_only() {
+    assert!(Name::parse("writer-device").unwrap().is_add_only());
     assert!(Name::parse(&format!("tls.{}", "a".repeat(64)))
         .unwrap()
         .is_add_only());
@@ -133,8 +136,8 @@ mod development {
     use std::fs;
     use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
-    const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-    const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
+    const A: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0";
+    const B: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e1";
     struct Fixture {
         _temp: tempfile::TempDir,
         base: PathBuf,
@@ -215,7 +218,7 @@ mod development {
         })
         .unwrap();
         office
-            .create("OFFICE", &org_proto::DbKey::from_bytes([3; 32]))
+            .create("OFFICE", &org_proto::OfficeSecretsKey::from_bytes([3; 32]))
             .unwrap();
         assert_eq!(office.list().unwrap(), vec!["OFFICE"]);
         assert_eq!(a.list().unwrap(), vec![n.clone()]);
@@ -1037,7 +1040,7 @@ mod development {
     }
 }
 
-const HOST_INSTANCE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+const HOST_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d0";
 const HOST_GROUP: &str = "TEAMID1234.org.agentic.host";
 fn signing() -> crate::code_signing::Signing {
     crate::code_signing::Signing {
@@ -1061,6 +1064,9 @@ fn release_selection_validates_instance_then_group_before_signing() {
         "../bad",
         "01aaaaaaaaaaaaaaaaaaaaaaaa",
         "8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        // A ULID (the earlier form) and uppercase UUIDv7: only lowercase UUIDv7 is accepted.
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071D0",
     ] {
         assert_eq!(
             selection_error(release_store(None, instance, || panic!(

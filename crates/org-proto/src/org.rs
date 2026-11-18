@@ -18,7 +18,7 @@
 //! `member.set_run_mode`, `member.offboard` and `member.remove` change who works for the
 //! organization and what it spends, and some cannot be undone. The wire
 //! carries no caller identity: the office that receives a command knows whose connection it came
-//! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
+//! in on (a person acts through an owner grant on a host channel, X-02 §4.1), enforces this before it
 //! queues or forwards the command, and HQ relies on that.
 //!
 //! ## Command ids and retries
@@ -67,7 +67,8 @@
 //!   ([`is_valid_id`]). A ULID fits. An id that names something that already exists is only
 //!   looked up (`not_found`).
 //! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
-//!   [`MEMBER_ID_CHARS`] ASCII letters and digits, the shape of a ULID ([`is_valid_member_id`]).
+//!   [`MEMBER_ID_CHARS`] ASCII letters and digits, the shape of a ULID, or a canonical
+//!   lowercase UUIDv7, the form of an organization creator's id ([`is_valid_member_id`]).
 //!   No handle has this shape, so an id and a handle never collide.
 //! - **Command ids** (`command_id`, on every command): an uppercase Crockford ULID, 26
 //!   characters ("Command ids and retries"); its format is checked after the stored-answer
@@ -294,8 +295,9 @@ pub const RUN_HANDLE_PREFIX: &str = "run:";
 
 /// Whether `handle` (trimmed, as a person's `name` or an agent's `messaging_name` is compared)
 /// looks like something messaging already addresses by: it starts with [`RUN_HANDLE_PREFIX`]
-/// (any case), or is exactly 26 ASCII letters and digits (the shape of every member id,
-/// [`is_valid_member_id`]; a lenient ULID decoder reads I, L, O and U too, so none is excluded),
+/// (any case), or is exactly 26 ASCII letters and digits or a canonical UUIDv7 (the shapes of a
+/// member id, [`is_valid_member_id`]; a lenient ULID decoder reads I, L, O and U too, so none is
+/// excluded),
 /// so a handle can never shadow a member id or a run. HQ refuses such a
 /// handle with `invalid_name`, for agents and for people. The reserved words [`OWNER_HANDLE`]
 /// and [`OFFICE_HANDLE`] are a different rule: they are `already_exists`, as if another
@@ -310,16 +312,18 @@ pub fn is_shaped_like_an_address(handle: &str) -> bool {
     run || is_valid_member_id(handle) || is_valid_member_id(&handle.to_lowercase())
 }
 
-/// The length of a member id.
+/// The length of a member id in its ULID form.
 pub const MEMBER_ID_CHARS: usize = 26;
 
 /// Whether `id` is a valid member id: exactly [`MEMBER_ID_CHARS`] ASCII letters and digits (the
-/// shape of a ULID, which is what clients make). `member.add_person` and `member.add_agent`
-/// refuse anything else with `invalid_request`. No handle has this shape
-/// ([`is_shaped_like_an_address`]), so an id never equals a handle, and a lookup by id before
-/// handle cannot be captured by a name.
+/// shape of a ULID, which is what clients make), or a canonical lowercase UUIDv7
+/// ([`crate::is_uuid_v7`]), the form the host mints for the person who creates an organization.
+/// `member.add_person` and `member.add_agent` refuse anything else with `invalid_request`. No
+/// handle has either shape ([`is_shaped_like_an_address`]), so an id never equals a handle, and
+/// a lookup by id before handle cannot be captured by a name.
 pub fn is_valid_member_id(id: &str) -> bool {
-    id.len() == MEMBER_ID_CHARS && id.bytes().all(|b| b.is_ascii_alphanumeric())
+    (id.len() == MEMBER_ID_CHARS && id.bytes().all(|b| b.is_ascii_alphanumeric()))
+        || crate::is_uuid_v7(id)
 }
 
 /// The longest client-made id, in characters (see [`is_valid_id`]).

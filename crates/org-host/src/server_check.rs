@@ -1,5 +1,5 @@
-//! Who may get an office's database key: the check of every office server the host starts,
-//! before its first line (which carries the key) is written.
+//! Who may get an office's secrets key: the check of every office server the host starts,
+//! before its handoff (which carries the key) is written.
 //!
 //! The threat: a same-user process runs the signed host from a copy, a symlink or a hard link,
 //! next to its own `agentic-org-office` (the host starts the server next to its own executable),
@@ -9,12 +9,12 @@
 //! inherits stdin, then `exec` the genuine server and pass the check), and checks it by its
 //! **audit token**, which names the image the exec loaded: its code object
 //! (`SecCodeCopyGuestWithAttributes`) must satisfy a requirement compiled into the host,
-//! the server's signing identifier [`SERVER_SIGNING_ID`] signed with the app team's Developer
+//! the office worker's signing identifier [`OFFICE_SIGNING_ID`] signed with the app team's Developer
 //! ID, and run hardened code without the entitlements that let another process reach into it
 //! (`code_signing::satisfies_hardened`):
 //!
 //! ```text
-//! identifier "com.ellosoft.agentic-org.org-server" and anchor apple generic
+//! identifier "com.vgmello.agentic-org.office" and anchor apple generic
 //!   and certificate 1[field.1.2.840.113635.100.6.2.6] exists
 //!   and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
 //!   and certificate leaf[subject.OU] = "<ORG_APP_TEAM_ID>"
@@ -36,12 +36,17 @@
 //! all (logged loudly). **Debug builds don't check** (their servers are unsigned development and
 //! test builds), which is logged at startup.
 
-/// The office server's signing identifier (ADR-0003 §2.1): a release host gives an office's key
-/// only to a server signed with it by the app's team (`server_check`). The bundle must sign
+/// The office worker's signing identifier (ADR-0003 §2.1): a release host gives an office's key
+/// only to an office worker signed with it by the app's team (`server_check`). The bundle must sign
 /// agentic-org-office with it. The signing identifier is stable across filename changes.
-pub const SERVER_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-server";
+pub const OFFICE_SIGNING_ID: &str = "com.vgmello.agentic-org.office";
+/// The browser service has no office-worker or Keychain authority (ADR-0008).
+pub const WEB_SIGNING_ID: &str = "com.vgmello.agentic-org.web";
 
 use crate::peer::AuditToken;
+
+#[cfg(all(test, target_os = "macos"))]
+mod selected_image_tests;
 
 /// How the host checks the office servers it starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,8 +56,14 @@ pub(crate) enum ServerCheck {
     Skip,
     /// Every server must satisfy this requirement and run hardened code.
     Requirement(String),
+    /// Same Developer ID/hardening rules, additionally forbidding Keychain entitlement.
+    Gateway(String),
+    /// Same platform policy plus the selected publisher-signed exact image.
+    Pinned(Box<ServerCheck>, [u8; 20]),
     /// No team id: no server may be started.
     Refuse,
+    /// The web process may not be started, and why (for the host log).
+    WebRefused(&'static str),
     /// Tests only: the admission and the re-check's token come from the test.
     #[cfg(test)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -94,6 +105,21 @@ impl PartialEq for Scripted {
 impl Eq for Scripted {}
 
 impl ServerCheck {
+    pub(crate) fn pinned(self, hash: [u8; 20]) -> Self {
+        Self::Pinned(Box::new(self), hash)
+    }
+    pub(crate) fn gateway_for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
+        if debug {
+            return Ok(Self::Skip);
+        }
+        match team_id {
+            Some(team) => crate::code_signing::developer_id_requirement(WEB_SIGNING_ID, team)
+                .map(Self::Gateway),
+            None => Ok(Self::WebRefused(
+                "no app team id (ORG_APP_TEAM_ID at build time)",
+            )),
+        }
+    }
     /// The check for a build (`debug`) whose app team id is `team_id`. A team id that isn't well
     /// formed is an error, never a weaker check.
     pub(crate) fn for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
@@ -109,6 +135,10 @@ impl ServerCheck {
     /// What the host logs about the check at startup.
     pub(crate) fn describe(&self) -> String {
         match self {
+            ServerCheck::Pinned(check, _) => format!(
+                "{}; exact selected release kernel image required",
+                check.describe()
+            ),
             ServerCheck::Skip => "debug build: office servers' code signatures aren't checked \
                                   before they get an office's key"
                 .to_owned(),
@@ -116,10 +146,16 @@ impl ServerCheck {
                 "office servers get an office's key only if they run hardened code satisfying: \
                  {requirement}"
             ),
+            ServerCheck::Gateway(requirement) => format!(
+                "gateway requires hardened code without Keychain entitlement: {requirement}"
+            ),
             ServerCheck::Refuse => "WARNING: no app team id (ORG_APP_TEAM_ID at build time), so \
                                     no office server's signature can be checked: no office \
                                     server will be started"
                 .to_owned(),
+            ServerCheck::WebRefused(cause) => {
+                format!("WARNING: the web process will not be started: {cause}")
+            }
             #[cfg(test)]
             ServerCheck::Scripted(_) => "scripted (tests)".to_owned(),
         }
@@ -128,10 +164,13 @@ impl ServerCheck {
     /// Before a spawn: whether any server may be started.
     pub(crate) fn may_spawn(&self) -> Result<(), String> {
         match self {
+            ServerCheck::Pinned(check, _) => check.may_spawn(),
             ServerCheck::Refuse => {
                 Err("this build has no app team id to check servers with".into())
             }
+            ServerCheck::WebRefused(cause) => Err((*cause).into()),
             ServerCheck::Skip | ServerCheck::Requirement(_) => Ok(()),
+            ServerCheck::Gateway(_) => Ok(()),
             #[cfg(test)]
             ServerCheck::Scripted(_) => Ok(()),
         }
@@ -140,16 +179,40 @@ impl ServerCheck {
     /// After the spawn of child `pid`: its audit token if it may get a key (`None`: not
     /// checked, a debug build), or why not.
     pub(crate) fn admit(&self, pid: u32) -> Result<Option<AuditToken>, String> {
+        if let Self::Pinned(check, expected) = self {
+            let token = check
+                .admit(pid)?
+                .ok_or_else(|| "selected release requires platform-audited image".to_owned())?;
+            if org_socket::image::loaded_cdhash_for_audit_token(&token)
+                .map_err(|_| "selected release kernel image unavailable")?
+                != *expected
+            {
+                return Err("selected release kernel image mismatch".into());
+            }
+            return Ok(Some(token));
+        }
         #[cfg(test)]
         if let ServerCheck::Scripted(scripted) = self {
             return (scripted.0)(Step::Admit, pid);
         }
-        admit(self, || token_of(pid), satisfies)
+        admit(self, || token_of(pid), satisfies, gateway_without_keychain)
     }
 
     /// Right before child `pid`'s first line: whether it is still the image `admitted` (what
     /// [`ServerCheck::admit`] returned).
     pub(crate) fn still(&self, pid: u32, admitted: Option<AuditToken>) -> Result<(), String> {
+        if let Self::Pinned(check, expected) = self {
+            check.still(pid, admitted)?;
+            let token = admitted
+                .ok_or_else(|| "selected release requires platform-audited image".to_owned())?;
+            if org_socket::image::loaded_cdhash_for_audit_token(&token)
+                .map_err(|_| "selected release kernel image unavailable")?
+                != *expected
+            {
+                return Err("selected release kernel image mismatch".into());
+            }
+            return Ok(());
+        }
         let now = || {
             #[cfg(test)]
             if let ServerCheck::Scripted(scripted) = self {
@@ -165,22 +228,28 @@ impl ServerCheck {
     }
 }
 
-/// The requirement an office server must satisfy: [`SERVER_SIGNING_ID`] signed with the
+/// The requirement an office worker must satisfy: [`OFFICE_SIGNING_ID`] signed with the
 /// Developer ID of team `team_id`.
 pub(crate) fn server_requirement(team_id: &str) -> Result<String, String> {
-    crate::code_signing::developer_id_requirement(SERVER_SIGNING_ID, team_id)
+    crate::code_signing::developer_id_requirement(OFFICE_SIGNING_ID, team_id)
 }
 
 /// The decision, pure: `token` gives the child's audit token, `satisfies` checks the code it
-/// names against a requirement. Neither is asked unless the check needs it.
+/// names against a requirement and `keychain_free` whether that code holds no Keychain
+/// entitlement (the web process only). None is asked unless the check needs it.
 fn admit(
     check: &ServerCheck,
     token: impl FnOnce() -> Result<AuditToken, String>,
     satisfies: impl FnOnce(&AuditToken, &str) -> bool,
+    keychain_free: impl FnOnce(&AuditToken) -> bool,
 ) -> Result<Option<AuditToken>, String> {
     match check {
+        ServerCheck::Pinned(_, _) => {
+            Err("selected release requires the live kernel image adapter".into())
+        }
         ServerCheck::Skip => Ok(None),
         ServerCheck::Refuse => Err("this build has no app team id to check servers with".into()),
+        ServerCheck::WebRefused(cause) => Err((*cause).into()),
         #[cfg(test)]
         ServerCheck::Scripted(_) => Err("a scripted check isn't decided here".into()),
         ServerCheck::Requirement(requirement) => {
@@ -195,7 +264,36 @@ fn admit(
                 )
             }
         }
+        ServerCheck::Gateway(requirement) => {
+            let token = token().map_err(|why| format!("its audit token: {why}"))?;
+            if satisfies(&token, requirement) && keychain_free(&token) {
+                Ok(Some(token))
+            } else {
+                Err(
+                    "it isn't the signed web process (its code signature doesn't satisfy \
+                     the web process requirement, it isn't hardened, or it holds a Keychain \
+                     entitlement)"
+                        .into(),
+                )
+            }
+        }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn gateway_without_keychain(token: &AuditToken) -> bool {
+    crate::code_signing::code_for_audit_token(token)
+        .and_then(|code| crate::code_signing::signing(&code))
+        .is_some_and(|s| {
+            !s.entitlements
+                .iter()
+                .flatten()
+                .any(|(key, _)| key == "keychain-access-groups")
+        })
+}
+#[cfg(not(target_os = "macos"))]
+fn gateway_without_keychain(_: &AuditToken) -> bool {
+    false
 }
 
 /// Whether the child's token `now` is still the one admitted.
@@ -238,7 +336,7 @@ mod tests {
     fn the_requirement_names_the_server_and_the_team() {
         assert_eq!(
             server_requirement(TEAM).unwrap(),
-            "identifier \"com.ellosoft.agentic-org.org-server\" and anchor apple generic \
+            "identifier \"com.vgmello.agentic-org.office\" and anchor apple generic \
              and certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
              certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""
@@ -265,6 +363,163 @@ mod tests {
     }
 
     #[test]
+    fn release_web_without_a_team_may_not_spawn() {
+        let check = ServerCheck::gateway_for_build(false, None).unwrap();
+        assert!(matches!(check, ServerCheck::WebRefused(_)));
+        assert!(check.may_spawn().is_err());
+        assert!(check.describe().contains("web process"));
+        assert!(check.describe().contains("no app team id"));
+        assert!(ServerCheck::gateway_for_build(true, None)
+            .unwrap()
+            .may_spawn()
+            .is_ok());
+    }
+
+    #[test]
+    fn gateway_requires_its_distinct_identity_and_never_a_missing_team() {
+        let ServerCheck::Gateway(requirement) =
+            ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap()
+        else {
+            panic!("release gateway policy")
+        };
+        assert!(requirement.contains(WEB_SIGNING_ID));
+        assert!(!requirement.contains(OFFICE_SIGNING_ID));
+        assert!(matches!(
+            ServerCheck::gateway_for_build(false, None).unwrap(),
+            ServerCheck::WebRefused(_)
+        ));
+        assert!(ServerCheck::gateway_for_build(false, Some("bad")).is_err());
+        assert_eq!(
+            ServerCheck::gateway_for_build(true, None).unwrap(),
+            ServerCheck::Skip
+        );
+        let never = || -> Result<AuditToken, String> { panic!("asked for missing-team token") };
+        assert!(admit(
+            &ServerCheck::Refuse,
+            never,
+            |_, _| panic!("signature"),
+            no_keychain
+        )
+        .is_err());
+        let ServerCheck::Gateway(requirement) =
+            ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap()
+        else {
+            unreachable!()
+        };
+        let refusal = admit(
+            &ServerCheck::Gateway(requirement),
+            || Ok([7; 32]),
+            |_, _| false,
+            |_| true,
+        )
+        .unwrap_err();
+        // The web process refusal names the web process and its full admission condition.
+        assert!(refusal.contains("web process"), "{refusal}");
+        assert!(!refusal.contains("office server"), "{refusal}");
+        for condition in ["code signature", "hardened", "Keychain entitlement"] {
+            assert!(refusal.contains(condition), "{refusal}");
+        }
+    }
+
+    /// A Keychain probe for checks that must never ask it (only the web process does).
+    fn no_keychain(_: &AuditToken) -> bool {
+        panic!("asked for the Keychain entitlement")
+    }
+
+    /// The live probe reads a real child's signed entitlements. A suspended
+    /// `/bin/sleep` holds no `keychain-access-groups` entitlement and is accepted.
+    /// A suspended `/usr/libexec/security-sysdiagnose` (an Apple system tool that
+    /// never runs here) holds one and is refused. No local build product carries it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_live_keychain_probe_refuses_only_a_child_with_keychain_access_groups() {
+        let probe = |program: &str| {
+            let spawned =
+                crate::spawn::spawn_suspended(std::path::Path::new(program), &[], &[]).unwrap();
+            let token = crate::spawn::audit_token_of_child(spawned.process.id()).unwrap();
+            gateway_without_keychain(&token)
+        };
+        assert!(probe("/bin/sleep"), "an unentitled child was refused");
+        assert!(
+            !probe("/usr/libexec/security-sysdiagnose"),
+            "a child holding keychain-access-groups was accepted"
+        );
+    }
+
+    /// The production `ServerCheck::admit` entry wires the live token, signature and
+    /// Keychain probes. With an Apple-anchored requirement (no signing team needed),
+    /// hardened Apple binaries reach every probe: `/usr/bin/scp` (no entitlements) is
+    /// admitted; `/usr/bin/ssh` (hardened, only keychain-access-groups) satisfies the
+    /// signature check, as the office `Requirement` check shows, yet the web process check
+    /// refuses it; unhardened `/bin/sleep` fails the signature check.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn production_web_admission_uses_the_live_keychain_probe() {
+        let admit_with = |check: &ServerCheck, program: &str| {
+            let spawned =
+                crate::spawn::spawn_suspended(std::path::Path::new(program), &[], &[]).unwrap();
+            check.admit(spawned.process.id())
+        };
+        let web = ServerCheck::Gateway("anchor apple".into());
+        let office = ServerCheck::Requirement("anchor apple".into());
+        assert!(
+            matches!(admit_with(&web, "/usr/bin/scp"), Ok(Some(_))),
+            "a hardened child without a Keychain entitlement was refused"
+        );
+        assert!(
+            matches!(admit_with(&office, "/usr/bin/ssh"), Ok(Some(_))),
+            "/usr/bin/ssh must satisfy the signature check for this test to isolate the probe"
+        );
+        let refused = admit_with(&web, "/usr/bin/ssh").expect_err("Keychain child admitted");
+        assert!(refused.contains("Keychain entitlement"), "{refused}");
+        assert!(
+            admit_with(&web, "/bin/sleep").is_err(),
+            "an unhardened child was admitted"
+        );
+    }
+
+    #[test]
+    fn the_web_is_admitted_only_without_a_keychain_entitlement() {
+        let ServerCheck::Gateway(requirement) =
+            ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap()
+        else {
+            panic!("release gateway policy")
+        };
+        let check = ServerCheck::Gateway(requirement.clone());
+        let probed = Cell::new(None);
+        let probe = |free: bool| {
+            let probed = &probed;
+            move |token: &AuditToken| {
+                probed.set(Some(*token));
+                free
+            }
+        };
+        let asked = Cell::new(None);
+        let satisfied = |_: &AuditToken, r: &str| {
+            asked.set(Some(r.to_owned()));
+            true
+        };
+        // A satisfying signature without a Keychain entitlement is admitted.
+        assert_eq!(
+            admit(&check, || Ok([7; 32]), satisfied, probe(true)),
+            Ok(Some([7; 32]))
+        );
+        assert_eq!(asked.take().as_deref(), Some(requirement.as_str()));
+        assert_eq!(probed.take(), Some([7; 32]));
+        // The same satisfying signature holding a Keychain entitlement is refused.
+        let refusal = admit(&check, || Ok([7; 32]), |_, _| true, probe(false)).unwrap_err();
+        assert!(refusal.contains("web process"), "{refusal}");
+        assert!(refusal.contains("Keychain entitlement"), "{refusal}");
+        assert_eq!(probed.take(), Some([7; 32]));
+        // The office server's check never asks the Keychain probe.
+        let office = ServerCheck::Requirement("R".into());
+        assert_eq!(
+            admit(&office, || Ok([7; 32]), |_, _| true, no_keychain),
+            Ok(Some([7; 32]))
+        );
+    }
+
+    #[test]
     fn a_child_is_admitted_only_with_a_token_that_satisfies_the_requirement() {
         let check = ServerCheck::Requirement("R".into());
         let asked = Cell::new(None);
@@ -272,16 +527,28 @@ mod tests {
             asked.set(Some(r.to_owned()));
             true
         };
-        assert_eq!(admit(&check, || Ok([7; 32]), yes), Ok(Some([7; 32])));
+        assert_eq!(
+            admit(&check, || Ok([7; 32]), yes, no_keychain),
+            Ok(Some([7; 32]))
+        );
         assert_eq!(asked.take().as_deref(), Some("R"));
-        assert!(admit(&check, || Ok([7; 32]), |_, _| false).is_err());
+        assert!(admit(&check, || Ok([7; 32]), |_, _| false, no_keychain).is_err());
         // No token: refused, and the requirement isn't even checked.
-        let err = admit(&check, || Err("gone".into()), |_, _| panic!("checked")).unwrap_err();
+        let err = admit(
+            &check,
+            || Err("gone".into()),
+            |_, _| panic!("checked"),
+            no_keychain,
+        )
+        .unwrap_err();
         assert!(err.contains("gone"), "{err}");
         // Debug skips; no team id refuses; neither asks for anything.
         let never = || -> Result<AuditToken, String> { panic!("asked for a token") };
-        assert_eq!(admit(&ServerCheck::Skip, never, |_, _| panic!()), Ok(None));
-        assert!(admit(&ServerCheck::Refuse, never, |_, _| panic!()).is_err());
+        assert_eq!(
+            admit(&ServerCheck::Skip, never, |_, _| panic!(), no_keychain),
+            Ok(None)
+        );
+        assert!(admit(&ServerCheck::Refuse, never, |_, _| panic!(), no_keychain).is_err());
     }
 
     #[test]

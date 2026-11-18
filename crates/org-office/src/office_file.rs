@@ -23,6 +23,7 @@ const TEMP_NAME: &str = "office.json.tmp";
 /// The most the host reads.
 const MAX_BYTES: u64 = 64 * 1024;
 const VERSION: u32 = 1;
+const SELECTED_VERSION: u32 = 2;
 /// The longest office or organization id.
 pub(crate) const MAX_ID_CHARS: usize = 64;
 
@@ -40,6 +41,12 @@ struct Raw {
 /// Whether `id` is a plain id: 1 to 64 ASCII letters and digits.
 pub(crate) fn is_plain_id(id: &str) -> bool {
     (1..=MAX_ID_CHARS).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+pub(crate) fn is_storage_id(id: &str) -> bool {
+    is_plain_id(id) || org_proto::is_uuid_v7(id)
+}
+fn selected(info: &OfficeInfo) -> bool {
+    org_proto::is_uuid_v7(&info.office_id) && org_proto::is_uuid_v7(&info.org_id)
 }
 
 /// Whether `text` looks like `YYYY-MM-DDTHH:MM:SS.mmmZ`.
@@ -65,7 +72,7 @@ fn check(info: &OfficeInfo) -> Result<(), OfficeError> {
             return Err(OfficeError::Invalid("a name is not trimmed"));
         }
     }
-    if !is_plain_id(&info.office_id) || !is_plain_id(&info.org_id) {
+    if !(is_plain_id(&info.office_id) && is_plain_id(&info.org_id)) && !selected(info) {
         Err(OfficeError::Invalid(
             "an id must be 1 to 64 letters and digits",
         ))
@@ -78,10 +85,14 @@ fn check(info: &OfficeInfo) -> Result<(), OfficeError> {
     }
 }
 
-fn encode(info: &OfficeInfo) -> Result<Vec<u8>, OfficeError> {
+pub(crate) fn encode(info: &OfficeInfo) -> Result<Vec<u8>, OfficeError> {
     check(info)?;
     let raw = Raw {
-        v: VERSION,
+        v: if selected(info) {
+            SELECTED_VERSION
+        } else {
+            VERSION
+        },
         office_id: info.office_id.clone(),
         office_name: info.office_name.clone(),
         role: match info.role {
@@ -99,7 +110,7 @@ fn encode(info: &OfficeInfo) -> Result<Vec<u8>, OfficeError> {
 fn decode(bytes: &[u8]) -> Result<OfficeInfo, OfficeError> {
     let raw: Raw = serde_json::from_slice(bytes)
         .map_err(|_| OfficeError::Invalid("office.json is not valid"))?;
-    if raw.v != VERSION {
+    if !matches!(raw.v, VERSION | SELECTED_VERSION) {
         return Err(OfficeError::Invalid(
             "office.json has an unsupported version",
         ));
@@ -109,7 +120,7 @@ fn decode(bytes: &[u8]) -> Result<OfficeInfo, OfficeError> {
         _ => {
             return Err(OfficeError::Invalid(
                 "office.json has a role this build does not know",
-            ))
+            ));
         }
     };
     let info = OfficeInfo {
@@ -120,6 +131,11 @@ fn decode(bytes: &[u8]) -> Result<OfficeInfo, OfficeError> {
         org_name: raw.org_name,
         created_at: raw.created_at,
     };
+    if (raw.v == SELECTED_VERSION) != selected(&info) {
+        return Err(OfficeError::Invalid(
+            "office.json identity profile mismatch",
+        ));
+    }
     check(&info)?;
     Ok(info)
 }

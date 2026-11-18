@@ -1,8 +1,8 @@
 # Model profiles, provider connections and agent execution
 
-Status: **data and execution specification, revision 6**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **selected** data and execution contract, revision 8. This document defines the data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
-This document owns provider connections, subscription identity, model profiles and their ordered memberships, discovered models, agent execution configuration, office-local bindings, shared admission records, and execution turns/attempts/process ownership. It is a first-class member of the [organization data specification](README.md), with its SQL included in the consolidated [schema.sql](schema.sql). The SQL is a design/import contract, not an application migration already applied to v1. Existing employee IDs and organization/team/project/task relationships are preserved.
+This document owns provider connections, subscription identity, model profiles and their ordered memberships, discovered models, agent execution configuration, office-local bindings, shared admission records, and execution turns/attempts/process ownership. It is a first-class member of the [organization data specification](README.md), with its SQL included in the consolidated [schema.sql](schema.sql). The SQL is a design contract; the code does not implement it yet.
 
 | Related document | Boundary |
 | --- | --- |
@@ -18,7 +18,7 @@ An agent employee has zero or one execution configuration; a runnable agent requ
 
 One logical turn belongs to one employee/office/placement generation and has one or more execution attempts once routing succeeds. Each attempt records its selected connection, permit and optional process instance; skipped candidates do not fabricate a running attempt. Shared quota is keyed to the canonical connection, not a profile or credential directory. Full columns, foreign keys and constraints appear in §12; configuration files and recovery authorities appear in §3.
 
-Requirements source: owner-supplied `requirements_design_document_subscription_pool_model_profile_architecture.md`, SHA-256 `c3189b7af897be77cc9e8d4214edcc71a66039f3c14a95f6d08d3da5678c43dc`. Provider commands/model names in that source are illustrative. Adapter conformance tests establish what an installed version supports; unsupported capability returns a defined error instead of leaving an architecture decision open.
+Provider commands and model names in examples are illustrative. Adapter conformance tests establish what an installed version supports; unsupported capability returns a defined error instead of leaving an architecture decision open.
 
 ## 1. Fixed decisions and scope
 
@@ -33,10 +33,10 @@ Requirements source: owner-supplied `requirements_design_document_subscription_p
 | Shared quota | HQ's organization service coordinates turn permits across offices. Per-connection concurrency defaults to one and is explicitly configurable. |
 | Failover | Same target model, first eligible connection by priority. Each connection is tried at most once per dispatch cycle. Replay/resume requires the proof rules in §7. |
 | Fast iteration | Reuse an idle verified process when its connection, model, workspace and launch digest match. Otherwise perform a controlled switch. No Git fetch, model discovery or authentication flow runs on the selection hot path. |
-| Persistence | Organization config in Git; local auth and execution journal outside Git; SQLite is a projection. Accounting remains durable as defined in [usage accounting](10-usage-and-cost-accounting.md). |
-| Delivery scope | Configuration, discovery, explicit turn execution, supervision, permits, safe switching and accounting capture. Business-process engines, automatic scheduling, delegated employees, memory consolidation and budget-triggered pausing are excluded. |
+| Persistence | Organization config in Git; local auth and execution records outside Git, written through the office's one acceptance journal ([document 16](16-recovery-and-office-continuity.md#selected-immutable-acceptance-journal)); SQLite is a projection. Accounting remains durable as defined in [usage accounting](10-usage-and-cost-accounting.md). |
+| Delivery scope | Configuration, discovery, explicit turn execution, supervision, permits, safe switching and accounting capture. Business-process engines, automatic scheduling, delegated employees, memory consolidation, budget evaluation and interrupting a running turn for a budget are excluded. Admission still honors recorded budget holds (§6 step 3, [document 17](17-budgets-and-controls.md)). |
 
-The owner-approved executable structure uses agentic-org as the human CLI/service host, agentic-org-web as the browser server, agentic-org-office as the office worker, and agent-os as the separate agent CLI. It supersedes revision 1's dedicated supervisor process. The existing-employee extension and supervision responsibilities remain. The four executable application directories/packages and entry points were aligned in merged v1 commit 700d5a37; this PR also names the static UI package agentic-org-ui. Pool routing, execution configuration and the complete agent session runner remain implementation work; naming an executable does not establish those capabilities.
+The executable structure uses agentic-org as the human CLI/service host, agentic-org-web as the browser server, agentic-org-office as the office worker, and agent-os as the separate agent CLI; there is no dedicated supervisor process. The static UI package is agentic-org-ui. Pool routing, execution configuration and the complete agent session runner remain implementation work; naming an executable does not establish those capabilities.
 
 ## 2. Executables, modules and exclusive ownership
 
@@ -67,21 +67,21 @@ flowchart TD
     AgentCLI -->|employee-scoped local operations| API
 ```
 
-The OS service manager starts/restarts agentic-org serve. Its host module starts and monitors office workers and the optional web child. Each office worker acquires its exclusive office/ownership locks, replays its execution journal and reconciles marked children before admitting starts. A worker restart requires agent recovery; this version does not promise uninterrupted agent execution across worker restarts. Host and worker generations are distinct from employee placement generation. Host shutdown stops workers in order; host reconciliation must not race the live worker's ownership of agent children.
+The OS service manager starts/restarts agentic-org serve. Its host module starts and monitors office workers and the optional web child. Each office worker acquires its exclusive office/ownership locks, replays its acceptance journal and reconciles marked children before admitting starts. After a worker restart the office continues each interrupted turn by itself once it has proved the run's processes are gone ([ADR-0030](../../adr/0030-an-agent-works-while-it-has-work.md) decisions 8 and 9); a process does not survive the restart. Host and worker generations are distinct from employee placement generation. Host shutdown stops workers in order; host reconciliation must not race the live worker's ownership of agent children.
 
 Inside agentic-org-office, the agent supervisor owns employee lifecycle, readiness, environment setup and recovery. The connection router owns pool selection, cooldown/permit decisions and failover. The session runner owns protocol pumping and invokes org-supervise for OS operations. Existing org-runtime remains the adapter contract; the planned org-office-sessions integration composes these capabilities without changing pure domain modules into process-control code. Binaries remain thin. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
 
-The worker has one SQLite writer and one agent recovery owner. Its internal supervisor submits journal/projection changes through the office data service; it does not open another writer or communicate with a sibling supervisor daemon. The execution journal remains authoritative for process ownership, turn/attempt changes and command receipts; SQL rows are projections. Integrate existing owned-recovery records into this path before enabling launches. Organization configuration and HQ coordination keep their authorities (§3/§6).
+The worker has one SQLite writer and one agent recovery owner. Its internal supervisor submits its changes through the office data service; it does not open another writer, keep a journal of its own or communicate with a sibling supervisor daemon. The execution record files, written through the office's acceptance journal, are authoritative for process ownership, turn/attempt changes and command receipts; SQL rows are projections. Integrate existing owned-recovery records into this path before enabling launches. Organization configuration and HQ coordination keep their authorities (§3/§6).
 
 **Release lifecycle.** agentic-org owns online downloads and offline local-bundle installation. Stage and verify a complete platform release, including every framework executable and web assets, before activation. Check signed metadata and checksums against installed trust; offline install/upgrade performs no network requests. Startup uses the pinned installed release even if update checking fails. Background checks do not imply immediate activation: apply the configured policy, drain affected work, switch the release pin, restart through the OS service manager and verify readiness. Preserve the prior release and compatible recoverable data state; executable-only rollback after an incompatible schema change is forbidden. Updating the running host itself needs platform-aware replacement/restart. An offline bundle is not a promise of offline cloud-model access.
 
 **Satellite operation.** HQ and satellite are roles of the same office executable, not different binaries. A satellite enrolls once and reconnects outbound to HQ's authenticated federation endpoint using its office identity; browser authentication and federation TLS remain separate boundaries. Agent tools call the local worker through agent-os. The worker replicates relevant shared data and uses local repository caches/worktrees; teams/projects remain organization-wide. Disconnected tasks/features can be saved with stable IDs and pending readable numbers, as defined in document 06. The current HQ permit contract still blocks new model turns without coordinator access and stops active turns when renewal cannot be maintained. Reserved offline capacity is a later explicit extension, not an implied exception. HQ/satellite protocol compatibility is checked during independently activated installation updates.
 
-The host retains office-key custody. The web process and agent-os receive only their scoped capabilities, never host key-access entitlement or database keys. Moving host behavior into agentic-org serve must preserve the existing platform credential and signed-launch boundaries; reusing an executable name does not make human, host and agent authority interchangeable.
+The host retains office-key custody. The web process and agent-os receive only their scoped capabilities, never host key-access entitlement or office secrets keys. Moving host behavior into agentic-org serve must preserve the existing platform credential and signed-launch boundaries; reusing an executable name does not make human, host and agent authority interchangeable.
 
 ### 2.1 Implemented CLI versus specified behavior
 
-Verified merged v1 at 700d5a37: agentic-org serve, help/version and existing agent-os operations are implemented. agentic-org setup explicitly returns unavailable before writing state; service start/stop/status, protected HQ bootstrap, installation/download/update activation and production web handoff are not implemented by the executable migration. Model-profile configuration/routing commands in this document are internal execution-service contracts, not new public CLI commands already available to users.
+Which entry points exist is tracked in [executable migration](../executable-migration.md); `agentic-org setup` refuses today. Model-profile configuration/routing commands in this document are internal execution-service contracts, not public CLI commands.
 
 The [standalone installation contract](../standalone-server.md#4-setup-and-service-lifecycle) defines the intended HQ-only initial setup with automatic service registration/start and separately initiated satellite onboarding. It remains responsible for installers/offline bundles and lifecycle commands; this document does not define another installer.
 
@@ -96,14 +96,16 @@ The [standalone installation contract](../standalone-server.md#4-setup-and-servi
     └── execution.md
 
 <data-root>/<organization-id>/durable/
-├── authority/agent-execution/              # HQ placement generations, permits and cooldowns
+├── authority/agent-execution/              # HQ placement generations, permits and cooldowns (record files)
 └── local/offices/<office-id>/
     ├── connections/<connection-id>/binding.yaml
     ├── auth/<connection-id>/               # Private CLI state, or external vault binding
     └── supervision/
         ├── supervisor.lock
-        ├── journal/<sequence>.json
+        ├── turns/<turn-id>/turn.json       # Turn state, attempts and process records
         ├── turns/<turn-id>/input.json
+        ├── receipts/<operation-id>.json    # Supervisor command receipts
+        ├── pending-starts/<employee-id>.json   # ADR-0030
         ├── checkpoints/<checkpoint-id>.json
         └── tools/<operation-id>.json
 
@@ -119,23 +121,23 @@ The [standalone installation contract](../standalone-server.md#4-setup-and-servi
 | `agent_execution_configs` | `execution.md` front matter: employee/profile/model IDs, revision/schema, enabled, tools_config; body is system_prompt_markdown. Common attribution follows [record contracts](08-record-contracts.md). |
 | `office_connection_bindings` | Local binding YAML with same-named fields. Never shared Git content. |
 | `office_connection_state`, `office_connection_models` | Supervisor-owned discovery/auth observations, rebuilt from verified probes after cache loss. Their journal snapshots improve startup but are not fresh proof after restart. |
-| `agent_placements.placement_generation` | HQ agent-execution journal; current placement row remains the existing employee-to-office projection. |
-| `connection_quota_state`, `connection_turn_permits` | HQ agent-execution journal; atomically committed before permit acknowledgement. |
-| `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts` | Supervisor journal transactions and immutable input/checkpoint/tool files. |
+| `agent_placements.placement_generation` | HQ's agent-execution record files, written through HQ's acceptance journal; current placement row remains the existing employee-to-office projection. |
+| `connection_quota_state`, `connection_turn_permits` | HQ's agent-execution record files, written through HQ's acceptance journal; committed before permit acknowledgement. |
+| `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts` | The turn and receipt files under `supervision/`, with the immutable input/checkpoint/tool files. A supervisor command's receipt is the receipt of its journal entry ([document 16](16-recovery-and-office-continuity.md#selected-immutable-acceptance-journal)); `supervisor_command_receipts` projects the fields execution needs from it and is not a second receipt store. |
 
-Journal records are ordered UTF-8 JSON transaction envelopes: `{schema_version, sequence, operation_id, payload_sha256, mutations, response, envelope_sha256}`. Write a complete transaction to a temporary file, durably flush it, atomically rename to its sequence name, then durably flush the parent directory before acknowledgement. All journal, ownership and input/checkpoint flushes in this document must provide the platform power-loss guarantees of [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md), including the macOS full-flush operation; plain fsync alone is insufficient there. Mutations contain full same-named row snapshots or explicit projection removals. A projector applies each sequence once in one SQLite transaction; a gap or checksum conflict blocks new execution until recovered. `envelope_sha256` hashes the entire canonical envelope except itself, including mutations and response, for every transaction. `payload_sha256` remains the command digest and is not an envelope-integrity check. Verify the envelope digest before replay. Asynchronous fact transactions use null operation_id, payload_sha256 and response and create no command receipt, but still require envelope_sha256. Input/checkpoint/tool files referenced by a transaction are fsynced before publishing it. Canonical JSON expands defaults/nulls, sorts keys and uses compact UTF-8 encoding; digests use the [accounting](10-usage-and-cost-accounting.md) SHA-256 convention.
+**There is no execution journal.** Every execution change (a turn or attempt transition, a process record, a permit, a cooldown, a command receipt, a pending start) is a change to a record file, accepted as one entry of the office's one acceptance journal like any other change (document 16; [ADR-0021](../../adr/0021-office-store-architecture.md); owner, 2026-11-18). An entry holds file changes, never table rows; the projector builds the tables of section 12 from the files, and a rebuilt cache reads them again. Execution records under `local/` are never published to HQ or to Git; they are replayed only by their own office. A change is acknowledged in the durable class ([ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 3) and has no flush rule of its own: the journal's flush is the only one. Input, checkpoint and tool files that a change names are written in the same entry. Hashes use `canonical-json/2` ([hash codec registry](08-record-contracts.md#hash-codec-registry)). This paragraph replaces the earlier supervision journal of transaction envelopes with row snapshots.
 
 Credentials never enter organization Git, command payloads, journal events or logs. The local binding holds only a vault/keychain reference or a private auth-directory path. Auth directories are owned by the office user with mode 0700; generated files are 0600. Rebind on a new machine and probe again. Native auth variables require a reviewed adapter allowlist; HTTP keys are resolved into the approved provider-client context, not ordinary tool environments.
 
-Keep live ownership evidence until cleanup is proven. A fresh office cache replays identities/config, HQ authority data and supervisor journals, then performs marked-process recovery before starts. If local recovery evidence or input/checkpoints were lost while a child may exist, return `RECOVERY_REQUIRED`; do not infer that deletion of a cache ended the process. Recovery on a different machine requires a new placement generation and the old office's cleanup acknowledgement or an explicitly verified machine fence; automatic timeout-only reassignment is outside this version.
+Keep live ownership evidence until cleanup is proven. A fresh office cache replays identities/config, HQ authority data and the office's acceptance journal, then performs marked-process recovery before starts. If local recovery evidence or input/checkpoints were lost while a child may exist, return `RECOVERY_REQUIRED`; do not infer that deletion of a cache ended the process. Recovery on a different machine requires a new placement generation and the old office's cleanup acknowledgement or an explicitly verified machine fence; automatic timeout-only reassignment is outside this version. This is agent re-placement between offices. Relocating an office's own durable sources and custody to another machine is a different operation and is not supported in v1 ([document 16](16-recovery-and-office-continuity.md#moving-agents-and-moving-offices)).
 
-Document 04's current placement row is a projection of the small durable coordination/fencing journal outside Git; employee home-team and organization membership remain unchanged. HQ owns monotonically increasing placement_generation per employee. Moving an agent first requires the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence; HQ then journals the new office and incremented generation atomically. Every command, permit and attempt carries that generation. The column default of one is a projection bootstrap, not permission to start a legacy process: recovery must finish before HQ admits its first generation. Lost authority evidence blocks starts until restored. Historical attempts retain their original office/generation independently of current placement.
+Document 04's current placement row is a projection of the small durable coordination/fencing journal outside Git; employee home-team and organization membership remain unchanged. HQ owns monotonically increasing placement_generation per employee. Moving an agent first requires the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence; HQ then journals the new office and incremented generation atomically. Every command, permit and attempt carries that generation. The column default of one is a projection bootstrap, not permission to start a process: recovery must finish before HQ admits its first generation. Lost authority evidence blocks starts until restored. Historical attempts retain their original office/generation independently of current placement.
 
 ## 4. Configuration transactions and discovery
 
 For the focused data-structure view—concepts, field diagrams, relationships, canonical files, examples and SQL mapping—see [Model providers, connections and pools](14-model-providers-and-connection-pools.md). It describes the same records as this execution contract.
 
-All IDs use the existing stable-ID contract. `workspace_id` from the upload maps to organization_id. Every foreign reference is organization-scoped. Provider/profile keys are organization-unique readable strings; no new human number counter is required.
+All IDs use the stable-ID contract. Every foreign reference is organization-scoped. Provider/profile keys are organization-unique readable strings; no new human number counter is required.
 
 For `subscription_cli`, `subscription_identity` is required: the provider adapter's canonical, non-secret identity for the actual subscription entitlement/quota account, not a connection label, credential path, model name or office ID. HQ registers it once per `(organization_id, provider_type, subscription_identity)`. Two different connection IDs for that same subscription are rejected with `SUBSCRIPTION_ALREADY_REGISTERED`, returning the existing connection ID. Disabled/archived definitions also reserve their identity; reuse/re-enable the existing definition. One connection may appear in several profiles and have one local binding per office, while all those uses share its HQ permit/cooldown state. Multiple subscription connections in a pool represent distinct subscriptions.
 
@@ -205,11 +207,12 @@ The body is the system prompt. Existing employee identity, role, home team and r
 
 The office exposes execution operations through its existing authenticated service boundary and dispatches typed commands to the internal supervisor. There is no additional supervisor socket, framing protocol or server-to-supervisor service credential. Existing local IPC and federation transports retain their own framing and peer admission. Execution command content is bounded to 1 MiB; larger inputs use approved immutable local content references. Validate the admitted principal, organization, office and operation scope before internal dispatch. An employee token permits only the operations explicitly authorized for that employee; it is not host administration authority.
 
-Every internal command envelope contains `{protocol_version:1, organization_id, office_id, operation_id, command, payload, payload_sha256}`; protocol_version is the internal execution-contract version, independent of existing transport API versions. Validate scope/authentication before admission. payload_sha256 hashes canonical `{command, organization_id, office_id, payload}` only; transport capabilities and worker generation are excluded so an original operation can be retried after restart. Mutation payloads include expected object revisions/placement generation; responses are `{operation_id, outcome, code, data}`. Journal the result and associated state atomically before replying. Same ID/digest returns the original response; same ID/different payload returns `IDEMPOTENCY_CONFLICT` without side effects. A lost acknowledgement is resolved by `GetOperation(operation_id)` or the same-ID retry, never a newly generated command. Keep receipts while their turn/process/config revision is retained; no time-only dedupe expiry is introduced.
+Every internal command envelope contains `{protocol_version:1, organization_id, office_id, operation_id, command, payload, payload_sha256}`; protocol_version is the internal execution-contract version, independent of existing transport API versions. Validate scope/authentication before admission. payload_sha256 hashes canonical `{command, organization_id, office_id, payload}` only, using codec `canonical-json/2` from the [hash codec registry](08-record-contracts.md#hash-codec-registry), as does `envelope_sha256` in §3, which omits only its own field and hashes the envelope's `payload_sha256` as content; transport capabilities and worker generation are excluded so an original operation can be retried after restart. Mutation payloads include expected object revisions/placement generation; responses are `{operation_id, outcome, code, data}`. Journal the result and associated state atomically before replying. Same ID/digest returns the original response; same ID/different payload returns `IDEMPOTENCY_CONFLICT` without side effects. A lost acknowledgement is resolved by `GetOperation(operation_id)` or the same-ID retry, never a newly generated command. Keep receipts while their turn/process/config revision is retained; no time-only dedupe expiry is introduced.
 
 | Command | Required payload / result |
 | --- | --- |
 | `RunTurn` | turn_id, employee_id, placement_generation, expected_agent_config_revision, expected_profile_revision, task_id or null, workspace_key, immutable input_ref/input_sha256. Returns accepted turn identity. A second open turn for the employee returns BUSY. |
+| What started a turn | Every turn records `started_by_kind` (`run`, `message`, `mention`, `ask`, `handoff`, `assignment`, `answer`, `resume` or `recovery`), the employee who did it in `started_by_employee_id` (null for a recovery) and, in `started_by_ref`, the message or task it came from ([ADR-0023](../../adr/0023-an-agents-ask-starts-a-turn.md), [ADR-0028](../../adr/0028-an-agent-is-always-available.md)). `resume` is the turn that continues an agent suspended on a required answer ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md) decision 8); `answer` is an answer that starts an agent holding no wait. A suspended agent started by a question or a hand-off from the employee it waits for is recorded as `ask` or `handoff` and counted (ADR-0030 decision 7). A turn that takes several waiting items names the first in `started_by_ref`; its input lists them all. ADR-0023's hourly limit is counted from these rows, leaving out `run`, `resume` and `recovery`. Presence is not stored here: an agent that is active, configured and not held is available whether or not a process is running. |
 | `ResumeTurn` | turn_id, expected_turn_revision; recovery-required turns also require recovery `{checkpoint_ref, receipt_dispositions:[{operation_id, outcome, result_ref, evidence_ref}]}`. Outcome is confirmed_completed or confirmed_not_started, with evidence verified by the tool broker/operator recovery authority. Unknown outcomes remain recovery_required. Retries a blocked turn or resumes only after validated reconciliation. Preserves turn ID, model and workspace. |
 | `CancelTurn` | turn_id, expected_turn_revision. Stops current work and becomes cancelled only after completion/cleanup facts are known. |
 | `StopAgent` | employee_id, placement_generation. Stops active and idle main processes. It creates no future automatic wake or budget policy. |
@@ -219,11 +222,11 @@ Every internal command envelope contains `{protocol_version:1, organization_id, 
 
 The office validates placement/config revisions and dispatches through the internal supervisor against the same admitted snapshot. No new starts occur while the worker is stopping, recovering or has lost its host-control authority. The existing host/worker launch contract controls that lifecycle; there is no separate server-to-supervisor lease. HQ turn-permit renewal remains mandatory under §6. Unresolved cleanup retains the process/turn slot. Client deadlines of 10 seconds are response deadlines only; they do not prove a command failed or cancel accepted work.
 
-Run input is a private immutable JSON file containing the resolved employee/role/system instructions, visible messages/attachments by content reference, approved tool/policy manifests, work scope, requested model and ordered pool snapshot. Large content uses content-addressed local references; it is not embedded past the frame limit. Resolve paths against the office's approved roots and reject traversal/symlink substitution. The same turn keeps its original target model, profile order, workspace and input digest through every attempt. Connection disabling, revoked authority and invalid credentials override old eligibility; ordinary profile/prompt changes take effect on the next turn. Resume does not silently broaden the admitted policy.
+Run input is a private immutable JSON file containing the resolved employee/role/system instructions (including the effective processes and standards for the work, with every non-overridable one in a marked must-follow section; [processes design](../processes.md), decision 4), visible messages/attachments by content reference, approved tool/policy manifests, work scope, requested model and ordered pool snapshot. Large content uses content-addressed local references; it is not embedded past the frame limit. Resolve paths against the office's approved roots and reject traversal/symlink substitution. The same turn keeps its original target model, profile order, workspace and input digest through every attempt. Connection disabling, revoked authority and invalid credentials override old eligibility; ordinary profile/prompt changes take effect on the next turn. Resume does not silently broaden the admitted policy.
 
 ## 6. Shared quota and deterministic selection
 
-HQ's organization service is the single permit/cooldown coordinator. It journals before acknowledging and updates its projection in one `BEGIN IMMEDIATE` transaction: expire overdue active permits to release_pending; read connection and applicable model cooldowns; count active plus release_pending permits; grant only below max_concurrent_turns. Permission to proceed is a scoped opaque permit ID bound to employee/office/placement/model and coordinator generation. There is no global counter on the agent and no quota authority in an office's cached healthy flag.
+HQ's organization service is the single permit/cooldown coordinator. It journals before acknowledging and updates its projection in one atomic transaction that is serialized against every other permit decision ([ADR-0018](../../adr/0018-storage-engine-independence.md)): expire overdue active permits to release_pending; read connection and applicable model cooldowns; count active plus release_pending permits; grant only below max_concurrent_turns. Permission to proceed is a scoped opaque permit ID bound to employee/office/placement/model and coordinator generation. There is no global counter on the agent and no quota authority in an office's cached healthy flag.
 
 Permits last 60 seconds and renew every 10 seconds while a model turn is active. Compute local deadlines conservatively from the monotonic request-send time and the returned remaining duration. Start stop/recovery with at least 20 seconds remaining when renewal fails. **Expiry does not free capacity:** release_pending continues to count until a supervisor proves the model turn ended with no outstanding work, or proves its process/descendants gone. Unknown cleanup is not a release acknowledgement. Warm verified-idle processes consume no turn permit. Coordinator restart replays its journal and marks prior active permits release_pending before issuing new permits; affected supervisors stop/reconcile rather than reusing an old coordinator generation.
 
@@ -233,12 +236,12 @@ For each RunTurn/ResumeTurn dispatch cycle:
 
 1. Read the frozen ordered pool and admitted policy. Reject archived profile, disabled execution config, inactive employee or stale placement.
 2. In ascending priority, check connection enabled/non-archived, local binding, exact binding revision, installed driver/verified version, fresh auth readiness, confirmed model entitlement and policy/tool/context compatibility. Unknown/stale evidence produces a skip code and asynchronous refresh, not hot-path discovery.
-3. Ask HQ for a turn permit. A full/cooling-down connection is skipped; coordinator unavailability blocks dispatch rather than bypassing global admission.
+3. Ask HQ for a turn permit. HQ first checks the authorized budget-control state of [document 17](17-budgets-and-controls.md): when an unreleased budget hold applies to the turn's task or to the employee, HQ grants no permit and the dispatch ends with `BUDGET_HELD`, naming the hold; the turn becomes blocked and no process is started or reused. This check applies to the first permit of a RunTurn or ResumeTurn command only. A turn can come to work on a task it did not start with: when a command of the run names a task, or sets it as the work-for context, and an unreleased hold applies to that task, the office refuses that command with the hold named, so usage does not keep accruing to a held task. A running turn is never refused for a budget: neither renewal of its permit nor the replacement permit a §7 switch requests for the same logical turn is checked, so the current turn finishes as document 17 requires. An open turn that is blocked or recovery_required is not running: ResumeTurn for it is refused while the hold applies, and the hold stays `stop_pending` until the supervisor proves no process for the affected work remains, then becomes `held`. Otherwise a full/cooling-down connection is skipped; coordinator unavailability blocks dispatch rather than bypassing global admission.
 4. Reserve the employee's exclusive process slot. Reuse an idle process only if connection, driver/version, canonical model, workspace and launch digest match. The digest covers connection definition revision/endpoint, canonical and resolved model IDs, driver version/executable fingerprint, workspace, resolved instructions/tool-policy revisions and binding revision, never plaintext secret values. Validate the process row matches the admitted connection/driver/model before attaching an attempt.
 5. Otherwise stop/reap/recover the previous process, create a new mark/instance, fsync planned ownership, prepare the explicit environment/launch plan, spawn through org-supervise, fsync PID/start/boot identity, then admit input. No replacement starts while cleanup is unresolved.
 6. Journal attempt and turn transitions, pump protocol, persist usage before final completion acknowledgement, release the permit after a verified terminal/idle boundary, and keep the process warm for compatible subsequent turns. Configuration changes do not rewrite the current attempt.
 
-Each connection is attempted at most once in a dispatch cycle. Exhaustion yields `POOL_EXHAUSTED` with ordered per-connection reasons and any known earliest cooldown time; the turn becomes blocked. Explicit ResumeTurn starts another bounded cycle, not an unbounded retry loop. Concurrent input is BUSY; this version has no implicit scheduling queue.
+Each connection is attempted at most once in a dispatch cycle. Exhaustion yields `POOL_EXHAUSTED` with ordered per-connection reasons and any known earliest cooldown time; the turn becomes blocked. ResumeTurn, by a person or by the office when the reason has gone, starts another bounded cycle, not an unbounded retry loop. Concurrent input is BUSY; what arrives for a busy agent is kept as a pending start ([ADR-0030](../../adr/0030-an-agent-works-while-it-has-work.md)), which is the only queue.
 
 ## 7. Failover, checkpoints and side effects
 
@@ -262,7 +265,7 @@ This qualifies source FR-6 deliberately: automatic mid-turn failover is required
 
 Each registered driver supplies versioned preflight/discovery, capabilities, launch planning, normalized protocol events, checkpoint export/import and stop instructions. Reuse org-runtime's sans-I/O separation: adapters plan/translate, the supervisor performs I/O and org-supervise owns OS control. The HTTP-worker protocol adapter follows the same boundary. The connection's runtime_driver selects a registered implementation; unknown or unverified installed versions cannot run.
 
-Driver manifest requirements are auth modes, supported isolation mechanism, model discovery evidence, tool/policy enforcement, context limits, side-effect visibility, checkpoint formats/portability, usage semantics and stop/cleanup support. A runtime cannot become eligible merely because it answers text requests. The adapter test suite uses fake drivers for deterministic core tests and installed-version fixtures for every production driver. Do not execute the upload's onboarding commands or claim its example models/variables are supported without that evidence.
+Driver manifest requirements are auth modes, supported isolation mechanism (the modes of [ADR-0015](../../adr/0015-agent-isolation-modes.md): `same-user` and `dedicated-user` in v1, with the mode carried in the launch contract and digest), model discovery evidence, tool/policy enforcement, context limits, side-effect visibility, checkpoint formats/portability, usage semantics and stop/cleanup support. A runtime cannot become eligible merely because it answers text requests. The adapter test suite uses fake drivers for deterministic core tests and installed-version fixtures for every production driver. Do not claim a model or variable is supported without that evidence.
 
 | Error code | Stable outcome |
 | --- | --- |
@@ -270,8 +273,10 @@ Driver manifest requirements are auth modes, supported isolation mechanism, mode
 | PROFILE_IN_USE / INVALID_PROFILE_MEMBERSHIP | Reject configuration transaction atomically. |
 | BINDING_MISSING / AUTH_EXPIRED / DRIVER_UNAVAILABLE / DRIVER_UNVERIFIED | Skip route; return readiness evidence and refresh/rebind action. |
 | MODEL_UNVERIFIED / MODEL_NOT_ENTITLED / POLICY_UNSUPPORTED / CONTEXT_LIMIT | Skip route; never change the requested model or drop policy. |
-| COORDINATOR_UNAVAILABLE / POOL_EXHAUSTED | Accepted turn becomes blocked; no uncontrolled start. |
-| PROCESS_CLEANUP_PENDING / RECOVERY_REQUIRED | Keep ownership/open-turn slots until explicit reconciliation. |
+| COORDINATOR_UNAVAILABLE / POOL_EXHAUSTED | A turn a person started becomes blocked; no uncontrolled start. A start the office makes (a message, an assignment, an answer) creates no turn: it stays a pending start and is tried again when a permit or a connection is freed ([ADR-0030](../../adr/0030-an-agent-works-while-it-has-work.md)). The office resumes a blocked turn itself when the reason has gone. |
+| BUDGET_HELD | A turn a person started becomes blocked with the applicable hold named; no permit, process start or process reuse. A start the office makes creates no turn and stays a pending start. When the hold is released under document 17, the office resumes the blocked turn, or makes the pending start, itself; nobody has to ask. |
+| PROCESS_CLEANUP_PENDING / RECOVERY_REQUIRED | Keep ownership/open-turn slots until reconciliation. After a restart the office reconciles and continues the turn itself when it has proved the run's processes are gone and the session resumes; a person is needed only otherwise (ADR-0030 decisions 8 and 9). |
+| STALLED | No activity for the stall time: the office stops the run and its sub-agents, the turn fails with `error_code` `STALLED`, the agent is idle (ADR-0030 decisions 10 to 12). |
 | UNKNOWN_COMMAND_OUTCOME | Resolve original operation ID; do not resubmit a fresh start. |
 
 ## 9. States and accounting
@@ -289,15 +294,18 @@ stateDiagram-v2
     running --> failed: terminal non-retry error and reconciled effects
     accepted --> cancelled: cancellation
     running --> cancelled: cancellation with verified stop
-    blocked --> accepted: explicit ResumeTurn
-    recovery_required --> accepted: explicit validated recovery
+    blocked --> accepted: reason gone (office) or ResumeTurn
+    blocked --> cancelled: cancellation
+    running --> recovery_required: office restart or crash
+    running --> failed: stalled, run stopped
+    recovery_required --> accepted: processes proved gone (office), or explicit validated recovery
     recovery_required --> cancelled: explicit reconciled cancellation
     succeeded --> [*]
     failed --> [*]
     cancelled --> [*]
 ```
 
-Process states are planned → starting → idle/busy → stopping → gone; any uncertain exit becomes cleanup_required and retains the exclusive slot. Turns in accepted/running/switching/blocked/recovery_required are open. The SQL unique indexes enforce one open turn and one not-gone main process per employee. Transition validation occurs in journal transactions; arbitrary SQL updates are not a public execution API. Cancellation with unknown effects remains recovery_required until reconciled. Turn success is not task closure; task lifecycle remains a separate contract.
+Process states are planned → starting → idle/busy → stopping → gone; any uncertain exit becomes cleanup_required and retains the exclusive slot. Turns in accepted/running/switching/blocked/recovery_required are open. The SQL unique indexes enforce one open turn and one not-gone main process per employee. Transition validation occurs when the change is accepted into the acceptance journal; arbitrary SQL updates are not a public execution API. A turn interrupted by a restart is `recovery_required` only until the office has reconciled it: it returns to `accepted` by itself, in the same turn, when the run's processes are proved gone, passes the permit and budget-hold checks like any start, and the vendor session resumes, and stays `recovery_required` for a person when that cannot be proved or three resumes fail (ADR-0030). What waits for an agent that cannot start now is a pending start (`supervision/pending-starts/<employee-id>.json`: the employee, the waiting items, the reason and since when), not a turn; it has no table and is read from its file by the office that owns it. Cancellation with unknown effects remains recovery_required until reconciled. Turn success is not task closure; task lifecycle remains a separate contract.
 
 Every chargeable attempt captures actual consuming employee/one-off context and work attribution through [usage accounting](10-usage-and-cost-accounting.md). Add the following routing object to source_metadata_json before hashing each new event:
 
@@ -311,7 +319,7 @@ Provider/model and price_id describe the actual route used, not the first pool m
 
 The SQL enforces scoped references, subscription identity/replacement guards, agent-only execution configuration, unique open-turn/process slots and placement-generation monotonicity. Service transactions still enforce profile cardinality/contiguous ordering, fresh entitlement evidence, policy compatibility, quota permits and safe process cleanup/replay. A valid SQL row alone is not launch authority. Discovered catalog membership is not a guarantee of an available permit or compatible driver. Readiness and skip reasons must expose that distinction.
 
-The installed-version driver probes, authenticated production composition, complete session pump and safe checkpoint portability are acceptance work, not proven capabilities in merged v1. Memory consolidation, automatic scheduling, budget-triggered pauses and actual subscription billing remain outside this document. Schema tests verify the data contract; they do not establish production execution or deployment readiness.
+The installed-version driver probes, authenticated production composition, complete session pump and safe checkpoint portability are acceptance work, not capabilities the code has. Memory consolidation, automatic scheduling, budget evaluation, budget-triggered interruption of a running turn and actual subscription billing remain outside this document; §6 step 3 only refuses new admission while a recorded hold exists. Schema tests verify the data contract; they do not establish production execution or deployment readiness.
 
 ## 10. Required acceptance criteria
 
@@ -335,21 +343,22 @@ The installed-version driver probes, authenticated production composition, compl
 | AE-16 | Fresh setup downloads/verifies one complete release, creates HQ only and registers/starts one service. No satellite option is offered; satellite requests are rejected before provisioning. Interrupted/repeated/concurrent setup reuses durable steps and creates no duplicate service, identity or office. HQ-initiated satellite onboarding is a separate flow. |
 | AE-17 | Offline HQ setup performs zero external requests, rejects untrusted/incomplete bundles, and never starts satellite enrollment. Missing service-manager support reports foreground instructions; serve starts installed releases without a download prerequisite. |
 | AE-18 | Concurrent registration of the same subscription admits one connection/default profile. Disabled/archived duplicates are rejected; distinct subscriptions are accepted. Two office bindings reuse one connection and its quota/cooldown state. Mismatched or unverified binding identity never becomes ready; credential rotation cannot create fresh quota under another connection ID. |
+| AE-19 | RunTurn and ResumeTurn for a task or agent with an unreleased budget hold end with `BUDGET_HELD` before any permit, process start or process reuse. A turn already running keeps renewing its permit, may obtain a §7 switch permit, and completes. ResumeTurn of a blocked or recovery_required turn under the hold is refused. Releasing the hold admits the next command. An unreachable coordinator blocks dispatch and never bypasses the hold. |
 
 ## 11. Implementation sequence and integration boundaries
 
-1. Implement versioned application migrations and serializers/projectors from the consolidated schema and this contract (AE-01..03 and subscription identity in AE-18). Preserve employee identity; do not create a second agents table. Document 04 and schema.sql already include these design relationships; applying an application migration is separate implementation work.
+1. Implement the schema and its serializers/projectors from the consolidated schema and this contract (AE-01..03 and subscription identity in AE-18). Preserve employee identity; do not create a second agents table. Document 04 and schema.sql already include these design relationships; implementing them is separate work.
 2. Add configuration/discovery handlers and typed local credential bindings, using fake driver fixtures first (AE-05..06, AE-18).
-3. Implement HQ permit coordinator and office command/receipt journal (AE-04, AE-07..08).
+3. Implement HQ permit coordinator and the office's execution record families on the acceptance journal (AE-04, AE-07..08).
 4. Integrate supervisor/router/session-runner modules inside agentic-org-office, host startup/launch admission and the existing recovery adapter (AE-10..11, AE-15). Apply the executable names in §2 with existing signed-launch/credential tests; retain agent-os as the small separate CLI.
 5. Implement native adapters and, when its backend ships, the HTTP worker/agent loop behind the same port; gate each production backend on AE-09/14. Unsupported drivers can remain explicitly unavailable while supported backends ship.
 6. Connect durable usage capture/routing evidence and restoration (AE-12), then report the performance gate (AE-13).
 
-The first release accepts explicit turn commands only. Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service. Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
+The first release starts a turn from an explicit command and from what is addressed to an agent (ADR-0023, ADR-0028, ADR-0030). Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service; the office's messaging is one such caller when another agent's ask or hand-off starts a turn ([ADR-0023](../../adr/0023-an-agents-ask-starts-a-turn.md)). Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
 
 ## 12. SQL tables, relationships and file mapping
 
-The tables, view, indexes and triggers below are included in [schema.sql](schema.sql). Load that consolidated draft once; there is no second execution-extension apply step. [Agent structure](04-agent-structure.md) owns the agent_placements table and its placement_generation column. These triggers reject generation regression, office moves without an increment and changing a configured agent into a person. HQ still verifies cleanup/fencing; a SQL generation check alone cannot prove an old process stopped. Use schema-versioned application migrations and rebuild projections from the authorities in §3. Common attribution follows [record contracts](08-record-contracts.md); missing legacy metadata is not fabricated.
+The tables, view, indexes and triggers below are included in [schema.sql](schema.sql). Load that consolidated draft once; there is no second execution-extension apply step. [Agent structure](04-agent-structure.md) owns the agent_placements table and its placement_generation column. These triggers reject generation regression, office moves without an increment and changing a configured agent into a person. HQ still verifies cleanup/fencing; a SQL generation check alone cannot prove an old process stopped. Rebuild projections from the authorities in §3. Common attribution follows [record contracts](08-record-contracts.md); missing metadata is not fabricated.
 
 ```mermaid
 erDiagram
@@ -522,6 +531,9 @@ erDiagram
         TEXT created_at "required"
         TEXT ended_at "optional"
         TEXT error_code "optional"
+        TEXT started_by_kind "required"
+        TEXT started_by_employee_id FK "optional"
+        TEXT started_by_ref "optional"
     }
     agent_process_instances {
         TEXT organization_id PK, FK "required"
@@ -601,10 +613,10 @@ key TEXT NOT NULL CHECK (length(key)>0),
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
   max_concurrent_turns INTEGER NOT NULL DEFAULT 1 CHECK (max_concurrent_turns>=1),
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','owner','system','unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','owner','system','unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,id),
 UNIQUE (organization_id,key),
@@ -653,10 +665,10 @@ key TEXT NOT NULL CHECK (length(key)>0),
   generated_for_connection_id TEXT,
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','owner','system','unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','owner','system','unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,id),
 UNIQUE (organization_id,key),
@@ -691,10 +703,10 @@ model_profile_id TEXT NOT NULL,
   tools_config_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tools_config_json) AND json_type(tools_config_json)='array'),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','owner','system','unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','owner','system','unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,employee_id),
 FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
@@ -805,8 +817,13 @@ organization_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   ended_at TEXT,
   error_code TEXT,
+  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','resume','recovery')),
+  started_by_employee_id TEXT,
+  started_by_ref TEXT,
+  CHECK (started_by_kind<>'recovery' OR started_by_employee_id IS NULL),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
+  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
   FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
@@ -913,9 +930,9 @@ BEGIN SELECT RAISE(ABORT,'execution config requires an agent employee') WHERE EX
 CREATE TRIGGER agent_config_update_requires_agent BEFORE UPDATE OF employee_id,organization_id ON agent_execution_configs
 BEGIN SELECT RAISE(ABORT,'execution config requires an agent employee') WHERE EXISTS (
  SELECT 1 FROM employees e WHERE e.organization_id=NEW.organization_id AND e.id=NEW.employee_id AND e.kind<>'agent'); END;
-CREATE TRIGGER configured_employee_stays_agent BEFORE UPDATE OF kind ON employees
-WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM agent_execution_configs c WHERE c.organization_id=OLD.organization_id AND c.employee_id=OLD.id)
-BEGIN SELECT RAISE(ABORT,'configured employee must remain an agent'); END;
+CREATE TRIGGER employee_kind_never_changes BEFORE UPDATE OF kind ON employees
+WHEN NEW.kind<>OLD.kind
+BEGIN SELECT RAISE(ABORT,'an employee''s kind never changes'); END;
 
 CREATE VIEW model_profile_model_union AS
 SELECT m.organization_id,m.office_id,p.model_profile_id,m.model_id,
@@ -926,21 +943,16 @@ WHERE m.entitlement='confirmed'
 GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
 ```
 
-## Appendix A. Verified v1 starting point
+## Appendix A. What the code holds today
 
-Inspected `origin/v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**. These are repository findings, not claims about processes running on a user's machine.
+| Component | Role in the code |
+| --- | --- |
+| `crates/org-supervise` | A library for explicit environments, child spawning, ownership, stopping, cleanup and recovery primitives. It is not a supervisor daemon or a routing engine, and it does not launch agents today. |
+| `crates/org-runtime` | The runtime-adapter contract: `AgentRuntime::plan_session` produces a launch plan; the adapter does not spawn or do I/O. It has no caller. |
+| `apps/agentic-org-office` | Holds a recovery adapter over office-owned process rows (`tests/owned_recovery.rs`). The agent launch loop is not wired. |
 
-| Component | Verified role in that checkout | Evidence |
-| --- | --- | --- |
-| `org-office-host` | Starts and supervises an **office server** process, `org-server`. It is not an implemented subscription-pool agent supervisor. | [Spawner::spawn](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/apps/org-office-host/src/supervisor/child.rs#L175) calls the host's suspended-spawn path with the server executable. |
-| `org-supervise` | Implemented **library** for explicit environments, child spawning, ownership, stopping, cleanup, probes and recovery primitives. It is not a standalone supervisor daemon or a routing policy engine. | [Library boundary](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/lib.rs#L1), [spawn ownership API](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/spawn.rs#L43). |
-| `org-runtime` | Runtime-adapter contract. `AgentRuntime::plan_session` produces a launch plan and protocol session; the adapter itself does not spawn or do I/O. | [AgentRuntime](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-runtime/src/runtime.rs#L10). |
-| `org-supervise::runtime` | Maps launch plans into process preparation; its own source explicitly says it is not a complete session runner. | [Runtime mapping](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/runtime.rs#L1). |
-| `org-server` | Contains a recovery-record adapter over office-owned process rows. This is a real integration component, not proof that the whole agent launch loop is wired. | [Owned recovery adapter](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/apps/org-server/src/owned_recovery.rs#L1). |
-| Employee supervisor/session pump | **Proposed design:** the office hosts a logical employee supervisor; `org-office-sessions` is intended to implement the session pump. No `org-office-sessions`, native runtime-adapter packages or `org-agent-supervisor` executable appear in the checked Cargo workspace. A complete native-agent launch integration was not found there. | [Employee-supervision proposal](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/employee-supervision.md#L1), [planned session integration](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/agent-sessions.md#L125), [workspace](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/Cargo.toml). |
+The office hosts the logical employee supervisor, router and runner defined above; there is no separate supervisor executable.
 
-Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. The current revision retains the office-hosted control loop and defines its supervisor/router/runner responsibilities without a separate supervisor daemon. The historical evidence links intentionally retain their inspected v1 paths; §2 records the merged executable layout and still-missing integrations.
+Environment preparation in `crates/org-supervise` (`runtime.rs`, `environment.rs`) admits only a reviewed list of runtime switches, which does not include connection-specific auth-context variables. Auth isolation needs an adapter/environment-contract extension; arbitrary environment maps must not bypass that boundary.
 
-V1's environment preparation is intentionally restricted. Its reviewed runtime-switch list does not currently include the connection-specific auth-context variables shown in the upload. See [reviewed switches](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/runtime.rs#L137) and [explicit environment construction](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/environment.rs#L52). Auth isolation needs an adapter/environment-contract extension; arbitrary environment maps must not bypass that boundary.
-
-[Budgets and controls](17-budgets-and-controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.
+[Budgets and controls](17-budgets-and-controls.md) defines the budget data model. The one execution rule it adds is the admission check in §6 step 3 and criterion AE-19.

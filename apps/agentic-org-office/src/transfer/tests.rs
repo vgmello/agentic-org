@@ -1,6 +1,6 @@
 #![allow(unsafe_code)]
 use super::*;
-use org_office_launch::v3::ChannelKind;
+use org_office_launch::ChannelKind;
 use std::os::unix::net::UnixDatagram;
 
 // A fork temporarily copies unrelated tests' descriptors, even with CLOEXEC.
@@ -39,11 +39,11 @@ pub(crate) fn process_output(
 #[test]
 fn decoding_checks_strict_json_bounds_and_each_record_descriptor_count_directly() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    let revoked = v3::encode_transfer_record(&TransferRecord::Revoked {
+    let revoked = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
         session_ids: vec![],
     })
     .unwrap();
-    let channel = v3::encode_transfer_record(&TransferRecord::Channel {
+    let channel = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind: ChannelKind::Local,
         office_id: "office".into(),
         channel_id: "opaque".into(),
@@ -66,14 +66,14 @@ fn decoding_checks_strict_json_bounds_and_each_record_descriptor_count_directly(
             io::ErrorKind::InvalidData
         );
     }
-    let body = v3::encode_transfer_record(&TransferRecord::Revoked {
+    let body = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
         session_ids: vec![String::new()],
     })
     .unwrap();
     let record = TransferRecord::Revoked {
-        session_ids: vec!["x".repeat(v3::TRANSFER_HEADER_MAX_BYTES - body.len())],
+        session_ids: vec!["x".repeat(org_office_launch::TRANSFER_HEADER_MAX_BYTES - body.len())],
     };
-    let exact = v3::encode_transfer_record(&record).unwrap();
+    let exact = org_office_launch::encode_transfer_record(&record).unwrap();
     assert_eq!(exact.len(), 1024);
     assert!(decode(&exact, 0).is_ok());
     let mut too_big = exact;
@@ -132,7 +132,7 @@ fn interrupted_poll_retries_before_receiving_but_other_poll_errors_refuse() {
         let (host, child) = UnixDatagram::pair().unwrap();
         NEXT_POLL.with(|next| {
             *next.borrow_mut() = Some(Box::new(move || {
-                let body = v3::encode_transfer_record(&TransferRecord::Revoked {
+                let body = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
                     session_ids: vec!["after-poll".into()],
                 })
                 .unwrap();
@@ -179,7 +179,7 @@ fn a_poisoned_revocations_mutex_refuses_before_applying_the_record() {
     .is_err());
     let (host, child) = UnixDatagram::pair().unwrap();
     host.send(
-        &v3::encode_transfer_record(&TransferRecord::Revoked {
+        &org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
             session_ids: vec!["must-not-apply".into()],
         })
         .unwrap(),
@@ -480,7 +480,7 @@ fn every_poll_result_retries_receipt_and_fatal_receipt_stops_before_later_record
         NEXT_POLL.with(|next| {
             *next.borrow_mut() = Some(Box::new(move || {
                 host.send(
-                    &v3::encode_transfer_record(&TransferRecord::Revoked {
+                    &org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
                         session_ids: vec!["after-readiness".into()],
                     })
                     .unwrap(),
@@ -519,7 +519,7 @@ fn every_poll_result_retries_receipt_and_fatal_receipt_stops_before_later_record
     let (host, child) = UnixDatagram::pair().unwrap();
     host.send(&[b'x'; 1025]).unwrap();
     host.send(
-        &v3::encode_transfer_record(&TransferRecord::Revoked {
+        &org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
             session_ids: vec!["must-not-apply".into()],
         })
         .unwrap(),
@@ -551,7 +551,7 @@ fn channel_handler_refusal_stops_before_any_later_revocation_can_be_applied() {
     let (host, child) = UnixDatagram::pair().unwrap();
     let (source, mut peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-    let channel = v3::encode_transfer_record(&TransferRecord::Channel {
+    let channel = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind: ChannelKind::Local,
         office_id: "office".into(),
         channel_id: "staged".into(),
@@ -559,7 +559,7 @@ fn channel_handler_refusal_stops_before_any_later_revocation_can_be_applied() {
     .unwrap();
     send_rights(&host, &channel, &[source.as_raw_fd()]);
     host.send(
-        &v3::encode_transfer_record(&TransferRecord::Revoked {
+        &org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
             session_ids: vec!["must-not-apply".into()],
         })
         .unwrap(),
@@ -589,7 +589,7 @@ fn channel_handler_refusal_stops_before_any_later_revocation_can_be_applied() {
 #[test]
 fn actual_transfer_applies_fifo_records_then_refuses_atomic_overflow_without_a_prefix() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    use org_office_launch::v3::{self, TransferRecord};
+    use org_office_launch::TransferRecord;
     use std::os::unix::net::UnixDatagram;
     use std::sync::{atomic::AtomicBool, Arc, Mutex};
     let state = Arc::new(Mutex::new(Revocations::default()));
@@ -609,8 +609,10 @@ fn actual_transfer_applies_fifo_records_then_refuses_atomic_overflow_without_a_p
         ],
         vec!["unreachable-after-overflow".into()],
     ] {
-        let body =
-            v3::encode_transfer_record(&TransferRecord::Revoked { session_ids: ids }).unwrap();
+        let body = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
+            session_ids: ids,
+        })
+        .unwrap();
         host.send(&body).unwrap();
     }
     host.send(b"terminal-invalid").unwrap();
@@ -646,7 +648,7 @@ fn actual_transfer_applies_fifo_records_then_refuses_atomic_overflow_without_a_p
 #[test]
 fn stream_handoff_with_concatenated_records_refuses_without_applying_a_prefix() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    use org_office_launch::v3::{self, TransferRecord};
+    use org_office_launch::TransferRecord;
     use std::io::Write;
     use std::os::fd::OwnedFd;
     use std::os::unix::net::{UnixDatagram, UnixStream};
@@ -655,7 +657,7 @@ fn stream_handoff_with_concatenated_records_refuses_without_applying_a_prefix() 
     let mut body = Vec::new();
     for id in ["prefix", "tail"] {
         body.extend(
-            v3::encode_transfer_record(&TransferRecord::Revoked {
+            org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
                 session_ids: vec![id.into()],
             })
             .unwrap(),

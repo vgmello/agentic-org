@@ -27,14 +27,13 @@
           "organizations": [
             {
               "org_id": "01M72N8MG00000000000000003",
-              "member_id": "01M72N8MG00000000000000004",
+              "employee_id": "01M72N8MG00000000000000004",
               "office_ids": [
                 "01M72N8MG00000000000000005"
               ]
             }
           ],
           "server_time_ms": 1794312000000,
-          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
           "idle_expires_at": "2026-11-10T12:30:00.000Z",
           "proof": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
@@ -57,14 +56,13 @@
           "organizations": [
             {
               "org_id": "01M72N8MG00000000000000003",
-              "member_id": "01M72N8MG00000000000000004",
+              "employee_id": "01M72N8MG00000000000000004",
               "office_ids": [
                 "01M72N8MG00000000000000005"
               ]
             }
           ],
           "server_time_ms": 1794312000000,
-          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
           "idle_expires_at": "2026-11-10T12:30:00.000Z"
         }
       },
@@ -87,13 +85,13 @@
       }
     },
     {
-      "name": "trusted restart reason is distinct",
+      "name": "an unrecognized session reason still reads as an auth error",
       "category": "session",
       "wire": {
         "error": {
           "code": "not_authorized",
           "message": "Sign in again.",
-          "session_reason": "hq_restarted"
+          "session_reason": "future_reason"
         }
       },
       "expect": {
@@ -114,14 +112,13 @@
           "organizations": [
             {
               "org_id": "01M72N8MG00000000000000003",
-              "member_id": "01M72N8MG00000000000000004",
+              "employee_id": "01M72N8MG00000000000000004",
               "office_ids": [
                 "01M72N8MG00000000000000005"
               ]
             }
           ],
           "server_time_ms": 1794312000000,
-          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
           "idle_expires_at": "2026-11-10T12:30:00.000Z"
         }
       },
@@ -143,14 +140,13 @@
           "organizations": [
             {
               "org_id": "01M72N8MG00000000000000003",
-              "member_id": "01M72N8MG00000000000000004",
+              "employee_id": "01M72N8MG00000000000000004",
               "office_ids": [
                 "01M72N8MG00000000000000005"
               ]
             }
           ],
           "server_time_ms": 1794312000000,
-          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
           "idle_expires_at": "2026-11-10T12:30:00.000Z",
           "proof": "wrong"
         }
@@ -165,6 +161,63 @@
       "wire": {
         "login": "alex",
         "password": 3141592653589793
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "readers ignore an unknown session field",
+      "category": "session",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "account": {
+            "id": "01M72N8MG00000000000000002",
+            "login": "alex"
+          },
+          "admin": true,
+          "organizations": [
+            {
+              "org_id": "01M72N8MG00000000000000003",
+              "employee_id": "01M72N8MG00000000000000004",
+              "office_ids": [
+                "01M72N8MG00000000000000005"
+              ]
+            }
+          ],
+          "server_time_ms": 1794312000000,
+          "idle_expires_at": "2026-11-10T12:30:00.000Z",
+          "future_field": "ignored"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "a link that spells only the old member_id is refused, with no compatibility shim",
+      "category": "session",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "account": {
+            "id": "01M72N8MG00000000000000002",
+            "login": "alex"
+          },
+          "admin": true,
+          "organizations": [
+            {
+              "org_id": "01M72N8MG00000000000000003",
+              "office_ids": [
+                "01M72N8MG00000000000000005"
+              ],
+              "member_id": "01M72N8MG00000000000000004"
+            }
+          ],
+          "server_time_ms": 1794312000000,
+          "idle_expires_at": "2026-11-10T12:30:00.000Z"
+        }
       },
       "expect": {
         "valid": false

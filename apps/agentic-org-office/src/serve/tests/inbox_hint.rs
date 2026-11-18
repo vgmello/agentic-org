@@ -73,14 +73,13 @@ fn hint_delivery_owner_and_every_denied_binding_share_the_same_payload_without_r
     shared.enable_inbox_hints().unwrap();
     for binding in [
         Binding::Anonymous,
-        Binding::App,
         Binding::Member {
             id: PAT_ID.into(),
-            with_app_token: true,
+            via_grant: true,
         },
         Binding::Member {
             id: ADA_ID.into(),
-            with_app_token: false,
+            via_grant: false,
         },
     ] {
         assert!(deliver_hint(
@@ -205,31 +204,30 @@ fn hint_cursor_failure_is_returned_without_advertising_a_working_capability() {
 
 #[test]
 fn hint_cursor_failure_still_emits_ready_without_capability_or_owner_delivery() {
-    use std::io::Seek;
     let _spawn = crate::transfer::tests::without_process_spawn();
     let mut shared = shared();
     shared.register_inbox(hq(rows(1)), Ok(true));
     shared.ports.feed = Box::new(NoHead);
-    let mut output = tempfile::tempfile().unwrap();
     let mut control = crate::startup::Control::new(
         crate::fdswap::ControlPipe {
             from_host: tempfile::tempfile().unwrap(),
-            to_host: output.try_clone().unwrap(),
+            to_host: tempfile::tempfile().unwrap(),
         },
         Arc::new(Mutex::new(())),
     );
+    let (rendezvous, host) = UnixStream::pair().unwrap();
+    control.set_rendezvous_for_test(rendezvous);
     crate::announce_ready(
         &mut control,
         std::path::Path::new("/ready-probe"),
         &mut shared,
     );
-    output.rewind().unwrap();
-    let event = org_office_launch::read_server_event(&mut std::io::BufReader::new(output))
+    let event = org_office_launch::read_server_event(&mut std::io::BufReader::new(host))
         .unwrap()
         .unwrap();
     assert!(matches!(
         event,
-        org_office_launch::ServerEvent::Ready { .. }
+        org_office_launch::RendezvousEvent::Server(org_office_launch::ServerEvent::Ready { .. })
     ));
     assert!(!shared.hello.supports("inbox.changed"));
     let (stream, peer) = UnixStream::pair().unwrap();

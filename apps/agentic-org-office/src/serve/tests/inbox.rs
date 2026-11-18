@@ -84,7 +84,7 @@ fn request(params: Value) -> Request {
 fn owner() -> Binding {
     Binding::Member {
         id: OWNER_ID.into(),
-        with_app_token: true,
+        via_grant: true,
     }
 }
 fn shared() -> Shared {
@@ -92,7 +92,7 @@ fn shared() -> Shared {
     ports.submit = Box::new(|_| panic!("inbox must never submit org writes"));
     ports.work = Box::new(|_, _| panic!("inbox must never write work"));
     ports.status = Box::new(|_, _| panic!("inbox must never set status"));
-    Shared::new(&test_info(), Path::new("unused.sock"), ports, token())
+    Shared::new(&test_info(), Path::new("unused.sock"), ports, launch_key())
 }
 
 #[test]
@@ -158,14 +158,13 @@ fn inbox_live_owner_is_one_canonical_person_check_and_fails_closed_without_sourc
     let req = request(json!({"state":"open"}));
     for mut denied in [
         Binding::Anonymous,
-        Binding::App,
         Binding::Member {
             id: PAT_ID.into(),
-            with_app_token: true,
+            via_grant: true,
         },
         Binding::Member {
             id: ADA_ID.into(),
-            with_app_token: false,
+            via_grant: false,
         },
     ] {
         for params in [

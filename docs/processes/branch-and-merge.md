@@ -1,61 +1,67 @@
 ---
-process: branch-and-merge     # the match key for overrides, unique per level and scope (a selected organization record receives a stable UUIDv7 ID; existing IDs are preserved)
-name: Branch, review and merge
+process: branch-and-merge
+name: Branch, review and integration
 kind: process
-level: organization          # repository seed metadata; selected structural scopes are organization | team | project
-version: 1
-owner: ada (Staff Engineer)
+level: organization
+version: 3
+owner: lead
 status: active
-summary: One open branch per agent; build, check, your own review, the reviewer's READY, the lead's go, merge into the release branch, clean up.
-applies_to: every agent that changes a repository
-overridable: true             # a team or project may override this process, or add its own
+summary: Branch from origin/v1-integration, verify and review locally, then merge into v1-integration.
+applies_to: every agent that changes this repository
+overridable: true
 ---
 
-> Kept in this repository (`docs/processes/`) as repository contributor instructions; selected organization process records belong in the remote organization repository (Processes, `docs/specs/processes-ux.md`). Here the release branch is `v1` and the lead is ada.
+# Branch, review and integration
 
-# Branch, review and merge
+Two engineers build v1, each with a lead agent. A lead takes an increment from the
+[implementation plan](../implementation-plan.md) and owns it end to end: UI, backend,
+database, shared contracts, documentation and integration. This page is how that work
+reaches the shared branch. [AGENTS.md](../../AGENTS.md) and the
+[kit workflow](../../.agent-kit/WORKFLOW.md) apply alongside it. No pull request and
+no outside reviewer is required.
 
-These instructions govern work on this software repository. Their legacy seed
-front matter is not an accepted organization-data payload. When materializing a
-selected process record, use the stable-ID path, `key`, `schema_version`, `revision`,
-`kind`, `title`, scope IDs, lifecycle and attribution fields in
-[organization structure](../design/organization-data/01-organization-structure.md).
-Preserve the explicit `overridable` value. That structural mapping neither
-activates a process engine nor changes this repository's review requirements.
+## 1. Branch and plan
 
-How every change reaches the release branch. Follow it from the moment you start work.
+- Start each increment's branch from `origin/v1-integration`.
+- Before code, write the increment's short plan: the outcome, the files you own, what
+  you will delete, and the decisions you take where the documents are silent.
+- One writer per file at a time. A file that two increments need is handed over
+  explicitly. Concurrent writers use separate worktrees.
+- Each lead keeps one active implementation branch at a time. If it is blocked,
+  preserve the branch and its checkpoint and continue independent work.
+- Never delete unmerged work or overwrite another writer's changes.
 
-## 1. One branch at a time
-- You have exactly **one open working branch**. Don't start new work, open another branch or stack branches until that branch is merged into the release branch.
-- Start every branch **from the release branch**: `git fetch origin && git switch -c <you>/<topic> origin/<release>`, in your own worktree when the repository's rules say so (`git worktree add ../<repo>-<you> -b <you>/<topic> origin/<release>`). Never branch in a checkout another agent uses.
-- Keep it **small**: one reviewable piece. Merge often; don't let work pile up.
+## 2. Implement and verify
 
-## 2. Build and check
-- Commit in small steps; every commit builds.
-- Keep the branch current: merge `origin/<release>` into it regularly (at least daily).
-- Before asking for review, all of the project's checks pass (format, lint, tests; for UI work also the UI checks and end-to-end tests).
+- Use the kit's task-routing and skill-routing. Delegate bounded pieces to local
+  subagents when useful, within the writer limit.
+- Agree a shared interface before another increment depends on it, and update every
+  affected implementation together.
+- Run the checks before review:
+  - Rust: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+    `cargo test --workspace`.
+  - UI: type check, tests, build and the relevant browser checks, with screenshots
+    where the change is visible.
+  - Data contract changes: `python3 docs/design/organization-data/test_schema.py`.
+  - Documentation or workflow only: the relevant kit and catalog checks, and a review
+    of the changed instructions.
+- Tests use temporary directories, never a real organization's data.
+- Update the [feature checklist](../FEATURES.md) row with evidence.
 
-## 3. Your own review
-- Run a **fresh, independent review** of the whole branch diff (a reviewer that gets the diff and the requirements, not your conclusions).
-- Verify each finding yourself; fix the confirmed ones; note anything you deliberately leave.
+## 3. Review locally
 
-## 4. Independent review
-- Send the **exact commit** to the team's reviewer with: the repository, the branch, the base, the commit, and the design or spec it implements.
-- The reviewer answers **READY** or **CHANGES NEEDED** for that exact commit. Fix, then ask again. Any later commit needs a new verdict.
-- **If the reviewer doesn't respond within 30 minutes**, tell your lead; the lead spins up another reviewer so work never stalls.
+Use the kit review cycle on the exact commit: a fresh independent local review,
+fixes for confirmed findings with checks rerun, validation by the original author that
+the result still meets the intent, then a separate fresh final review. A later source
+change needs current checks and review again.
 
-## 5. The lead's go
-- Ask your lead for the go with: the branch, the commit, the reviewer's READY, and the last lines of every check.
-- The lead checks that the change fits the design and the contracts.
+## 4. Integrate
 
-## 6. Merge
-- After the go: `git merge --no-ff` into the release branch and push it (or the lead merges and pushes for you, if your session can't push).
-- Contract changes (shared protocol crates) go through their owner, as small additive changes.
+After the checks and the final review pass, the lead merges with
+`git merge --no-ff` into `v1-integration` and pushes that branch. Verify the pushed
+commit. Then start the next increment from the updated `origin/v1-integration`.
 
-## 7. Clean up
-- After the merge, the merged branch and its worktree are deleted. Your lead confirms the branch is fully in the release branch before anything is deleted; nothing unmerged is ever deleted (closed unmerged work is archived as a tag first).
-- Then start your next branch from the release branch (back to step 1).
-
-## When things go wrong
-- **The pipeline stalls** (the reviewer or the messaging relay is down): tell your lead at once.
-- **The release branch is far behind:** the lead may integrate pending branches centrally (an interim rule), with reviews following as fix-ups.
+- `v1-integration` is the integration branch for all v1 work.
+- Never push to `main` or merge into the release branch `v1` without an explicit
+  release instruction.
+- Clean up a branch or worktree only after confirming it is fully merged.
