@@ -1,4 +1,4 @@
-//! Compiled programs the host's unit tests start as office workers.
+//! Compiled programs the host's unit tests start as office workers and as web processes.
 //!
 //! A host starts only a worker image that nobody else could have written, and a system that
 //! executes the bytes it verified cannot start a `#!` script at all. A test that goes
@@ -18,6 +18,15 @@ use std::sync::OnceLock;
 pub(crate) fn recording_worker() -> PathBuf {
     static COPY: OnceLock<PathBuf> = OnceLock::new();
     COPY.get_or_init(|| private_copy(&built_example("recording_worker")))
+        .clone()
+}
+
+/// The fake web process (`examples/fake_web.rs`): a compiled stand-in for `agentic-org-web`
+/// that takes its steps from a file beside the copy a test starts. This user's own copy,
+/// made once by each test process; a test copies it again to the place its host starts.
+pub(crate) fn fake_web() -> PathBuf {
+    static COPY: OnceLock<PathBuf> = OnceLock::new();
+    COPY.get_or_init(|| private_copy(&built_example("fake_web")))
         .clone()
 }
 
