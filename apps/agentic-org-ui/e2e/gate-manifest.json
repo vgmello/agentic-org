@@ -650,6 +650,7 @@
 	"rules": {
 		"ignore": [
 			"**/*.md",
+			"e2e-real/**",
 			"src/**/*.{test,spec}.{js,ts}",
 			"scripts/ui-gate*.ts",
 			".gitignore",

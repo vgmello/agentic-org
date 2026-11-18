@@ -154,7 +154,7 @@
 			<div class="flex items-center gap-x-3">
 				<button type="button" class="mr-auto text-sm/6 font-semibold text-indigo-300 underline" onclick={() => someoneElse()}>Sign in as someone else</button>
 				<button type="button" class="rounded-md bg-white/10 px-3 py-1.5 text-sm font-semibold" onclick={notNow}>Not now</button>
-				<button type="submit" disabled={busy} class="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-400 disabled:opacity-60">{busy ? 'Signing in…' : 'Sign in'}</button>
+				<button type="submit" disabled={busy} class="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-600 disabled:opacity-60">{busy ? 'Signing in…' : 'Sign in'}</button>
 			</div>
 		</form>
 	{/if}

@@ -64,7 +64,7 @@
 		<!-- SIGN-9, administrator: what the administrator sees right after registering. -->
 		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">No organizations yet. Create one to get started.</h1>
 		<div class="mt-6 flex items-center gap-x-4">
-			<a href="/create" class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">
+			<a href="/create" class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">
 				<Plus class="size-4" aria-hidden="true" />Create organization
 			</a>
 			<button type="button" disabled={signOutFlow.signingOut} onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button>
