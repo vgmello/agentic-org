@@ -28,6 +28,9 @@ pub const HR_BODY: &str =
 /// The HQ office's slug and the code HQ issues itself.
 pub const HQ_SLUG: &str = "hq";
 pub const HQ_CODE: &str = "A";
+/// The key of the organization repository's entry in `repositories.yaml` (data contract
+/// document 01, "Repository types").
+pub const ORGANIZATION_REPOSITORY_KEY: &str = "organization";
 
 /// The person who creates the organization: the lead of its top-level team.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
@@ -168,7 +171,7 @@ where
     };
     let repository = Repository {
         id: command.repository_id.clone(),
-        key: None,
+        key: Some(ORGANIZATION_REPOSITORY_KEY.to_owned()),
         kind: RepositoryKind::Remote,
         remote_url: Some(command.repository_remote_url.clone()),
         meta: meta.clone(),

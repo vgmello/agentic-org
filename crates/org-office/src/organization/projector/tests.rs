@@ -85,7 +85,7 @@ fn organization() -> Organization {
 fn repository() -> Repository {
     Repository {
         id: id(REPOSITORY),
-        key: None,
+        key: Some("organization".into()),
         kind: RepositoryKind::Remote,
         remote_url: Some("https://example.test/org.git".into()),
         meta: meta(),
