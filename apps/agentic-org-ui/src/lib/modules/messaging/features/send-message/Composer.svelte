@@ -21,11 +21,14 @@
 		resetKey,
 		draft,
 		alsoIn,
+		liveNote,
 		onsend
 	}: {
 		placeholder: string;
 		canWrite: boolean;
 		note?: string;
+		/** A note that depends on the text being typed: "HR lead can't run right now…" when it mentions `@hr`. */
+		liveNote?: (text: string) => string | undefined;
 		conversation: Conversation;
 		ctx: ChatContext;
 		/** A draft is kept per key (a conversation or a thread). */
@@ -203,10 +206,11 @@
 		picked = 0;
 	};
 	const rows = $derived(Math.min(8, Math.max(2, text.split('\n').length)));
+	const typedNote = $derived(canWrite ? liveNote?.(text) : undefined);
 </script>
 
 <div class="border-t border-white/10 px-4 py-3">
-	{#if note}<p class="mb-2 text-sm/6 {canWrite ? 'text-sky-200' : 'text-gray-300'}" data-testid="composer-note" aria-live="polite">{note}</p>{/if}
+	{#if note ?? typedNote}<p class="mb-2 text-sm/6 {canWrite ? 'text-sky-200' : 'text-gray-300'}" data-testid="composer-note" aria-live="polite">{note ?? typedNote}</p>{/if}
 	{#if canWrite}
 		<div class="relative">
 			{#if popup}

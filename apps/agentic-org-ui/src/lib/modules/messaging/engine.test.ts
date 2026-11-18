@@ -275,12 +275,13 @@ describe('CHAT-11 · mute and digest', () => {
 });
 
 describe('CHAT-12 · the owner reads any conversation', () => {
-	it('CHAT-12 · the owner reads and replies in a conversation they are not in', () => {
+	// chat-ux decision 5 and §1 (2026-11-17): reading as the owner is read-only; posting needs an authorized admission.
+	it('CHAT-12 · the owner reads a conversation they are not in, and does not post there', () => {
 		const s = fresh();
 		expect(conv(s, 'c-dm-sam-noor').members).not.toContain('you');
 		expect(canRead(ctxAs(), 'you', conv(s, 'c-dm-sam-noor'))).toBe(true);
 		expect(messagesIn(s, ctxAs(), 'you', 'c-dm-sam-noor').length).toBeGreaterThan(0);
-		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-dm-sam-noor', kind: 'msg', body: 'Carry on.' })).toBeUndefined();
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-dm-sam-noor', kind: 'msg', body: 'Carry on.' })?.code).toBe('not_in_conversation');
 	});
 	it('CHAT-12 · no one else reads or posts in a conversation they are not in', () => {
 		const s = fresh();
@@ -487,8 +488,8 @@ describe('review fixes', () => {
 		s = run(hand.state, { method: 'channel.remove_member', id: 'c-release-v1', member_id: 'kai' }).state;
 		expect(refusal(s, { method: 'chat.answer', ask_id: ask.accepted.id!, option_id: 'y' }, ctxAs('kai', 'agent'))?.code).toBe('not_in_conversation');
 		expect(refusal(s, { method: 'chat.accept_handoff', message_id: hand.accepted.id! }, ctxAs('kai', 'agent'))?.code).toBe('not_in_conversation');
-		// The owner, in the app, still can.
-		expect(refusal(s, { method: 'chat.answer', ask_id: ask.accepted.id!, option_id: 'y' })).toBeUndefined();
+		// Nor does the owner: an ask addressed to someone else gives the owner no answer action (chat-ux §2.1).
+		expect(refusal(s, { method: 'chat.answer', ask_id: ask.accepted.id!, option_id: 'y' })?.code).toBe('not_authorized');
 	});
 	it('CHAT-2 · an automatic channel whose suffixed name is taken too gets a name that is free', () => {
 		const ctx = ctxAs();

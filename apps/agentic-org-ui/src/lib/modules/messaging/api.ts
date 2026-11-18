@@ -1,8 +1,8 @@
 import type { OrgApi } from '$lib/org/api';
 import { applyChat, emptyChat, syncAuto, tick } from './engine';
 import { chatContext } from './model';
-import { sampleChat } from './sample';
-import type { ChatAccepted, ChatCall, ChatMessage, ChatRefusal, ChatSnapshot, ChatState } from './types';
+import { SAMPLE_DIRECTORY, sampleChatFull } from './sample';
+import type { ChatAccepted, ChatCall, ChatCallStatus, ChatMessage, ChatRefusal, ChatSnapshot, ChatState } from './types';
 
 /**
  * What the Chat screen needs from an office: a snapshot, the calls of ADR-0003 section 6 (amended 2026-11-08: chat, proposed), and a
@@ -16,15 +16,26 @@ export interface ChatApi {
 	command(organizationId: string, call: ChatCall): Promise<ChatAccepted>;
 	/** Calls `listener` whenever the conversations change. Returns the way to stop. */
 	subscribe(organizationId: string, listener: () => void): () => void;
+	/** What became of a call whose answer was lost, by its change id (`msg.status`): reconcile before any retry (CHAT-40). */
+	status(organizationId: string, changeId: string): Promise<ChatCallStatus>;
 }
 
-export type ChatScenario = 'healthy' | 'offline' | 'fail';
+/**
+ * The mock's states (chat-ux §6), chosen with `?chat=`: `offline` (read-only from the last copy), `nocopy` (offline with no
+ * copy: unavailable), `hq` (HQ can't be reached: messages to people and to agents outside this office wait as "Sending…"),
+ * `fail` (a send's answer is lost before the office got it), `lost` (the office got it but the answer was lost), `hr-down`
+ * (the HR lead can't run).
+ */
+export type ChatScenario = 'healthy' | 'offline' | 'nocopy' | 'hq' | 'fail' | 'lost' | 'hr-down';
+const SCENARIOS: ChatScenario[] = ['offline', 'nocopy', 'hq', 'fail', 'lost', 'hr-down'];
 
 const scenarioFromUrl = (): ChatScenario => {
 	if (typeof location === 'undefined') return 'healthy';
-	const wanted = new URLSearchParams(location.search).get('chat');
-	return wanted === 'offline' || wanted === 'fail' ? wanted : 'healthy';
+	const wanted = new URLSearchParams(location.search).get('chat') as ChatScenario | null;
+	return wanted && SCENARIOS.includes(wanted) ? wanted : 'healthy';
 };
+
+const COPY_AGE_MS = 25 * 60_000;
 
 export interface MockChatOptions {
 	now?: () => string;
@@ -47,13 +58,14 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 
 	const context = async (organizationId: string, extra: { newId?: (p: string) => string } = {}) => {
 		const { snapshot } = await org.view(organizationId);
-		return chatContext(snapshot, { now: now(), typing_ms: replyMs + 1200, ...extra });
+		return chatContext(snapshot, { now: now(), typing_ms: replyMs + 1200, directory: snapshot.members.length > 1 ? SAMPLE_DIRECTORY : [], ...extra });
 	};
+	const offline = () => scenario() === 'offline' || scenario() === 'nocopy';
 	const load = async (organizationId: string): Promise<ChatState> => {
 		const ctx = await context(organizationId);
 		let state = states.get(organizationId);
 		if (!state) {
-			state = sampleChat(ctx);
+			state = sampleChatFull(ctx);
 			if (ctx.members.length <= 1) state = syncAuto(emptyChat(), ctx);
 		}
 		// The office keeps the automatic channels in step with the organization, and applies due defaults itself.
@@ -63,7 +75,7 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 	};
 
 	const apply = async (organizationId: string, call: ChatCall): Promise<ChatAccepted> => {
-		if (scenario() === 'offline') throw unavailable();
+		if (offline()) throw unavailable();
 		const before = await load(organizationId);
 		const ctx = await context(organizationId, { newId: (p) => `${p}-${before.seq + 1}` });
 		// `fail`: a message goes wrong once, so "Not delivered" and Retry can be seen. A retry (same text) goes through.
@@ -72,8 +84,20 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 			throw unavailable();
 		}
 		const { state, accepted } = applyChat(before, call, ctx);
+		// `hq`: a message for someone outside this office is accepted and waits in the queue until HQ is back.
+		if (scenario() === 'hq' && call.method === 'msg.send' && accepted.id) {
+			const c = state.conversations.find((x) => x.id === accepted.conversation_id);
+			const { snapshot } = await org.view(organizationId);
+			const here = (id: string) => snapshot.members.find((m) => m.id === id)?.office_id !== undefined;
+			if (c?.members.some((id) => id !== ctx.actor && !here(id))) state.messages.find((m) => m.id === accepted.id)!.queued = true;
+		}
 		states.set(organizationId, state);
 		notify(organizationId);
+		// `lost`: the office has it, but the answer never reaches the app. Check status finds it.
+		if (scenario() === 'lost' && call.method === 'msg.send' && !failed.has(call.change_id)) {
+			failed.add(call.change_id);
+			throw unavailable();
+		}
 		// A woken agent answers a moment later, with a canned line (sample data).
 		if (call.method === 'msg.send' && accepted.id) {
 			const sent = state.messages.find((m) => m.id === accepted.id)!;
@@ -94,7 +118,24 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 
 	return {
 		async snapshot(organizationId) {
-			return { state: await load(organizationId), sample: true, office_running: scenario() !== 'offline' };
+			// No retained copy: unavailable, never an empty conversation (chat-ux §6).
+			if (scenario() === 'nocopy') throw { source: 'api', code: 'unavailable', message: "The office isn't running, and there's no copy of the conversations to read." } satisfies ChatRefusal;
+			const state = await load(organizationId);
+			const ctx = await context(organizationId);
+			const directory = ctx.members.filter((m) => SAMPLE_DIRECTORY.some((d) => d.id === m.id));
+			return {
+				state,
+				sample: true,
+				office_running: !offline(),
+				...(offline() ? { copy_at: new Date(Date.parse(now()) - COPY_AGE_MS).toISOString() } : {}),
+				...(directory.length ? { directory } : {}),
+				...(scenario() === 'hr-down' && directory.some((m) => m.id === 'hr') ? { cannot_run: ['hr'] } : {})
+			};
+		},
+		async status(organizationId, changeId) {
+			const state = await load(organizationId);
+			const accepted = state.applied[changeId];
+			return accepted ? { state: 'applied', accepted } : { state: 'not_found' };
 		},
 		command(organizationId, call) {
 			const run = (queues.get(organizationId) ?? Promise.resolve()).then(() => apply(organizationId, call));
