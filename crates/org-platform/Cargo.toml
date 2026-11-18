@@ -1,0 +1,17 @@
+[package]
+name = "org-platform"
+description = "Every operating-system difference behind small contracts: one non-conditional constructor per capability, the macOS adapter, and a refusing adapter elsewhere (ADR-0017 decision 6)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Test adapters built from the contracts, for consumer tests only.
+test-support = []
+
+[dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

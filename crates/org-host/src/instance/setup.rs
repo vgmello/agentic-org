@@ -118,10 +118,9 @@ pub(crate) struct Paths {
 impl Paths {
     pub fn prepare(account: &Path, user_temp: PathBuf, name: Option<&str>) -> Result<Self, Error> {
         Name::parse(name)?;
-        let base = Directory::open(
-            &account.join("Library/Application Support/agentic.org"),
-            true,
-        )?;
+        let base = org_platform::dirs::application_base(account)
+            .map_err(|_| Error::Invalid("instance locations are unavailable on this system"))?;
+        let base = Directory::open(&base, true)?;
         let locator = base.child("locator", true)?.path().to_owned();
         super::temp::validate_base(&Directory::open(&user_temp, false)?)?;
         Ok(Self {
