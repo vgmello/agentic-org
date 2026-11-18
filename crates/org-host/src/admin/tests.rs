@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use super::*;
 use crate::hostdb::HostDbInit;
 
-const INSTANCE: &str = "01J00000000000000000000000";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
 pub(crate) const OPERATION: &str = "01890a5d-ac96-774b-bcce-b302099a8057";
 const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 

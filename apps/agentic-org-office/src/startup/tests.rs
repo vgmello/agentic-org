@@ -14,13 +14,14 @@ use std::path::Path;
 use std::time::Duration;
 
 const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const WAIT: Duration = Duration::from_secs(10);
 
 fn first(path: &Path, op: FirstLine) -> HostFirstLine {
     let office = OfficeLine {
         id_profile: None,
         selected_writer_required: false,
-        instance_id: ID.into(),
+        instance_id: INSTANCE.into(),
         office_id: ID.into(),
         rendezvous: path.to_str().unwrap().into(),
     };

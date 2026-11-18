@@ -2,7 +2,7 @@ use super::*;
 use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
 use org_proto::{DbKey, GrantKey};
 
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 fn db_key() -> DbKey {
     DbKey::from_bytes([0xb3; 32])
@@ -170,7 +170,7 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
 #[test]
 fn distinct_v3_identities_are_preserved_on_every_operation() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    const OTHER_INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+    const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184";
     const OTHER_OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
     for op in 0..3 {
         let Request::V3 { mut line, handoff } = request(op, true);

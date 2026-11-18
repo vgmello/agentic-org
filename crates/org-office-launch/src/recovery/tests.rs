@@ -2,7 +2,7 @@ use super::*;
 fn request() -> Request {
     Request {
         version: 1,
-        instance_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182".into(),
         office_id: "019a9999-0000-7000-8000-000000000001".into(),
         organization_id: "019a9999-0000-7000-8000-000000000002".into(),
         operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
@@ -170,4 +170,18 @@ fn transfer_recovery_version_is_checked_in_both_directions() {
     };
     assert!(encode_transfer_record(&invalid).is_err());
     assert!(decode_transfer_record(&serde_json::to_vec(&invalid).unwrap()).is_err());
+}
+
+/// The instance id is canonical lowercase UUIDv7 text: a ULID and uppercase UUIDv7 are refused.
+#[test]
+fn request_refuses_a_ulid_or_uppercase_instance() {
+    assert!(request().check().is_ok());
+    for instance in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F607182",
+    ] {
+        let mut r = request();
+        r.instance_id = instance.into();
+        assert!(r.check().is_err(), "{instance}");
+    }
 }

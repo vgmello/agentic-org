@@ -349,7 +349,7 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         default_org,
         default_login,
     } = recovery_target(&options)?;
-    if !socket.is_absolute() || !org_office_launch::is_plain_id(&instance) {
+    if !socket.is_absolute() || !org_proto::is_uuid_v7(&instance) {
         return Err(HELP.into());
     }
     let org = options

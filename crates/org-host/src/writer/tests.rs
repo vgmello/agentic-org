@@ -15,7 +15,7 @@ fn fixture() -> (tempfile::TempDir, Arc<Writers>, Admission) {
     let keys = root.path().join("keys");
     fs::create_dir(&keys).unwrap();
     fs::set_permissions(&keys, fs::Permissions::from_mode(0o700)).unwrap();
-    let instance = crate::ids::generate().unwrap();
+    let instance = crate::ids::uuid_v7().unwrap();
     let account = crate::ids::generate().unwrap();
     let custody: Arc<dyn HostSecrets> =
         Arc::new(crate::host_secrets::dev::DevSecrets::open(&keys, &home, &instance).unwrap());

@@ -94,8 +94,9 @@ pub struct OfficeLine {
     pub id_profile: Option<IdProfile>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub selected_writer_required: bool,
-    /// The instance the office belongs to (a ULID). The server stores it at create and refuses a
-    /// `start` naming another; an office created before v3 adopts it on its first v3 `start`.
+    /// The instance the office belongs to: canonical lowercase UUIDv7 text (a ULID is refused).
+    /// The server stores it at create and refuses a `start` naming another; an office created
+    /// before v3 adopts it on its first v3 `start`.
     pub instance_id: String,
     pub office_id: String,
     /// The absolute path of the per-spawn rendezvous socket: `<runtime>/r/<16 hex>`.
@@ -147,7 +148,10 @@ impl OfficeLine {
             None => is_plain_id(&self.office_id),
             Some(IdProfile::SelectedV1) => crate::is_selected_entity_id(&self.office_id),
         };
-        if !is_plain_id(&self.instance_id) || !office_valid {
+        if !org_proto::is_uuid_v7(&self.instance_id) {
+            return Err("the first line's instance id isn't a canonical lowercase UUIDv7");
+        }
+        if !office_valid {
             return Err("the first line holds an id that isn't plain");
         }
         if !self.rendezvous.starts_with('/') || self.rendezvous.contains('\0') {

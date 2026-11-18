@@ -47,7 +47,7 @@ pub(super) struct Keychain {
 }
 impl Keychain {
     pub(super) fn new(group: &str, instance: &str) -> Result<Self, Error> {
-        if org_proto::ulid_time_ms(instance).is_none() {
+        if !org_proto::is_uuid_v7(instance) {
             return Err(Error::Unsafe);
         }
         Ok(Self {

@@ -1,7 +1,8 @@
 use super::*;
 
 fn context() -> HostChannel {
-    let mut hello = HelloResult::host("test", "This Mac").with_instance_id("verified-instance");
+    let mut hello = HelloResult::host("test", "This Mac")
+        .with_instance_id("0190a5d2-7c3e-7a01-8b2c-3d4e5f607182");
     hello.api_version = 2;
     HostChannel {
         _channel_id: "opaque-channel".into(),
@@ -64,7 +65,10 @@ fn host_hello_checks_both_range_edges_and_malformed_params_before_version_lock()
     ] {
         let answer = exchange(&mut peer, "hello", serde_json::json!({"api":range}));
         assert_eq!(answer["result"]["api_version"], 2);
-        assert_eq!(answer["result"]["instance_id"], "verified-instance");
+        assert_eq!(
+            answer["result"]["instance_id"],
+            "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182"
+        );
     }
     assert_eq!(
         exchange(&mut peer, "hello", serde_json::json!({"api":null}))["error"]["code"],

@@ -958,7 +958,7 @@ mod tests {
     /// [`a_v3_discard_hands_off_no_key_and_deletes_it_only_after_discarded`], records its
     /// handoff's `db_key` (`null` or `key`).
     const V3_DISCARD_SEEN: &str = "ORG_HOST_TEST_V3_DISCARD_SEEN";
-    const INSTANCE: &str = "01JD5Z00000000000000000NST";
+    const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 
     /// Not a test: the v3 `--discard` server the supervisor test runs, as the real worker
     /// speaks it (first line on stdin, the rendezvous connect, `ready_for_secrets`, the handoff

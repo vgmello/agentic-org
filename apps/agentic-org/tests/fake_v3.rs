@@ -17,7 +17,7 @@ use org_proto::location::{OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::{DbKey, GrantKey, RecoveryCode};
 use serde_json::json;
 
-const INSTANCE: &str = "01JD5Z00000000000000000NST";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 const OFFICE: &str = "01JD5Z0000000000000000OFFA";
 const WAIT: Duration = Duration::from_secs(20);
 
@@ -54,6 +54,16 @@ impl Home {
     /// Spawns the fake with `args`, writes `line` as its first stdin line and returns it with
     /// the rendezvous listener the line names.
     fn launch(&self, args: &[&str], line: &serde_json::Value) -> (Child, UnixListener) {
+        self.spawn(args, line, true)
+    }
+
+    /// As [`Home::launch`], but writes `line` as raw JSON (its `instance_id` kept when present),
+    /// so a line the typed writer would refuse still reaches the fake.
+    fn launch_raw(&self, args: &[&str], line: &serde_json::Value) -> (Child, UnixListener) {
+        self.spawn(args, line, false)
+    }
+
+    fn spawn(&self, args: &[&str], line: &serde_json::Value, typed: bool) -> (Child, UnixListener) {
         let rendezvous = self.runtime.join("rv");
         let _ = fs::remove_file(&rendezvous);
         let listener = UnixListener::bind(&rendezvous).unwrap();
@@ -69,11 +79,18 @@ impl Home {
             .unwrap();
         let mut line = line.clone();
         line["v"] = json!(3);
-        line["instance_id"] = json!(INSTANCE);
+        if line.get("instance_id").is_none() {
+            line["instance_id"] = json!(INSTANCE);
+        }
         line["rendezvous"] = json!(rendezvous.to_str().unwrap());
-        // Through the typed writer, so the line is one the host could send.
-        let typed: HostFirstLine = serde_json::from_value(line).unwrap();
-        v3::write_first_line(child.stdin.as_mut().unwrap(), &typed).unwrap();
+        let stdin = child.stdin.as_mut().unwrap();
+        if typed {
+            // Through the typed writer, so the line is one the host could send.
+            let typed: HostFirstLine = serde_json::from_value(line).unwrap();
+            v3::write_first_line(stdin, &typed).unwrap();
+        } else {
+            stdin.write_all(format!("{line}\n").as_bytes()).unwrap();
+        }
         (child, listener)
     }
 }
@@ -290,6 +307,36 @@ fn the_fake_refuses_a_start_line_naming_another_office_before_connecting() {
         "{log}"
     );
     assert!(!log_has(&log, &format!("transfer {OFFICE} {pid}")), "{log}");
+}
+
+/// The instance id is canonical lowercase UUIDv7 text. A ULID (the earlier form) or uppercase
+/// UUIDv7 is refused before connecting, as the real server refuses it.
+#[test]
+fn the_fake_refuses_a_v3_line_naming_a_ulid_instance() {
+    for instance in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071C0",
+    ] {
+        let home = Home::new();
+        let (mut child, listener) = home.launch_raw(
+            &[OFFICE_FLAG, OFFICE],
+            &json!({"op": "start", "office_id": OFFICE, "instance_id": instance}),
+        );
+        assert_eq!(wait_exit(&mut child), 1, "{instance}");
+        listener.set_nonblocking(true).unwrap();
+        assert!(
+            matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+            "the fake connected to the rendezvous for {instance}"
+        );
+        assert_eq!(stdout_of(&mut child), "");
+        let pid = child.id();
+        let log = home.log();
+        assert!(
+            log_has(&log, &format!("first-line-refused {OFFICE} {pid}")),
+            "{log}"
+        );
+        assert!(!log.contains("instance "), "{log}");
+    }
 }
 
 #[test]

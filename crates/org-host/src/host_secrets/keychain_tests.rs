@@ -1,5 +1,5 @@
 use super::*;
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+const A: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0";
 const GROUP: &str = "TEAMID1234.org.agentic.host";
 fn value(attrs: &Attributes, key: CFStringRef) -> CFType {
     // SAFETY: tests supply immutable framework constants.
@@ -14,7 +14,7 @@ fn string(value: CFType) -> String {
 #[test]
 fn exact_instance_service_accounts_group_and_data_protection() {
     let a = Keychain::new(GROUP, A).unwrap();
-    let b = Keychain::new(GROUP, "01BBBBBBBBBBBBBBBBBBBBBBBB").unwrap();
+    let b = Keychain::new(GROUP, "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e1").unwrap();
     for raw in ["registry", "recovery.A", "recovery.a"] {
         let n = Name::parse(raw).unwrap();
         let q = a.query(Some(&n));
@@ -66,6 +66,9 @@ fn invalid_instance_is_rejected_without_keychain_io() {
         "../x",
         "01aaaaaaaaaaaaaaaaaaaaaaaa",
         "8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        // A ULID (the earlier form) and uppercase UUIDv7: only lowercase UUIDv7 is accepted.
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071D0",
     ] {
         assert!(matches!(Keychain::new(GROUP, invalid), Err(Error::Unsafe)));
     }
@@ -321,7 +324,7 @@ fn four_call_adapter_insert_replace_delete_reopen_and_scope_conformance() {
     assert_eq!(loaded(&store(&fake, GROUP, A), &n), b"replacement");
     for isolated in [
         store(&fake, "OTHER.group", A),
-        store(&fake, GROUP, "01BBBBBBBBBBBBBBBBBBBBBBBB"),
+        store(&fake, GROUP, "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e1"),
     ] {
         assert!(isolated.load(&n).unwrap().is_none());
         assert!(isolated.list().unwrap().is_empty());

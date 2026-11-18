@@ -486,7 +486,7 @@ pub(crate) fn run_at(
 }
 
 /// The service manager's name for an instance: its ID in lowercase (the label is
-/// `com.ellosoft.agentic-org.instance.<id>`; instance IDs are case-insensitive ULIDs/UUIDs).
+/// `com.ellosoft.agentic-org.instance.<id>`; instance IDs are canonical lowercase UUIDv7 text, so this is a no-op kept for older input).
 fn service_id(instance_id: &str) -> String {
     instance_id.to_ascii_lowercase()
 }

@@ -2,8 +2,8 @@
 use super::*;
 use org_proto::ApiRange;
 
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-const OTHER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
+const OTHER: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607183";
 const TIMEOUT: Duration = Duration::from_secs(10);
 const RANGE_ERROR: &str = "the server chose an API version outside the offered range";
 const ID_ERROR: &str = "the server's instance id is missing or malformed";
@@ -161,9 +161,10 @@ fn version_two_requires_a_present_canonical_instance_id() {
     for instance in [
         Value::Null,
         json!(""),
-        json!(INSTANCE.to_lowercase()),
-        json!("81ARZ3NDEKTSV4RRFFQ69G5FAV"),
-        json!("01ARZ3NDEKTSV4RRFFQ69G5FAU"),
+        // Uppercase UUIDv7 and a ULID (the earlier form): only lowercase UUIDv7 is canonical.
+        json!(INSTANCE.to_uppercase()),
+        json!("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        json!("0190a5d2-7c3e-4a01-8b2c-3d4e5f607182"),
         json!("SECRET-PEER-INSTANCE"),
     ] {
         result_failure(

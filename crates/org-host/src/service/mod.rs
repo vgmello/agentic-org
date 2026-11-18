@@ -841,7 +841,7 @@ pub(crate) mod tests {
     /// its offices for shutdown.
     pub(crate) fn web_handler(home: &Path) -> (Arc<Service>, Arc<Offices>) {
         let mut service = service(home);
-        service.instance_id = Some(crate::ids::generate().unwrap());
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
         let offices = service.offices.clone();
         (Arc::new(service), offices)
     }
@@ -881,7 +881,7 @@ pub(crate) mod tests {
         std::io::BufReader<std::os::unix::net::UnixStream>,
         Arc<Offices>,
     ) {
-        service.instance_id = Some(crate::ids::generate().unwrap());
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
@@ -1030,7 +1030,7 @@ pub(crate) mod tests {
         use org_host_control::ops::WebServing;
         let home = tempfile::tempdir().unwrap();
         let mut service = service(home.path());
-        service.instance_id = Some(crate::ids::generate().unwrap());
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
         // Every host.sock connection is `Local`.
@@ -1058,7 +1058,7 @@ pub(crate) mod tests {
         use org_host_control::admin::{AdminLinkInitial, AdminLinkInitialParams, AdminReset};
         let home = tempfile::tempdir().unwrap();
         let mut service = service(home.path());
-        service.instance_id = Some(crate::ids::generate().unwrap());
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
         assert!(service.admin().is_none());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();

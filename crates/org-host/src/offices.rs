@@ -625,7 +625,7 @@ mod tests {
     }
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-    const INSTANCE: &str = "01JD5Z00000000000000000NST";
+    const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 
     fn hq() -> OfficeFile {
         OfficeFile::new(

@@ -86,7 +86,7 @@ fn home() -> tempfile::TempDir {
 }
 pub(in crate::hostdb) fn init() -> HostDbInit {
     HostDbInit {
-        instance_id: "01J00000000000000000000000".into(),
+        instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0".into(),
         clock_high_ms: 123,
     }
 }
@@ -1171,8 +1171,10 @@ fn committed_wal_recovers_after_real_process_death() {
         for ddl in [schema::DDL, provisioning::DDL, recovery::DDL, links::DDL] {
             c.execute_batch(ddl).unwrap();
         }
-        c.execute_batch("INSERT INTO meta VALUES ('instance_id','01J00000000000000000000000')")
-            .unwrap();
+        c.execute_batch(
+            "INSERT INTO meta VALUES ('instance_id','0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0')",
+        )
+        .unwrap();
         c.pragma_update(None, "user_version", SCHEMA_VERSION)
             .unwrap();
         c.execute(

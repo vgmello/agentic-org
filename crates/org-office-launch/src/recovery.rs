@@ -35,7 +35,7 @@ pub fn invalid() -> io::Error {
 impl Request {
     pub fn check(&self) -> io::Result<()> {
         if self.version != 1
-            || !crate::is_plain_id(&self.instance_id)
+            || !org_proto::is_uuid_v7(&self.instance_id)
             || !crate::is_storage_id(&self.office_id)
             || !crate::is_storage_id(&self.organization_id)
             || self.instance_id.len() > 255

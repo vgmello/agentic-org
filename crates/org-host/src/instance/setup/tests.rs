@@ -69,7 +69,7 @@ fn progress_moves_forward_in_order_and_never_replaces_identity() {
     let r = journal
         .freeze(input(base.join("instance")), true, pin())
         .unwrap();
-    let id = crate::ids::generate().unwrap();
+    let id = crate::ids::uuid_v7().unwrap();
     // Out of order: each step needs the one before it.
     for broken in [
         Record {
@@ -114,7 +114,7 @@ fn progress_moves_forward_in_order_and_never_replaces_identity() {
             ..step.clone()
         },
         Record {
-            instance_id: Some(crate::ids::generate().unwrap()),
+            instance_id: Some(crate::ids::uuid_v7().unwrap()),
             ..step.clone()
         },
         Record {

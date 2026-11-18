@@ -1,8 +1,8 @@
 use super::*;
 
 // X-02 rev15 §5.4: instance binding is local metadata, not a schema version.
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-const OTHER_INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
+const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607183";
 
 #[test]
 fn v3_create_persists_instance_and_v2_open_leaves_it_untouched() {
@@ -712,5 +712,26 @@ fn genuine_v6_constraints_metadata_and_all_rows_survive_v7_and_reopen() {
                 }
             })
             .unwrap();
+    }
+}
+
+/// An instance id is canonical lowercase UUIDv7 text: a ULID (the earlier form) and uppercase
+/// UUIDv7 are refused before any folder is made.
+#[test]
+fn create_for_instance_refuses_a_ulid_or_uppercase_instance() {
+    for instance in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F607182",
+    ] {
+        let dir = TempDir::new().unwrap();
+        let folder = folder_of(&dir, ID);
+        assert!(
+            matches!(
+                Office::create_for_instance(&folder, &new_office(ID), test_key(), instance),
+                Err(OfficeError::Invalid(_))
+            ),
+            "{instance}"
+        );
+        assert!(!folder.join(OFFICE_DB).exists(), "{instance}");
     }
 }
