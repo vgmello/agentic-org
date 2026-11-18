@@ -42,7 +42,7 @@ const TOKEN_PREFIXES: &[(&str, usize)] = &[
     ("xoxs-", 10),
 ];
 
-/// The office's app token is 64 hex digits (`org-proto`); so is a SHA-256. Both are refused.
+/// An office's fixed-size secrets are 64 hex digits (`org-proto`); so is a SHA-256. Both are refused.
 const HEX_RUN: usize = 64;
 
 fn is_token_char(c: char) -> bool {

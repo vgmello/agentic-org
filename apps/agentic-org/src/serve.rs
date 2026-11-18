@@ -14,7 +14,7 @@
 //! pinned runtime release refuses at runtime admission, before any custody is opened.
 //! **A release build trusts only what it was built with** ([`Config::trusted`]): the app's
 //! bundle id and team id (`ORG_APP_TEAM_ID` at build time; without it no signed app can use
-//! `office.app_token` or `office.restart`, logged loudly), its Keychain access group
+//! `office.restart`, logged loudly), its Keychain access group
 //! (`ORG_HOST_KEYCHAIN_GROUP` at build time; without it the host doesn't start), and the office
 //! server next to its own executable. It refuses `--home`, `--server-bin` and `--app-team-id`.
 //!
@@ -26,7 +26,7 @@
 //! the host is compiled), never read from the command line, a config file or the environment at
 //! run time. If it doesn't exist when the host starts, the fallback is off (logged).
 //!
-//! A debug build keeps the offices' database keys as files in the folder `ORG_OFFICE_DEV_KEY_DIR`
+//! A debug build keeps the offices' secrets keys as files in the folder `ORG_OFFICE_DEV_KEY_DIR`
 //! names, never in the Keychain, and refuses to start without it. Release builds ignore the
 //! variable. The host never passes the variable on to its servers.
 

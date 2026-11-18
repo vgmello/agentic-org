@@ -26,16 +26,19 @@ satellite completed an operation.
    separate authorities. People have no execution. A lead is a direct member of the
    home team and manages its subtree. The owner is a person; the host records
    ownership on that person's account, never in an employee field. An agent exists
-   only through an approved hire, provisioned by product code; the built-in HR lead,
+   only through a hire by someone who may hire, provisioned by product code; the built-in HR lead,
    created with the organization, is the one exception. No agent is started by
    hand, brought in from outside or bound to a run the office did not start.
 3. **One open turn and one main process per agent.** A runnable agent selects one
    model profile (an ordered pool) and one model. Connections use private
    office-local bindings and HQ-issued permits. A verified idle process is reused only
    with the same launch digest. An unknown cleanup keeps the slot.
-4. **Explicit work only.** A turn starts from an explicit instruction, the answer to a
-   required ask ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a
-   recovery the office performs. The office does not choose work, queue messages into
+4. **Work starts for a stated reason.** A turn starts from an explicit instruction,
+   from something addressed to the agent (a direct message, a mention, an ask or a
+   task assigned to it, [ADR-0028](../adr/0028-an-agent-is-always-available.md)),
+   the answer to a required ask
+   ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a recovery the
+   office performs. The office does not choose work, queue messages into
    a busy turn, remind goals, extract memory or spawn specialists.
 5. **Mechanism grants no authority.** Generated instructions are projections of the
    admitted identity, role and policy. An execution file, a note or a process document
@@ -88,12 +91,18 @@ The control path:
    dispatch cycle.
 4. On failure, stop and reconcile. Replay only with proof of no effects, or resume a
    verified compatible checkpoint with completed receipts. Missing evidence means
-   `recovery_required`, keeping the slot, workspace and evidence until an explicit
-   recovery.
+   `recovery_required`, keeping the slot, workspace and evidence until it is
+   reconciled.
 5. Release the permit and process ownership only after verified terminal, idle or
    cleanup facts. An expired permit stays `release_pending` and consumes capacity. The
-   office reconciles its journals and owned processes at startup before any
-   replacement. A crash never triggers an automatic rerun.
+   office reconciles its journal and owned processes at startup before any
+   replacement. A crash never runs a tool call again. It does continue the turn:
+   once the run's processes are proved gone, the office resumes the same session and
+   tells the agent what was interrupted, and the agent decides what to repeat
+   ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md)). A person recovers a
+   turn only when the office cannot do that.
+6. A turn with no activity for the stall time is stopped with its sub-agents and
+   recorded as stalled; the agent goes idle (ADR-0030 decisions 10 to 12).
 
 **Health** is separate from desired state and presence. The office tracks the last
 protocol event, the active operation, a known wait and its deadline, a probe result
@@ -145,10 +154,11 @@ process text. No process edit invents commands or changes tool permissions.
 ## 5. Not in v1
 
 Goals and goal reminders, automatic scheduling, generated native agent definitions
-and private specialists, delegation to child agents, and memory checkpoints are not
-part of v1. An agent that delegates inside its vendor tool does so within that tool's
-own sandbox and the office's rules; the office grants a child nothing and tracks no
-child job. EMP criteria about these features describe later work.
+and private specialists, delegation chosen by a process, and memory checkpoints are not
+part of v1. Starting a sub-agent inside the vendor tool is
+([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs within the turn, in the
+parent's sandbox and under the office's rules; the office grants it nothing of its own
+and tracks no separate job for it. EMP criteria about these features describe later work.
 
 ## 6. Validation
 

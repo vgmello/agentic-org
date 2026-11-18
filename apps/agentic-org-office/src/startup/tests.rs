@@ -3,8 +3,8 @@
 use crate::test_teardown::teardown_failed;
 
 use super::*;
-use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
-use org_proto::{DbKey, GrantKey, OfficeRole, RecoveryCode};
+use org_office_launch::{CreateLine, HandoffFd, OfficeLine};
+use org_proto::{GrantKey, OfficeRole, OfficeSecretsKey, RecoveryCode};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, Write};
@@ -43,20 +43,17 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
 fn handoff(op: FirstLine) -> Handoff {
     match op {
         FirstLine::Create => Handoff::Create {
-            db_key: DbKey::from_bytes([0xb3; 32]),
+            office_secrets_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+            recovery_code: Some(RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap()),
             fds: vec![HandoffFd::Transfer],
         },
         FirstLine::Start => Handoff::Start {
-            db_key: DbKey::from_bytes([0xb3; 32]),
+            office_secrets_key: Some(OfficeSecretsKey::from_bytes([0xb3; 32])),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         },
-        FirstLine::Discard => Handoff::Discard {
-            db_key: None,
-            fds: vec![],
-        },
+        FirstLine::Discard => Handoff::Discard { fds: vec![] },
     }
 }
 
@@ -120,7 +117,7 @@ fn launch(line: &HostFirstLine) -> (TestControl, File) {
 
 fn launch_with_fence(line: &HostFirstLine, fence: Arc<Mutex<()>>) -> (TestControl, File) {
     let mut bytes = vec![];
-    v3::write_first_line(&mut bytes, line).unwrap();
+    org_office_launch::write_first_line(&mut bytes, line).unwrap();
     // Subsequent pipe lines are never decoded, even if they look like secret commands.
     bytes.extend_from_slice(b"garbage\n{\"db_key\":\"unparsed\"}\n");
     control_with_fence(&bytes, fence)
@@ -140,7 +137,7 @@ fn accept(listener: UnixListener) -> (UnixStream, BufReader<UnixStream>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(
         event(&mut reader),
-        json!({"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
+        json!({"v":1,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
     );
     (stream, reader)
 }
@@ -198,11 +195,11 @@ fn stdout_is_empty(mut output: File) {
     output.rewind().unwrap();
     let mut bytes = vec![];
     output.read_to_end(&mut bytes).unwrap();
-    assert!(bytes.is_empty(), "v3 wrote to stdout");
+    assert!(bytes.is_empty(), "the launch wrote to stdout");
 }
 
 #[test]
-fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading() {
+fn launch_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     for op in [FirstLine::Create, FirstLine::Start] {
         let (_dir, listener, path) = listener();
@@ -211,37 +208,41 @@ fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading
         let sender = std::thread::spawn(move || {
             let (mut stream, mut reader) = accept(listener);
             stream
-                .write_all(&v3::encode_handoff(&handoff(op)).unwrap())
+                .write_all(&org_office_launch::encode_handoff(&handoff(op)).unwrap())
                 .unwrap();
             // The complete header grants no receipt: ownership requires the marker/fd.
             assert!(
                 !org_socket::poll_readable(stream.as_raw_fd(), Duration::from_millis(100)).unwrap()
             );
-            send_fds(&stream, v3::FD_MARKER, &[transfer.as_raw_fd()]);
+            send_fds(
+                &stream,
+                org_office_launch::FD_MARKER,
+                &[transfer.as_raw_fd()],
+            );
             assert_eq!(
                 event(&mut reader),
-                json!({"v":3,"event":"fds_received","of":"handoff"})
+                json!({"v":1,"event":"fds_received","of":"handoff"})
             );
             drop(transfer); // The real Mac topology: only the worker owns this end now.
             host_end.send(b"owned").unwrap();
             stream.write_all(b"Z").unwrap();
             assert_eq!(
                 event(&mut reader),
-                json!({"v":3,"event":"ready","socket":"/test","pid":123})
+                json!({"v":1,"event":"ready","socket":"/test","pid":123})
             );
         });
         let request = control.read(op).unwrap().unwrap();
         assert_header_wiped(true);
         match (request, op) {
             (
-                Request::V3 {
+                Request::Launch {
                     line: HostFirstLine::Create(_),
                     handoff: Handoff::Create { .. },
                 },
                 FirstLine::Create,
             )
             | (
-                Request::V3 {
+                Request::Launch {
                     line: HostFirstLine::Start(_),
                     handoff: Handoff::Start { .. },
                 },
@@ -283,26 +284,25 @@ fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading
 #[test]
 fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for key in [false, true] {
+    {
         let (_dir, listener, path) = listener();
         let (mut control, output) = launch(&first(&path, FirstLine::Discard));
         let sender = std::thread::spawn(move || {
             let (mut stream, mut reader) = accept(listener);
-            let header = Handoff::Discard {
-                db_key: key.then(|| DbKey::from_bytes([0xb3; 32])),
-                fds: vec![],
-            };
+            let header = Handoff::Discard { fds: vec![] };
             stream
-                .write_all(&v3::encode_handoff(&header).unwrap())
+                .write_all(&org_office_launch::encode_handoff(&header).unwrap())
                 .unwrap();
             // No marker: requiring one deadlocks. No receipt: first event is discarded.
-            assert_eq!(event(&mut reader), json!({"v":3,"event":"discarded"}));
+            assert_eq!(event(&mut reader), json!({"v":1,"event":"discarded"}));
         });
-        assert!(
-            matches!(control.read(FirstLine::Discard).unwrap(), Some(Request::V3 {
-            handoff: Handoff::Discard { db_key, .. }, ..
-        }) if db_key.is_some() == key)
-        );
+        assert!(matches!(
+            control.read(FirstLine::Discard).unwrap(),
+            Some(Request::Launch {
+                handoff: Handoff::Discard { .. },
+                ..
+            })
+        ));
         assert_header_wiped(true);
         assert!(control.transfer.is_none());
         assert!(!control.failed_rights());
@@ -383,7 +383,7 @@ fn handoff_fault_child() {
     let sender = std::thread::spawn(move || {
         let (mut stream, _reader) = accept(listener);
         let (fd, _other) = UnixDatagram::pair().unwrap();
-        let mut header = v3::encode_handoff(&handoff(FirstLine::Create)).unwrap();
+        let mut header = org_office_launch::encode_handoff(&handoff(FirstLine::Create)).unwrap();
         match case.as_str() {
             "poison_fence" => {
                 // Configure the host and receive Ready before poisoning. No header byte is
@@ -394,7 +394,7 @@ fn handoff_fault_child() {
                     panic!("synthetic poisoned receive/spawn fence");
                 });
                 let _ = stream.write_all(&header);
-                let _ = try_send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
+                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
             }
             "poison_fence_marker" => {
                 stream.write_all(&header).unwrap();
@@ -404,7 +404,7 @@ fn handoff_fault_child() {
                     let _guard = fence.lock().unwrap();
                     panic!("poison original caller fence only after complete header");
                 });
-                send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
+                send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
                 resume.send(()).unwrap();
             }
             "early_fd" => {
@@ -412,7 +412,7 @@ fn handoff_fault_child() {
                 let _ = stream.write_all(&header[1..]);
                 // A later correct marker makes silent loss of the early fd observable:
                 // an ordinary-read header mutant would otherwise fail only at marker EOF.
-                let _ = try_send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
+                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
             }
             "ctrunc_header" => {
                 stream.write_all(&header[..16]).unwrap();
@@ -427,9 +427,11 @@ fn handoff_fault_child() {
             }
             "wrong_op" => {
                 stream
-                    .write_all(&v3::encode_handoff(&handoff(FirstLine::Start)).unwrap())
+                    .write_all(
+                        &org_office_launch::encode_handoff(&handoff(FirstLine::Start)).unwrap(),
+                    )
                     .unwrap();
-                let _ = try_send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
+                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
             }
             "bad_version" => {
                 header[5] = b'4';
@@ -460,11 +462,15 @@ fn handoff_fault_child() {
                 stream.write_all(&header).unwrap();
                 match case.as_str() {
                     "eof_marker" => {}
-                    "zero_fds" => send_fds(&stream, v3::FD_MARKER, &[]),
-                    "extra_fds" => {
-                        send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd(), fd.as_raw_fd()])
+                    "zero_fds" => send_fds(&stream, org_office_launch::FD_MARKER, &[]),
+                    "extra_fds" => send_fds(
+                        &stream,
+                        org_office_launch::FD_MARKER,
+                        &[fd.as_raw_fd(), fd.as_raw_fd()],
+                    ),
+                    "ctrunc" => {
+                        send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd(); 8])
                     }
-                    "ctrunc" => send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd(); 8]),
                     "wrong_marker" => send_fds(&stream, 9, &[fd.as_raw_fd()]),
                     _ => panic!("unknown test case"),
                 }
@@ -590,14 +596,15 @@ fn handoff_header_accepts_exact_cap_and_refuses_one_byte_more() {
         let (mut control, output) = launch(&first(&path, FirstLine::Discard));
         let sender = std::thread::spawn(move || {
             let (mut stream, mut reader) = accept(listener);
-            let mut header = v3::encode_handoff(&handoff(FirstLine::Discard)).unwrap();
+            let mut header =
+                org_office_launch::encode_handoff(&handoff(FirstLine::Discard)).unwrap();
             header.pop();
             // Trailing JSON whitespace is legal; the only difference is the frame size.
             header.resize(size, b' ');
             header.push(b'\n');
             let _ = stream.write_all(&header);
             if size == 1024 {
-                assert_eq!(event(&mut reader), json!({"v":3,"event":"discarded"}));
+                assert_eq!(event(&mut reader), json!({"v":1,"event":"discarded"}));
             }
         });
         let result = control.read(FirstLine::Discard);
@@ -605,7 +612,7 @@ fn handoff_header_accepts_exact_cap_and_refuses_one_byte_more() {
         if size == 1024 {
             assert!(matches!(
                 result,
-                Ok(Some(Request::V3 {
+                Ok(Some(Request::Launch {
                     handoff: Handoff::Discard { .. },
                     ..
                 }))
@@ -740,7 +747,7 @@ fn handoff_framing_uses_the_move_one_header_cap_vector() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let vectors: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../crates/org-office-launch/test-vectors/v3/transfer-records.json"
+        "/../../crates/org-office-launch/test-vectors/launch/transfer-records.json"
     )))
     .unwrap();
     assert_eq!(vectors["header_max_bytes"], HANDOFF_HEADER_MAX_BYTES);
@@ -1040,7 +1047,7 @@ fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_f
         let mut values = Vec::new();
         for _ in 0..33 {
             let value: Value = frame::read_message(&mut peer).unwrap().unwrap();
-            assert_eq!(value["v"], 3);
+            assert_eq!(value["v"], 1);
             values.push(value);
         }
         values
@@ -1297,9 +1304,13 @@ fn a_failed_handshake_write_ends_the_rendezvous(at: HandshakeWrite) {
         }
         let (stream, _reader) = accept(listener);
         (&stream)
-            .write_all(&v3::encode_handoff(&handoff(FirstLine::Start)).unwrap())
+            .write_all(&org_office_launch::encode_handoff(&handoff(FirstLine::Start)).unwrap())
             .unwrap();
-        send_fds(&stream, v3::FD_MARKER, &[transfer.as_raw_fd()]);
+        send_fds(
+            &stream,
+            org_office_launch::FD_MARKER,
+            &[transfer.as_raw_fd()],
+        );
         let _ = hold.recv_timeout(WAIT);
     });
     let failed = control.read(FirstLine::Start);
@@ -1335,7 +1346,7 @@ fn explicit_drain_teardown_names_an_open_pipe_writer_and_joins_after_eof() {
     let (_dir, listener, path) = listener();
     let (input, mut writer) = std::io::pipe().unwrap();
     let mut header = Vec::new();
-    v3::write_first_line(&mut header, &first(&path, FirstLine::Discard)).unwrap();
+    org_office_launch::write_first_line(&mut header, &first(&path, FirstLine::Discard)).unwrap();
     writer.write_all(&header).unwrap();
     let mut control = Control::new(
         ControlPipe {
@@ -1347,7 +1358,7 @@ fn explicit_drain_teardown_names_an_open_pipe_writer_and_joins_after_eof() {
     let host = std::thread::spawn(move || {
         let (mut stream, _) = accept(listener);
         stream
-            .write_all(&v3::encode_handoff(&handoff(FirstLine::Discard)).unwrap())
+            .write_all(&org_office_launch::encode_handoff(&handoff(FirstLine::Discard)).unwrap())
             .unwrap();
         // Keep the rendezvous until the worker has committed its handoff read.
         let mut byte = [0];
@@ -1359,7 +1370,7 @@ fn explicit_drain_teardown_names_an_open_pipe_writer_and_joins_after_eof() {
     });
     assert!(matches!(
         control.read(FirstLine::Discard).unwrap(),
-        Some(Request::V3 { .. })
+        Some(Request::Launch { .. })
     ));
     let (release, released) = std::sync::mpsc::channel();
     // Even an ignored-deadline counterfactual eventually gets real pipe EOF.

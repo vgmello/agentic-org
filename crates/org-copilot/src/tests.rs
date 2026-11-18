@@ -629,7 +629,7 @@ fn text_that_looks_like_a_secret_is_refused_without_echoing_it() {
         "stripe sk_live_abcdefghijklmnop1234",
         "glpat-abcdefghijklmnop1234",
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuv",
-        // An office app token: 64 lowercase hex digits.
+        // An office secret's wire form: 64 lowercase hex digits.
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     ];
     let c = copilot(FakeRuntime::new([]));

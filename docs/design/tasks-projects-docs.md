@@ -18,8 +18,8 @@ task type has a `T-` reference minted by the office that creates it, and a durab
 immutable history. A project has an accountable team and may use several registered
 repositories, each with its own integration branch. Project, task, feature and
 knowledge records live in the remote organization repository, mirrored as durable
-files and indexed in a projection. Private task notes have a separate durable,
-author-only store. Runtime caches, agent placement and code worktrees are separate
+files and indexed in a projection. Private task notes have a separate durable
+store: a note is read by its author and by people, never by another agent. Runtime caches, agent placement and code worktrees are separate
 from all of these.
 
 ## Decisions
@@ -43,10 +43,15 @@ from all of these.
    authored fields, never calculated from task completion.
 6. **Supporting documents have explicit scope:** a required project and at most one
    feature, release or deployment of the same project. `feature.md` is not duplicated
-   as a supporting document.
-7. **Privacy is separate.** Shared comments stay shared. Private notes are author-only
-   records with no administrator exception, outside organization Git, shared history,
-   shared search and shared feeds.
+   as a supporting document. Project-wide documents live in one tree per project
+   with one index, and a task may name the issued document versions it realizes
+   ([development process design](development-processes.md#8-the-project-documentation-tree),
+   [document 18](organization-data/18-development-processes-and-project-documentation.md)).
+7. **Privacy is separate.** Shared comments stay shared. A private task note is edited
+   and deleted only by its author. It is read by its author and by any person who can
+   read the task, and never by another agent
+   ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). Notes are kept outside
+   organization Git, shared history, shared search and shared feeds.
 8. **No workflow engines in v1.** Areas, Undo, advanced checklist engines, automatic
    feature, bug or request transitions and process execution are not part of v1.
 
@@ -61,7 +66,7 @@ Paths are inside the organization repository, not this software repository.
 | Project task, any type | `projects/<project-id>/work/tasks/<task-id>.md` | One task row with the owner team |
 | Projectless task, any type | `teams/<team-id>/.../work/tasks/<task-id>.md` | Under the full team path; no copy in a project |
 | Feature definition | `projects/<project-id>/features/<feature-id>/feature.md` | Feature row and derived full slug |
-| Supporting knowledge | Project, feature, release or deployment folders (document 02) | Indexed documents with explicit scope and stable-ID file names |
+| Supporting knowledge | Project-wide: the project's documentation tree `projects/<project-id>/docs/` with its `index.yaml` (document 18). Feature, release or deployment: beside that record (document 02) | Indexed documents with explicit scope; readable paths in the tree, stable-ID file names beside a record |
 | Comments, checklists, watchers, questions, waits | Task front matter | Shared operational projection |
 | Task history | `work-history/tasks/<task-id>/<revision>.json` | Immutable `task_events` |
 | HQ-allocated numbers | `identity/counters/` and `identity/allocations/` | HQ's acceptance journal holds them until their files are written |
@@ -79,9 +84,8 @@ Paths are inside the organization repository, not this software repository.
 │   │   ├── designs/<document-id>.md
 │   │   ├── decisions/<document-id>.md
 │   │   └── reports/<document-id>.md
-│   ├── designs/<document-id>.md
-│   ├── decisions/<document-id>.md
-│   ├── reports/<document-id>.md
+│   ├── docs/                       # project-wide documents, diagrams and images, with index.yaml
+│   ├── docs-history/<document-id>/<version>.md
 │   ├── processes/<document-id>.md
 │   ├── standards/<document-id>.md
 │   ├── releases/<release-id>/
@@ -292,11 +296,19 @@ Markdown is rendered safely, and an oversized input gets an explicit size error.
 
 ### 2.2 Who may do what
 
+Any active employee of the organization, person or agent, creates, edits, assigns
+and moves tasks, at its own discretion; there is no separate task capability, and
+being assigned, leading a team or belonging to a project is not required
+([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). The office still checks every
+call: the caller is an active employee bound as itself, and the change is valid for
+the task. A paused, offboarded or deactivated employee is refused. Deleting a task,
+changing a project's or a team's settings, and budgets keep their own rules.
+
 Authentication and authorization are separate from project ownership, lead
 management and assignment. Reporter and update actors come from the admitted
 connection, and a forged actor is refused. A person's request carries the person's
 principal and a host grant; an agent's carries its run's binding. Access to shared
-work never extends to private notes.
+work never gives an agent another author's private notes.
 
 ### 2.3 IDs, idempotency and conflicts
 
@@ -434,13 +446,13 @@ offices call it as the bound author; nothing replicates it and it never enters G
 HQ is unavailable, private edits cannot be acknowledged. Another host accepts writes
 only after fencing.
 
-Reads, lists, author-private search, edits and deletion are scoped by organization
-**and the authenticated author**, and by task and note where relevant. An employee
-author is the stable employee ID; the owner is the stable authenticated subject.
-Unauthorized and missing IDs get the same not-found response. Creating a note also
-checks access to the task. A note stays readable by its author after the task is
-archived or deleted; assignment, leadership and administrator roles never grant
-access.
+Edits and deletion are scoped by organization **and the authenticated author**, and
+by task and note where relevant. An author is the stable employee ID of a person or
+an agent. Reads, lists and search return the caller's own notes and, to a person who
+can read the task, every author's notes on it, read-only. An agent never gets another
+author's note, whatever its assignment or leadership. Unauthorized and missing IDs get
+the same not-found response. Creating a note also checks access to the task. A note
+stays readable by its author after the task is archived or deleted.
 
 A create, edit or delete and its author-scoped receipt commit in one private
 transaction. The receipt is checked before the revision, so a retry returns the
@@ -490,7 +502,8 @@ on retry, and reports a conflict or unknown outcome without claiming success. Co
 that need a project take it from the agent's context, or require it when there is none
 (ADR-0019, "Default project for commands"). Lists default to one item per line, with
 documented JSON output and actionable refusals that leak no inaccessible identity.
-Private notes are reachable only through the separate author-only capability. Help
+Private notes are reachable only through `agent-os task note`, which gives an agent its
+own notes and never another author's. Help
 reflects only implemented commands.
 
 ## 6. Time figures

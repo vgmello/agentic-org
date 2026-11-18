@@ -1,14 +1,20 @@
-//! Key custody: where the host keeps every office's database key.
+//! Key custody: where the host keeps every office's secrets key.
 //!
-//! The host creates each office's key (`secrets::generate_db_key`), stores it here before the
+//! The host creates each office's key (`secrets::generate_office_secrets_key`), stores it here before the
 //! office's first `--create`, loads it before every `--office` and `--discard`, and sends it on
 //! the first line of the launch pipe (`org-office-launch`). Its servers never touch a key store.
 //! A key is in the host's memory only from its creation or load until that first line is written.
 //!
-//! [`KeyStore`] is the host's own abstraction: the supervisor depends on it, never on a
-//! particular store. The stores:
-//! - **Release builds:** the Data Protection keychain, in the host's access group
+//! [`OfficeSecretsKeys`] is the host's own contract: the supervisor and provisioning depend on it,
+//! never on a particular store or platform. The adapters:
+//! - **Release builds on macOS:** the Data Protection keychain, in the host's access group
 //!   (`keychain`), so other code gets `errSecItemNotFound`, never a prompt.
+//! - **Release builds on any other operating system:** `unsupported`, which refuses every call
+//!   with a reported reason ([`KeyStoreError::Unsupported`]). It is chosen before any Keychain
+//!   precondition is checked, so such a host never reports a macOS-only reason (no access group,
+//!   not hardened). `platform` is the only place that chooses between these two by
+//!   `cfg(target_os)`, and it owns the Keychain preconditions (the access group, its entitlement
+//!   and the host's own hardening).
 //! - **Debug builds:** plain files in a development folder (`dev`), so a debug host and the tests
 //!   never write a real Keychain item. A debug host without that folder refuses to start.
 //! - **Unit tests:** an in-memory store with fault injection (`memory`).
@@ -25,11 +31,12 @@
 
 #[cfg(debug_assertions)]
 mod dev;
-#[cfg(target_os = "macos")]
 mod keychain;
 #[cfg(test)]
 pub(crate) mod memory;
+mod platform;
 mod sweep;
+mod unsupported;
 
 pub(crate) use sweep::sweep_orphans;
 
@@ -38,22 +45,22 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 
-use crate::code_signing::{hardened_and_clean, Signing};
+use crate::code_signing::Signing;
 
-/// Where the host keeps every office's database key (see the module docs). Office ids are plain
+/// Where the host keeps every office's secrets key (see the module docs). Office ids are plain
 /// ids ([`org_office_launch::is_plain_id`]); a store refuses any other
 /// ([`KeyStoreError::NotPlainId`]).
-pub(crate) trait KeyStore: Send + Sync {
+pub(crate) trait OfficeSecretsKeys: Send + Sync {
     /// Stores `key` as office `office_id`'s key. Add-only: an existing item is
     /// [`KeyStoreError::Exists`] and is left as it is. On any other error nothing is stored.
-    fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError>;
+    fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError>;
 
     /// Office `office_id`'s key, or `None` if the store has no item for it. An item that isn't a
-    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. A `DbKey` keeps its bytes
+    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. An `OfficeSecretsKey` keeps its bytes
     /// on the heap, so moving it moves a pointer; drop it as soon as its line is written.
-    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError>;
+    fn load(&self, office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError>;
 
     /// Deletes office `office_id`'s key. A missing item is `Ok`.
     fn delete(&self, office_id: &str) -> Result<(), KeyStoreError>;
@@ -64,49 +71,44 @@ pub(crate) trait KeyStore: Send + Sync {
 }
 
 /// Why a key store call failed. It never holds key bytes, and neither does its `Display`.
+/// Each adapter constructs only the variants it can meet; a build without that adapter
+/// leaves them unused, which is not dead code to remove.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum KeyStoreError {
     /// `create`: the store already has an item for that office (it was left as it is).
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Exists,
     /// `load`: the item isn't a key.
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Corrupt,
     /// The office id isn't a plain id.
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     NotPlainId,
     /// The Keychain failed with this `OSStatus`.
-    #[cfg(any(target_os = "macos", test))]
     Os(i32),
     /// The development store's file I/O failed.
     Io(io::Error),
+    /// This operating system has no office secrets key adapter (`unsupported`).
+    Unsupported,
 }
 
 impl KeyStoreError {
-    pub(crate) fn means_key_missing(&self) -> bool {
-        #[cfg(any(target_os = "macos", debug_assertions, test))]
-        {
-            matches!(self, Self::Corrupt)
-        }
-        #[cfg(not(any(target_os = "macos", debug_assertions, test)))]
-        {
-            false
-        }
+    /// Whether the office's key is to be treated as missing: only an item that isn't a key.
+    /// Every other error, a refused platform included, is a store failure.
+    pub(crate) fn means_no_key(&self) -> bool {
+        matches!(self, Self::Corrupt)
     }
 }
 
 impl fmt::Display for KeyStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
-            KeyStoreError::Corrupt => f.write_str("the stored item isn't a database key"),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
+            KeyStoreError::Corrupt => f.write_str("the stored item isn't an office secrets key"),
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
-            #[cfg(any(target_os = "macos", test))]
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
+            KeyStoreError::Unsupported => f.write_str(
+                "this operating system has no office secrets key store (only macOS is implemented)",
+            ),
         }
     }
 }
@@ -115,7 +117,6 @@ impl std::error::Error for KeyStoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             KeyStoreError::Io(e) => Some(e),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             _ => None,
         }
     }
@@ -134,20 +135,25 @@ pub(crate) enum StoreError {
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     NoDevKeyDir,
     /// A release build has no Keychain access group compiled in.
+    // Keychain preconditions: only the macOS adapter (`platform`) checks them.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     NoKeychainGroup,
     /// A release build's access group isn't in its own `keychain-access-groups` entitlement.
+    // Keychain preconditions: only the macOS adapter (`platform`) checks them.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     KeychainGroupNotEntitled { group: String },
     /// A release build's own signature can't be read, or it isn't signed with the hardened
     /// runtime, or is entitled to let other code into it (`code_signing::REJECTED_ENTITLEMENTS`):
     /// any same-user process could then read the keys out of it.
-    #[cfg_attr(debug_assertions, allow(dead_code))]
+    #[cfg_attr(any(debug_assertions, not(target_os = "macos")), allow(dead_code))]
     NotHardened,
 }
 
 /// The key store this host uses. Debug builds: the development folder `dev_key_dir`
 /// (absolute, outside the office `home`), and [`StoreError::NoDevKeyDir`] without one, so a
-/// debug host never writes a real Keychain item. Release builds: the Data Protection keychain
-/// in the access group compiled in as `ORG_HOST_KEYCHAIN_GROUP`: [`StoreError::NoKeychainGroup`]
+/// debug host never writes a real Keychain item. Release builds on an operating system with no
+/// key store: the refusing adapter ([`KeyStoreError::Unsupported`] on every call), before any of
+/// the checks below. Release builds on macOS: the Data Protection keychain in the access group compiled in as `ORG_HOST_KEYCHAIN_GROUP`: [`StoreError::NoKeychainGroup`]
 /// without one. `own_signing` (the host's own signing information, read once) must show both
 /// that group in its `keychain-access-groups` entitlement
 /// ([`StoreError::KeychainGroupNotEntitled`] otherwise, so a misbuilt host fails at startup
@@ -159,7 +165,7 @@ pub(crate) fn store_for(
     home: &Path,
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     #[cfg(debug_assertions)]
     {
         let _ = own_signing;
@@ -172,7 +178,7 @@ pub(crate) fn store_for(
     #[cfg(not(debug_assertions))]
     {
         let _ = (dev_key_dir, home);
-        release_store_scoped(
+        platform::release_keys(
             option_env!("ORG_HOST_KEYCHAIN_GROUP"),
             instance_id,
             own_signing,
@@ -184,7 +190,7 @@ pub(crate) fn store_for(
 /// `offices/` it would look like an unfinished office (and be discarded with every key in it),
 /// and anywhere in the home it would put plain-text keys there.
 #[cfg(debug_assertions)]
-fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, StoreError> {
+fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     let inside = |dir: &Path| {
         let lexical = dir.starts_with(home);
         let canonical = match (dir.canonicalize(), home.canonicalize()) {
@@ -199,76 +205,6 @@ fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, Store
         }
         _ => Err(StoreError::NoDevKeyDir),
     }
-}
-
-/// The release store for the access group `group` (`ORG_HOST_KEYCHAIN_GROUP` at build time),
-/// once the host's own signing information (`own_signing`) shows it may use it and can be
-/// trusted with the keys ([`self_trusted`]).
-///
-/// The live check can't run in the tests: an unsigned (or ad-hoc signed) test binary has no
-/// `keychain-access-groups` and no hardened runtime, so it would always refuse. The decision,
-/// [`self_trusted`], is tested on synthetic signing information; the reading is
-/// `code_signing`'s, tested the same way. Check it live on the first signed build.
-#[cfg(test)]
-fn release_store(
-    group: Option<&str>,
-    own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
-    release_store_scoped(group, None, own_signing)
-}
-
-#[cfg_attr(debug_assertions, allow(dead_code))]
-fn release_store_scoped(
-    group: Option<&str>,
-    instance_id: Option<&str>,
-    own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
-    let group = match group {
-        Some(group) if !group.trim().is_empty() => group,
-        _ => return Err(StoreError::NoKeychainGroup),
-    };
-    self_trusted(group, own_signing().as_ref())?;
-    #[cfg(target_os = "macos")]
-    {
-        Ok(Arc::new(match instance_id {
-            Some(id) => keychain::Keychain::scoped(group, id),
-            None => keychain::Keychain::new(group),
-        }))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = instance_id;
-        Err(StoreError::NoKeychainGroup)
-    }
-}
-
-/// The decision, pure: a host whose own signing information is `own` may keep keys in the
-/// access group `group` only if that group is in its `keychain-access-groups`, and it runs
-/// hardened with none of the entitlements that let other code in
-/// (`code_signing::hardened_and_clean`). Information that couldn't be read trusts nothing.
-#[cfg_attr(debug_assertions, allow(dead_code))]
-fn self_trusted(group: &str, own: Option<&Signing>) -> Result<(), StoreError> {
-    // Its own signature can't be read: nothing about it can be trusted.
-    let Some(own) = own else {
-        return Err(StoreError::NotHardened);
-    };
-    let entitled = own.keychain_access_groups.as_deref();
-    if !group_entitled(group, entitled) {
-        return Err(StoreError::KeychainGroupNotEntitled {
-            group: group.to_owned(),
-        });
-    }
-    if !hardened_and_clean(own) {
-        return Err(StoreError::NotHardened);
-    }
-    Ok(())
-}
-
-/// Whether the access group `group` is one of the host's own `entitled` groups (exactly). No
-/// entitlement, or one that couldn't be read, entitles nothing.
-#[cfg_attr(debug_assertions, allow(dead_code))]
-fn group_entitled(group: &str, entitled: Option<&[String]>) -> bool {
-    entitled.is_some_and(|groups| groups.iter().any(|g| g == group))
 }
 
 #[cfg(test)]
@@ -294,8 +230,10 @@ mod tests {
         })
         .unwrap();
         let office = "SAMEOFFICE";
-        a.create(office, &DbKey::from_bytes([1; 32])).unwrap();
-        b.create(office, &DbKey::from_bytes([2; 32])).unwrap();
+        a.create(office, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
+        b.create(office, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
         assert_eq!(a.list().unwrap(), vec![office]);
         assert_eq!(b.list().unwrap(), vec![office]);
         let before = b.load(office).unwrap().unwrap();
@@ -319,14 +257,15 @@ mod tests {
 
     #[test]
     fn only_a_corrupt_item_means_the_key_is_missing() {
-        assert!(KeyStoreError::Corrupt.means_key_missing());
+        assert!(KeyStoreError::Corrupt.means_no_key());
         for error in [
             KeyStoreError::Exists,
             KeyStoreError::NotPlainId,
             KeyStoreError::Os(-25308),
             KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+            KeyStoreError::Unsupported,
         ] {
-            assert!(!error.means_key_missing(), "{error:?}");
+            assert!(!error.means_no_key(), "{error:?}");
         }
     }
 
@@ -338,6 +277,7 @@ mod tests {
             KeyStoreError::NotPlainId,
             KeyStoreError::Os(-25308),
             KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+            KeyStoreError::Unsupported,
         ]
         .map(|e| e.to_string());
         assert!(shown[3].contains("-25308"), "{}", shown[3]);
@@ -345,110 +285,6 @@ mod tests {
             assert!(!text.is_empty());
             assert!(!text.bytes().any(|b| b == b'\n'), "{text}");
         }
-    }
-
-    const GROUP: &str = "TEAMID1234.org.agentic.host";
-    const HARDENED: u32 = crate::code_signing::HARDENED_RUNTIME;
-
-    /// Signing information with these `flags`, access `groups` and boolean `entitlements`.
-    fn signing(flags: Option<u32>, groups: &[&str], entitlements: &[(&str, bool)]) -> Signing {
-        Signing {
-            flags,
-            entitlements: Some(
-                entitlements
-                    .iter()
-                    .map(|(key, value)| ((*key).to_owned(), Some(*value)))
-                    .collect(),
-            ),
-            keychain_access_groups: Some(groups.iter().map(|g| (*g).to_owned()).collect()),
-        }
-    }
-
-    #[test]
-    fn a_release_build_without_an_access_group_has_no_store() {
-        let mut asked = false;
-        for group in [None, Some(""), Some("  ")] {
-            let store = release_store(group, || {
-                asked = true;
-                Some(signing(Some(HARDENED), &[GROUP], &[]))
-            });
-            assert!(
-                matches!(store, Err(StoreError::NoKeychainGroup)),
-                "{group:?}"
-            );
-        }
-        assert!(!asked, "the signing information was read without a group");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_release_build_needs_its_access_group_in_its_own_entitlement() {
-        for groups in [
-            vec![],
-            vec!["TEAMID1234.other"],
-            vec![
-                "TEAMID1234.org.agentic.host.x",
-                "teamid1234.org.agentic.host",
-            ],
-        ] {
-            let own = signing(Some(HARDENED), &groups, &[]);
-            let err = self_trusted(GROUP, Some(&own)).unwrap_err();
-            assert_eq!(
-                err,
-                StoreError::KeychainGroupNotEntitled {
-                    group: GROUP.to_owned()
-                },
-                "{groups:?}"
-            );
-        }
-        // Signing information that couldn't be read trusts nothing.
-        assert_eq!(self_trusted(GROUP, None), Err(StoreError::NotHardened));
-        let entitled = signing(Some(HARDENED), &["TEAMID1234.other", GROUP], &[]);
-        assert_eq!(self_trusted(GROUP, Some(&entitled)), Ok(()));
-        // Choosing the store touches no Keychain item.
-        assert!(release_store(Some(GROUP), || Some(entitled)).is_ok());
-    }
-
-    /// M1: an entitled host that isn't hardened, or lets other code in, could give every key
-    /// away: refused.
-    #[test]
-    fn a_release_build_must_itself_be_hardened_and_closed_to_other_code() {
-        let entitled =
-            |flags, entitlements: &[(&str, bool)]| signing(flags, &[GROUP], entitlements);
-        for own in [
-            entitled(None, &[]),
-            entitled(Some(0x2), &[]),
-            entitled(
-                Some(HARDENED),
-                &[(
-                    "com.apple.security.cs.allow-dyld-environment-variables",
-                    true,
-                )],
-            ),
-            entitled(
-                Some(HARDENED),
-                &[("com.apple.security.cs.disable-library-validation", true)],
-            ),
-            entitled(
-                Some(HARDENED),
-                &[("com.apple.security.get-task-allow", true)],
-            ),
-        ] {
-            assert_eq!(
-                self_trusted(GROUP, Some(&own)),
-                Err(StoreError::NotHardened),
-                "{own:?}"
-            );
-            assert!(matches!(
-                release_store(Some(GROUP), || Some(own)),
-                Err(StoreError::NotHardened)
-            ));
-        }
-        let clean = entitled(
-            Some(HARDENED | 0x2),
-            &[("com.apple.security.get-task-allow", false)],
-        );
-        assert_eq!(self_trusted(GROUP, Some(&clean)), Ok(()));
     }
 
     #[cfg(debug_assertions)]

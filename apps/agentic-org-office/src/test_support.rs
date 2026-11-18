@@ -10,7 +10,7 @@ use sha2::Sha256;
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
 
-/// The grant key the tests launch an office with; `[7; 32]`, as the v3 handoff tests use.
+/// The grant key the tests launch an office with; `[7; 32]`, as the launch handoff tests use.
 pub const TEST_GRANT_KEY: [u8; 32] = [7; 32];
 
 /// The test grant key as the launch hands it over.

@@ -33,9 +33,9 @@ export ORG_OFFICE_DEV_KEY_DIR="$HQ_DEV/keys"
 ```
 
 A debug host refuses to start without `ORG_OFFICE_DEV_KEY_DIR`, an absolute folder
-outside the office home where it keeps office database keys as plain files instead of
-in the Keychain. Those keys exist only because the office database is encrypted today;
-increment A1 removes that encryption. Keep socket paths short: macOS limits a socket
+outside the office home where it keeps the offices' secrets keys as plain files instead
+of in the Keychain. The office databases are not encrypted (ADR-0016); a secrets key
+only wraps the office's private keys. Keep socket paths short: macOS limits a socket
 path to 103 bytes.
 
 ## 2. Build

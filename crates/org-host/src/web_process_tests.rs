@@ -1,11 +1,11 @@
 //! F4 production-path proof (GW-01 falsification): the real host, started for a
 //! registered instance whose registry holds a seeded administrator, spawns the
 //! real built `agentic-org-web`, which serves `/api/v1/version` over loopback
-//! HTTP. Browser sign-in waits for stored sessions (FC-159): the session routes
-//! are JSON 404 and sign in nobody.
+//! HTTP. A protected session route without the browser pair is 401 before any
+//! host call; routes not yet built are JSON 404.
 //! The administrator is seeded directly (A2 D1: the reverse bootstrap is gone and
-//! A3 creates administrators through a one-time link); HQ is provisioned over
-//! `host.sock` exactly as before.
+//! A3 creates administrators through a one-time link). The web process starts
+//! once the instance is registered and authenticated, before any organization.
 //! Only disposable `/private/tmp` roots and debug development custody are used;
 //! debug `ServerCheck::Skip` establishes no release-signing evidence.
 use crate::{
@@ -33,6 +33,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod browser_sessions;
 mod recovery_custody;
 
 const WAIT: Duration = Duration::from_secs(60);
@@ -44,15 +45,21 @@ struct Reply {
     body: serde_json::Value,
 }
 fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str) -> Reply {
+    send(
+        address,
+        &format!(
+            "{method} {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}",
+            body.len()
+        ),
+    )
+}
+/// Sends `request` exactly as written and reads the whole reply.
+fn send(address: SocketAddr, request: &str) -> Reply {
     let mut stream = TcpStream::connect(address).expect("web process listener");
     stream.set_read_timeout(Some(WAIT)).unwrap();
     // One write for head and body: a split write can leave late body bytes unread
     // when the web process answers early, and its close then resets the socket
     // (a known transport limit tracked for A3, not what this test proves).
-    let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}",
-        body.len()
-    );
     stream.write_all(request.as_bytes()).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
@@ -79,17 +86,25 @@ fn assert_missing(reply: &Reply, what: &str) {
     );
 }
 
-/// Every browser session route is absent until FC-159.
+/// Without a cookie and proof the protected session routes are 401 and set no
+/// session cookie; routes not yet built stay JSON 404.
 fn assert_no_sign_in(address: SocketAddr) {
-    let credentials = serde_json::json!({ "login": "Owner", "password": PASSWORD }).to_string();
     for (method, path, body) in [
-        ("POST", "/api/v1/session/sign-in", credentials.as_str()),
         ("GET", "/api/v1/session", ""),
-        ("POST", "/api/v1/session/refresh", "{}"),
-        ("POST", "/api/v1/session/sign-out", "{}"),
+        ("GET", "/api/v1/organizations", ""),
     ] {
-        assert_missing(&http(address, method, path, "", body), path);
+        let reply = http(address, method, path, "", body);
+        assert_eq!(reply.status, 401, "{path}: {}", reply.headers);
+        assert_eq!(reply.body["error"]["code"], "not_authorized", "{path}");
+        assert!(
+            !reply.headers.to_ascii_lowercase().contains("set-cookie"),
+            "{path}: no cookie"
+        );
     }
+    assert_missing(
+        &http(address, "POST", "/api/v1/session/refresh", "", "{}"),
+        "/api/v1/session/refresh",
+    );
 }
 
 fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
@@ -157,19 +172,32 @@ fn web_pid(program: &Path) -> String {
     pids.into_iter().next().unwrap()
 }
 
-/// A registered instance as the service host will find it after setup and the
-/// administrator's registration: the instance reserved with its browser address,
-/// its registry created under the host and instance locks, one administrator.
-/// Returns the started host and its `host.sock` path.
-fn start_registered_host(
+/// What the fixture registry holds before the host first starts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Seed {
+    /// One administrator with [`PASSWORD`], as after the browser registration.
+    Administrator,
+    /// No account; one pending registration link, as `admin.link.initial` leaves it.
+    RegistrationLink,
+}
+
+/// Opens the fixture instance under `base`, runs `create` (first start only) with its
+/// office home and custody, and starts the host the way the registered start does,
+/// including the instance name `instance.view` reports. Returns the host and its
+/// `host.sock` path. A restart passes a `create` that does nothing.
+pub(super) fn host_at(
     mut config: Config,
     base: &Path,
-    listen: &org_host_control::listen::ListenConfig,
+    create: impl FnOnce(
+        &crate::instance::registry::Instance,
+        &Path,
+        &dyn crate::host_secrets::HostSecrets,
+    ),
 ) -> (Host, PathBuf) {
     config.admit_runtime().unwrap();
     let registry = Registry::open(&base.join("locator"), &base.join("temp")).unwrap();
+    registry.restore_temp_folders().unwrap();
     let instance = registry.reserve(None, &base.join("instance")).unwrap();
-    instance.set_browser(listen).unwrap();
     let paths = instance.prepare_layout().unwrap();
     let layout = Layout::with_runtime(&paths.office_home, instance.temp_folder());
     layout.check_socket_paths().unwrap();
@@ -182,49 +210,96 @@ fn start_registered_host(
         crate::code_signing::own_signing,
     )
     .unwrap();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-    let init = HostDbInit {
-        instance_id: instance.id().to_owned(),
-        clock_high_ms: now,
-    };
-    let db = HostDb::create(&paths.office_home, &*custody, &init).unwrap();
-    let verifier = hash_password(&Password::new(PASSWORD.into()).unwrap()).unwrap();
-    db.seed_account(
-        &crate::ids::generate().unwrap(),
-        "Owner",
-        &verifier,
-        true,
-        now,
-    )
-    .unwrap();
-    drop(db);
+    create(&instance, &paths.office_home, &*custody);
+    let name = instance.name().to_owned();
     let socket = layout.host_socket.clone();
     let host =
         Host::start_prepared(config, Some(instance), Some((lock, Arc::clone(&custody)))).unwrap();
+    assert!(host.service.install_instance_name(&name));
     (host, socket)
 }
 
-/// A started registered host running copies of the real worker and web images,
-/// with `wire` signed in as the seeded administrator `session` over `host.sock`.
-/// `temp` is declared last so a whole `Started` drops it after the host; a
-/// destructuring caller binds `temp` first for the same reason (bindings drop
-/// in reverse order).
-pub(super) struct Started {
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// A registered instance as the service host will find it after setup: the instance
+/// reserved with its browser address and its registry created under the host and
+/// instance locks, holding `seed`. Returns the started host, its `host.sock` path
+/// and, for [`Seed::RegistrationLink`], the link token the browser presents.
+fn start_registered_host(
+    config: Config,
+    base: &Path,
+    listen: &org_host_control::listen::ListenConfig,
+    seed: Seed,
+) -> (Host, PathBuf, Option<String>) {
+    let mut link = None;
+    let (host, socket) = host_at(config, base, |instance, home, custody| {
+        instance.set_browser(listen).unwrap();
+        let now = now_ms();
+        let init = HostDbInit {
+            instance_id: instance.id().to_owned(),
+            clock_high_ms: now,
+        };
+        let db = HostDb::create(home, custody, &init).unwrap();
+        match seed {
+            Seed::Administrator => {
+                let verifier = hash_password(&Password::new(PASSWORD.into()).unwrap()).unwrap();
+                db.seed_account(
+                    &crate::ids::generate().unwrap(),
+                    "Owner",
+                    &verifier,
+                    true,
+                    now,
+                )
+                .unwrap();
+            }
+            Seed::RegistrationLink => {
+                use crate::links::{LinkKind, OneTimeLinks, Subject};
+                let issued = db
+                    .issue_first(
+                        LinkKind::Registration,
+                        &Subject::new("administrator").unwrap(),
+                        now,
+                    )
+                    .unwrap()
+                    .expect("the first registration link");
+                link = Some(issued.token.encode().to_string());
+            }
+        }
+    });
+    (host, socket, link)
+}
+
+/// A started registered host running copies of the real worker and web images under a
+/// disposable `/private/tmp` root, before any native sign-in. `temp` is declared last
+/// so the whole value drops it after the host.
+pub(super) struct Launched {
     pub(super) address: SocketAddr,
     pub(super) program: PathBuf,
     pub(super) host: Host,
     pub(super) socket: PathBuf,
-    pub(super) wire: BufReader<UnixStream>,
-    pub(super) session: SessionHandle,
+    pub(super) link: Option<String>,
+    pub(super) base: PathBuf,
     pub(super) temp: tempfile::TempDir,
 }
 
-/// Starts [`Started`] from `ORG_TEST_OFFICE_BIN` and `ORG_TEST_WEB_BIN` under a
-/// disposable `/private/tmp` root. Uses request IDs 1 and 2.
-pub(super) fn start_signed_in() -> Started {
+/// The host configuration of the fixture under `base` (copies placed by [`launch`]).
+pub(super) fn fixture_config(base: &Path) -> Config {
+    let mut config = crate::Config::new(
+        base.join("unused-home"),
+        base.join("bin/agentic-org-office"),
+    );
+    config.dev_key_dir = Some(base.join("keys"));
+    config.dev_app_path = Some(std::env::current_exe().unwrap());
+    config
+}
+
+/// Starts [`Launched`] from `ORG_TEST_OFFICE_BIN` and `ORG_TEST_WEB_BIN`.
+pub(super) fn launch(seed: Seed) -> Launched {
     let office = std::env::var_os("ORG_TEST_OFFICE_BIN")
         .expect("ORG_TEST_OFFICE_BIN must name the built agentic-org-office");
     let web = std::env::var_os("ORG_TEST_WEB_BIN")
@@ -237,9 +312,8 @@ pub(super) fn start_signed_in() -> Started {
     }
     // The host runs the web process as the worker's sibling; the web image serves
     // `<exe dir>/ui`. Copies keep the build outputs untouched.
-    let worker = base.join("bin/agentic-org-office");
     let program = base.join("bin/agentic-org-web");
-    fs::copy(office, &worker).unwrap();
+    fs::copy(office, base.join("bin/agentic-org-office")).unwrap();
     fs::copy(web, &program).unwrap();
     fs::create_dir(base.join("bin/ui")).unwrap();
     // Startup validation hashes the entry's inline bootstrap into the CSP and
@@ -257,11 +331,43 @@ pub(super) fn start_signed_in() -> Started {
         "origin":format!("http://{address}"),"hsts":"off"
     }))
     .unwrap();
+    let (host, socket, link) = start_registered_host(fixture_config(&base), &base, &listen, seed);
+    Launched {
+        address,
+        program,
+        host,
+        socket,
+        link,
+        base,
+        temp,
+    }
+}
 
-    let mut config = crate::Config::new(base.join("unused-home"), worker);
-    config.dev_key_dir = Some(base.join("keys"));
-    config.dev_app_path = Some(std::env::current_exe().unwrap());
-    let (host, socket) = start_registered_host(config, &base, &listen);
+/// A started registered host running copies of the real worker and web images,
+/// with `wire` signed in as the seeded administrator `session` over `host.sock`.
+/// `temp` is declared last so a whole `Started` drops it after the host; a
+/// destructuring caller binds `temp` first for the same reason (bindings drop
+/// in reverse order).
+pub(super) struct Started {
+    pub(super) address: SocketAddr,
+    pub(super) program: PathBuf,
+    pub(super) host: Host,
+    pub(super) socket: PathBuf,
+    pub(super) wire: BufReader<UnixStream>,
+    pub(super) session: SessionHandle,
+    pub(super) temp: tempfile::TempDir,
+}
+
+/// Starts [`Started`] from [`launch`] with a seeded administrator. Uses request IDs 1 and 2.
+pub(super) fn start_signed_in() -> Started {
+    let Launched {
+        temp,
+        address,
+        program,
+        host,
+        socket,
+        ..
+    } = launch(Seed::Administrator);
     let stream = UnixStream::connect(&socket).unwrap();
     stream.set_read_timeout(Some(WAIT)).unwrap();
     let mut wire = BufReader::new(stream);
@@ -331,32 +437,12 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
         program,
         host,
         socket: _,
-        mut wire,
-        session,
+        wire,
+        session: _,
     } = start_signed_in();
-    // Authenticated but no HQ yet: the web process is not serving.
-    assert!(!web_ready(&host));
-    // The wired start-eligibility gate holds the supervisor before any spawn or bind:
-    // across several supervisor polls no agentic-org-web child runs and the browser
-    // port accepts nothing.
-    let window = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < window {
-        let pids = web_pids(&program);
-        assert!(
-            pids.is_empty(),
-            "web process spawned before HQ is Active: {pids:?}"
-        );
-        assert!(
-            TcpStream::connect(address).is_err(),
-            "browser port accepted before HQ is Active"
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
-    assert!(!web_ready(&host));
-    let mut id = 3;
-    provision_hq(&mut wire, &mut id, session);
-
-    // 1. Admission after HQ: the supervisor spawns and admits the real web image.
+    // 1. Registered with authentication, no organization or office at all: the
+    //    supervisor spawns and admits the real web image (lead ruling, A3 B5).
+    assert!(host.offices.offices().is_empty(), "no office");
     wait_until("web_ready", || web_ready(&host));
     wait_until("HTTP readiness", || http_ready(address));
     let version = http(address, "GET", "/api/v1/version", "", "");
@@ -389,7 +475,6 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     assert_eq!(http(address, "GET", "/api/v1/version", "", "").status, 200);
     assert_no_sign_in(address);
 
-    let _ = id;
     drop(wire);
     drop(host);
     // Host shutdown drops the web process first: no web process survives.

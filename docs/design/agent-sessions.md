@@ -70,9 +70,11 @@ The decisions this design applies:
      deadline and feeds the facts into `org-office`. It also implements `SessionAuth`
      (see [Messaging](#messaging)). `agentic-org-office` wires it in.
 3. **Durable facts, disposable projections.** Organization Git owns employee and
-   execution definitions. Protected execution journals own turn, attempt and process
-   transitions, immutable inputs, tool receipts, checkpoints and command outcomes;
-   HQ's journal owns placement generations, permits and cooldowns. The database
+   execution definitions. Protected execution record files, written through the
+   office's one acceptance journal, own turn, attempt and process transitions,
+   immutable inputs, tool receipts, checkpoints and command outcomes; HQ's own
+   record files own placement generations, permits and cooldowns. There is no
+   separate execution journal. The database
    indexes these. A runtime transcript alone never establishes whether an effect
    completed.
 4. **Identity, placement and workspaces are separate.** An employee has one home
@@ -188,13 +190,15 @@ The decisions this design applies:
        `sandboxPolicy` has no read deny, so Codex is not office-run until the profile
        holds every fixed deny in live turns.
    - **Claude's tools are an explicit allowlist:** `Read`, `Edit`, `Write`, `Glob`,
-     `Grep`, `Bash` (sandboxed) and the tools of the connectors the office granted
-     this agent, nothing else. No product command is an MCP tool, and milestones one
+     `Grep`, `Bash` (sandboxed), the tool that starts a sub-agent, and the tools of the
+     connectors the office granted this agent, nothing else. A sub-agent is part of
+     the turn and has the parent's sandbox, tools and policy, never more
+     ([ADR-0025](../adr/0025-agents-start-sub-agents.md)). No product command is an MCP tool, and milestones one
      and two grant no connector, so the MCP configuration is empty
      ([agent command line](agent-os-command-line.md), section 2.10). Claude's
      other tools act outside the office or the sandbox (cross-session messaging,
-     scheduling and remote triggers, background and sub-agent work, worktrees, web
-     access). The adapter passes the built-in names as `--tools`, the whole list as the
+     scheduling and remote triggers, work that continues in the background after a
+     result, worktrees, web access). The adapter passes the built-in names as `--tools`, the whole list as the
      inline agent's `tools`, and every other known tool in `--disallowedTools`.
      `ToolSearch` is disallowed and `ENABLE_TOOL_SEARCH=false`, so a granted
      connector's tools are never deferred. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` turns off Bash's
@@ -246,11 +250,15 @@ The decisions this design applies:
      sandbox's own real-path enforcement holds.
    - **The fixed denies override every allow rule.** If a runtime's approval bridge
      does not work, actions needing approval are denied and the run ends `blocked`.
-8. **Instructions are composed by the office** from the employee's identity and role
+8. **Instructions are composed by the office** from the product's built-in
+   [agent instructions](agent-instructions.md), which come first and are the same for
+   every agent, the employee's identity and role
    (`profile.md`), its prompt and tools (`execution.md`), the turn's explicit
-   objective, the effective processes and standards
-   ([process design](processes.md#32-delivery-to-sessions-proc-7)), built-in `agent-os`
-   help, and the project's instruction files read with the office's hardened Git from
+   objective, the effective organization processes and standards
+   ([process design](processes.md#32-delivery-to-sessions-proc-7)), the project's development process
+   with the skills for the agent's role, as a section of its own
+   ([development process design](development-processes.md#6-how-skills-reach-an-agent)),
+   built-in `agent-os` help, and the project's instruction files read with the office's hardened Git from
    each association's `integration_branch` in a verified cache. Nothing an agent
    writes in its worktree changes what the office tells the next session. Instruction
    files a runtime reads from its working directory on its own (`AGENTS.md`,
@@ -344,11 +352,15 @@ such if shown.
 
 ## How a turn runs
 
-A turn starts only from an explicit instruction, the answer to a required ask, an ask
-or a hand-off from another agent to an idle agent
-([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), or a recovery. Other
-messages, assignments and schedules never create model work by themselves.
-A second open turn returns `BUSY`.
+A turn starts only from an explicit instruction, the answer to a required ask, being
+addressed by another agent or receiving an answer to its own question while idle
+([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), a direct message or a
+mention from a person or a task assigned to the agent
+([ADR-0028](../adr/0028-an-agent-is-always-available.md)), or a recovery. Other
+messages and schedules never create model work by themselves.
+A second open turn returns `BUSY`. An agent ends a turn with one line saying what it
+did; the office keeps it as the turn's outcome summary, shown in the turn's history and
+sent to no one ([agent instructions](agent-instructions.md)).
 
 1. **Admit.** Authenticate the caller and scope, validate placement and configuration
    revisions, persist the immutable input and the actor-bound operation receipt before
@@ -368,7 +380,24 @@ A second open turn returns `BUSY`.
 6. **Handle failure.** Retry only eligible quota, rate, authentication or model
    failures. Replay only with proof of no effects, or resume a compatible checkpoint
    with completed receipts; otherwise `recovery_required`, keeping slot, workspace and
-   evidence. Never ask a model to "check its state" instead of reconciling.
+   evidence. The office reconciles what it can know itself (its processes, and the
+   receipts of product changes) and never asks a model to do that for it.
+   - **After a restart the turn continues by itself**
+     ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md) decisions 8 and 9).
+     Once the run's processes are proved gone, the office resumes the vendor session
+     in the same turn, after the normal permit and budget checks, and tells the
+     agent that it was interrupted, which tool call was running, and which
+     `agent-os` commands the office had already accepted, so that none is sent
+     twice. What a shell command did is the one thing the office cannot know, so
+     the agent checks it before repeating it. A person is needed only when the
+     processes cannot be proved gone, the session cannot be resumed, or three
+     resumes fail.
+   - **A stalled turn is stopped** (ADR-0030 decisions 10 to 12). With no model
+     output, no tool call starting or finishing (a sub-agent's included), no
+     `agent-os` call, no open wait for a question and no open approval request for
+     the stall time, 15 minutes unless changed, the office stops
+     the run and its sub-agents, fails the turn with `STALLED`, and the agent is
+     idle. After three in a row the agent is not started automatically.
 7. **Finish.** Turn success is separate from task closure. Capacity is released only
    after a verified terminal or idle boundary. A compatible idle process may stay warm
    without a permit.
@@ -455,14 +484,26 @@ again on hand-back, and the command warns about this when it starts.
   bound with it. A bound connection's descriptor passed to another process keeps
   working until then: ancestry is checked at bind only.
 - **Holds are capped.** One held call on a token-bound connection lasts at most 60 s.
-  An `ask` waits as ADR-0020 says: `agent-os` renews the hold until the answer, the
-  timeout, a required-answer-pending result or a withdrawal.
+  One command holds its caller for at most the short hold, 90 seconds unless changed
+  (non-negotiable 18): `msg ask` and `msg wait` return `waiting` when it ends, and
+  the agent continues the wait with another `msg wait`. The office keeps the one
+  timer of the ask across those calls (ADR-0020 decisions 15 to 17). A vendor's shell
+  tool stops a command that runs for minutes, so no command relies on running that
+  long.
 - **No file queue.** `agent-os` never writes to a local queue; every call goes to
   the office.
 - **Delivery** follows ADR-0003: a message is kept for the agent's next turn boundary,
-  never interrupts a busy turn, and never wakes a paused agent. A reply that satisfies
-  a wait creates no second turn. An ask or a hand-off from another agent starts one
-  turn for an idle recipient, under an hourly limit (ADR-0023).
+  never interrupts a busy turn, and never wakes a paused agent. A start that cannot
+  happen now, for any reason (the agent is busy, paused or suspended, admission
+  refuses, the hourly limit holds it), is kept as a **pending start** and tried
+  again whenever that reason can have changed; one turn takes everything that is
+  waiting (ADR-0030 decisions 2 and 3 list the reasons and the events). A reply that satisfies
+  a wait creates no second turn. An ask, a hand-off or a mention by name from another
+  agent, and an answer to the recipient's own question, start one turn for an idle
+  recipient, under an hourly limit (ADR-0023); so do a direct message or a mention
+  from a person and a task assigned to the agent (ADR-0028). What is delivered to an
+  agent at all is only what is addressed to it
+  ([ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md)).
 - **Presence:** `busy`, `idle`, `needs_you`, `with_you`, `waiting` (on a required
   answer, naming whom), `asleep` and `offline`. An agent holding an `agent-os` wait
   counts as idle. Presence is not stored durably.

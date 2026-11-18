@@ -1,6 +1,6 @@
 # Project structure
 
-Status: **selected** data contract, revision 2.9. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Status: **selected** data contract, revision 2.13. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md). A project's development process, its documentation tree and issued document versions are defined in [document 18](18-development-processes-and-project-documentation.md).
 
 ## Relationships
 
@@ -38,6 +38,7 @@ erDiagram
         TEXT updated_at "optional"
         TEXT updated_by_kind "required"
         TEXT updated_by_id FK "optional"
+        TEXT development_process_id FK "optional"
     }
     project_contributing_teams {
         TEXT organization_id PK, FK "required"
@@ -114,6 +115,10 @@ erDiagram
         TEXT updated_at "optional"
         TEXT updated_by_kind "required"
         TEXT updated_by_id FK "optional"
+        TEXT summary "optional"
+        TEXT path "optional"
+        INTEGER version "optional"
+        INTEGER issued_revision "optional"
     }
 ```
 
@@ -123,11 +128,17 @@ HQ creates projects, releases and milestones. Other offices can request their cr
 
 A project brings its own team (owner, 2026-11-17). By default, creating a project also creates its owning team, in the same accepted transaction: a new team named after the project, placed under the organization's top-level team ([document 01](01-organization-structure.md#creating-an-organization)). The request may instead name an existing active team as the owner, and then no team is created. Either way `owner_team_id` is set when the project is created; there is no project without an owning team. People and agents join the project team by being moved there or added there, like any team.
 
+The dependency runs one way (owner, 2026-11-18). Teams are created on their own, nested to any depth, before any project exists, and a team needs no project: it may be accountable for none, one or several, and its own work is team tasks ([document 03](03-features-and-work.md)). An organization can therefore be fully structured and staffed, with agents hired and working on team tasks, before its first project is created, and a project created later names one of those teams as its owner.
+
+A project may follow one development process, named by optional `development_process_id` and chosen when the project is created or later ([document 18](18-development-processes-and-project-documentation.md#a-projects-process)). Null means no development process.
+
 Each project has exactly one owning team and optional contributing teams. Its organization-wide readable reference is `P-<number>`. It also requires an organization-unique `slug`, such as `reservations`, assigned and registered by HQ when the project is created. Every project task stores that same accountable owning team in required `team_id`; a composite foreign key enforces the match. The task's optional `assigned_team_id` identifies the team currently responsible for doing the work, and `assignee_id` identifies its current individual assignee. Either can be outside the owning team. Reassigning work changes neither project ownership nor task ownership. Reassigning project ownership updates its tasks' `team_id` and records those ownership changes in the same recoverable transaction; existing team/individual assignments stay unchanged. See [task assignment and history](12-task-assignment-and-history.md).
 
 A project may use several repositories, including shared infrastructure or libraries. `integration_branch` is required on each project/repository association; the same repository can use different integration branches for different projects. A contributing-team registration and a task assignment express different facts: assigning a task does not rewrite the project's contributing-team list or grant repository access.
 
 A release has an `R-<number>` reference and an optional plain-text `version_label`, such as `1.4.0` or `Spring launch`. The label is independent of identity and need not follow semantic versioning. A release belongs to one project and contains zero or more milestones. Every milestone requires exactly one same-project release. A task can reference zero or one milestone. Releases are delivery records, not organization-wide repository branches.
+
+Releases and milestones are primitives of the system: they exist for every project, and a project's development process chooses whether and how to use them (owner, 2026-11-18). Nothing requires a task or a change to be in a release, and a release may have no milestone.
 
 Project investment/token totals are derived from [usage records](10-usage-and-cost-accounting.md), including explicitly attributed project overhead. A project/team/task move does not retroactively change recorded consumption. Release accounting uses captured release attribution, not every later release-manifest membership.
 
@@ -163,13 +174,16 @@ projects/<project-id>/
 │       ├── deployment.md
 │       ├── changelog.md              # Technical changes
 │       └── documents/<document-id>.md
-├── decisions/<document-id>.md
-├── designs/<document-id>.md
-├── reports/<document-id>.md
+├── docs/                            # Project-wide documents, diagrams and images (document 18)
+│   ├── index.yaml                   # Table of contents of the tree
+│   └── <section>/.../<name>.md
+├── docs-history/<document-id>/<version>.md   # Issued versions, written once
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
 └── work/tasks/<task-id>.md          # type: task, bug, request, or another task type
 ```
+
+Project-wide decisions, designs, reports and every process-defined kind of document live in the project's documentation tree, `docs/`, whose layout belongs to the project and whose table of contents is `docs/index.yaml` ([document 18](18-development-processes-and-project-documentation.md#project-documentation-tree)). A project that follows no development process starts with the sections `decisions`, `designs` and `reports`. The brief, and the documents of a feature, a release or a deployment, keep the fixed places shown above.
 
 Tasks stay in the project work folder even when linked to a milestone; their explicit `milestone_id` is the relationship. This avoids moving task documents whenever their planning assignment changes. Milestone files themselves live inside their owning release.
 
@@ -181,6 +195,7 @@ slug: reservations
 revision: 1
 name: Reservations
 owner_team_id: 01930000-0000-7000-8000-000000000020
+development_process_id: null
 contributing_team_ids: []
 repositories:
   - repository_id: 01930000-0000-7000-8000-000000000002
@@ -191,18 +206,19 @@ The Product Agency's Care Platform and Trading Platform projects can reference t
 
 ## Project, feature, release and deployment documents
 
-One `documents` table holds supporting knowledge at these four scopes. Each document has `owner_employee_id`, `status: draft | current | deprecated` and common creation/update attribution; a current document requires an accountable owner. See [record contracts](08-record-contracts.md). Every document requires `project_id` and can optionally name exactly one of `feature_id`, `release_id` or `deployment_id`, constrained to that same project. All three null means project scope. Release and deployment documents are described in [release content and flags](09-release-content-and-flags.md). Each scope can have zero or many documents. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
+One `documents` table holds supporting knowledge at these four scopes. Each document has `owner_employee_id`, `status: draft | current | deprecated` and common creation/update attribution; a current document requires an accountable owner. See [record contracts](08-record-contracts.md). A project-scope document other than the brief is a tree document: it has a `path` inside the project's `docs/`, an optional `summary`, and, for a versioned kind, `version` and `issued_revision` ([document 18](18-development-processes-and-project-documentation.md#issued-versions)). Documents at the other scopes have none of these. Every document requires `project_id` and can optionally name exactly one of `feature_id`, `release_id` or `deployment_id`, constrained to that same project. All three null means project scope. Release and deployment documents are described in [release content and flags](09-release-content-and-flags.md). Each scope can have zero or many documents. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
 
 | Record | Content | Canonical location |
 | --- | --- | --- |
 | Project brief | Product purpose, goals and boundaries | `projects/<project-id>/brief.md` |
-| Project design | Shared architecture, integrations and cross-feature concepts | Project `designs/<document-id>.md` |
-| Project decision/report | Cross-feature decisions or findings | Project `decisions/` or `reports/` |
+| Project design | Shared architecture, integrations and cross-feature concepts | In the tree: `docs/<path>.md`, by default under `docs/designs/` |
+| Project decision/report | Cross-feature decisions or findings | In the tree, by default under `docs/decisions/` or `docs/reports/` |
+| Development process-defined kind | Whatever the project's development process declares, for example a specification | In the tree, in a section the development process declares or the project adds |
 | Feature definition | Purpose, current behaviour, rules, known limitations and non-goals | `features/<feature-id>/feature.md` |
 | Feature design | Detailed flows, interactions and implementation choices | Feature `designs/<document-id>.md` |
 | Feature decision/report | Feature-specific rationale, experiments or findings | Feature `decisions/` or `reports/` |
 
-`feature.md` projects into the `features` table; it is not duplicated as a `documents` row. Other feature documents use `kind: design`, `decision` or `report`. A `brief` document is project-wide. `kind: changelog` is restricted to release or deployment scope and lives at its scope's `changelog.md`. Other release/deployment documents live under that scope's `documents/`. All paths above are inside the organization Git repository, retain stable ID filenames, and survive closure of related tasks.
+`feature.md` projects into the `features` table; it is not duplicated as a `documents` row. Other feature documents use `kind: design`, `decision` or `report`. A `brief` document is project-wide. `kind: changelog` is restricted to release or deployment scope and lives at its scope's `changelog.md`. Other release/deployment documents live under that scope's `documents/`. `kind` is one of those five built-in values or, for a tree document only, a key declared by a development process. All paths above are inside the organization Git repository and survive closure of related tasks. Documents beside a feature, a release or a deployment keep stable-ID filenames; a tree document has a readable path that may change, and its identity is the `id` in its front matter.
 
 For Restaurant SaaS, shared Reservations architecture is a project design (`feature_id: null`). The table-booking feature definition explains booking behaviour and known limitations. Its overlap-handling design is a separate feature document:
 
@@ -234,19 +250,19 @@ Concurrent requests must not both reserve the same table and time range.
 This design covers individual tables; combining tables needs a separate design.
 ```
 
-Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`. A project document has the same metadata with `feature_id`, `release_id` and `deployment_id` all null and lives in the project-level folder. Path, `kind` and scope IDs must agree; validation rejects mismatches. To associate existing supporting knowledge with a feature, preserve the document ID, set `feature_id`, and move its file to that feature's appropriate folder. Do not retain a duplicate canonical copy.
+Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`. A project document has the same metadata with `feature_id`, `release_id` and `deployment_id` all null, plus its `path`, and lives in the project's documentation tree at that path. Location, `kind` and scope IDs must agree; validation rejects mismatches. To associate existing supporting knowledge with a feature, preserve the document ID, set `feature_id`, clear `path`, and move its file to that feature's appropriate folder. Do not retain a duplicate canonical copy.
 
 ## File to SQL mapping
 
 | Table | Source fields |
 | --- | --- |
-| `projects` | `project.yaml`: common identity fields, required organization-unique `slug`, `name`, `owner_team_id`, `archived` (default false). |
+| `projects` | `project.yaml`: common identity fields, required organization-unique `slug`, `name`, `owner_team_id`, `archived` (default false), optional `development_process_id`. |
 | `project_contributing_teams` | One row per `contributing_team_ids[]`; `project_id` comes from that project. |
 | `project_repositories` | One row per `repositories[]` entry with `repository_id`, `integration_branch`; `project_id` comes from the project. |
 | `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, and Markdown body; `feature_ids[]`/`task_ids[]` are projected by document 09. |
 | `release_repository_commits` | Release `repository_commits` map: repository ID to exact commit SHA; `release_id` and `project_id` come from its parent file. |
 | `milestones` | Milestone front matter: common identity fields, required `project_id`, required `release_id`, `title`, and Markdown body. Path and explicit parent IDs must agree. |
-| `documents` | Supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `release_id` or `deployment_id` (at most one), `kind`, `status`, `owner_employee_id`, common attribution, `title`, and body. Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
+| `documents` | Supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `release_id` or `deployment_id` (at most one), `kind`, `status`, `owner_employee_id`, common attribution, `title`, and body; for a tree document also `summary`, `path`, `version` and `issued_revision` (document 18). Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
 
 A manifest may cover multiple code repositories. Release deployment records are defined in [document 07](07-release-deployments.md), including environment/target, outcomes, rollback references and exact commit snapshots. Build artifacts are out of scope. Dates, release gates, progression rules, budgets and delivery execution are not fixed by this structural draft. They require separate lifecycle/operations decisions; they are not automatically imported from v1.
 
@@ -274,11 +290,14 @@ slug TEXT NOT NULL CHECK (
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
+  development_process_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
   UNIQUE (organization_id, slug),
   UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, development_process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
@@ -430,7 +449,7 @@ CREATE TABLE documents (
   release_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
+  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*'),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -440,10 +459,23 @@ CREATE TABLE documents (
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
+  summary TEXT,
+  path TEXT CHECK (path IS NULL OR (
+    length(path) BETWEEN 4 AND 512 AND path NOT GLOB '*[^a-z0-9/._-]*'
+    AND substr(path, 1, 1) GLOB '[a-z0-9]' AND path GLOB '*.md'
+    AND instr(path, '//') = 0 AND instr(path, '..') = 0 AND instr(path, '/.') = 0)),
+  version INTEGER CHECK (version >= 1),
+  issued_revision INTEGER CHECK (issued_revision >= 1),
   PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, project_id, path),
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),
+  CHECK ((path IS NOT NULL) = (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL AND kind <> 'brief')),
+  CHECK (path IS NOT NULL OR kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
+  CHECK (summary IS NULL OR path IS NOT NULL),
+  CHECK ((version IS NULL) = (issued_revision IS NULL)),
+  CHECK (version IS NULL OR (path IS NOT NULL AND issued_revision <= revision AND status <> 'draft')),
   CHECK ((feature_id IS NOT NULL) + (release_id IS NOT NULL) + (deployment_id IS NOT NULL) <= 1),
   CHECK (feature_id IS NULL OR kind IN ('design', 'decision', 'report')),
   CHECK (kind <> 'brief' OR (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL)),
@@ -455,6 +487,8 @@ CREATE TABLE documents (
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, id, version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),

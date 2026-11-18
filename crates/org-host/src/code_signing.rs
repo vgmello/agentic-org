@@ -1,6 +1,6 @@
 //! Reading and checking code signatures, for the host's checks of the programs it trusts with
-//! secrets: the desktop app (`app_auth`, an app token) and its office servers (`server_check`,
-//! a database key), and of its own entitlements (`keys`, its Keychain access group).
+//! secrets: the desktop app (`app_auth`, its `admin` and `recovery` calls) and its office servers (`server_check`,
+//! an office secrets key), and of its own entitlements (`keys`, its Keychain access group).
 //!
 //! Everything here fails closed: an error is "no".
 
@@ -81,7 +81,7 @@ pub(crate) struct Signing {
 #[cfg(target_os = "macos")]
 pub(crate) const KEYCHAIN_ACCESS_GROUPS: &str = "keychain-access-groups";
 
-/// Whether signed code may get a secret (an app token, a database key): it runs with the hardened runtime and has none of
+/// Whether signed code may get a secret (an office secrets key): it runs with the hardened runtime and has none of
 /// the [`REJECTED_ENTITLEMENTS`] (one that's present with any value but `false` counts). Missing
 /// flags fail closed.
 pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {

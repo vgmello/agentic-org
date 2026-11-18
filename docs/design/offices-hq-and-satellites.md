@@ -47,7 +47,7 @@ process.
 - **Access.** The browser authenticates to HQ; no local office is needed. The HQ
   office is created with its organization, from the browser; a satellite is created
   by enrollment started from HQ. Replication
-  scope never overrides chat visibility, private-note author-only access or cost and
+  scope never overrides chat visibility, private-note access (the author and people, never another agent) or cost and
   budget authorization. Presence is ephemeral and grants nothing.
 
 ## Processes in one instance
@@ -62,7 +62,7 @@ lock. Launch, admission, quarantine, restart and error rules are in the
 Each office's data follows the
 [storage contract](organization-data/README.md#shared-storage-contract): sources under
 `durable/`, rebuildable caches under `runtime/<office-id>/`. Private task notes are a
-separate author-only database at HQ. Task worktrees survive handoff until closure;
+separate database at HQ, read by their author and by people, never by another agent. Task worktrees survive handoff until closure;
 local-only and unpushed edits are checkpointed before any cleanup.
 
 When the host dies, its workers and their processes stop. A restart needs lock
@@ -340,8 +340,8 @@ the [standalone design](standalone-server.md#ca-escrow-and-the-explicit-recovery
    travel in the invitation and the registry.
 7. **Satellites do not listen.** They connect out to HQ and keep a full-duplex
    connection; HQ relays everything between satellites.
-8. **An office is not an authority over people's data.** Message visibility, author-only
-   notes, cost scopes and actor grants apply in every replica, and an office certificate
+8. **An office is not an authority over people's data.** Message visibility, private
+   task notes, cost scopes and actor grants apply in every replica, and an office certificate
    is never owner authority.
 9. **A browser never becomes a satellite.** Only enrollment creates an office.
 10. **The transport writer is not accountability.** Handover never closes work or

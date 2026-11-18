@@ -1124,8 +1124,7 @@ fn hq_creation_record_is_plain_sqlite_with_only_the_wrapped_ca_key() {
     .unwrap();
     let header = std::fs::read(folder.join("office.db")).unwrap();
     assert!(header.starts_with(b"SQLite format 3\0"));
-    // A plain reader beside the live office; SQLite is already initialized by the open above.
-    #[allow(clippy::disallowed_methods)]
+    // A plain reader beside the live office.
     let db = rusqlite::Connection::open_with_flags(
         folder.join("office.db"),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,

@@ -1,6 +1,6 @@
 # Features and work structure
 
-Status: **selected** data contract, revision 2.11. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Status: **selected** data contract, revision 2.12. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -90,13 +90,14 @@ erDiagram
     }
 ```
 
-- Every task requires owning `team_id`. `project_id` is optional: null means a team task; present means a project task. A project task's owning team must equal the project's owning team. Ownership determines its backlog/scope and numbering, not who must perform the work.
+- Every task requires owning `team_id`. `project_id` is optional: null means a team task; present means a project task. A project task's owning team must equal the project's owning team. Ownership determines its backlog/scope, not who must perform the work; the number comes from the creating office (document 06).
 - `assigned_team_id` and `assignee_id` are the current team and individual assignment. Both are nullable and independent of owning `team_id`. A task can be assigned to a team awaiting an individual, directly to an individual, to both, or to neither. New assignments must resolve to active teams/employees in the same organization; neither project contribution membership nor the individual's home team is an assignment restriction or an access grant. An employee's later home-team move does not silently change the task's assigned team.
 - Creator, assigned team, assignee and the assignee's home team do not determine ownership. A Payments-owned task can be assigned to Platform and Ana without changing its owner or number. A director may assign a team task to another director without creating an artificial project. Owning-team backlog queries use `team_id`; work queues use `assigned_team_id` and/or `assignee_id`.
 - The reporter/originator is the task's immutable `created_by_kind`/`created_by_id`, populated from the admitted actor. `updated_by_*` describes only the latest change. [Task assignment and history](12-task-assignment-and-history.md) preserves previous assignments, status changes and their actors/times; it also distinguishes a recorded fix/closure actor from the current assignee.
 - A project task can have zero or one feature and zero or one milestone, both from the same project. Team tasks have neither. Feature and milestone membership are independent.
 - A feature belongs to one project and has a numeric reference such as `F-6`. Its file stores project-unique `local_slug: table-booking`. The public feature `slug` is derived automatically as `reservations/table-booking` using the project slug, making it unique within the organization.
 - A bug is `type: bug`; `severity` is optional metadata for triage. A request is `type: request`. Changing type preserves the task's ID, number, comments and relationships. Additional types do not require new SQL tables; their workflow behaviour remains out of scope.
+- A project task may name the issued document versions it brings the code in line with, in `realizes[]`. The record and the derived convergence of a version are owned by [document 18](18-development-processes-and-project-documentation.md#tasks-that-realize-a-version).
 - A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on projection and publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
 
 ```text
@@ -247,6 +248,7 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
 | `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required owning `team_id`, optional `project_id`, nullable current `assigned_team_id` and `assignee_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. Reporter/originator uses immutable `created_by_*`. |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
+| `task_document_versions` | `realizes[]`: one row per `{document_id, version}`; defined in [document 18](18-development-processes-and-project-documentation.md). |
 | `links` | Source `links[]` is defined in [record contracts](08-record-contracts.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
 | `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
@@ -278,7 +280,7 @@ project_id TEXT NOT NULL,
   owner_employee_id TEXT,
   work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('planned', 'in_progress', 'live', 'retired')),
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
@@ -413,7 +415,7 @@ A task has zero or one `task_details` row, sharing its identity and revision. Th
 | `done_anyway_json` | Front matter `details.done_anyway`: object `{reason, steps: [step-id, ...]}`; preserves exceptional completion evidence without implementing that workflow |
 | `what_happened`, `expected`, `steps`, `environment` | Bug reproduction text, kept distinct from the task description |
 | `severity_confirmed`, `reopen_count`, `closed_reason` | Confirmation flag, nonnegative reopen count, and closure explanation |
-| `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity; validate required target type and cycles when the command is accepted |
+| `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity, held through `record_refs` (with the fixed `related_task_kind`) so that the reference survives when the other task becomes a tombstone; validate required target type and cycles when the command is accepted |
 | `affects_feature_id` | Affected feature, distinct from the feature implementing the fix; the task's project must match the affected feature's project |
 | `request_kind`, `request_text`, `route_reason`, `routing_source`, `routed_by_employee_id` | Original request content/category and routing decision; `routing_source` is `person | rule | copilot`, never an employee FK. An independently known actor may populate nullable `routed_by_employee_id`; otherwise it stays NULL |
 | `request_outcome_json` | Front matter `details.request_outcome`: object with optional `feature`, `docs`, `draft_tasks`, `estimate`. `feature` is `{type: new | extends, feature_id}`; each `docs[]` entry is `{project_id, doc_key}`; each `draft_tasks[]` entry has required `draft_id`, `title` and optional `description`, `assignee_id`, `team_id`, `priority`. `estimate` has `effort` (free text such as "a week", unrelated to the task's numeric `effort` in points), `cost_usd_cents_min`, `cost_usd_cents_max`; amounts are nonnegative and min≤max. This is a proposal estimate, not a budget. Validate nested project/feature/doc/employee references; draft IDs are not created tasks |
@@ -460,6 +462,7 @@ CREATE TABLE task_details (
   routed_by_employee_id TEXT,
   request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
   merged_into_task_id TEXT,
+  related_task_kind TEXT NOT NULL DEFAULT 'task' CHECK (related_task_kind='task'),
   decline_reason TEXT,
   suggested_triager_id TEXT,
   suggested_verifier_id TEXT,
@@ -467,8 +470,8 @@ CREATE TABLE task_details (
   CHECK (duplicate_of_task_id IS NULL OR duplicate_of_task_id<>task_id),
   CHECK (merged_into_task_id IS NULL OR merged_into_task_id<>task_id),
   FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,duplicate_of_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,merged_into_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,related_task_kind,duplicate_of_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,related_task_kind,merged_into_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,affects_feature_id) REFERENCES features(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,routed_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,suggested_triager_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
@@ -502,6 +505,7 @@ erDiagram
         TEXT routed_by_employee_id FK "optional"
         TEXT request_outcome_json "optional"
         TEXT merged_into_task_id FK "optional"
+        TEXT related_task_kind "required"
         TEXT decline_reason "optional"
         TEXT suggested_triager_id FK "optional"
         TEXT suggested_verifier_id FK "optional"

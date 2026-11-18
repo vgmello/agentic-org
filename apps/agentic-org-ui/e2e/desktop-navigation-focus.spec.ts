@@ -1,8 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { signInAsAdmin } from './web-session';
 
+// Signed in as the administrator (SIGN-9); the organizations list names the organization opened here.
 async function openOffices(page: Page) {
+	await signInAsAdmin(page, [{ id: 'org-heading-focus', name: 'Heading focus', created_at: '2026-11-18T00:00:00Z', recovery: 'acknowledged' }]);
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Heading focus');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -85,6 +88,7 @@ test('BUG-74: Switch organization keeps its non-shell navigation', { tag: ['@jou
 	await page.getByRole('link', { name: /^Switch organization/ }).click();
 	await expect(page).toHaveURL(/\/welcome$/);
 	await expect(page.locator('#shell-page-title')).toHaveCount(0);
-	await expect(page.getByRole('heading', { name: 'Welcome to Agentic Org', exact: true })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Organizations', exact: true })).toBeVisible();
+	await expect(page.getByRole('listitem').filter({ hasText: 'Heading focus' })).toBeVisible();
 	await shot(page, 'bug74-switch-organization');
 });

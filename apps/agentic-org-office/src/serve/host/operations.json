@@ -50,7 +50,6 @@
   {"method":"msg.send","policy":"serve"},
   {"method":"msg.threads","policy":"unserved"},
   {"method":"msg.wait","policy":"invalid_request"},
-  {"method":"office.app_token","policy":"refuse"},
   {"method":"office.list","policy":"refuse"},
   {"method":"office.restart","policy":"refuse"},
   {"method":"operation.get","policy":"serve"},

@@ -131,7 +131,7 @@ stop work.
 - EMP-2 · Health distinguishes a known wait from unresponsiveness. A silent long tool run is not killed merely for producing no tokens; recovery has explicit deadlines and a bounded retry budget.
 - EMP-3 · Not in v1: durable goals delivered and reminded at start, resume and recovery.
 - EMP-4 · Not in v1: a generated harness replica definition for each employee.
-- EMP-5 · Not in v1: fresh-self delegates.
+- EMP-5 · Not in v1: fresh-self delegates. A general-purpose sub-agent inside a turn is in v1 (ADR-0025).
 - EMP-6 · Not in v1: private specialists.
 - EMP-7 · Not in v1: process-driven delegation choices.
 - EMP-8 · No launch or subprocess gains more permissions, channels, credentials or spending authority than its employee's grant.

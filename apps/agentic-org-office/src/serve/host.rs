@@ -5,7 +5,7 @@ use crate::revocations::Revocations;
 
 pub(crate) struct HostChannel {
     pub _channel_id: String,
-    pub _kind: org_office_launch::v3::ChannelKind,
+    pub _kind: org_office_launch::ChannelKind,
     pub hello: HelloResult,
     pub _revocations: Arc<Mutex<Revocations>>,
 }

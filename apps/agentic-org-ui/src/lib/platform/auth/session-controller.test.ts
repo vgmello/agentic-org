@@ -53,6 +53,10 @@ function setup(initial: SessionRecord | undefined = record) {
 			...view,
 			proof: rotated
 		})),
+		register: vi.fn(async (_request: unknown, _signal?: AbortSignal) => ({
+			...view,
+			proof: rotated
+		})),
 		refresh: vi.fn(async (_proof: string, _signal?: AbortSignal) => ({ ...view, proof: rotated })),
 		signOut: vi.fn(async (_proof: string, _signal?: AbortSignal) => ({}))
 	};
@@ -451,6 +455,21 @@ describe('P6a session ownership', () => {
 			kind: 'signed-in',
 			session: { account: { id: 'new' } }
 		});
+	});
+	it('B6 register establishes the pair under the session lock exactly like sign-in', async () => {
+		const s = setup();
+		await s.controller.boot();
+		s.names.length = 0;
+		await s.controller.register({ link: 'secret', login: 'alex', password: 'long-enough-pw' });
+		expect(s.names).toEqual(['org-session:refresh']);
+		expect(s.gateway.register).toHaveBeenCalledWith(
+			{ link: 'secret', login: 'alex', password: 'long-enough-pw' },
+			undefined
+		);
+		expect(s.stored()).toMatchObject({ proof: rotated, account_id: view.account.id });
+		expect(s.states.at(-1)).toMatchObject({ kind: 'signed-in' });
+		expect(JSON.stringify(s.states.at(-1))).not.toContain(rotated);
+		expect(s.postMessage).toHaveBeenLastCalledWith({ kind: 'signed-in', account_id: view.account.id });
 	});
 	it('retries exactly one READ after a proof change, preserving the path and signal', async () => {
 		const s = setup();

@@ -1,4 +1,4 @@
-//! Host registry/TLS/recovery custody, separate from office database keys and their sweep.
+//! Host registry/TLS/recovery custody, separate from office secrets keys and their sweep.
 
 #[cfg(debug_assertions)]
 pub(crate) mod dev;

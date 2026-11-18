@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "2bb8b7c66b1f6d86e04ebbc65a46f5f32cbf1eac34206dd99bb90c4facb1f47a"
+      "sha256": "6c73aeeb56f77763040df08af66fba0573436e82cb9be778ebe010d5713503f6"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "efe8ef0145a8d74a73b85853dbbbda1f57c001cdaa2fe59edfd0e305e45124f5"
+      "sha256": "4f78594e2b745bca03a5569f192d3aedc98a14ba8fee9f208d92ab4feb8c4646"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "7acdfe9d7de32c7475ecdedb33c250b38daa2a9aface14007712c509c8bd0b04"
+      "sha256": "10393c33b5b5b1f5fd5a9b261da414313ffef6a4ce31d75e5d1cfc194867e6f1"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -82,11 +82,11 @@
     },
     {
       "path": "apps/agentic-org-ui/package.json",
-      "sha256": "a5f4697b3d032b26acaf83fde679694345e853f104f4adfbdc324572314450aa"
+      "sha256": "a6a47bf87e5801b67f8b15a3f2c1d4f2a42bff5de1e7d538de9723d2d4ec1210"
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
-      "sha256": "4bcb18581f12cb50e5550e242c3c31aa528ff51661ae9522d6a3aa2417dafcbf"
+      "sha256": "ec630df1177affde52308916108ba2dd7805c06a03ee1be4f74ff6fb5cd9edd4"
     },
     {
       "path": "crates/org-client/Cargo.toml",
@@ -106,7 +106,7 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "3158f539fbd4addf0bab993d4764b6ba357fa881f8cf887f750e8714290128f8"
+      "sha256": "0fd3ca79b38b73e0f64a6d5066fe713f0cb56e62c05f07b93ec7b72c53bf3cdf"
     },
     {
       "path": "crates/org-release/Cargo.toml",
@@ -118,11 +118,11 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "258d322d6ed3188b904f1cdd4aaea1adc2b72f3c08f68ea85fa9138f85c6e99d"
+      "sha256": "0e88c3c9ddb2f83fde694c10733392cfcd1d863df7dc754fc83b64f5c7c391a2"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "46bca00bed148f5c823632a85e357ae5f723fe1decbff237f3403bc465f3f9a3"
+      "sha256": "dfb7c758a7df84027fa34454c8268296e6cd7d847610d415a3b78c8e349a2511"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "2c1ad83db0cd78193063582e31057331a89d23a819a9a78229b8db050f033722"
+      "sha256": "379ca93190007a8da2ef54a6a7645850b82c10e3a908739016211ec2fc37f8a0"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "7929833273791787115519f972541f29001a319b3a954aa5adcbc1258e9ce740"
+      "sha256": "2cbe74280abaecedb305a08d01d11b83b02114b832ea4e4000c409bf47b2cfd6"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "d069f7e9c7fe071965f1f73c13debf89e6727b33fd2429fce8d81a11b8c18201"
+      "sha256": "99237f8b2683c1f515eeed2fe72f7d4333ed2e6dbbb5dfa8c61e867bac769745"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,11 +182,11 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "ff142e6ac2bd9077ab02ef3fccf4eb8173ab22a50a506fd0b06fc2f88d532bf6"
+      "sha256": "e8ff2b2a058a832b211e924bb15e9cd4f7d4d2cb2565f447cd7e9328dc21328f"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "f8ad1e3d04d08b16f8ea6225eb76ccad2655c04329d222f1bfb956ffad0e0309"
+      "sha256": "149365ade0686c43df89cd1dcae4b5a5598d63235ceb699a86da9ee91ea213e5"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
@@ -490,7 +490,7 @@
         ".agent-kit/tasks/v1-hq-creation-provider-contract.md",
         ".agent-kit/tasks/v1-creation-admission-interface.md",
         "crates/org-proto/src/location.rs",
-        "apps/agentic-org-office/tests/launch/v3_activation.rs"
+        "apps/agentic-org-office/tests/launch/activation.rs"
       ],
       "risks": [],
       "implementation": [

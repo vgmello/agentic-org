@@ -1,6 +1,6 @@
 # Organization structure
 
-Status: **selected** data contract, revision 2.7. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Status: **selected** data contract, revision 2.8. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
@@ -151,9 +151,10 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── roles/<role-id>.md
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
+├── development-processes/<id>/
 ├── teams/<team-id>/
 │   ├── team.yaml
-│   ├── work/tasks/<task-id>.md       # Team tasks of any type; project_id is null
+│   ├── work/tasks/<task-id>.md       # Team tasks; project_id is null
 │   ├── agents/<employee-id>/profile.md
 │   ├── people/<employee-id>/profile.md
 │   ├── processes/<document-id>.md
@@ -175,8 +176,8 @@ An office file stores its stable ID, slug, name, revision and `role: hq` or `sat
 
 `security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
 package from [ADR-0007](../../adr/0007-hq-creation-escrow.md). The usable CA key is
-an HQ-local SQLCipher record (under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) a record
-wrapped by the host-held office secrets key once SQLCipher is removed), excluded from copied organization projections and
+an HQ-local record wrapped by the host-held office secrets key
+([ADR-0016](../../adr/0016-no-application-level-data-encryption.md)), excluded from copied organization projections and
 all selected journals/history. The delivery code stays in protected host custody
 until acknowledged; neither secret is organization Git content. The public
 package alone supplies no account, epoch or writer authority.
