@@ -70,9 +70,11 @@ The decisions this design applies:
      deadline and feeds the facts into `org-office`. It also implements `SessionAuth`
      (see [Messaging](#messaging)). `agentic-org-office` wires it in.
 3. **Durable facts, disposable projections.** Organization Git owns employee and
-   execution definitions. Protected execution journals own turn, attempt and process
-   transitions, immutable inputs, tool receipts, checkpoints and command outcomes;
-   HQ's journal owns placement generations, permits and cooldowns. The database
+   execution definitions. Protected execution record files, written through the
+   office's one acceptance journal, own turn, attempt and process transitions,
+   immutable inputs, tool receipts, checkpoints and command outcomes; HQ's own
+   record files own placement generations, permits and cooldowns. There is no
+   separate execution journal. The database
    indexes these. A runtime transcript alone never establishes whether an effect
    completed.
 4. **Identity, placement and workspaces are separate.** An employee has one home
@@ -378,7 +380,21 @@ sent to no one ([agent instructions](agent-instructions.md)).
 6. **Handle failure.** Retry only eligible quota, rate, authentication or model
    failures. Replay only with proof of no effects, or resume a compatible checkpoint
    with completed receipts; otherwise `recovery_required`, keeping slot, workspace and
-   evidence. Never ask a model to "check its state" instead of reconciling.
+   evidence. The office reconciles what it can know itself (its processes, and the
+   receipts of product changes) and never asks a model to do that for it.
+   - **After a restart the turn continues by itself**
+     ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md) decisions 8 and 9).
+     Once the run's processes are proved gone, the office resumes the vendor session
+     in the same turn and tells the agent that it was interrupted and which tool call
+     was running. What a shell command did is the one thing the office cannot know,
+     so the agent checks it before repeating it. A person is needed only when the
+     processes cannot be proved gone, the session cannot be resumed, or three
+     resumes fail.
+   - **A stalled turn is stopped** (ADR-0030 decisions 10 to 12). With no model
+     output, no tool call starting or finishing (a sub-agent's included) and no
+     `agent-os` call for the stall time, 15 minutes unless changed, the office stops
+     the run and its sub-agents, fails the turn with `STALLED`, and the agent is
+     idle. After three in a row the agent is not started automatically.
 7. **Finish.** Turn success is separate from task closure. Capacity is released only
    after a verified terminal or idle boundary. A compatible idle process may stay warm
    without a permit.
@@ -465,12 +481,20 @@ again on hand-back, and the command warns about this when it starts.
   bound with it. A bound connection's descriptor passed to another process keeps
   working until then: ancestry is checked at bind only.
 - **Holds are capped.** One held call on a token-bound connection lasts at most 60 s.
-  An `ask` waits as ADR-0020 says: `agent-os` renews the hold until the answer, the
-  timeout, a required-answer-pending result or a withdrawal.
+  One command holds its caller for at most the short hold, 90 seconds unless changed
+  (non-negotiable 18): `msg ask` and `msg wait` return `waiting` when it ends, and
+  the agent continues the wait with another `msg wait`. The office keeps the one
+  timer of the ask across those calls (ADR-0020 decisions 15 to 17). A vendor's shell
+  tool stops a command that runs for minutes, so no command relies on running that
+  long.
 - **No file queue.** `agent-os` never writes to a local queue; every call goes to
   the office.
 - **Delivery** follows ADR-0003: a message is kept for the agent's next turn boundary,
-  never interrupts a busy turn, and never wakes a paused agent. A reply that satisfies
+  never interrupts a busy turn, and never wakes a paused agent. A start that cannot
+  happen now (the agent is busy, admission refuses, the hourly limit holds it) is
+  kept as a **pending start** and tried again when the turn ends, a permit or a
+  connection is freed, a hold or a pause is lifted, the hour has passed, or the
+  office starts; one turn takes everything that is waiting (ADR-0030). A reply that satisfies
   a wait creates no second turn. An ask, a hand-off or a mention by name from another
   agent, and an answer to the recipient's own question, start one turn for an idle
   recipient, under an hourly limit (ADR-0023); so do a direct message or a mention

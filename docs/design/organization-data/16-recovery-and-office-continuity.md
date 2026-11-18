@@ -1,6 +1,6 @@
 # Recovery and office continuity data
 
-Status: **selected** data contract, revision 4. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
+Status: **selected** data contract, revision 4. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them. Those documents own their records; none owns a journal: the acceptance journal below is the only one in an office.
 
 ## What recovery means
 

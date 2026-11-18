@@ -71,7 +71,7 @@ The organization repository must be remote. Its tracked content is mirrored as o
 │   │                                #   point), checkpoints, snapshots (16)
 │   ├── budgets/                     # Protected policies, periods, events, holds (17)
 │   ├── private/task-notes.db        # HQ only: author-private task notes (05)
-│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11);
+│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and execution records (11);
 │   │                                #   agents/<employee-id>/home/, each agent's private home (ADR-0015)
 │   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
 └── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.

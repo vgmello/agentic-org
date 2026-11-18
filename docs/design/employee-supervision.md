@@ -91,12 +91,18 @@ The control path:
    dispatch cycle.
 4. On failure, stop and reconcile. Replay only with proof of no effects, or resume a
    verified compatible checkpoint with completed receipts. Missing evidence means
-   `recovery_required`, keeping the slot, workspace and evidence until an explicit
-   recovery.
+   `recovery_required`, keeping the slot, workspace and evidence until it is
+   reconciled.
 5. Release the permit and process ownership only after verified terminal, idle or
    cleanup facts. An expired permit stays `release_pending` and consumes capacity. The
-   office reconciles its journals and owned processes at startup before any
-   replacement. A crash never triggers an automatic rerun.
+   office reconciles its journal and owned processes at startup before any
+   replacement. A crash never runs a tool call again. It does continue the turn:
+   once the run's processes are proved gone, the office resumes the same session and
+   tells the agent what was interrupted, and the agent decides what to repeat
+   ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md)). A person recovers a
+   turn only when the office cannot do that.
+6. A turn with no activity for the stall time is stopped with its sub-agents and
+   recorded as stalled; the agent goes idle (ADR-0030 decisions 10 to 12).
 
 **Health** is separate from desired state and presence. The office tracks the last
 protocol event, the active operation, a known wait and its deadline, a probe result
