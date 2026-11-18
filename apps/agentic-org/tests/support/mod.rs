@@ -71,6 +71,22 @@ pub fn private_program(built: &Path) -> PathBuf {
     private
 }
 
+/// Whether this test process may start the service: `agentic-org serve` refuses to run as
+/// root on every system (ADR-0017 decision 10). A test that starts the real service calls
+/// this first and returns when it is `false`: the reason is printed, and the same test runs
+/// as an ordinary user in CI on both systems (GitHub's runners are not root).
+pub fn may_run_the_service(test: &str) -> bool {
+    // SAFETY: no arguments and no side effects; it cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!(
+            "{test}: SKIPPED as root: the service refuses to run as root; run the tests as an \
+             ordinary user (CI does)"
+        );
+        return false;
+    }
+    true
+}
+
 /// A short temporary directory on a disk (an instance root is refused on a memory
 /// filesystem, and socket paths under it must fit this system's limit).
 pub fn short_tempdir(prefix: &str) -> tempfile::TempDir {
@@ -97,7 +113,8 @@ pub fn fast_timings() -> Timings {
     }
 }
 
-/// A temporary office home under /tmp (socket paths must stay under 103 bytes), with its own
+/// A temporary office home in a short directory on disk (socket paths must fit the system's
+/// limit, and an instance root is refused on a memory filesystem), with its own
 /// development key folder next to it (outside the home, so no key is ever in the home or its
 /// logs).
 pub struct TestHome {
@@ -107,12 +124,8 @@ pub struct TestHome {
 
 impl TestHome {
     pub fn new() -> Self {
-        let dir = tempfile::Builder::new()
-            .prefix("oh")
-            .tempdir_in("/tmp")
-            .unwrap();
         Self {
-            dir,
+            dir: short_tempdir("oh"),
             instance_id: None,
         }
     }
@@ -422,19 +435,6 @@ impl TestHome {
             .iter()
             .map(|f| f[2].parse().unwrap())
             .collect()
-    }
-
-    /// Writes an executable `sh` script next to the office home (not in it) and returns its
-    /// path, to use as the server program. `$FAKE` in `body` is the fake server.
-    pub fn wrapper(&self, name: &str, body: &str) -> PathBuf {
-        let path = self.dir.path().join(name);
-        let script = format!(
-            "#!/bin/sh\nFAKE='{}'\n{body}\n",
-            fake_server().to_str().unwrap()
-        );
-        fs::write(&path, script).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-        path
     }
 
     /// The text of every office log (`<home>/logs/*`) and of `fake.log`, with the file names.

@@ -1,7 +1,5 @@
 //! Private-bootstrap acceptance; every path and key belongs to this disposable fixture.
 #![cfg(debug_assertions)]
-// The one test starts a real server, which only macOS can spawn (BUG-187).
-#![cfg(target_os = "macos")]
 
 mod support;
 
@@ -21,12 +19,8 @@ fn private_dir(path: &Path) {
 
 #[test]
 fn two_long_root_instances_run_the_same_office_id_with_separate_data_sockets_and_keys() {
-    let base = if cfg!(target_os = "linux") {
-        "/var/tmp"
-    } else {
-        "/private/tmp"
-    };
-    let fixture = tempfile::tempdir_in(base).unwrap();
+    let fixture =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let base = fixture.path().canonicalize().unwrap();
     let locator = base.join("locator");
     let temporary = base.join("temp");

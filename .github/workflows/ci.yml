@@ -27,12 +27,6 @@ jobs:
       matrix:
         # macos-15: macOS arm64. ubuntu-26.04: Linux x86-64.
         os: [macos-15, ubuntu-26.04]
-        include:
-          - os: ubuntu-26.04
-            # The host does not compose the Linux admission adapter yet (implementation plan X2,
-            # host slice), so the tests that start a worker stay excluded here. The whole
-            # workspace is linted on both systems.
-            test-flags: --exclude org-host --exclude agentic-org
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,13 +74,9 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-      - name: CLI migration checks (Linux)
-        if: runner.os == 'Linux'
-        run: cargo test --locked -p agentic-org --lib --test cli
-
       # --no-fail-fast: a failing test binary must not hide the result of every crate after it.
       - name: cargo test
-        run: cargo test --locked --workspace --no-fail-fast ${{ matrix.test-flags }}
+        run: cargo test --locked --workspace --no-fail-fast
 
   # ADR-0017 LNX-5: a change never adds a file to .github/platform-conditionals.allow or raises a
   # count in it. A branch is compared with where it left v1-integration; a push to v1-integration

@@ -216,15 +216,158 @@ fn command_id(n: u8) -> String {
     String::from_utf8(out.to_vec()).unwrap()
 }
 
-/// The early production path: the real host admits the real worker through the platform's
-/// admission and the worker reaches `ready` (it serves its socket as this office).
+/// What one `agent-os` run printed and how it ended.
+struct Run {
+    code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+impl Run {
+    fn ok(self) -> Self {
+        assert_eq!(
+            self.code, 0,
+            "stdout: {}\nstderr: {}",
+            self.stdout, self.stderr
+        );
+        self
+    }
+
+    fn json(&self) -> serde_json::Value {
+        serde_json::from_str(&self.stdout)
+            .unwrap_or_else(|error| panic!("not JSON ({error}): {}", self.stdout))
+    }
+}
+
+impl World {
+    /// The office home `agent-os` is given, made once the worker serves its socket.
+    ///
+    /// `agent-os` finds an office by its folder under `<office home>/offices` and connects
+    /// to `<office home>/run/<handle>.sock`, and it refuses a `run` that is a link. A
+    /// registered instance keeps its sockets in the instance's runtime folder instead, which
+    /// `agent-os` cannot name yet on any system (a managed agent's launch binding and a
+    /// person's saved context are later increments; reported to the track's lead). Until
+    /// then this test gives the agent an office home of its own: `offices` is a link to the
+    /// instance's office folders, and `run` is a real folder that holds a second name (a hard
+    /// link) of the worker's socket. Everything from the socket on is the product's route:
+    /// the worker's peer check, `hello`, `msg.bind` as the agent, and the calls.
+    fn agent_office_home(&self) -> PathBuf {
+        let view = self.base().join("v");
+        if !view.exists() {
+            fs::DirBuilder::new().mode(0o700).create(&view).unwrap();
+            std::os::unix::fs::symlink(
+                self.account.office_home.join("offices"),
+                view.join("offices"),
+            )
+            .unwrap();
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(view.join("run"))
+                .unwrap();
+            let socket = self.office_socket();
+            fs::hard_link(&socket, view.join("run").join(socket.file_name().unwrap()))
+                .expect("a second name for the worker's socket");
+        }
+        view
+    }
+
+    /// `agent-os <args>` as `agent`, by hand: no session token, the office named, and every
+    /// home inside this world (the route the `agent-os` suite's own office tests use).
+    fn agent(&self, agent: &str, args: &[&str]) -> Run {
+        let out = Command::new(&self.agent_os)
+            .args(args)
+            .env_clear()
+            .env("ORG_OFFICE_HOME", self.agent_office_home())
+            .env("HOME", self.base().join("u"))
+            .env("ORG_HOME", self.base().join("u"))
+            .env("ORG_AGENT", agent)
+            .env("ORG_OFFICE", OFFICE)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        Run {
+            code: out.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&out.stdout).trim().to_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        }
+    }
+}
+
+/// LNX-1. The real host admits the real worker through the platform's admission, the worker
+/// serves its local socket as this office, and `agent-os` sends a message through it and
+/// reads it back; then the host stops cleanly on `SIGTERM` and takes its worker with it.
 #[test]
-fn the_real_host_starts_the_real_worker() {
+fn the_real_host_starts_the_real_worker_and_agent_os_sends_and_reads() {
+    if !support::may_run_the_service(
+        "the_real_host_starts_the_real_worker_and_agent_os_sends_and_reads",
+    ) {
+        return;
+    }
     let world = World::new();
     let mut host = world.spawn_host(&world.worker);
     world.wait_until_ready(&mut host);
     let log = world.host_log();
     assert!(!log.contains("couldn't start the server"), "{log}");
     assert!(!log.contains("refused office server"), "{log}");
-    let _ = &world.agent_os;
+    assert!(!log.contains("no office server can be started"), "{log}");
+
+    // pixel sends to nova by handle; the office answers with the message's id.
+    let sent = world
+        .agent(
+            "pixel",
+            &[
+                "msg",
+                "send",
+                "--to",
+                "nova",
+                "--subject",
+                "hi",
+                "--json",
+                "hello nova",
+            ],
+        )
+        .ok();
+    assert_eq!(sent.stderr, "");
+    let id = sent.json()["id"].as_str().unwrap().to_owned();
+    // Nothing fell back to a local spool: the send went through the office.
+    assert!(!world.base().join("u/spool/outbox/new").exists());
+
+    // nova's inbox shows it, and reading it gives the body back.
+    let inbox = world.agent("nova", &["msg", "inbox", "--json"]).ok().json();
+    let rows = inbox.as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{inbox}");
+    assert_eq!(rows[0]["id"], id.as_str());
+    assert_eq!(rows[0]["from"], "pixel");
+    assert_eq!(rows[0]["status"], "unread");
+    let read = world
+        .agent("nova", &["msg", "read", "--next", "--json"])
+        .ok()
+        .json();
+    assert_eq!(read["id"], id.as_str());
+    assert_eq!(read["body"], "hello nova");
+    assert_eq!(read["from"], "pixel");
+    assert_eq!(read["subject"], "hi");
+    assert_eq!(
+        world.agent("nova", &["msg", "inbox", "--json"]).ok().stdout,
+        "[]"
+    );
+
+    // The service stops on SIGTERM, exits 0 and leaves no worker serving the socket.
+    // SAFETY: sends a signal to this test's own child.
+    assert_eq!(
+        unsafe { libc::kill(host.0.id() as libc::pid_t, libc::SIGTERM) },
+        0
+    );
+    let stopped = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = host.0.try_wait().unwrap() {
+            break status;
+        }
+        assert!(stopped.elapsed() < WAIT, "the host didn't stop");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success(), "{status}: {}", world.host_log());
+    eventually(WAIT, "the worker's socket to stop answering", || {
+        UnixStream::connect(world.office_socket()).is_err()
+    });
 }
