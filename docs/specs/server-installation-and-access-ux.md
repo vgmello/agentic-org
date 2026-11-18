@@ -983,7 +983,7 @@ recovering after losing HQ (REC-1).
 
 ### 4a.9 Open questions
 
-- A81 · Username length and characters, and the password rule (at least 12 characters is proposed). Usernames are normalized (NFC, case-folded) and unique ignoring case.
+- A81 · Settled (A3): a username is 1 to 64 Unicode characters after NFC, with no control characters and no whitespace at the start or end; usernames are unique ignoring case (NFC, case fold, NFC). A password is at least 12 Unicode characters after NFC and at most 1024 bytes, checked only when it is set; sign-in checks only the 4096-byte input bound, so a name that breaks the format is an unknown login. The host decides; a refusal names `{field, rule}`.
 - A82 · Sign-in rate limit: per username, per source address or both, the limits, and whether the refusal carries a retry time the page can show.
 - A87 · Settled: the creator's person record takes the account's username as its name and handle when the organization is created; it is edited later like any person's. The owner bar (offices §7.1) shows the person's name.
 - A88 · Which read gives the browser "being prepared" and "couldn't be prepared" recovery states. `organization.list` gives linked organizations `recovery: pending | delivered | acknowledged` with the dates and the count of second showings.
