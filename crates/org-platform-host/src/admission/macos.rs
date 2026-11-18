@@ -166,10 +166,7 @@ impl Admission {
 
     /// The admission of `child` once more: it must give the token the child was admitted with.
     pub(super) fn readmit(&self, child: &Child) -> Result<(), ImageRefusal> {
-        if self.admit(child.id())? != child.admitted {
-            return Err(ImageRefusal::Readmitted);
-        }
-        Ok(())
+        decision::readmitted(child.admitted, self.admit(child.id()))
     }
 
     /// Authenticate the socket's actual reader, not merely a process that was admitted before
@@ -270,7 +267,7 @@ impl StaticImages {
 
 /// The peer's audit token, which the code-signing check identifies the caller by. Unlike a pid,
 /// it names one process for its whole life and is never reused.
-pub(crate) fn audit_token(stream: &UnixStream) -> io::Result<[u8; AUDIT_TOKEN_BYTES]> {
+fn audit_token(stream: &UnixStream) -> io::Result<[u8; AUDIT_TOKEN_BYTES]> {
     let mut token = [0u8; AUDIT_TOKEN_BYTES];
     let mut len = AUDIT_TOKEN_BYTES as libc::socklen_t;
     // SAFETY: a valid socket fd, and an out-buffer of `len` bytes that outlives the call.

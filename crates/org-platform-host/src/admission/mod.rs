@@ -56,7 +56,7 @@ use std::sync::Mutex;
 use org_platform::Refused;
 
 #[cfg(target_os = "macos")]
-pub(crate) mod macos;
+mod macos;
 #[cfg(target_os = "macos")]
 use macos as native;
 

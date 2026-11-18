@@ -72,6 +72,18 @@ pub(super) fn unchanged(admitted: Token, now: Result<Token, String>) -> Result<(
     }
 }
 
+/// The admission of a running child once more: `again` is what the whole check
+/// (requirement and pin) answers now, and it must be what the child was admitted with.
+pub(super) fn readmitted(
+    admitted: Option<Token>,
+    again: Result<Option<Token>, ImageRefusal>,
+) -> Result<(), ImageRefusal> {
+    if again? != admitted {
+        return Err(ImageRefusal::Readmitted);
+    }
+    Ok(())
+}
+
 /// The re-check of a running child: still the image `admitted` (`now` is asked only
 /// when it was identified), and, when the image is pinned, identified and still the
 /// pinned image.
@@ -294,6 +306,30 @@ mod tests {
                 admitted
             );
         }
+    }
+
+    #[test]
+    fn a_readmission_must_answer_what_the_child_was_admitted_with() {
+        let a: Token = [1; 32];
+        let b: Token = [2; 32];
+        assert!(readmitted(Some(a), Ok(Some(a))).is_ok());
+        assert!(readmitted(None, Ok(None)).is_ok());
+        // Another image, an image where none was identified, and none where one was.
+        for (admitted, again) in [(Some(a), Some(b)), (None, Some(a)), (Some(a), None)] {
+            assert!(matches!(
+                readmitted(admitted, Ok(again)),
+                Err(ImageRefusal::Readmitted)
+            ));
+        }
+        // A check that refuses now refuses with its own reason.
+        assert!(matches!(
+            readmitted(Some(a), Err(ImageRefusal::NotTheImage)),
+            Err(ImageRefusal::NotTheImage)
+        ));
+        assert!(matches!(
+            readmitted(Some(a), Err(ImageRefusal::DigestMismatch)),
+            Err(ImageRefusal::DigestMismatch)
+        ));
     }
 
     #[test]

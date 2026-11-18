@@ -54,8 +54,8 @@ use super::{Confirmation, Unconfirmed};
 use org_platform::Refused;
 
 pub(super) fn local_peer(peer: &UnixStream) -> Result<bool, Refused> {
-    // The one read of the peer's audit token is the admission adapter's.
-    Ok(crate::admission::macos::audit_token(peer).is_ok_and(|token| local(&token)))
+    // The one read of the peer's audit token is the admission contract's.
+    Ok(crate::admission::peer(peer).is_ok_and(|peer| local(&peer.macos_audit_token)))
 }
 
 pub(super) fn current_context() -> Result<bool, Refused> {
