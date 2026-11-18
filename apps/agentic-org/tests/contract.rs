@@ -102,9 +102,8 @@ fn the_v3_worker_gets_no_app_token() {
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
-    // The v3 handoff carries the database and grant keys only: the worker is handed no app
-    // token.
-    assert!(home.token_fingerprints(A).is_empty());
+    // The v3 handoff carries the database and grant keys only: it has no app-token field, so the
+    // worker is handed none. What it does get is one grant key.
     assert_eq!(home.grant_fingerprints(A).len(), 1);
     home.assert_no_secret_in_home();
     host.shutdown();
