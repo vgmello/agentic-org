@@ -51,6 +51,8 @@ mod tests;
 /// The port of the `default` instance; named instances take the first free one after it.
 pub const DEFAULT_PORT: u16 = 7420;
 const READY_WITHIN: Duration = Duration::from_secs(60);
+/// How long a command waits for the instance locator while a starting service holds it.
+const LOCATOR_WAIT: Duration = Duration::from_secs(5);
 
 /// The platform adapters setup composes.
 pub struct Platform {
@@ -426,8 +428,14 @@ pub fn configuration(path: &Path) -> Result<Configuration, String> {
     std::fs::File::open(path)
         .and_then(|file| file.take(64 * 1024 + 1).read_to_end(&mut bytes))
         .map_err(|e| format!("reading the setup configuration {shown}: {e}"))?;
-    let input = Input::from_configuration(&bytes)
-        .map_err(|e| format!("{shown}: {e}; nothing was changed"))?;
+    let input = Input::from_configuration(&bytes).map_err(|e| {
+        // The rule alone: the error's own prefix speaks of choosing an instance.
+        let why = match e {
+            crate::instance::Error::Invalid(why) => why.to_owned(),
+            other => other.to_string(),
+        };
+        format!("{shown}: {why}; nothing was changed")
+    })?;
     input
         .fits(org_platform_host::credentials::protected_store().ok())
         .map_err(|why| format!("{shown}: {why}; nothing was changed"))?;
@@ -721,11 +729,9 @@ pub(crate) fn run_at(
     mut request: Request<'_>,
     out: &mut dyn Write,
 ) -> Result<(), String> {
-    // 1. Platform gate. A system whose service manager does not answer (a Linux machine or
-    // container without a systemd user manager) is refused here, before anything is saved,
-    // with the way to run without one.
+    // 1. Platform gate. [`run`] has already asked the service manager whether it answers,
+    // before any folder was made.
     let pin = release_pin()?;
-    service_gate(platform, &request)?;
     let name = request.name.as_deref();
     let shown = name.unwrap_or("default");
     say(out, format!("Setting up instance \"{shown}\"."))?;
@@ -1072,8 +1078,20 @@ fn local_time(ms: i64) -> String {
 }
 
 fn connect(socket: &Path, instance_id: &str) -> Result<Wire, String> {
+    connect_verified(socket, instance_id, |stream| {
+        crate::human::verify_host(stream).map(drop)
+    })
+}
+
+/// Connects to `socket`, has `verify` judge who listens there, and greets instance
+/// `instance_id`.
+fn connect_verified(
+    socket: &Path,
+    instance_id: &str,
+    verify: impl FnOnce(&UnixStream) -> Result<(), String>,
+) -> Result<Wire, String> {
     let stream = UnixStream::connect(socket).map_err(|e| fail("connecting to the service", e))?;
-    crate::human::verify_host(&stream)?;
+    verify(&stream)?;
     let mut wire = Wire::new(stream)?;
     let hello = wire
         .call::<Hello>(
@@ -1120,9 +1138,18 @@ fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, Path
         Journal::snapshot(&paths.base, name).map_err(|e| fail("reading the setup record", e))?;
     let registry = Registry::open(&paths.locator, &paths.user_temp)
         .map_err(|e| fail("opening the instance locator", e))?;
-    let (id, temp) = registry
-        .locate(name, &record.input.root)
-        .map_err(|e| fail("locating the instance", e))?;
+    // A service that is just starting holds the locator's lock for a moment (it reserves
+    // its instance again): a command that arrives then waits for it instead of failing.
+    let deadline = Instant::now() + LOCATOR_WAIT;
+    let (id, temp) = loop {
+        match registry.locate(name, &record.input.root) {
+            Ok(located) => break located,
+            Err(crate::instance::Error::Busy(_)) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(fail("locating the instance", e)),
+        }
+    };
     if record.instance_id.as_deref() != Some(id.as_str()) {
         return Err("the instance is not the one setup recorded; run agentic-org setup".into());
     }
@@ -1140,22 +1167,65 @@ fn running_with_administrator(shown: &str, origin: &str) -> String {
 /// `agentic-org admin reset`: a new registration link after presence at the host.
 /// `terminal` says whether `out` is a terminal: the link is printed only there, so
 /// otherwise this refuses before asking the host, and no link is issued or cancelled.
-pub fn admin_reset(name: Option<&str>, terminal: bool, out: &mut dyn Write) -> Result<(), String> {
+///
+/// Run by root for the service user's instance (SIGN-33; ADR-0017 decisions 10 and 11): the
+/// account is `user`, or the one `sudo` names (`SUDO_UID`). Root finds the instance as that
+/// user ([`as_account`]), so nothing in the instance's folders is made or changed by root,
+/// and then connects as root, which is what the service admits for this one call. Any other
+/// user acts only for itself.
+pub fn admin_reset(
+    name: Option<&str>,
+    user: Option<&str>,
+    terminal: bool,
+    out: &mut dyn Write,
+) -> Result<(), String> {
     if !terminal {
         // Spec §4a.4 copy. SIGN-34's SSH refusal ("shown before anything else") needs
         // SSH-session detection, which is not built yet; it goes before this check.
         return Err(NOT_A_TERMINAL.into());
     }
-    let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
-    let mut wire = connect(&socket, &id).map_err(|why| {
+    let acting_for = service_account(
+        crate::home::euid(),
+        user,
+        std::env::var("SUDO_UID").ok().as_deref(),
+        account_by_name,
+        account_by_id,
+    )?;
+    let not_running = |why: String| {
         format!(
             "{why}; the service is not running: start it with agentic-org service start{}",
             name.map(|n| format!(" --name {n}")).unwrap_or_default()
         )
-    })?;
+    };
+    let mut wire = match acting_for {
+        Some(account) => {
+            let (_, id, socket) =
+                as_account(account, || registered(&crate::human::paths(name)?, name))?;
+            connect_verified(&socket, &id, |stream| {
+                crate::human::verify_service_host(stream, account.uid)
+            })
+            .map_err(not_running)?
+        }
+        None => {
+            let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
+            connect(&socket, &id).map_err(not_running)?
+        }
+    };
     let result = wire
         .call::<AdminReset>(&AdminResetParams::default(), None)
-        .map_err(|e| fail("asking for a new registration link", e))?;
+        .map_err(|e| {
+            let why = fail("asking for a new registration link", e);
+            if acting_for.is_none() && crate::human::host_is_named_by_user_alone() {
+                format!(
+                    "{why}; on this system the administrator is reset by root at the server \
+                     machine: run this as root (sudo agentic-org admin reset; in a container, \
+                     docker exec -it -u 0 <container> agentic-org admin reset --user <service \
+                     user>)"
+                )
+            } else {
+                why
+            }
+        })?;
     if matches!(result, AdminLinkResult::AdministratorPresent) {
         return say(
             out,
@@ -1163,6 +1233,131 @@ pub fn admin_reset(name: Option<&str>, terminal: bool, out: &mut dyn Write) -> R
         );
     }
     show_link(out, result, name)
+}
+
+/// An account of this machine: its user and primary group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Account {
+    pub uid: u32,
+    pub gid: u32,
+}
+
+/// Whose instance `admin reset` acts on, pure. `me` is this process's effective user,
+/// `named` the `--user` option and `sudo_uid` the `SUDO_UID` variable. `None`: this
+/// user's own, as itself. Root acts for the account it names and never for itself (the
+/// service does not run as root); anyone else acts only for itself.
+pub(crate) fn service_account(
+    me: u32,
+    named: Option<&str>,
+    sudo_uid: Option<&str>,
+    by_name: impl Fn(&str) -> Option<Account>,
+    by_id: impl Fn(u32) -> Option<Account>,
+) -> Result<Option<Account>, String> {
+    let unknown = |account: &str| format!("this machine has no account {account:?}");
+    if me != 0 {
+        return match named {
+            None => Ok(None),
+            Some(account) => match by_name(account) {
+                Some(found) if found.uid == me => Ok(None),
+                Some(_) => Err(format!(
+                    "--user {account} names another account: only root acts for another user"
+                )),
+                None => Err(unknown(account)),
+            },
+        };
+    }
+    let account = match (named, sudo_uid) {
+        (Some(account), _) => by_name(account).ok_or_else(|| unknown(account))?,
+        (None, Some(uid)) => uid
+            .parse()
+            .ok()
+            .and_then(by_id)
+            .ok_or_else(|| unknown(uid))?,
+        (None, None) => {
+            return Err(
+                "as root, name the user the service runs as: agentic-org admin reset --user \
+                 <service user>"
+                    .into(),
+            )
+        }
+    };
+    if account.uid == 0 {
+        return Err("the service does not run as root; name the user it runs as".into());
+    }
+    Ok(Some(account))
+}
+
+/// One entry of the account database, by name or by number.
+fn account_entry(
+    look: impl Fn(&mut libc::passwd, &mut [libc::c_char], &mut *mut libc::passwd) -> libc::c_int,
+) -> Option<Account> {
+    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
+    // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    if look(&mut entry, &mut buffer, &mut found) != 0 || found.is_null() {
+        return None;
+    }
+    Some(Account {
+        uid: entry.pw_uid,
+        gid: entry.pw_gid,
+    })
+}
+
+fn account_by_name(name: &str) -> Option<Account> {
+    let name = std::ffi::CString::new(name).ok()?;
+    account_entry(|entry, buffer, found| {
+        // SAFETY: a NUL-terminated name, and an entry, buffer and result valid for the call.
+        unsafe {
+            libc::getpwnam_r(
+                name.as_ptr(),
+                entry,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                found,
+            )
+        }
+    })
+}
+
+fn account_by_id(uid: u32) -> Option<Account> {
+    account_entry(|entry, buffer, found| {
+        // SAFETY: an entry, buffer and result valid for the call.
+        unsafe { libc::getpwuid_r(uid, entry, buffer.as_mut_ptr(), buffer.len(), found) }
+    })
+}
+
+/// Runs `work` with this process's effective user and group set to `account`'s, and sets
+/// them back. Root uses it to read another user's instance exactly as that user does: every
+/// ownership check of the instance's folders holds, and a file `work` makes (a lock) belongs
+/// to that user, never to root. Only root can do this, and the process has one thread when
+/// a command calls it. If the identity cannot be set back the process ends: it must not
+/// continue as a user it did not mean to be.
+fn as_account<T>(account: Account, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    // SAFETY: getegid and geteuid have no preconditions and cannot fail.
+    let (group, user) = unsafe { (libc::getegid(), libc::geteuid()) };
+    // The group first: only root may change it. SAFETY: plain identity changes.
+    if unsafe { libc::setegid(account.gid) } != 0 {
+        return Err(fail(
+            "acting as the service user",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    // SAFETY: as above.
+    if unsafe { libc::seteuid(account.uid) } != 0 {
+        let error = std::io::Error::last_os_error();
+        // SAFETY: as above; still root.
+        if unsafe { libc::setegid(group) } != 0 {
+            std::process::abort();
+        }
+        return Err(fail("acting as the service user", error));
+    }
+    let result = work();
+    // SAFETY: as above; the saved user is still root's.
+    if unsafe { libc::seteuid(user) } != 0 || unsafe { libc::setegid(group) } != 0 {
+        std::process::abort();
+    }
+    result
 }
 
 /// `agentic-org service start|stop|status`.

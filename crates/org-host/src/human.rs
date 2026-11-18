@@ -197,7 +197,7 @@ fn user_temp(account: &std::path::Path) -> Result<PathBuf, String> {
     })
 }
 mod host;
-pub(crate) use host::verify_host;
+pub(crate) use host::{host_is_named_by_user_alone, verify_host, verify_service_host};
 mod recovery;
 pub use recovery::recovery;
 mod terminal;

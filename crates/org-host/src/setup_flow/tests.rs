@@ -177,9 +177,231 @@ fn a_repeated_setup_with_an_administrator_says_where_to_sign_in() {
 #[test]
 fn admin_reset_off_a_terminal_refuses_with_the_spec_copy_before_anything_else() {
     let mut out = Vec::new();
-    let refused = admin_reset(Some("no-such-instance"), false, &mut out).unwrap_err();
+    let refused = admin_reset(Some("no-such-instance"), None, false, &mut out).unwrap_err();
     assert_eq!(refused, NOT_A_TERMINAL);
     assert!(out.is_empty());
+}
+
+/// SIGN-33: whose instance `admin reset` acts on. Root acts for the account it names (or
+/// the one `sudo` names) and never for itself; anyone else acts only for itself.
+#[test]
+fn admin_reset_acts_for_the_named_service_user_only_when_root_runs_it() {
+    let agentic = Account {
+        uid: 61000,
+        gid: 61000,
+    };
+    let by_name = |name: &str| match name {
+        "agentic" => Some(agentic),
+        "root" => Some(Account { uid: 0, gid: 0 }),
+        "other" => Some(Account {
+            uid: 1001,
+            gid: 1001,
+        }),
+        _ => None,
+    };
+    let by_id = |uid: u32| match uid {
+        61000 => Some(agentic),
+        0 => Some(Account { uid: 0, gid: 0 }),
+        _ => None,
+    };
+    let decide = |me, named, sudo| service_account(me, named, sudo, by_name, by_id);
+    // Root: the named account, or the one sudo names; --user wins.
+    assert_eq!(decide(0, Some("agentic"), None), Ok(Some(agentic)));
+    assert_eq!(decide(0, None, Some("61000")), Ok(Some(agentic)));
+    assert_eq!(decide(0, Some("agentic"), Some("1001")), Ok(Some(agentic)));
+    assert!(decide(0, None, None)
+        .unwrap_err()
+        .contains("--user <service user>"));
+    assert!(decide(0, Some("nobody-here"), None)
+        .unwrap_err()
+        .contains("no account"));
+    assert!(decide(0, None, Some("4242"))
+        .unwrap_err()
+        .contains("no account"));
+    assert!(decide(0, None, Some("not-a-number")).is_err());
+    // Root never acts for root: the service does not run as root.
+    assert!(decide(0, Some("root"), None)
+        .unwrap_err()
+        .contains("does not run as root"));
+    assert!(decide(0, None, Some("0")).is_err());
+    // Anyone else: itself, with or without its own name; never another account.
+    assert_eq!(decide(61000, None, None), Ok(None));
+    assert_eq!(
+        decide(61000, None, Some("0")),
+        Ok(None),
+        "SUDO_UID means nothing here"
+    );
+    assert_eq!(decide(61000, Some("agentic"), None), Ok(None));
+    assert!(decide(61000, Some("other"), None)
+        .unwrap_err()
+        .contains("only root acts for another user"));
+    assert!(decide(1001, Some("agentic"), None).is_err());
+    assert!(decide(61000, Some("nobody-here"), None).is_err());
+    // The real account database knows this process's own user, by number and by name.
+    let me = account_by_id(crate::home::euid()).expect("this user has an account");
+    assert_eq!(me.uid, crate::home::euid());
+    assert_eq!(account_by_name("no-such-account-x5"), None);
+}
+
+/// A service manager no foreground setup may touch.
+struct Untouchable;
+impl ServiceManager for Untouchable {
+    fn register(&self, _: &Unit) -> Result<org_platform::service::Registration, ServiceError> {
+        panic!("the foreground mode registered a service")
+    }
+    fn start(&self, _: &str) -> Result<(), ServiceError> {
+        panic!("the foreground mode started a service")
+    }
+    fn stop(&self, _: &str) -> Result<(), ServiceError> {
+        panic!("the foreground mode stopped a service")
+    }
+    fn status(&self, _: &str) -> Result<ServiceStatus, ServiceError> {
+        panic!("the foreground mode asked for a service's status")
+    }
+    fn unregister(&self, _: &str) -> Result<(), ServiceError> {
+        panic!("the foreground mode unregistered a service")
+    }
+    fn available(&self) -> Result<(), ServiceError> {
+        panic!("the foreground mode asked whether a service manager answers")
+    }
+    fn lingering(&self) -> Lingering {
+        panic!("the foreground mode asked about lingering")
+    }
+}
+
+/// Non-interactive setup in the foreground mode: the record is frozen from the file's
+/// input, the instance is reserved and its layout made, and that is all. No service
+/// manager is asked anything, nothing is waited for, no link is asked for or printed, and a
+/// second run changes nothing. A file that differs from what the instance was set up with
+/// is refused.
+#[test]
+fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap().join("b");
+    for dir in [base.clone(), base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    let input = Input {
+        version: 1,
+        service: Service::Foreground,
+        root: base.join("data"),
+        credentials: None,
+        listen: loopback(7420).unwrap(),
+        certificate: None,
+    };
+    let platform = Platform {
+        service: Box::new(Untouchable),
+        disk: Box::new(org_platform::testing::FakeDiskEncryption(
+            EncryptionState::Unknown("a test".into()),
+        )),
+        credentials: CredentialDirectory::Unused,
+    };
+    let run = |input: &Input| {
+        let request = Request {
+            name: None,
+            port: None,
+            prompt: None,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            // Even at a terminal: the configuration decides, and no link is printed.
+            terminal: true,
+            configuration: Some(Configuration(input.clone())),
+        };
+        assert!(request.configuration.as_ref().unwrap().foreground());
+        let mut out = Vec::new();
+        let result = run_at(&paths, &platform, request, &mut out);
+        (result, String::from_utf8(out).unwrap())
+    };
+    let (result, out) = run(&input);
+    result.unwrap();
+    assert!(
+        out.contains("Service: none is registered (foreground mode)."),
+        "{out}"
+    );
+    assert!(out.contains("agentic-org serve --setup <file>"), "{out}");
+    assert!(out.contains("agentic-org admin reset"), "{out}");
+    assert!(!out.contains("/register"), "{out}");
+    assert!(!out.contains("Service registered"), "{out}");
+    let record = Journal::snapshot(&base, None).unwrap();
+    assert_eq!(record.input, input);
+    assert!(record.offline, "non-interactive setup is offline");
+    assert!(record.instance_id.is_some());
+    assert_eq!(
+        (
+            record.service_registered,
+            record.registry_created,
+            record.initial_link_issued,
+            &record.credentials
+        ),
+        (false, false, false, &None)
+    );
+    assert!(
+        base.join("data/office-state").is_dir(),
+        "the layout is made"
+    );
+    // A second run is a no-op that says the same.
+    let (result, again) = run(&input);
+    result.unwrap();
+    assert_eq!(again, out);
+    assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
+    // Another configuration for the same instance is refused, whatever differs.
+    let mut other = input.clone();
+    other.service = Service::Registered;
+    let mut moved = input.clone();
+    moved.listen = loopback(7421).unwrap();
+    for changed in [other, moved] {
+        let request = Request {
+            name: None,
+            port: None,
+            prompt: None,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            terminal: false,
+            configuration: Some(Configuration(changed)),
+        };
+        let mut out = Vec::new();
+        let refused = run_at(&paths, &platform, request, &mut out).unwrap_err();
+        assert!(refused.contains("a different configuration"), "{refused}");
+        assert!(refused.ends_with("nothing was changed"), "{refused}");
+    }
+    assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
+}
+
+/// The configuration file is read strictly and read-only, and says what it is missing.
+#[test]
+fn a_configuration_file_is_read_without_changing_anything() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("setup.json");
+    let missing = configuration(&file).unwrap_err();
+    assert!(
+        missing.starts_with("reading the setup configuration "),
+        "{missing}"
+    );
+    std::fs::write(&file, b"{\"version\": 1}").unwrap();
+    let refused = configuration(&file).unwrap_err();
+    assert!(
+        refused.contains("\"service\": \"registered\" or \"foreground\"")
+            && refused.ends_with("nothing was changed"),
+        "{refused}"
+    );
+    std::fs::write(
+        &file,
+        br#"{"version":1,"service":"registered","root":"/srv/agentic/instance",
+            "listen":{"address":"127.0.0.1","port":7420,"scheme":"http_loopback",
+                      "origin":"http://127.0.0.1:7420","hsts":"off"}}"#,
+    )
+    .unwrap();
+    let registered = configuration(&file).unwrap();
+    assert!(!registered.foreground());
+    assert_eq!(registered.0.root, PathBuf::from("/srv/agentic/instance"));
+    assert_eq!(
+        std::fs::read_dir(temp.path()).unwrap().count(),
+        1,
+        "reading made a file"
+    );
 }
 
 mod credentials {
@@ -432,6 +654,66 @@ mod credentials {
         );
     }
 
+    /// The foreground mode: the credential directory is a mounted volume. Setup never
+    /// makes it, asks the platform to require the mount, and says so when it is refused.
+    #[test]
+    fn in_the_foreground_mode_setup_makes_no_credential_directory_and_requires_a_mount() {
+        let account = account();
+        let data = account.base.join("data");
+        fs::create_dir(&data).unwrap();
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o700)).unwrap();
+        let data_root = fs::File::open(&data).unwrap();
+        let data_fd = || std::os::fd::AsFd::as_fd(&data_root);
+        let secrets = account.base.join("secrets");
+        let before = tree(&account.base);
+        let asked = std::cell::Cell::new(0);
+        let refusing = |location: org_platform_host::credentials::ReleaseDirectory<'_>| {
+            asked.set(asked.get() + 1);
+            assert_eq!(location.path, secrets.as_path());
+            assert!(location.mount_point_required, "the mount is required");
+            assert!(!location.expect_items);
+            assert!(!location.path.exists(), "setup made the directory");
+            Err(org_platform_host::credentials::CredentialError::Unsafe)
+        };
+        let refused = use_credential_directory(&secrets, true, data_fd(), &account.base, refusing)
+            .unwrap_err();
+        assert_eq!(asked.get(), 1);
+        assert!(
+            refused.starts_with("the credential directory cannot be used: ")
+                && refused.contains("mounted volume")
+                && refused.contains("setup does not make it"),
+            "{refused}"
+        );
+        assert_eq!(tree(&account.base), before);
+        // The registered mode makes the directory at exactly the configured path and does
+        // not require a mount.
+        let lenient = |location: org_platform_host::credentials::ReleaseDirectory<'_>| {
+            assert!(!location.mount_point_required);
+            assert!(location.path.is_dir());
+            Err(org_platform_host::credentials::CredentialError::Unsafe)
+        };
+        let refused = use_credential_directory(&secrets, false, data_fd(), &account.base, lenient)
+            .unwrap_err();
+        assert!(!refused.contains("mounted volume"), "{refused}");
+        assert_eq!(tree(&account.base), before, "a refused directory was kept");
+        // On this system, with the platform's own check: a plain directory is not a mount.
+        if release_directory_system() {
+            fs::create_dir(&secrets).unwrap();
+            fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700)).unwrap();
+            let enter = |location: org_platform_host::credentials::ReleaseDirectory<'_>| {
+                release_directory_below(&account.base, location)
+            };
+            let refused = use_credential_directory(&secrets, true, data_fd(), &account.base, enter)
+                .unwrap_err();
+            println!("a plain directory in the foreground mode: {refused}");
+            assert!(refused.contains("mount"), "{refused}");
+            assert_eq!(
+                use_credential_directory(&secrets, false, data_fd(), &account.base, enter),
+                Ok(secrets.clone())
+            );
+        }
+    }
+
     /// A service manager that registers nothing: setup stops there, after its third step.
     struct NoService;
     impl ServiceManager for NoService {
@@ -486,6 +768,7 @@ mod credentials {
             program: PathBuf::from("/no-such-program"),
             env: Vec::new(),
             terminal: false,
+            configuration: None,
         };
         let mut out = Vec::new();
         let result = run_at(&paths, &platform, request, &mut out);

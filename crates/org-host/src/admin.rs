@@ -6,6 +6,11 @@
 //! previous one. Setting a new administrator password is A3's branch and answers
 //! `unavailable` here. Both calls require the signing check `recovery` uses; hello, the
 //! registered instance and the host's effective UID are enforced before dispatch.
+//!
+//! On a system that names a peer by its user alone (GNU/Linux, ADR-0017 decision 11) there
+//! is no dialog and no code identity: `admin.reset` is authorized by root, the one user
+//! besides the host's own that `host.sock` admits, and for that call only (SIGN-33). A peer
+//! of the host's own user is refused there, whatever its program.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -72,6 +77,12 @@ pub(crate) fn admit_with(
     } else {
         Err(denied())
     }
+}
+
+/// Whether the system names this connection's peer by its user alone (GNU/Linux), so that
+/// no fact tells a command a person ran from any other process of that user.
+fn named_by_user_alone(c: &Connection) -> bool {
+    crate::peer::identity(c.socket()).is_ok_and(|identity| identity.uid.is_some())
 }
 
 fn denied() -> ApiError {
@@ -145,7 +156,26 @@ impl Admin {
         c: &Connection,
         received: Received,
     ) -> Result<AdminLinkResult, ApiError> {
+        if c.root_authority() {
+            // SIGN-33 on a system that names a peer by its user alone: root at the server
+            // machine is the local authority, attested by the kernel when the connection
+            // was accepted. There is no dialog to show; nothing else of root's is read.
+            admit_with(c.channel_kind(), || true)?;
+            if !c.recovery_peer_idle() {
+                return Err(denied());
+            }
+            return self.reset_with(true, || Ok(()));
+        }
         self.admit(c, received)?;
+        if named_by_user_alone(c) {
+            // The same user as the service is not an authority over its administrator:
+            // any process of that user, an agent included, could ask. Whatever a later
+            // presence adapter answers there, only root resets.
+            return Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "on this system the administrator is reset by root at the server machine",
+            ));
+        }
         if !c.recovery_peer_idle() {
             return Err(denied());
         }

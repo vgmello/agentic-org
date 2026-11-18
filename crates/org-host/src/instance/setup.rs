@@ -88,8 +88,15 @@ impl Input {
                 .ok()
                 .is_some_and(|normal| normal.as_os_str() == path.as_os_str())
         };
-        if self.version != 1 || !spelled(&self.root) {
-            return Err(Error::Invalid("invalid version-1 setup configuration"));
+        if self.version != 1 {
+            return Err(Error::Invalid(
+                "the setup configuration's \"version\" must be 1",
+            ));
+        }
+        if !spelled(&self.root) {
+            return Err(Error::Invalid(
+                "the data folder (\"root\") must be an absolute, normalized path",
+            ));
         }
         if self
             .credentials

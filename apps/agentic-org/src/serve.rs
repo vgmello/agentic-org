@@ -106,13 +106,7 @@ fn run_as(
     // The foreground mode: set the instance up from the file if it is not set up yet. A
     // stop signal that arrives meanwhile stays pending and ends the service below.
     if let Some(file) = &args.setup {
-        if !crate::setup::configured(file, args.name.as_deref())? {
-            return Err(format!(
-                "{} sets up a registered service, which its service manager runs; serve \
-                 --setup is the foreground mode and needs \"service\": \"foreground\"",
-                file.display()
-            ));
-        }
+        crate::setup::configured_foreground(file, args.name.as_deref())?;
     }
     let registered = args.name.is_some() || args.setup.is_some();
     let name = args.name.clone();

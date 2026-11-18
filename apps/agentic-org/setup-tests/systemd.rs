@@ -187,7 +187,12 @@ fn setup_registers_a_systemd_user_unit_starts_it_once_and_reports_lingering() {
     // With lingering on, nothing is said about it.
     std::fs::write(account.programs.as_ref().unwrap().join("linger"), "yes").unwrap();
     let status = account.run(&["service", "status"]);
-    assert_eq!(text(&status).0, format!("running (pid {restarted})\n"));
+    assert_eq!(
+        text(&status).0,
+        format!("running (pid {restarted})\n"),
+        "stderr: {}",
+        text(&status).1
+    );
     let stop = account.run(&["service", "stop"]);
     assert!(stop.status.success(), "{:?}", text(&stop));
 }

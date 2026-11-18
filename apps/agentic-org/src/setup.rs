@@ -69,8 +69,7 @@ fn run_as(
             return configured(
                 std::path::Path::new(file),
                 options.get("--name").map(String::as_str),
-            )
-            .map(drop);
+            );
         }
         (true, None) => return Err("--non-interactive needs --config <file>".into()),
         (false, Some(_)) => {
@@ -114,13 +113,32 @@ fn own_program() -> Result<std::path::PathBuf, String> {
 /// Non-interactive, offline setup of instance `name` from the configuration at `file`:
 /// nothing is asked, nothing is fetched and no link is printed. It is idempotent: a later
 /// run with the same file finds the instance set up and changes nothing, and a file that
-/// differs from what the instance was set up with is refused. Returns whether the
-/// configuration's service mode is `foreground`, in which nothing is registered or
-/// started. The caller has already refused a user who may not own the instance.
-pub(crate) fn configured(file: &std::path::Path, name: Option<&str>) -> Result<bool, String> {
+/// differs from what the instance was set up with is refused. The caller has already
+/// refused a user who may not own the instance.
+pub(crate) fn configured(file: &std::path::Path, name: Option<&str>) -> Result<(), String> {
+    apply(setup_flow::configuration(file)?, name)
+}
+
+/// [`configured`] for `serve --setup`: the file must set up the foreground mode, in which
+/// nothing is registered and the caller is the service. A file that sets up a registered
+/// service is refused before anything is changed: its service manager runs it.
+pub(crate) fn configured_foreground(
+    file: &std::path::Path,
+    name: Option<&str>,
+) -> Result<(), String> {
     let configuration = setup_flow::configuration(file)?;
-    let foreground = configuration.foreground();
-    let platform = platform(foreground)?;
+    if !configuration.foreground() {
+        return Err(format!(
+            "{} sets up a registered service, which its service manager runs; serve --setup \
+             is the foreground mode and needs \"service\": \"foreground\"; nothing was changed",
+            file.display()
+        ));
+    }
+    apply(configuration, name)
+}
+
+fn apply(configuration: setup_flow::Configuration, name: Option<&str>) -> Result<(), String> {
+    let platform = platform(configuration.foreground())?;
     let request = Request {
         name: name.map(str::to_owned),
         port: None,
@@ -131,8 +149,7 @@ pub(crate) fn configured(file: &std::path::Path, name: Option<&str>) -> Result<b
         configuration: Some(configuration),
     };
     let mut out = std::io::stdout().lock();
-    setup_flow::run(&platform, request, &mut out)?;
-    Ok(foreground)
+    setup_flow::run(&platform, request, &mut out)
 }
 
 fn ask_port(address: &str) -> Result<Option<u16>, String> {

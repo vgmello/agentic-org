@@ -526,4 +526,5 @@ fn the_registered_account_fixture_serves_with_serve_name() {
     assert!(child.wait().unwrap().success());
 }
 
+mod configured;
 mod systemd;

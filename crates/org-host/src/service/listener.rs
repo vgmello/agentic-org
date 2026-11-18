@@ -320,10 +320,13 @@ fn accept_loop(
         if stream.set_nonblocking(false).is_err() {
             continue;
         }
-        if !org_socket::peer_allowed(&stream, config.expected_uid) {
+        let Some(admitted) = admission(
+            org_socket::peer_allowed(&stream, config.expected_uid),
+            || root_peer(&stream),
+        ) else {
             host_log::log("refused a connection from another user");
             continue; // dropping `stream` closes it
-        }
+        };
         let mut table = lock(live);
         table.retain(|_, live| !live.reader.is_finished());
         if table.len() >= config.max_connections {
@@ -335,6 +338,10 @@ fn accept_loop(
         let id = next_id;
         next_id += 1;
         let (connection, queue) = Connection::new(for_writer, Accepted::sample(&stream));
+        if admitted == Admitted::Root {
+            connection.mark_root_authority();
+            host_log::log("admitted root on host.sock, for admin.reset only");
+        }
         let reader = {
             let (handler, connection) = (Arc::clone(handler), Arc::clone(&connection));
             let max_in_flight = config.max_in_flight;
@@ -388,6 +395,45 @@ fn readable(listener: &UnixListener, wait: Duration) -> bool {
 
 /// A connection's reader: reads requests until the client goes away or the stream is out of
 /// step, runs each on its own thread, then waits for them and stops the writer.
+/// Who a peer of `host.sock` was admitted as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Admitted {
+    /// The host's own user: every call is judged by its own rule.
+    User,
+    /// Root, on a system that names a peer by its user alone: the local authority that
+    /// may reset the administrator (SIGN-33, ADR-0017 decision 11). It is admitted for
+    /// that call and the greeting, and for nothing else ([`root_may_call`]).
+    Root,
+}
+
+/// The admission decision, pure: `own_user` is whether the kernel names the host's own
+/// user as the peer, and `root` asks whether it names root (asked only otherwise). Any
+/// other user is not admitted at all.
+fn admission(own_user: bool, root: impl FnOnce() -> bool) -> Option<Admitted> {
+    if own_user {
+        Some(Admitted::User)
+    } else if root() {
+        Some(Admitted::Root)
+    } else {
+        None
+    }
+}
+
+/// Whether the kernel names root as the peer of `stream`, through the platform's peer
+/// identity. Only a system that names a peer by its user alone reports a user at all
+/// (`Identity::uid`): where a peer is identified by its image, root has no route here,
+/// and a system that cannot identify a peer admits nobody this way.
+fn root_peer(stream: &UnixStream) -> bool {
+    crate::peer::identity(stream).is_ok_and(|identity| identity.uid == Some(0))
+}
+
+/// The calls a connection admitted as root may make: the greeting every connection
+/// starts with, and `admin.reset`. Everything else is answered `not_authorized` before any
+/// handler sees it.
+fn root_may_call(request: &Request) -> bool {
+    request.is::<org_proto::Hello>() || request.is::<org_host_control::admin::AdminReset>()
+}
+
 fn serve(
     stream: UnixStream,
     connection: Arc<Connection>,
@@ -452,6 +498,17 @@ fn serve_with_poll(
                 continue;
             }
         };
+        if connection.root_authority() && !root_may_call(&request) {
+            connection.clear_recovery_permission();
+            connection.send_response(Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "root is admitted on this socket for admin.reset only",
+                ),
+            ));
+            continue;
+        }
         let received = Received {
             sent_at,
             buffered_after: reader.inner.buffer().len(),
@@ -598,11 +655,22 @@ pub(crate) struct Connection {
     /// Ends the ticked reader even if shutdown misses a platform wakeup.
     closed: Arc<AtomicBool>,
     hello_completed: AtomicBool,
+    /// The peer is root, admitted as the local authority for `admin.reset` alone.
+    root_authority: AtomicBool,
     descriptor_receipts:
         Mutex<HashMap<String, (mpsc::Sender<()>, crate::supervisor::channels::ChannelSlot)>>,
     received_channels: Mutex<HashMap<String, crate::supervisor::channels::ChannelSlot>>,
     gateway: Option<Gateway>,
     pub(crate) recovery_permission: Mutex<Option<crate::recovery::Permission>>,
+}
+
+#[cfg(test)]
+impl Connection {
+    /// A connection as the listener makes one for an accepted `stream`, for the tests of
+    /// the calls that judge a connection (`admin`). Nothing serves it.
+    pub(crate) fn accepted_for_tests(stream: &UnixStream) -> Arc<Self> {
+        Self::new(stream.try_clone().unwrap(), Accepted::sample(stream)).0
+    }
 }
 
 /// Capacity is a definite pre-enqueue refusal; all other delivery failures stay fatal.
@@ -621,6 +689,7 @@ impl Connection {
             accepted,
             closed: Arc::new(AtomicBool::new(false)),
             hello_completed: AtomicBool::new(false),
+            root_authority: AtomicBool::new(false),
             descriptor_receipts: Mutex::default(),
             received_channels: Mutex::default(),
             gateway: None,
@@ -656,6 +725,15 @@ impl Connection {
     }
     pub(crate) fn hello_completed(&self) -> bool {
         self.hello_completed.load(Ordering::SeqCst)
+    }
+    /// Set once, when the connection is accepted, and never cleared.
+    pub(crate) fn mark_root_authority(&self) {
+        self.root_authority.store(true, Ordering::SeqCst);
+    }
+    /// Whether the kernel named root as this connection's peer when it was accepted, on a
+    /// system where that makes it the local authority for `admin.reset`.
+    pub(crate) fn root_authority(&self) -> bool {
+        self.root_authority.load(Ordering::SeqCst)
     }
     pub(crate) fn channel_kind(&self) -> org_office_launch::v3::ChannelKind {
         if self.gateway.is_some() {
@@ -1245,6 +1323,88 @@ mod tests {
         assert_eq!(reader.read_line(&mut line).unwrap(), 0);
         worker.join().unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// SIGN-33: the host's own user is admitted as itself, root as the local authority
+    /// (asked only when the peer is not the host's user), and nobody else at all.
+    #[test]
+    fn only_the_hosts_user_and_root_are_admitted_and_root_is_asked_last() {
+        let unasked = || -> bool { panic!("asked about root for the host's own user") };
+        assert_eq!(admission(true, unasked), Some(Admitted::User));
+        assert_eq!(admission(false, || true), Some(Admitted::Root));
+        assert_eq!(admission(false, || false), None);
+        // This process's own peer is its own user: the platform never names it root unless
+        // the tests run as root, and where a peer is identified by its image, never.
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let named_root = crate::peer::identity(&stream).is_ok_and(|i| i.uid == Some(0));
+        assert_eq!(root_peer(&stream), named_root);
+        assert!(!named_root || crate::home::euid() == 0);
+    }
+
+    /// A connection admitted as root reaches a handler with the greeting and
+    /// `admin.reset` only: every other method is answered `not_authorized` before any
+    /// handler sees it. The same requests on the host's own user's connection all reach
+    /// the handler, which judges each by its own rule.
+    #[test]
+    fn root_is_admitted_for_admin_reset_and_the_greeting_and_nothing_else() {
+        const METHODS: [&str; 14] = [
+            "hello",
+            "instance.status",
+            "admin.link.initial",
+            "admin.reset",
+            "tls.fetch",
+            "web.serving",
+            "organization.provision",
+            "operation.get",
+            "recovery.release",
+            "recovery.acknowledge",
+            "session.grant",
+            "office.app_token",
+            "office.restart",
+            "no.such.method",
+        ];
+        for root in [true, false] {
+            let (host, peer) = UnixStream::pair().unwrap();
+            let (connection, queue) =
+                Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+            assert!(!connection.root_authority());
+            if root {
+                connection.mark_root_authority();
+            }
+            let serving = Arc::clone(&connection);
+            let server = thread::spawn(move || serve(host, serving, queue, Arc::new(Echo), 4));
+            peer.set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut reader = io::BufReader::new(peer.try_clone().unwrap());
+            for (id, method) in METHODS.iter().enumerate() {
+                writeln!(
+                    &peer,
+                    r#"{{"id":{},"method":"{method}","params":{{}}}}"#,
+                    id + 1
+                )
+                .unwrap();
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let response: Response = serde_json::from_str(&line).unwrap();
+                assert_eq!(response.id, id as u64 + 1);
+                let reached = match response.outcome {
+                    org_proto::Outcome::Result(value) => {
+                        assert_eq!(value, Value::String((*method).into()));
+                        true
+                    }
+                    org_proto::Outcome::Error(error) => {
+                        assert_eq!(error.code, ErrorCode::NotAuthorized, "{method}");
+                        assert!(error.message.contains("admin.reset only"), "{method}");
+                        false
+                    }
+                };
+                let allowed = !root || matches!(*method, "hello" | "admin.reset");
+                assert_eq!(reached, allowed, "root={root} {method}");
+            }
+            drop(reader);
+            drop(peer);
+            server.join().unwrap();
+        }
     }
 
     #[test]

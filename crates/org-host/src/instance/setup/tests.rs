@@ -160,11 +160,52 @@ fn strict_input_and_replaced_setup_lock_refuse_without_secrets() {
         serde_json::from_value::<Input>(raw).is_err(),
         "plain HTTP stays on loopback"
     );
-    // A valid HTTPS listener on every address decodes, and this setup adapter refuses it.
+    // HTTPS on every address is a listener; an origin whose scheme or port is not the
+    // listener's cannot even be decoded.
+    let https = |origin: &str| {
+        serde_json::from_str::<ListenConfig>(&format!(
+            r#"{{"address":"0.0.0.0","port":7420,"scheme":"https","origin":"{origin}","hsts":"off"}}"#
+        ))
+        .map(|listen| Input {
+            listen,
+            ..original.clone()
+        })
+    };
+    let secure = https("https://office.example:7420").unwrap();
+    assert!(secure.listen.address().is_unspecified());
+    assert!(secure.validate().is_ok());
+    assert!(https("https://office.example:7421").is_err());
+    assert!(https("http://office.example:7420").is_err());
+    // A certificate is two absolute, normalized paths, for an HTTPS listener only.
+    let pair = |chain: &str, key: &str| Certificate {
+        chain: chain.into(),
+        key: key.into(),
+    };
+    let mut with = secure.clone();
+    with.certificate = Some(pair("/secrets/tls/chain.pem", "/secrets/tls/key.pem"));
+    assert!(with.validate().is_ok());
+    for bad_pair in [
+        pair("chain.pem", "/secrets/tls/key.pem"),
+        pair("/secrets/tls/chain.pem", "/secrets/../key.pem"),
+        pair("/secrets//tls/chain.pem", "/secrets/tls/key.pem"),
+    ] {
+        with.certificate = Some(bad_pair);
+        assert!(with.validate().is_err());
+    }
     bad = original.clone();
-    bad.listen = serde_json::from_str(r#"{"address":"0.0.0.0","port":7420,"scheme":"https","origin":"https://office.example:7420","hsts":"off"}"#).unwrap();
-    assert!(bad.listen.address().is_unspecified());
-    assert!(bad.validate().is_err(), "HTTPS setup is unavailable");
+    bad.certificate = Some(pair("/secrets/tls/chain.pem", "/secrets/tls/key.pem"));
+    assert!(bad.validate().is_err(), "no certificate for loopback HTTP");
+    // The credential directory is spelled as it is walked.
+    for (path, valid) in [
+        ("/secrets", true),
+        ("/secrets/", false),
+        ("/a/../secrets", false),
+        ("secrets", false),
+    ] {
+        bad = original.clone();
+        bad.credentials = Some(path.into());
+        assert_eq!(bad.validate().is_ok(), valid, "{path}");
+    }
     let journal = Journal::open(&base, None).unwrap();
     let r = journal.freeze(original, true, pin()).unwrap();
     let lock = base.join("setup/default/setup.lock");
@@ -322,4 +363,120 @@ fn the_credential_directory_is_validated_strictly_and_frozen_with_the_record() {
         assert!(journal.read().is_err());
         assert!(Journal::snapshot(&base, None).is_err());
     }
+}
+
+/// The configuration of non-interactive setup is the record's own input, read strictly:
+/// every property is required or named optional, nothing else is accepted, and a mistake
+/// is answered with the whole shape.
+#[test]
+fn a_configuration_file_is_the_strict_input_and_names_its_shape_when_it_is_wrong() {
+    let text = r#"{
+      "version": 1, "service": "foreground", "root": "/data/instance",
+      "credentials": "/secrets",
+      "listen": {"address": "0.0.0.0", "port": 8443, "scheme": "https",
+                 "origin": "https://localhost:8443", "hsts": "off"}
+    }"#;
+    let input = Input::from_configuration(text.as_bytes()).unwrap();
+    assert_eq!(input.service, Service::Foreground);
+    assert_eq!(input.root, PathBuf::from("/data/instance"));
+    assert_eq!(input.credentials, Some(PathBuf::from("/secrets")));
+    assert_eq!(input.listen.port(), 8443);
+    assert_eq!(input.certificate, None);
+    // It is exactly what the record stores.
+    assert_eq!(
+        serde_json::from_value::<Input>(serde_json::to_value(&input).unwrap()).unwrap(),
+        input
+    );
+    let value: serde_json::Value = serde_json::from_str(text).unwrap();
+    let with = |change: &dyn Fn(&mut serde_json::Value)| {
+        let mut changed = value.clone();
+        change(&mut changed);
+        Input::from_configuration(changed.to_string().as_bytes())
+    };
+    assert!(with(&|_| {}).is_ok());
+    for (what, change) in [
+        (
+            "an unknown property",
+            (&|v: &mut serde_json::Value| v["password"] = "x".into())
+                as &dyn Fn(&mut serde_json::Value),
+        ),
+        ("no service mode", &|v| {
+            v.as_object_mut().unwrap().remove("service");
+        }),
+        ("an unknown service mode", &|v| {
+            v["service"] = "daemon".into()
+        }),
+        ("another version", &|v| v["version"] = 2.into()),
+        ("no version", &|v| {
+            v.as_object_mut().unwrap().remove("version");
+        }),
+        ("a relative root", &|v| v["root"] = "data".into()),
+        ("an unknown listener property", &|v| {
+            v["listen"]["tls"] = true.into()
+        }),
+        ("plain HTTP off loopback", &|v| {
+            v["listen"]["scheme"] = "http_loopback".into();
+            v["listen"]["origin"] = "http://localhost:8443".into();
+        }),
+        ("an unknown certificate property", &|v| {
+            v["certificate"] = serde_json::json!({"chain": "/c", "key": "/k", "pass": "x"});
+        }),
+        ("a certificate without a key", &|v| {
+            v["certificate"] = serde_json::json!({"chain": "/c"})
+        }),
+    ] {
+        assert!(with(change).is_err(), "{what} was accepted");
+    }
+    // A repeated property, something that is not an object, and a file that is too large.
+    for bytes in [
+        text.replacen("\"version\": 1,", "\"version\": 1, \"version\": 1,", 1)
+            .into_bytes(),
+        b"[]".to_vec(),
+        b"".to_vec(),
+        format!("{text}{}", " ".repeat(LIMIT)).into_bytes(),
+    ] {
+        assert!(Input::from_configuration(&bytes).is_err());
+    }
+    let refused = Input::from_configuration(b"{}").unwrap_err().to_string();
+    assert!(
+        refused.contains("\"service\": \"registered\" or \"foreground\""),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("no other property is accepted"),
+        "{refused}"
+    );
+}
+
+/// Which systems an input fits: a directory is named only where secrets are kept in one,
+/// and the foreground mode must name it there.
+#[test]
+fn an_input_names_a_credential_directory_only_where_the_system_keeps_one() {
+    let mut input = input(PathBuf::from("/data/instance"));
+    let directory = Some(ProtectedStore::ReleaseDirectory);
+    for store in [directory, Some(ProtectedStore::Keychain), None] {
+        assert_eq!(
+            input.fits(store),
+            Ok(()),
+            "registered, none named: {store:?}"
+        );
+    }
+    input.credentials = Some("/secrets".into());
+    assert_eq!(input.fits(directory), Ok(()));
+    assert!(input
+        .fits(Some(ProtectedStore::Keychain))
+        .unwrap_err()
+        .contains("remove it"));
+    assert!(input.fits(None).is_err());
+    input.service = Service::Foreground;
+    assert_eq!(input.fits(directory), Ok(()));
+    assert!(input.fits(Some(ProtectedStore::Keychain)).is_err());
+    input.credentials = None;
+    assert!(input
+        .fits(directory)
+        .unwrap_err()
+        .contains("mounted secrets volume"));
+    // Where secrets are kept elsewhere, the foreground mode names none.
+    assert_eq!(input.fits(Some(ProtectedStore::Keychain)), Ok(()));
+    assert_eq!(input.fits(None), Ok(()));
 }

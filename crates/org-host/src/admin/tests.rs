@@ -287,3 +287,87 @@ fn only_the_local_channel_may_administer_even_when_the_policy_would_allow() {
         ErrorCode::NotAuthorized
     );
 }
+
+/// A presence adapter that says yes to everything: what a later Linux adapter might answer
+/// for a process of the service's own user.
+struct Approving;
+impl Presence for Approving {
+    fn local(&self, _: &Connection) -> bool {
+        true
+    }
+    fn confirm(&self, _: &dyn Fn() -> bool) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+/// SIGN-33 on a system that names a peer by its user alone: `admin.reset` is root's. A
+/// connection the listener admitted as root gets a link with no dialog, even where the
+/// presence adapter refuses everything; a connection of the host's own user is refused
+/// even where the presence adapter would approve, because any process of that user could
+/// ask. Where the system identifies a peer's image, the host's own user goes to the dialog
+/// as before, and root has no connection to be judged.
+#[test]
+fn where_a_peer_is_named_by_its_user_alone_only_root_resets_the_administrator() {
+    use std::os::unix::net::UnixStream;
+    let received = Received {
+        sent_at: 0,
+        buffered_after: 0,
+    };
+    let (host, _peer) = UnixStream::pair().unwrap();
+    let by_user_alone = crate::peer::identity(&host).is_ok_and(|identity| identity.uid.is_some());
+
+    // Root, admitted by the listener: no presence is asked (this adapter refuses).
+    let (_home, refusing) = admin();
+    let root = Connection::accepted_for_tests(&host);
+    root.mark_root_authority();
+    let issued = refusing.reset(&root, received).unwrap();
+    let (first, _) = token(issued);
+    // A second reset replaces the link; an administrator ends it.
+    let (second, _) = token(refusing.reset(&root, received).unwrap());
+    assert_ne!(first, second);
+    seed_administrator(&refusing);
+    assert_eq!(
+        refusing.reset(&root, received).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    // Bytes already waiting behind the request deny it, as for every caller.
+    let (_home, fresh) = admin();
+    let (busy_host, mut busy_peer) = UnixStream::pair().unwrap();
+    let busy = Connection::accepted_for_tests(&busy_host);
+    busy.mark_root_authority();
+    std::io::Write::write_all(&mut busy_peer, b"x").unwrap();
+    assert_eq!(
+        fresh.reset(&busy, received).unwrap_err().code,
+        ErrorCode::NotAuthorized
+    );
+
+    // The host's own user, with a presence adapter that approves everything.
+    let (home, admin) = self::admin();
+    let approving = Admin::new(
+        Arc::clone(&admin.db),
+        OPERATION,
+        ListenOrigin::parse("http://127.0.0.1:7420").unwrap(),
+        AppPolicy::new(crate::HOST_SIGNING_ID, None).unwrap(),
+        Arc::new(Approving),
+    );
+    let own = Connection::accepted_for_tests(&host);
+    let answer = approving.reset(&own, received);
+    if by_user_alone {
+        let error = answer.unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotAuthorized);
+        assert!(error.message.contains("by root"), "{}", error.message);
+        assert_eq!(
+            admin
+                .db
+                .pending(LinkKind::Registration, &subject(), 1)
+                .unwrap(),
+            None,
+            "no link was issued for the service's own user"
+        );
+    } else {
+        // An unsigned test binary does not pass the signing policy there: refused before
+        // any dialog, as it always was.
+        assert_eq!(answer.unwrap_err().code, ErrorCode::NotAuthorized);
+    }
+    drop(home);
+}
