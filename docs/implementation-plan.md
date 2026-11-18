@@ -1048,6 +1048,41 @@ half of LNX-6 run).
   setup reports when it is off.
 - **Needs:** X2, X3, X4, A2 (setup) and A3 (the web process and sign-in).
 
+### X7 · HTTPS for a container, with the instance's own certificate (pending)
+
+Recorded by the owner on 2026-11-18. Until it is built the container serves the
+browser over plain HTTP (X5), and the documented run command publishes that port on
+`127.0.0.1` only.
+
+- **Outcome:** the container serves the browser over HTTPS without the operator making
+  anything: at first start the instance makes its own certificate for the configured
+  origin and prints its fingerprint; an operator may supply a certificate pair
+  instead. The plain-HTTP mode for a published port is then removed or kept only as an
+  explicit choice, a decision taken when this is built.
+- **What it needs** (none of it exists on any system today; the product serves plain
+  HTTP on loopback only):
+  - the web process serving TLS from a key it receives from the host (`tls.fetch`
+    answers only the loopback HTTP profile; `apps/agentic-org-web/src/tls.rs`), and
+    the host's gate that requires a verified HTTP loopback listener
+    (`crates/org-host/src/web.rs`) extended to an HTTPS listener;
+  - custody of the pair in the host's secrets (the `tls_pair` record is unused; a
+    self-made certificate may be made again if it is lost, an operator's key may not:
+    the store must refuse a start when the record names a key that is gone);
+  - making an X.509 certificate: no workspace dependency can (rustls and webpki only
+    read them), so either a dependency that can, or a small DER writer over the
+    existing crypto library;
+  - a verifier for a supplied pair (the key matches the leaf, the leaf is valid now and
+    names the origin's host, the chain parses) and its import at setup;
+  - the session cookie, HSTS and Origin rules for an HTTPS origin, which the listener
+    contract already describes (`crates/org-host-control/src/listen.rs`).
+- **Owned with Track A:** the listener and gateway contracts and FC-017 (TLS, CA
+  custody and privilege separation) are theirs; the contract change is agreed with
+  that lead before it is built.
+- **Read:** [Linux host design](design/linux-host.md) section 3.4,
+  [ADR-0017](adr/0017-linux-and-container-hosting.md) decision 10,
+  [standalone server design](design/standalone-server.md) (listener and Origin).
+- **Needs:** X5.
+
 ### X6 · Both systems in CI
 
 - **Outcome:** none a person can see. Every change is checked on both systems and in

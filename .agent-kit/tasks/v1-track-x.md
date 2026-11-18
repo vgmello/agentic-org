@@ -51,6 +51,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X4 web process confined on Linux (LNX-3) | Adapter reviewed and repaired; Landlock optional; host slice integrated (`4823b23a`); the real-host LNX-3 test and the last web tests are in work; a fresh review of the host work is owed | See below |
 | X5 service and container (LNX-2) | Built on branch `x/x5-service` (`a31873e8`), not integrated; under fresh review; the browser is not served from the container | See below |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
+| X7 HTTPS for a container with the instance's own certificate | Pending, recorded by the owner 2026-11-18; with Track A | Implementation plan X7 |
 
 ## X1a · The platform crate and the check
 
@@ -885,7 +886,7 @@ store are each refused by their rule.
 
 | Gap | What it needs |
 | --- | --- |
-| The browser is not served from the container. The web process serves plain HTTP on loopback only (`web.rs` requires a verified HTTP loopback listener; `tls.fetch` answers only that profile; the `tls_pair` custody is unused), a published port is not loopback, and no workspace dependency can make a certificate | Either HTTPS serving in the host and the web process (a product feature that exists on no system yet: FC-017, Track A's area) with a certificate made at first start, or plain HTTP allowed on the container's interface. The owner's decision |
+| The browser is not served from the container. The web process serves plain HTTP on loopback only (`web.rs` requires a verified HTTP loopback listener; `tls.fetch` answers only that profile; the `tls_pair` custody is unused), a published port is not loopback, and no workspace dependency can make a certificate | Either HTTPS serving in the host and the web process (a product feature that exists on no system yet: FC-017, Track A's area) with a certificate made at first start, or plain HTTP allowed on the container's interface. **Decided by the owner, 2026-11-18: plain HTTP for now** (a listener mode only the foreground mode may choose; X5's worker is building it), **and HTTPS with the instance's own certificate recorded as pending work** (implementation plan X7, ADR-0017 decision 10). Owed after the merge of `x/merge-a`: the same note in `docs/FEATURES.md` rows FC-164 and FC-017 |
 | The container uses the development key store (`/secrets/dev-keys`), because the image holds a debug build; a release directory is used only by a release-profile host | A release image needs the release pipeline (a signed manifest and pinned runtime); until then the release store runs in no host anywhere |
 | A new, empty secrets volume does not stop the start in that image: the host serves and reports the office as having no usable key; no key is made | Follows from the development store |
 | `-v D:/data -v D/secrets:/secrets` is not refused: the store is beside the instance root (`/data/instance`), not inside it | The store must be compared with the data volume, not only with the instance root: X3's author, after the merge |
