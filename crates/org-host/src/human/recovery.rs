@@ -320,7 +320,8 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
             }
             _ => return Err(HELP.into()),
         };
-    // An explicit target must name an absolute socket and a canonical instance id (UUIDv7).
+    // Every target (explicit or setup-located) must name an absolute socket and a canonical
+    // UUIDv7 instance id.
     if !socket.is_absolute() || !org_proto::is_uuid_v7(&instance) {
         return Err(HELP.into());
     }
