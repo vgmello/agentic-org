@@ -1,6 +1,6 @@
 # Organization structure
 
-Status: **selected** data contract, revision 2.7. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Status: **selected** data contract, revision 2.8. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
@@ -151,9 +151,10 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── roles/<role-id>.md
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
+├── development-processes/<id>/
 ├── teams/<team-id>/
 │   ├── team.yaml
-│   ├── work/tasks/<task-id>.md       # Team tasks of any type; project_id is null
+│   ├── work/tasks/<task-id>.md       # Team tasks; project_id is null
 │   ├── agents/<employee-id>/profile.md
 │   ├── people/<employee-id>/profile.md
 │   ├── processes/<document-id>.md

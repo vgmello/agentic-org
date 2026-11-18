@@ -103,7 +103,7 @@ another record.
 
 ## 3. Flow 1 · Project page
 
-Projects → Reservations **P-8**, with a Projects back link. Header: **Accountable team: Payments**; **Contributors: Platform**; real done/total counts; New task and Report bug. The tabs are **Overview | Work | Team | Activity | Conversations**, Overview by default. Work filters shared typed tasks by type. Backlog and Releases join after Work when they are built; Insights is last when it is built. Features, Docs and Settings appear when their own experiences are served; their specs define them.
+Projects → Reservations **P-8**, with a Projects back link. Header: **Accountable team: Payments**; **Contributors: Platform**; real done/total counts; New task and Report bug. The tabs are **Overview | Work | Docs | Team | Activity | Conversations** in every project, Overview by default, with the tabs the project's development process declares between Work and Docs ([development processes](../design/development-processes.md#4-the-projects-tabs)). Work filters shared typed tasks by type. Backlog joins after Work when it is built; Insights is last when it is built. Releases and Features are tabs a development process declares; a project with none has both. Settings appears when its own experience is served.
 
 Overview shows the living Brief, real open/blocked counts and the five latest activity entries. Work shows the project's typed tasks with one status signal; Team shows accountable/contributing teams and then member rows, with only supported authorized association edits. Activity uses full references: “Ana assigned T-A42 to Platform · Ana.” Conversations shows permitted project-linked threads. Empty feeds say **No activity yet** or **No conversations yet**. Projectless work appears in Work/team backlogs rather than an artificial project.
 
@@ -253,7 +253,7 @@ Criteria marked "Not in v1" belong to §16.
 
 **Project page (PRJ)**
 
-- PRJ-1 · The project page uses Overview, Work, Team, Activity and Conversations with Projects back navigation. Work filters typed tasks. Backlog, Releases and Insights appear when built; tabs for experiences that are not served are never shown.
+- PRJ-1 · The project page uses Overview, Work, Docs, Team, Activity and Conversations with Projects back navigation, plus the tabs its development process declares, such as Releases, Features or a section of its documentation (PKG-15). Work filters typed tasks. Backlog and Insights appear when built; tabs for experiences that are not served are never shown.
 - PRJ-2 · Overview shows the living Brief, real open/blocked counts and the five latest activity entries. Team separates accountable/contributing teams from member rows; Conversations exposes only authorized linked threads. Empty states and optional lead/health/due fields are honest.
 - PRJ-3 · The header shows one required accountable team and optional contributors. Settings keeps repository integration branches on each project/repository association; a teamless project is never accepted.
 - PRJ-4 · When the accepting service is unavailable, writes have an accessible reason and last known data stays readable with a stale/read-only label.

@@ -86,7 +86,8 @@ the turn also has other records; a turn with none shows no amount.
   **Run now** (with an optional note: "What should HR lead do?"), **Message**, and
   ⋯ › **Pause**.
 - **Profile › Runs tab:** one row per turn: when · who started it (Run now by you,
-  or the answer to a required ask) · duration · cost · outcome (the agent's one-line
+  a message, mention, ask or assignment from a named employee, or the answer to a
+  required ask) · duration · cost · outcome (the agent's one-line
   summary, or "Failed: <reason>") · **Open session log**. Filter by outcome.
 - **Activity:** one row per turn, updated live ("running 2 min…" becomes
   "ran 4 min").
@@ -120,7 +121,7 @@ model turn.
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · A message, an ask or a mention from a person, and an assignment, start no model work. A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024).
+- RUN-3 · A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024). By [ADR-0028](../adr/0028-an-agent-is-always-available.md) a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way (AVAIL-1 to AVAIL-6). An announcement, `@here`, and an ordinary post or an undirected question in a channel start nothing. An agent that is not working shows as Available, whether or not its process is running.
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.
@@ -136,8 +137,8 @@ model turn.
 
 ## 5. Not in v1
 
-- **Automatic run modes.** On call (asleep until any message, task or Run now wakes
-  it; v1 has only the narrower rule of ADR-0023), Scheduled (wakes on a plain-words schedule, never cron) and Always on (kept
+- **Automatic run modes.** On call for anything else (asleep until any post or Run now wakes
+  it; v1 has the rules of ADR-0023 and ADR-0028), Scheduled (wakes on a plain-words schedule, never cron) and Always on (kept
   running and restarted). With them: Asleep presence, wake history with triggers,
   idle sleep after 5 minutes, a maximum busy time (30 minutes in the agent's home,
   2 hours on a task), wake-up guidance, missed-run catch-up, and an "Upcoming" list.

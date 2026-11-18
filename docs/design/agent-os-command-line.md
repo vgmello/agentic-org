@@ -483,11 +483,36 @@ The rules:
 | --- | --- | --- | --- |
 | `process list` | The processes and standards that apply to the caller's current work, or to a named task, with where each comes from and which must be followed. `--kind process` or `--kind standard` keeps one kind | [Processes design](processes.md) (`process.effective`), PROC-8 | C5 |
 | `process inspect` | One document's full text by key, process or standard; with `--why`, the chain from organization to team to project and which level won | The same (`process.show`, `process.why`) | C5 |
-| `skill list`, `skill read` | The product's built-in guidance on its own commands | Processes design, decision 4 | C5 |
+| `skill list`, `skill read` | The product's built-in guidance on its own commands, and the skills of the caller's project's development process for the caller's role; each names its source | Processes design, decision 4; [development processes](development-processes.md#6-how-skills-reach-an-agent) | C5; L12 for a development process's skills |
+| `process create`, `process update` | Add an organization process or standard at the scope of a project of the caller's own team, or change one of that project's. Never at team or organization scope, never non-overridable, never a key inherited from above | [Processes design](processes.md#5-changing-processes), decision 8 (PROC-36) | L12 |
+| `dev-process inspect` | The development process of the caller's project: its summary, stages and tabs, and the caller's role in it. Reading only: a person creates, edits and imports one in the browser | [Development processes](development-processes.md) | L12 |
 
 Processes and standards are the same kind of document, inherited the same way and
-read through the same calls, so they share one resource. `process apply` and
+read through the same calls, so they share one resource. A development process is a different
+primitive with its own resource; its skills are read with the `skill` commands. `process apply` and
 `policy check` are in section 6.
+
+### 3.5a Project documents
+
+The owner's REQ-06 and REQ-07 are in the repository, and these commands are their
+form in this grammar ([development processes](development-processes.md#8-the-project-documentation-tree),
+[desired state specifications](desired-state-specifications.md#6-the-contract)). They
+come with L11 and L13. A call for a project that is not the caller's own is refused
+with `other_project`.
+
+| Command | What it does | Contract |
+| --- | --- | --- |
+| `doc index` | The project's information-architecture index in one read: every section, document and media file with its path, kind, title, status and what it is for | `doc.index` |
+| `doc list`, `doc inspect` | A folder or a filtered listing; one document: its latest issued version by default, `--working` for the working text, `--version <n>` for an earlier one | `doc.list`, `doc.read` |
+| `doc create`, `doc update`, `doc move` | Start a document from its kind's template, change it, or move it; the index is written in the same accepted change | `doc.write` |
+| `doc put`, `doc get` | Store a diagram or an image in the tree; copy one into the run's temporary folder | `doc.upload`, `doc.write`, `doc.read` |
+| `doc-section create`, `doc-section update`, `doc-section move` | Add, describe or reorder a section of the tree | `doc.write` |
+| `doc issue` | Fix the working text as the next version, with a note and the versions it was derived from | `doc.issue` |
+| `doc diff`, `doc versions`, `doc status` | Differences between versions or the working text; a document's versions with their tasks and progress; every versioned document of the project | `doc.diff`, `doc.versions`, `doc.status` |
+| `doc link-code`, `doc unlink-code`, `doc code-links` | Say where a document is realized in code; list the links of a document or the documents that link a file; `--check` marks stale ones | `doc.link_code`, `doc.code_links` |
+
+`task create` and `task update` take `--realizes <document>@<version>`. `hr hire` takes
+`--role <key>`, and `role inspect` also prints what a hire proposal for the role needs.
 
 ### 3.6 Repositories and worktrees
 
@@ -581,9 +606,9 @@ capability of `org-platform`, on both systems.
 | Requirement | Why not yet | Where it goes |
 | --- | --- | --- |
 | `milestone`, `release` | Features, releases and deployments are a later increment | L7, in this grammar |
-| `ia`, `fs`, `link` | Project documents are L7. Their meaning (the Information Architecture index, project storage, links to DSS versions) is defined in REQ-01 to REQ-07, which this repository does not hold. Until they are settled, `agent-os doc` in the [knowledge UX](../specs/decisions-and-tech-debt-ux.md) (AUTH-5, TPL-3) states the behaviour and its command names are provisional | L7, after the owner's answer |
-| `process apply`, `block run`, role-bound skills | Process Packages. Processes here are documents that are read, and writing them from the command line is not in v1 (PROC-8) | After the owner's answer |
-| `artifact publish`, `artifact drift` | No record of typed artifact versions or derivation exists | After the owner's answer |
+| `ia`, `fs`, `link` | They are `doc index`, the `doc` commands and `doc link-code` (3.5a), from REQ-06 and REQ-07 | L11 and L13 |
+| `process apply`, `block run` | A development process is content that agents read, with no engine: nothing applies a process or runs a block ([ADR-0026](../adr/0026-development-processes-are-content.md)). Its role-bound skills are read with `skill list` and `skill read` (3.5) | Not commands |
+| `artifact publish`, `artifact drift` | They are `doc issue` and `doc status`: an issued version of a document, and whether the tasks that realize it are finished (3.5a) | L13 |
 | `event emit`, `event subscribe` | The office has one change stream, for its own readers. Agents publishing events and packages subscribing to them is new | After the owner's answer |
 | `gate open`, `gate status` | An approval is a record with its own rules (3.3), and what declares a gate is a Process Package | After the owner's answer. Until then: `hr hire` for a hire, a required yes-or-no ask for anything else |
 | `worktree create`, `worktree cleanup` | The office does both, at task start and after closure (3.6) | Not commands |
