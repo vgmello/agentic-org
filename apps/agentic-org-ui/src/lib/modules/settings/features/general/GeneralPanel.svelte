@@ -34,6 +34,7 @@
 	error="Couldn't load the organization's settings"
 	place="General"
 	area="Organization settings"
+	rows={5}
 >
 	{#snippet children(general)}
 		{#snippet adminText()}
