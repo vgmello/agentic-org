@@ -14,6 +14,7 @@ use org_proto::{Call, Empty};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ops::LinkedOrg;
+use crate::status::{Administrator, GatewayState, InstanceMode};
 use crate::{LinkToken, Password};
 
 /// A 32-byte digest as 64 lowercase hex digits. Not secret: it is the stored form.
@@ -156,6 +157,28 @@ pub struct BrowserSession {
 pub struct BrowserAccount {
     pub id: String,
     pub login: String,
+}
+
+/// `instance.view`: the instance's display state behind the browser's `GET /instance`. The web
+/// process validates the browser session first; the host serves this only on the web
+/// connection. No path, socket, handle or certificate material; TLS state is not reported
+/// until TLS lands.
+pub struct InstanceView;
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstanceViewParams {}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstanceViewResult {
+    /// The instance's registered name.
+    pub name: String,
+    pub status: InstanceMode,
+    pub web_status: GatewayState,
+    pub administrator: Administrator,
+}
+impl Call for InstanceView {
+    const METHOD: &'static str = "instance.view";
+    type Params = InstanceViewParams;
+    type Result = InstanceViewResult;
 }
 
 /// Host→web event: the session no longer exists; drop it from every cache.

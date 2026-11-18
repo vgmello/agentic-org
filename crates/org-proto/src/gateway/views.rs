@@ -44,7 +44,9 @@ pub struct InstanceView {
     pub server_version: String,
     pub web_status: GatewayStatus,
     pub listen_scheme: ListenScheme,
-    pub tls: TlsStatus,
+    /// Absent until the instance serves TLS; never certificate material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<TlsStatus>,
     pub server_time_ms: Milliseconds,
 }
 

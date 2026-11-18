@@ -574,6 +574,33 @@
           false
         ]
       }
+    },
+    {
+      "name": "tls is absent until the instance serves TLS",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "web_status": "ok",
+          "listen_scheme": "http_loopback",
+          "server_time_ms": 1794312000000
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "instance_id": "01M72N8MG00000000000000001",
+            "name": "default",
+            "server_version": "0.1.0",
+            "web_status": "ok",
+            "listen_scheme": "http_loopback",
+            "server_time_ms": 1794312000000
+          }
+        }
+      }
     }
   ]
 }

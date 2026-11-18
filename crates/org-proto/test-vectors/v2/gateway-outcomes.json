@@ -700,6 +700,91 @@
         },
         "final": true
       }
+    },
+    {
+      "name": "credential rule names its field and rule",
+      "native_error": {
+        "code": "invalid_request",
+        "message": "Use at least 12 characters.",
+        "field": "password",
+        "rule": "too_short"
+      },
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "invalid_request",
+          "message": "Use at least 12 characters.",
+          "field": "password",
+          "rule": "too_short"
+        }
+      },
+      "authenticated": false,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 400,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "invalid_request",
+            "message": "Use at least 12 characters.",
+            "field": "password",
+            "rule": "too_short"
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "host rate limit keeps its retry delay",
+      "native_error": {
+        "code": "rate_limited",
+        "message": "Wait, then try again.",
+        "retry_after_ms": 30000
+      },
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "rate_limited",
+          "message": "Wait, then try again.",
+          "retry_after_ms": 30000
+        }
+      },
+      "authenticated": false,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 429,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "rate_limited",
+            "message": "Wait, then try again.",
+            "retry_after_ms": 30000
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "field without rule is invalid",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "invalid_request",
+          "message": "Refused.",
+          "field": "login"
+        }
+      },
+      "authenticated": false,
+      "expect": {
+        "valid": false
+      }
     }
   ]
 }

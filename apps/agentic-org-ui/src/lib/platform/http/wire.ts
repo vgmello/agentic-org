@@ -158,13 +158,17 @@ export const validRawPathSegment = (segment: string): boolean => typeof segment 
 
 const sessionReason = word(['session_ended'] as const);
 const cancelState = word(['abandoned', 'linked', 'in_progress'] as const);
+const credentialField = word(['login', 'password'] as const);
+const credentialRule = word(['format', 'taken', 'too_short', 'too_long'] as const);
 const gatewayErrorReader = object({
 	code: text, message: text, retry_after_ms: optional(readSafeInteger), session_reason: optional(sessionReason),
-	operation_id: optional(operationId), state: optional(cancelState)
+	operation_id: optional(operationId), state: optional(cancelState),
+	field: optional(credentialField), rule: optional(credentialRule)
 });
 export const readGatewayError = checked((value) => {
 	const error = gatewayErrorReader(value);
 	if (error.code === 'rate_limited' && error.retry_after_ms === undefined) return invalid();
+	if ((error.field === undefined) !== (error.rule === undefined)) return invalid();
 	return error;
 });
 export type GatewayError = ReturnType<typeof readGatewayError>;
@@ -282,7 +286,7 @@ export const readCancelResult = checked((value) => {
 export const cancelStatus = (result: ReturnType<typeof readCancelResult>): number | undefined => ['abandoned', 'linked'].includes(result.state) ? 200 : undefined;
 export const readInstance = checked(object({
 	instance_id: text, name: text, server_version: text, web_status: word(['ok', 'degraded'] as const),
-	listen_scheme: word(['https', 'http_loopback'] as const), tls: word(['ok', 'missing', 'expiring'] as const), server_time_ms: readSafeInteger
+	listen_scheme: word(['https', 'http_loopback'] as const), tls: optional(word(['ok', 'missing', 'expiring'] as const)), server_time_ms: readSafeInteger
 }));
 export const readOffice = checked(object({
 	id: text, organization_id: text, name: text, role: word(['hq', 'satellite'] as const), host: text,
