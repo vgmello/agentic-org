@@ -13,6 +13,18 @@
       "sourceType": "github",
       "skillPath": "skills/playwright-cli/SKILL.md",
       "ref": "b21724888b8100b05ef8dee3a92f2bb03bf4dcde"
+    },
+    "svelte-code-writer": {
+      "source": "sveltejs/ai-tools",
+      "sourceType": "github",
+      "skillPath": "plugins/claude/svelte/skills/svelte-code-writer/SKILL.md",
+      "ref": "f9d22f2f7f7cd5e4596eef5d108a69ac8f0dd48d"
+    },
+    "svelte-core-bestpractices": {
+      "source": "sveltejs/ai-tools",
+      "sourceType": "github",
+      "skillPath": "plugins/claude/svelte/skills/svelte-core-bestpractices/SKILL.md",
+      "ref": "f9d22f2f7f7cd5e4596eef5d108a69ac8f0dd48d"
     }
   }
 }

@@ -12,7 +12,8 @@ local-server fallback.
 Web Locks, BroadcastChannel, a clock and a state callback explicitly. It publishes
 session views without proofs. Its `read` operation is GET-only: on 401 it re-reads
 storage and retries once, only if the same account and instance has a different
-proof. A 403 is returned unchanged. Operations that change the pair are explicit and
+proof. A 403 is returned unchanged. `submit` is one POST on the same terms: the caller's body
+carries the operation ID, and it is sent again only after such a 401, which proves it was not admitted. Operations that change the pair are explicit and
 never retried.
 
 IndexedDB database `org-session`, store `session`, key `current` holds

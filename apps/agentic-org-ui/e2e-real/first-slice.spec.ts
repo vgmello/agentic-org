@@ -9,7 +9,12 @@ const password = 'correct horse battery';
 
 async function axe(page: Page) {
 	const result = await new AxeBuilder({ page }).analyze();
-	expect(result.violations.map((v) => `${v.id}: ${v.help} @ ${v.nodes.map((n) => `${n.target.join(' ')} (${n.failureSummary})`).join('; ')}`)).toEqual([]);
+	expect(
+		result.violations.map(
+			(v) =>
+				`${v.id}: ${v.help} @ ${v.nodes.map((n) => `${n.target.join(' ')} (${n.failureSummary})`).join('; ')}`
+		)
+	).toEqual([]);
 }
 
 test.describe.configure({ mode: 'serial' });

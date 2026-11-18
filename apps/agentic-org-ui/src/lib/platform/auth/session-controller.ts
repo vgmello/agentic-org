@@ -248,6 +248,43 @@ export function createSessionController({
 			await publishEstablished(session, next, { kind: 'signed-in', account_id: next.account_id });
 		});
 	}
+	async function send(
+		request: { path: string; signal?: AbortSignal } & (
+			{ method: 'GET' } | { method: 'POST'; body: unknown }
+		)
+	) {
+		ensureOpen();
+		const expected = record;
+		if (!expected) throw new Error('Sign in required');
+		const token = generation;
+		const current = () => {
+			if (!active(token)) throw new Error('Session changed');
+		};
+		let response = await http({ ...request, proof: expected.proof });
+		current();
+		if (response.status !== 401) return response;
+		const stored = await store.read();
+		current();
+		if (!stored || !sameAccount(expected, stored)) {
+			ended(stored ? 'changed-account' : 'ended', stored?.login);
+			throw new Error('Session changed');
+		}
+		if (stored.proof !== expected.proof) {
+			record = stored;
+			response = await http({ ...request, proof: stored.proof });
+			current();
+			if (response.status !== 401) return response;
+		}
+		let reason: 'session_ended' | 'unknown' | undefined;
+		try {
+			const body = readResponse(response.body, readJsonObject);
+			if ('error' in body) reason = body.error.session_reason;
+		} catch {
+			/* Untrusted error payload. */
+		}
+		reauth(reason);
+		return response;
+	}
 	return Object.freeze({
 		boot,
 		signIn: (credentials: unknown, signal?: AbortSignal) =>
@@ -335,39 +372,14 @@ export function createSessionController({
 				if (refusal) throw refusal;
 			});
 		},
-		async read(path: string, signal?: AbortSignal) {
-			ensureOpen();
-			const expected = record;
-			if (!expected) throw new Error('Sign in required');
-			const token = generation;
-			const current = () => {
-				if (!active(token)) throw new Error('Session changed');
-			};
-			let response = await http({ method: 'GET', path, proof: expected.proof, signal });
-			current();
-			if (response.status !== 401) return response;
-			const stored = await store.read();
-			current();
-			if (!stored || !sameAccount(expected, stored)) {
-				ended(stored ? 'changed-account' : 'ended', stored?.login);
-				throw new Error('Session changed');
-			}
-			if (stored.proof !== expected.proof) {
-				record = stored;
-				response = await http({ method: 'GET', path, proof: stored.proof, signal });
-				current();
-				if (response.status !== 401) return response;
-			}
-			let reason: 'session_ended' | 'unknown' | undefined;
-			try {
-				const body = readResponse(response.body, readJsonObject);
-				if ('error' in body) reason = body.error.session_reason;
-			} catch {
-				/* Untrusted error payload. */
-			}
-			reauth(reason);
-			return response;
-		},
+		read: (path: string, signal?: AbortSignal) => send({ method: 'GET', path, signal }),
+		/**
+		 * One POST with the current pair. The caller owns idempotency: its body carries the
+		 * operation ID. Like `read`, it is sent again only after a 401 (which proves it was not
+		 * admitted) and only when another tab has already rotated this account's proof.
+		 */
+		submit: (path: string, body: unknown, signal?: AbortSignal) =>
+			send({ method: 'POST', path, body, signal }),
 		dispose() {
 			disposed = true;
 			versionChanged?.();

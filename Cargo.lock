@@ -710,6 +710,7 @@ dependencies = [
  "org-mailbox",
  "org-platform",
  "org-proto",
+ "org-store",
  "org-sync",
  "org-sync-proto",
  "org-work",
@@ -815,6 +816,18 @@ dependencies = [
  "org-platform",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "org-store"
+version = "0.0.0"
+dependencies = [
+ "org-platform",
+ "org-store",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

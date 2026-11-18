@@ -20,8 +20,13 @@
 		>{session.account.login}</button
 	>
 	{#if open}
-		<div id="account-menu" class="absolute right-0 z-10 mt-2 w-56 rounded-md bg-gray-900 py-1 outline-1 outline-white/10">
-			<p class="px-3 py-2 text-sm/6 text-gray-300">Signed in as <span class="font-semibold text-white">{session.account.login}</span></p>
+		<div
+			id="account-menu"
+			class="absolute right-0 z-10 mt-2 w-56 rounded-md bg-gray-900 py-1 outline-1 outline-white/10"
+		>
+			<p class="px-3 py-2 text-sm/6 text-gray-300">
+				Signed in as <span class="font-semibold text-white">{session.account.login}</span>
+			</p>
 			{#if session.admin}<p class="px-3 pb-2 text-xs/5 text-gray-400">Administrator</p>{/if}
 			<div class="border-t border-white/10"></div>
 			<button

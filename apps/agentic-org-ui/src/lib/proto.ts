@@ -6,13 +6,7 @@ export type OfficeRole = 'hq' | 'satellite' | 'unknown';
 
 /** Missing or unrecognised means `unknown`, never healthy. */
 export type OfficeStatus =
-	| 'active'
-	| 'starting'
-	| 'pending'
-	| 'offline'
-	| 'unavailable'
-	| 'update_needed'
-	| 'unknown';
+	'active' | 'starting' | 'pending' | 'offline' | 'unavailable' | 'update_needed' | 'unknown';
 
 /** Why an office is not running (`org_proto::OfficeStatusReason`); a reason this build doesn't know reads as `unknown`. */
 export type OfficeStatusReason =
@@ -47,7 +41,8 @@ export interface OfficeInfo {
  * What the shell's live status feed sends (`office-status`): the whole list of this Mac's offices (when the feed
  * starts and after it reconnects), or one office's updated record (`office.status_changed`).
  */
-export type StatusUpdate = { kind: 'offices'; offices: OfficeInfo[] } | { kind: 'office'; office: OfficeInfo };
+export type StatusUpdate =
+	{ kind: 'offices'; offices: OfficeInfo[] } | { kind: 'office'; office: OfficeInfo };
 
 /** Set when an office server answers `hello`. */
 export interface OfficeHello {
@@ -128,7 +123,6 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 /** Errors from making the office ready. These belong to the app, not to `org-proto`. */
 export type SetupErrorCode = 'unreachable';
 
-
 /** What every failed call looks like to the UI. `source` says which layer failed. */
 export type AppError =
 	| { source: 'api'; code: ApiErrorCode; message: string }
@@ -156,7 +150,9 @@ export interface OrgChangedNotice {
  * What the shell's live feed sends (`org-feed`): a change, or whether the feed is subscribed. While `live` is
  * false the screens are not being kept up to date.
  */
-export type OrgFeedNotice = ({ kind: 'changed' } & OrgChangedNotice) | { kind: 'live'; organization_id: string; live: boolean };
+export type OrgFeedNotice =
+	| ({ kind: 'changed' } & OrgChangedNotice)
+	| { kind: 'live'; organization_id: string; live: boolean };
 
 /** A team. Teams own teams (a tree). Optional lead: a member of the team. */
 export interface Team {

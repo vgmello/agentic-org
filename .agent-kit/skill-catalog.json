@@ -21,6 +21,10 @@
       "sha256": "9df6019afd5837ba5e13c3658b47190f2edeb15701b29a2682a287b0794661ed"
     },
     {
+      "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
+      "sha256": "554bb2c00ac92aeaec675a58e02f33c5a6fc1f5ad5a4f76f352f1fc80eb1b4b1"
+    },
+    {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
       "sha256": "c0343c5f725d6ea9ff0a75ad34003c14e3edd4bb0dcc1b1bc9ff53afe00ea2eb"
     },
@@ -37,6 +41,14 @@
       "sha256": "11d116e4c74230df0151bf8a3a7581f9884416d4cfdf4a80911c61c8477cae9b"
     },
     {
+      "path": ".agent-kit/tasks/v1-creation-admission-interface.md",
+      "sha256": "a1781d7d7883f73bac20c1f1413ab7e9b76d175591baff0a73e3876cc4012781"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
+      "sha256": "77bac99ef8ac2069ad0fafb054643063712700c0d2a7c2e59b90645c51f7b3b8"
+    },
+    {
       "path": ".agents/skills/caveman/SKILL.md",
       "sha256": "d59325d69f2da932f525ca69dd42a3dba6abb0c6e07c3908b941c7be6ece4fb6"
     },
@@ -49,8 +61,16 @@
       "sha256": "1c11b03e380578beb93807b46f3a0c4b243e1aeeef27e8782fe8bf2c8dfcf862"
     },
     {
+      "path": ".agents/skills/svelte-code-writer/SKILL.md",
+      "sha256": "b0652d3c73c1728afdb7f5bffd38a49d86a8a5b4ef7949ef8c1508ce9d46d45e"
+    },
+    {
+      "path": ".agents/skills/svelte-core-bestpractices/SKILL.md",
+      "sha256": "96e025333e54533a31d37f70c7094da8df8b89c3c622a70d7edbf6332b84da47"
+    },
+    {
       "path": ".codex/config.toml",
-      "sha256": "4b4fadcd85bf04f59a64c250a2ad34a12fecda76ab192de07663ecd71344972a"
+      "sha256": "a1cdbc3c7a52ba6cb3d7bcd37e34f04a0c28564aa8595dbdad62b6f446fef4f3"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -58,15 +78,15 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "8fc5db20419dc4d0f210b91bc5287e18493770150f8f5b6b354a1edcb7df771f"
+      "sha256": "f59bf1404ad4e5bed6ae694790cd82ddcf039df7068582b1cfd5fec149e82ff4"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "85900a3a026df3a2c60a74438b85cea784f58c330c0218351f0f81f381f1cab0"
+      "sha256": "e1f47813cf4ccdc42d44ccdaa45c8326e943a86e819c1806c13bbcef14e3bb72"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "e0126245706bdbfd9e7deb09a60a273a9eace3907a165c9c4fea5c018e3da1a3"
+      "sha256": "8263b161ef70997e168ab09ff8074ae276869044ff62957e9946be184d34c1da"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -106,7 +126,11 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "cd07587edccf0050b4100f0b3c5cdc5ca87f2324dfc6f02e23a6cdca3c43a67e"
+      "sha256": "c07d04241dc7d05649b37a5dd8cd48a20dde55b83d2d5f34859c2c960fd46729"
+    },
+    {
+      "path": "crates/org-pki/Cargo.toml",
+      "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
     },
     {
       "path": "crates/org-release/Cargo.toml",
@@ -153,34 +177,6 @@
       "sha256": "379ca93190007a8da2ef54a6a7645850b82c10e3a908739016211ec2fc37f8a0"
     },
     {
-      "path": "docs/design/organization-data/README.md",
-      "sha256": "10a6fbe4af84b6bbe7dcf1681795e8436fddced0e7d91d24d18410af7a119cdf"
-    },
-    {
-      "path": "docs/design/project-structure.md",
-      "sha256": "99237f8b2683c1f515eeed2fe72f7d4333ed2e6dbbb5dfa8c61e867bac769745"
-    },
-    {
-      "path": "docs/processes/branch-and-merge.md",
-      "sha256": "2ce376007e5c79e188a60fbe5aa7e77d7eb80f0982f4badb190ab3236763384b"
-    },
-    {
-      "path": "rust-toolchain.toml",
-      "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
-    },
-    {
-      "path": "docs/independent-delivery.md",
-      "sha256": "5775049de3b761e08c41100c816f71156918ef6ded100d60f86590083de0bd67"
-    },
-    {
-      "path": "crates/org-pki/Cargo.toml",
-      "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
-    },
-    {
-      "path": ".agent-kit/tasks/v1-creation-admission-interface.md",
-      "sha256": "a1781d7d7883f73bac20c1f1413ab7e9b76d175591baff0a73e3876cc4012781"
-    },
-    {
       "path": "docs/design/organization-data/01-organization-structure.md",
       "sha256": "bf075c7126b9097253b19fd4bb43183d3c15de6663f862bdbc7379b5bdc242f9"
     },
@@ -189,12 +185,24 @@
       "sha256": "149365ade0686c43df89cd1dcae4b5a5598d63235ceb699a86da9ee91ea213e5"
     },
     {
-      "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "554bb2c00ac92aeaec675a58e02f33c5a6fc1f5ad5a4f76f352f1fc80eb1b4b1"
+      "path": "docs/design/organization-data/README.md",
+      "sha256": "f90935b8d6fd2d93d800bfaec3ce1c5fd9f148d89b4f9982b3556bc99a40b08b"
     },
     {
-      "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
-      "sha256": "77bac99ef8ac2069ad0fafb054643063712700c0d2a7c2e59b90645c51f7b3b8"
+      "path": "docs/design/project-structure.md",
+      "sha256": "c857c6e75485c6a303389e8df3501f09e1fb22fe0cc2d4265c83cc771f8d660c"
+    },
+    {
+      "path": "docs/independent-delivery.md",
+      "sha256": "5775049de3b761e08c41100c816f71156918ef6ded100d60f86590083de0bd67"
+    },
+    {
+      "path": "docs/processes/branch-and-merge.md",
+      "sha256": "2ce376007e5c79e188a60fbe5aa7e77d7eb80f0982f4badb190ab3236763384b"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
     }
   ],
   "roles": {
@@ -268,13 +276,17 @@
         "apps/agentic-org-ui/AGENTS.md",
         ".agent-kit/project-skills/ui-maintenance/SKILL.md",
         ".agents/skills/shadcn-svelte/SKILL.md",
-        ".agents/skills/playwright-cli/SKILL.md"
+        ".agents/skills/playwright-cli/SKILL.md",
+        ".agents/skills/svelte-code-writer/SKILL.md",
+        ".agents/skills/svelte-core-bestpractices/SKILL.md"
       ],
       "review": [
         "apps/agentic-org-ui/AGENTS.md",
         ".agent-kit/project-skills/ui-maintenance/SKILL.md",
         ".agents/skills/shadcn-svelte/SKILL.md",
-        ".agents/skills/playwright-cli/SKILL.md"
+        ".agents/skills/playwright-cli/SKILL.md",
+        ".agents/skills/svelte-code-writer/SKILL.md",
+        ".agents/skills/svelte-core-bestpractices/SKILL.md"
       ],
       "critical": false
     },

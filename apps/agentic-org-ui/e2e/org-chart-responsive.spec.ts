@@ -3,12 +3,11 @@ import { viewAction, expectViewAction } from './org-chart-menu';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openChart(page: Page, width: number, scale = 1, query = '') {
 	await page.setViewportSize({ width, height: 640 });
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, `/org-chart${query}`);
 	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
@@ -463,9 +462,7 @@ for (const text of [1, 2]) {
 for (const text of [1, 2]) {
 	test(`PEOPLE-1 BUG-70 BUG-90: membership refresh remeasures Fit when chart dimensions stay unchanged at ${text * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 640 });
-		await visit(page, '/create');
-		await page.getByLabel('Organization name').fill('Acme');
-		await page.getByRole('button', { name: 'Create organization' }).click();
+		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/agents$/);
 		const fixture = await page.evaluate(async () => {
 			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
@@ -510,9 +507,7 @@ for (const text of [1, 2]) {
 for (const text of [1, 2]) {
 	test(`PEOPLE-1 BUG-70 BUG-90: collapse and expand remeasure content at unchanged dimensions with ${text * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 640 });
-		await visit(page, '/create');
-		await page.getByLabel('Organization name').fill('Acme');
-		await page.getByRole('button', { name: 'Create organization' }).click();
+		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/agents$/);
 		await page.evaluate(async () => {
 			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
@@ -693,9 +688,7 @@ test('PEOPLE-1 BUG-70 BUG-90 BUG-123: pointer Fit refusal explains without activ
 test('PEOPLE-1 BUG-70 BUG-90 BUG-123: reopened blocked menu dismisses the explanation before the parent', { tag: '@webkit' }, async ({ page }) => {
 	// Start in the default mobile List; opening Teams View first primes a different layer lifetime.
 	await page.setViewportSize({ width: 320, height: 640 });
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/org-chart');
 	await page.addStyleTag({ content: 'html { font-size: 100% !important; }' });
@@ -899,9 +892,7 @@ async function createChipOrg(page: Page, width: number, scale = 1) {
 		addEventListener('DOMContentLoaded', apply, { once: true });
 		if (document.documentElement) apply();
 	}, scale);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization', exact: true }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	// URL changes before the destination is ready; avoid interrupting the create handoff (BUG-93).
 	await expect(page.getByRole('main', { name: 'Agents', exact: true })).toBeVisible();

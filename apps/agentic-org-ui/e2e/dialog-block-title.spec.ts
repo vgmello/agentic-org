@@ -1,11 +1,10 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openBoard(page: Page) {
- await visit(page,'/create');
- await page.getByLabel('Organization name').fill('Acme');
- await page.getByRole('button',{name:'Create organization',exact:true}).click();
+ await enterMockedOrganization(page);
  await expect(page).toHaveURL(/\/agents$/);
  await expect(page.getByRole('table',{name:'Agents',exact:true})).toBeVisible();
  await visit(page,'/projects/atlas');

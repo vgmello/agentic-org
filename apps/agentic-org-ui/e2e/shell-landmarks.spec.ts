@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
+import { enterMockedOrganization } from './mock-organization';
 import { visit } from './ready';
 import { shot } from './shot';
 
 test('BUG-19: retained sections have one main landmark while navigating the shell', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/create');
 	await expect(page.getByRole('main')).toHaveCount(1);
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	const sections = [
 		['Agents', 'agents'], ['Org chart', 'org-chart'], ['Projects', 'projects'], ['Work', 'work'],

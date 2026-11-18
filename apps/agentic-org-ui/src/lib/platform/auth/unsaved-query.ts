@@ -7,7 +7,12 @@
 type Channel = Pick<BroadcastChannel, 'postMessage' | 'addEventListener' | 'removeEventListener'>;
 type Options = { channel: Channel; local: () => boolean; timeoutMs?: number; newId?: () => string };
 
-export function createUnsavedQuery({ channel, local, timeoutMs = 250, newId = () => crypto.randomUUID() }: Options) {
+export function createUnsavedQuery({
+	channel,
+	local,
+	timeoutMs = 250,
+	newId = () => crypto.randomUUID()
+}: Options) {
 	const answer: EventListener = (event) => {
 		const data: unknown = (event as MessageEvent).data;
 		if (!data || typeof data !== 'object') return;
@@ -27,7 +32,8 @@ export function createUnsavedQuery({ channel, local, timeoutMs = 250, newId = ()
 					const data: unknown = (event as MessageEvent).data;
 					if (!data || typeof data !== 'object') return;
 					const message = data as Record<string, unknown>;
-					if (message.kind === 'unsaved' && message.id === id && message.unsaved === true) finish(true);
+					if (message.kind === 'unsaved' && message.id === id && message.unsaved === true)
+						finish(true);
 				};
 				const timer = setTimeout(() => finish(false), timeoutMs);
 				function finish(value: boolean) {

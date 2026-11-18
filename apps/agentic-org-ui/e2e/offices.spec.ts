@@ -2,12 +2,11 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import type { OfficeInfo, StatusUpdate } from '../src/lib/proto';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openOffices(page: Page, stopped?: string) {
 	// `?office=` makes the new organization's HQ a stopped office with a reason (the mock's scenario).
-	await visit(page, stopped ? `/create?office=${stopped}` : '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page, 'Acme', stopped ? `/create?office=${stopped}` : '/create');
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices');
 	await expect(page.getByRole('list', { name: 'Offices' })).toBeVisible();
@@ -69,9 +68,7 @@ test('OFC-13: every status shows its icon and its word (the word is never replac
 });
 
 test('OFC-13 BUG-70: while the agents are being counted the row shows a skeleton, then the count', { tag: '@webkit' }, async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices?org=slow');
 	await expect(rows(page)).toHaveCount(1); // the list doesn't wait
@@ -83,9 +80,7 @@ test('OFC-13 BUG-70: while the agents are being counted the row shows a skeleton
 });
 
 test('Retry after a failed count works', async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices?org=fails_once');
 	await expect(page.getByTestId('count-error')).toBeVisible();
@@ -117,9 +112,7 @@ test('Unplaced agents are a group with a disabled Place… that says why', async
 });
 
 test('OFC-13 BUG-70: a failure to count agents keeps the list and shows an in-page error with Retry, not an error page', { tag: '@webkit' }, async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices?org=fails');
 	await expect(rows(page)).toHaveCount(1); // the list is there
@@ -134,9 +127,7 @@ test('OFC-13 BUG-70: a failure to count agents keeps the list and shows an in-pa
 });
 
 test('OFC-12: HQ says Checking… until the app has verified the connection, and only then Online', { tag: '@journey' }, async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices');
 	// The saved status says active, but the row has to earn "Online" by the office answering.
@@ -151,9 +142,7 @@ test('OFC-12: HQ says Checking… until the app has verified the connection, and
 });
 
 test('OFC-12: when the office does not answer, the row says Unreachable with a Retry, never a stale Online', { tag: '@journey' }, async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices?mock=unreachable');
 	const hq = rows(page).first();
@@ -202,9 +191,7 @@ test('OFC-11: other reasons have their words; no reason reads "It isn’t runnin
 	await openOffices(page, 'stopped_by_owner');
 	await expect(rows(page).first()).toContainText('You stopped it');
 	const other = await page.context().newPage();
-	await visit(other, '/create?office=unknown');
-	await other.getByLabel('Organization name').fill('Beta');
-	await other.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(other, 'Beta', '/create?office=unknown');
 	await expect(other).toHaveURL(/\/agents$/);
 	await visit(other, '/offices');
 	await expect(other.getByTestId('office-row').first()).toContainText("It isn't running");

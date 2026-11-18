@@ -1,8 +1,6 @@
 //! Organization-owned validation, identity and relationship invariants.
-use super::OrgView;
-use org_proto::org::{
-    AgentStatus, Member, MemberKind, AGENT_TEXT_MAX_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
-};
+use super::{records::is_reserved_handle, OrgView};
+use org_proto::org::{AgentStatus, Member, MemberKind, AGENT_TEXT_MAX_CHARS};
 use org_proto::{ApiError, ErrorCode, NameError, OrganizationName};
 use std::collections::HashSet;
 
@@ -138,8 +136,9 @@ pub(crate) fn refuse_offboarded(member: &Member) -> Result<(), ApiError> {
 }
 
 /// Handles are compared ignoring case across every agent's `messaging_name`, every person's
-/// `name` and the reserved word `owner`; the owner's display name is not a handle. `except` is
-/// the member being renamed, which may keep or recapitalize its own.
+/// `name` and the reserved words, which the records own (`records::is_reserved_handle`:
+/// `owner`, `office` and `here`); the owner's display name is not a handle. `except` is the
+/// member being renamed, which may keep or recapitalize its own.
 pub(crate) fn check_handle_free(
     view: &dyn OrgView,
     key: &str,
@@ -150,7 +149,7 @@ pub(crate) fn check_handle_free(
     let taken_by_other = view
         .member_with_handle(key)
         .is_some_and(|holder| !holder.owner && Some(holder.id.as_str()) != except);
-    if taken_by_other || key == OWNER_HANDLE || key == OFFICE_HANDLE {
+    if taken_by_other || is_reserved_handle(key) {
         Err(fail(
             ErrorCode::AlreadyExists,
             "that name is already another member's handle",
