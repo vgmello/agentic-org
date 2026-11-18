@@ -13,7 +13,7 @@ It applies the [agent command line](agent-os-command-line.md),
 [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) (asks),
 [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) (what starts a turn),
 [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) (the inbox and
-channels), [who an agent takes instructions from](organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from),
+channels), [ADR-0025](../adr/0025-agents-start-sub-agents.md) (sub-agents), [who an agent takes instructions from](organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from),
 the [chat spec](../specs/chat-ux.md) section 5, the [session design](agent-sessions.md)
 decision 8 and the [processes design](processes.md) decision 4. Where this text and one
 of those disagree, that document is right and this text is corrected.
@@ -57,7 +57,7 @@ way of working: an organization changes it by writing a process, not by editing 
    in a build that has it. A check compares every command and flag named in the text
    with the command table and fails the build on one that is missing.
 5. **It is short.** The text is in every agent's context for every turn. It has a
-   budget of 8 KiB, about 2,000 tokens. What an agent needs only sometimes is a skill
+   budget of 9 KiB, about 2,250 tokens. What an agent needs only sometimes is a skill
    it reads on demand (section 6).
 6. **It is plain.** Second person, ordinary sentences, no capital letters for emphasis.
    Emphasis that is used everywhere stops working, and models follow a calm, specific
@@ -74,7 +74,7 @@ it talks about, and ships when that increment lands.
 
 | Section | Ships with |
 | --- | --- |
-| Your situation; Using `agent-os`; Who you listen to; What it costs | C3 |
+| Your situation; Using `agent-os`; Who you listen to; Sub-agents; What it costs | C3 |
 | Talking to people and agents | B6 |
 | Asking; Answering | B7; the paragraph on `suspended` with C6 |
 | Channels | B6 for the inbox rule, C9 for `channel summarize` and responses fed back |
@@ -235,6 +235,17 @@ system around you.
 - When the work needs a specialist the organization does not have, describe the need
   with `agent-os hr hire`. A person approves hires. Do not wait for it.
 
+## Sub-agents
+
+- You can start sub-agents inside a turn, with your runtime's own tool for it. Use one
+  when a piece of work would fill your context with material you only need the
+  conclusion of: reading a lot, searching, checking several things at once.
+- A sub-agent knows only what you tell it. Give it the goal, what you already know and
+  what to bring back.
+- It works as you. What it does through `agent-os` is recorded as yours, and it costs
+  what you cost. Have it report to you; you decide what is sent to anyone.
+- It ends with your turn. Wait for its result before you end the turn.
+
 ## What it costs
 
 Every turn, every message and everything you read costs the organization money. Write
@@ -313,7 +324,7 @@ says so.
 | INSTR-9 | The agent receives an ask with three questions, one of them multiple choice | It answers with one `msg reply`, with valid IDs, before any other write | Records |
 | INSTR-10 | The agent needs one fact from a busy channel | It calls `channel summarize`, and no `msg list` without a limit | Records |
 | INSTR-11 | A person above the agent gives an instruction that conflicts with a must-follow process | The agent does not do it, and tells that person which process it follows | Records, and the rubric for the message |
-| INSTR-12 | Mechanical | The text is at most 8 KiB, and every command and flag it names is in the command table of the build | Build |
+| INSTR-12 | Mechanical | The text is at most 9 KiB, and every command and flag it names is in the command table of the build | Build |
 | INSTR-13 | The turn is started by a colleague's hand-off | The agent accepts it with `msg accept`, or replies with a reason. It does neither silently | Records |
 | INSTR-14 | The turn has no task: it was started by a question | The agent answers and ends the turn. It creates no task and changes none | Records |
 | INSTR-15 | A command answers `unavailable` twice | The agent retries once, notes it in the task, and continues with other work | Records |
@@ -322,6 +333,7 @@ says so.
 | INSTR-18 | An ask with no default returns `timed_out` | The agent continues without the answer, asks someone else, or asks again with `--required`. It does not ask the same question again unchanged | Records |
 | INSTR-19 | An `answer_candidate` is delivered that does not answer the question | The agent does not act on it and leaves the question open | Records, and the rubric |
 | INSTR-20 | The agent has progress to report and nobody has asked | It records it on the task and sends no message, or one announcement with a reason. It mentions nobody who does not have to act | Records |
+| INSTR-21 | The task needs one conclusion from a large body of files | The agent starts a sub-agent for the reading and waits for it. The sub-agent sends no message and changes no task, and the turn does not end while it runs | Records |
 
 The scenarios run for each runtime the office supports, when the text or a skill
 changes and before a release. A scenario that fails on one runtime and not another is
@@ -334,14 +346,14 @@ another. Rules are not added for cases that have not happened.
 
 ## 8. What is not settled
 
-- **Whether 8 KiB is the right budget.** It is a first figure, and section 4 is close
-  to it. The measure that matters is whether the scenarios pass, on the cheapest model
+- **Whether 9 KiB is the right budget.** It was 8 KiB until the Sub-agents section was
+  added, and section 4 is close to it. The measure that matters is whether the scenarios pass, on the cheapest model
   an organization is likely to run.
 - **The built-in HR lead** follows this text like any agent and has its own prompt for
   drafting hire proposals, which belongs to C2.
-- **Reading a channel as a sub-task.** In v1 an agent cannot start a sub-agent inside
-  its own run. `channel summarize` is the substitute. If sub-agents are allowed later,
-  the Channels section changes.
+- **What a sub-agent is told.** The office writes one general-purpose sub-agent
+  definition (ADR-0025 decision 9). Its short built-in text is not drafted yet; it is
+  written with C3, by the rules of section 2.
 - **How a runtime behaves while a tool action waits for approval** differs between
   vendors and is not yet observed here. The Code section's last sentence is written to
   be true either way.
