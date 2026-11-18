@@ -1,11 +1,14 @@
-//! Bounded nonsecret setup continuation. No password/session/custody bytes.
+//! Bounded nonsecret setup continuation. No password/session/custody bytes, no account and
+//! no organization: setup asks for none (A2). The frozen input is the root and the address;
+//! progress only moves forward, in the order the setup flow takes it:
+//! instance reserved (`instance_id`), service registered, registry created by the service
+//! host at its first start (D1), initial registration link issued (at most once).
 use super::{
     directory::{Directory, FileLock},
     Error, Name,
 };
 use crate::release::ReleasePin;
-use org_host_control::{listen::ListenConfig, provision::Provisioned};
-use org_proto::selected_bootstrap::PlanV1;
+use org_host_control::listen::ListenConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 const FILE: &str = "setup.v1.json";
@@ -15,8 +18,6 @@ const LIMIT: usize = 64 * 1024;
 pub(crate) struct Input {
     pub version: u32,
     pub root: PathBuf,
-    pub login: String,
-    pub organization: PlanV1,
     #[serde(deserialize_with = "strict_listen")]
     pub listen: ListenConfig,
 }
@@ -38,12 +39,8 @@ fn strict_listen<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ListenConfig,
 }
 impl Input {
     pub fn validate(&self) -> Result<(), Error> {
-        if self.version != 1
-            || super::directory::absolute(&self.root)? != self.root
-            || !self.organization.valid()
-            || crate::accounts::identity::LoginKey::new(&self.login).is_err()
-        {
-            return Err(Error::Invalid("invalid version-1 HQ configuration"));
+        if self.version != 1 || super::directory::absolute(&self.root)? != self.root {
+            return Err(Error::Invalid("invalid version-1 setup configuration"));
         }
         // The existing actual gateway composition only supports this profile.
         if self.listen.scheme() != org_host_control::listen::ListenMode::HttpLoopback
@@ -71,12 +68,15 @@ pub(crate) struct Record {
     pub input: Input,
     pub offline: bool,
     pub release: ReleasePin,
-    pub bootstrap_operation: String,
-    pub hq_operation: String,
+    /// UUIDv7, fixed when the record is first frozen.
+    pub setup_operation: String,
+    /// The reserved instance, as the registry names it.
     pub instance_id: Option<String>,
-    pub provisioned: Option<Provisioned>,
-    pub exited: bool,
-    pub registered: bool,
+    pub service_registered: bool,
+    /// The service host created its registry at its first start (D1).
+    pub registry_created: bool,
+    /// The one initial registration link was issued for `setup_operation`.
+    pub initial_link_issued: bool,
 }
 impl Record {
     fn validate(&self) -> Result<(), Error> {
@@ -85,25 +85,32 @@ impl Record {
             .validate()
             .map_err(|_| Error::Unsafe("invalid setup release pin"))?;
         if self.version != 1
-            || org_proto::ulid_time_ms(&self.bootstrap_operation).is_none()
-            || org_proto::ulid_time_ms(&self.hq_operation).is_none()
-            || self.bootstrap_operation == self.hq_operation
+            || !org_proto::is_uuid_v7(&self.setup_operation)
             || self
                 .instance_id
                 .as_ref()
-                .is_some_and(|i| org_proto::ulid_time_ms(i).is_none())
-            || self.provisioned.as_ref().is_some_and(|p| {
-                [&p.organization_id, &p.office_id, &p.home_team_id]
-                    .iter()
-                    .any(|id| !org_proto::is_uuid_v7(id))
-            })
-            || (self.provisioned.is_some() && self.instance_id.is_none())
-            || (self.exited && self.provisioned.is_none())
-            || (self.registered && !self.exited)
+                .is_some_and(|i| !super::registry::valid_instance_id(i))
+            || (self.service_registered && self.instance_id.is_none())
+            || (self.registry_created && !self.service_registered)
+            || (self.initial_link_issued && !self.registry_created)
         {
             return Err(Error::Unsafe("incoherent setup continuation"));
         }
         Ok(())
+    }
+    /// Identity and configuration never change, and progress never goes backwards.
+    fn follows(&self, old: &Record) -> bool {
+        old.input == self.input
+            && old.offline == self.offline
+            && old.release == self.release
+            && old.setup_operation == self.setup_operation
+            && old
+                .instance_id
+                .as_ref()
+                .is_none_or(|i| Some(i) == self.instance_id.as_ref())
+            && (!old.service_registered || self.service_registered)
+            && (!old.registry_created || self.registry_created)
+            && (!old.initial_link_issued || self.initial_link_issued)
     }
 }
 pub(crate) struct Journal {
@@ -132,7 +139,7 @@ impl Paths {
 }
 impl Journal {
     /// Atomic read of frozen setup facts for the service. This reader never
-    /// takes the workflow writer lock or publishes progress; registered may
+    /// takes the workflow writer lock or publishes progress; progress may
     /// advance concurrently, while identity/configuration are immutable.
     pub fn snapshot(base: &Path, name: Option<&str>) -> Result<Record, Error> {
         let name = Name::parse(name)?;
@@ -191,12 +198,11 @@ impl Journal {
             input,
             offline,
             release,
-            bootstrap_operation: crate::ids::generate()?,
-            hq_operation: crate::ids::generate()?,
+            setup_operation: crate::ids::uuid_v7()?,
             instance_id: None,
-            provisioned: None,
-            exited: false,
-            registered: false,
+            service_registered: false,
+            registry_created: false,
+            initial_link_issued: false,
         };
         self.write(&r)?;
         Ok(r)
@@ -208,22 +214,7 @@ impl Journal {
         if let Some(previous) = &previous {
             let old: Record = serde_json::from_slice(previous)
                 .map_err(|_| Error::Unsafe("invalid setup continuation"))?;
-            if old.input != next.input
-                || old.offline != next.offline
-                || old.release != next.release
-                || old.bootstrap_operation != next.bootstrap_operation
-                || old.hq_operation != next.hq_operation
-                || old
-                    .instance_id
-                    .as_ref()
-                    .is_some_and(|i| Some(i) != next.instance_id.as_ref())
-                || old
-                    .provisioned
-                    .as_ref()
-                    .is_some_and(|p| Some(p) != next.provisioned.as_ref())
-                || (old.exited && !next.exited)
-                || (old.registered && !next.registered)
-            {
+            if !next.follows(&old) {
                 return Err(Error::Conflict(
                     "setup continuation cannot replace accepted identity or go backwards",
                 ));

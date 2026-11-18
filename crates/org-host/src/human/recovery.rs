@@ -313,8 +313,9 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
                 (
                     instance,
                     temp.join("host.sock"),
-                    record.provisioned.map(|p| p.organization_id),
-                    Some(record.input.login),
+                    // Setup creates no organization and no account (A2).
+                    None,
+                    None,
                 )
             }
             _ => return Err(HELP.into()),

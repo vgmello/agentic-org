@@ -25,10 +25,17 @@ struct Binding {
     temp_folder: PathBuf,
 }
 
+/// The one format check for an instance ID. Instance IDs are still ULIDs: the switch to
+/// UUIDv7 (non-negotiable 4, A2 decision D8) lands with the host-database rewrite (A2 B2),
+/// whose fixtures and secrets namespace carry the ID; this is the line it changes.
+pub(crate) fn valid_instance_id(id: &str) -> bool {
+    org_proto::ulid_time_ms(id).is_some()
+}
+
 impl Binding {
     fn validate(&self) -> Result<(), Error> {
         Name::parse(Some(self.name.as_str()))?;
-        if org_proto::ulid_time_ms(&self.id).is_none() {
+        if !valid_instance_id(&self.id) {
             return Err(Error::Unsafe("instance ID is not a canonical ULID"));
         }
         if absolute(&self.root)? != self.root {

@@ -449,9 +449,11 @@ the 6.2 floor, and denying `connect` outright is simpler.
 ```rust
 pub enum ServiceMode { Registered, Foreground }
 pub struct Unit { pub instance_id: String, pub program: PathBuf, pub args: Vec<OsString>, pub env: Vec<(OsString, OsString)> }
-pub fn service(mode: ServiceMode) -> Result<Box<dyn ServiceManager>, Refused>;
+pub struct Placement { pub prefix: String, pub directory: PathBuf } // Placement::user(home); tests use a temp one
+pub fn service(mode: ServiceMode, home: &Path) -> Result<Box<dyn ServiceManager>, Refused>;
+pub fn service_in(mode: ServiceMode, placement: Placement) -> Result<Box<dyn ServiceManager>, Refused>;
 pub trait ServiceManager {
-    fn register(&self, unit: &Unit) -> Result<(), ServiceError>;   // idempotent, never takes over another unit
+    fn register(&self, unit: &Unit) -> Result<Registration, ServiceError>; // Unchanged | Loaded; idempotent, never takes over another unit
     fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
     fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
     fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>; // includes login and linger requirements
@@ -460,14 +462,23 @@ pub trait ServiceManager {
 ```
 
 This contract is agreed with the Track A lead on the first day (X1a), because A2
-writes the launchd registration and needs somewhere to put it.
+writes the launchd registration and needs somewhere to put it. A2 B0 built it as shown
+(`crates/org-platform/src/service/`), before X1a: `ServiceStatus` is `NotRegistered`,
+`Unloaded`, `Stopped` or `Running { pid }`; every adapter refuses a relative program,
+path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
+`GLIBC_TUNABLES`) in the unit's environment. `Foreground` refuses everywhere until X5.
 
 `agentic-org serve` is the same foreground process in every mode; it stops on
 `SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
 process and the workers (`SIGTERM`, then `SIGKILL` after 5 s), flushes its logs and
 exits 0 within 8 s, inside a container runtime's default 10-second grace.
 
-**macOS adapter.** A per-user launchd agent (written by A2 behind this contract).
+**macOS adapter.** A per-user launchd agent (written by A2 behind this contract):
+`~/Library/LaunchAgents/com.ellosoft.agentic-org.instance.<instance-id>.plist` with
+`RunAtLoad`, `KeepAlive { SuccessfulExit = false }`, `Umask` 0077 and an explicit
+environment, loaded with `launchctl bootstrap gui/<uid>`. An identical loaded job is
+left alone; a different file or a job loaded from elsewhere under the label is a
+conflict. `stop` sends `SIGTERM`, so the clean exit is not restarted.
 
 **Linux adapter, `Registered`.** A systemd user unit,
 `~/.config/systemd/user/agentic-org-<instance-id>.service`, with

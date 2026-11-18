@@ -167,9 +167,15 @@ Default data roots:
 
 | Platform | Instance data root | Service and runtime details |
 | --- | --- | --- |
-| macOS | `~/Library/Application Support/agentic.org/instances/<name>/` | Per-user launchd label derived from the instance ID; short private socket directory |
+| macOS | `~/Library/Application Support/agentic.org/instances/<name>/` | Per-user launchd agent `com.ellosoft.agentic-org.instance.<instance-id>` in `~/Library/LaunchAgents`; short private socket directory |
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/agentic-org/instances/<name>/` | systemd user unit derived from the instance ID, or foreground under a container runtime; sockets in a validated private runtime directory |
 | Container | A mounted volume | Nothing the instance keeps is written outside mounted volumes |
+
+Default addresses (A2 decision D9): `default` listens on `http://127.0.0.1:7420`; a named
+instance takes the first free port from 7421. A port in use is an actionable error and
+leaves the saved address unchanged. The service label comes from the instance ID, never
+the name, so renaming cannot collide; a definition with that label but other contents is
+never taken over.
 
 Setup may take an explicit absolute data directory. It saves the resolved path;
 services and agents never infer it from a later working directory or `HOME`.
