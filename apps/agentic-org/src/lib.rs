@@ -1,9 +1,14 @@
 //! Human CLI dispatch and host composition. No agent CLI or office data ownership.
+mod admin;
 mod serve;
+mod service;
+mod setup;
 
-const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Create HQ (requires the pending protected bootstrap integration)\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated separately from HQ.";
+use std::collections::BTreeMap;
 
-/// Dispatches a human CLI command, preserving unavailable bootstrap stages.
+const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Set up this Mac's instance and register its service\n  admin      admin reset: a new administrator registration link\n  service    start, stop or show the instance's service\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated separately from HQ.";
+
+/// Dispatches a human CLI command.
 pub fn run(arguments: Vec<String>) -> Result<(), String> {
     match arguments.as_slice() {
         [] => {
@@ -24,19 +29,31 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
         }
         [command, rest @ ..] if command == "serve" => serve::run(rest.to_vec()),
         [command, rest @ ..] if command == "recovery" => org_host::human::recovery(rest),
-        [command, rest @ ..] if command == "setup" => {
-            // Never write a fake HQ, register a broken service or bypass bootstrap authority.
-            if rest.iter().any(|arg| {
-                matches!(arg.as_str(), "--hq" | "--satellite" | "--invitation")
-                    || arg.starts_with("--hq=")
-                    || arg.starts_with("--invitation=")
-            }) {
-                return Err(
-                    "setup creates HQ only; use HQ's Add office flow for satellites".into(),
-                );
-            }
-            Err("HQ setup is unavailable: protected administrator/bootstrap and service registration are not wired in v1 yet; no setup state was changed".into())
-        }
+        [command, rest @ ..] if command == "setup" => setup::run(rest),
+        [command, rest @ ..] if command == "admin" => admin::run(rest),
+        [command, rest @ ..] if command == "service" => service::run(rest),
         _ => Err(format!("unrecognized command or arguments\n{HELP}")),
     }
+}
+
+/// `--option value` pairs, each at most once, from `allowed` only.
+pub(crate) fn options(
+    arguments: &[String],
+    allowed: &[&str],
+) -> Result<BTreeMap<String, String>, String> {
+    let mut options = BTreeMap::new();
+    let mut arguments = arguments.iter();
+    while let Some(flag) = arguments.next() {
+        if !allowed.contains(&flag.as_str()) {
+            return Err(format!("unrecognized argument {flag:?}"));
+        }
+        let value = arguments
+            .next()
+            .filter(|v| !v.starts_with("--"))
+            .ok_or_else(|| format!("{flag} needs a value"))?;
+        if options.insert(flag.clone(), value.clone()).is_some() {
+            return Err(format!("{flag} is given more than once"));
+        }
+    }
+    Ok(options)
 }

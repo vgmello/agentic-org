@@ -123,11 +123,26 @@ pub(crate) struct Paths {
     pub user_temp: PathBuf,
 }
 impl Paths {
+    /// Setup's default root for `name`: `<base>/instances/<name>`, its parent created private.
+    pub fn instance_root(&self, name: Option<&str>) -> Result<PathBuf, Error> {
+        let name = Name::parse(name)?;
+        let instances = Directory::open(&self.base, false)?.child("instances", true)?;
+        Ok(instances.path().join(name.as_str()))
+    }
+}
+
+impl Paths {
     pub fn prepare(account: &Path, user_temp: PathBuf, name: Option<&str>) -> Result<Self, Error> {
-        Name::parse(name)?;
         let base = org_platform::dirs::application_base(account)
             .map_err(|_| Error::Invalid("instance locations are unavailable on this system"))?;
-        let base = Directory::open(&base, true)?;
+        Self::at(&base, user_temp, name)
+    }
+
+    /// The paths under an explicit application base (the platform's, or a development
+    /// override).
+    pub fn at(base: &Path, user_temp: PathBuf, name: Option<&str>) -> Result<Self, Error> {
+        Name::parse(name)?;
+        let base = Directory::open(base, true)?;
         let locator = base.child("locator", true)?.path().to_owned();
         super::temp::validate_base(&Directory::open(&user_temp, false)?)?;
         Ok(Self {

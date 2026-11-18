@@ -80,6 +80,8 @@ mod registered;
 mod secrets;
 mod server_check;
 mod service;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub mod setup_flow;
 pub mod signals;
 mod spawn;
 mod supervisor;

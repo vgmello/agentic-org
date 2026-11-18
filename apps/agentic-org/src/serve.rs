@@ -77,7 +77,15 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
         return Ok(());
     }
     let name = args.name.clone();
-    let config = config(args)?;
+    #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+    let mut config = config(args)?;
+    // A development build serving a registered instance admits its own executable as the
+    // unsigned development CLI peer (setup and `admin` run the same binary), unless the build
+    // names another one. Logged loudly by the host's app policy; release builds never do this.
+    #[cfg(debug_assertions)]
+    if name.is_some() && config.dev_app_path.is_none() {
+        config.dev_app_path = std::env::current_exe().ok();
+    }
     let host = match name {
         Some(name) => Host::start_registered(config, Some(&name)),
         None => Host::start(config),

@@ -31,6 +31,7 @@ dependencies = [
  "org-host",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-socket",
  "serde",
