@@ -3,6 +3,7 @@
 
 /// Process admission: a scripted image check, and children a test names itself.
 pub mod admission {
+    pub use crate::admission::test_support::path_admission;
     pub use crate::admission::test_support::{
         child_peer, scripted_admission, unowned_child, unreleased, Script, Step,
     };

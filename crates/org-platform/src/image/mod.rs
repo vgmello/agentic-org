@@ -12,9 +12,10 @@
 //!
 //! - macOS: the kernel's CodeDirectory hash of a running image (`csops`,
 //!   `csops_audittoken`); releases for `Macos`.
-//! - GNU/Linux: no loaded-image query yet, so both image functions return the
-//!   `image identity` refusal (increment X2 writes the Linux rule); releases for
-//!   `Linux`.
+//! - GNU/Linux: the kernel has no CodeDirectory hash and no audit token, so both
+//!   image functions return the `image identity` refusal. The Linux rule, the SHA-256
+//!   of the executed bytes, needs a hash this crate does not link: the host applies
+//!   it in `org_platform_host::admission`. Releases for `Linux`.
 //! - Every other Unix target: each function returns its refusal.
 
 #[cfg(target_os = "macos")]

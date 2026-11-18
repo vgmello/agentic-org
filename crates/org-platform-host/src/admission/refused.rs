@@ -16,8 +16,8 @@ use std::sync::Mutex;
 use org_platform::Refused;
 
 use super::{
-    peer_refusal, refusal, ChildEnv, ExpectedImage, ImageRefusal, Peer, Signing, SigningRule,
-    Started, StaticImageError, StaticSignature,
+    image_refusal, peer_refusal, refusal, ChildEnv, ExpectedImage, ImageRefusal, OwnImageError,
+    Peer, Signing, SigningRule, Started, StaticImageError, StaticSignature,
 };
 
 pub(super) enum Admission {}
@@ -33,6 +33,15 @@ impl Admission {
         _script: super::test_support::Script,
     ) -> Result<Self, Refused> {
         Err(refusal())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn by_path(_expected: ExpectedImage) -> Result<Self, Refused> {
+        Err(refusal())
+    }
+
+    pub(super) fn image_sha256(&self) -> Option<[u8; 32]> {
+        match *self {}
     }
 
     pub(super) fn start(
@@ -108,6 +117,10 @@ pub(super) fn peer_executable(_stream: &UnixStream) -> io::Result<PathBuf> {
     Err(peer_refusal().into())
 }
 
+pub(super) fn own_image(_expected: &ExpectedImage) -> Result<(), OwnImageError> {
+    Err(OwnImageError::Unsupported(image_refusal()))
+}
+
 pub(super) fn own_signing() -> Option<Signing> {
     None
 }
@@ -181,6 +194,7 @@ mod tests {
             Child::unowned(std::process::id(), None).err(),
             Some(refusal())
         );
+        assert_eq!(Admission::by_path(development()).err(), Some(refusal()));
         assert_eq!(StaticImages::new().err(), Some(refusal()));
     }
 
@@ -194,11 +208,27 @@ mod tests {
         let Refused::Unsupported { capability, os } = native_peers().unwrap_err();
         assert_eq!(capability, "peer identity");
         assert_eq!(os, std::env::consts::OS);
-        for token in [[0; 32], [7; 32]] {
-            let peer = Peer {
-                macos_audit_token: token,
-            };
+        for peer in [
+            Peer::from_macos_audit_token([0; 32]),
+            Peer::from_macos_audit_token([7; 32]),
+            Peer::from_linux_credentials(1000, 1),
+        ] {
             assert!(!peer_satisfies(&peer, "anchor apple", &ANY));
+        }
+    }
+
+    #[test]
+    fn the_own_image_is_refused_as_unidentifiable_whatever_is_expected() {
+        let pinned = ExpectedImage {
+            sha256: Some([7; 32]),
+            macos_cdhash: Some([7; 20]),
+            ..development()
+        };
+        for expected in [development(), pinned] {
+            match own_image(&expected) {
+                Err(OwnImageError::Unsupported(refused)) => assert_eq!(refused, image_refusal()),
+                other => panic!("the refusing adapter answered {other:?}"),
+            }
         }
     }
 

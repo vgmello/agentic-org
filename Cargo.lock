@@ -747,6 +747,7 @@ dependencies = [
  "org-platform",
  "security-framework",
  "security-framework-sys",
+ "sha2",
  "tempfile",
 ]
 

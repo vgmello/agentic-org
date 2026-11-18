@@ -15,8 +15,8 @@ use std::sync::Mutex;
 use org_platform::Refused;
 
 use super::{
-    decision, ChildEnv, ExpectedImage, ImageRefusal, NotTheChild, Peer, Signing, SigningRule,
-    SpawnRefused, Started, StaticImageError, StaticSignature,
+    decision, ChildEnv, ExpectedImage, ImageRefusal, NotTheChild, OwnImageError, Peer, Signing,
+    SigningRule, SpawnRefused, Started, StaticImageError, StaticSignature,
 };
 
 mod code;
@@ -59,6 +59,17 @@ impl Admission {
             expected,
             script: Some(script),
         })
+    }
+
+    /// The test adapter that starts by path: this adapter already does.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn by_path(expected: ExpectedImage) -> Result<Self, Refused> {
+        Self::new(expected)
+    }
+
+    /// No bytes are hashed here: a child is admitted by its code signature.
+    pub(super) fn image_sha256(&self) -> Option<[u8; 32]> {
+        None
     }
 
     /// Starts the child suspended (`spawn::spawn_suspended`), so not one instruction of its
@@ -185,11 +196,11 @@ fn token_of(pid: u32) -> Result<AuditToken, String> {
 /// The system's identity of this process's own unreaped child `pid`.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn child_peer(pid: u32) -> io::Result<Peer> {
-    spawn::audit_token_of_child(pid).map(|macos_audit_token| Peer { macos_audit_token })
+    spawn::audit_token_of_child(pid).map(Peer::from_macos_audit_token)
 }
 
 pub(super) fn peer(stream: &UnixStream) -> io::Result<Peer> {
-    audit_token(stream).map(|macos_audit_token| Peer { macos_audit_token })
+    audit_token(stream).map(Peer::from_macos_audit_token)
 }
 
 pub(super) fn native_peers() -> Result<(), Refused> {
@@ -207,6 +218,24 @@ pub(super) fn peer_satisfies(peer: &Peer, requirement: &str, rule: &SigningRule)
 #[cfg(debug_assertions)]
 pub(super) fn peer_executable(stream: &UnixStream) -> io::Result<PathBuf> {
     pid(stream).and_then(executable)
+}
+
+/// Whether this running process is the image `expected` pins: the kernel's CodeDirectory
+/// hash of the loaded image must be `macos_cdhash`. An image with no pin is a mismatch.
+pub(super) fn own_image(expected: &ExpectedImage) -> Result<(), OwnImageError> {
+    let loaded = org_platform::image::own_loaded_cdhash().map_err(|error| {
+        match error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<Refused>())
+        {
+            Some(refused) => OwnImageError::Unsupported(refused.clone()),
+            None => OwnImageError::Unavailable(error),
+        }
+    })?;
+    if expected.macos_cdhash != Some(loaded) {
+        return Err(OwnImageError::Mismatch);
+    }
+    Ok(())
 }
 
 /// This process's own signing information (through `SecCodeCopySelf`).

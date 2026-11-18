@@ -257,8 +257,7 @@ impl ServerCheck {
             return Ok(org_platform_host::testing::admission::scripted_admission(
                 expected,
                 std::sync::Arc::new(move |step, pid| {
-                    script(step, pid)
-                        .map(|token| token.map(|macos_audit_token| Peer { macos_audit_token }))
+                    script(step, pid).map(|token| token.map(Peer::from_macos_audit_token))
                 }),
             )?);
         }
@@ -650,8 +649,16 @@ mod tests {
             check.admission(PROGRAM.as_ref()).is_ok(),
             ServerCheck::Skip.admission(PROGRAM.as_ref()).is_ok()
         );
+        // No admission here means no adapter, or an adapter that reads the image when the
+        // admission is built and found none at this path.
         if let Err(error) = check.admission(PROGRAM.as_ref()) {
-            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+            assert!(
+                matches!(
+                    error.kind(),
+                    io::ErrorKind::Unsupported | io::ErrorKind::NotFound
+                ),
+                "{error:?}"
+            );
         }
         // Building the admission started nothing and asked the script nothing.
         assert!(asked.lock().unwrap().is_empty());
