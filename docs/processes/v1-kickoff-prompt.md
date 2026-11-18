@@ -43,8 +43,11 @@ v1-integration. Never push to main. Tests never touch a real organization's data
 Suggested start: one engineer takes Track A from A2 (setup's registration link), then
 A3 and A4, so that installing, registering and creating the organization work first.
 The other takes A1, the clean-up the store rebuild depends on, and then Track B from
-B1. B1, the store foundation, is the largest increment and starts with a written plan
-recorded in the repository.
+B1a. B1a to B1c, the store foundation, are built from the
+[office store design](../design/office-store.md).
 A third agent can take Track X, Linux, from X1a at the same time. X1a is the shared
 platform crate's skeleton, its CI check and the service contract agreed with the
 agent on A2; read it with [the Linux host design](../design/linux-host.md).
+K1, the command contract, needs nothing and suits any free agent: it is the one
+grammar and answer format that every `agent-os` and `agentic-org` command is written
+against; read it with the [agent command line design](../design/agent-os-command-line.md).

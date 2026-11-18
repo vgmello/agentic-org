@@ -64,9 +64,13 @@ classes defined here.
    applied.
 4. **A caller may always ask for durable.** An explicit option upgrades a
    committed-class call to durable for a sender that needs certainty.
-5. **`agent-os` gains a session mode.** One long-running `agent-os` process per agent
-   session keeps its office connection open and takes requests in the existing
-   `org-proto` frames. The one-shot command stays for people and scripts.
+5. **`agent-os` gains a session mode.** A long-running `agent-os` process binds once,
+   keeps its office connection open and takes one request after another. Its shape is
+   `agent-os session attach`: one command a line in, one answer envelope a line out
+   ([agent command line](../design/agent-os-command-line.md), section 2.9). An agent
+   reaches it by sending several commands in one shell call, and the target of
+   decision 1 is measured through it. The one-shot command stays for a single call, for
+   people and for scripts.
 6. **Commit first, materialize after.** The point of commitment is the office's
    durable local store: the authoritative office database today, and in the selected
    storage layout a journal under `durable/`. It is never the rebuildable projection
@@ -93,11 +97,11 @@ classes defined here.
      each request needs its class on the write job, the commit must not force the
      drive, and a flush must complete before any durable reply in the batch is sent.
      `org-mailbox` has several write entry points and a port comment promising that
-     success means durable; both are updated. Where the store publishes journal
-     envelope files, as the work-acceptance journal does at HQ, a committed-class
-     envelope may be published without a flush, a durable publication first flushes
-     every earlier unflushed envelope, and recovery stops at the first missing or
-     incomplete ordinal.
+     success means durable; both are updated. The office's acceptance journal
+     ([ADR-0021](0021-office-store-architecture.md)) appends a committed-class entry
+     without a flush; the group flush that answers a durable request covers every
+     earlier entry, and recovery truncates a torn tail only above the head the host
+     custody last confirmed.
    - What every adapter must guarantee is stated in engine-neutral terms: a committed
      write survives a crash of the office process and is flushed within the bounded
      interval; a durable write is not acknowledged before it would survive a power

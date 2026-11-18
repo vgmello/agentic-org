@@ -26,7 +26,9 @@ in the "What the code does today" section of each design.
 | Chat data, visibility and who writes what | [Messaging](organization-data/15-messaging-and-chat.md), [ADR-0003](../adr/0003-agent-messaging-office-first.md) |
 | How fast an operation answers, and when it is acknowledged | [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) |
 | How an ask waits; required asks | [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) |
+| The agents' command line: grammar, answer format, errors and the list of commands | [Agent command line](agent-os-command-line.md), from [REQ-08](../specs/req-08-agent-os-cli-and-kernel-primitives.md). What a command means stays with the contract its row names |
 | Durable sources versus rebuildable caches | [Storage contract](organization-data/README.md#shared-storage-contract), [recovery](organization-data/16-recovery-and-office-continuity.md) |
+| How the office stores, acknowledges and rebuilds data | [Office store design](office-store.md), [ADR-0021](../adr/0021-office-store-architecture.md) |
 | Replaceable storage engine | [ADR-0018](../adr/0018-storage-engine-independence.md) |
 | Encryption and secrets | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
 | Budgets | [Budgets](organization-data/17-budgets-and-controls.md); the [cost UX](../specs/costs-and-insights-ux.md) for presentation and access |

@@ -1,6 +1,6 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.15 (2026-11-17). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.16 (2026-11-18). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **data relationships, fields and canonical sources**. Where the code or another design differs, the code or that design changes. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes implementation status and deferred scope.
 
@@ -62,12 +62,12 @@ The organization repository must be remote. Its tracked content is mirrored as o
 <data-root>/<organization-id>/
 ├── durable/                         # Sources. Back up all of it. Cache cleanup never touches it.
 │   ├── state/                       # Latest organization repository content (published to Git)
-│   ├── journal/                     # Pending local persistence; not Git content
-│   ├── authority/                   # Numbering ledger and its recovery journal (06); HQ placement
+│   ├── authority/                   # HQ's authority records (06); HQ placement
 │   │                                #   generations, permits and cooldowns (11)
 │   ├── accounting/                  # Usage streams/checkpoints (10)
 │   ├── messaging/                   # Protected conversations, messages, attachments (15)
-│   ├── recovery/                    # Receipts, origin streams, acceptance journals, checkpoints (16)
+│   ├── recovery/                    # Receipts, each office's acceptance journal (the commit
+│   │                                #   point), checkpoints, snapshots (16)
 │   ├── budgets/                     # Protected policies, periods, events, holds (17)
 │   ├── private/task-notes.db        # HQ only: author-private task notes (05)
 │   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11);
@@ -89,7 +89,7 @@ Code today keeps its authoritative `org.db` and `office.db` under `offices/<offi
 
 Durable scalar values are explicit YAML/front-matter fields. Association rows come from ID arrays or maps in their owning documents. Markdown bodies map to `body_markdown`. Array positions and resolver indexes are derived and have no independently authored source. Generated numeric keys are derived from persisted numbers. Null optional fields and documented defaults round-trip identically.
 
-Shared SQLite is the indexed projection for domain records, task activity and accounting events. The private-note database is an explicit separate durable store, not a reconstructible shared cache. Published task activity lives in organization Git under `work-history/tasks/`; acknowledged unpublished changes also require their durable journal. Accounting recovery additionally requires the durable usage archive; rates alone or organization Git alone cannot restore accounting per-event history. Cache paths and worktree paths are transient. Document 11 requires durable placement/fencing evidence before execution; recreating an office database does not authorize starting another copy of an agent. Existing authentication/credential storage remains a separate subsystem and is not made disposable by this schema. Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) organization data is not encrypted by the application: databases and files under this root are protected by disk encryption, private file permissions and the agent isolation mode of [ADR-0015](../../adr/0015-agent-isolation-modes.md). Private keys and credentials never live in plaintext in a database or in Git content: an office's private keys are stored wrapped by a host-held key, and vendor sign-in state has its own owner-only directory under `durable/local/` (document 11). Shared organization files do not contain credentials, private task notes or chat bodies. Document 15 defines protected messaging sources outside disposable office caches; Git alone does not restore chat.
+Shared SQLite is the indexed projection for domain records, task activity and accounting events. The private-note database is an explicit separate durable store, not a reconstructible shared cache. Published task activity lives in organization Git under `work-history/tasks/`; acknowledged unpublished changes also require the office's acceptance journal (16). Accounting recovery additionally requires the durable usage archive; rates alone or organization Git alone cannot restore accounting per-event history. Cache paths and worktree paths are transient. Document 11 requires durable placement/fencing evidence before execution; recreating an office database does not authorize starting another copy of an agent. Existing authentication/credential storage remains a separate subsystem and is not made disposable by this schema. Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) organization data is not encrypted by the application: databases and files under this root are protected by disk encryption, private file permissions and the agent isolation mode of [ADR-0015](../../adr/0015-agent-isolation-modes.md). Private keys and credentials never live in plaintext in a database or in Git content: an office's private keys are stored wrapped by a host-held key, and vendor sign-in state has its own owner-only directory under `durable/local/` (document 11). Shared organization files do not contain credentials, private task notes or chat bodies. Document 15 defines protected messaging sources outside disposable office caches; Git alone does not restore chat.
 
 Structural validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
 

@@ -27,8 +27,8 @@ single office on macOS. Its steps, in order:
 
 | Step | A person can | Increments |
 | --- | --- | --- |
-| 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
-| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1, B2, B3, O1, A6, R1, U1 |
+| 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 and K1 alongside |
+| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1a to B1c, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
 | 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
@@ -47,7 +47,7 @@ them (S1).
 Most of step 2 and the hire flow are create, read, update and delete on records the
 data contract already defines. The parts that are not: the web process and sessions
 working end to end for the first time (step 1), the store rebuilt so that files are
-the source (B1), and starting and supervising an agent process (C3).
+the source (B1a to B1c), and starting and supervising an agent process (C3).
 
 Track A is the way in: host, setup, web, sign-in. Track B is the organization's data:
 the office's storage and the domain on it. Track C is agents. Track X is Linux and containers, built alongside the other three. A and B start on the same
@@ -62,9 +62,9 @@ Three things to know about the order:
 - **Getting in comes first and waits for nothing.** The Track A engineer starts at A2
   and goes straight through A3 and A4: the link, registration, and creating the
   organization.
-- **A1 is a clean-up that the Track B engineer takes first,** because B1 rebuilds the
-  office store that A1 removes the encryption from. B1's written plan is prepared
-  meanwhile. A1 also removes the encryption of the host database, which A2 and A3
+- **A1 is a clean-up that the Track B engineer takes first,** because B1b rebuilds the
+  office store that A1 removes the encryption from. B1a, which builds the new store
+  beside the old one, can proceed meanwhile. A1 also removes the encryption of the host database, which A2 and A3
   write to: the two leads agree the order of those commits.
 - **macOS and Linux in parallel.** The Track A and B engineers work on macOS. Track X
   brings Linux, including a container, at the same time (X1a to X6). X1a lands on the first day and
@@ -88,6 +88,8 @@ Three things to know about the order:
   - The host holds one office secrets key per office and passes it over the rendezvous.
     The office wraps its private keys (the CA key today) with it; no private key is ever
     stored in the clear.
+  - Its change to the old office store is deliberately minimal (no encryption key, the CA
+    key wrapped), because B1b deletes that code.
 - **Read:** [host boundary design](design/office-host-boundary.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [ADR-0012](adr/0012-office-channel-lifecycle.md). Checklist rows FC-017, FC-162.
@@ -227,8 +229,32 @@ Three things to know about the order:
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once; ENC-2 passes.
-- **Needs:** A3. A4 lands on the office store as it is. B1 then rebuilds that store
+- **Needs:** A3. A4 lands on the office store as it is. B1b then rebuilds that store
   underneath it and makes organization creation the first accepted transaction.
+
+### K1 · The command contract
+
+- **Outcome:** none a person can see. It is a foundation: every command of `agent-os`
+  and `agentic-org` is written against one grammar and answers in one format, and a
+  test suite holds every later command to it.
+- **Build:** the shared command library of the
+  [agent command line design](design/agent-os-command-line.md): the table of commands;
+  the parser (`<resource> <verb>`, named flags, no positional arguments); the three ways
+  to give input (flags, `--json`, `--input-file` or `--stdin`); the answer envelope and
+  its three formats; `--fields`, `--limit` and `--cursor`; `--help` and `--schema`
+  generated from the table; exit codes; and the contract tests, run against a test
+  office that is a stub inside the test process. No command of today is converted here.
+  Each later increment adds its own rows and deletes what they replace.
+- **Read:** [REQ-08](specs/req-08-agent-os-cli-and-kernel-primitives.md),
+  [agent command line design](design/agent-os-command-line.md) sections 2, 7 and 8.
+  Row FC-168.
+- **Code today:** `apps/agent-os/src/main.rs` parses arguments by hand, with positional
+  arguments and text output; none of it is kept.
+- **Done when:** CLI-1, CLI-2, CLI-3, CLI-7, CLI-8 and CLI-11 pass for every row in the
+  table against the test office, and a row is added in a test without touching the
+  parser. The first rows on the real path are A5's.
+- **Needs nothing and can start at any time.** A5 and every increment that adds a
+  command need it.
 
 ### A5 · A person on the command line
 
@@ -242,8 +268,10 @@ Three things to know about the order:
     when its connection closes.
   - The person's executable is `agentic-org`. After `agentic-org sign-in` it offers the
     same office commands that `agent-os` offers an agent (teams, people, tasks,
-    messages), from one shared library, under the person's name. `agent-os` is for
-    agents only and refuses to run without the binding of a run the office started.
+    messages), from the one shared library of K1, under the person's name. Its first two
+    rows are `org inspect` and one of the owner's writes, served by today's office; B2
+    moves them onto the new store. `agent-os` is for agents only and, from C3, refuses
+    to run without the binding of a run the office started.
   - A person-started command names the instance and the office, or uses a saved context
     bound to those two IDs. With neither it fails and says how to select one.
   - Each call reaches the office with the person's principal and a host-issued grant,
@@ -261,49 +289,141 @@ Three things to know about the order:
 - **Done when:** SES-8 passes; a signed-in person runs a read command and a write
   command against the office from a terminal; the same commands are refused without a
   session.
-- **Needs:** A4.
+- **Needs:** A4, K1.
 
 ---
 
 ## Step 2 · The organization: office, projects, teams and people
 
-### B1 · The store foundation
+### B1a · The store core on the organization family
 
-- **Outcome:** none a person can see. Every later Track B increment writes through it.
+The store is built from the [office store design](design/office-store.md) and
+[ADR-0021](adr/0021-office-store-architecture.md), in three increments. B1a proves the
+whole path on one record family so that B2 starts on it; B1b moves the running office
+onto it and deletes the old store; B1c measures and guards it.
+
+- **Outcome:** none a person can see; an internal foundation. Organization records go
+  through the whole path: command, journal, files, projection, rebuild, and one
+  conformance suite against SQLite and against memory. B2 starts on it.
 - **Build:**
-  - Files are the source. Organization files live under `durable/state/`; the database
-    under `runtime/<office-id>/` is a projection that can be deleted and rebuilt.
-  - One write path: a command is validated, committed to the acceptance journal with its
-    event and its idempotency result, and then materialized to files and the projection.
-  - Creating an organization is the first accepted transaction of that organization's
-    journal, and its first directory generation.
-  - Storage is reached only through contracts the domain crates define. SQL appears only
-    in the store adapter. Each contract has a test suite that does not depend on the
-    database engine.
-  - Each operation declares whether it is acknowledged at the commit or after the drive
-    flush.
-- **Read:** the [data contract index](design/organization-data/README.md) (shared storage
-  contract), [record contracts](design/organization-data/08-record-contracts.md),
+  - The crate `org-store`: the change contract and the acknowledgement classes, the
+    single writer with batching, the journal (segments, hash chain, anchor, torn-tail
+    recovery), the flusher (group flush, durable replies, file materialization), the
+    receipts, origin and feed positions, the change stream, `rebuild`, the `Engine`,
+    `CorePort` and `Projector` traits, and a `testkit` with the memory engine, the
+    rebuild-equivalence harness and the crash points.
+  - The SQLite engine in `crates/org-office/src/store/sqlite/`: the projection at
+    `runtime/<office-id>/office.db` from the contract's `schema.sql` and the store's
+    tables, WAL without per-commit flushes, the reader pool, the schema digest.
+  - The organization family in `crates/org-office/src/organization/`: records, paths and
+    codec for the organization, offices, office codes, teams, people and agents, HQ
+    counters and allocations; its two ports, its projector and its testkit; two
+    operations: create the organization (the first entry: organization, HQ office,
+    top-level team, the creator as its lead, the HR lead; directory generation 1) and
+    create a team.
+  - `open_store`, the one seam, used by the office's tests with either engine.
+  - B1a is large, so it may land as two merges, with acceptance at the second. The
+    first merge is `org-store` (writer, journal, flusher, files, receipts, rebuild,
+    memory engine and harness) with the organization family running on the memory
+    engine. The second adds the SQLite engine and runs the suite and the harness on
+    both engines.
+- **Read:** [office store design](design/office-store.md) sections 1 to 7 and 9,
+  [ADR-0021](adr/0021-office-store-architecture.md), the
+  [data contract index](design/organization-data/README.md) (shared storage contract),
   [recovery contract](design/organization-data/16-recovery-and-office-continuity.md)
-  including its resolution for the first directory generation,
-  [ADR-0018](adr/0018-storage-engine-independence.md),
+  (receipts, how the directory begins), [organization structure](design/organization-data/01-organization-structure.md),
+  [agent structure](design/organization-data/04-agent-structure.md),
+  [identity and numbering](design/organization-data/06-identity-and-numbering.md),
+  [ADR-0006](adr/0006-selected-task-acceptance.md),
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decisions 2, 3, 6
-  and 8, [ADR-0006](adr/0006-selected-task-acceptance.md). Rows FC-141, FC-146, FC-165.
-- **Code today:** `crates/org-office/src/store` is about 14,700 lines against tables the
-  data contract replaces, and is the source of truth; `store/acceptance` is the journal
-  the selected design keeps; `crates/org-docs` parses and edits the files. Outside the
-  store, two files use the database driver (`organization/bootstrap.rs`,
-  `organization/admission.rs`) and two more hold SQL (`office.rs`, `office/hq_creation.rs`).
-- **Done when:** deleting `runtime/<office-id>/` and restarting rebuilds the projection
-  with no loss; in `org-office`, SQL and driver types are found only in the store
-  adapter (ENG-1 for the office); the office starts with its store chosen through one
-  seam and the organization suite passes against SQLite and against an in-memory
-  implementation (ENG-2, and ENG-3 for organization records); ENG-4 and ENG-5 pass.
-  The suites for work and messaging arrive with B4 and B6, for the host with A3, and for
-  replication with S1.
-- **This is the largest increment in the plan.** It starts with a written plan, recorded
-  in the repository: which record families move first, and what is deleted.
-- **Needs:** A1's change to the office store.
+  and 8, [ADR-0018](adr/0018-storage-engine-independence.md). Rows FC-141, FC-146, FC-165.
+- **Code today:** `crates/org-office/src/store/acceptance.rs` holds the journal rules
+  the design keeps (frozen decisions, anchor and chain, final-state materialization) and
+  its crash tests; `store/acceptance/durable.rs` the publication primitives; `store.rs`
+  the batching rules and their tests; `crates/org-docs` the front-matter parser and
+  source-preserving editor; `organization/bootstrap.rs` and `organization/admission.rs`
+  today's creation path; `org_mailbox::mailbox_conformance_tests!` the suite pattern.
+  The workspace `rusqlite` is built with SQLCipher until A1; the new engine never sets a
+  key.
+- **Done when:** the organization suite passes against SQLite and memory (ENG-3 for
+  organization records); the rebuild-equivalence harness passes for the organization
+  family on both engines; a crash injected at each point of the design's crash table
+  reopens to the entry wholly absent or wholly present, with no decision run twice;
+  deleting the projection and reopening rebuilds an equal one; a committed write is
+  answered while a flush is held back; a failed flush stops the office and a failed
+  append fails its batch alone (STORE-1 to STORE-5 and STORE-8).
+- **Needs:** nothing. B1a carries the full-flush and exclusive-rename primitives of
+  `store/acceptance/durable.rs` into `org-store`'s `files.rs` as they are (one small
+  platform-conditional function, on the Linux check's allowlist in place of
+  `durable.rs`), and uses `org-platform`'s `fs` instead only if X1b has already landed.
+  Milestone one's path does not wait for Track X. Not A1.
+
+### B1b · The office runs on the new store
+
+- **Outcome:** the running office keeps organization data as files under `durable/`,
+  with its projection under `runtime/<office-id>/`; deleting `runtime/<office-id>/` and
+  restarting loses nothing. Creating an organization is the first entry of HQ's journal.
+- **Build:**
+  - The office opens its store through `open_store` at start-up: host writer custody
+    checked at open and confirmed once per flush; the projection replayed, or rebuilt
+    when missing or stale; the clean-stop marker.
+  - Organization creation through the host's protected path writes entry 1; the CA key
+    is a protected record wrapped by the office secrets key; recovery-code delivery is
+    unchanged.
+  - The directory read and team creation answer through the office's native calls, so
+    the commands A5 exercises keep working.
+  - The old store is deleted whole, with the SQL outside it (design section 11). Calls
+    only the old tables served answer `unsupported` until their family is rebuilt: work
+    in B4, messaging and status in B6, process ownership in C3.
+  - The ENG-1 check is narrowed to `src/store/sqlite/`.
+  - Features that go dark are recorded: every checklist row whose evidence stops being
+    true is updated (for example FC-072, the agent messaging command line, which is Done
+    today), and the tests of the removed calls are deleted or rewritten against the new
+    store, never disabled.
+- **Read:** [office store design](design/office-store.md) sections 4, 5 and 11;
+  [recovery contract](design/organization-data/16-recovery-and-office-continuity.md)
+  (opening, loss boundaries); [ADR-0007](adr/0007-hq-creation-escrow.md),
+  [ADR-0016](adr/0016-no-application-level-data-encryption.md),
+  [host boundary design](design/office-host-boundary.md).
+- **Code today:** `crates/org-office/src/office.rs` opens `org.db` and `office.db` and
+  writes `meta` rows; `office/hq_creation.rs` and `store/hq_creation.rs` hold the
+  creation record; `apps/agentic-org-office/src/transfer/writer.rs` is the host custody
+  channel, called twice per write and once per read today; `apps/agentic-org-office/src/lib.rs`
+  wires the mailbox to the old tables.
+- **Done when:** with an organization created through the host, deleting
+  `runtime/<office-id>/` and restarting rebuilds the projection with no loss; a
+  committed organization write survives killing the office right after its answer; the
+  organization's files are at the contract's paths under `durable/state/`; `rusqlite` and
+  SQL appear in `org-office` only under `src/store/sqlite/` (ENG-1 for the office); the
+  office's tests pass on the memory engine through `open_store` (ENG-2); STORE-6 passes.
+- **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
+  it moves).
+
+### B1c · The store measured and guarded
+
+- **Outcome:** none a person can see. The store's speed is known on Linux and on the
+  reference Mac and is guarded in CI; the engine-independence criteria are closed.
+- **Build:** the benchmark target of design section 8; the flush interval fixed from
+  its results; a load test of the flush bound; a CI regression check; the wording of
+  documents 06 and 11 and the ADRs checked for engine mechanisms; the trigger and
+  generated-column constraints listed in words in schema coverage.
+- **Read:** [office store design](design/office-store.md) sections 8 and 9;
+  [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 7 and
+  ACK-2, ACK-3, ACK-5 to ACK-7; [ADR-0018](adr/0018-storage-engine-independence.md)
+  ENG-4 and ENG-5.
+- **Code today:** no store benchmark exists; ADR-0014 holds Linux estimates only.
+- **Done when:** section 8's numbers are recorded in ADR-0014 for Linux CI and the
+  reference Mac; ACK-2, ACK-3, ACK-5, ACK-6 and ACK-7 pass against the store for
+  organization operations; ENG-4 and ENG-5 pass; CI runs the regression check.
+- **Needs:** B1b, and a reference Mac for its numbers.
+
+**What depends on B1.** B2 starts on B1a, whose organization family it extends, and
+finishes on B1b, where its commands reach the running office. B3 copies the family
+pattern for projects after B2. B4 builds the work family on B1b (through B3). B6 builds
+the messaging family and measures ACK-1 with B1c's harness. R1 opens an organization
+from its files with B1b's rebuild. A1 comes before B1b and is independent of B1a. A4
+lands on the old store; B1b moves its creation onto the journal. S1 builds replication
+on the offers of design section 10.
 
 ### B2 · Organization, teams and people
 
@@ -313,6 +433,10 @@ Three things to know about the order:
 - **Build:** the organization, teams, employees and roles of the data contract. One home
   team per employee. One status field. A team lead who is a direct member. HQ gives
   teams their numbers. The many-to-many membership model is deleted.
+- **Commands:** `org inspect`, `team roster`, `agent inspect`, and the owner's commands
+  for teams and people, which this increment names under the grammar. With the first
+  write on the new store: `--dry-run`, `--idempotency-key`, `--if-match` and `--durable`
+  ([command line design](design/agent-os-command-line.md), sections 2.6, 2.7 and 3.2; CLI-4, 5 and 6).
 - **Read:** [organization structure](design/organization-data/01-organization-structure.md),
   [agent structure](design/organization-data/04-agent-structure.md),
   [identity and numbering](design/organization-data/06-identity-and-numbering.md),
@@ -324,7 +448,7 @@ Three things to know about the order:
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
-- **Needs:** B1, A5.
+- **Needs:** B1a to start, B1b to finish; A5.
 
 ### B3 · Projects, the minimum
 
@@ -333,6 +457,8 @@ Three things to know about the order:
   contributing teams. Creating a project creates its team by default: a new team
   named after the project, under the top-level team, accountable for it. Naming an
   existing team instead stays possible. No features, releases or repositories yet.
+- **Commands:** `project list`, `project inspect`, and `project create` for the owner
+  ([command line design](design/agent-os-command-line.md), section 3.2).
 - **Read:** [project structure](design/organization-data/02-project-structure.md). Rows
   FC-030, FC-038.
 - **Done when:** a project and its team exist after a restart, created from a terminal
@@ -411,11 +537,11 @@ Three things to know about the order:
   and its loss boundaries, [identity contract](design/organization-data/06-identity-and-numbering.md),
   [ADR-0007](adr/0007-hq-creation-escrow.md). Row FC-167.
 - **Code today:** nothing opens an organization from files; the office's store is the
-  source of truth until B1.
+  source of truth until B1b.
 - **Done when:** with `runtime/` and the host's database deleted, the organization is
   opened again from its repository and every record published before the loss is
   there; an invalid organization record refuses the open and names the file.
-- **Needs:** B1, A4, A6.
+- **Needs:** B1b, A4, A6.
 
 ### U1 · Offices, teams, people and projects in the browser
 
@@ -458,6 +584,9 @@ Three things to know about the order:
   - The built-in HR lead drafts the proposal once agents can run (C3). Until then, and
     whenever HR cannot run, the same flow works with the form.
   - Edit, move, pause, resume and offboard an agent.
+- **Commands:** `hr roles`, `hr inspect-role` and `hr hire`, which answers
+  `gate_required` with the request and, once it is known, who approves ([command line design](design/agent-os-command-line.md), section 3.2;
+  CLI-14).
 - **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
   hire flow; who approves; STAFF and HRL criteria), [roles UX](specs/roles-ux.md),
   [agent structure](design/organization-data/04-agent-structure.md),
@@ -477,6 +606,12 @@ Three things to know about the order:
   description, with the product stating the reduced protection of that mode; one vendor
   adapter behind the runtime contract; one open turn per agent, started only by an
   explicit instruction; `agent-os` bound to the run the office started.
+- **Commands:** the binding and the `AGENT_OS_` launch variables; `agent-os` refuses
+  to run without a binding; `session inspect` and `grant list`; the short catalogue in
+  the agent's instructions; an empty MCP configuration ([command line design](design/agent-os-command-line.md),
+  sections 2.5, 2.8, 2.10 and 3.1; CLI-9, 10 and 12). The check that the caller
+  descends from the started process uses `org-platform` and passes on Linux in the same
+  change.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
@@ -509,6 +644,8 @@ Three things to know about the order:
   its work, with the non-overridable ones marked as must-follow.
 - **Build:** the one-chain resolution (organization, the accountable team's chain, the
   project) and its delivery at launch.
+- **Commands:** `process catalog`, `process inspect`, `policy list`, `policy inspect`,
+  `skill list` and `skill read` ([command line design](design/agent-os-command-line.md), section 3.5).
 - **Read:** [processes design](design/processes.md), [processes UX](specs/processes-ux.md).
   Rows FC-110, FC-112.
 - **Code today:** `crates/org-process` resolves several chains, which the design
@@ -530,6 +667,10 @@ Three things to know about the order:
   - A send is acknowledged at the local commit and relayed afterwards.
   - `agent-os` talks to the office for every call and gains the long-running mode. The
     file queue, `crates/org-spool` and the route through it are deleted.
+- **Commands:** `channel list`, `join`, `leave` and `post`; `thread list`, `read`,
+  `reply`, `accept`, `done`, `defer` and `wait`; `agent status`; `session attach`, which is the
+  long-running mode. Today's `msg` commands are deleted with the file queue
+  ([command line design](design/agent-os-command-line.md), sections 2.9, 3.3 and 3.7; CLI-13).
 - **Read:** [messaging and chat](design/organization-data/15-messaging-and-chat.md),
   [ADR-0003](adr/0003-agent-messaging-office-first.md),
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) (ACK-1 to ACK-9),
@@ -540,7 +681,7 @@ Three things to know about the order:
   when one is named.
 - **Done when:** the CHAT criteria for sending, reading and channels pass; the
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
-- **Needs:** B2, A5. The browser part needs A3.
+- **Needs:** B2, A5, B1c. The browser part needs A3.
 
 ### B7 · Asks and questions
 
@@ -555,6 +696,8 @@ Three things to know about the order:
     single choice, multiple choice, yes/no, free text. A default is preselected.
   - A required ask that is not answered in time returns "required answer pending". The
     suspension that follows is increment C6.
+- **Commands:** `channel ask` and `consult ask`, answering with `thread reply`,
+  `thread withdraw`, and the `timed_out` and `withdrawn` outcomes ([command line design](design/agent-os-command-line.md), sections 2.3 and 3.3; CLI-14).
 - **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
   [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
   (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
@@ -566,6 +709,8 @@ Three things to know about the order:
 
 - **Outcome:** an agent that cannot continue without an answer is stopped after being
   told, and starts again in the same session when the answer arrives.
+- **Commands:** the `suspended` outcome of a required ask ([command line design](design/agent-os-command-line.md),
+  sections 2.3 and 3.3; CLI-14).
 - **Read:** [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 5 to 13.
   Row FC-166.
 - **Done when:** ASK-3, ASK-5, ASK-6, ASK-7 and ASK-9 pass, and the presence part of
@@ -616,6 +761,8 @@ Three things to know about the order:
 - **Build:** the task commands of `agent-os`, with the project taken from the agent's
   context and required when there is none; the board, list and detail screens against
   the real API, updated by the change stream.
+- **Commands:** `task create`, `list`, `inspect`, `update`, `transition`, `assign`,
+  `comment` and `watch`, and `checklist` ([command line design](design/agent-os-command-line.md), section 3.4).
 - **Read:** [work items UX](specs/work-items-ux.md) (TSK, BUG, CHK, WORK criteria),
   [identity and numbering, default project](design/organization-data/06-identity-and-numbering.md#stable-ids-readable-references-and-scopes).
   Rows FC-038, FC-039, FC-043.
@@ -628,6 +775,8 @@ Three things to know about the order:
 
 - **Outcome:** an agent works in a worktree of a registered repository and the office
   pushes its task branch.
+- **Commands:** `repo list`, `repo attach` for the owner, `worktree list` and
+  `repo push`; the office creates and removes worktrees itself ([command line design](design/agent-os-command-line.md), section 3.6).
 - **Read:** [Git design](design/projects-git-github.md) and its open questions, which the
   engineer answers first. Rows FC-103, FC-139, FC-140.
 - **Needs:** C3, B4.
@@ -694,9 +843,13 @@ half of LNX-6 run).
   checks, the default locations, process supervision and socket peer checks of all
   four executables come from `org-platform`.
 - **Build:** the `fs`, `dirs`, `process` and `socket` modules with today's macOS code
-  and today's Linux code moved in unchanged and refusing adapters elsewhere;
+  and today's Linux code moved in unchanged and refusing adapters elsewhere (the flush
+  of `store/acceptance/durable.rs`, or of `org-store/src/files.rs` once B1a has carried
+  it there);
   `org-proto/src/location.rs` keeps only path composition; `org-supervise`'s
   `compile_error!` goes; the allowlist shrinks by every moved file.
+- **Commands:** `agent-os` and the shared command library take default locations and
+  file reads only from `org-platform` ([command line design](design/agent-os-command-line.md), section 5).
 - **Read:** [Linux host design](design/linux-host.md) section 4.
 - **Code today:** see X1a.
 - **Done when:** none of the moved files has a platform predicate; the macOS and Linux
@@ -755,6 +908,8 @@ half of LNX-6 run).
   - The root refusal at the `serve` composition; the non-dumpable test drops its child
     to an unprivileged user when run as root.
   - The host's integration tests and `org-host`'s tests run on Linux.
+- **Commands:** the command contract tests that need an office pass on Linux for the
+  commands that exist then ([command line design](design/agent-os-command-line.md), section 5).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.1 and 4,
   [host boundary design](design/office-host-boundary.md) (admission and the verified
   rendezvous). LNX-1.
@@ -823,6 +978,9 @@ half of LNX-6 run).
   Ubuntu hosts; the container's HTTPS listener with an operator-supplied certificate
   pair and the host's verifier for it, unless A3 has built it; the documented run
   command and the `docker exec -u 0 … admin reset --user` step.
+- **Commands:** `agent-os` is in the image's release `bin/`, first on an agent's
+  `PATH`, and the image has a shell; no MCP wrapper is built ([command line design](design/agent-os-command-line.md),
+  section 5).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.4 and 3.5,
   [standalone server design](design/standalone-server.md) (service, non-interactive
   setup). LNX-2.
@@ -847,6 +1005,9 @@ half of LNX-6 run).
 - **Build:** the CI matrix runs the full workspace checks on macOS and Linux with no
   exclusion; the platform check runs with an empty allowlist; a job builds the
   container image and runs the LNX-2 send and read in it.
+- **Commands:** the command contract tests run on both systems; the catalogue and
+  every schema are byte-identical on macOS and Linux; one-shot timings are recorded on
+  Linux, and `session attach` timings once B6 has landed ([command line design](design/agent-os-command-line.md), section 5; CLI-11).
 - **Read:** ADR-0017. LNX-5, LNX-6.
 - **Code today:** `.github/workflows/ci.yml` excludes `org-host` and `agentic-org` from
   the Linux clippy and test runs.
