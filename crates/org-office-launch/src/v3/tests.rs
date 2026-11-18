@@ -4,7 +4,6 @@ use std::io::Cursor;
 use serde_json::{json, Value};
 
 use super::*;
-use crate::{write_host_message, HostMessage, StartOffice};
 
 const INSTANCE: &str = "01M72N8MG00000000000000I01";
 const OFFICE: &str = "01M72N8MG00000000000000F01";
@@ -275,16 +274,14 @@ fn first_lines_round_trip_and_match_the_flag() {
 
 #[test]
 fn the_v3_reader_refuses_a_v2_line() {
-    // No v2 reader is left (A1.5 step 3a); the v3 reader refuses a v2 line as another version.
-    let mut v2 = Vec::new();
-    write_host_message(
-        &mut v2,
-        &HostMessage::Start(StartOffice {
-            app_token: org_proto::AppToken::from_bytes([1; 32]),
-            db_key: DbKey::from_bytes([2; 32]),
-        }),
+    // Launch v2 is gone (A1.5): the only reader refuses a retired v2 start line, keys included,
+    // as another version.
+    let v2 = format!(
+        "{{\"v\":2,\"op\":\"start\",\"app_token\":\"{}\",\"db_key\":\"{}\"}}\n",
+        "01".repeat(32),
+        "02".repeat(32)
     )
-    .unwrap();
+    .into_bytes();
     let err = read_first_line(&mut Cursor::new(v2), FirstLine::Start).unwrap_err();
     assert!(matches!(
         err,
@@ -607,7 +604,6 @@ fn transfer_records_match_the_vectors_and_the_cap() {
 #[test]
 fn the_v3_constants() {
     assert_eq!(LAUNCH_VERSION, 3);
-    assert_eq!(crate::LAUNCH_VERSION, 2, "v2 is unchanged in move 1");
     assert_eq!(TRANSFER_HEADER_MAX_BYTES, 1024);
     assert_eq!(TRANSFER_SOCKET_BUFFER_BYTES, 64 * 1024);
 }
@@ -660,50 +656,6 @@ fn a_handoff_carries_exactly_the_keys_of_its_op() {
 }
 
 #[test]
-fn the_rollout_reader_takes_either_version_and_checks_the_flag() {
-    let mut v3 = Vec::new();
-    write_first_line(&mut v3, &HostFirstLine::Start(office())).unwrap();
-    assert_eq!(
-        read_first_line_any(&mut Cursor::new(v3.clone()), FirstLine::Start).unwrap(),
-        Some(AnyFirstLine::V3(HostFirstLine::Start(office())))
-    );
-    let mut v2 = Vec::new();
-    write_host_message(
-        &mut v2,
-        &HostMessage::Start(StartOffice {
-            app_token: org_proto::AppToken::from_bytes([1; 32]),
-            db_key: DbKey::from_bytes([2; 32]),
-        }),
-    )
-    .unwrap();
-    assert!(matches!(
-        read_first_line_any(&mut Cursor::new(v2.clone()), FirstLine::Start).unwrap(),
-        Some(AnyFirstLine::V2(HostMessage::Start(_)))
-    ));
-    for line in [v2, v3] {
-        assert!(matches!(
-            read_first_line_any(&mut Cursor::new(line), FirstLine::Discard),
-            Err(LaunchError::Invalid(_))
-        ));
-    }
-    let v4 = b"{\"v\":4,\"op\":\"start\"}\n".to_vec();
-    let err = read_first_line_any(&mut Cursor::new(v4), FirstLine::Start).unwrap_err();
-    assert!(matches!(
-        err,
-        LaunchError::UnsupportedVersion { found: 4, .. }
-    ));
-    assert_eq!(
-        err.to_string(),
-        "launch version 4 isn't supported (this build speaks 2 or 3)"
-    );
-    assert!(
-        read_first_line_any(&mut Cursor::new(Vec::new()), FirstLine::Start)
-            .unwrap()
-            .is_none()
-    );
-}
-
-#[test]
 fn worker_events_on_the_rendezvous_are_v3_lines() {
     let ready = ServerEvent::Ready {
         socket: "/run/o.sock".into(),
@@ -719,8 +671,7 @@ fn worker_events_on_the_rendezvous_are_v3_lines() {
         read_server_event(&mut Cursor::new(out)).unwrap(),
         Some(RendezvousEvent::Server(ready.clone()))
     );
-    let mut v2 = Vec::new();
-    crate::write_server_event(&mut v2, &ready).unwrap();
+    let v2 = b"{\"v\":2,\"event\":\"ready\",\"socket\":\"/run/o.sock\",\"pid\":42}\n".to_vec();
     assert!(matches!(
         read_server_event(&mut Cursor::new(v2)),
         Err(LaunchError::UnsupportedVersion { found: 2, .. })

@@ -1,6 +1,5 @@
-//! Launch contract v3 (X-02 §5.1, §5.2, §5.4). Workers speak only v3. The version 2 writers and
-//! types at the crate root stay for the host carrier and a test fake, and are removed in A1.5
-//! step 3b.
+//! Launch contract v3 (X-02 §5.1, §5.2, §5.4), the only launch version: version 2 was removed
+//! in A1.5.
 //!
 //! What changes from v2:
 //! - **The first line is non-secret** ([`HostFirstLine`]): the instance, the office and the path
@@ -31,8 +30,7 @@
 //!
 //! The "first line only, then drain unparsed" rule of v2 stays for the pipe. A v3 line is
 //! `{"v": 3, ...}`; a v2 build refuses it as another version, and [`read_first_line`] refuses a
-//! v2 line the same way. [`read_first_line_any`] still reads both; removed in A1.5 step 3b (host
-//! carrier, test fake).
+//! v2 line the same way, by its version, without decoding it.
 
 use std::io::{BufRead, Write};
 
@@ -42,8 +40,7 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    is_plain_id, read_secret_line, zero, ByteCounter, DbKey, FirstLine, HostMessage, LaunchError,
-    ServerEvent,
+    is_plain_id, read_secret_line, zero, ByteCounter, DbKey, FirstLine, LaunchError, ServerEvent,
 };
 
 /// An organization's recovery code (X-02 §6.4): staged by the host at `reserved` and sent on
@@ -391,72 +388,6 @@ pub fn read_first_line(
         _ => Err(LaunchError::Invalid(
             "the first line isn't the op this server's flag expects",
         )),
-    }
-}
-
-/// A first line of either version, for the rollout (X-02 §5.4). No worker reads v2 any more.
-/// Removed in A1.5 step 3b (host carrier, test fake).
-#[derive(Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AnyFirstLine {
-    /// A v2 line, with its app token and keys.
-    V2(HostMessage),
-    /// A v3 line, non-secret.
-    V3(HostFirstLine),
-}
-
-/// Removed in A1.5 step 3b (host carrier, test fake): workers use [`read_first_line`].
-///
-/// Read a server's first line, v2 or v3, and check it matches the flag. One read of one line,
-/// through a buffer reserved up front and zeroed on every path. Another `v`
-/// is [`LaunchError::UnsupportedVersion`]; an unknown op, or another flag's op, is
-/// [`LaunchError::Invalid`]. `Ok(None)` means EOF before it.
-pub fn read_first_line_any(
-    r: &mut impl BufRead,
-    expected: FirstLine,
-) -> Result<Option<AnyFirstLine>, LaunchError> {
-    let Some(mut line) = read_secret_line(r)? else {
-        return Ok(None);
-    };
-    let decoded = decode_any(&line);
-    zero(&mut line);
-    let message = decoded?;
-    let matches = match &message {
-        AnyFirstLine::V2(m) => matches!(
-            (m, expected),
-            (HostMessage::Create(_), FirstLine::Create)
-                | (HostMessage::Start(_), FirstLine::Start)
-                | (HostMessage::Discard(_), FirstLine::Discard)
-        ),
-        AnyFirstLine::V3(m) => matches!(
-            (m, expected),
-            (HostFirstLine::Create(_), FirstLine::Create)
-                | (HostFirstLine::Start(_), FirstLine::Start)
-                | (HostFirstLine::Discard(_), FirstLine::Discard)
-        ),
-    };
-    if matches {
-        Ok(Some(message))
-    } else {
-        Err(LaunchError::Invalid(
-            "the first line isn't the op this server's flag expects",
-        ))
-    }
-}
-
-fn decode_any(line: &[u8]) -> Result<AnyFirstLine, LaunchError> {
-    let version: Versioned = serde_json::from_slice(line).map_err(LaunchError::Json)?;
-    match version.v {
-        crate::LAUNCH_VERSION => serde_json::from_slice::<HostMessage>(line)
-            .map(AnyFirstLine::V2)
-            .map_err(LaunchError::Json),
-        LAUNCH_VERSION => serde_json::from_slice::<HostFirstLine>(line)
-            .map(AnyFirstLine::V3)
-            .map_err(LaunchError::Json),
-        other => Err(LaunchError::UnsupportedVersion {
-            found: other,
-            supported: &[crate::LAUNCH_VERSION, LAUNCH_VERSION],
-        }),
     }
 }
 
