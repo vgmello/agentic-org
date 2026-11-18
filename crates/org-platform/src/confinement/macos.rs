@@ -89,7 +89,7 @@ fn entry() -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn restrict(rendezvous: &Path) -> io::Result<()> {
+fn restrict(rendezvous: &Path) -> io::Result<()> {
     let value = path(rendezvous)?;
     if value.as_bytes().len() >= 104 {
         return Err(refused());
@@ -114,7 +114,7 @@ pub(super) fn restrict(rendezvous: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn verify(pid: u32, paths: &[&Path]) -> io::Result<()> {
+fn verify(pid: u32, paths: &[&Path]) -> io::Result<()> {
     let pid = libc::pid_t::try_from(pid)
         .ok()
         .filter(|p| *p > 0)

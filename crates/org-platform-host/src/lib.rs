@@ -14,7 +14,8 @@
 //! `linux.rs` and `refused.rs` beside it, one non-conditional entry per function, a
 //! refusing adapter that returns [`org_platform::Refused`] and is compiled and tested
 //! on every target, no domain policy, and platform predicates only in the module
-//! declarations at the top of each `mod.rs`. The LNX-5 check exempts this crate as it
+//! declarations at the top of each `mod.rs` (and as the crate-level gate of an
+//! integration test that needs one system's toolchain). The LNX-5 check exempts this crate as it
 //! exempts `org-platform`.
 
 #[cfg(not(unix))]

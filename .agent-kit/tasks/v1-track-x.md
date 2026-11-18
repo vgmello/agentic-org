@@ -39,7 +39,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | --- | --- | --- |
 | X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
-| X1c `admission`, `confinement`, `presence` | In work: two slices, two workers | |
+| X1c `admission`, `confinement`, `presence` | `confinement` and `presence` integrated and reviewed; `admission` in work | See below |
 | X1d `credentials` | Not started | |
 | X2 first worker on Linux (LNX-1) | Not started | |
 | X3 host secrets on Linux (LNX-4) | Not started | |
@@ -280,10 +280,78 @@ later commits were still queued when this was written.
   in three crates (`org-client`, `org-host`, `agentic-org-office`), each with its
   test. A relative or unset `HOME` gives no office home even when `XDG_DATA_HOME` is
   absolute.
-- `org-socket` cannot be built for a refusing target until X1c moves its confinement
-  code (`getentropy` is not in `libc` for musl); CI adds it to the refusing-target
-  lint then. Its `unix_datagram` adoption calls no platform function and so does not
-  refuse there, which is intended: it performs every check it performs elsewhere.
+- `org-socket`'s `unix_datagram` adoption calls no platform function and so does not
+  refuse on a refusing target, which is intended: it performs every check it performs
+  elsewhere. (X1c moved the confinement code out, so `org-socket` builds for a
+  refusing target and CI lints it there.)
 - For A2 part 2: X1b's `fs`/`dirs` slice removes about 250 lines from
   `org-host/src/instance/directory.rs` and changes `home.rs`; the next Track A merge
   in those files needs a rebase.
+
+## X1c · Admission, confinement and presence behind the crates
+
+**Outcome.** An internal foundation; nothing a person can see. Starting and admitting
+a worker or the web process, confining the web process and the recovery presence
+check go through the platform crates on macOS, with refusing adapters elsewhere.
+
+**Prerequisites.** X1a, X1b. **Split.** Two slices, two workers in separate worktrees:
+
+| Slice | Owner | Files | State |
+| --- | --- | --- | --- |
+| `confinement` and `presence` | Worker in `x/x1c-confine` | `crates/org-platform/src/confinement/`, `crates/org-platform-host/src/presence/` and `build.rs`; out of `crates/org-socket/src/confinement*`, `crates/org-host/src/recovery/presence.rs`, `crates/org-host/build.rs`; the call sites in `org-host/src/web.rs` and `apps/agentic-org-web/src/process.rs` | Integrated at `27125f6c` |
+| `admission` | Worker in `x/x1c-admission` | `crates/org-platform-host/src/admission/`, `crates/org-platform/src/image/`; out of `crates/org-host/src/{spawn, server_check, code_signing, peer, app_auth, bootstrap, release*, supervisor/**, offices, lib, web}.rs` and `crates/org-socket/src/image.rs` | In work |
+
+**Decisions.**
+
+1. `confinement` has the design's shape (`confine_web`, `verify_web`, `Enforcement`)
+   with `io::Result`, a process id instead of the admission `Child` until X4, and two
+   host checks instead of one, because one would reorder macOS's steps.
+2. `presence` is in `org-platform-host`, because the bridge links Foundation,
+   LocalAuthentication, Security and SystemConfiguration (X1b decision 7). Its macOS
+   adapter carries its own copy of the peer audit-token read until the admission
+   slice lands; the lead makes one call the other at that integration.
+3. The Linux adapters of both refuse in X1c. The host's behaviour on Linux is
+   unchanged: no web process starts, and the recovery release is unavailable.
+4. The confinement example stays in `crates/org-socket/examples/`: it needs that
+   crate's descriptor passing, and `org-platform` depends on no workspace crate.
+5. The ready line carries the Landlock status only. A domain not enforced in full is
+   refused when the line is read (`web::reported`), and where a system has seccomp
+   the host observes it on the process itself, as the design says.
+
+**Review.**
+
+| Slice | Phase | Result |
+| --- | --- | --- |
+| `confinement` and `presence` | Fresh read-only review, on `27125f6c` | Changes required, in test evidence only: the example's "a threaded process is refused" check could no longer fail, because `confine_web` also connects. Production code preserved by reading: the Seatbelt profile and the bridge are byte-identical, and the order in the web process and the host is unchanged. 2 minor, 5 nit |
+| `confinement` and `presence` | Repairs by the lead | The example asserts the refusal is the entry check's and that nothing was confined; the report mapping is a pure function with tests; stale statements in ADR-0008, ADR-0011, the checklist and the design |
+
+**Checks.** On Linux x86-64 as an unprivileged user, after the integration: the whole
+workspace's tests with the same 22 known failures and no other; after the repairs,
+`org-host` again with the same failing set. `cargo fmt --check`, the two CI lint
+commands, the macOS-target lint of the whole workspace and of the example, and the
+refusing-target lint and tests of both platform crates pass. The list is at 54 files
+and 330 predicates.
+
+**Owed from a Mac, by the Track A engineer, before this is relied on** (nothing of
+this slice could be run; it was type-checked and linted for macOS, and the bridge was
+not compiled):
+
+1. `cargo test --locked --workspace --no-fail-fast` on macOS (CI does this on every
+   push; record the run).
+2. `cargo run --locked -p org-socket --example gateway_confinement`, outside a parent
+   sandbox: the PASS line, with the threaded child refused at entry.
+3. `cargo test -p org-platform confinement` and `cargo test -p org-platform-host`
+   (the presence fixture test with ARC and ASan).
+4. `otool -L` on `agentic-org-web`, `agentic-org-office` and `agent-os`: no Security,
+   CoreFoundation, LocalAuthentication, Foundation or SystemConfiguration, as before.
+5. A signed build: the host starts the web process, the Seatbelt probes pass, the
+   handoff completes; `agentic-org recovery release` at the console shows the dialog,
+   cancel denies, approve releases, and over SSH it is not local.
+
+**For the Track A lead.** Commit `2d560d7c` (A1.3b, the SQLCipher removal) deleted
+`crates/org-office/src/store/tests/sqlcipher_init.rs`, the only file that declared
+the `opener_build*` test modules. `crates/org-office/src/store/tests/opener_build.rs`,
+`opener_build_pins.rs` and `opener_build_tests.rs` are no longer compiled, so the
+build-script fence they held runs nowhere. X1c moved the presence bridge out of
+`crates/org-host/build.rs`; those files still pin the old script and were left
+untouched. Delete them, or re-attach the fence and re-pin it.

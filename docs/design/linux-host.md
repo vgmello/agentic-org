@@ -113,9 +113,8 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   target whose `path` is not a `.rs` file, a `[target.'cfg(..)']` table in a manifest,
   `cfg(windows)` and `cfg(target_feature = "crt-static")`, an `include!` or `path`
   attribute that a macro assembles from its arguments, and a build script that emits
-  its own `cfg` after reading `CARGO_CFG_TARGET_OS`. Only `org-host/build.rs` reads that
-  variable today, to compile the presence bridge, which moves with the bridge into
-  `org-platform/build.rs` in X1c.
+  its own `cfg` after reading `CARGO_CFG_TARGET_OS`. Only `org-platform-host/build.rs` reads that variable, to
+  compile the presence bridge (moved there from `org-host` in X1c).
 
 Rejected: renaming `org-socket` to `org-platform`, because the rename ripples through
 files the macOS track is editing (`apps/agentic-org-office/src/serve.rs`, the host
@@ -127,7 +126,7 @@ would be declared four times.
 | Executable | Platform concern | Where it is today | Behind |
 | --- | --- | --- | --- |
 | `agentic-org` (`serve`) | Start an office worker and admit it | `org-host/src/spawn.rs`, `server_check.rs`, `code_signing.rs`, `peer.rs`, `supervisor/child.rs`, `supervisor/channels.rs` (`reader_is_child`), `supervisor/mod.rs` (macOS-only tests and scripted checks), `lib.rs` (`startup_server_check`) | `admission` |
-| `agentic-org` (`serve`) | Start the web process and verify its confinement | Not wired (A3); host side is `org-socket/src/confinement.rs` (`verify_gateway`) | `admission`, `confinement` |
+| `agentic-org` (`serve`) | Start the web process and verify its confinement | Wired by F4 in `org-host/src/web.rs`; the host side is `org_platform::confinement` (`verify_web`) since X1c | `admission`, `confinement` |
 | `agentic-org` (`serve`) | Admit native clients on `host.sock`, including the recovery peer | `org-host/src/app_auth.rs`, `bootstrap.rs`, `human.rs` (`verify_host`), `recovery.rs` (`native()` admits only on macOS), `peer.rs` | `admission` (peer) |
 | `agentic-org` (`serve`) | Office secrets keys and host secrets | `org-host/src/keys/` (`mod.rs`, `keychain.rs`, `dev.rs`), `host_secrets.rs`, `host_secrets/` (`keychain.rs`, `dev.rs`) | `credentials` |
 | `agentic-org` (`serve`, `setup`) | Register, start and stop the service; stop on a signal | Not built (A2); `org-host/src/signals.rs` is portable | `service` |
@@ -142,7 +141,7 @@ would be declared four times.
 | `agentic-org-office` | Admit same-user peers on its local socket | `org-socket/src/peer.rs` (`peer_allowed`), called from `apps/agentic-org-office/src/serve.rs` | `socket` |
 | `agentic-org-office` | Start, watch, stop and recover agent processes | `org-supervise/src/lib.rs`, `platform.rs`, `spawn.rs`, `child.rs`, `recovery.rs`, `recovery/scan.rs`, `recovery/native/` | `process`, `isolation` |
 | `agentic-org-office` | Durable flush of accepted work | `org-office/src/store/acceptance/durable.rs` | `fs` |
-| `agentic-org-web` | Confine itself before input | `org-socket/src/confinement.rs`, `confinement/macos.rs` | `confinement` |
+| `agentic-org-web` | Confine itself before input | `org-platform/src/confinement/` since X1c (was `org-socket/src/confinement.rs`, `confinement/macos.rs`) | `confinement` |
 | `agentic-org-web` | Which platform's release it is, when it authenticates its own image | `apps/agentic-org-web/src/release.rs` (`policy`, a `cfg!` on the system) | `admission` (X1c, with `org-host/src/release.rs`) |
 | `agentic-org-web` | Check the inherited listener and received descriptors | `org-socket/src/rights/stream.rs` (`listening`), `rights.rs` | `socket` |
 | `agent-os` | Find and connect to the office socket | `org-proto/src/location.rs` through `apps/agent-os/src/office.rs` and `org-client`; the ticked reader is portable | `dirs` |
@@ -160,7 +159,7 @@ platform predicate. 45 are source files: 29 in `org-host`, 6 in `org-socket`, 6 
 `org-supervise`, and `org-office/src/store/acceptance/durable.rs`,
 `org-client/src/agent.rs`, `org-spool/src/safe_read.rs` and
 `apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
-(`org-socket/examples/gateway_confinement.rs`, which moves with confinement in X1c),
+(`org-socket/examples/gateway_confinement.rs`; it stayed in `org-socket` in X1c, because it needs that crate's descriptor passing, and lost its predicates),
 and 33 are test files. The list is at 78 files and 491 predicates since A1 removed
 SQLCipher from the office store. Milestone-one work in these files adds no new
 predicate; a new need goes into `org-platform`.
@@ -408,9 +407,20 @@ because they are read-only and the host creates keys.
 **Contract** (`org_platform::confinement`):
 
 ```rust
-pub fn confine_web(rendezvous: &Path) -> Result<(UnixStream, Enforcement), Refused>; // in the web process
-pub fn verify_web(child: &Child, enforcement: &Enforcement, critical: &[&Path]) -> Result<(), Refused>; // in the host
+pub fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)>; // in the web process
+pub fn web_confinement_supported() -> Result<(), Refused>;       // in the host, before any bind, child or secret
+pub fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()>; // in the host, when the ready line arrives
+pub fn verify_web(pid: u32, enforcement: &Enforcement, critical: &[&Path]) -> io::Result<()>; // in the host, before the handoff
 ```
+
+Built in X1c as shown. The functions return `io::Result`, because they fail for
+reasons other than a missing adapter; a refusal is the error's inner `Refused`.
+`verify_web` takes the process id until the admission contract's `Child` exists (X4
+switches to it for the pidfd). The host makes two checks, where one function would
+reorder macOS's steps: the report when the ready line arrives, and the process itself
+after the reader and image re-checks. The ready line carries the Landlock status only:
+a domain not enforced in full never becomes an `Enforcement`, and the host observes
+seccomp on the process itself.
 
 `confine_web` returns the connected rendezvous stream only after confinement is in
 force, so the web process cannot use the stream unconfined on any system. The order
@@ -421,7 +431,7 @@ confinement holds. `Enforcement` is the evidence the web process reports in
 
 **macOS adapter.** ADR-0008: the thread and descriptor preconditions, the Seatbelt
 profile, then the connection; the host's `sandbox_check` probes
-(`org-socket/src/confinement/macos.rs`).
+(`org-platform/src/confinement/macos.rs`, moved from `org-socket` in X1c).
 
 **Linux adapter.** Called on the main thread before any runtime thread. The host
 starts the web process without `RUST_BACKTRACE` (a backtrace opens files, which the

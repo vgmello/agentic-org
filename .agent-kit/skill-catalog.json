@@ -130,7 +130,7 @@
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "7232430004e71136763a26f7c20208e5fdfccbd1cc5790f04343da3781dce813"
+      "sha256": "1d8c8d5106fdbc033b652533023a70953377e034fd23443bcf7c143b61bfc130"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",
@@ -142,7 +142,7 @@
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "0e57cc2fc10f35ba36c2de9c4ae21a4d8cd92d6d3d02f68d1daaf0857cc1e076"
+      "sha256": "f71bfc1c52530058f8e86a3db8dd8e1209bb583eecdd4b26114e27823a9e7560"
     },
     {
       "path": "docs/architecture-rules.md",

@@ -913,7 +913,7 @@ half of LNX-6 run).
     no-new-privileges state.
 - **Read:** [Linux host design](design/linux-host.md) section 3.3,
   [ADR-0008](adr/0008-gateway-macos-sandbox.md). LNX-3.
-- **Code today:** `org-socket/src/confinement.rs` has a refusing adapter on every
+- **Code today:** `org-platform/src/confinement/linux.rs` has a refusing adapter, as on every
   system but macOS; the host does not start the web process yet (A3).
 - **Done when:** LNX-3 passes: with Landlock unavailable, below ABI 3 or blocked by a
   seccomp profile, the web process refuses and reports which (proved first with the

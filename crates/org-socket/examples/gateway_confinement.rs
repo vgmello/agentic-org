@@ -60,7 +60,16 @@ mod vector {
         let rendezvous = Path::new(&args[2]);
         if args[0] == "--thread" {
             std::thread::spawn(|| {}).join().unwrap();
-            assert!(confinement::confine_web(rendezvous).is_err());
+            // `confine_web` confines and then connects. The refusal must be the entry
+            // check's, not a failed connect to the rendezvous: it has no OS error
+            // number, it has the entry check's text, and nothing was confined.
+            let error = confinement::confine_web(rendezvous).unwrap_err();
+            assert!(
+                error.raw_os_error().is_none(),
+                "refused at entry, not at connect: {error}"
+            );
+            assert_eq!(error.to_string(), "gateway confinement unavailable");
+            assert_eq!(fs::read(root.join("fixture")).unwrap(), b"retained");
             println!("thread-refused");
             return;
         }

@@ -470,19 +470,9 @@ impl Running {
         let ready: GatewayReadyForSecrets =
             serde_json::from_slice(&line(&mut receiver, until, "ready line")?)
                 .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
-        // The ready line has no seccomp field.
-        let enforcement = org_platform::confinement::Enforcement {
-            landlock_abi: ready.landlock.map(|status| status.abi),
-            seccomp: false,
-        };
+        let enforcement = reported(&ready).map_err(failed)?;
         org_platform::confinement::verify_ready_report(&enforcement)
             .map_err(|error| failed(&error.to_string()))?;
-        // The report above carries the ABI only: a domain not enforced in full is refused here.
-        if ready.landlock.is_some_and(|status| {
-            status.enforcement != org_host_control::gateway::LandlockEnforcement::FullyEnforced
-        }) {
-            return Err(failed("the ready line reports landlock not fully enforced"));
-        }
         crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
             .map_err(|_| failed("the ready-line peer is not the admitted child"))?;
         config
@@ -630,5 +620,28 @@ fn fatal_receive(what: &str, kind: io::ErrorKind) -> String {
     ))
 }
 
+/// What the web process's ready line reports about its confinement, as the platform
+/// contract takes it. An [`Enforcement`](org_platform::confinement::Enforcement) says a
+/// Landlock domain is in force in full, so a line that reports one enforced only in
+/// part, or not at all, never becomes one: it is refused here. The line has no
+/// seccomp field; where the system has seccomp the host observes it on the process
+/// itself (Linux host design, section 3.3).
+fn reported(
+    ready: &GatewayReadyForSecrets,
+) -> Result<org_platform::confinement::Enforcement, &'static str> {
+    use org_host_control::gateway::LandlockEnforcement::FullyEnforced;
+    match ready.landlock {
+        Some(status) if status.enforcement != FullyEnforced => {
+            Err("the ready line reports landlock not fully enforced")
+        }
+        landlock => Ok(org_platform::confinement::Enforcement {
+            landlock_abi: landlock.map(|status| status.abi),
+            seccomp: false,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod report_tests;
 #[cfg(test)]
 mod tests;
