@@ -38,7 +38,8 @@ At its first start the container sets the instance up from
 `/etc/agentic-org/setup.json` (`agentic-org serve --setup`), then serves it in the
 foreground. `docker logs agentic-org` shows what setup did. `docker stop` ends it with
 exit code 0, normally within a second; a worker that does not stop when asked is killed
-after 5 seconds, so the service always ends inside the runtime's default grace of 10.
+after 1.5 seconds, so the service always ends within 2.5 seconds, inside the shortest
+default grace of a container runtime (Docker Desktop's 3 seconds; Docker Engine's is 10).
 
 **State of this build.** The host, the web process (confined as on a Linux machine: its
 seccomp filter, and Landlock where the kernel has it), the offices and `agent-os` work in

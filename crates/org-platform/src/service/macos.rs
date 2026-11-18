@@ -25,7 +25,7 @@ const LAUNCHCTL: &str = "/bin/launchctl";
 /// `launchctl print` and `bootout` for a label launchd does not know.
 const NO_SUCH_SERVICE: i32 = 113;
 /// How long unregister waits for launchd to drop a job after `bootout`; the host exits
-/// within 8 s of `SIGTERM`.
+/// within 2.5 s of `SIGTERM`.
 const UNLOAD_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 pub(super) const USER_PREFIX: &str = "com.ellosoft.agentic-org.instance.";
 

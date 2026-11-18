@@ -33,8 +33,8 @@ use support::{eventually, private_program, sibling_program, Client};
 
 const WAIT: Duration = Duration::from_secs(30);
 /// How long the service may take to exit after `SIGTERM`, with its workers stopped (Linux
-/// host design section 3.4): inside a container runtime's default grace of 10 s.
-const STOP_WITHIN: Duration = Duration::from_secs(8);
+/// host design section 3.4): inside Docker Desktop's default grace of 3 s.
+const STOP_WITHIN: Duration = Duration::from_secs(3);
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
 const ORG: &str = "01ORG0000000000000000ACME1";
 const PIXEL: &str = "AGENT00000000000000000PIXL";

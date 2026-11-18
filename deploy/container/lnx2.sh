@@ -301,7 +301,7 @@ took=$(since "$started")
 code=$(docker inspect -f '{{.State.ExitCode}}' "$tag-a")
 echo "docker stop: $took s, exit code $code"
 [ "$code" = 0 ] || fail "the service ended with $code (137 is the runtime's kill after its grace)"
-awk -v t="$took" 'BEGIN { exit !(t < 8) }' || fail "the service took $took s to stop"
+awk -v t="$took" 'BEGIN { exit !(t < 3) }' || fail "the service took $took s to stop"
 
 say "5b. docker stop with a worker that does not act on the stop (X5 review V2)"
 docker start "$tag-a" >/dev/null
@@ -319,7 +319,7 @@ took=$(since "$started")
 code=$(docker inspect -f '{{.State.ExitCode}}' "$tag-a")
 echo "docker stop with the worker stopped (SIGSTOP): $took s, exit code $code"
 [ "$code" = 0 ] || fail "the service ended with $code: the runtime had to kill it"
-awk -v t="$took" 'BEGIN { exit !(t < 8) }' || fail "the service took $took s to stop"
+awk -v t="$took" 'BEGIN { exit !(t < 3) }' || fail "the service took $took s to stop"
 
 say "6. a new container on the same volumes"
 docker rm "$tag-a" >/dev/null

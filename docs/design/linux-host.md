@@ -721,8 +721,10 @@ path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
 
 `agentic-org serve` is the same foreground process in every mode; it stops on
 `SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
-process and the workers (`SIGTERM`, then `SIGKILL` after 5 s), flushes its logs and
-exits 0 within 8 s, inside a container runtime's default 10-second grace.
+process and the workers (`SIGTERM`, then `SIGKILL` after 1.5 s), flushes its logs and
+exits 0 within 2.5 s, inside the shortest default grace of a container runtime (Docker
+Desktop's 3 s, `default-stop-timeout`; Docker Engine's is 10 s). A worker killed at the
+deadline loses nothing: the office store recovers from a kill at any point.
 
 **macOS adapter.** A per-user launchd agent (written by A2 behind this contract):
 `~/Library/LaunchAgents/com.ellosoft.agentic-org.instance.<instance-id>.plist` with

@@ -127,8 +127,8 @@ These settle what the decisions above left open. The detail is in the
    refusing adapters. As first accepted, this decision required Landlock ABI 3 and
    therefore kernel 6.2.
 10. **Service.** A systemd user unit on a Linux machine; in a container, `agentic-org
-    serve --setup <file>` in the foreground under `tini`, stopping within 8 seconds on
-    `SIGTERM`. Setup's non-interactive configuration names the mode and the credential
+    serve --setup <file>` in the foreground under `tini`, stopping within 2.5 seconds on
+    `SIGTERM` (amended 2026-11-18 from 8: Docker Desktop's default grace is 3 seconds). Setup's non-interactive configuration names the mode and the credential
     directory; nothing detects a container. `serve` and `setup` refuse to run as root.
     The container runs as UID 61000 and listens on its network interface.
     It starts with a plain `docker run` that publishes the port (amended by the
