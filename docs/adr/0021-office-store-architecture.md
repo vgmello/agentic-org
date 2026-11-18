@@ -1,8 +1,8 @@
 # ADR-0021 · The office store: one journal of file changes, a projection rebuilt from files
 
-Status: **accepted by the Track B lead** for the owner's request of 2026-11-18 ("define
-the new architecture for the store ... without unnecessary coupling, without
-over-engineering"). Implementation pending: increments B1a to B1c of the
+Status: **proposed** 2026-11-18, answering the owner's request to define the store's new
+architecture ("without unnecessary coupling", "without over-engineering"); accepted when
+the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
 [implementation plan](../implementation-plan.md). The design is the
 [office store](../design/office-store.md). This record states the choices that
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md),
@@ -112,7 +112,7 @@ These are not changed by this record; their owners amend them.
 | STORE-2 | Deleting `runtime/<office-id>/` and reopening yields a projection whose canonical dump equals the one before; the rebuild-equivalence harness passes for every family on every engine. |
 | STORE-3 | No journal entry names a table, column or engine; changing the projection DDL changes its digest, rebuilds it, and changes no journal or file byte. |
 | STORE-4 | A committed operation is answered while a flush is held back; a durable one is not answered before the flush that covers it; no outbox consumer and no file sees an entry before its flush. |
-| STORE-5 | Reads succeed with `durable/` unreadable to the reading thread's file calls and the host channel closed, and see every change acknowledged before they began. |
+| STORE-5 | Reads still answer with `durable/` made unreadable and the host channel closed (they read no file and call no host), and see every change acknowledged before they began. |
 | STORE-6 | Every materialized file is at the data contract's path in its exact bytes, written atomically; bytes the office did not write stop materialization and name the path. |
 | STORE-7 | Adding a family (projects, B3) adds its own module and one SQL module and changes no file of `org-store`. |
 
