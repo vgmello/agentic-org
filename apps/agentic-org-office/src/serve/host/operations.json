@@ -54,7 +54,6 @@
   {"method":"office.restart","policy":"refuse"},
   {"method":"operation.get","policy":"serve"},
   {"method":"org.snapshot","policy":"serve"},
-  {"method":"organization.create","policy":"refuse"},
   {"method":"organization.list","policy":"refuse"},
   {"method":"project.add_team","policy":"serve"},
   {"method":"project.archive","policy":"unserved"},
