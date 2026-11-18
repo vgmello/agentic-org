@@ -594,6 +594,51 @@ participant file for that recipient commits. Nothing polls the database.
 
 ## 8. Speed
 
+ADR-0014 sets the budget end to end in `agent-os` session mode on the reference Mac: a
+read or a send at a median of 1 ms and a 95th percentile of 2 ms. The
+[non-negotiables](../architecture-non-negotiables.md) ask single-digit milliseconds for
+creating and updating a task. Process start and the socket take most of the 1 ms; the
+store's share must stay in tens of microseconds.
+
+| Hot path | Class | What it costs here |
+| --- | --- | --- |
+| Read the inbox | Read | One read transaction; one indexed range on `message_recipient_states` by recipient and state, joined to `messages` by primary key. No file, no host, no writer |
+| Send a message | Committed | Membership check by index; encode the message JSON and its `jcs-rfc8785/1` hash; project one message and its recipient rows; one append without flush; one projection commit without flush |
+| Mark read | Committed | One participant file `Put`; one row update; append; commit |
+| Create a task | Committed | Read the office counter row; encode the task Markdown and its `created` event; project both; append; commit. Once per block of numbers, a durable entry raises `reserved_through` |
+| Update a task (status, assignment) | Durable | `source()` of the task file (pending bytes or one file read); source-preserving edit; the event; append; commit; then the group full flush, shared by every durable operation in the window (ADR-0014 estimates 6 to 10 ms on a Mac) |
+
+**Settings.** The projection runs WAL with `synchronous=NORMAL`: it is a cache, so a
+power cut may lose its tail, which the cursor check at opening replays or rebuilds. No
+projection commit flushes the drive; only the journal is flushed. `foreign_keys` and
+`recursive_triggers` are on for every write connection, as the data contract requires.
+Today every connection sets `synchronous=FULL` and `fullfsync=ON`
+(`connect` in `crates/org-office/src/store.rs`), so every commit waits for the drive and
+the committed class does not exist yet.
+
+**Costs this design removes.** Today's acceptance path asks the host for its custody
+checkpoint before each write and confirms after it, asks again before each read, and
+re-reads every materialized file on every read and write (`verify_authority`,
+`confirm` and `verify_artifacts` in `crates/org-office/src/store/acceptance.rs`). Here the
+host is called once per flush, and reads touch only the projection.
+
+**First numbers** (Linux build container, 1 KiB entries, Python harness, 2026-11-18;
+not the reference Mac): appending to an open segment took a median of 0.65 µs against
+16 µs for writing a file per entry; with a flush, 228 µs against 580 µs. ADR-0014
+measured a WAL commit at 0.013 ms without a flush. These support the segment journal;
+they are not the measurement B1c owes.
+
+**What B1c measures, and how.** A benchmark target in `org-office` drives the real
+writer and SQLite engine in a temporary root and reports the 50th, 95th and 99th
+percentiles over at least 10,000 operations of: a committed write alone and beside
+continuous durable load; a durable write and the group size per flush; the inbox read
+over 10,000 messages and 100 recipients; task create and update including the YAML
+codec in the projector; the largest gap between a commit and its flush under continuous
+committed load (ACK-5); materialization throughput; and rebuild time for 10,000 and
+100,000 files. The results are recorded on Linux CI and the reference Mac in ADR-0014's
+measurement section (its decision 7), and CI fails a store benchmark that regresses past
+twice its recorded value.
+
 ## 9. Engine independence
 
 ## 10. Replication's place
