@@ -826,6 +826,22 @@ is regenerated for an existing office (writer custody and a pending recovery cod
 refuse), but the start itself does not refuse; a marker in the data root
 (`selected-writer.required`) could make `expect_items` exact per item store. Open.
 
+**Defect in the S1 repair, found by the lead's full run at `8ab12056`** (3,563 tests
+passed; 28 failed, of them 24 this one): with a Docker daemon running on the machine,
+every store is refused with `Undetermined(Malformed)`. Docker mounts its network
+namespaces (`57 27 0:4 net:[4026532268] /run/docker/netns/… - nsfs nsfs rw`); the root
+of such a mount is not a path, the mount-table reader called the line malformed, and
+one unreadable line refused everything. It passed in the author's runs and in the
+lead's check of the merge because no daemon was running then. So a release host on
+any machine that runs Docker could not open its store. With the author
+(`x/x3-mounts`): only the two mounts that are looked for may refuse; the fixture is
+this machine's real table; the check is run inside a container as well; and, from X5,
+with a required mount point the store is compared with the whole data volume, not
+only with the instance root. The other failures of that run: the offline and IPv6
+tests, and `supervisor::channels::tests::a_discard_stream_ends_at_a_non_server_event`
+(Track A's test; X5's worker saw it fail twice and pass once: intermittent, cause not
+yet looked for).
+
 **Review: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the lead, on
 `4823b23a..d13aa040`). It built trees as root on ext4, tmpfs and overlay and attacked
 them as three other users; ran the store's tests ten times as uid 1000 and as root
