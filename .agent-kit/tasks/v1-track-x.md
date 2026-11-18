@@ -608,8 +608,34 @@ process serving HTTPS under the filter with a stand-in host (TLS 1.3 and 1.2, a
 lead's cleanup, so that evidence is the worker's receipt only. The reviewer was told
 so and re-derives what it can.
 
-**Review of slice 1:** a fresh read-only reviewer is attacking the filter and the
-order on this kernel (result recorded here when it reports).
+**Review of slice 1: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the
+lead, on `db6b3bfe..458ed8b1`). It ran the confinement tests ten times (all passed),
+rebuilt the real web process and drove it under the filter with a stand-in host
+(HTTPS on TLS 1.3 and 1.2, a 3 MiB asset, 224 concurrent requests, about 100,000
+keep-alive requests per run, exit 0, only listed calls in the trace), reproduced the
+allocator-arena open, and read the filter program instruction by instruction. An
+automated safety stop interrupted it when it began to write an attack probe, so its
+one MAJOR finding is from reading the kernel's behaviour, not from a probe; the
+author checks it on the kernel.
+
+| Finding | Severity | State |
+| --- | --- | --- |
+| C1 `sendto` and `sendmsg` take any destination and flags: TCP's send-time connect (`MSG_FASTOPEN`) and a datagram send to a named Unix socket are not `connect` calls, so neither the filter nor Landlock sees them | MAJOR | With the author: `sendto` only without a destination and with known flags, `sendmsg` removed, kernel cases added |
+| C2 `mremap` is killed, and glibc grows a large block with it: a buffer pushed past about 128 KiB kills a healthy process (probed) | MINOR today, no current path in the web process | With the author: allowed, growth cases added |
+| C3 `sched_yield` is killed; a contended standard channel calls it (probed on a copy of the web process's pool, not reproduced in the web process) | MINOR | With the author: allowed, case added |
+| C4 The web process prints only "authenticated startup unavailable" | MINOR | The host slice (already its item 1) |
+| C5 The example's threaded role no longer isolates the macOS rule "a process that ever had a thread" | MINOR | With the author |
+| C6 Design 3.3, the checklist row and this record were behind the code | MINOR | This record was updated after the reviewed commit; design 3.3 and FC-164 are rewritten by the lead when the repairs settle the list |
+| C7 Install the filter with thread synchronisation | NIT | With the author |
+| C8, C9 Calls a confined process must not make; small information the list still gives | NIT | With the author (documentation, or one entry each) |
+
+Verified by the reviewer and found correct: the architecture and x32 checks, the
+default kill, both halves of 64-bit arguments where the kernel reads 64 bits, the
+exact thread flags, the Landlock masks and sizes per ABI, the clamp to ABI 7, that no
+path returns confined-in-part, that the process name cannot spoof `/proc` fields, and
+that the test seams are compiled only for tests. Not verified: C1 on the kernel,
+aarch64 at run time, Landlock ABI 3 to 6 on a real kernel, a container runtime's
+profile, Docker Desktop's kernel, the example on macOS.
 
 **Slice 2, the host:** in work in worktree `x/x4-host` (the adapter's author): the
 refusal's reason from the adapter and from the web process to the host log and the
