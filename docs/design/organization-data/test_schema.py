@@ -1138,6 +1138,67 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.db.commit()
         self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=2 WHERE id='ana'"))
 
+    def hire(self, request="hire", **fields):
+        values = dict(organization_id="org", id=request, schema_version=1, revision=1, state="waiting",
+                      requested_by_employee_id="ana", home_team_id="payments",
+                      created_at="2026-11-18T09:00:00Z", updated_at="2026-11-18T09:00:00Z")
+        values.update(fields)
+        insert(self.db, "hire_requests", **values)
+
+    def test_a_hire_request_records_who_asked_who_it_waits_for_and_who_decided(self):
+        self.hire(approver_employee_id="reporter",
+                  escalations_json='[{"employee_id": "ana", "reason": "no hiring power"}]')
+        self.hire("approved", state="approved", decided_by_employee_id="reporter",
+                  decided_at="2026-11-18T10:00:00Z", failed_step="register with messaging")
+        insert(self.db, "employees", organization_id="org", id="marlowe", handle="marlowe",
+               schema_version=1, revision=1, kind="agent", name="Marlowe", home_team_id="payments")
+        self.hire("hired", state="hired", decided_by_employee_id="reporter",
+                  decided_at="2026-11-18T10:00:00Z", employee_id="marlowe")
+        self.db.commit()
+        decided = dict(decided_by_employee_id="reporter", decided_at="2026-11-18T10:00:00Z")
+        for fields in (dict(state="approved"),                        # approved by nobody
+                       dict(state="waiting", **decided),              # decided while still waiting
+                       dict(state="rejected", **decided),             # rejected without a reason
+                       dict(state="hired", **decided),                # hired without an employee
+                       dict(state="waiting", employee_id="marlowe"),  # an employee before the hire
+                       dict(state="waiting", failed_step="home"),     # a failed step before approval
+                       dict(state="waiting", home_team_id="missing"),
+                       dict(state="waiting", requested_by_employee_id="missing"),
+                       dict(state="promoted")):
+            self.refused(lambda: self.hire("bad", **fields))
+        self.refused(lambda: self.hire("twice", state="hired", employee_id="marlowe", **decided))
+
+    def test_a_task_is_in_the_releases_of_its_milestone_and_of_release_contents(self):
+        for release in ("r1", "r2"):
+            insert(self.db, "releases", organization_id="org", id=release, schema_version=1, revision=1,
+                   project_id="project", title=release)
+        insert(self.db, "milestones", organization_id="org", id="m1", schema_version=1, revision=1,
+               project_id="project", release_id="r1", title="M1")
+        for task in ("planned", "listed", "ktlo"):
+            seed_task(self.db, task=task)
+        self.db.execute("UPDATE tasks SET milestone_id='m1' WHERE id='planned'")
+        insert(self.db, "release_tasks", organization_id="org", release_id="r2", project_id="project",
+               task_id="listed")
+        insert(self.db, "release_tasks", organization_id="org", release_id="r1", project_id="project",
+               task_id="planned")  # also listed in its own release: counted once
+        rows = sorted(tuple(r) for r in self.db.execute("SELECT task_id, release_id FROM task_releases"))
+        self.assertEqual(rows, [("listed", "r2"), ("planned", "r1")])  # "ktlo" has no release lane
+
+    def test_a_message_records_whom_it_mentions(self):
+        columns = [row[1] for row in self.db.execute("PRAGMA table_info(message_mentions)")]
+        self.assertEqual(columns, ["organization_id", "message_id", "conversation_id", "employee_id"])
+        self.refused(lambda: insert(self.db, "message_mentions", organization_id="org",
+                                    message_id="missing", conversation_id="missing", employee_id="ana"))
+
+    def test_a_turn_records_what_started_it(self):
+        columns = {row[1]: row for row in self.db.execute("PRAGMA table_info(agent_execution_turns)")}
+        self.assertEqual(columns["started_by_kind"][4], "'run'")
+        self.assertIn("started_by_employee_id", columns)
+        self.assertIn("started_by_ref", columns)
+        sql = self.db.execute("SELECT sql FROM sqlite_schema WHERE name='agent_execution_turns'").fetchone()[0]
+        for kind in ("run", "message", "mention", "ask", "assignment", "answer", "recovery"):
+            self.assertIn(f"'{kind}'", sql)
+
     def test_a_process_declares_its_tabs_from_the_generic_views(self):
         self.package()
         tab = dict(organization_id="org", process_id="dss", title="Product")

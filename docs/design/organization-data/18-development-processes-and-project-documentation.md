@@ -1,6 +1,6 @@
 # Development processes and project documentation
 
-Status: **selected** data contract, revision 1.4. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: development processes, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [development process design](../development-processes.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
+Status: **selected** data contract, revision 1.5. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: development processes, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [development process design](../development-processes.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
 
 The product carries no methodology. A development process is content: a manifest, role definitions, skills and document templates. Nothing here is a process execution engine, and no record in this document starts work, changes a status or blocks an action.
 
@@ -37,7 +37,7 @@ erDiagram
         TEXT version_label "optional"
         TEXT status "required"
         TEXT owner_employee_id FK "optional"
-        TEXT copied_from_package_id "optional"
+        TEXT copied_from_process_id "optional"
         TEXT stages_json "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
@@ -170,7 +170,7 @@ A development process describes one way of working: which roles it needs, what e
 `origin` says where the content comes from:
 
 - `organization`: the development process is a folder in organization Git, created and edited through the product by any person of the organization: in the editor, by copying one, or by importing a process file. `current` requires an active owner. A process file is an archive of the folder below; importing one validates it, gives it a new ID and adds it as a draft, and any development process can be downloaded as that file. There is no link, sync or sharing between organizations (owner, 2026-11-18).
-- `built_in`: the development process ships with the product. Its content is the running product's copy, its ID is fixed by the product, it has no file in organization Git and it cannot be edited. Its rows are projected from the product's copy with `system` attribution. To change one, copy it: the copy is an `organization` development process with a new ID and `copied_from_package_id` set. That field is provenance only and is never followed.
+- `built_in`: the development process ships with the product. Its content is the running product's copy, its ID is fixed by the product, it has no file in organization Git and it cannot be edited. Its rows are projected from the product's copy with `system` attribution. To change one, copy it: the copy is an `organization` development process with a new ID and `copied_from_process_id` set. That field is provenance only and is never followed.
 
 ### Durable process files
 
@@ -196,7 +196,7 @@ summary: >-
 version_label: "1.0"
 status: current
 owner_employee_id: 01930000-0000-7000-8000-000000000001
-copied_from_package_id: 01930000-0000-7000-8000-0000000000c0   # the built-in dss development process
+copied_from_process_id: 01930000-0000-7000-8000-0000000000c0   # the built-in dss development process
 roles:
   - key: product-lead
     name: Product Owner / Principal Designer
@@ -438,7 +438,7 @@ realizes:
     version: 2
 ```
 
-A process that uses releases puts the tasks that realize a version in a release of the project, listed in its content or grouped in one of its milestones ([document 09](09-release-content-and-flags.md), [document 02](02-project-structure.md)); the version's page then names the release. Nothing requires it: a task may be in no release.
+A process that uses releases puts the tasks that realize a version in a release of the project, listed in its content or grouped in one of its milestones ([document 09](09-release-content-and-flags.md), [document 02](02-project-structure.md)); the version's page then names the release. Nothing requires it: a task may be in no release. The view `task_releases` gives each task's releases, through its milestone or a release's content; a task with no row there is in the **No release** lane of a board.
 
 `realizes[]` is authored in the task's front matter. Each entry names an issued version of a tree document in the task's own project; the accepting service checks both. A task may realize several versions and a version may be realized by several tasks.
 
@@ -469,6 +469,7 @@ An agent reads and writes the documentation of **its own projects only**: a proj
 | `document_version_sources` | `derived_from[]` of the version file. |
 | `document_code_links` | `code_links[]` of the document. |
 | `task_document_versions` | `realizes[]` of the task file. |
+| `task_releases` (view) | Derived from `tasks.milestone_id` and `release_tasks`; no authored source. |
 | `document_version_progress` (view) | Derived from the two tables above and task status; no authored source. |
 
 Development processes register in `record_refs` as `development_process` and media files as `media`.
@@ -490,7 +491,7 @@ CREATE TABLE development_processes (
   version_label TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
   owner_employee_id TEXT,
-  copied_from_package_id TEXT,
+  copied_from_process_id TEXT,
   stages_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(stages_json) AND json_type(stages_json) = 'array'),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
@@ -501,7 +502,7 @@ CREATE TABLE development_processes (
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, key),
   CHECK (origin = 'built_in' OR status <> 'current' OR owner_employee_id IS NOT NULL),
-  CHECK (copied_from_package_id IS NULL OR copied_from_package_id <> id),
+  CHECK (copied_from_process_id IS NULL OR copied_from_process_id <> id),
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
@@ -722,6 +723,15 @@ CREATE TABLE task_document_versions (
   FOREIGN KEY (organization_id, document_id, version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE VIEW task_releases AS
+SELECT t.organization_id, t.id AS task_id, m.release_id
+FROM tasks t
+JOIN milestones m ON m.organization_id = t.organization_id AND m.id = t.milestone_id
+UNION
+SELECT rt.organization_id, rt.task_id, rt.release_id
+FROM release_tasks rt
+JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id;
 
 CREATE VIEW document_version_progress AS
 SELECT v.organization_id, v.document_id, v.version,

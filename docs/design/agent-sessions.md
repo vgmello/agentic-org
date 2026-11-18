@@ -457,7 +457,8 @@ again on hand-back, and the command warns about this when it starts.
 - **No file queue.** `agent-os` never writes to a local queue; every call goes to
   the office.
 - **Delivery** follows ADR-0003: a message is kept for the agent's next turn boundary,
-  never interrupts a busy turn, and never wakes a paused agent. A reply that satisfies
+  never interrupts a busy turn, and never wakes a paused agent. A message addressed to
+  an agent that has no turn open starts one (ADR-0023). A reply that satisfies
   a wait creates no second turn.
 - **Presence:** `busy`, `idle`, `needs_you`, `with_you`, `waiting` (on a required
   answer, naming whom), `asleep` and `offline`. An agent holding an `agent-os` wait

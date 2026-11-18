@@ -286,7 +286,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <p class="lede">How every component interacts and how each is meant to work: processes, connections, storage, the paths a command and an agent turn take, and the trust boundaries between them. Each element is marked with how far the code has got, so the design target and the current build can be compared line by line.</p>
   <div class="meta">
     <span>Branch <b>v1-integration @ 55c7d76</b></span>
-    <span>Data contract <b>organization-data rev 2.20</b></span>
+    <span>Data contract <b>organization-data rev 2.21</b></span>
     <span>ADRs <b>0001 to 0023</b></span>
     <span>Written <b>2026-11-17</b></span>
     <span>Updated <b>2026-11-18</b></span>
@@ -506,7 +506,7 @@ offices/
     <li>One write connection on one thread per database, batching with savepoints. Readers use a small pool.</li>
     <li>Schemas are versioned in code by <code>user_version</code>. There are no SQL migration files.</li>
     <li>The host creates each office key once and never recreates it. A missing key is an error, <code>key_missing</code>.</li>
-    <li>The draft target schema is 90 tables and 11 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
+    <li>The draft target schema is 92 tables and 12 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
   </ul>
 </section>
 

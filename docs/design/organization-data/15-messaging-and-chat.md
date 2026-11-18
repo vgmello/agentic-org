@@ -39,6 +39,7 @@ Each JSON source envelope has `schema_version: 1`, stable IDs, a positive `revis
 | --- | --- | --- |
 | Office first | The sender's own office commits a send durably and allocates the next origin sequence for `(origin_office_id, origin_incarnation)` in the same transaction as the message. Sending never requires HQ to be reachable. | ADR-0003 decision 1 |
 | Local delivery | For a recipient placed in the same office, delivery is complete at that commit and a waiting `wait` or `ask` listener is notified. This does not wake a paused agent or interrupt a busy turn. | ADR-0003 decisions 2 and 3 |
+| What is addressed to an employee | A message in a direct or group conversation is addressed to its other members. In a channel, a message is addressed to the employees in its `mentions[]`. An ask is addressed to the employee in its card's `addressed_to`. What is addressed to an agent with no open turn starts it; a channel message that does not mention it does not ([ADR-0023](../../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)). The acknowledgement of a send or an ask carries each addressed recipient's presence, which is not stored in this set. | ADR-0023 |
 | Routing | Otherwise the change travels office → HQ → recipient's office over the office's outbound connection. HQ deduplicates by `(origin_office_id, origin_incarnation, origin_sequence)`, acknowledges the origin and then forwards. Offices never connect to each other directly. | ADR-0003 decision 4 |
 | Owner of recipient state | The office where the recipient agent is placed, as of the organization position recorded on the change, is the single writer of that recipient's `message_recipient_states`. HQ is the owner for people, for the organization owner, and for recipients that were removed or have no office. | ADR-0003 decision 5 |
 | Ownership hand-off | When an agent is re-placed, ownership moves at that organization position. The previous office stops resolving that agent's state as soon as it applies the move; competing changes are ordered by organization position first. | ADR-0003 decision 6 |
@@ -73,6 +74,7 @@ Each employee's state is stored in that employee's own files (see [Storage and d
 | `conversation_preferences` | `preferences[]` in the viewer's `participants/<employee-id>/state.json`, keyed by viewer and muted employee; mute state only |
 | `conversation_read_markers` | `read_markers[]` in the viewer's `participants/<employee-id>/state.json`, keyed by conversation/viewer; optional last-read message must be in that conversation |
 | `message_attachments` | `attachments[]`: content reference, media type, bytes/hash; content never resides in organization Git |
+| `message_mentions` | `mentions[]` of the message file: the employees the message mentions, written once with the message by its origin office. |
 | `message_reactions` | `participants/<employee-id>/reactions/<message-id>.json`: employee/reaction/time |
 | Card state shown with a message (no table of its own; assembled in the `messages` projection) | `answer` and acceptance from the answerer's `participants/<employee-id>/answers/<message-id>.json`; the close outcome from `messages/<message-id>.close.json`; pins from `pins[]` in `conversation.json`. None of it is stored in the message file. |
 
@@ -241,6 +243,16 @@ CREATE TABLE message_attachments (
   PRIMARY KEY (organization_id,message_id,id),
   FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TABLE message_mentions (
+  organization_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  PRIMARY KEY (organization_id,message_id,employee_id),
+  FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id),
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id)
+) STRICT;
 CREATE TABLE message_reactions (
   organization_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -354,6 +366,12 @@ erDiagram
         TEXT viewer_employee_id PK, FK "required"
         TEXT read_at "optional"
         TEXT last_read_message_id FK "optional"
+    }
+    message_mentions {
+        TEXT organization_id PK, FK "required"
+        TEXT message_id PK, FK "required"
+        TEXT conversation_id FK "required"
+        TEXT employee_id PK, FK "required"
     }
     message_attachments {
         TEXT organization_id PK, FK "required"

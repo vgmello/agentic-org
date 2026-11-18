@@ -616,6 +616,41 @@ CREATE TABLE task_workspaces (
   FOREIGN KEY (organization_id, task_id, repository_id) REFERENCES task_repositories(organization_id, task_id, repository_id)
 ) STRICT;
 
+CREATE TABLE hire_requests (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  state TEXT NOT NULL CHECK (state IN ('drafting', 'waiting', 'approved', 'hiring', 'hired', 'rejected', 'withdrawn')),
+  requested_by_employee_id TEXT NOT NULL,
+  home_team_id TEXT NOT NULL,
+  role_id TEXT,
+  proposal_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(proposal_json) AND json_type(proposal_json) = 'object'),
+  reason TEXT NOT NULL DEFAULT '',
+  approver_employee_id TEXT,
+  escalations_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(escalations_json) AND json_type(escalations_json) = 'array'),
+  decided_by_employee_id TEXT,
+  decided_at TEXT,
+  decision_reason TEXT,
+  employee_id TEXT,
+  failed_step TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, employee_id),
+  CHECK ((state IN ('approved', 'hiring', 'hired', 'rejected')) = (decided_by_employee_id IS NOT NULL)),
+  CHECK ((decided_by_employee_id IS NULL) = (decided_at IS NULL)),
+  CHECK (state <> 'rejected' OR (decision_reason IS NOT NULL AND length(decision_reason) > 0)),
+  CHECK ((state = 'hired') = (employee_id IS NOT NULL)),
+  CHECK (state IN ('approved', 'hiring') OR failed_step IS NULL),
+  FOREIGN KEY (organization_id, requested_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, home_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, role_id) REFERENCES roles(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, approver_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, decided_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
 CREATE TABLE watchers (
   organization_id TEXT NOT NULL,
   target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
@@ -1626,8 +1661,13 @@ organization_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   ended_at TEXT,
   error_code TEXT,
+  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','assignment','answer','recovery')),
+  started_by_employee_id TEXT,
+  started_by_ref TEXT,
+  CHECK (started_by_kind<>'recovery' OR started_by_employee_id IS NULL),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
+  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
   FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
@@ -1914,6 +1954,16 @@ CREATE TABLE message_attachments (
   content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
   PRIMARY KEY (organization_id,message_id,id),
   FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE message_mentions (
+  organization_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  PRIMARY KEY (organization_id,message_id,employee_id),
+  FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id),
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id)
 ) STRICT;
 CREATE TABLE message_reactions (
   organization_id TEXT NOT NULL,
@@ -2265,7 +2315,7 @@ CREATE TABLE development_processes (
   version_label TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
   owner_employee_id TEXT,
-  copied_from_package_id TEXT,
+  copied_from_process_id TEXT,
   stages_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(stages_json) AND json_type(stages_json) = 'array'),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
@@ -2276,7 +2326,7 @@ CREATE TABLE development_processes (
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, key),
   CHECK (origin = 'built_in' OR status <> 'current' OR owner_employee_id IS NOT NULL),
-  CHECK (copied_from_package_id IS NULL OR copied_from_package_id <> id),
+  CHECK (copied_from_process_id IS NULL OR copied_from_process_id <> id),
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
@@ -2497,6 +2547,15 @@ CREATE TABLE task_document_versions (
   FOREIGN KEY (organization_id, document_id, version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE VIEW task_releases AS
+SELECT t.organization_id, t.id AS task_id, m.release_id
+FROM tasks t
+JOIN milestones m ON m.organization_id = t.organization_id AND m.id = t.milestone_id
+UNION
+SELECT rt.organization_id, rt.task_id, rt.release_id
+FROM release_tasks rt
+JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id;
 
 CREATE VIEW document_version_progress AS
 SELECT v.organization_id, v.document_id, v.version,

@@ -1,6 +1,6 @@
 # Agents and employees
 
-Status: **selected** data contract, revision 2.14. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
+Status: **selected** data contract, revision 2.15. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
 
 ## Confirmed relationships
 
@@ -49,6 +49,27 @@ erDiagram
         TEXT office_id FK "required"
         INTEGER placement_generation "required"
     }
+    hire_requests {
+        TEXT organization_id PK, FK "required"
+        TEXT id PK "required"
+        INTEGER schema_version "required"
+        INTEGER revision "required"
+        TEXT state "required"
+        TEXT requested_by_employee_id FK "required"
+        TEXT home_team_id FK "required"
+        TEXT role_id FK "optional"
+        TEXT proposal_json "required"
+        TEXT reason "required"
+        TEXT approver_employee_id FK "optional"
+        TEXT escalations_json "required"
+        TEXT decided_by_employee_id FK "optional"
+        TEXT decided_at "optional"
+        TEXT decision_reason "optional"
+        TEXT employee_id FK "optional"
+        TEXT failed_step "optional"
+        TEXT created_at "required"
+        TEXT updated_at "required"
+    }
     task_workspaces {
         TEXT organization_id PK, FK "required"
         TEXT office_id FK "required"
@@ -94,7 +115,7 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 
 Every organization has a built-in **HR lead**, created with the organization ([document 01](01-organization-structure.md#creating-an-organization)) as an employee of kind `agent` in the organization's top-level team. It appears and is addressed as an agent: it has a handle, it can be messaged and assigned work, and its turns are recorded like any agent's. It is part of the product: its instructions and the code it calls ship with the product. It is not kept running; the office starts it only when it is called, as for any agent turn (document 11).
 
-An agent comes to exist in an organization only through the HR hire flow. HR drafts a hire proposal; a lead with the authority to approve it approves it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before approval no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal, its approval and who may approve are specified in [our organization in the app](../../specs/our-org-in-the-app.md); this set adds no table for them, because an approved hire produces only the records already defined here and in document 11.
+An agent comes to exist in an organization only through the HR hire flow. HR drafts a hire proposal; a lead with the authority to approve it approves it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before approval no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal, its approval and who may approve are specified in [our organization in the app](../../specs/our-org-in-the-app.md). A request is a record of its own, `hire_requests` ([below](#hire-requests)), so that it survives a restart while it waits, shows who it is waiting for, and says afterwards who asked and who approved.
 
 ### Who approves a hire
 
@@ -111,6 +132,25 @@ The permission is given lead by lead, not by position. In a director team with e
 
 With the team lead appointment, this is one of the two records that carry authority. Both are given only by someone already above the holder, and the office checks them on every call ([non-negotiables](../../architecture-non-negotiables.md), rule 9).
 
+### Hire requests
+
+A hire request is written at HQ as `teams/<team-id>/.../hires/<request-id>.yaml`, under the team the new agent would join, and stays there after it is decided.
+
+| Field | Meaning |
+| --- | --- |
+| `state` | `drafting` (HR is writing the proposal), `waiting` (for the approver), `approved`, `hiring` (provisioning), `hired`, `rejected`, `withdrawn` |
+| `requested_by_employee_id` | Who asked: a person or an agent |
+| `home_team_id`, `role_id` | The team the agent joins, and the role when the request names one |
+| `proposal` | Name, handle, title, focus, reporting line, execution profile, model and office, as drafted |
+| `reason` | Why the hire is needed, in the requester's words |
+| `approver_employee_id` | The lead it is waiting for; null means the owner |
+| `escalations[]` | Each lead it passed, with the time and why it went on (no hiring power, deactivated, above a hiring limit) |
+| `decided_by_employee_id`, `decided_at`, `decision_reason` | Who approved or rejected it, when and why; a rejection needs a reason |
+| `employee_id` | The agent it produced, set when the state is `hired` |
+| `failed_step` | The provisioning step that stopped, while approved and not yet hired |
+
+"Requested by" and "approved by" on an agent's profile are read from its hire request. A lead with hiring power who asks for its own team is both. The built-in HR lead has no request.
+
 ## Who an agent takes instructions from
 
 An agent always replies to a person who messages it (owner, 2026-11-17). It follows instructions only from a person above it in the organization's hierarchy: the leads of its home team and of each ancestor team, up to the organization owner (the lead of its own home team does not count when that lead is the agent itself). A message from any other person is a request: the agent answers it, and where it conflicts with an instruction from its own chain, the chain wins. The rule is derived from `home_team_id`, `parent_team_id` and `lead_employee_id` and from who owns the organization; there is no field or table for it, and it grants no authority at the office, which still authorizes every call.
@@ -123,6 +163,7 @@ teams/<team-id>/
 │   ├── profile.md
 │   └── execution.md      # Optional configuration; required before the agent is runnable
 ├── people/<employee-id>/profile.md
+├── hires/<request-id>.yaml   # Hire requests for this team
 └── teams/<child-team-id>/...
 ```
 
@@ -165,6 +206,7 @@ The runtime team tree is the local office's projection of the organization-wide 
 | `agent_placements` | Current placement projection, rebuilt from HQ's durable execution placement/generation journal. Only agents are eligible. No office_id is silently added to an employee profile. |
 | `agent_execution_configs` | execution.md front matter/body; full table and routing contract are owned by document 11. |
 | `task_workspaces` | Current workspace-controller state; runtime-only office/employee/task/repository IDs and `worktree_path`. |
+| `hire_requests` | `hires/<request-id>.yaml` under the team the agent joins: same-named scalars; `proposal` as `proposal_json`, `escalations[]` as `escalations_json`. |
 
 ### Execution and remaining boundaries
 
@@ -238,6 +280,41 @@ CREATE TABLE task_workspaces (
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id),
   FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id),
   FOREIGN KEY (organization_id, task_id, repository_id) REFERENCES task_repositories(organization_id, task_id, repository_id)
+) STRICT;
+
+CREATE TABLE hire_requests (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  state TEXT NOT NULL CHECK (state IN ('drafting', 'waiting', 'approved', 'hiring', 'hired', 'rejected', 'withdrawn')),
+  requested_by_employee_id TEXT NOT NULL,
+  home_team_id TEXT NOT NULL,
+  role_id TEXT,
+  proposal_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(proposal_json) AND json_type(proposal_json) = 'object'),
+  reason TEXT NOT NULL DEFAULT '',
+  approver_employee_id TEXT,
+  escalations_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(escalations_json) AND json_type(escalations_json) = 'array'),
+  decided_by_employee_id TEXT,
+  decided_at TEXT,
+  decision_reason TEXT,
+  employee_id TEXT,
+  failed_step TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, employee_id),
+  CHECK ((state IN ('approved', 'hiring', 'hired', 'rejected')) = (decided_by_employee_id IS NOT NULL)),
+  CHECK ((decided_by_employee_id IS NULL) = (decided_at IS NULL)),
+  CHECK (state <> 'rejected' OR (decision_reason IS NOT NULL AND length(decision_reason) > 0)),
+  CHECK ((state = 'hired') = (employee_id IS NOT NULL)),
+  CHECK (state IN ('approved', 'hiring') OR failed_step IS NULL),
+  FOREIGN KEY (organization_id, requested_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, home_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, role_id) REFERENCES roles(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, approver_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, decided_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 ```
 
