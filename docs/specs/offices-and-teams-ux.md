@@ -371,7 +371,7 @@ Agents never sign in, and neither does a person without an account.
 | Create an organization | The administrator only. Setup creates none | Browser (§5a) |
 | Open an organization | Any account tied to a person in it. The administrator flag alone doesn't open it | Browser |
 | Change its structure (teams, people and their places, leads, projects), and invite, approve and remove satellite offices | Its owner | Browser |
-| Approve a hire | The owner, or a person in the lead chain of the team the agent joins | Browser |
+| Approve a hire | A lead in the lead chain of the team the agent joins (a person, or an agent whose May hire is on), and always the owner | Browser; `agent-os` for an agent lead |
 | Read the organization, work on tasks, and talk to any person or agent | Any person with an account in it | Browser |
 | Give a person an account (Invite to sign in), a new sign-in link, or remove their access | The administrator or the organization's owner | Browser, People (§7.4) |
 | Hand ownership to another person who has an account | The owner | Browser (§7.1) |

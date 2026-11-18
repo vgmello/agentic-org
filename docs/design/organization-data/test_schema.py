@@ -1132,6 +1132,20 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             self.db.commit()
         self.db.rollback()
 
+    def test_only_an_agent_can_be_given_the_permission_to_hire(self):
+        self.assertEqual(self.db.execute("SELECT may_hire FROM employees WHERE id='ana'").fetchone()[0], 0)
+        self.db.execute("UPDATE employees SET may_hire=1 WHERE id='ana'")  # an agent
+        self.db.commit()
+        self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=1 WHERE id='reporter'"))
+        self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=2 WHERE id='ana'"))
+
+    def test_a_package_names_the_optional_records_it_uses(self):
+        self.package(uses_json='["features", "milestones"]')
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT uses_json FROM process_packages").fetchone()[0],
+                         '["features", "milestones"]')
+        self.refused(lambda: self.package("bad", uses_json='{"features": true}'))
+
     def test_a_project_follows_an_existing_package_or_none(self):
         self.assertIsNone(self.db.execute("SELECT process_package_id FROM projects").fetchone()[0])
         self.package()

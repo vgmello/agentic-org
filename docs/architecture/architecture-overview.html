@@ -282,7 +282,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <p class="lede">Agentic Org is a self-hosted server that runs an organization of AI agents and people: teams, projects, tasks, chat and spend, with agents launched and supervised on machines you control. This page is the map. It names the parts, what each one owns, where truth lives, and how far the code is from the selected design.</p>
   <div class="meta">
     <span>Branch <b>v1-integration</b></span>
-    <span>Data contract <b>organization-data rev 2.16</b></span>
+    <span>Data contract <b>organization-data rev 2.17</b></span>
     <span>Updated <b>2026-11-18</b></span>
   </div>
 </header>
@@ -461,7 +461,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <li><b>A package grants nothing</b><span>It names no tool, model, credential, budget or approver. An unknown field in a manifest is refused. Authority still comes from a caller's place in the organization.</span></li>
     <li><b>Skills are one more layer of guidance</b><span>Organization, then the accountable team's chain, then the package, then the project. A skill is bound to roles by key. An agent receives the skills for its role and the ones written for everyone, as a title and a when-to-use line, and retrieves the body when it needs it.</span></li>
     <li><b>A project starts lean</b><span>A package marks a few roles as its seed. Choosing the package shows them as a roster. A person fills each with a hire, or with an employee who already has the role. An open seed role blocks nothing.</span></li>
-    <li><b>Hiring stays the product's</b><span>A skill tells a lead when to staff the project. The lead reads the role and asks HR. HR drafts the proposal, a person approves it, and product code provisions the agent in the project's team.</span></li>
+    <li><b>Hiring stays the product's</b><span>A skill tells a lead when to staff the project. The lead reads the role and asks HR. HR drafts the proposal, a lead approves it, and product code provisions the agent in the project's team. A lead who is a person approves. A lead who is an agent approves only when a person has turned on its May hire permission, and then its own request is enough (your decision of 2026-11-18, ADR-0022).</span></li>
     <li><b>Built in, or a copy</b><span>Packages that ship with the product cannot be edited. An organization changes one by copying it; the copy has a new ID and remembers where it came from.</span></li>
     <li><b>Changing a project's package removes nothing</b><span>Missing roles and sections are added. No file, document, role or employee changes.</span></li>
   </ul>
@@ -675,7 +675,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
 
 <section id="status">
   <h2><span class="num">09</span>Where we are</h2>
-  <p class="sec-lede">The feature checklist has 177 rows. These counts are rows of different sizes and are not a completion percentage. Done means source evidence for the row's exact scope.</p>
+  <p class="sec-lede">The feature checklist has 178 rows. These counts are rows of different sizes and are not a completion percentage. Done means source evidence for the row's exact scope.</p>
   <div class="tbl wide"><table>
     <thead><tr><th>Area</th><th>Rows</th><th>Done</th><th>In progress</th><th>Planned</th><th>Blocked</th><th>Deferred</th></tr></thead>
     <tbody>
@@ -687,15 +687,15 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
       <tr><td>06 Chat and agent messaging</td><td class="n">14</td><td class="n">2</td><td class="n">6</td><td class="n">4</td><td class="n">0</td><td class="n">2</td></tr>
       <tr><td>07 Usage, costs and budgets</td><td class="n">11</td><td class="n">0</td><td class="n">0</td><td class="n">10</td><td class="n">0</td><td class="n">1</td></tr>
       <tr><td>08 Execution, providers and supervision</td><td class="n">14</td><td class="n">1</td><td class="n">2</td><td class="n">7</td><td class="n">0</td><td class="n">4</td></tr>
-      <tr><td>09 Roles, processes and retrospectives</td><td class="n">16</td><td class="n">0</td><td class="n">3</td><td class="n">8</td><td class="n">0</td><td class="n">5</td></tr>
+      <tr><td>09 Roles, processes and retrospectives</td><td class="n">17</td><td class="n">0</td><td class="n">3</td><td class="n">8</td><td class="n">0</td><td class="n">6</td></tr>
       <tr><td>10 Project health and reports</td><td class="n">5</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">5</td></tr>
       <tr><td>11 Copilot drafting</td><td class="n">17</td><td class="n">1</td><td class="n">2</td><td class="n">0</td><td class="n">0</td><td class="n">14</td></tr>
       <tr><td>12 Git, identity, synchronization and recovery</td><td class="n">14</td><td class="n">1</td><td class="n">4</td><td class="n">6</td><td class="n">0</td><td class="n">3</td></tr>
       <tr><td>13 Session inspection and private memory</td><td class="n">3</td><td class="n">0</td><td class="n">0</td><td class="n">2</td><td class="n">0</td><td class="n">1</td></tr>
-      <tr><td><strong>Total</strong></td><td class="n"><strong>177</strong></td><td class="n"><strong>9</strong></td><td class="n"><strong>62</strong></td><td class="n"><strong>63</strong></td><td class="n"><strong>1</strong></td><td class="n"><strong>42</strong></td></tr>
+      <tr><td><strong>Total</strong></td><td class="n"><strong>178</strong></td><td class="n"><strong>9</strong></td><td class="n"><strong>62</strong></td><td class="n"><strong>63</strong></td><td class="n"><strong>1</strong></td><td class="n"><strong>43</strong></td></tr>
     </tbody>
   </table></div>
-  <p class="src">Source: docs/FEATURE-AREAS.md, area summary, as of 2026-11-18. The ten rows added that day, FC-168 to FC-177, are all Planned.</p>
+  <p class="src">Source: docs/FEATURE-AREAS.md, area summary, as of 2026-11-18. Eleven rows were added that day, FC-168 to FC-178: ten are Planned, and FC-172, moving a package between organizations, was withdrawn by your answer and is Deferred.</p>
 
   <h3>What the gap looks like</h3>
   <p>The libraries are deep and the entry points are closed. Three things are true at once:</p>
@@ -716,7 +716,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
       <tr><td>Task numbers</td><td>Minted by the creating office, one sequence per office, with a letter: <code>T-B37</code>. Tasks only. Creating a task uses the fast acknowledgement. In the data contract.</td><td>Code.</td></tr>
       <tr><td>IDs</td><td>UUIDv7 everywhere, the published standard.</td><td>Code: most of it mints ULIDs today.</td></tr>
       <tr><td>Session view and questions</td><td>Your two requirement documents are in the repository: a read-only console built from the agent tool's conversation files (REQ-05), and structured questions rendered as choice, yes/no or free-text components (REQ-04), built with shadcn-svelte and Bits UI in the product's own chat. No external channels, no React. A default value is preselected.</td><td>Code.</td></tr>
-      <tr><td>How a project works (REQ-07)</td><td>Your requirement document is in the repository. A project follows at most one process package: a manifest, roles with a few marked as its seed, skills for each role, document kinds and a documentation layout. The product holds the primitives and no methodology. No engine reads a package and a package grants nothing. Skills reach an agent as one more layer of guidance. Hiring stays with HR and a person's approval. Project-wide documents move into one tree per project, with one index.</td><td>Code. Six points wait for you in the two requirement documents. The main one: whether an ask or a task assignment starts an agent. Today only a person's Run or the answer to a required ask does.</td></tr>
+      <tr><td>How a project works (REQ-07)</td><td>Your requirement document is in the repository. A project follows at most one process package: a manifest, roles with a few marked as its seed, skills for each role, document kinds and a documentation layout. The product holds the primitives and no methodology. No engine reads a package and a package grants nothing. Skills reach an agent as one more layer of guidance. Hiring stays with HR and a lead's approval. Project-wide documents move into one tree per project, with one index.</td><td>Code. On 2026-11-18 you settled three points: a lead approves a hire and an agent lead needs the May hire permission (ADR-0022); features belong to their own package, a second built-in one for software delivery by features; and packages do not move between organizations. Three points still wait for you in the two requirement documents. The main one: whether an ask or a task assignment starts an agent. Today only a person's Run or the answer to a required ask does.</td></tr>
       <tr><td>Desired state specifications (REQ-06)</td><td>Your requirement document is in the repository. It becomes the first built-in package, with two seed leads. A document is edited freely and issued in versions; the desired state is the latest issued version. A Technical DSS version names the Product DSS versions it follows, a task names the versions it realizes, and code links tie documents to code. Convergence is derived from tasks. Standards grow from decisions, as project standards that an agent of the project's team may add.</td><td>Code, then a run with real agents. The factory is "automated" only once you answer the same point about agents starting agents; until then a person presses Run on the next agent.</td></tr>
       <tr><td>Anything from before</td><td>Dropped. The earlier command-line tool and its message queue are not carried over. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td>Nothing.</td></tr>
       <tr><td>Asking and waiting</td><td>An ask waits a bounded time. A required ask left unanswered stops the agent, after telling it, and the answer starts it again in the same session.</td><td>Code, with the agent launch path.</td></tr>
@@ -727,7 +727,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
       <tr><td>Model shapes</td><td>Single home team, one typed task, no areas. Remove the old shapes.</td><td>Code.</td></tr>
       <tr><td>Accounts and ownership</td><td>Held by the host. One administrator account; every account is tied to a person; the owner is a person. No account command except a reset for the administrator.</td><td>Code.</td></tr>
       <tr><td>Create organization</td><td>Done by the signed-in administrator, not by setup. The headquarters office, a top-level team, the owner's person record and the built-in HR are created with it.</td><td>Code.</td></tr>
-      <tr><td>Agents</td><td>Exist only through HR, which is built in and runs when called.</td><td>Code.</td></tr>
+      <tr><td>Agents</td><td>Exist only through HR, which is built in and runs when called. A lead approves each hire: a person, or an agent lead whose May hire permission a person turned on (ADR-0022).</td><td>Code.</td></tr>
       <tr><td>Speed and encryption</td><td>Fast acknowledgement for messaging; no application-level encryption.</td><td>Code and measurement on a Mac.</td></tr>
       <tr><td>Names in code</td><td>"gateway" becomes "web" in the code too.</td><td>A mechanical rename in 83 source files.</td></tr>
     </tbody>
@@ -749,7 +749,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     </tbody>
   </table></div>
   <p><strong>Milestone two is Linux,</strong> including inside a container. It runs as its own track alongside milestone one, because the platform differences sit behind small contracts in one shared crate: the Mac work and the Linux work change different files.</p>
-  <p><strong>Milestone three is a second office on another machine.</strong> It is a separate thread: enrolment of the office, replication between machines and messages relayed between offices. Costs and budgets, features and releases, and updates come later still; all of it is v1. So do the project documentation tree, process packages, issued versions, the desired state package and moving a package between organizations (increments L11 to L15).</p>
+  <p><strong>Milestone three is a second office on another machine.</strong> It is a separate thread: enrolment of the office, replication between machines and messages relayed between offices. Costs and budgets, features and releases, and updates come later still; all of it is v1. So do the project documentation tree, process packages, issued versions, and the two built-in packages for desired state and for feature delivery (increments L11 to L14).</p>
   <p>The plan with every increment, what to read for it and when it is finished is <code>docs/implementation-plan.md</code>.</p>
 </section>
 
@@ -791,7 +791,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
 </section>
 
 <footer class="doc-foot">
-  Built from the repository branch <code>v1-integration</code>: the organization-data contracts, ADRs 0001 to 0021, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source, not run.
+  Built from the repository branch <code>v1-integration</code>: the organization-data contracts, ADRs 0001 to 0022, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source, not run.
 </footer>
 </main>
 </div>

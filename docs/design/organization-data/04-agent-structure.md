@@ -1,6 +1,6 @@
 # Agents and employees
 
-Status: **selected** data contract, revision 2.10. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
+Status: **selected** data contract, revision 2.11. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
 
 ## Confirmed relationships
 
@@ -41,6 +41,7 @@ erDiagram
         TEXT role_text "optional"
         TEXT title_in_team "optional"
         TEXT offboarded_at "optional"
+        INTEGER may_hire "required"
     }
     agent_placements {
         TEXT organization_id PK, FK "required"
@@ -84,7 +85,8 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 | Change the organization's structure: create, rename, move or archive a team; add, place, move or deactivate a person; appoint a lead; create a project (and with it its team) | The organization's owner |
 | Invite a person to sign in, issue a new link, remove access | The owner or the administrator |
 | Hand over ownership | The owner |
-| Approve a hire | The owner, or a person in the lead chain of the team the agent joins |
+| Approve a hire | A lead in the lead chain of the team the agent joins: a person who leads, or an agent who leads and whose `may_hire` is on; and always the owner ([below](#who-approves-a-hire)) |
+| Turn an agent's `may_hire` on or off | The owner, or a person above the agent in the hierarchy |
 | Pause or resume an agent, or give it an instruction it must follow | The owner, or a person above the agent in the hierarchy |
 | See a project's costs; set or change a task budget in it | The owner, or the project's manager: the lead of the project's accountable team. "Project manager" in the cost and budget documents means that position, not an access role |
 
@@ -92,7 +94,19 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 
 Every organization has a built-in **HR lead**, created with the organization ([document 01](01-organization-structure.md#creating-an-organization)) as an employee of kind `agent` in the organization's top-level team. It appears and is addressed as an agent: it has a handle, it can be messaged and assigned work, and its turns are recorded like any agent's. It is part of the product: its instructions and the code it calls ship with the product. It is not kept running; the office starts it only when it is called, as for any agent turn (document 11).
 
-An agent comes to exist in an organization only through the HR hire flow. HR drafts a hire proposal; a person with the authority to approve it approves it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before approval no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal, its approval and who may approve are specified in [our organization in the app](../../specs/our-org-in-the-app.md); this set adds no table for them, because an approved hire produces only the records already defined here and in document 11.
+An agent comes to exist in an organization only through the HR hire flow. HR drafts a hire proposal; a lead with the authority to approve it approves it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before approval no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal, its approval and who may approve are specified in [our organization in the app](../../specs/our-org-in-the-app.md); this set adds no table for them, because an approved hire produces only the records already defined here and in document 11.
+
+### Who approves a hire
+
+A lead approves every hire (owner, 2026-11-18). The approver is the nearest lead, going up from the team the new agent joins, who may approve:
+
+- a lead who is a person may approve;
+- a lead who is an agent may approve only when its `may_hire` is on;
+- above the top team, and at any time, the organization's owner.
+
+`may_hire` is a field of an agent's profile, off by default. Only the owner, or a person above the agent in the hierarchy, turns it on or off; the change is attributed and kept in history like any profile change, and an agent can never set it, for itself or for another. It has no effect on an agent that leads no team, and the built-in HR lead never has it. A lead who may approve hires for a team hires into it without a second approval: its request is recorded as requested and approved by that lead. HR still drafts the proposal, product code still provisions, and the hiring limits a person sets in Settings apply to every lead, person or agent.
+
+With the team lead appointment, this is one of the two records that carry authority. Both are given only by someone already above the holder, and the office checks them on every call ([non-negotiables](../../architecture-non-negotiables.md), rule 9).
 
 ## Who an agent takes instructions from
 
@@ -181,6 +195,8 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   role_text TEXT,
   title_in_team TEXT,
   offboarded_at TEXT,
+  may_hire INTEGER NOT NULL DEFAULT 0 CHECK (may_hire IN (0, 1)),
+  CHECK (kind = 'agent' OR may_hire = 0),
   CHECK (kind = 'agent' OR status <> 'paused'),
   CHECK (offboarded_at IS NULL OR status = 'inactive'),
   PRIMARY KEY (organization_id, id),
@@ -227,7 +243,7 @@ Direct reporting must be acyclic within an organization, independently of the te
 
 ## Profile fields and employee state
 
-The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `offboarded_at`. Nullable text remains NULL if not known.
+The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `offboarded_at`, and for agents `may_hire` (default false, [above](#who-approves-a-hire)). Nullable text remains NULL if not known.
 
 **Employee state is one field.** `status` is a closed list: `active`, `paused`, `inactive`. `paused` applies to agents only: the agent keeps its employment, handle and history and is not started. `inactive` is a person who has left or an agent that has been offboarded; `offboarded_at` may be set only then, and the profile keeps its handle. There is no second state field. Whether an agent may run is one rule: its status is `active`, it has an enabled execution configuration ([document 11](11-model-profiles-and-agent-execution.md)), and no unreleased budget hold applies ([document 17](17-budgets-and-controls.md)). Holds stay separate records because they belong to a budget and a period, not to the employee.
 

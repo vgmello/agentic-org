@@ -122,7 +122,7 @@
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "46bca00bed148f5c823632a85e357ae5f723fe1decbff237f3403bc465f3f9a3"
+      "sha256": "bfa1ef1c76bba49388d9e6e62c390df11d48eab824dabf5499870e0c21593bce"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
@@ -150,11 +150,11 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "6e157124f35a776895a2298f7158e8541c51345234dda0545c434819922a78e6"
+      "sha256": "8aa0be8418d1eaf143b733b8b68e7277bca32e7b95e7497ed21530d0096d7b09"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "ecf283308a8ba8778c8d94f2d3ff686c6e6c9f1940cf84e27968e34993bcac78"
+      "sha256": "be0763be3d7ca343d964657db886284888af49857908ad8f5dc954fa9f855088"
     },
     {
       "path": "docs/design/project-structure.md",

@@ -286,8 +286,8 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <p class="lede">How every component interacts and how each is meant to work: processes, connections, storage, the paths a command and an agent turn take, and the trust boundaries between them. Each element is marked with how far the code has got, so the design target and the current build can be compared line by line.</p>
   <div class="meta">
     <span>Branch <b>v1-integration @ 55c7d76</b></span>
-    <span>Data contract <b>organization-data rev 2.16</b></span>
-    <span>ADRs <b>0001 to 0021</b></span>
+    <span>Data contract <b>organization-data rev 2.17</b></span>
+    <span>ADRs <b>0001 to 0022</b></span>
     <span>Written <b>2026-11-17</b></span>
     <span>Updated <b>2026-11-18</b></span>
   </div>
@@ -876,7 +876,7 @@ offices/
       <ul>
         <li>The seed roster is derived: a seed role is filled when an active member of the project's team holds it.</li>
         <li>A skill tells a lead when to staff. The lead reads the role (<code>agent-os role show</code>) and asks (<code>agent-os hire request --role</code>).</li>
-        <li>HR drafts, a person approves, product code provisions. A package decides when a lead asks, never whether the hire happens.</li>
+        <li>HR drafts, a lead approves, product code provisions. A lead who is a person approves; a lead who is an agent approves only when a person has turned on its <code>may_hire</code> permission, and then its own request is enough (ADR-0022). A package decides when a lead asks and gives no one the right to approve.</li>
       </ul>
     </div>
   </div>
@@ -943,7 +943,7 @@ offices/
       <tr><td>Project documentation tree and index</td><td><span class="st target">Designed</span></td><td><code>org-docs</code> front-matter parser and editor only</td><td>Tree writes with the index in one change, the project boundary for agents, <code>agent-os doc</code>, the Docs tab (L11)</td></tr>
       <tr><td>Issued versions, code links, realizing tasks</td><td><span class="st target">Designed</span></td><td>Draft schema in document 18</td><td><code>doc.issue</code>, differences, the stale-link check against the Git cache, derived convergence (L13)</td></tr>
       <tr><td>The built-in DSS package</td><td><span class="st target">Designed</span></td><td>Nothing</td><td>The package's content, then a run with real agents (L14)</td></tr>
-      <tr><td>Moving a package between organizations</td><td><span class="st target">Designed</span></td><td>Nothing</td><td>An archive of the package folder (L15)</td></tr>
+      <tr><td>Built-in feature delivery package</td><td><span class="st target">Designed</span></td><td>Nothing</td><td>Content only: software delivery by features, where requests are scoped into features, built by tasks and shipped in releases (FC-178)</td></tr>
       <tr><td>Linux and containers</td><td><span class="st target">Designed</span></td><td>Workers start only on macOS</td><td>Five platform contracts with Linux implementations (ADR-0017)</td></tr>
       <tr><td>Replaceable storage engine</td><td><span class="st target">Designed</span></td><td>SQL mostly inside the store folder; two files outside</td><td>One selection point and engine-independent suites (ADR-0018)</td></tr>
       <tr><td>Private task notes</td><td><span class="st target">Designed</span></td><td>Draft schema, acceptance criteria PN-01 to PN-06</td><td>Store, access control, API, UI</td></tr>
@@ -987,22 +987,19 @@ offices/
     <tbody>
       <tr><td>Questions to people</td><td>One structured schema, rendered as choice, yes/no or free-text components built with shadcn-svelte and Bits UI in the product's own chat. No external channels. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one.</td><td class="k">REQ-04</td></tr>
       <tr><td>Asking and waiting</td><td>10 minutes wait, 2 minutes grace. A required ask left unanswered suspends the agent; the answer resumes it.</td><td class="k">ADR-0020</td></tr>
-      <tr><td>How a project works</td><td>A project follows at most one process package: content, not code. No engine reads it and it grants nothing. Its skills are one more layer of guidance, bound to roles by key. A project starts with the package's seed roles and hires the rest through HR, with a person's approval, when a skill says so. Project-wide documents live in one tree per project with one index, kept by the office from what agents and people do. An agent reads and writes the tree of its own projects only.</td><td class="k">REQ-07, process package design, document 18</td></tr>
+      <tr><td>How a project works</td><td>A project follows at most one process package: content, not code. No engine reads it and it grants nothing. Its skills are one more layer of guidance, bound to roles by key. A project starts with the package's seed roles and hires the rest through HR, with a lead's approval, when a skill says so. Features, milestones and releases are records a package uses or leaves alone; a package stays in its organization. Project-wide documents live in one tree per project with one index, kept by the office from what agents and people do. An agent reads and writes the tree of its own projects only.</td><td class="k">REQ-07, process package design, document 18</td></tr>
       <tr><td>Desired state specifications</td><td>The first built-in package. A document is issued in versions and the desired state is the latest issued one. A Technical DSS version names the Product DSS versions it follows; a task names the versions it realizes; code links tie documents to code. Convergence is derived from tasks. The factory is agents following skills, not a pipeline in the product.</td><td class="k">REQ-06, desired state design</td></tr>
       <tr><td>Agents writing guidance</td><td>An agent whose home team is a project's own team may add process and standard documents at that project's scope and change the project's own. It never replaces a document inherited from above, never writes at team or organization scope and never marks a document not overridable.</td><td class="k">process design</td></tr>
       <tr><td>Anything from before</td><td>Dropped. The former development team's earlier command-line tool and its message queue are not carried over, and no rule protects them. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td class="k">AGENTS.md</td></tr>
     </tbody>
   </table></div>
   <h3>Open with the owner</h3>
-  <p>Six points from REQ-06 and REQ-07 are not decided. Each has a recommendation in the requirement document, and the design works without the answer.</p>
+  <p>On 2026-11-18 the owner settled three points: a lead approves a hire, and an agent lead needs the <code>may_hire</code> permission (ADR-0022); features belong to their own package; packages do not move between organizations. Three points from REQ-06 and REQ-07 are not decided. Each has a recommendation in the requirement document, and the design works without the answer.</p>
   <div class="tbl wide"><table>
     <thead><tr><th>Point</th><th>Today</th><th>Recommendation</th></tr></thead>
     <tbody>
       <tr><td>Agents starting other agents</td><td>A turn starts only from a person's Run or the answer to a required ask. On-call run modes are deferred (FC-104).</td><td>A narrow on-call rule: an ask addressed to an agent, or a task assigned by its lead chain or a lead of the task's project, gives it a turn, under a permit and the budget holds.</td></tr>
-      <tr><td>Who approves a hire a lead asks for</td><td>A person approves every hire.</td><td>Keep it. Say if approving a staffing plan once should cover the hires named in it.</td></tr>
-      <tr><td>Features beside the Product DSS</td><td>Features are a record; the DSS package does not use them.</td><td>Keep features for projects whose process uses them.</td></tr>
       <tr><td>The word "process"</td><td>A single guidance document is called a process; a project's process is now a package.</td><td>Say "process package", "skill" and "process document", unless the existing documents are to be renamed.</td></tr>
-      <tr><td>Packages between organizations</td><td>Selected as the last increment (L15).</td><td>Say if it is needed sooner or not in v1.</td></tr>
       <tr><td>The Standards specification REQ-06 refers to</td><td>The process design already defines three levels, inheritance by key and the non-overridable lock, for processes and standards alike.</td><td>Say if a further requirement is coming, or if that design is the specification.</td></tr>
     </tbody>
   </table></div>
@@ -1011,7 +1008,7 @@ offices/
 </section>
 
 <footer class="doc-foot">
-  Built from the repository branch <code>v1-integration</code>: the organization-data contracts (documents 01 to 18), ADRs 0001 to 0021, the design and UX documents, and a read of every crate and app. Section 15 and the rows that mention REQ-06 and REQ-07 were added on 2026-11-18 from the design documents; no code changed. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
+  Built from the repository branch <code>v1-integration</code>: the organization-data contracts (documents 01 to 18), ADRs 0001 to 0022, the design and UX documents, and a read of every crate and app. Section 15 and the rows that mention REQ-06 and REQ-07 were added on 2026-11-18 from the design documents; no code changed. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
 </footer>
 </main>
 </div>

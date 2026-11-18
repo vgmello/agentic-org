@@ -55,10 +55,12 @@ runs.
 7. **A project starts lean.** A package marks a few roles as its seed. Choosing the
    package shows them; a person fills each by a hire or with an employee who already
    has the role. Everyone else is hired when a skill says the work calls for it.
-8. **Hiring stays the product's.** An agent asks for a hire; HR drafts it; a person
+8. **Hiring stays the product's.** An agent asks for a hire; HR drafts it; a lead
    approves it; product code provisions it
-   ([document 04](organization-data/04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)).
-   A package decides when a lead asks and for which role, never whether the hire happens.
+   ([document 04](organization-data/04-agent-structure.md#who-approves-a-hire),
+   [ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). A lead that is an agent approves
+   only when a person has turned its May hire permission on. A package decides when a
+   lead asks and for which role; it gives no one the right to approve.
 9. **A project's documents live in one tree whose layout the project owns.** The
    package declares the sections it starts with; agents and people grow it. The product
    has no document type for any methodology: a tree holds Markdown documents, diagrams
@@ -102,8 +104,10 @@ process-packages/<package-id>/
 - **Catalogue.** The package list shows every `current` package, built-in ones first,
   each with its summary, its seed roles and the sections it starts a project with.
   A draft is visible to people and cannot be chosen for a project.
-- **Authoring.** A person creates a package, or copies one, and edits its manifest,
-  roles, skills and templates in the product. A copy has a new ID and remembers what it
+- **Authoring.** There are two kinds of package: the ones built into the product, and
+  the ones an organization's people create and edit (owner, 2026-11-18). Any person of
+  the organization creates a package, or copies one, and edits its manifest, roles,
+  skills and templates in the product. A copy has a new ID and remembers what it
   was copied from. Every write names the expected revision and is attributed.
 - **Validation at every write.** The manifest, role, skill and stage fields are a
   closed list ([document 18](organization-data/18-process-packages-and-project-documentation.md#durable-package-files));
@@ -115,8 +119,9 @@ process-packages/<package-id>/
 - **Built in.** Built-in packages are part of the product and change with it. They are
   listed with the product's version and cannot be edited. The first is `dss`
   ([desired state design](desired-state-specifications.md)).
-- **Moving a package between organizations** is an archive of the package folder. It
-  is the last increment (section 11).
+- **A package stays in its organization.** There is no export, import or transfer of
+  packages between organizations (owner, 2026-11-18). What every organization should
+  have is built in.
 
 ## 3. A project's process
 
@@ -169,6 +174,34 @@ Nothing else happens. No agent is hired, started or told anything by the choice 
 above. No file, document kind, role or employee changes. Agents receive the new
 package's skills at their next start.
 
+## 3a. Features, and a second package
+
+Features, milestones and releases are records of the product that a package may use or
+leave alone (owner, 2026-11-18). A package says which in its manifest's `uses`. A
+project whose package does not use features shows no Features tab while it has no
+feature; nothing is removed and no call is refused.
+
+This is how two well-specified processes sit on the same product:
+
+| | Desired State Specification (`dss`) | Feature delivery (`feature-delivery`) |
+| --- | --- | --- |
+| What it is | Specify the product and the system as desired state, then keep the code in line | Software delivery by features: requests are scoped into features, features are built by tasks and shipped in releases |
+| The specification is | Versioned Product DSS and Technical DSS documents | Each feature's definition, `feature.md` ([features UX](../specs/features-ux.md)) |
+| A task points at | The document versions it realizes | Its feature |
+| `uses` | `milestones`, `releases` | `features`, `milestones`, `releases` |
+| Kinds it adds | `product-dss`, `technical-dss` | None; it uses decisions, designs and reports |
+| Seed roles | Product lead, technical lead | Product lead, engineering lead |
+| Starting sections | `product`, `technical` | `decisions`, `designs`, `reports` |
+
+`feature-delivery` is the second built-in package. Its skills cover capturing and
+scoping a request ([request UX](../specs/feature-requests-ux.md)), writing a feature
+definition, breaking a feature into tasks, grouping work into milestones and a
+release, and staffing. Their text is written when the package is built. It is content
+only, which is the proof of PKG-1. Iterations, boards and other habits of an agile
+team are skills and stages of such a package, not parts of the product.
+
+A project with no package keeps features, milestones and releases as they are today.
+
 ## 4. How skills reach an agent
 
 A project's package adds one layer to the resolution of the
@@ -215,8 +248,11 @@ The lead then uses the product's hiring, as any agent may:
    sends the request to HR. HR drafts the proposal; when HR cannot run, the command
    says so and a person fills the form
    ([hire flow](../specs/our-org-in-the-app.md), APPR-8).
-3. **Approval.** The proposal goes to the nearest person in the lead chain of the
-   project's team, else to the owner. An agent never approves a hire.
+3. **Approval.** A lead approves. The proposal goes to the nearest lead, going up from
+   the project's team, who may approve: a person, or an agent whose May hire
+   permission is on; else to the owner. When the requesting lead is itself that lead,
+   its request is its approval, and the hire is recorded as requested and approved by
+   it. A seed lead without the permission waits for the lead above it.
 4. **Onboarding.** On approval the office provisions the agent in the project's team,
    so it is under that team's lead. The proposal suggests the requesting lead as the
    new agent's reporting line, which the approver confirms or changes. From its first
@@ -329,11 +365,13 @@ Built-in packages are files in the product's source, compiled into the office.
 | PKG-7 | An agent receives the skills for its role and the ones for everyone, named with the package and its revision, as summaries with retrievable bodies; another role's skills are not in its set. |
 | PKG-8 | A project document with a skill's key replaces that skill in that project only; `process why` shows the package layer and the replacement. |
 | PKG-9 | A skill whose key the organization marked not overridable is left out, with a problem naming the organization's document; that document is still delivered in full. |
-| PKG-10 | A lead agent's `hire request` for a package role produces a proposal for the project's team; nothing is provisioned before a person approves; the new agent's first instructions carry its role's skills. |
+| PKG-10 | A lead agent's `hire request` for a package role produces a proposal for the project's team; nothing is provisioned before a lead who may approve does: a person, or an agent lead with May hire on, whose own request is then enough (HIRE-1 to HIRE-3); the new agent's first instructions carry its role's skills. |
 | PKG-11 | `doc index` returns the whole index in one call while it is at most 256 KiB, and the section list with each section readable by path beyond that. After any accepted write it lists exactly what the tree holds. |
 | PKG-12 | An agent of another project is refused `doc index`, `doc ls`, `doc show` and every write, with `other_project` and the lead to ask; a person is not. |
 | PKG-13 | Changing a project's package removes no file, section, document or role, and the next start of each agent delivers the new package's skills. |
 | PKG-14 | With no package, a project's tree starts with `decisions`, `designs` and `reports`, and resolution is exactly the process design's. |
+| PKG-15 | A project whose package does not list `features` in `uses` shows no Features tab while it has no feature; one whose package lists it, and one with no package, shows it. Changing the package hides no existing feature. |
+| PKG-16 | Any person of the organization creates, copies and edits an organization package; an agent's write of a package is refused; there is no export or import of a package. |
 
 ## 10. Open points
 
@@ -354,7 +392,7 @@ Built-in packages are files in the product's source, compiled into the office.
 ## 11. Delivery order
 
 Each step is usable on its own. Increments are in the
-[implementation plan](../implementation-plan.md) (L11 to L15).
+[implementation plan](../implementation-plan.md) (L11 to L14).
 
 1. **The tree and the index** for every project, with `agent-os doc` and the Docs tab
    (FC-173). It needs no package.
@@ -365,8 +403,8 @@ Each step is usable on its own. Increments are in the
 3. **Hiring from a skill:** `role show` and the role on `hire request` (FC-171). Needs
    the hire flow (C2).
 4. **Issued versions, code links and realizing tasks** (FC-174, FC-175), then **the
-   DSS package** (FC-176) ([desired state design](desired-state-specifications.md)).
-5. **Moving a package between organizations** (FC-172).
+   DSS package** (FC-176) ([desired state design](desired-state-specifications.md))
+   and **the feature delivery package** (FC-178, section 3a).
 
 ## What the code does today
 

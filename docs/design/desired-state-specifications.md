@@ -72,6 +72,7 @@ roles:
 kinds:
   - { key: product-dss, title: Product DSS, versioned: true }
   - { key: technical-dss, title: Technical DSS, versioned: true }
+uses: [milestones, releases]
 folders:
   - { path: product, title: Product documentation, kinds: [product-dss] }
   - { path: technical, title: Technical documentation, kinds: [technical-dss] }
@@ -115,6 +116,10 @@ because of it, each naming the Product DSS version it follows.
 
 Both are ordinary tree documents with `versioned: true`. The product knows neither
 name.
+
+The package does not use feature records: the Product DSS is the definition, and a
+task points at the versions it realizes. Software delivery by features is another
+package ([process package design](process-packages.md#3a-features-and-a-second-package)).
 
 ## 3. The flow
 
@@ -162,7 +167,10 @@ name.
 10. They decide which roles the tasks need. For each, the technical lead reads the role
     (`agent-os role show`) and asks HR for the hire with a reason
     ([process package design](process-packages.md#5-hiring-when-the-package-says-so)).
-    A person approves. Tasks are assigned as the hires complete.
+    A lead approves: a person, or the technical lead itself when it leads the
+    project's team and a person has turned its May hire permission on
+    ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). Tasks are assigned as the
+    hires complete.
 
 ### 3.4 Build
 
@@ -221,8 +229,8 @@ next time the same question comes up.
   tasks that realize each version, and the code links with any that are stale.
 - **A task:** the versions it realizes, each a link to that text.
 - **Needs you:** a confirmation before a version is issued, a technical decision the
-  lead cannot take from the standards, and a hire to approve. Nothing else asks for the
-  person.
+  lead cannot take from the standards, and a hire to approve when the project's lead
+  is a person or an agent without May hire. Nothing else asks for the person.
 
 ## 6. The contract
 
@@ -262,7 +270,7 @@ These calls are general and belong to the documentation tree
 | DSS-7 | A task shows the versions it realizes; a version shows its tasks and is converged only when all are finished. |
 | DSS-8 | Issuing a new version of a document that has code links lists those links, with stale ones marked, to the lead planning the change. |
 | DSS-9 | An engineer's question to the technical lead is answered in the lead's existing session, and an answer that changes the specification results in a new issued version. |
-| DSS-10 | No specialist is hired before both layers have an issued version; each hire has a person's approval. |
+| DSS-10 | No specialist is hired before both layers have an issued version; each hire has the approval of a lead who may approve. |
 | DSS-11 | The whole flow runs with no code in the product that names DSS, a DSS role or a DSS kind (PKG-1). |
 
 DSS-5, DSS-6, DSS-9 and DSS-10 are checked by running the package with real agents:

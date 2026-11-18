@@ -1,6 +1,6 @@
 # Process packages and project documentation
 
-Status: **selected** data contract, revision 1.0. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: process packages, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [process package design](../process-packages.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
+Status: **selected** data contract, revision 1.1. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: process packages, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [process package design](../process-packages.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
 
 The product carries no methodology. A process package is content: a manifest, role definitions, skills and document templates. Nothing here is a process execution engine, and no record in this document starts work, changes a status or blocks an action.
 
@@ -38,6 +38,7 @@ erDiagram
         TEXT owner_employee_id FK "optional"
         TEXT copied_from_package_id "optional"
         TEXT stages_json "required"
+        TEXT uses_json "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
         TEXT created_by_id FK "optional"
@@ -159,7 +160,7 @@ A process package describes one way of working: which roles it needs, what each 
 
 `origin` says where the content comes from:
 
-- `organization`: the package is a folder in organization Git, written through the product. `current` requires an active owner.
+- `organization`: the package is a folder in organization Git, created and edited through the product by any person of the organization. `current` requires an active owner. A package stays in its organization: there is no export, import or transfer between organizations (owner, 2026-11-18).
 - `built_in`: the package ships with the product. Its content is the running product's copy, its ID is fixed by the product, it has no file in organization Git and it cannot be edited. Its rows are projected from the product's copy with `system` attribution. To change one, copy it: the copy is an `organization` package with a new ID and `copied_from_package_id` set. That field is provenance only and is never followed.
 
 ### Durable package files
@@ -172,7 +173,7 @@ process-packages/<package-id>/
 └── templates/<kind-key>.md   # Optional starting body for a document kind
 ```
 
-The folder is named by the package's stable ID. Files inside it are named by their key, which is unique within the package: a package is one unit of identity, revision and transfer, and nothing outside a package refers to one of its parts by ID. A key is 1 to 64 lowercase ASCII letters, digits or hyphens. Files are regular Markdown or YAML blobs: no symlinks, submodules or traversal. A write to any file of the package advances the package's `revision`. A package belongs to the organization, like a role: HQ writes it and other offices replicate it. Every manifest, role, skill and stage field is listed here; a field that is not is refused.
+The folder is named by the package's stable ID. Files inside it are named by their key, which is unique within the package: a package is one unit of identity and revision, and nothing outside a package refers to one of its parts by ID. A key is 1 to 64 lowercase ASCII letters, digits or hyphens. Files are regular Markdown or YAML blobs: no symlinks, submodules or traversal. A write to any file of the package advances the package's `revision`. A package belongs to the organization, like a role: HQ writes it and other offices replicate it. Every manifest, role, skill and stage field is listed here; a field that is not is refused.
 
 ```yaml
 schema_version: 1
@@ -220,6 +221,7 @@ stages:
     title: Specify the product
     summary: Talk with the person until the behaviour is clear, then issue it.
     lead_role: product-lead
+uses: [milestones, releases]
 ```
 
 This is an organization's copy of the built-in `dss` package, shortened. A copy has its own key, because a key is unique in the organization.
@@ -227,6 +229,7 @@ This is an organization's copy of the built-in `dss` package, shortened. A copy 
 - **`roles[]`** are the roles the package needs. `seed: true` marks the few that start the project; the others are hired when the work calls for them. `hats` are labels for people, shown on the roster to say what a combined role covers; nothing reads them. Each role has a definition at `roles/<key>.md`, with the body headings of a [role record](../../specs/roles-ux.md).
 - **`kinds[]`** are document kinds the package adds to the built-in ones (`brief`, `decision`, `design`, `report`, `changelog`). A package cannot redefine a built-in kind. `versioned: true` means documents of that kind are [issued in versions](#issued-versions). A kind may have a template at `templates/<key>.md`.
 - **`folders[]`** are the sections a project's documentation starts with. `kinds` says what a folder is for; it guides and is not enforced.
+- **`uses[]`** names the optional records the package works with: `features`, `milestones`, `releases`. Tasks, documents, messages and hiring are always there. The list only decides what a project that follows the package shows and what its skills may refer to: a project whose package does not use features has no Features tab while it has no feature. It removes no record and refuses no call.
 - **`stages[]`** describe the order of work for people and agents. An entry has a `key`, a `title`, an optional `summary` and an optional `lead_role` naming a declared role. The product shows stages to people and includes them in an agent's instructions. No code acts on one.
 
 A skill is a Markdown file whose front matter says who it is for:
@@ -428,7 +431,7 @@ An agent reads and writes the documentation of **its own projects only**: a proj
 
 | Table | Source |
 | --- | --- |
-| `process_packages` | `package.yaml` scalars; `stages[]` as `stages_json`. For `origin: built_in`, the product's copy. |
+| `process_packages` | `package.yaml` scalars; `stages[]` as `stages_json`, `uses[]` as `uses_json`. For `origin: built_in`, the product's copy. |
 | `process_package_roles` | Manifest `roles[]` in order (`position`), with the body of `roles/<key>.md`. |
 | `process_package_skills` | Front matter and body of `skills/<key>.md`; `position` is the order by key. |
 | `process_package_skill_roles` | One row per entry of a skill's `roles[]`. No row means every role. |
@@ -465,6 +468,7 @@ CREATE TABLE process_packages (
   owner_employee_id TEXT,
   copied_from_package_id TEXT,
   stages_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(stages_json) AND json_type(stages_json) = 'array'),
+  uses_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(uses_json) AND json_type(uses_json) = 'array'),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -693,7 +697,7 @@ GROUP BY v.organization_id, v.document_id, v.version;
 
 `document_versions` has no foreign key to `documents`: an issued version is history and outlives the live row, resolved through `record_refs` like any historical reference. The other direction is enforced: a document's `version` must be one of its issued versions. Version rows are written once; the two triggers refuse an update, a delete and a replace.
 
-Rules checked by the accepting service, not by SQL: a project's package is `current` when chosen; a stage's `lead_role` is a declared role; a document's kind is built in or declared by a package; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
+Rules checked by the accepting service, not by SQL: a project's package is `current` when chosen; a stage's `lead_role` is a declared role; `uses[]` holds only `features`, `milestones` and `releases`; a document's kind is built in or declared by a package; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
 
 ## Acceptance criteria
 

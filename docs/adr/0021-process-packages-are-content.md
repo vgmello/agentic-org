@@ -3,9 +3,11 @@
 Status: **decided by the lead 2026-11-18** to place the owner's
 [REQ-06](../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) and
 [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md) in the
-selected architecture. Implementation pending. Six points are with the owner, five in
-REQ-07's alignment section and one in REQ-06's; none of them changes the decisions
-below.
+selected architecture. Implementation pending. The owner settled three points on
+2026-11-18 (who approves a hire, [ADR-0022](0022-a-lead-approves-a-hire.md); features
+belong to their own package; packages do not move between organizations). Three are
+still with the owner, listed in the two alignment sections; none of them changes the
+decisions below.
 
 ## Context
 
@@ -49,8 +51,9 @@ Three rules already in force constrain how:
 3. **Skills are a layer of the existing resolution,** between the accountable team's
    chain and the project, filtered by the agent's role. They are overridable guidance.
    Non-overridable documents of the organization and its teams keep their force.
-4. **Hiring, approval and starting agents are unchanged.** A package can tell a lead
-   when to ask for a hire. It cannot approve one, and it cannot start an agent.
+4. **A package gives no right to hire and starts no agent.** A package can tell a lead
+   when to ask for a hire. Who may approve one is decided by the lead chain and the
+   permission to hire ([ADR-0022](0022-a-lead-approves-a-hire.md)), never by a package.
 5. **A project's own documents live in one tree, `projects/<project-id>/docs/`, with
    one index, `index.yaml`.** The package declares the starting sections. The office
    writes the index in the same accepted change as every write to the tree, from what
@@ -63,7 +66,10 @@ Three rules already in force constrain how:
 7. **The desired state of a versioned document is its latest issued version,** written
    once. Whether the code matches it is derived from the tasks that realize it.
 8. **DSS is the first built-in package** and proves the rule: it is delivered as
-   content.
+   content. Features, milestones and releases are records a package may use or not;
+   software delivery by features is a second built-in package.
+9. **A package stays in its organization.** There are built-in packages and packages
+   an organization's people create and edit. Nothing exports or imports one.
 
 ## Acceptance criteria
 

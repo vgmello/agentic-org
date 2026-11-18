@@ -2,7 +2,7 @@
 
 These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. 
 
-There are **13 categories, 177 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
+There are **13 categories, 178 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 ## Categorization rules
 
@@ -26,12 +26,12 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks and handoffs | 14 | 2 | 6 | 4 | 0 | 2 | 0 |
 | [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 10 | 0 | 1 | 0 |
 | [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 14 | 1 | 2 | 7 | 0 | 4 | 0 |
-| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content, process packages and deferred learning engines | 16 | 0 | 3 | 8 | 0 | 5 | 0 |
+| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content, process packages and deferred learning engines | 17 | 0 | 3 | 8 | 0 | 6 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 14 | 1 | 4 | 6 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **177** | **9** | **62** | **63** | **1** | **42** | **0** |
+| **Total** | | **178** | **9** | **62** | **63** | **1** | **43** | **0** |
 
 ## AREA-01
 
@@ -133,7 +133,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Roles, processes and retrospectives** · [Feature checklist](FEATURES.md#roles-processes-and-retrospectives)
 
-**Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction, process packages (roles, skills, a project's process, seed roster, role-named hire requests, the built-in desired state package), and the separately deferred enforcement/autonomy/retrospective engines.
+**Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction, process packages (roles, skills, a project's process, seed roster, role-named hire requests, the built-in desired state and feature delivery packages), and the separately deferred enforcement/autonomy/retrospective engines.
 
 **Boundary:** Owns guidance content and proposed learning workflows. Execution configuration belongs to AREA-08; general document tooling, including the project documentation tree, issued versions and code links, belongs to AREA-05; the hire flow itself belongs to AREA-03. Resolution is selected; a process package is content, and mechanical enforcement, approvals and execution engines remain Deferred.
 
