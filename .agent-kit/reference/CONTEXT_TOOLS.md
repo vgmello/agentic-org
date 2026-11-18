@@ -15,7 +15,7 @@ select infrastructure. RTK is excluded; commands execute directly.
 | Task continuity | Task-state records and the kit's metadata checkpoint hooks; the author session stays alive through review |
 | Command output | `kit_hooks.py`: direct execution, original exit status, bounded diagnostics and full private logs |
 | Planning and implementation | The installed profile assigns all roles/efforts: Claude families in hybrid, Sol in Codex-only; helpers only extract facts |
-| Review and acceptance | Sol 6.1 High fresh review/same-session fix, original-author validation, then a fresh final review: Sol in Codex-only, Opus in hybrid |
+| Review and acceptance | Sol High fresh review/same-session fix (the routing policy's `review.model`: gpt-6.1-sol or gpt-6.2-sol), original-author validation, then a fresh final review: Sol in Codex-only, Opus in hybrid |
 | Cache reuse | Native provider caching and recorded usage; no keepalive calls or caching proxy |
 
 Hindsight runs locally with embedded pg0 and local CPU embedding/reranking, without
