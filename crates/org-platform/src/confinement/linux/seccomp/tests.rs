@@ -157,6 +157,7 @@ fn every_listed_number_is_allowed_and_no_other() {
             arch.sendto,
             arch.mmap,
             arch.mprotect,
+            arch.mremap,
             arch.tgkill,
         ];
         for number in by_argument {
@@ -176,8 +177,9 @@ fn every_listed_number_is_allowed_and_no_other() {
                 RET_ALLOW
             } else if number == arch.clone3 {
                 ERRNO_ENOSYS
-            } else if number == arch.mmap || number == arch.mprotect || number == arch.sendto {
-                // No protection asked for: not executable. No destination.
+            } else if [arch.mmap, arch.mprotect, arch.sendto, arch.mremap].contains(&number) {
+                // No protection asked for: not executable. No destination. No
+                // flag: resized in place.
                 RET_ALLOW
             } else {
                 // Every other call, and with these arguments `clone`, `prctl`,
@@ -191,11 +193,12 @@ fn every_listed_number_is_allowed_and_no_other() {
 }
 
 #[test]
-fn the_allowed_names_are_the_designs_list_and_three_more() {
+fn the_allowed_names_are_the_designs_list_and_four_more() {
     // Linux host design, section 3.3, step 5, in its order, with `epoll_*`,
     // `rt_sig*` and "clocks" read as the calls the runtime makes. The design's
     // `mmap`, `mprotect`, `fcntl`, `sendto`, `clone`, `prctl`, `ioctl` and signals
-    // to itself are not here: their arguments decide. The design's `sendmsg` is not
+    // to itself are not here: their arguments decide, as they do for `mremap`,
+    // which the design does not name. The design's `sendmsg` is not
     // allowed at all: its destination is where a filter cannot read it.
     let design = [
         "munmap",
@@ -231,7 +234,7 @@ fn the_allowed_names_are_the_designs_list_and_three_more() {
         "exit",
         "exit_group",
     ];
-    let beyond = ["getpeername", "getpid", "restart_syscall"];
+    let beyond = ["getpeername", "getpid", "restart_syscall", "sched_yield"];
     let names =
         |calls: &[Call]| -> BTreeSet<&str> { calls.iter().map(|(name, _)| *name).collect() };
     let expected: BTreeSet<&str> = design.into_iter().chain(beyond).collect();
@@ -255,7 +258,6 @@ const KILLED_X86_64: &[Call] = &[
     ("stat", 4),
     ("fstat", 5),
     ("pipe", 22),
-    ("mremap", 25),
     ("dup", 32),
     ("dup2", 33),
     ("sendfile", 40),
@@ -361,7 +363,6 @@ const KILLED_AARCH64: &[Call] = &[
     ("accept", 202),
     ("connect", 203),
     ("sendmsg", 211),
-    ("mremap", 216),
     ("add_key", 217),
     ("keyctl", 219),
     ("execve", 221),
@@ -688,6 +689,33 @@ fn no_memory_is_mapped_or_made_executable() {
 }
 
 #[test]
+fn memory_is_resized_or_moved_by_the_kernel_never_placed() {
+    assert_eq!(libc::MREMAP_MAYMOVE, 1);
+    for (name, arch) in tables() {
+        let flags = |flags: u64| {
+            decide(
+                arch,
+                arch.mremap,
+                [0x7000_0000, 135_168, 266_240, flags, 0, 0],
+            )
+        };
+        assert_eq!(flags(0), RET_ALLOW, "{name}");
+        assert_eq!(flags(libc::MREMAP_MAYMOVE as u64), RET_ALLOW, "{name}");
+        for other in [
+            libc::MREMAP_FIXED as u64,
+            (libc::MREMAP_MAYMOVE | libc::MREMAP_FIXED) as u64,
+            (libc::MREMAP_MAYMOVE | libc::MREMAP_DONTUNMAP) as u64,
+            8,
+            1 << 32,
+            1 | 1 << 32,
+            u64::MAX,
+        ] {
+            assert_eq!(flags(other), RET_KILL_PROCESS, "{name} {other:#x}");
+        }
+    }
+}
+
+#[test]
 fn a_signal_goes_only_to_the_processs_own_threads() {
     for (name, arch) in tables() {
         let target = |group: u64| {
@@ -760,7 +788,6 @@ const _: () = {
         ("stat", libc::SYS_stat),
         ("fstat", libc::SYS_fstat),
         ("pipe", libc::SYS_pipe),
-        ("mremap", libc::SYS_mremap),
         ("dup", libc::SYS_dup),
         ("dup2", libc::SYS_dup2),
         ("sendfile", libc::SYS_sendfile),
@@ -870,7 +897,6 @@ const _: () = {
         ("accept", libc::SYS_accept),
         ("connect", libc::SYS_connect),
         ("sendmsg", libc::SYS_sendmsg),
-        ("mremap", libc::SYS_mremap),
         ("add_key", libc::SYS_add_key),
         ("keyctl", libc::SYS_keyctl),
         ("execve", libc::SYS_execve),

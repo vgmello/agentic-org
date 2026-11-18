@@ -9,7 +9,7 @@ use std::io;
 use std::mem;
 
 use super::syscalls::{
-    Arch, FCNTL_COMMANDS, IOCTL_REQUESTS, PRCTL_OPTIONS, PROT_EXEC, SENDTO_FLAGS,
+    Arch, FCNTL_COMMANDS, IOCTL_REQUESTS, MREMAP_FLAGS, PRCTL_OPTIONS, PROT_EXEC, SENDTO_FLAGS,
     THREAD_CLONE_FLAGS,
 };
 
@@ -263,6 +263,20 @@ pub(super) fn program(arch: &Arch, pid: u32) -> Vec<Instruction> {
             ],
         );
     }
+    // mremap(old address, old size, new size, flags, ...): resize a block in place
+    // or let the kernel move it. The kernel reads the flags as a 64-bit integer.
+    let mut mremap = vec![
+        Step::Load(high(3)),
+        Step::Test {
+            code: JUMP_EQUAL,
+            k: 0,
+            yes: To::Next,
+            no: To::Kill,
+        },
+        Step::Load(low(3)),
+    ];
+    mremap.extend(one_of(MREMAP_FLAGS));
+    decided_by_arguments(&mut program, arch.mremap, &mremap);
     // tgkill(tgid, tid, signal): a signal to one of this process's own threads. The
     // kernel reads the thread group as a 32-bit integer.
     decided_by_arguments(

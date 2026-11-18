@@ -10,8 +10,8 @@
 //!
 //! The list is the design's, read narrowly: of `epoll_*` only the calls the runtime
 //! makes, of `rt_sig*` only the three that act on the process itself, and of the
-//! clocks only reading one. Three calls are here that the design's list does not
-//! name; each says why at its entry. Five of the design's calls are decided by an
+//! clocks only reading one. Four calls are here that the design's list does not
+//! name, and `mremap` with two flags; each says why at its entry. Five of the design's calls are decided by an
 //! argument although the design does not ask for it: `clone` by its exact flags,
 //! `mmap` and `mprotect` by their protection, `fcntl` by its command and `sendto` by
 //! its destination and flags. One of the design's calls is not here: `sendmsg`.
@@ -61,6 +61,8 @@ pub(super) struct Arch {
     pub(super) mmap: u32,
     /// Allowed only without `PROT_EXEC`.
     pub(super) mprotect: u32,
+    /// Allowed only with the flags in [`MREMAP_FLAGS`].
+    pub(super) mremap: u32,
     /// Allowed only towards this process's own threads ("signals to itself").
     pub(super) tgkill: u32,
 }
@@ -97,6 +99,15 @@ pub(super) const THREAD_CLONE_FLAGS: u64 = 0x003d_0f00;
 /// `PROT_EXEC`: no memory becomes executable after confinement. The runtime never
 /// asks for it: thread stacks and the allocator map memory readable and writable.
 pub(super) const PROT_EXEC: u32 = 4;
+
+/// No flag, or `MREMAP_MAYMOVE` (`include/uapi/linux/mman.h`): how glibc's `realloc`
+/// resizes a block it got from `mmap` (`malloc/malloc.c`, `mremap_chunk`), which a
+/// vector or a string that grows by appending past about 128 KiB reaches. Not in
+/// the design's list. The call resizes or moves memory the process already has, with
+/// the protection it has: it cannot make memory executable and maps no descriptor.
+/// `MREMAP_FIXED` and `MREMAP_DONTUNMAP`, which place a mapping at a chosen address
+/// or keep the old one, kill.
+pub(super) const MREMAP_FLAGS: &[u32] = &[0, 1];
 
 /// `AUDIT_ARCH_X86_64`: `EM_X86_64 | __AUDIT_ARCH_64BIT | __AUDIT_ARCH_LE`.
 const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
@@ -139,6 +150,10 @@ pub(super) const X86_64: Arch = Arch {
         ("madvise", 28),
         // Threads and their synchronization; `clone` is decided by its flags.
         ("futex", 202),
+        // Not in the design's list. The standard library's channels yield the time
+        // slice while they wait for the other side under contention, and the web
+        // process sends every request through one.
+        ("sched_yield", 24),
         ("sched_getaffinity", 204),
         ("set_robust_list", 273),
         ("rseq", 334),
@@ -170,6 +185,7 @@ pub(super) const X86_64: Arch = Arch {
     sendto: 44,
     mmap: 9,
     mprotect: 10,
+    mremap: 25,
     tgkill: 234,
 };
 
@@ -200,6 +216,7 @@ pub(super) const AARCH64: Arch = Arch {
         ("brk", 214),
         ("madvise", 233),
         ("futex", 98),
+        ("sched_yield", 124),
         ("sched_getaffinity", 123),
         ("set_robust_list", 99),
         ("rseq", 293),
@@ -223,6 +240,7 @@ pub(super) const AARCH64: Arch = Arch {
     sendto: 206,
     mmap: 222,
     mprotect: 226,
+    mremap: 216,
     tgkill: 131,
 };
 
@@ -288,6 +306,7 @@ const _: () = {
         ("brk", libc::SYS_brk),
         ("madvise", libc::SYS_madvise),
         ("futex", libc::SYS_futex),
+        ("sched_yield", libc::SYS_sched_yield),
         ("sched_getaffinity", libc::SYS_sched_getaffinity),
         ("set_robust_list", libc::SYS_set_robust_list),
         ("rseq", libc::SYS_rseq),
@@ -317,6 +336,7 @@ const _: () = {
     assert!(TABLE.sendto as libc::c_long == libc::SYS_sendto);
     assert!(TABLE.mmap as libc::c_long == libc::SYS_mmap);
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
+    assert!(TABLE.mremap as libc::c_long == libc::SYS_mremap);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);
 };
 #[cfg(target_arch = "aarch64")]
@@ -344,6 +364,7 @@ const _: () = {
         ("brk", libc::SYS_brk),
         ("madvise", libc::SYS_madvise),
         ("futex", libc::SYS_futex),
+        ("sched_yield", libc::SYS_sched_yield),
         ("sched_getaffinity", libc::SYS_sched_getaffinity),
         ("set_robust_list", libc::SYS_set_robust_list),
         ("rseq", libc::SYS_rseq),
@@ -373,5 +394,6 @@ const _: () = {
     assert!(TABLE.sendto as libc::c_long == libc::SYS_sendto);
     assert!(TABLE.mmap as libc::c_long == libc::SYS_mmap);
     assert!(TABLE.mprotect as libc::c_long == libc::SYS_mprotect);
+    assert!(TABLE.mremap as libc::c_long == libc::SYS_mremap);
     assert!(TABLE.tgkill as libc::c_long == libc::SYS_tgkill);
 };

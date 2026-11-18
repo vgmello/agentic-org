@@ -524,6 +524,58 @@ fn a_relative_rendezvous_is_refused_before_anything_changes() {
     );
 }
 
+/// Grows a vector and a string to megabytes by appending, never asking for the
+/// room first.
+fn grow() {
+    let mut bytes = Vec::new();
+    for value in 0..(3u32 << 20) {
+        bytes.push(value as u8);
+    }
+    let mut text = String::new();
+    while text.len() < 2 << 20 {
+        text.push_str("grown by appending ");
+    }
+    assert_eq!(bytes.len(), 3 << 20);
+    assert_eq!(bytes[(1 << 20) + 5], 5);
+    assert!(text.ends_with("appending "));
+}
+
+/// Four senders and four receivers on one bounded channel and one that hands each
+/// value over directly, as a pool of workers behind a queue does.
+fn contend() {
+    for capacity in [0, 1] {
+        let (send, receive) = std::sync::mpsc::sync_channel::<u32>(capacity);
+        let receive = std::sync::Arc::new(std::sync::Mutex::new(receive));
+        let receivers: Vec<_> = (0..4)
+            .map(|_| {
+                let receive = std::sync::Arc::clone(&receive);
+                std::thread::spawn(move || {
+                    let mut sum = 0u64;
+                    loop {
+                        let next = receive.lock().unwrap().recv();
+                        match next {
+                            Ok(value) => sum += u64::from(value),
+                            Err(_) => return sum,
+                        }
+                    }
+                })
+            })
+            .collect();
+        let senders: Vec<_> = (0..4)
+            .map(|_| {
+                let send = send.clone();
+                std::thread::spawn(move || (0..20_000).for_each(|value| send.send(value).unwrap()))
+            })
+            .collect();
+        drop(send);
+        senders
+            .into_iter()
+            .for_each(|sender| sender.join().unwrap());
+        let sum: u64 = receivers.into_iter().map(|r| r.join().unwrap()).sum();
+        assert_eq!(sum, 4 * (0..20_000u64).sum::<u64>());
+    }
+}
+
 /// The child: one role, chosen by the environment. Returns its exit status.
 fn run(role: &str, report: &Report) -> i32 {
     let (rendezvous, file) = (variable(RENDEZVOUS), variable(FILE));
@@ -558,6 +610,15 @@ fn run(role: &str, report: &Report) -> i32 {
             let mut random = [0u8; 64];
             confinement::fill_entropy(&mut random).unwrap();
             assert_ne!(random, [0u8; 64]);
+            // Buffers that grow a push at a time, on this thread and on another:
+            // past about 128 KiB the C library moves the block with mremap.
+            grow();
+            std::thread::spawn(grow).join().unwrap();
+            report.line("grew");
+            // Channels under contention, as each of the web process's requests
+            // uses them: a waiting side yields its time slice (sched_yield).
+            contend();
+            report.line("contended");
             // A caught panic: the message goes to standard error, and unwinding
             // needs no forbidden call.
             assert!(panic::catch_unwind(|| panic!("a confined process caught this")).is_err());
@@ -705,11 +766,16 @@ fn a_confined_process_uses_its_stream_threads_memory_clock_and_randomness() {
     let mut stream = fixture.accept(&mut child).unwrap();
     stream.write_all(b"ping").unwrap();
     let mut pong = [0u8; 4];
-    stream.read_exact(&mut pong).unwrap();
-    assert_eq!(&pong, b"pong");
+    let answered = stream.read_exact(&mut pong);
     let (ended, report) = child.finish();
-    assert_eq!(report, format!("{}done\n", confined_line()));
+    // The report first: it says how far a child that died had come.
+    assert_eq!(
+        report,
+        format!("{}grew\ncontended\ndone\n", confined_line())
+    );
     assert_eq!(ended, Ended::Exited(0));
+    answered.unwrap();
+    assert_eq!(&pong, b"pong");
 }
 
 #[test]
