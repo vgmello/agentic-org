@@ -512,6 +512,7 @@ offices/
     <li><strong>Nothing loaded up front.</strong> The agent gets a short catalogue at launch and asks for a command's schema with <code>--schema</code> when it needs it. <code>--dry-run</code> asks the office what a change would do and changes nothing.</li>
     <li><strong>Never blocks.</strong> A command that must wait for a person answers <code>suspended</code> or <code>gate_required</code>; the office stops the agent and starts it again with the answer.</li>
     <li><strong>The office decides.</strong> Identity comes from the binding of the run, never from a variable or a flag. Every check is made by the office, and no product command is offered as an MCP tool.</li>
+    <li><strong>The common commands are fast.</strong> Reading the inbox, sending a message, listing and creating tasks answer in single-digit milliseconds one at a time, and in about 1 ms inside a batch. Commands that wait for the drive, a person or the network have no speed target.</li>
     <li><strong>One table of commands,</strong> shared with <code>agentic-org</code> for people. A command arrives with the increment that builds the thing it acts on.</li>
   </ul>
   <p>The design is <code>docs/design/agent-os-command-line.md</code>, from the owner's requirement REQ-08. Its first increment is K1 in the plan.</p>

@@ -30,7 +30,7 @@ single office on macOS. Its steps, in order:
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 and K1 alongside |
 | 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1a to B1c, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
-| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
+| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asks another agent and gets it running | B6, B7, C6, C8 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
 
 **Milestone two: Linux, in parallel (Track X).** The same server runs on Linux, including inside a
@@ -678,7 +678,8 @@ on the offers of design section 10.
   `wait`, keeping today's names in the new grammar; `channel list`, `join` and `leave`;
   `status set` and `clear`; `session attach`, which is the long-running mode. The file
   queue goes, and every `msg` command goes to the office
-  ([command line design](design/agent-os-command-line.md), sections 2.9, 3.3 and 3.7; CLI-13).
+  ([command line design](design/agent-os-command-line.md), sections 2.9, 2.11, 3.3 and 3.7; CLI-13, and CLI-15 for the
+  common message commands).
 - **Read:** [messaging and chat](design/organization-data/15-messaging-and-chat.md),
   [ADR-0003](adr/0003-agent-messaging-office-first.md),
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) (ACK-1 to ACK-9),
@@ -727,6 +728,20 @@ on the offers of design section 10.
   finished with L4, and ASK-8 (a budget hold keeps the agent suspended) with L3.
 - **Needs:** B7, C3.
 
+### C8 · An agent's ask starts a turn for an idle agent
+
+- **Outcome:** an agent asks another agent a question, or hands work to it, and the
+  second agent runs and answers without a person starting it.
+- **Build:** the office starts one ordinary turn for an idle recipient when another
+  agent sends it an ask or a hand-off; the same admission as a person's Run; the hourly
+  limit (a system setting, 12 unless changed); the record of what started the turn. No
+  new command: the answer's `meta` says whether a turn was started.
+- **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-6),
+  [how agents run](specs/agent-run-modes-ux.md) (RUN-3),
+  [command line design](design/agent-os-command-line.md) section 3.3. Row FC-169.
+- **Done when:** WAKE-1 to WAKE-6 pass.
+- **Needs:** B7, C3.
+
 ---
 
 ## Step 5 · Tasks
@@ -771,7 +786,8 @@ on the offers of design section 10.
   context and required when there is none; the board, list and detail screens against
   the real API, updated by the change stream.
 - **Commands:** `task create`, `list`, `inspect`, `update`, `transition`, `assign`,
-  `comment` and `watch`, and `checklist` ([command line design](design/agent-os-command-line.md), section 3.4).
+  `comment` and `watch`, and `checklist` ([command line design](design/agent-os-command-line.md), sections 2.11 and 3.4;
+  CLI-15 for the common task commands).
 - **Read:** [work items UX](specs/work-items-ux.md) (TSK, BUG, CHK, WORK criteria),
   [identity and numbering, default project](design/organization-data/06-identity-and-numbering.md#stable-ids-readable-references-and-scopes).
   Rows FC-038, FC-039, FC-043.

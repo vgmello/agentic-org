@@ -25,7 +25,9 @@ follows [COST](costs-and-insights-ux.md) and document 17.
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
 
 v1 runs agents by explicit turns, and suspends and resumes an agent waiting on a
-required answer ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)).
+required answer ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)). One
+thing besides a person starts a turn: an ask or a hand-off from another agent, when the
+recipient is idle ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)).
 Automatic run modes (On call, Scheduled, Always on) and one-off agents are
 [not in v1](#5-not-in-v1) for ordinary agents. The built-in HR lead is never kept
 running: it runs only when called (a message to it, an `@hr` mention or a hire
@@ -42,8 +44,10 @@ request starts one turn), and it stops when the turn ends
    separate from office placement.
 2. **A turn is explicit.** Run submits an authorized logical turn using the current
    configuration and placement revisions and an approved task or workspace key.
-   Messages and assignments do not start model work by themselves; the answer to a
-   required ask does resume a suspended agent (ADR-0020).
+   Messages and assignments do not start model work by themselves, with two stated
+   exceptions: the answer to a required ask resumes a suspended agent (ADR-0020), and
+   an ask or a hand-off from another agent starts one turn for an idle agent, under an
+   hourly limit (ADR-0023).
 3. **One open turn and one main process per agent.** A compatible verified-idle
    process can be reused. The UI distinguishes the logical turn, its routed
    attempts and the process lifetime.
@@ -114,7 +118,7 @@ model turn.
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · Not in v1: a message, assignment or mention waking an agent. Messages and assignments start no model work; an explicit Run or the answer to a required ask does.
+- RUN-3 · A message from a person, an assignment or a mention starts no model work. A turn starts from an explicit Run, from the answer to a required ask, or from an ask or a hand-off sent by another agent to an idle agent (ADR-0023, WAKE-1 to WAKE-6).
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.
@@ -130,8 +134,8 @@ model turn.
 
 ## 5. Not in v1
 
-- **Automatic run modes.** On call (asleep until a message, task or Run now wakes
-  it), Scheduled (wakes on a plain-words schedule, never cron) and Always on (kept
+- **Automatic run modes.** On call (asleep until any message, task or Run now wakes
+  it; v1 has only the narrower rule of ADR-0023), Scheduled (wakes on a plain-words schedule, never cron) and Always on (kept
   running and restarted). With them: Asleep presence, wake history with triggers,
   idle sleep after 5 minutes, a maximum busy time (30 minutes in the agent's home,
   2 hours on a task), wake-up guidance, missed-run catch-up, and an "Upcoming" list.

@@ -83,6 +83,7 @@ must stay fast under load. People take part too, through the product's own chat.
 | Files, tables, hashes, who writes which file | [Messaging contract](../design/organization-data/15-messaging-and-chat.md) |
 | How fast a send answers; the long-running `agent-os` mode | [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) |
 | How long an asker waits; required asks; defaults | [ADR-0020](0020-required-asks-suspend-and-resume.md) |
+| Which message starts a turn for its recipient | [ADR-0023](0023-an-agents-ask-starts-a-turn.md) |
 | Channels, threads, cards and what people see | [Chat UX](../specs/chat-ux.md), [REQ-04](../specs/req-04-channel-messaging-and-question-components.md) |
 | Wire method names and shapes | `crates/org-proto`; they change in place until v1 ships |
 | The `agent-os` commands | [Agent command line](../design/agent-os-command-line.md); what the code does today is in [`apps/agent-os/README.md`](../../apps/agent-os/README.md) |

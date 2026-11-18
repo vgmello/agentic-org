@@ -32,6 +32,9 @@ classes defined here.
    (owner decision): the target above applies to
    the sender's office whether the recipient is local or in another office, because
    relaying is never part of the acknowledgement (decision 9).
+   The target is for the common commands, the ones an agent runs all day; not every
+   command has to be fast (owner, 2026-11-18). They are listed in the
+   [agent command line](../design/agent-os-command-line.md), section 2.11.
 2. **Two acknowledgement classes.**
    - **Committed.** The office answers once the write is committed in its durable
      local store, without forcing the drive. The write survives a crash of the office process. It

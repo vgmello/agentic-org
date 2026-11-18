@@ -287,6 +287,28 @@ variable that names the caller.
   runs where its office runs, with a shell. If such a runner is ever selected, the
   wrapper is generated from the command table and adds nothing to it.
 
+### 2.11 Which commands are fast
+
+Owner, 2026-11-18: the common commands are fast; not every command has to be.
+
+- **The common commands** are the ones an agent runs all day: every read from its own
+  office, and every write in the committed class of
+  [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 3.
+  In this catalogue: `msg inbox`, `msg read`, `msg send`, `msg reply`, `msg done`,
+  `msg defer`, `status set`, `session inspect`, `task list`, `task inspect`,
+  `task create`, `task comment`, `task watch` and `checklist check`.
+- **Their target.** One command run by itself answers in single-digit milliseconds; it
+  is bounded by the start of its process. Inside `session attach` the target is a
+  median of 1 ms and a 95th percentile of 2 ms on the reference Mac (ADR-0014
+  decision 1).
+- **Everything else has no latency target:** a write that waits for the drive (a status
+  change, an assignment), a command that waits for a person (`msg ask`), one that
+  reaches the network (`repo push`), and rare ones (`hr hire`, `repo attach`).
+- **What keeps the common path short.** Before its call, `agent-os` does nothing the
+  call does not need: it loads no schema and no catalogue, reads no file except one
+  named with `--input-file`, and makes no extra round trip to the office. A change that
+  slows a common command is a regression.
+
 ## 3. The commands, and the contract behind each
 
 "With" names the increment that delivers the command. A person's command is one the
@@ -329,8 +351,8 @@ command is used. The names are the ones the office's calls already have (`msg.se
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `handoff`, or `announcement` with its reason | [Chat UX](../specs/chat-ux.md) section 5 | B6 |
-| `msg ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020; [employees](organization-data/04-agent-structure.md) | B7 |
+| `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `handoff`, or `announcement` with its reason. A hand-off to an idle agent starts a turn for it (C8) | [Chat UX](../specs/chat-ux.md) section 5; [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) | B6 |
+| `msg ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there. An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
 | `msg reply` | Replies in a thread (B6); answers an ask (B7) | Messaging; ADR-0020 | B6, B7 |
 | `msg accept` | Accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
 | `msg withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
@@ -430,6 +452,7 @@ the table.
 | 4 | B6 | `msg send`, `reply`, `accept`, `inbox`, `read`, `done`, `defer`, `wait`; `channel list`, `join`, `leave`; `status set`, `clear`; `session attach`. Every `msg` command goes to the office; the file queue and the relay are deleted |
 | 4 | B7 | `msg ask`, answering with `msg reply`, `msg withdraw`, and the `timed_out` and `withdrawn` outcomes |
 | 4 | C6 | The `suspended` outcome of a required ask |
+| 4 | C8 | No new command: an ask or a hand-off from an agent starts a turn for an idle agent, and `meta` says whether it did |
 | 5 | B5 | `task` and `checklist` |
 | 5 | C7 | `repo list`, `repo attach`, `worktree list`, `repo push` |
 
@@ -469,7 +492,7 @@ capability of `org-platform`, on both systems.
 | `grant check` | It is `--dry-run` (2.6) | Not a command |
 | `session suspend`, `session resume` | They are outcomes the office performs (3.1) | Not commands |
 | `policy check` | A written standard cannot be checked by a program. Rules the code enforces are checked by `--dry-run` | With machine-checked policies, if they are added |
-| `runner spawn` | Only the office starts a run ([non-negotiable 10](../architecture-non-negotiables.md)) | See the owner's question 2 in REQ-08 |
+| `runner spawn` | Only the office starts a run ([non-negotiable 10](../architecture-non-negotiables.md)). An agent gets a colleague running by asking it or handing work to it ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)) | Not a command |
 | `logs inspect` | The session view is for people in the browser (C4). No rule says which agent may read which session | Later |
 | `metrics query` | Usage and costs | L2 |
 | A gate resolved by policy alone | Approvals are a person's | Not in v1 |
@@ -508,11 +531,12 @@ capability of `org-platform`, on both systems.
 | CLI-12 | The MCP configuration written for a run is empty, and a start that reports any MCP server is refused |
 | CLI-13 | `session attach` answers each line with the envelope the one-shot command prints |
 | CLI-14 | A required ask returns `completed` with an answer that arrives within its wait, and `suspended` when the wait ends without one; an ask that is not required returns `timed_out` with its default; a hire request returns `gate_required` at once; none blocks past its stated wait |
+| CLI-15 | Each common command of 2.11 is measured by itself and inside `session attach`, on the reference Mac and on Linux, with the method recorded; a guard fails the build when one slows past its recorded bound |
 
 K1 makes CLI-1, 2, 3, 7, 8 and 11 pass against a test office. Each later increment
 makes them pass for its own rows, and the rest pass with the increment that builds
 what they test: CLI-4, 5 and 6 with B2, CLI-9, 10 and 12 with C3, CLI-13 with B6,
-CLI-14 with C2, B7 and C6.
+CLI-14 with C2, B7 and C6, and CLI-15 with B6 for messages and B5 for tasks.
 
 ## 9. What the code does today
 
