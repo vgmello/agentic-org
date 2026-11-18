@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use org_office_launch::is_storage_id;
 use org_proto::{OfficeSecretsKey, OFFICE_SECRETS_KEY_BYTES};
 
-use super::{KeyStore, KeyStoreError};
+use super::{KeyStoreError, OfficeSecretsKeys};
 use crate::secrets::zero;
 
 /// A key's file: 64 hex digits.
@@ -90,7 +90,7 @@ impl DevKeys {
     }
 }
 
-impl KeyStore for DevKeys {
+impl OfficeSecretsKeys for DevKeys {
     fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
         let path = self.path(office_id)?;
         match self.write_new(&path, key) {

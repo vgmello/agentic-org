@@ -674,7 +674,7 @@ mod tests {
     /// is only marked, and a key whose folder exists is always kept.
     #[test]
     fn the_startup_sweeps_orphan_keys_only_when_allowed() {
-        use crate::keys::KeyStore;
+        use crate::keys::OfficeSecretsKeys;
         use org_proto::OfficeSecretsKey;
         const ORPHAN: &str = "01ORPHANORPHANORPHANORPHAN";
         const NEW_ORPHAN: &str = "01NEWORPHANNEWORPHANNEWORP";
@@ -707,7 +707,7 @@ mod tests {
                     logs_dir: home.join("logs"),
                     log_max_bytes: 1024,
                     timings: Timings::default(),
-                    keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+                    keys: Arc::clone(&keys) as Arc<dyn OfficeSecretsKeys>,
                     server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                     sweep_orphans: sweep,
                 },

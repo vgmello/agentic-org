@@ -383,6 +383,14 @@ it restarts the worker; it never races a live worker over its agents.
   `supervisor` (spawn, the launch protocol, status, backoff, shutdown), `service` (the
   host socket), `keys` and `host_secrets` (credential providers), `spawn` (process
   admission).
+- `keys::OfficeSecretsKeys` is the host's own contract for the office secrets keys
+  (create add-only, load, delete, list; errors carry codes, never key bytes). Its
+  adapters: the macOS Data Protection keychain (`keys/keychain.rs`, service
+  `org.agentic.office-key`), owner-only files in a development folder for debug builds
+  (`keys/dev.rs`), an in-memory store with fault injection for tests (`keys/memory.rs`),
+  and, for every other operating system, an adapter that refuses each call with a
+  reported reason (`keys/unsupported.rs`). `keys/platform.rs` holds the only
+  `cfg(target_os)` choice; the supervisor and provisioning never branch on the platform.
 - The organization name rule is `org_proto::OrganizationName`: trimmed, Unicode
   lowercase as its key, refusing empty, too long and control characters
   (`invalid_name`).
@@ -398,7 +406,7 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
 | A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
-| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). Pending: the key store adapter contract (implementation plan A1.6). |
+| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5); an operating system without an adapter refuses. |
 | X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
 
 `organization.provision.v1` today carries a `home_team_name`, creates no person record

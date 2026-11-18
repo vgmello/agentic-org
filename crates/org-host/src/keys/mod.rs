@@ -1,14 +1,17 @@
-//! Key custody: where the host keeps every office's database key.
+//! Key custody: where the host keeps every office's secrets key.
 //!
 //! The host creates each office's key (`secrets::generate_office_secrets_key`), stores it here before the
 //! office's first `--create`, loads it before every `--office` and `--discard`, and sends it on
 //! the first line of the launch pipe (`org-office-launch`). Its servers never touch a key store.
 //! A key is in the host's memory only from its creation or load until that first line is written.
 //!
-//! [`KeyStore`] is the host's own abstraction: the supervisor depends on it, never on a
-//! particular store. The stores:
-//! - **Release builds:** the Data Protection keychain, in the host's access group
+//! [`OfficeSecretsKeys`] is the host's own contract: the supervisor and provisioning depend on it,
+//! never on a particular store or platform. The adapters:
+//! - **Release builds on macOS:** the Data Protection keychain, in the host's access group
 //!   (`keychain`), so other code gets `errSecItemNotFound`, never a prompt.
+//! - **Release builds on any other operating system:** `unsupported`, which refuses every call
+//!   with a reported reason ([`KeyStoreError::Unsupported`]). `platform` is the only place that
+//!   chooses between these two by `cfg(target_os)`.
 //! - **Debug builds:** plain files in a development folder (`dev`), so a debug host and the tests
 //!   never write a real Keychain item. A debug host without that folder refuses to start.
 //! - **Unit tests:** an in-memory store with fault injection (`memory`).
@@ -25,11 +28,12 @@
 
 #[cfg(debug_assertions)]
 mod dev;
-#[cfg(target_os = "macos")]
 mod keychain;
 #[cfg(test)]
 pub(crate) mod memory;
+mod platform;
 mod sweep;
+mod unsupported;
 
 pub(crate) use sweep::sweep_orphans;
 
@@ -42,10 +46,10 @@ use org_proto::OfficeSecretsKey;
 
 use crate::code_signing::{hardened_and_clean, Signing};
 
-/// Where the host keeps every office's database key (see the module docs). Office ids are plain
+/// Where the host keeps every office's secrets key (see the module docs). Office ids are plain
 /// ids ([`org_office_launch::is_plain_id`]); a store refuses any other
 /// ([`KeyStoreError::NotPlainId`]).
-pub(crate) trait KeyStore: Send + Sync {
+pub(crate) trait OfficeSecretsKeys: Send + Sync {
     /// Stores `key` as office `office_id`'s key. Add-only: an existing item is
     /// [`KeyStoreError::Exists`] and is left as it is. On any other error nothing is stored.
     fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError>;
@@ -64,49 +68,44 @@ pub(crate) trait KeyStore: Send + Sync {
 }
 
 /// Why a key store call failed. It never holds key bytes, and neither does its `Display`.
+/// Each adapter constructs only the variants it can meet; a build without that adapter
+/// leaves them unused, which is not dead code to remove.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum KeyStoreError {
     /// `create`: the store already has an item for that office (it was left as it is).
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Exists,
     /// `load`: the item isn't a key.
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Corrupt,
     /// The office id isn't a plain id.
-    #[cfg(any(target_os = "macos", debug_assertions, test))]
     NotPlainId,
     /// The Keychain failed with this `OSStatus`.
-    #[cfg(any(target_os = "macos", test))]
     Os(i32),
     /// The development store's file I/O failed.
     Io(io::Error),
+    /// This operating system has no office secrets key adapter (`unsupported`).
+    Unsupported,
 }
 
 impl KeyStoreError {
+    /// Whether the office's key is to be treated as missing: only an item that isn't a key.
+    /// Every other error, a refused platform included, is a store failure.
     pub(crate) fn means_key_missing(&self) -> bool {
-        #[cfg(any(target_os = "macos", debug_assertions, test))]
-        {
-            matches!(self, Self::Corrupt)
-        }
-        #[cfg(not(any(target_os = "macos", debug_assertions, test)))]
-        {
-            false
-        }
+        matches!(self, Self::Corrupt)
     }
 }
 
 impl fmt::Display for KeyStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
-            KeyStoreError::Corrupt => f.write_str("the stored item isn't a database key"),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
+            KeyStoreError::Corrupt => f.write_str("the stored item isn't an office secrets key"),
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
-            #[cfg(any(target_os = "macos", test))]
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
+            KeyStoreError::Unsupported => f.write_str(
+                "this operating system has no office secrets key store (only macOS is implemented)",
+            ),
         }
     }
 }
@@ -115,7 +114,6 @@ impl std::error::Error for KeyStoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             KeyStoreError::Io(e) => Some(e),
-            #[cfg(any(target_os = "macos", debug_assertions, test))]
             _ => None,
         }
     }
@@ -159,7 +157,7 @@ pub(crate) fn store_for(
     home: &Path,
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     #[cfg(debug_assertions)]
     {
         let _ = own_signing;
@@ -184,7 +182,7 @@ pub(crate) fn store_for(
 /// `offices/` it would look like an unfinished office (and be discarded with every key in it),
 /// and anywhere in the home it would put plain-text keys there.
 #[cfg(debug_assertions)]
-fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, StoreError> {
+fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     let inside = |dir: &Path| {
         let lexical = dir.starts_with(home);
         let canonical = match (dir.canonicalize(), home.canonicalize()) {
@@ -213,7 +211,7 @@ fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, Store
 fn release_store(
     group: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     release_store_scoped(group, None, own_signing)
 }
 
@@ -222,24 +220,13 @@ fn release_store_scoped(
     group: Option<&str>,
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     let group = match group {
         Some(group) if !group.trim().is_empty() => group,
         _ => return Err(StoreError::NoKeychainGroup),
     };
     self_trusted(group, own_signing().as_ref())?;
-    #[cfg(target_os = "macos")]
-    {
-        Ok(Arc::new(match instance_id {
-            Some(id) => keychain::Keychain::scoped(group, id),
-            None => keychain::Keychain::new(group),
-        }))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = instance_id;
-        Err(StoreError::NoKeychainGroup)
-    }
+    Ok(platform::release_keys(group, instance_id))
 }
 
 /// The decision, pure: a host whose own signing information is `own` may keep keys in the
@@ -327,6 +314,7 @@ mod tests {
             KeyStoreError::NotPlainId,
             KeyStoreError::Os(-25308),
             KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+            KeyStoreError::Unsupported,
         ] {
             assert!(!error.means_key_missing(), "{error:?}");
         }
@@ -340,6 +328,7 @@ mod tests {
             KeyStoreError::NotPlainId,
             KeyStoreError::Os(-25308),
             KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+            KeyStoreError::Unsupported,
         ]
         .map(|e| e.to_string());
         assert!(shown[3].contains("-25308"), "{}", shown[3]);

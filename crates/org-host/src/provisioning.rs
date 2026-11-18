@@ -3,7 +3,7 @@
 use crate::{
     host_secrets::{HostSecrets, Name, Value},
     hostdb::{accounts::Account, provisioning::Reservation, HostDb},
-    keys::KeyStore,
+    keys::OfficeSecretsKeys,
     offices::Offices,
     writer::Writers,
 };
@@ -27,7 +27,7 @@ use std::{
 pub(crate) struct Provisioning {
     db: Arc<HostDb>,
     custody: Arc<dyn HostSecrets>,
-    keys: Arc<dyn KeyStore>,
+    keys: Arc<dyn OfficeSecretsKeys>,
     writers: Arc<Writers>,
     instance: String,
     root: PathBuf,
@@ -123,7 +123,7 @@ impl Provisioning {
     pub(crate) fn new(
         db: Arc<HostDb>,
         custody: Arc<dyn HostSecrets>,
-        keys: Arc<dyn KeyStore>,
+        keys: Arc<dyn OfficeSecretsKeys>,
         writers: Arc<Writers>,
         instance: &str,
         root: &Path,

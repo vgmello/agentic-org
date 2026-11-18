@@ -5,7 +5,7 @@
 //! The host hands a server no app token: a launch handoff carries only the office's
 //! secrets key (and, for the HQ create, its recovery code) over the instance's rendezvous.
 //!
-//! Each office's secrets key lives in the host's key store ([`KeyStore`], the host's own
+//! Each office's secrets key lives in the host's key store ([`OfficeSecretsKeys`], the host's own
 //! abstraction: the supervisor never knows which store it is). A create stores the new key
 //! before its server starts; every start and discard loads it just before the spawn, and drops
 //! it once the first line is written. A start whose key is missing, or whose item isn't a key,
@@ -37,7 +37,7 @@ use org_proto::{OfficeStatus, OfficeStatusReason};
 
 use crate::host_log;
 use crate::ids::handle_of;
-use crate::keys::KeyStore;
+use crate::keys::OfficeSecretsKeys;
 use crate::logs::RotatingLog;
 use crate::server_check::ServerCheck;
 use crate::sync::lock;
@@ -57,7 +57,7 @@ pub(crate) struct SupervisorConfig {
     pub(crate) log_max_bytes: u64,
     pub(crate) timings: Timings,
     /// Where every office's secrets key is kept.
-    pub(crate) keys: Arc<dyn KeyStore>,
+    pub(crate) keys: Arc<dyn OfficeSecretsKeys>,
     /// How every server is checked before it gets its first line (`server_check`).
     pub(crate) server_check: Arc<ServerCheck>,
     /// Whether [`Supervisor::sweep_orphan_keys`] may delete keys (see `keys::sweep_orphans`
@@ -725,7 +725,7 @@ mod tests {
                 logs_dir: dir.join("logs"),
                 log_max_bytes: 1024,
                 timings,
-                keys: Arc::clone(keys) as Arc<dyn KeyStore>,
+                keys: Arc::clone(keys) as Arc<dyn OfficeSecretsKeys>,
                 server_check: Arc::new(check),
                 sweep_orphans: false,
             },
@@ -1225,7 +1225,7 @@ mod tests {
             logs_dir: dir.path().join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
-            keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+            keys: Arc::clone(&keys) as Arc<dyn OfficeSecretsKeys>,
             server_check: Arc::new(ServerCheck::Skip),
             sweep_orphans: false,
         });

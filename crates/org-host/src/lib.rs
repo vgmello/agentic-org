@@ -368,7 +368,7 @@ fn startup_keys(
     config: &Config,
     instance: &Option<instance::registry::Instance>,
     dev_key_dir: Option<&Path>,
-) -> Result<Arc<dyn keys::KeyStore>, HostError> {
+) -> Result<Arc<dyn keys::OfficeSecretsKeys>, HostError> {
     let keys = keys::store_for(
         dev_key_dir,
         instance
@@ -533,7 +533,7 @@ fn startup_protected_services(
     instance: &Option<instance::registry::Instance>,
     authentication: &Option<Arc<service::authentication::Authentication>>,
     supervisor: Supervisor,
-    keys: &Arc<dyn keys::KeyStore>,
+    keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
 ) -> Result<ProtectedServices, HostError> {
     let io = |context| move |source| HostError::Io { context, source };

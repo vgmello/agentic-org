@@ -48,7 +48,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use org_office_launch::is_storage_id;
 use serde::{Deserialize, Serialize};
 
-use super::KeyStore;
+use super::OfficeSecretsKeys;
 use crate::host_log;
 
 /// The orphan record's file name, in the office home.
@@ -111,7 +111,7 @@ pub(crate) fn decide(
 /// unmarks keys whose office came back, deletes keys orphaned for [`ORPHAN_GRACE`] or more, and
 /// saves the record. Returns the ids it deleted.
 pub(crate) fn sweep_orphans(
-    store: &dyn KeyStore,
+    store: &dyn OfficeSecretsKeys,
     home: &Path,
     find_orphans: impl FnOnce(&[String]) -> Result<Vec<String>, String>,
     now: SystemTime,
@@ -346,13 +346,13 @@ mod tests {
     }
 
     /// Sweeps as the host does, with the catalog finding the orphans in `home`.
-    fn sweep_orphans(store: &dyn KeyStore, home: &Path, now: SystemTime) -> Vec<String> {
+    fn sweep_orphans(store: &dyn OfficeSecretsKeys, home: &Path, now: SystemTime) -> Vec<String> {
         super::sweep_orphans(store, home, |ids| crate::catalog::orphans(home, ids), now)
     }
 
     /// Sweeps at t0 (which must only mark) and again 7 days later: what that second sweep
     /// deleted.
-    fn sweep_a_week_apart(store: &dyn KeyStore, home: &Path) -> Vec<String> {
+    fn sweep_a_week_apart(store: &dyn OfficeSecretsKeys, home: &Path) -> Vec<String> {
         assert!(
             sweep_orphans(store, home, t0()).is_empty(),
             "deleted on first sight"

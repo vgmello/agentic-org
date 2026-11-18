@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use org_office_launch::is_storage_id;
 use org_proto::OfficeSecretsKey;
 
-use super::{KeyStore, KeyStoreError};
+use super::{KeyStoreError, OfficeSecretsKeys};
 use crate::sync::lock;
 
 /// A store operation, for faults and the call record.
@@ -91,7 +91,7 @@ fn copy(key: &OfficeSecretsKey) -> OfficeSecretsKey {
     OfficeSecretsKey::from_bytes(*key.expose_bytes())
 }
 
-impl KeyStore for MemoryKeys {
+impl OfficeSecretsKeys for MemoryKeys {
     fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
         self.begin(Op::Create, office_id)?;
         let mut keys = lock(&self.keys);

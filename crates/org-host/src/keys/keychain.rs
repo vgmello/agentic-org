@@ -17,6 +17,8 @@
 //! Only a signed host with the entitlement can use this store, so it's checked on a signed
 //! build (see the host-keys runbook).
 
+// The macOS adapter: compiled for macOS only (`keys::platform` selects it).
+#![cfg(target_os = "macos")]
 // Debug builds never choose this store (`keys::store_for`); its tests still run there.
 #![cfg_attr(debug_assertions, allow(dead_code))]
 
@@ -36,7 +38,7 @@ use security_framework_sys::item::{
 };
 use security_framework_sys::keychain_item::SecItemAdd;
 
-use super::{KeyStore, KeyStoreError};
+use super::{KeyStoreError, OfficeSecretsKeys};
 use crate::secrets::zero;
 
 /// The service every office key is filed under (ADR-0002); the account is the office id. It is
@@ -148,7 +150,7 @@ fn item_attributes_for(office_id: &str, group: &str, service: &str) -> Vec<(CFSt
     attributes
 }
 
-impl KeyStore for Keychain {
+impl OfficeSecretsKeys for Keychain {
     fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
         if !is_storage_id(office_id) {
             return Err(KeyStoreError::NotPlainId);

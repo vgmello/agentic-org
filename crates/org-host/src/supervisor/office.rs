@@ -20,7 +20,7 @@ use org_proto::OfficeStatusReason;
 use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
 use super::state::{OfficeState, SharedState};
 use crate::host_log;
-use crate::keys::KeyStore;
+use crate::keys::OfficeSecretsKeys;
 use crate::logs::RotatingLog;
 use crate::timings::Timings;
 
@@ -40,7 +40,7 @@ const EXIT_LINES_WAIT: Duration = Duration::from_millis(200);
 /// Everything one office's supervision thread owns.
 pub(crate) struct OfficeRunner {
     pub(crate) office_id: String,
-    pub(crate) keys: Arc<dyn KeyStore>,
+    pub(crate) keys: Arc<dyn OfficeSecretsKeys>,
     pub(crate) spawner: Spawner,
     pub(crate) timings: Timings,
     pub(crate) state: Arc<SharedState>,
