@@ -196,14 +196,14 @@ slug TEXT NOT NULL CHECK (
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
-  process_package_id TEXT,
+  development_process_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
   UNIQUE (organization_id, slug),
   UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, process_package_id) REFERENCES process_packages(organization_id, id)
+  FOREIGN KEY (organization_id, development_process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
@@ -2251,8 +2251,8 @@ SELECT r.organization_id, r.id AS release_id,
   END AS is_done
 FROM releases r;
 
--- Document 18: process packages and project documentation
-CREATE TABLE process_packages (
+-- Document 18: development processes and project documentation
+CREATE TABLE development_processes (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
@@ -2268,7 +2268,6 @@ CREATE TABLE process_packages (
   owner_employee_id TEXT,
   copied_from_package_id TEXT,
   stages_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(stages_json) AND json_type(stages_json) = 'array'),
-  uses_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(uses_json) AND json_type(uses_json) = 'array'),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -2287,9 +2286,9 @@ CREATE TABLE process_packages (
   FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_roles (
+CREATE TABLE development_process_roles (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'),
@@ -2298,14 +2297,14 @@ CREATE TABLE process_package_roles (
   seed INTEGER NOT NULL DEFAULT 0 CHECK (seed IN (0, 1)),
   hats_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(hats_json) AND json_type(hats_json) = 'array'),
   body_markdown TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (organization_id, package_id, key),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, key),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_skills (
+CREATE TABLE development_process_skills (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'),
@@ -2313,26 +2312,26 @@ CREATE TABLE process_package_skills (
   title TEXT NOT NULL,
   description TEXT NOT NULL CHECK (length(description) > 0),
   body_markdown TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (organization_id, package_id, key),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, key),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_skill_roles (
+CREATE TABLE development_process_skill_roles (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   skill_key TEXT NOT NULL,
   role_key TEXT NOT NULL,
-  PRIMARY KEY (organization_id, package_id, skill_key, role_key),
-  FOREIGN KEY (organization_id, package_id, skill_key) REFERENCES process_package_skills(organization_id, package_id, key)
+  PRIMARY KEY (organization_id, process_id, skill_key, role_key),
+  FOREIGN KEY (organization_id, process_id, skill_key) REFERENCES development_process_skills(organization_id, process_id, key)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, package_id, role_key) REFERENCES process_package_roles(organization_id, package_id, key)
+  FOREIGN KEY (organization_id, process_id, role_key) REFERENCES development_process_roles(organization_id, process_id, key)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_kinds (
+CREATE TABLE development_process_kinds (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'
@@ -2340,14 +2339,14 @@ CREATE TABLE process_package_kinds (
   title TEXT NOT NULL,
   versioned INTEGER NOT NULL DEFAULT 0 CHECK (versioned IN (0, 1)),
   template_markdown TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (organization_id, package_id, key),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, key),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_folders (
+CREATE TABLE development_process_folders (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   path TEXT NOT NULL CHECK (
     length(path) BETWEEN 1 AND 256 AND path NOT GLOB '*[^a-z0-9/_-]*'
     AND substr(path, 1, 1) GLOB '[a-z0-9]' AND substr(path, -1, 1) <> '/'
@@ -2356,8 +2355,25 @@ CREATE TABLE process_package_folders (
   title TEXT NOT NULL,
   summary TEXT NOT NULL DEFAULT '',
   kinds_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(kinds_json) AND json_type(kinds_json) = 'array'),
-  PRIMARY KEY (organization_id, package_id, path),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, path),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE development_process_tabs (
+  organization_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND key NOT IN ('overview', 'work', 'docs', 'releases', 'team', 'activity', 'conversations')),
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 7),
+  title TEXT NOT NULL CHECK (length(title) > 0),
+  view TEXT NOT NULL CHECK (view IN ('documents', 'work', 'features')),
+  config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
+  PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 

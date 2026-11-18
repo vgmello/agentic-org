@@ -33,9 +33,12 @@ satellite completed an operation.
    model profile (an ordered pool) and one model. Connections use private
    office-local bindings and HQ-issued permits. A verified idle process is reused only
    with the same launch digest. An unknown cleanup keeps the slot.
-4. **Explicit work only.** A turn starts from an explicit instruction, the answer to a
-   required ask ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a
-   recovery the office performs. The office does not choose work, queue messages into
+4. **Work starts for a stated reason.** A turn starts from an explicit instruction,
+   an ask addressed to the agent, a task assigned to it by its lead chain or its
+   project team ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)),
+   the answer to a required ask
+   ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a recovery the
+   office performs. The office does not choose work, queue messages into
    a busy turn, remind goals, extract memory or spawn specialists.
 5. **Mechanism grants no authority.** Generated instructions are projections of the
    admitted identity, role and policy. An execution file, a note or a process document

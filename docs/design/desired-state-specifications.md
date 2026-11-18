@@ -1,17 +1,17 @@
-# Design: desired state specifications (the DSS package)
+# Design: desired state specifications (the DSS development process)
 
 How a person specifies software by talking to an agent, and how the specification
 stays the thing the code is held to. It implements the owner's
 [REQ-06](../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) as a
-[process package](process-packages.md): the built-in package `dss`. The general
+[development process](development-processes.md): the built-in development process `dss`. The general
 records it uses (the documentation tree, issued versions, code links and realizing
 tasks) are owned by
-[document 18](organization-data/18-process-packages-and-project-documentation.md) and
-are available to every package.
+[document 18](organization-data/18-development-processes-and-project-documentation.md) and
+are available to every development process.
 
 ## In one paragraph
 
-A project that follows the `dss` package starts with two agents: a product lead and a
+A project that follows the `dss` development process starts with two agents: a product lead and a
 technical lead. The person describes what they want in chat. The product lead writes
 it down as Product DSS documents, organized by product domain, and issues a version
 when the person agrees. The technical lead derives the Technical DSS from it: from the
@@ -24,8 +24,8 @@ converged when the tasks that realize it are finished.
 
 ## Decisions
 
-1. **DSS is a package, not a feature of the product.** Everything specific to it is in
-   the package's manifest, roles, skills and templates. The product parts it relies on
+1. **DSS is a development process, not a feature of the product.** Everything specific to it is in
+   the development process's manifest, roles, skills and templates. The product parts it relies on
    are general: versioned documents, code links, tasks that realize a version, asks,
    hiring.
 2. **The desired state is the latest issued version of a document.** A document is
@@ -47,9 +47,9 @@ converged when the tasks that realize it are finished.
 8. **Convergence is derived.** A version is converged when the tasks that realize it
    are finished. No one declares it.
 9. **The leads act because their skills tell them to.** The product starts nothing when
-   a version is issued ([process package design](process-packages.md), decision 2).
+   a version is issued ([development process design](development-processes.md), decision 2).
 
-## 1. The package
+## 1. The development process
 
 ```yaml
 key: dss
@@ -72,6 +72,9 @@ roles:
 kinds:
   - { key: product-dss, title: Product DSS, versioned: true }
   - { key: technical-dss, title: Technical DSS, versioned: true }
+tabs:
+  - { key: product, title: Product, view: documents, section: product, kinds: [product-dss] }
+  - { key: technical, title: Technical, view: documents, section: technical }
 folders:
   - { path: product, title: Product documentation, kinds: [product-dss] }
   - { path: technical, title: Technical documentation, kinds: [technical-dss] }
@@ -116,10 +119,10 @@ because of it, each naming the Product DSS version it follows.
 Both are ordinary tree documents with `versioned: true`. The product knows neither
 name.
 
-The package works with releases and milestones, as every process does, and does not
+The development process works with releases and milestones, as every process does, and does not
 use feature records: the Product DSS is the definition, and a
 task points at the versions it realizes. Software delivery by features is another
-package ([process package design](process-packages.md#3a-features-and-a-second-package)).
+development process ([development process design](development-processes.md#5-two-built-in-development-processes)).
 
 ## 3. The flow
 
@@ -139,7 +142,8 @@ package ([process package design](process-packages.md#3a-features-and-a-second-p
 
 ### 3.2 Derive
 
-5. The product lead hands over: it creates a task for the technical lead, "Derive the
+5. The product lead hands over, and the assignment starts the technical lead
+   ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)): it creates a task for the technical lead, "Derive the
    Technical DSS", naming the Product DSS versions just issued.
 6. The technical lead reads those versions and what changed since the versions the
    Technical DSS was last derived from (`agent-os doc diff`). For each technical
@@ -168,7 +172,7 @@ package ([process package design](process-packages.md#3a-features-and-a-second-p
    expected to touch.
 10. They decide which roles the tasks need. For each, the technical lead reads the role
     (`agent-os role show`) and asks HR for the hire with a reason
-    ([process package design](process-packages.md#5-hiring-when-the-package-says-so)).
+    ([development process design](development-processes.md#7-hiring-when-the-development-process-says-so)).
     A lead approves: a person, or the technical lead itself when it leads the
     project's team and a person has turned its May hire permission on
     ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). Tasks are assigned as the
@@ -213,7 +217,7 @@ next time the same question comes up.
   `process edit`, which the process design opens to agents of the project's own team
   ([process design](processes.md), decision 8).
 - An agent adds standards and changes the project's own. It cannot replace one
-  inherited from the organization, a team or the package, cannot mark a document not
+  inherited from the organization, a team or the development process, cannot mark a document not
   overridable and cannot write at team or organization scope. A standard that should bind more than one project is proposed to
   a person, who writes it at the level it belongs to.
 - A standard the organization or a team marked not overridable is a rule the Technical
@@ -223,7 +227,8 @@ next time the same question comes up.
 
 - **Chat** with the product lead and, when a technical decision is needed, the
   technical lead. Questions arrive as cards.
-- **The project's Docs tab:** the product and technical sections, each document with
+- **The project's Product and Technical tabs,** which the process declares, and the
+  Docs tab with the whole tree: the product and technical sections, each document with
   its latest version, "2 unissued changes" when it has them, and its convergence:
   "v3 · 4 of 5 tasks done".
 - **A document:** the issued text by default, the working text with the differences
@@ -237,7 +242,7 @@ next time the same question comes up.
 ## 6. The contract
 
 These calls are general and belong to the documentation tree
-([process package design](process-packages.md#7-the-contract)).
+([development process design](development-processes.md#9-the-contract)).
 
 | Call | Params | Result | Errors |
 | --- | --- | --- | --- |
@@ -263,7 +268,7 @@ These calls are general and belong to the documentation tree
 
 | ID | Passing evidence |
 | --- | --- |
-| DSS-1 | Choosing `dss` for a project shows two seed roles and adds the product and technical sections; nothing else is created. |
+| DSS-1 | Choosing `dss` for a project shows two seed roles, adds the product and technical sections and gives the project Product and Technical tabs; nothing else is created, and the project has no Features tab. |
 | DSS-2 | A Product DSS document is created from its template under a product domain section and appears in the index with its summary. |
 | DSS-3 | Edits to an issued document do not change what `doc show` returns by default; issuing does, and adds one version with its note and issuer. |
 | DSS-4 | A Technical DSS version records the Product DSS versions it was derived from, and a document's page shows them in both directions. |
@@ -276,28 +281,25 @@ These calls are general and belong to the documentation tree
 | DSS-11 | The whole flow runs with no code in the product that names DSS, a DSS role or a DSS kind (PKG-1). |
 | DSS-12 | The tasks that realize an issued version are all in a release of the project, with or without a milestone, and the version's page names the release; a realizing task in no release is marked. |
 
-DSS-5, DSS-6, DSS-9 and DSS-10 are checked by running the package with real agents:
+DSS-5, DSS-6, DSS-9 and DSS-10 are checked by running the development process with real agents:
 they test the skills' text as much as the product.
 
 ## 8. Open points
 
-- **Who starts the next agent.** Steps 5, 10 and 12 put work in front of another agent.
-  Today that agent acts when a person presses Run or, for an agent suspended on a
-  required ask, when its answer arrives. Whether an ask or an assignment starts an
-  agent is with the owner
-  ([REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md#how-this-fits-the-selected-architecture),
-  point 1).
+- **Unattended running.** Steps 5, 10 and 12 start the next agent
+  ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)). How well a
+  whole change runs with nobody watching is what the run with real agents measures.
 - **Cost.** A factory spends without a person watching each step. Task and agent
   budgets ([document 17](organization-data/17-budgets-and-controls.md)) are the limit;
-  the package sets none.
+  the development process sets none.
 - **Granularity of a Product DSS document.** One document per product area is the
-  package's guidance. Whether very large areas need issuing by section is not decided.
+  development process's guidance. Whether very large areas need issuing by section is not decided.
 - **Reading code to propose links.** An engineer keeps links current by hand. Deriving
   candidate links from a task's integrated commits is possible and not selected.
 
 ## What the code does today
 
 Nothing of this exists. It needs the documentation tree and issued versions, process
-packages, the hire flow and agent sessions, none of which is built
-([process package design](process-packages.md#what-the-code-does-today)), and asks,
+development processes, the hire flow and agent sessions, none of which is built
+([development process design](development-processes.md#what-the-code-does-today)), and asks,
 which exist in part (FC-079).

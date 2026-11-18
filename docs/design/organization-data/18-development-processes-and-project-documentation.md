@@ -1,20 +1,21 @@
-# Process packages and project documentation
+# Development processes and project documentation
 
-Status: **selected** data contract, revision 1.2. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: process packages, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [process package design](../process-packages.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
+Status: **selected** data contract, revision 1.3. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: development processes, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [development process design](../development-processes.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
 
-The product carries no methodology. A process package is content: a manifest, role definitions, skills and document templates. Nothing here is a process execution engine, and no record in this document starts work, changes a status or blocks an action.
+The product carries no methodology. A development process is content: a manifest, role definitions, skills and document templates. Nothing here is a process execution engine, and no record in this document starts work, changes a status or blocks an action.
 
 ## Relationships
 
 ```mermaid
 erDiagram
-    process_packages ||--o{ process_package_roles : declares
-    process_packages ||--o{ process_package_skills : bundles
-    process_package_skills ||--o{ process_package_skill_roles : bound_to
-    process_package_roles ||--o{ process_package_skill_roles : receives
-    process_packages ||--o{ process_package_kinds : defines
-    process_packages ||--o{ process_package_folders : lays_out
-    process_packages o|--o{ projects : governs
+    development_processes ||--o{ development_process_roles : declares
+    development_processes ||--o{ development_process_skills : bundles
+    development_process_skills ||--o{ development_process_skill_roles : bound_to
+    development_process_roles ||--o{ development_process_skill_roles : receives
+    development_processes ||--o{ development_process_kinds : defines
+    development_processes ||--o{ development_process_folders : lays_out
+    development_processes ||--o{ development_process_tabs : shows
+    development_processes o|--o{ projects : governs
     projects ||--o{ documentation_sections : organizes
     projects ||--o{ documentation_media : holds
     projects ||--o{ documents : holds
@@ -24,7 +25,7 @@ erDiagram
     repositories ||--o{ document_code_links : contains
     document_versions ||--o{ task_document_versions : realized_by
     tasks ||--o{ task_document_versions : realizes
-    process_packages {
+    development_processes {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
         TEXT key "required"
@@ -38,7 +39,6 @@ erDiagram
         TEXT owner_employee_id FK "optional"
         TEXT copied_from_package_id "optional"
         TEXT stages_json "required"
-        TEXT uses_json "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
         TEXT created_by_id FK "optional"
@@ -46,9 +46,9 @@ erDiagram
         TEXT updated_by_kind "required"
         TEXT updated_by_id FK "optional"
     }
-    process_package_roles {
+    development_process_roles {
         TEXT organization_id PK, FK "required"
-        TEXT package_id PK, FK "required"
+        TEXT process_id PK, FK "required"
         TEXT key PK "required"
         INTEGER position "required"
         TEXT name "required"
@@ -56,32 +56,41 @@ erDiagram
         TEXT hats_json "required"
         TEXT body_markdown "required"
     }
-    process_package_skills {
+    development_process_skills {
         TEXT organization_id PK, FK "required"
-        TEXT package_id PK, FK "required"
+        TEXT process_id PK, FK "required"
         TEXT key PK "required"
         INTEGER position "required"
         TEXT title "required"
         TEXT description "required"
         TEXT body_markdown "required"
     }
-    process_package_skill_roles {
+    development_process_skill_roles {
         TEXT organization_id PK, FK "required"
-        TEXT package_id PK, FK "required"
+        TEXT process_id PK, FK "required"
         TEXT skill_key PK, FK "required"
         TEXT role_key PK, FK "required"
     }
-    process_package_kinds {
+    development_process_kinds {
         TEXT organization_id PK, FK "required"
-        TEXT package_id PK, FK "required"
+        TEXT process_id PK, FK "required"
         TEXT key PK "required"
         TEXT title "required"
         INTEGER versioned "required"
         TEXT template_markdown "required"
     }
-    process_package_folders {
+    development_process_tabs {
         TEXT organization_id PK, FK "required"
-        TEXT package_id PK, FK "required"
+        TEXT process_id PK, FK "required"
+        TEXT key PK "required"
+        INTEGER position "required"
+        TEXT title "required"
+        TEXT view "required"
+        TEXT config_json "required"
+    }
+    development_process_folders {
+        TEXT organization_id PK, FK "required"
+        TEXT process_id PK, FK "required"
         TEXT path PK "required"
         INTEGER position "required"
         TEXT title "required"
@@ -154,26 +163,26 @@ erDiagram
     }
 ```
 
-## Process packages
+## Development processes
 
-A process package describes one way of working: which roles it needs, what each role does, which kinds of document it produces and how a project's documentation is laid out. A project follows at most one package. A package has a stable `id`, an organization-unique `key` such as `dss`, a `revision`, a lifecycle `draft | current | deprecated`, an accountable owner and the common attribution. `version_label` is free text for people, like a release's.
+A development process describes one way of working: which roles it needs, what each role does, which kinds of document it produces and how a project's documentation is laid out. A project follows at most one development process. A development process has a stable `id`, an organization-unique `key` such as `dss`, a `revision`, a lifecycle `draft | current | deprecated`, an accountable owner and the common attribution. `version_label` is free text for people, like a release's.
 
 `origin` says where the content comes from:
 
-- `organization`: the package is a folder in organization Git, created and edited through the product by any person of the organization. `current` requires an active owner. A package stays in its organization: there is no export, import or transfer between organizations (owner, 2026-11-18).
-- `built_in`: the package ships with the product. Its content is the running product's copy, its ID is fixed by the product, it has no file in organization Git and it cannot be edited. Its rows are projected from the product's copy with `system` attribution. To change one, copy it: the copy is an `organization` package with a new ID and `copied_from_package_id` set. That field is provenance only and is never followed.
+- `organization`: the development process is a folder in organization Git, created and edited through the product by any person of the organization: in the editor, by copying one, or by importing a process file. `current` requires an active owner. A process file is an archive of the folder below; importing one validates it, gives it a new ID and adds it as a draft, and any development process can be downloaded as that file. There is no link, sync or sharing between organizations (owner, 2026-11-18).
+- `built_in`: the development process ships with the product. Its content is the running product's copy, its ID is fixed by the product, it has no file in organization Git and it cannot be edited. Its rows are projected from the product's copy with `system` attribution. To change one, copy it: the copy is an `organization` development process with a new ID and `copied_from_package_id` set. That field is provenance only and is never followed.
 
-### Durable package files
+### Durable process files
 
 ```text
-process-packages/<package-id>/
-├── package.yaml              # The manifest
+development-processes/<process-id>/
+├── process.yaml              # The manifest
 ├── roles/<role-key>.md       # One per declared role: the role's definition
 ├── skills/<skill-key>.md     # What a role does, and how
 └── templates/<kind-key>.md   # Optional starting body for a document kind
 ```
 
-The folder is named by the package's stable ID. Files inside it are named by their key, which is unique within the package: a package is one unit of identity and revision, and nothing outside a package refers to one of its parts by ID. A key is 1 to 64 lowercase ASCII letters, digits or hyphens. Files are regular Markdown or YAML blobs: no symlinks, submodules or traversal. A write to any file of the package advances the package's `revision`. A package belongs to the organization, like a role: HQ writes it and other offices replicate it. Every manifest, role, skill and stage field is listed here; a field that is not is refused.
+The folder is named by the development process's stable ID. Files inside it are named by their key, which is unique within the development process: a development process is one unit of identity and revision, and nothing outside a development process refers to one of its parts by ID. A key is 1 to 64 lowercase ASCII letters, digits or hyphens. Files are regular Markdown or YAML blobs: no symlinks, submodules or traversal. A write to any file of the development process advances the development process's `revision`. A development process belongs to the organization, like a role: HQ writes it and other offices replicate it. Every manifest, role, skill and stage field is listed here; a field that is not is refused.
 
 ```yaml
 schema_version: 1
@@ -187,7 +196,7 @@ summary: >-
 version_label: "1.0"
 status: current
 owner_employee_id: 01930000-0000-7000-8000-000000000001
-copied_from_package_id: 01930000-0000-7000-8000-0000000000c0   # the built-in dss package
+copied_from_package_id: 01930000-0000-7000-8000-0000000000c0   # the built-in dss development process
 roles:
   - key: product-lead
     name: Product Owner / Principal Designer
@@ -221,15 +230,24 @@ stages:
     title: Specify the product
     summary: Talk with the person until the behaviour is clear, then issue it.
     lead_role: product-lead
-uses: []
+tabs:
+  - key: product
+    title: Product
+    view: documents
+    section: product
+    kinds: [product-dss]
+  - key: technical
+    title: Technical
+    view: documents
+    section: technical
 ```
 
-This is an organization's copy of the built-in `dss` package, shortened. A copy has its own key, because a key is unique in the organization.
+This is an organization's copy of the built-in `dss` development process, shortened. A copy has its own key, because a key is unique in the organization.
 
-- **`roles[]`** are the roles the package needs. `seed: true` marks the few that start the project; the others are hired when the work calls for them. `hats` are labels for people, shown on the roster to say what a combined role covers; nothing reads them. Each role has a definition at `roles/<key>.md`, with the body headings of a [role record](../../specs/roles-ux.md).
-- **`kinds[]`** are document kinds the package adds to the built-in ones (`brief`, `decision`, `design`, `report`, `changelog`). A package cannot redefine a built-in kind. `versioned: true` means documents of that kind are [issued in versions](#issued-versions). A kind may have a template at `templates/<key>.md`.
+- **`roles[]`** are the roles the development process needs. `seed: true` marks the few that start the project; the others are hired when the work calls for them. `hats` are labels for people, shown on the roster to say what a combined role covers; nothing reads them. Each role has a definition at `roles/<key>.md`, with the body headings of a [role record](../../specs/roles-ux.md).
+- **`kinds[]`** are document kinds the development process adds to the built-in ones (`brief`, `decision`, `design`, `report`, `changelog`). A development process cannot redefine a built-in kind. `versioned: true` means documents of that kind are [issued in versions](#issued-versions). A kind may have a template at `templates/<key>.md`.
 - **`folders[]`** are the sections a project's documentation starts with. `kinds` says what a folder is for; it guides and is not enforced.
-- **`uses[]`** names the optional records the package works with. There is one today: `features`. Releases and milestones are not listed because they are first-class in every project, whatever its package, and a package cannot leave them out (owner, 2026-11-18); so are tasks, documents, messages and hiring. The list only decides what a project that follows the package shows and what its skills may refer to: a project whose package does not use features has no Features tab while it has no feature. It removes no record and refuses no call.
+- **`tabs[]`** are the things the process gives a project, each shown as a tab of the project page, in order. A tab has a `key`, a `title` and a `view`, one of the product's generic views: `documents` (one `section` of the tree, optionally limited to `kinds`), `work` (the project's tasks of the given `types`, with `layout: list | board`) and `features` (the feature map; listing it is how a process says it uses features). A process has at most eight tabs, and a tab's key is not one of the fixed tabs' (`overview`, `work`, `docs`, `releases`, `team`, `activity`, `conversations`). Releases and milestones are not listed because they are first-class in every project, whatever its process, and a process cannot leave them out (owner, 2026-11-18). How the tab bar is worked out is in the [design](../development-processes.md#4-the-projects-tabs); nothing about tabs is stored on a project.
 - **`stages[]`** describe the order of work for people and agents. An entry has a `key`, a `title`, an optional `summary` and an optional `lead_role` naming a declared role. The product shows stages to people and includes them in an agent's instructions. No code acts on one.
 
 A skill is a Markdown file whose front matter says who it is for:
@@ -247,27 +265,27 @@ roles: [technical-lead]
 ## Done when
 ```
 
-`roles` lists keys of roles declared in the same manifest. An empty list means every role of the package. `description` is one or two sentences saying when to use the skill; it is what an agent sees before it retrieves the body.
+`roles` lists keys of roles declared in the same manifest. An empty list means every role of the development process. `description` is one or two sentences saying when to use the skill; it is what an agent sees before it retrieves the body.
 
-### What a package may not carry
+### What a development process may not carry
 
-A package grants nothing. It cannot name tools, models, credentials, budgets, approvers or permissions, and a field that tried would be refused as unknown. Its skills are guidance of the same standing as an overridable process document ([process design](../processes.md)): they cannot be marked non-overridable, and they never displace a document that the organization or a team marked `overridable: false`.
+A development process grants nothing. It cannot name tools, models, credentials, budgets, approvers or permissions, and a field that tried would be refused as unknown. It is a different primitive from the organization's processes and standards ([process design](../processes.md), decision 9): its skills have no level, no override key and no lock, they are never part of an effective set, and where a skill and an organization process or standard disagree the organization's document is followed.
 
-### Roles the package needs, and the organization's roles
+### Roles the development process needs, and the organization's roles
 
-An employee's role is still the organization's [role record](01-organization-structure.md) named by `employees.role_id`. A package role is matched to an organization role by `key`. When a package is chosen for a project, every package role whose key has no organization role yet gets one, created from the package's definition in the same accepted change. A key that already exists is left as it is: the organization's own definition of a role stands, and the person choosing the package is shown which roles will be created and which existing ones will be used before confirming. An employee holds a package role when the key of its role equals the package role's key. The key of an organization role that a package in use refers to cannot be changed or removed; the refusal names the package.
+An employee's role is still the organization's [role record](01-organization-structure.md) named by `employees.role_id`. A development process role is matched to an organization role by `key`. When a development process is chosen for a project, every development process role whose key has no organization role yet gets one, created from the development process's definition in the same accepted change. A key that already exists is left as it is: the organization's own definition of a role stands, and the person choosing the development process is shown which roles will be created and which existing ones will be used before confirming. An employee holds a development process role when the key of its role equals the development process role's key. The key of an organization role that a development process in use refers to cannot be changed or removed; the refusal names the development process.
 
 ## A project's process
 
 `project.yaml` gains one optional field:
 
 ```yaml
-process_package_id: 01930000-0000-7000-8000-0000000000d0
+development_process_id: 01930000-0000-7000-8000-0000000000d0
 ```
 
-Null means the project follows no package and behaves exactly as [document 02](02-project-structure.md) describes. The package must be `current` when it is chosen. A project follows the package's current content, not a pinned revision: a change to the package applies to its projects at each agent's next start, as a change to a process document does. A project that must not move copies the package.
+Null means the project follows no development process and behaves exactly as [document 02](02-project-structure.md) describes. The development process must be `current` when it is chosen. A project follows the development process's current content, not a pinned revision: a change to the development process applies to its projects at each agent's next start, as a change to a process document does. A project that must not move copies the development process.
 
-Choosing or changing a project's package is a change to the project, made by the organization's owner or by a person in the lead chain of the project's owning team. It never deletes, moves or renames a file, never changes a document's kind and never changes anyone's role. Sections the new package declares and the project lacks are added; everything already there stays. A document that has been issued keeps its versions whatever the project's package later declares; a new version can be issued only while the document's kind is `versioned` in the project's current package.
+Choosing or changing a project's development process is a change to the project, made by the organization's owner or by a person in the lead chain of the project's owning team. It never deletes, moves or renames a file, never changes a document's kind and never changes anyone's role. Sections the new development process declares and the project lacks are added; everything already there stays. A document that has been issued keeps its versions whatever the project's development process later declares; a new version can be issued only while the document's kind is `versioned` in the project's current development process.
 
 ## Project documentation tree
 
@@ -286,9 +304,9 @@ projects/<project-id>/
 └── docs-history/<document-id>/<version>.md      # Issued versions, written once
 ```
 
-- **What is in the tree.** Every document whose scope is the project itself, except the brief: decisions, designs, reports and every package-defined kind. `index.yaml` is the only other file at the tree's root and its name is reserved. The brief stays at `projects/<project-id>/brief.md`. A document that belongs to a feature, a release or a deployment stays beside that record ([document 02](02-project-structure.md#project-feature-release-and-deployment-documents)), and so do changelogs.
+- **What is in the tree.** Every document whose scope is the project itself, except the brief: decisions, designs, reports and every process-defined kind. `index.yaml` is the only other file at the tree's root and its name is reserved. The brief stays at `projects/<project-id>/brief.md`. A document that belongs to a feature, a release or a deployment stays beside that record ([document 02](02-project-structure.md#project-feature-release-and-deployment-documents)), and so do changelogs.
 - **Paths are readable and can change.** A path is segments separated by `/`, at most 512 bytes and eight levels deep. A folder name is lowercase letters, digits, hyphens and underscores. A file name may also contain single dots; it never starts with one. A document ends in `.md` and holds at most 512 KiB. Identity is the `id` in the document's front matter, never the path: moving or renaming a document keeps its ID, its revisions, its versions and every link to it.
-- **Sections** are the folders, each described in the index with a title, a summary and an order. A project without a package starts with `decisions`, `designs` and `reports`. A project with a package starts with the folders its manifest declares; any other section, those three included, is added when it is first needed. Agents and people add sections as the work needs them, and saving a file into a folder that has no section yet adds one, titled from the folder's name until someone gives it a better title. A section exists as soon as the index lists it; Git shows the directory with its first file.
+- **Sections** are the folders, each described in the index with a title, a summary and an order. A project without a development process starts with `decisions`, `designs` and `reports`. A project with a development process starts with the folders its manifest declares; any other section, those three included, is added when it is first needed. Agents and people add sections as the work needs them, and saving a file into a folder that has no section yet adds one, titled from the folder's name until someone gives it a better title. A section exists as soon as the index lists it; Git shows the directory with its first file.
 - **Media** are diagrams and images stored beside the documents: PNG, JPEG, WebP, GIF and SVG images, and diagram sources as text (Mermaid `.mmd`, `.drawio`, `.excalidraw`). A media file is at most 5 MiB and never ends in `.md`. It has no front matter; its identity and description are its index entry. The product shows an SVG as an image and never runs anything inside it.
 
 A tree document uses the envelope of every supporting document, with a path and an optional summary:
@@ -320,7 +338,7 @@ code_links:
 ## Purpose
 ```
 
-For a tree document `kind` is `decision`, `design`, `report` or a key the project's package declares. A document keeps its kind when the project changes package; a kind no current package declares is shown by its key and is never rejected on read.
+For a tree document `kind` is `decision`, `design`, `report` or a key the project's development process declares. A document keeps its kind when the project changes development process; a kind no current development process declares is shown by its key and is never rejected on read.
 
 ### The index
 
@@ -330,7 +348,7 @@ For a tree document `kind` is `decision`, `design`, `report` or a key the projec
 schema_version: 1
 project_id: 01930000-0000-7000-8000-000000000010
 revision: 42
-process_package_id: 01930000-0000-7000-8000-0000000000d0
+development_process_id: 01930000-0000-7000-8000-0000000000d0
 sections:
   - path: product
     title: Product documentation
@@ -381,7 +399,7 @@ A document of a `versioned` kind is the desired state of something, and work is 
 - **Issuing** records the working text as the next version: `version` goes from null to 1, or up by one; `issued_revision` becomes the document's revision; the status becomes `current`; and the text is written once to `docs-history/<document-id>/<version>.md`. That file is never changed or removed. A document that has been issued is deprecated when it stops applying, not deleted.
 - **The desired state is the latest issued version.** Edits after it are unissued changes: the document has them when its title or body differs from the latest version's. A change to its summary, owner, path or code links is not a change to the desired state.
 - A version may record what it was **derived from**: issued versions of other documents of the same project, for example the Product DSS version a Technical DSS version follows. The sources are part of the version file and are written once with it.
-- Who issued a version, and when, come from the admitted actor. Issuing needs no approval record. Whether a person is asked first is the package's guidance, not a rule of the data.
+- Who issued a version, and when, come from the admitted actor. Issuing needs no approval record. Whether a person is asked first is the development process's guidance, not a rule of the data.
 
 ```markdown
 ---
@@ -433,13 +451,14 @@ An agent reads and writes the documentation of **its own projects only**: a proj
 
 | Table | Source |
 | --- | --- |
-| `process_packages` | `package.yaml` scalars; `stages[]` as `stages_json`, `uses[]` as `uses_json`. For `origin: built_in`, the product's copy. |
-| `process_package_roles` | Manifest `roles[]` in order (`position`), with the body of `roles/<key>.md`. |
-| `process_package_skills` | Front matter and body of `skills/<key>.md`; `position` is the order by key. |
-| `process_package_skill_roles` | One row per entry of a skill's `roles[]`. No row means every role. |
-| `process_package_kinds` | Manifest `kinds[]`, with the body of `templates/<key>.md` when present. |
-| `process_package_folders` | Manifest `folders[]` in order; `kinds[]` as `kinds_json`. |
-| `projects.process_package_id` | `project.yaml`. |
+| `development_processes` | `process.yaml` scalars; `stages[]` as `stages_json`. For `origin: built_in`, the product's copy. |
+| `development_process_roles` | Manifest `roles[]` in order (`position`), with the body of `roles/<key>.md`. |
+| `development_process_skills` | Front matter and body of `skills/<key>.md`; `position` is the order by key. |
+| `development_process_skill_roles` | One row per entry of a skill's `roles[]`. No row means every role. |
+| `development_process_kinds` | Manifest `kinds[]`, with the body of `templates/<key>.md` when present. |
+| `development_process_folders` | Manifest `folders[]` in order; `kinds[]` as `kinds_json`. |
+| `development_process_tabs` | Manifest `tabs[]` in order (`position`); `section`, `kinds`, `types` and `layout` as `config_json`. |
+| `projects.development_process_id` | `project.yaml`. |
 | `documentation_sections` | Index `sections[]`, nested sections flattened by `path`; `position` is the order among siblings. |
 | `documentation_media` | Index entries of type `image` or `diagram`. |
 | `documents` (`summary`, `path`, `version`, `issued_revision`) | Front matter of each tree document. |
@@ -449,12 +468,12 @@ An agent reads and writes the documentation of **its own projects only**: a proj
 | `task_document_versions` | `realizes[]` of the task file. |
 | `document_version_progress` (view) | Derived from the two tables above and task status; no authored source. |
 
-Packages register in `record_refs` as `process_package` and media files as `media`.
+Development processes register in `record_refs` as `development_process` and media files as `media`.
 
 ## SQLite tables
 
 ```sql
-CREATE TABLE process_packages (
+CREATE TABLE development_processes (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
@@ -470,7 +489,6 @@ CREATE TABLE process_packages (
   owner_employee_id TEXT,
   copied_from_package_id TEXT,
   stages_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(stages_json) AND json_type(stages_json) = 'array'),
-  uses_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(uses_json) AND json_type(uses_json) = 'array'),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -489,9 +507,9 @@ CREATE TABLE process_packages (
   FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_roles (
+CREATE TABLE development_process_roles (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'),
@@ -500,14 +518,14 @@ CREATE TABLE process_package_roles (
   seed INTEGER NOT NULL DEFAULT 0 CHECK (seed IN (0, 1)),
   hats_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(hats_json) AND json_type(hats_json) = 'array'),
   body_markdown TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (organization_id, package_id, key),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, key),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_skills (
+CREATE TABLE development_process_skills (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'),
@@ -515,26 +533,26 @@ CREATE TABLE process_package_skills (
   title TEXT NOT NULL,
   description TEXT NOT NULL CHECK (length(description) > 0),
   body_markdown TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (organization_id, package_id, key),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, key),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_skill_roles (
+CREATE TABLE development_process_skill_roles (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   skill_key TEXT NOT NULL,
   role_key TEXT NOT NULL,
-  PRIMARY KEY (organization_id, package_id, skill_key, role_key),
-  FOREIGN KEY (organization_id, package_id, skill_key) REFERENCES process_package_skills(organization_id, package_id, key)
+  PRIMARY KEY (organization_id, process_id, skill_key, role_key),
+  FOREIGN KEY (organization_id, process_id, skill_key) REFERENCES development_process_skills(organization_id, process_id, key)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, package_id, role_key) REFERENCES process_package_roles(organization_id, package_id, key)
+  FOREIGN KEY (organization_id, process_id, role_key) REFERENCES development_process_roles(organization_id, process_id, key)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_kinds (
+CREATE TABLE development_process_kinds (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'
@@ -542,14 +560,14 @@ CREATE TABLE process_package_kinds (
   title TEXT NOT NULL,
   versioned INTEGER NOT NULL DEFAULT 0 CHECK (versioned IN (0, 1)),
   template_markdown TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (organization_id, package_id, key),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, key),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE process_package_folders (
+CREATE TABLE development_process_folders (
   organization_id TEXT NOT NULL,
-  package_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
   path TEXT NOT NULL CHECK (
     length(path) BETWEEN 1 AND 256 AND path NOT GLOB '*[^a-z0-9/_-]*'
     AND substr(path, 1, 1) GLOB '[a-z0-9]' AND substr(path, -1, 1) <> '/'
@@ -558,8 +576,25 @@ CREATE TABLE process_package_folders (
   title TEXT NOT NULL,
   summary TEXT NOT NULL DEFAULT '',
   kinds_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(kinds_json) AND json_type(kinds_json) = 'array'),
-  PRIMARY KEY (organization_id, package_id, path),
-  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+  PRIMARY KEY (organization_id, process_id, path),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE development_process_tabs (
+  organization_id TEXT NOT NULL,
+  process_id TEXT NOT NULL,
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND key NOT IN ('overview', 'work', 'docs', 'releases', 'team', 'activity', 'conversations')),
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 7),
+  title TEXT NOT NULL CHECK (length(title) > 0),
+  view TEXT NOT NULL CHECK (view IN ('documents', 'work', 'features')),
+  config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
+  PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
+  FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -699,15 +734,15 @@ GROUP BY v.organization_id, v.document_id, v.version;
 
 `document_versions` has no foreign key to `documents`: an issued version is history and outlives the live row, resolved through `record_refs` like any historical reference. The other direction is enforced: a document's `version` must be one of its issued versions. Version rows are written once; the two triggers refuse an update, a delete and a replace.
 
-Rules checked by the accepting service, not by SQL: a project's package is `current` when chosen; a stage's `lead_role` is a declared role; `uses[]` holds only `features`; a document's kind is built in or declared by a package; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
+Rules checked by the accepting service, not by SQL: a project's development process is `current` when chosen; a stage's `lead_role` is a declared role; a `documents` tab names a declared folder and kinds that are built in or declared, a `work` tab names at least one task type, and a process lists the `features` view at most once; a document's kind is built in or declared by a development process; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
 
 ## Acceptance criteria
 
 | ID | Passing evidence |
 | --- | --- |
-| PPD-1 | A package's manifest, roles, skills, kinds and folders round-trip between its files and these tables; a built-in package projects the same rows with no file in organization Git. |
-| PPD-2 | A skill naming a role its package does not declare, a package kind named like a built-in kind, and an unknown manifest field are refused, each naming the field. |
-| PPD-3 | Choosing a package for a project creates the missing organization roles and the declared sections in one accepted change; choosing another later adds sections and removes nothing. |
+| PPD-1 | A development process's manifest, roles, skills, kinds and folders round-trip between its files and these tables; a built-in development process projects the same rows with no file in organization Git. |
+| PPD-2 | A skill naming a role its development process does not declare, a development process kind named like a built-in kind, and an unknown manifest field are refused, each naming the field. |
+| PPD-3 | Choosing a development process for a project creates the missing organization roles and the declared sections in one accepted change; choosing another later adds sections and removes nothing. |
 | PPD-4 | Every accepted tree write leaves `index.yaml` listing exactly the tree's sections, documents and media; a document's index entry equals its front matter. |
 | PPD-5 | Moving a document changes its path and keeps its ID, revisions, versions, code links and the tasks that realize it. |
 | PPD-6 | Issuing writes one version file and one `document_versions` row; neither can be changed, removed or replaced afterwards. |

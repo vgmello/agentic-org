@@ -21,13 +21,14 @@ in the "What the code does today" section of each design.
 | What never varies, and what an engineer decides | [Architecture non-negotiables](../architecture-non-negotiables.md) |
 | How far each feature has got | [Feature checklist](../FEATURES.md), with evidence; [feature areas](../FEATURE-AREAS.md) for categories |
 | Records, fields, canonical files, draft SQL | [Data contract index](organization-data/README.md) and its numbered documents |
-| Process packages, a project's process, the project documentation tree and its index, issued versions and code links | [Document 18](organization-data/18-process-packages-and-project-documentation.md); behaviour in [process packages](process-packages.md) and [desired state specifications](desired-state-specifications.md); the decision in [ADR-0021](../adr/0021-process-packages-are-content.md) |
+| Development processes, a project's process, the project documentation tree and its index, issued versions and code links | [Document 18](organization-data/18-development-processes-and-project-documentation.md); behaviour in [development processes](development-processes.md) and [desired state specifications](desired-state-specifications.md); the decision in [ADR-0021](../adr/0021-development-processes-are-content.md) |
 | Who approves a hire; an agent lead's permission to hire | [ADR-0022](../adr/0022-a-lead-approves-a-hire.md), [employees](organization-data/04-agent-structure.md#who-approves-a-hire), [hire flow](../specs/our-org-in-the-app.md) |
 | Teams, home team, reporting, project accountability | [Organization](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md), [employees](organization-data/04-agent-structure.md) |
 | Typed tasks, references, assignment and history | [Tasks and features](organization-data/03-features-and-work.md), [identity and numbering](organization-data/06-identity-and-numbering.md), [assignment](organization-data/12-task-assignment-and-history.md), [ADR-0019](../adr/0019-office-coded-task-numbers.md) |
 | Chat data, visibility and who writes what | [Messaging](organization-data/15-messaging-and-chat.md), [ADR-0003](../adr/0003-agent-messaging-office-first.md) |
 | How fast an operation answers, and when it is acknowledged | [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) |
 | How an ask waits; required asks | [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) |
+| What starts an agent's turn | [ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md), [agent sessions](agent-sessions.md) |
 | Durable sources versus rebuildable caches | [Storage contract](organization-data/README.md#shared-storage-contract), [recovery](organization-data/16-recovery-and-office-continuity.md) |
 | Replaceable storage engine | [ADR-0018](../adr/0018-storage-engine-independence.md) |
 | Encryption and secrets | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
@@ -54,7 +55,7 @@ in the "What the code does today" section of each design.
 | Messaging, accounting and budgets | [Chat UX](../specs/chat-ux.md), [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), [cost UX](../specs/costs-and-insights-ux.md) | 10, 15, 16, 17 |
 | Offices, host, HTTP and installation | [Offices](offices-hq-and-satellites.md), [host boundary](office-host-boundary.md), [web API](web-api-v1.md), [standalone design](standalone-server.md), [installation UX](../specs/server-installation-and-access-ux.md) | 01, 04, 06, 11, 15, 16, 17 |
 | Processes and standards | [Process design](processes.md), [process UX](../specs/processes-ux.md) | 01 |
-| Process packages, seed teams, skills and project documentation | [Process packages](process-packages.md), [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md), [knowledge UX](../specs/decisions-and-tech-debt-ux.md) | 01, 02, 04, 18 |
+| Development processes, seed teams, skills and project documentation | [Development processes](development-processes.md), [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md), [knowledge UX](../specs/decisions-and-tech-debt-ux.md) | 01, 02, 04, 18 |
 | Desired state specifications | [Desired state design](desired-state-specifications.md), [REQ-06](../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) | 02, 03, 18 |
 
 Library and CLI READMEs describe the interfaces the code implements. Research
@@ -79,10 +80,11 @@ rewritten to match a target, and they are not requirements.
   local; the organization repository is remote.
 - Features have project-prefixed slugs and stable-ID paths. Release product
   changelogs and deployment technical changelogs are distinct.
-- A project may follow one process package. The package is content: roles, skills,
-  document kinds and a documentation layout. Its skills are a layer of process
-  resolution between the team chain and the project. It starts nothing and grants
-  nothing.
+- A project may follow one development process. The development process is content: roles, skills,
+  document kinds, tabs and a documentation layout. It is a different primitive from
+  organization processes and standards: neither inherits from nor overrides the
+  other, and the organization's documents win where they disagree. It starts nothing
+  and grants nothing.
 - A project's own documents live in one tree, `projects/<project-id>/docs/`, with one
   index. A versioned document's desired state is its latest issued version, and a
   version is converged when the tasks that realize it are finished.
@@ -128,8 +130,8 @@ does not restore chat, budgets, usage or authority.
 
 Areas, Undo, advanced checklist execution, retrospectives, automatic scheduling,
 agent memory consolidation and a process execution engine are not part of v1. A
-process package is not an engine: its stages are read by people and agents and run
-by nothing ([process packages](process-packages.md), decision 2). A UX
+development process is not an engine: its stages are read by people and agents and run
+by nothing ([development processes](development-processes.md), decision 2). A UX
 criterion for one of them is not approval to build it. Process and standard content,
 its scope and the override lock are selected, and so is resolution
 ([process design](processes.md)). Budgets and recovery are selected as data and

@@ -64,48 +64,56 @@ Decouple the core platform's well-modeled execution primitives—including **pro
 
 ## How this fits the selected architecture
 
-Written by the lead on 2026-11-18. It adds no requirement; it places the owner's requirement in the existing contracts. The records are in [document 18](../design/organization-data/18-process-packages-and-project-documentation.md) and the behaviour is in the [process package design](../design/process-packages.md). The DSS process itself is [REQ-06](req-06-desired-state-spec-authoring-and-reconciliation.md).
+Written by the lead on 2026-11-18 and updated the same day with the owner's answers. It adds no requirement; it places the owner's requirement in the existing contracts. The records are in [document 18](../design/organization-data/18-development-processes-and-project-documentation.md) and the behaviour is in the [development process design](../design/development-processes.md). The DSS process itself is [REQ-06](req-06-desired-state-spec-authoring-and-reconciliation.md).
 
-**What it matches already.** Projects, releases, milestones and tasks are first-class records with no methodology in them ([documents 02](../design/organization-data/02-project-structure.md) and [03](../design/organization-data/03-features-and-work.md)). Hiring is a product capability behind the built-in HR lead, and the hire flow already lets an agent ask for a hire with `agent-os hire request` ([hire flow](our-org-in-the-app.md)); the command is specified and not built. Creating a project creates its team. The product has no process engine and blocks nothing for breaking a process ([process design](../design/processes.md), decision 7): it tells the agent what applies and the agent acts. Documents are written through the product and kept in organization Git, never in a code repository's `docs/` ([knowledge UX](decisions-and-tech-debt-ux.md)).
+**The name.** The requirement's "Process Package" is called a **development process** in the product, the owner's agentic software development process (ASDP). It is a different primitive from the **organization processes** the product already has, which say how the organization works whatever is being built (owner, 2026-11-18).
+
+**What it matches already.** Projects, teams, releases, milestones and tasks are first-class records with no methodology in them ([documents 02](../design/organization-data/02-project-structure.md) and [03](../design/organization-data/03-features-and-work.md)). Hiring is a product capability behind the built-in HR lead, and the hire flow already lets an agent ask for a hire with `agent-os hire request` ([hire flow](our-org-in-the-app.md)); the command is specified and not built. A project always has a team; a team needs no project. The product has no process engine and blocks nothing for breaking a process: it tells the agent what applies and the agent acts. Documents are written through the product and kept in organization Git, never in a code repository's `docs/` ([knowledge UX](decisions-and-tech-debt-ux.md)).
 
 **Where each part of the requirement lands.**
 
 | Requirement | In the product |
 | --- | --- |
-| Process package: YAML manifest and skills | A folder in organization Git, `process-packages/<package-id>/`: `package.yaml`, role definitions, skills and document templates. Packages that ship with the product are built in; any person of the organization creates and edits its own. |
-| Process as skills that agents interpret | A skill is guidance bound to roles. It reaches an agent through the same resolution and delivery as process documents, as one more layer between the team's documents and the project's own. |
+| Process package: YAML manifest and skills | A development process: a folder in organization Git, `development-processes/<process-id>/`, with `process.yaml`, role definitions, skills and document templates. Some are built in; any person of the organization creates, copies, imports and edits its own. |
+| Process as skills that agents interpret | A skill is guidance bound to roles. An agent receives its project's development process as a section of its instructions, beside and separate from organization processes. |
 | Seed archetypes, multi-hat | Roles declared in the manifest, some marked `seed`; `hats` label what a combined role covers. |
-| Process selector on a project | `process_package_id` on the project, chosen when it is created or later. |
-| Seed roster: hire, or assign an existing team | Choosing a package shows its seed roles. Each is filled by a hire proposal into the project's team, or by an employee who already has that role; naming an existing team as the project's owner covers the "existing team" case. |
-| Process-timed hiring by the leads | A skill tells the lead when to hire. The lead reads the role with `agent-os role show` and asks with `agent-os hire request`. The hire still goes through HR and a lead's approval; an agent lead with the May hire permission approves its own request. |
+| Process selector on a project | `development_process_id` on the project, chosen when it is created or later. |
+| Seed roster: hire, or assign an existing team | Choosing a development process shows its seed roles. Each is filled by a hire proposal into the project's team, or by an employee who already has that role; naming an existing team as the project's owner covers the "existing team" case. |
+| Process-timed hiring by the leads | A skill tells the lead when to hire. The lead reads the role with `agent-os role show` and asks with `agent-os hire request`. A lead approves; an agent lead with the May hire permission approves its own request. |
 | Onboarded into the project team under the seed leads | The new agent's home team is the project's team, whose lead the owner appoints: a person or one of the seed agents. The proposal suggests the requesting lead as the reporting line. |
-| Dynamic folder structure, materialized eagerly | The project documentation tree `projects/<project-id>/docs/`. Choosing a package adds the sections it declares, at once. |
-| Markdown, diagrams and images, no hardcoded "DSS file" | Tree documents are ordinary supporting documents whose `kind` may be one the package declares; media files sit beside them. |
+| What a project shows | The development process declares the project's tabs from the product's generic views. |
+| Dynamic folder structure, materialized eagerly | The project documentation tree `projects/<project-id>/docs/`. Choosing a development process adds the sections it declares, at once. |
+| Markdown, diagrams and images, no hardcoded "DSS file" | Tree documents are ordinary supporting documents whose `kind` may be one the process declares; media files sit beside them. |
 | Live YAML index, single read | `projects/<project-id>/docs/index.yaml`, read with `agent-os doc index`. |
 | `ls` as a fallback | `agent-os doc ls`. |
-| Project isolation, ask the other project's agents | An agent is refused another project's index, listing and files; the refusal names whom to ask. |
+| Project isolation, ask the other project's agents | An agent is refused another project's index, listing and files; the refusal names whom to ask, and an ask starts that agent. |
 
-**Points settled by the lead.** Each is a decision inside the [non-negotiables](../architecture-non-negotiables.md), recorded in the design.
+**Decided by the owner, 2026-11-18.**
 
-1. **"Written directly by agents" means written through `agent-os`.** An agent has no file access to organization data (non-negotiables 7 and 10). Agents keep the index current by what they do: adding a section, saving a document with its title and summary, storing a diagram. The office writes `index.yaml` in the same accepted change, so the index and the tree cannot disagree.
-2. **No trigger engine.** The manifest's workflow rules are stages that people and agents read. Nothing in the product acts on them. This is the requirement's own rule ("without hardcoding any specific methodology or trigger logic") and the existing one.
-3. **Skills are delivered by the office, not loaded by the vendor tool.** Agents run with the vendor tools' own skill loading switched off ([agent sessions](../design/agent-sessions.md)). A skill's title and when-to-use line are in the agent's instructions and its body is retrieved with `agent-os process show`.
-4. **A package grants nothing.** It cannot name tools, models, credentials, budgets or approvers (the permission to hire is given to an agent by a person, never by a package), and its skills never displace a document the organization marked not overridable.
-5. **Built-in packages ship with the product; an organization customizes a copy.**
-6. **Project-wide documents move into the tree.** The fixed `decisions/`, `designs/` and `reports/` folders at project level are replaced by sections of the tree, which a project without a package starts with. Documents of a feature, a release or a deployment stay beside their record, and so do the brief and the changelogs.
-7. **A package's roles are matched to the organization's roles by key,** and missing ones are created when the package is chosen. An employee still has one role.
-8. **Changing a project's process later removes nothing.**
-9. **A team has one lead.** With two seed leads, the owner appoints one of them, or a person, as the project team's lead. An agent takes instructions from the leads above it and treats anyone else's as a request ([document 04](../design/organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from)), so the other seed lead directs the engineers by request.
-10. **A project's tree has one writing office,** handed over like a task's writer. An agent in another office waits for that office when it writes a document, as it does for a cross-office edit of a task.
-11. **"Skill" now means a package's guidance.** The guidance on the product's own commands that ships with the product is called built-in guidance.
+1. **Two kinds of process.** Organization processes stay as they are. A development process is a separate primitive: it does not inherit from them, override them or take part in their resolution, and where the two disagree the organization's document is followed.
+2. **A lead approves every hire.** A lead who is a person approves. A lead who is an agent approves only if a person has turned on its May hire permission, a field of the agent, given lead by lead ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)).
+3. **Agents start other agents.** An ask addressed to an agent, or a task assigned to it by its leads or its project team, starts it ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
+4. **Releases and milestones are first-class in every project.** Every change goes into a release; milestones are optional. Features are not first-class: a project has them when its development process says so, and software delivery by features is its own process, built in beside DSS.
+5. **A development process declares the project's tabs.** The tabs are generic; a process says which things it has and they become tabs ([design](../design/development-processes.md#4-the-projects-tabs)).
+6. **Built-in processes, and processes anyone can create or edit.** A process can be imported into the system as a file. There is no link between organizations.
+7. **Teams and projects live side by side.** A team is created before any project and never needs one; a project always has a team.
 
-**Points the owner settled, 2026-11-18.**
+**Decided by the lead,** inside the [non-negotiables](../architecture-non-negotiables.md) and recorded in the design.
 
-1. **A lead approves every hire.** "Not a person, a lead approves every hire." When the lead is a person, that person approves. When the lead is an agent, it approves only if a person has turned on its May hire permission, a field of the agent ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md), [document 04](../design/organization-data/04-agent-structure.md#who-approves-a-hire)). A lead who may approve hires into its own team without a second approval.
-2. **Features belong to their own process.** DSS does not use feature records. Software delivery by features is a different package, `feature-delivery`, built in beside `dss`; a package's manifest says whether it uses features. Releases and milestones are first-class for every process: every change goes into a release, and milestones are optional ([process package design](../design/process-packages.md#3a-features-and-a-second-package)).
-3. **Packages do not move between organizations.** There are built-in packages and packages the organization's people create and edit. Export and import are not built; the requirement's "portable" means a package is self-contained and can be reused across projects and copied.
+1. **"Written directly by agents" means written through `agent-os`.** An agent has no file access to organization data (non-negotiables 7 and 10). Agents keep the index current by what they do; the office writes `index.yaml` in the same accepted change, so the index and the tree cannot disagree.
+2. **No trigger engine.** The manifest's workflow rules are stages that people and agents read. Nothing in the product acts on them.
+3. **Skills are delivered by the office, not loaded by the vendor tool.** Agents run with the vendor tools' own skill loading switched off ([agent sessions](../design/agent-sessions.md)).
+4. **A development process grants nothing.** It cannot name tools, models, credentials, budgets or approvers.
+5. **Project-wide documents move into the tree.** The fixed `decisions/`, `designs/` and `reports/` folders at project level are replaced by sections of the tree. Documents of a feature, a release or a deployment stay beside their record, and so do the brief and the changelogs.
+6. **A process's roles are matched to the organization's roles by key,** and missing ones are created when the process is chosen. An employee still has one role.
+7. **Changing a project's development process removes nothing.**
+8. **A team has one lead.** With two seed leads, the owner appoints one of them, or a person, as the project team's lead; the other directs by request.
+9. **A project's tree has one writing office,** handed over like a task's writer.
+10. **The views a tab can use are the product's:** documents of a section, tasks of given types as a list or a board, and the feature map. A new kind of view is a product change.
+11. **How agents starting agents is bounded:** a start never interrupts a running turn, passes the permit and budget checks, and starts by agents are capped per hour for each agent.
 
 **Points that need the owner.**
 
-1. **Agents starting other agents.** Today a turn starts only when a person presses Run or answers a required ask (the HR lead, which a hire request starts, is the one exception); a message, an ask or an assignment does not start an agent ([run modes](agent-run-modes-ux.md), RUN-3; checklist row FC-104 is deferred). The flows in REQ-06 and REQ-07 have one agent hand work to another, ask another, or ask another project's agents, and expect it to act. Recommendation: select a narrow "on call" rule. An agent gets a turn when an ask is addressed to it, or when a task is assigned to it by its lead chain or by a lead of the task's project; the turn still needs a permit, respects budget holds and never interrupts a running turn. Until this is answered the design works with a person pressing Run on the next agent, and nothing else in it depends on the answer.
-2. **The word "process".** The product already calls a single guidance document a process, with a Processes page. A project's process is now a package. The design says "process package" for the bundle, "skill" for its guidance and "process document" for the existing documents. In your answers of 2026-11-18 you call a package a process ("built-in processes and processes anyone can create or edit"), so the project setting stays **Process**. Say if you want the existing single documents renamed, for example to "procedures", so that the word means one thing.
+1. **Does the May hire permission apply to person leads too?** As written, a person who leads a team can always approve hires for it, and only agent leads need the permission.
+2. **"Releases are not optional."** The design has every process plan its work into a release and marks a task that is in none; it does not refuse a task without a release, because a bug or a request exists before anyone has planned it. Say if a task must always name a release.
+3. **Import.** You said earlier that processes do not move between organizations, and now that a process can be imported. The design reads this as: a person can import a process file and download one, and nothing connects two organizations. Say if that is wrong.

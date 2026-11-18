@@ -1111,7 +1111,7 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         values = dict(organization_id="org", id=package, key=package, schema_version=1, revision=1,
                       origin="built_in", name=package, status="current")
         values.update(fields)
-        insert(self.db, "process_packages", **values)
+        insert(self.db, "development_processes", **values)
 
     def document(self, document="spec", **fields):
         values = dict(organization_id="org", id=document, schema_version=1, revision=1,
@@ -1139,19 +1139,33 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=1 WHERE id='reporter'"))
         self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=2 WHERE id='ana'"))
 
-    def test_a_package_names_the_optional_records_it_uses(self):
-        self.package(uses_json='["features"]')
+    def test_a_process_declares_its_tabs_from_the_generic_views(self):
+        self.package()
+        tab = dict(organization_id="org", process_id="dss", title="Product")
+        insert(self.db, "development_process_tabs", **tab, key="product", position=0, view="documents",
+               config_json='{"section": "product", "kinds": ["product-dss"]}')
+        insert(self.db, "development_process_tabs", **tab, key="board", position=1, view="work",
+               config_json='{"types": ["story"], "layout": "board"}')
         self.db.commit()
-        self.assertEqual(self.db.execute("SELECT uses_json FROM process_packages").fetchone()[0],
-                         '["features"]')
-        self.refused(lambda: self.package("bad", uses_json='{"features": true}'))
+        # A view is one of the product's; a fixed tab's key is not available; order is unique.
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="calendar",
+                                    position=2, view="calendar"))
+        for key in ("overview", "work", "docs", "releases", "team", "activity", "conversations"):
+            self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key=key,
+                                        position=2, view="features"))
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="again",
+                                    position=1, view="features"))
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="ninth",
+                                    position=8, view="features"))
+        self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="bad-config",
+                                    position=2, view="work", config_json='["story"]'))
 
     def test_a_project_follows_an_existing_package_or_none(self):
-        self.assertIsNone(self.db.execute("SELECT process_package_id FROM projects").fetchone()[0])
+        self.assertIsNone(self.db.execute("SELECT development_process_id FROM projects").fetchone()[0])
         self.package()
-        self.db.execute("UPDATE projects SET process_package_id='dss'")
+        self.db.execute("UPDATE projects SET development_process_id='dss'")
         self.db.commit()
-        self.refused(lambda: self.db.execute("UPDATE projects SET process_package_id='missing'"))
+        self.refused(lambda: self.db.execute("UPDATE projects SET development_process_id='missing'"))
 
     def test_an_organization_package_needs_an_owner_to_be_current_and_a_built_in_one_does_not(self):
         self.package()
@@ -1165,36 +1179,36 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
     def test_a_skill_is_bound_only_to_roles_of_its_own_package(self):
         self.package()
         self.package("tdd")
-        insert(self.db, "process_package_roles", organization_id="org", package_id="dss",
+        insert(self.db, "development_process_roles", organization_id="org", process_id="dss",
                key="product-lead", position=0, name="Product lead", seed=1)
-        insert(self.db, "process_package_roles", organization_id="org", package_id="tdd",
+        insert(self.db, "development_process_roles", organization_id="org", process_id="tdd",
                key="engineer", position=0, name="Engineer")
-        insert(self.db, "process_package_skills", organization_id="org", package_id="dss",
+        insert(self.db, "development_process_skills", organization_id="org", process_id="dss",
                key="write-product-dss", position=0, title="Write the Product DSS",
                description="Use when the person describes behaviour.")
-        insert(self.db, "process_package_skill_roles", organization_id="org", package_id="dss",
+        insert(self.db, "development_process_skill_roles", organization_id="org", process_id="dss",
                skill_key="write-product-dss", role_key="product-lead")
         self.db.commit()
-        self.refused(lambda: insert(self.db, "process_package_skill_roles", organization_id="org",
-                                    package_id="dss", skill_key="write-product-dss", role_key="engineer"))
+        self.refused(lambda: insert(self.db, "development_process_skill_roles", organization_id="org",
+                                    process_id="dss", skill_key="write-product-dss", role_key="engineer"))
 
     def test_package_keys_folders_and_descriptions_are_well_formed(self):
         self.package()
         self.db.commit()
-        role = dict(organization_id="org", package_id="dss", position=0, name="Lead")
-        skill = dict(organization_id="org", package_id="dss", position=0, title="Skill")
-        folder = dict(organization_id="org", package_id="dss", position=0, title="Folder")
-        insert(self.db, "process_package_folders", **folder, path="technical/diagrams")
+        role = dict(organization_id="org", process_id="dss", position=0, name="Lead")
+        skill = dict(organization_id="org", process_id="dss", position=0, title="Skill")
+        folder = dict(organization_id="org", process_id="dss", position=0, title="Folder")
+        insert(self.db, "development_process_folders", **folder, path="technical/diagrams")
         self.db.commit()
         for key in ("-lead", "Lead", "product lead", ""):
-            self.refused(lambda: insert(self.db, "process_package_roles", **role, key=key))
-            self.refused(lambda: insert(self.db, "process_package_skills", **skill, key=key,
+            self.refused(lambda: insert(self.db, "development_process_roles", **role, key=key))
+            self.refused(lambda: insert(self.db, "development_process_skills", **skill, key=key,
                                         description="Use when needed."))
-        self.refused(lambda: insert(self.db, "process_package_skills", **skill, key="empty",
+        self.refused(lambda: insert(self.db, "development_process_skills", **skill, key="empty",
                                     description=""))
         for path in ("technical/diagrams", "/technical", "technical/", "technical//diagrams",
                      "technical/v1.2", "../technical", "Technical"):
-            self.refused(lambda: insert(self.db, "process_package_folders", **folder, path=path))
+            self.refused(lambda: insert(self.db, "development_process_folders", **folder, path=path))
 
     def test_sections_are_folders_of_one_project(self):
         section = dict(organization_id="org", project_id="project", position=0, title="Product")
@@ -1209,11 +1223,11 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
 
     def test_a_package_cannot_redefine_a_built_in_document_kind(self):
         self.package()
-        insert(self.db, "process_package_kinds", organization_id="org", package_id="dss",
+        insert(self.db, "development_process_kinds", organization_id="org", process_id="dss",
                key="product-dss", title="Product DSS", versioned=1)
         for kind in ("brief", "decision", "design", "report", "changelog"):
-            self.refused(lambda: insert(self.db, "process_package_kinds", organization_id="org",
-                                        package_id="dss", key=kind, title=kind))
+            self.refused(lambda: insert(self.db, "development_process_kinds", organization_id="org",
+                                        process_id="dss", key=kind, title=kind))
 
     def test_project_wide_documents_live_in_the_tree_and_scoped_ones_do_not(self):
         self.document()

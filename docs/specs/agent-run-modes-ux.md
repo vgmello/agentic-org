@@ -80,7 +80,8 @@ the turn also has other records; a turn with none shows no amount.
   **Run now** (with an optional note: "What should HR lead do?"), **Message**, and
   ⋯ › **Pause**.
 - **Profile › Runs tab:** one row per turn: when · who started it (Run now by you,
-  or the answer to a required ask) · duration · cost · outcome (the agent's one-line
+  an ask from a named employee, the assignment of a named task, or the answer to a
+  required ask) · duration · cost · outcome (the agent's one-line
   summary, or "Failed: <reason>") · **Open session log**. Filter by outcome.
 - **Activity:** one row per turn, updated live ("running 2 min…" becomes
   "ran 4 min").
@@ -114,7 +115,7 @@ model turn.
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · Not in v1: a message, assignment or mention waking an agent. Messages and assignments start no model work; an explicit Run or the answer to a required ask does.
+- RUN-3 · An ask addressed to an agent, or a task assigned to it by its lead chain or by a member of the task's accountable team, starts a turn; so do an explicit Run and the answer to a required ask ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md), WAKE-1 to WAKE-8). A message, a mention, a comment and an assignment by anyone else start nothing. A start never interrupts an open turn, passes the same checks as Run, and starts by agents are capped per hour.
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.
@@ -130,8 +131,8 @@ model turn.
 
 ## 5. Not in v1
 
-- **Automatic run modes.** On call (asleep until a message, task or Run now wakes
-  it), Scheduled (wakes on a plain-words schedule, never cron) and Always on (kept
+- **Automatic run modes.** On call beyond asks and assignments (asleep until any
+  message or mention wakes it), Scheduled (wakes on a plain-words schedule, never cron) and Always on (kept
   running and restarted). With them: Asleep presence, wake history with triggers,
   idle sleep after 5 minutes, a maximum busy time (30 minutes in the agent's home,
   2 hours on a task), wake-up guidance, missed-run catch-up, and an "Upcoming" list.

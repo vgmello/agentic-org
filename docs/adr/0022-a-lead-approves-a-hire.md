@@ -12,7 +12,7 @@ Implementation pending.
 
 Until now a person approved every hire: the owner, or a person in the lead chain of
 the team the new agent joins. No agent could approve, and no field on a record granted
-the right. A project that follows a process package is led by seed agents who decide,
+the right. A project that follows a development process is led by seed agents who decide,
 after the specification is clear, which specialists the work needs. With approval
 reserved to people, every such hire waited for a person even when the team's lead was
 an agent the owner trusted to staff its team.
@@ -48,11 +48,11 @@ an agent the owner trusted to staff its team.
 ## Rejected
 
 - **Keeping approval with people only.** It makes a person the bottleneck of a team an
-  agent leads, which is the case process packages create on purpose.
+  agent leads, which is the case development processes create on purpose.
 - **Letting any lead agent approve.** A lead appointment says who directs a team, not
   who may spend on new employees. The owner wants that as a separate, explicit switch.
-- **A permission in the process package.** A package is content and grants nothing
-  ([ADR-0021](0021-process-packages-are-content.md)).
+- **A permission in the development process.** A development process is content and grants nothing
+  ([ADR-0021](0021-development-processes-are-content.md)).
 
 ## Acceptance criteria
 

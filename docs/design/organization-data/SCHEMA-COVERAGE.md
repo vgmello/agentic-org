@@ -1,6 +1,6 @@
 # Schema coverage and integrity review
 
-The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 89 tables and 11 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 90 tables and 11 views; the private side has 4 tables. These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -23,7 +23,7 @@ The primary design documents define two SQL artifacts. Load `schema.sql` once in
 | [03: task details](03-features-and-work.md#detailed-task-payload-and-feature-lifecycle) | [schema.sql](schema.sql) | `task_details` |
 | [16](16-recovery-and-office-continuity.md) | [schema.sql](schema.sql) | `mutation_receipts`, `office_origin_streams`, `office_recovery_checkpoints`, `recovery_snapshot_transfers`, `process_cleanup_records` |
 | [17](17-budgets-and-controls.md) | [schema.sql](schema.sql) | `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
-| [18](18-process-packages-and-project-documentation.md) | [schema.sql](schema.sql) | `process_packages`, `process_package_roles`, `process_package_skills`, `process_package_skill_roles`, `process_package_kinds`, `process_package_folders`, `documentation_sections`, `documentation_media`, `document_versions`, `document_version_sources`, `document_code_links`, `task_document_versions`, `document_version_progress`; adds `projects.process_package_id` and `documents.summary`, `path`, `version`, `issued_revision` to document 02's tables |
+| [18](18-development-processes-and-project-documentation.md) | [schema.sql](schema.sql) | `development_processes`, `development_process_roles`, `development_process_skills`, `development_process_skill_roles`, `development_process_kinds`, `development_process_folders`, `development_process_tabs`, `documentation_sections`, `documentation_media`, `document_versions`, `document_version_sources`, `document_code_links`, `task_document_versions`, `document_version_progress`; adds `projects.development_process_id` and `documents.summary`, `path`, `version`, `issued_revision` to document 02's tables |
 
 [Document 14](14-model-providers-and-connection-pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `schema.sql`; it adds no tables.
 
@@ -33,7 +33,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code has this table with these columns), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (no code).
 
-As of 2026-11-18 none of the 89 tables or 11 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 84 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
+As of 2026-11-18 none of the 90 tables or 11 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 85 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -90,12 +90,13 @@ As of 2026-11-18 none of the 89 tables or 11 views is implemented as drafted. 16
 | `organizations` | table | Different shape in code | Same name in `org.db`, different columns |
 | `owner_questions` | table | Absent |  |
 | `process_cleanup_records` | table | Different shape in code | Closest current table: `owned_processes` |
-| `process_package_folders` | table | Absent |  |
-| `process_package_kinds` | table | Absent |  |
-| `process_package_roles` | table | Absent |  |
-| `process_package_skill_roles` | table | Absent |  |
-| `process_package_skills` | table | Absent |  |
-| `process_packages` | table | Absent |  |
+| `development_process_folders` | table | Absent |  |
+| `development_process_kinds` | table | Absent |  |
+| `development_process_roles` | table | Absent |  |
+| `development_process_skill_roles` | table | Absent |  |
+| `development_process_skills` | table | Absent |  |
+| `development_process_tabs` | table | Absent |  |
+| `development_processes` | table | Absent |  |
 | `project_contributing_teams` | table | Different shape in code | Closest current table: `project_teams` |
 | `project_repositories` | table | Absent |  |
 | `projects` | table | Different shape in code | Same name in `org.db`, different columns |

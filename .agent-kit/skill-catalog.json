@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "8aa0be8418d1eaf143b733b8b68e7277bca32e7b95e7497ed21530d0096d7b09"
+      "sha256": "e2fc528b1d5b1fe08ee699f450976aa00cb32d93ecbf1b9893c342d6e42344f5"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "ac61465462e0d4178c5ae0190eaa6bc78dcad1ec714ce8a92957e36ff5f4b45f"
+      "sha256": "e893f4520351a0e2feea77f03f2fb16fd126dd2b4835d40230f1bed8f0018868"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "33917b21d5108b29ccbda0b46ab540cc94fe673d7166438f8edc0c95d784bc78"
+      "sha256": "eee25c0f30e2e38de5a1af5a002fdcc7eb9dd3674c9a79a49fa462f080e979b2"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,7 +182,7 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "c93177d7847707cfa37874d71a06a52981fbc9a3d79c0ffac1c244d611b735a3"
+      "sha256": "80cdd91a8c60b276458f2b6420f8fb96a45da21019851c8b1af969e8e097d9eb"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",

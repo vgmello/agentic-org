@@ -45,8 +45,8 @@ from all of these.
    feature, release or deployment of the same project. `feature.md` is not duplicated
    as a supporting document. Project-wide documents live in one tree per project
    with one index, and a task may name the issued document versions it realizes
-   ([process package design](process-packages.md#6-the-project-documentation-tree),
-   [document 18](organization-data/18-process-packages-and-project-documentation.md)).
+   ([development process design](development-processes.md#8-the-project-documentation-tree),
+   [document 18](organization-data/18-development-processes-and-project-documentation.md)).
 7. **Privacy is separate.** Shared comments stay shared. Private notes are author-only
    records with no administrator exception, outside organization Git, shared history,
    shared search and shared feeds.

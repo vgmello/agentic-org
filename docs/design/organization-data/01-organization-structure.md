@@ -151,10 +151,10 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── roles/<role-id>.md
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
-├── process-packages/<package-id>/
+├── development-processes/<id>/
 ├── teams/<team-id>/
 │   ├── team.yaml
-│   ├── work/tasks/<task-id>.md       # Team tasks of any type; project_id is null
+│   ├── work/tasks/<task-id>.md       # Team tasks; project_id is null
 │   ├── agents/<employee-id>/profile.md
 │   ├── people/<employee-id>/profile.md
 │   ├── processes/<document-id>.md
@@ -263,7 +263,7 @@ Common fields and organization scoping follow [shared contracts](README.md).
 | `roles` | Front matter and body of `roles/<id>.md`. |
 | `teams` | Same-named fields in `team.yaml`, including `number`, `status` and common attribution, nullable `parent_team_id` and `lead_employee_id`; `key` is derived as `TEAM-<number>`. |
 | `offices` | Same-named keys in `offices/<id>.yaml`; durable organization structure. |
-| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content. Which documents apply to a piece of work is the v1 resolution rule in the [processes design](../processes.md), decision 4 (organization, team chain, package skills, project; `overridable: false` cannot be replaced below). No enforcement engine is specified. |
+| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content. Which documents apply to a piece of work is the v1 resolution rule in the [processes design](../processes.md), decision 4 (organization, then the accountable team's chain, then the project; `overridable: false` cannot be replaced below). No enforcement engine is specified. |
 | `local_repository_locations` | Local durable office/repository binding file: `office_id`, `repository_id`, `origin_path`; never organization Git content. |
 | `repository_caches` | Runtime-only `office_id`, `repository_id`, `bare_path`; not authored in durable organization files. |
 

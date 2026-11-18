@@ -1,6 +1,6 @@
 # Project structure
 
-Status: **selected** data contract, revision 2.12. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md). A project's process package, its documentation tree and issued document versions are defined in [document 18](18-process-packages-and-project-documentation.md).
+Status: **selected** data contract, revision 2.12. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md). A project's development process, its documentation tree and issued document versions are defined in [document 18](18-development-processes-and-project-documentation.md).
 
 ## Relationships
 
@@ -38,7 +38,7 @@ erDiagram
         TEXT updated_at "optional"
         TEXT updated_by_kind "required"
         TEXT updated_by_id FK "optional"
-        TEXT process_package_id FK "optional"
+        TEXT development_process_id FK "optional"
     }
     project_contributing_teams {
         TEXT organization_id PK, FK "required"
@@ -130,7 +130,7 @@ A project brings its own team (owner, 2026-11-17). By default, creating a projec
 
 The dependency runs one way (owner, 2026-11-18). Teams are created on their own, nested to any depth, before any project exists, and a team needs no project: it may be accountable for none, one or several, and its own work is team tasks ([document 03](03-features-and-work.md)). An organization can therefore be fully structured and staffed, with hires approved and agents working on team tasks, before its first project is created, and a project created later names one of those teams as its owner.
 
-A project may follow one process package, named by optional `process_package_id` and chosen when the project is created or later ([document 18](18-process-packages-and-project-documentation.md#a-projects-process)). Null means no package.
+A project may follow one development process, named by optional `development_process_id` and chosen when the project is created or later ([document 18](18-development-processes-and-project-documentation.md#a-projects-process)). Null means no development process.
 
 Each project has exactly one owning team and optional contributing teams. Its organization-wide readable reference is `P-<number>`. It also requires an organization-unique `slug`, such as `reservations`, assigned and registered by HQ when the project is created. Every project task stores that same accountable owning team in required `team_id`; a composite foreign key enforces the match. The task's optional `assigned_team_id` identifies the team currently responsible for doing the work, and `assignee_id` identifies its current individual assignee. Either can be outside the owning team. Reassigning work changes neither project ownership nor task ownership. Reassigning project ownership updates its tasks' `team_id` and records those ownership changes in the same recoverable transaction; existing team/individual assignments stay unchanged. See [task assignment and history](12-task-assignment-and-history.md).
 
@@ -138,7 +138,7 @@ A project may use several repositories, including shared infrastructure or libra
 
 A release has an `R-<number>` reference and an optional plain-text `version_label`, such as `1.4.0` or `Spring launch`. The label is independent of identity and need not follow semantic versioning. A release belongs to one project and contains zero or more milestones. Every milestone requires exactly one same-project release. A task can reference zero or one milestone. Releases are delivery records, not organization-wide repository branches.
 
-Releases and milestones are first-class in every project, whatever process package it follows, and no package can leave them out (owner, 2026-11-18). A release is how a project's work reaches people, so every planned change goes into one. A milestone is optional: a release may have none.
+Releases and milestones are first-class in every project, whatever development process it follows, and no development process can leave them out (owner, 2026-11-18). A release is how a project's work reaches people, so every planned change goes into one. A milestone is optional: a release may have none.
 
 Project investment/token totals are derived from [usage records](10-usage-and-cost-accounting.md), including explicitly attributed project overhead. A project/team/task move does not retroactively change recorded consumption. Release accounting uses captured release attribution, not every later release-manifest membership.
 
@@ -183,7 +183,7 @@ projects/<project-id>/
 └── work/tasks/<task-id>.md          # type: task, bug, request, or another task type
 ```
 
-Project-wide decisions, designs, reports and every package-defined kind of document live in the project's documentation tree, `docs/`, whose layout belongs to the project and whose table of contents is `docs/index.yaml` ([document 18](18-process-packages-and-project-documentation.md#project-documentation-tree)). A project that follows no process package starts with the sections `decisions`, `designs` and `reports`. The brief, and the documents of a feature, a release or a deployment, keep the fixed places shown above.
+Project-wide decisions, designs, reports and every process-defined kind of document live in the project's documentation tree, `docs/`, whose layout belongs to the project and whose table of contents is `docs/index.yaml` ([document 18](18-development-processes-and-project-documentation.md#project-documentation-tree)). A project that follows no development process starts with the sections `decisions`, `designs` and `reports`. The brief, and the documents of a feature, a release or a deployment, keep the fixed places shown above.
 
 Tasks stay in the project work folder even when linked to a milestone; their explicit `milestone_id` is the relationship. This avoids moving task documents whenever their planning assignment changes. Milestone files themselves live inside their owning release.
 
@@ -195,7 +195,7 @@ slug: reservations
 revision: 1
 name: Reservations
 owner_team_id: 01930000-0000-7000-8000-000000000020
-process_package_id: null
+development_process_id: null
 contributing_team_ids: []
 repositories:
   - repository_id: 01930000-0000-7000-8000-000000000002
@@ -206,19 +206,19 @@ The Product Agency's Care Platform and Trading Platform projects can reference t
 
 ## Project, feature, release and deployment documents
 
-One `documents` table holds supporting knowledge at these four scopes. Each document has `owner_employee_id`, `status: draft | current | deprecated` and common creation/update attribution; a current document requires an accountable owner. See [record contracts](08-record-contracts.md). A project-scope document other than the brief is a tree document: it has a `path` inside the project's `docs/`, an optional `summary`, and, for a versioned kind, `version` and `issued_revision` ([document 18](18-process-packages-and-project-documentation.md#issued-versions)). Documents at the other scopes have none of these. Every document requires `project_id` and can optionally name exactly one of `feature_id`, `release_id` or `deployment_id`, constrained to that same project. All three null means project scope. Release and deployment documents are described in [release content and flags](09-release-content-and-flags.md). Each scope can have zero or many documents. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
+One `documents` table holds supporting knowledge at these four scopes. Each document has `owner_employee_id`, `status: draft | current | deprecated` and common creation/update attribution; a current document requires an accountable owner. See [record contracts](08-record-contracts.md). A project-scope document other than the brief is a tree document: it has a `path` inside the project's `docs/`, an optional `summary`, and, for a versioned kind, `version` and `issued_revision` ([document 18](18-development-processes-and-project-documentation.md#issued-versions)). Documents at the other scopes have none of these. Every document requires `project_id` and can optionally name exactly one of `feature_id`, `release_id` or `deployment_id`, constrained to that same project. All three null means project scope. Release and deployment documents are described in [release content and flags](09-release-content-and-flags.md). Each scope can have zero or many documents. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
 
 | Record | Content | Canonical location |
 | --- | --- | --- |
 | Project brief | Product purpose, goals and boundaries | `projects/<project-id>/brief.md` |
 | Project design | Shared architecture, integrations and cross-feature concepts | In the tree: `docs/<path>.md`, by default under `docs/designs/` |
 | Project decision/report | Cross-feature decisions or findings | In the tree, by default under `docs/decisions/` or `docs/reports/` |
-| Package-defined kind | Whatever the project's process package declares, for example a specification | In the tree, in a section the package declares or the project adds |
+| Development process-defined kind | Whatever the project's development process declares, for example a specification | In the tree, in a section the development process declares or the project adds |
 | Feature definition | Purpose, current behaviour, rules, known limitations and non-goals | `features/<feature-id>/feature.md` |
 | Feature design | Detailed flows, interactions and implementation choices | Feature `designs/<document-id>.md` |
 | Feature decision/report | Feature-specific rationale, experiments or findings | Feature `decisions/` or `reports/` |
 
-`feature.md` projects into the `features` table; it is not duplicated as a `documents` row. Other feature documents use `kind: design`, `decision` or `report`. A `brief` document is project-wide. `kind: changelog` is restricted to release or deployment scope and lives at its scope's `changelog.md`. Other release/deployment documents live under that scope's `documents/`. `kind` is one of those five built-in values or, for a tree document only, a key declared by a process package. All paths above are inside the organization Git repository and survive closure of related tasks. Documents beside a feature, a release or a deployment keep stable-ID filenames; a tree document has a readable path that may change, and its identity is the `id` in its front matter.
+`feature.md` projects into the `features` table; it is not duplicated as a `documents` row. Other feature documents use `kind: design`, `decision` or `report`. A `brief` document is project-wide. `kind: changelog` is restricted to release or deployment scope and lives at its scope's `changelog.md`. Other release/deployment documents live under that scope's `documents/`. `kind` is one of those five built-in values or, for a tree document only, a key declared by a development process. All paths above are inside the organization Git repository and survive closure of related tasks. Documents beside a feature, a release or a deployment keep stable-ID filenames; a tree document has a readable path that may change, and its identity is the `id` in its front matter.
 
 For Restaurant SaaS, shared Reservations architecture is a project design (`feature_id: null`). The table-booking feature definition explains booking behaviour and known limitations. Its overlap-handling design is a separate feature document:
 
@@ -256,7 +256,7 @@ Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md
 
 | Table | Source fields |
 | --- | --- |
-| `projects` | `project.yaml`: common identity fields, required organization-unique `slug`, `name`, `owner_team_id`, `archived` (default false), optional `process_package_id`. |
+| `projects` | `project.yaml`: common identity fields, required organization-unique `slug`, `name`, `owner_team_id`, `archived` (default false), optional `development_process_id`. |
 | `project_contributing_teams` | One row per `contributing_team_ids[]`; `project_id` comes from that project. |
 | `project_repositories` | One row per `repositories[]` entry with `repository_id`, `integration_branch`; `project_id` comes from the project. |
 | `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, and Markdown body; `feature_ids[]`/`task_ids[]` are projected by document 09. |
@@ -290,14 +290,14 @@ slug TEXT NOT NULL CHECK (
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
-  process_package_id TEXT,
+  development_process_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
   UNIQUE (organization_id, slug),
   UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, process_package_id) REFERENCES process_packages(organization_id, id)
+  FOREIGN KEY (organization_id, development_process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),

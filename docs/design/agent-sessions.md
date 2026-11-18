@@ -242,10 +242,11 @@ The decisions this design applies:
      does not work, actions needing approval are denied and the run ends `blocked`.
 8. **Instructions are composed by the office** from the employee's identity and role
    (`profile.md`), its prompt and tools (`execution.md`), the turn's explicit
-   objective, the effective processes and standards, which include the skills of the
-   project's process package for the agent's role
-   ([process design](processes.md#32-delivery-to-sessions-proc-7)), built-in `agent-os`
-   help, and the project's instruction files read with the office's hardened Git from
+   objective, the effective organization processes and standards
+   ([process design](processes.md#32-delivery-to-sessions-proc-7)), the project's development process
+   with the skills for the agent's role, as a section of its own
+   ([development process design](development-processes.md#6-how-skills-reach-an-agent)),
+   built-in `agent-os` help, and the project's instruction files read with the office's hardened Git from
    each association's `integration_branch` in a verified cache. Nothing an agent
    writes in its worktree changes what the office tells the next session. Instruction
    files a runtime reads from its working directory on its own (`AGENTS.md`,
@@ -339,8 +340,11 @@ such if shown.
 
 ## How a turn runs
 
-A turn starts only from an explicit instruction, the answer to a required ask, or a
-recovery. Messages, assignments and schedules never create model work by themselves.
+A turn starts from an explicit instruction, an ask addressed to the agent, a task
+assigned to it by its lead chain or its project team, the answer to a required ask, or
+a recovery ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
+Messages, mentions, other assignments and schedules never create model work by
+themselves. A waiting ask or assignment never interrupts an open turn.
 A second open turn returns `BUSY`.
 
 1. **Admit.** Authenticate the caller and scope, validate placement and configuration

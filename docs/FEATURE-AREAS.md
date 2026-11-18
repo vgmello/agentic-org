@@ -2,7 +2,7 @@
 
 These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. 
 
-There are **13 categories, 178 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
+There are **13 categories, 180 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 ## Categorization rules
 
@@ -25,13 +25,13 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring, project documentation and release/deployment records | 17 | 0 | 1 | 15 | 0 | 1 | 0 |
 | [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks and handoffs | 14 | 2 | 6 | 4 | 0 | 2 | 0 |
 | [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 10 | 0 | 1 | 0 |
-| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 14 | 1 | 2 | 7 | 0 | 4 | 0 |
-| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content, process packages and deferred learning engines | 17 | 0 | 3 | 8 | 0 | 6 | 0 |
+| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 15 | 1 | 2 | 8 | 0 | 4 | 0 |
+| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content, development processes and deferred learning engines | 18 | 0 | 3 | 10 | 0 | 5 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 14 | 1 | 4 | 6 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **178** | **9** | **62** | **63** | **1** | **43** | **0** |
+| **Total** | | **180** | **9** | **62** | **66** | **1** | **42** | **0** |
 
 ## AREA-01
 
@@ -87,11 +87,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Scope:** Canonical feature definitions/lifecycle and linked work; scoped knowledge, briefs, ADRs, shortcut provenance and feature limitations, document CLI/publication; the project documentation tree with its index, issued document versions, code links and derived convergence; release/milestone manifests, changelogs, deployment and flag records.
 
-**Boundary:** Owns definitions and records, not deployment execution or flag evaluation. Task execution belongs to AREA-04; richer health/report generation belongs to AREA-10; Git transport/storage mechanics belong to AREA-12. Process packages, which declare a project's document kinds and starting sections, belong to AREA-09.
+**Boundary:** Owns definitions and records, not deployment execution or flag evaluation. Task execution belongs to AREA-04; richer health/report generation belongs to AREA-10; Git transport/storage mechanics belong to AREA-12. Development processes, which declare a project's document kinds and starting sections, belong to AREA-09.
 
 **Verification focus:** Check real feature storage/editing and task membership; document reader/editor, kinds/templates/search and publication/provenance; that the index lists exactly what the tree holds after every write, that an issued version cannot change and that an agent is refused another project's tree; release content/changelogs, deployment outcomes/rollback links and intended versus applied flag records. Authored records do not establish automation.
 
-**Requirements:** [Features UX](specs/features-ux.md), [Knowledge UX](specs/decisions-and-tech-debt-ux.md), [Process packages and project documentation](design/organization-data/18-process-packages-and-project-documentation.md), [Release content](design/organization-data/09-release-content-and-flags.md), [Deployments](design/organization-data/07-release-deployments.md).
+**Requirements:** [Features UX](specs/features-ux.md), [Knowledge UX](specs/decisions-and-tech-debt-ux.md), [Development processes and project documentation](design/organization-data/18-development-processes-and-project-documentation.md), [Release content](design/organization-data/09-release-content-and-flags.md), [Deployments](design/organization-data/07-release-deployments.md).
 
 ## AREA-06
 
@@ -123,7 +123,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Scope:** Native process primitives and runtime adapters, explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation and deferred scheduling/delegation.
 
-**Boundary:** Owns running work safely. Employee identity belongs to AREA-03, budget semantics to AREA-07, human session inspection/takeover to AREA-13, and durable recovery evidence to AREA-12. Automatic scheduling and delegate engines remain Deferred.
+**Boundary:** Owns running work safely. Employee identity belongs to AREA-03, budget semantics to AREA-07, human session inspection/takeover to AREA-13, and durable recovery evidence to AREA-12. Starting an agent on an ask or an assignment is selected (ADR-0023); schedules, always-on agents and delegate engines remain Deferred.
 
 **Verification focus:** Check each Claude/Codex/Agy adapter for real launch, streaming, cancellation and sandbox enforcement; check observed progress/health/waits; validate credential and other-task denies in the selected workspace topology. Generic process primitives do not prove full adapters.
 
@@ -133,13 +133,13 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Roles, processes and retrospectives** · [Feature checklist](FEATURES.md#roles-processes-and-retrospectives)
 
-**Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction, process packages (roles, skills, a project's process, seed roster, role-named hire requests, the built-in desired state and feature delivery packages), and the separately deferred enforcement/autonomy/retrospective engines.
+**Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction, development processes, a primitive separate from organization processes (roles, skills, tabs, a project's choice of one, seed roster, role-named hire requests, import, the built-in desired state and feature delivery processes), and the separately deferred enforcement/autonomy/retrospective engines.
 
-**Boundary:** Owns guidance content and proposed learning workflows. Execution configuration belongs to AREA-08; general document tooling, including the project documentation tree, issued versions and code links, belongs to AREA-05; the hire flow itself belongs to AREA-03. Resolution is selected; a process package is content, and mechanical enforcement, approvals and execution engines remain Deferred.
+**Boundary:** Owns guidance content and proposed learning workflows. Execution configuration belongs to AREA-08; general document tooling, including the project documentation tree, issued versions and code links, belongs to AREA-05; the hire flow itself belongs to AREA-03. Resolution is selected; a development process is content, and mechanical enforcement, approvals and execution engines remain Deferred.
 
 **Verification focus:** Check actual role record/assignment persistence and organization/team/project process or standard document storage. Existing content and editor UI do not establish runtime composition, inheritance, agent injection or retrospective execution.
 
-**Requirements:** [Roles UX](specs/roles-ux.md), [Process UX](specs/processes-ux.md), [Process design](design/processes.md), [Process package design](design/process-packages.md), [Desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), [Retrospective UX](specs/retrospectives-ux.md).
+**Requirements:** [Roles UX](specs/roles-ux.md), [Process UX](specs/processes-ux.md), [Process design](design/processes.md), [Development process design](design/development-processes.md), [Desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), [Retrospective UX](specs/retrospectives-ux.md).
 
 ## AREA-10
 
