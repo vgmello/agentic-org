@@ -102,6 +102,10 @@ mod vector {
     /// number, it has the adapter's refusal text, and nothing was confined.
     fn refused_at_entry(root: &Path, rendezvous: &Path) {
         let error = confinement::confine_web(rendezvous).unwrap_err();
+        entry_refusal(root, &error);
+    }
+    /// Checks that `error` is the entry check's refusal and that nothing was confined.
+    fn entry_refusal(root: &Path, error: &std::io::Error) {
         assert!(
             error.raw_os_error().is_none(),
             "refused at entry, not at connect: {error}"
@@ -154,15 +158,32 @@ mod vector {
         let root = Path::new(&args[1]);
         let rendezvous = Path::new(&args[2]);
         if args[0] == "--thread" {
-            std::thread::spawn(|| {}).join().unwrap();
             // A second thread that lives through the call: every adapter refuses a
-            // process that has another thread, and one refuses any that ever had.
+            // process that has another thread.
             let (release, parked) = std::sync::mpsc::channel::<()>();
             let second = std::thread::spawn(move || parked.recv());
             refused_at_entry(root, rendezvous);
             drop(release);
             let _ = second.join().unwrap();
             println!("thread-refused");
+            return;
+        }
+        if args[0] == "--joined-thread" {
+            // A thread that has ended before the call, and no other. An adapter that
+            // asks whether the process ever had a thread refuses; one that counts
+            // the threads it has now may find one and confine it. The parent knows
+            // from the first child's report which it must be.
+            std::thread::spawn(|| {}).join().unwrap();
+            match confinement::confine_web(rendezvous) {
+                Err(error) => {
+                    entry_refusal(root, &error);
+                    println!("joined-thread-refused");
+                }
+                Ok((_approved, report)) => {
+                    confinement::verify_ready_report(&report).unwrap();
+                    println!("joined-thread-confined");
+                }
+            }
             return;
         }
         if args[0] == "--descriptor" {
@@ -202,6 +223,32 @@ mod vector {
             for worker in workers {
                 worker.join().unwrap();
             }
+            // Buffers that grow by appending, here and on another thread (the C
+            // library moves a large block with mremap), and a contended channel
+            // (a waiting side yields with sched_yield).
+            let grow = || {
+                let mut bytes = Vec::new();
+                (0..(1u32 << 20)).for_each(|value| bytes.push(value as u8));
+                let mut text = String::new();
+                while text.len() < 1 << 20 {
+                    text.push_str("grown by appending ");
+                }
+                bytes.len() + text.len()
+            };
+            assert!(grow() > 2 << 20);
+            assert!(std::thread::spawn(grow).join().unwrap() > 2 << 20);
+            let (send, receive) = std::sync::mpsc::sync_channel::<u32>(0);
+            let senders: Vec<_> = (0..4)
+                .map(|_| {
+                    let send = send.clone();
+                    std::thread::spawn(move || (0..5_000).for_each(|n| send.send(n).unwrap()))
+                })
+                .collect();
+            drop(send);
+            assert_eq!(receive.iter().count(), 20_000);
+            senders
+                .into_iter()
+                .for_each(|sender| sender.join().unwrap());
             let started = std::time::Instant::now();
             let sum = std::thread::spawn(|| {
                 let block = vec![1u8; 8 << 20];
@@ -368,9 +415,36 @@ mod vector {
             );
             assert!(negative.0.wait().unwrap().success());
         }
-        drop((unrelated, outbound));
+        // A process whose only other thread has ended. Without a filter in the
+        // report (the adapter that asks whether the process ever had a thread) it
+        // must be refused. With one, the adapter counts the threads the process has
+        // now: it is refused or confined, and either is right. Its rendezvous
+        // listens, so a refusal is the entry check's and not a failed connection.
+        let joined_rendezvous = root.0.join("j");
+        let joined_listener = UnixListener::bind(&joined_rendezvous).unwrap();
+        let mut joined = spawn(
+            &["--joined-thread"],
+            &root.0,
+            &joined_rendezvous,
+            &outbound_address,
+        );
+        let outcome = line(&mut BufReader::new(joined.0.stdout.take().unwrap()));
+        assert!(joined.0.wait().unwrap().success());
+        let joined_thread = match outcome.as_str() {
+            "joined-thread-refused\n" => "refusal of a process whose thread had ended",
+            "joined-thread-confined\n" if kills => {
+                "confinement of a process whose thread had ended (one thread at entry)"
+            }
+            other => panic!("a process that had a thread: {other:?}"),
+        };
+        drop((unrelated, outbound, joined_listener));
         assert_eq!(fs::read(root.0.join("fixture")).unwrap(), b"retained");
-        println!("PASS: normal/special pathname, main-thread enforcement, parent observation, inherited listener/rights, denied ambient I/O/exec/connect, inherited thread policy and never-threaded refusal; disposable roots only");
+        println!(
+            "PASS: normal/special pathname, main-thread enforcement, parent observation, \
+             inherited listener/rights, denied ambient I/O/exec/connect, inherited thread \
+             policy, refusal of a process with a second thread, {joined_thread}, refusal of a \
+             process with a fourth descriptor; disposable roots only"
+        );
     }
 }
 
