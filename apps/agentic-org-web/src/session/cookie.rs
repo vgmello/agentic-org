@@ -8,7 +8,6 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use hyper::header::{HeaderMap, HeaderValue, COOKIE};
 use org_host_control::browser::Digest32;
 use sha2::{Digest, Sha256};
-use std::{fs::File, io::Read};
 use zeroize::Zeroizing;
 
 const COOKIE_DOMAIN: &[u8] = b"agentic-org/browser-session/cookie/v1\0";
@@ -97,9 +96,14 @@ pub struct BrowserPair {
     proof: Zeroizing<String>,
 }
 impl BrowserPair {
+    /// Mints from the system generator (`getentropy`), which the web process's
+    /// sandbox permits; it cannot open `/dev/urandom`.
     pub fn mint() -> std::io::Result<Self> {
+        use ring::rand::{SecureRandom, SystemRandom};
         let mut bytes = Zeroizing::new([0u8; 64]);
-        File::open("/dev/urandom")?.read_exact(&mut *bytes)?;
+        SystemRandom::new()
+            .fill(&mut *bytes)
+            .map_err(|_| std::io::Error::other("the system random generator failed"))?;
         let cookie = Zeroizing::new(URL_SAFE_NO_PAD.encode(&bytes[..32]));
         let mut proof = Zeroizing::new(String::with_capacity(64));
         for b in &bytes[32..] {

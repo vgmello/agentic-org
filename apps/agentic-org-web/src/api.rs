@@ -321,7 +321,8 @@ impl ApiBackend for SessionApi {
     type Call = Call;
     fn route(&self, request: &Parts, path: &RequestPath) -> Result<Route, ApiReply> {
         let query = request.uri.query().is_some();
-        let get = request.method == Method::GET && !query;
+        // HEAD is GET without the body (`into_http` drops it), as `Allow` advertises.
+        let get = matches!(request.method, Method::GET | Method::HEAD) && !query;
         let post = request.method == Method::POST && !query;
         let segments: Vec<&str> = path.segments().iter().map(String::as_str).collect();
         Ok(match segments.as_slice() {

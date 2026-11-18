@@ -471,6 +471,45 @@ fn a_validated_pair_is_cached_for_later_requests() {
     );
 }
 
+/// HEAD, advertised in `Allow`, answers a GET route's status and headers with no
+/// body, through the same pair check; a POST-only route stays `invalid_request`.
+#[test]
+fn head_answers_get_routes_without_a_body() {
+    let (first, _) = gateway(default_script());
+    let pair = sign_in(&first).pair();
+    let (gateway, calls) = gateway(Arc::new(|method, _| match method {
+        "session.validate" => vec![json!({ "result": record(1) })],
+        _ => vec![json!({"error":{"code":"unavailable","message":"no"}})],
+    }));
+    let version = send(&gateway, Method::HEAD, "/api/v1/version", "", None, &[]);
+    assert_eq!(version.status, StatusCode::OK);
+    assert_eq!(version.body, Value::Null);
+    let unpaired = send(&gateway, Method::HEAD, "/api/v1/session", "", None, &[]);
+    assert_eq!(unpaired.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(unpaired.body, Value::Null);
+    let session = send(
+        &gateway,
+        Method::HEAD,
+        "/api/v1/session",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(session.status, StatusCode::OK);
+    assert_eq!(session.body, Value::Null);
+    assert!(session.headers.get(header::SET_COOKIE).is_none());
+    let post_only = send(
+        &gateway,
+        Method::HEAD,
+        "/api/v1/session/sign-in",
+        "",
+        None,
+        &[],
+    );
+    assert_eq!(post_only.status, StatusCode::BAD_REQUEST);
+    assert_eq!(calls.methods(), ["session.validate"]);
+}
+
 /// Registration redeems the link with the socket peer address and signs in.
 #[test]
 fn register_redeems_the_link_and_sets_the_pair() {

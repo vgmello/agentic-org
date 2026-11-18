@@ -80,6 +80,7 @@ dependencies = [
  "org-proto",
  "org-release",
  "org-socket",
+ "ring",
  "rustix",
  "scraper",
  "serde",
