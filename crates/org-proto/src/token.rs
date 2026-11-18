@@ -1,5 +1,5 @@
 //! The app token: the per-office secret that lets the desktop app act for people (ADR-0003 §2.1),
-//! [`OfficeSecretsKey`], an office's database key, and the grant secrets of X-02 §4.1 ([`GrantMac`] and
+//! [`OfficeSecretsKey`], an office's secrets key, and the grant secrets of X-02 §4.1 ([`GrantMac`] and
 //! [`GrantKey`]), which share the same guards.
 //!
 //! The host makes a fresh token for each office every time it starts and keeps it only in
@@ -17,7 +17,7 @@
 //!
 //! It decodes from JSON only (it uses `deserialize_any`, which needs a self-describing format).
 //!
-//! [`OfficeSecretsKey`], an office's database key, gets the same treatment (see its docs). It travels only
+//! [`OfficeSecretsKey`], an office's secrets key, gets the same treatment (see its docs). It travels only
 //! on the launch pipe from the host to the office's server (`org-office-launch`), never on a
 //! socket. It lives here, next to the app token, so the two share one implementation of their
 //! guards (`org-office-launch` re-exports it).
@@ -51,7 +51,7 @@ const SECRET_BYTES: usize = 32;
 /// An app token's length in bytes (64 hex digits on the wire).
 pub const APP_TOKEN_BYTES: usize = SECRET_BYTES;
 
-/// A database key's length in bytes (64 hex digits on the wire).
+/// An office secrets key's length in bytes (64 hex digits on the wire).
 pub const OFFICE_SECRETS_KEY_BYTES: usize = SECRET_BYTES;
 
 /// A per-office app token. See the module docs.
@@ -149,12 +149,13 @@ impl Secret for AppToken {
     }
 }
 
-/// An office's database key: the 32-byte raw key of its SQLCipher databases.
+/// An office's secrets key: 32 random bytes that wrap the office's private keys
+/// (`org_pki::wrap`). It never encrypts a database (ADR-0016).
 ///
 /// The host creates each office's key from a secure random source, stores it in its own key
 /// store, and sends it to the office's server on the launch pipe (`org-office-launch`) on every
-/// create, start and discard. The server never creates, stores or deletes one. It never reaches
-/// argv, the environment, a log or the office's folder.
+/// create and start (a discard carries none). The server never creates, stores or deletes one.
+/// It never reaches argv, the environment, a log or the office's folder.
 ///
 /// It has the same guards as [`AppToken`]:
 /// - On the wire it is 64 lowercase hex digits; decode errors never echo the input, and it
@@ -237,10 +238,10 @@ impl<'de> Deserialize<'de> for OfficeSecretsKey {
 }
 
 /// The one decode error. It never contains the input.
-const BAD_DB_KEY: &str = "a database key must be 64 lowercase hex digits";
+const BAD_DB_KEY: &str = "an office secrets key must be 64 lowercase hex digits";
 
 impl Secret for OfficeSecretsKey {
-    const EXPECTING: &'static str = "a database key";
+    const EXPECTING: &'static str = "an office secrets key";
     const BAD: &'static str = BAD_DB_KEY;
 
     fn zeroed() -> Self {

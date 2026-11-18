@@ -1,7 +1,7 @@
-//! Making the host's secrets, `std` only: database keys, plus non-secret unique names drawn from
+//! Making the host's secrets, `std` only: office secrets keys, plus non-secret unique names drawn from
 //! the same source. The host makes no app tokens: a launch handoff carries none.
 //!
-//! The host makes an office's database key once, when it creates the office, and stores it in its
+//! The host makes an office's secrets key once, when it creates the office, and stores it in its
 //! key store (`keys`) before the office's server starts. It is in the host's memory only from its
 //! creation (or a load from the store) until the first line that carries it is written.
 
@@ -10,7 +10,7 @@ use std::io::{self, Read};
 
 use org_proto::{OfficeSecretsKey, OFFICE_SECRETS_KEY_BYTES};
 
-/// A fresh database key: 32 bytes from `/dev/urandom`.
+/// A fresh office secrets key: 32 bytes from `/dev/urandom`.
 pub(crate) fn generate_office_secrets_key() -> io::Result<OfficeSecretsKey> {
     random(OfficeSecretsKey::from_bytes)
 }

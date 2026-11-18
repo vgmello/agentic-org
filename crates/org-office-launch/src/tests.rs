@@ -4,7 +4,7 @@ use std::path::Path;
 use super::*;
 use crate::write_server_event;
 
-/// A fixed database key's wire form, for the secret-line reader's tests.
+/// A fixed office secrets key's wire form, for the secret-line reader's tests.
 const KEY_HEX: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
 
 fn office_file() -> OfficeFile {

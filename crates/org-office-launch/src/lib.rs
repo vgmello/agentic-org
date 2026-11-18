@@ -125,7 +125,7 @@ use org_proto::frame::FrameError;
 use org_proto::OfficeRole;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// An office's database key, re-exported from `org_proto` so the host and the server name it
+/// An office's secrets key, re-exported from `org_proto` so the host and the server name it
 /// through this contract. It travels only in the rendezvous handoff ([`Handoff`]); see the
 /// crate docs.
 pub use org_proto::OfficeSecretsKey;

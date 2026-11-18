@@ -13,7 +13,7 @@
 //! `org-office-launch`, and never depends on `org-office`. The private `hostdb` stores the
 //! host's registry in SQLCipher; organization databases remain in office servers.
 //!
-//! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
+//! It holds every office's secrets key (`keys`): it creates each one, keeps it in its key store
 //! (the Data Protection keychain in release builds, a development folder in debug builds) and
 //! hands it to the office's server on the launch pipe. Its servers never touch a key store.
 //!
@@ -166,7 +166,7 @@ pub struct Config {
     #[cfg(debug_assertions)]
     pub dev_app_path: Option<PathBuf>,
     /// Debug builds only (release builds don't have the field): the folder (absolute) where the
-    /// host keeps the offices' database keys, as plain files, instead of the Keychain. A debug
+    /// host keeps the offices' secrets keys, as plain files, instead of the Keychain. A debug
     /// host without it refuses to start ([`HostError::NoDevKeyDir`]), so it never writes a real
     /// Keychain item. The binary takes it from `ORG_OFFICE_DEV_KEY_DIR`; tests set it directly.
     /// It must not be inside the office home, and two homes must not share one.

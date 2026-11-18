@@ -1,6 +1,6 @@
 //! The real `agentic-org-office` binary, driven the way the host drives it: arguments, the launch
 //! first line on stdin, the authenticated rendezvous (keys, events, lifetime) and the office
-//! socket. stdout is untrusted and must stay empty. The host holds the database key and hands it
+//! socket. stdout is untrusted and must stay empty. The host holds the office secrets key and hands it
 //! over on the rendezvous (key custody), so there is no key store here and no test can touch a
 //! Keychain: the server has no Keychain code.
 
@@ -141,7 +141,7 @@ fn token() -> AppToken {
     AppToken::from_bytes([0xA7; 32])
 }
 
-/// The database key the host would hold for the office.
+/// The office secrets key the host would hold for the office.
 fn db_key() -> OfficeSecretsKey {
     OfficeSecretsKey::from_bytes([0xB3; 32])
 }
@@ -692,7 +692,7 @@ fn the_keys_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     assert!(!log.contains("07070707"), "the grant key reached the log");
     assert!(
         !log.contains(DB_KEY_HEX),
-        "the database key reached the log"
+        "the office secrets key reached the log"
     );
 }
 
