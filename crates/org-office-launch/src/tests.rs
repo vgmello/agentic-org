@@ -99,11 +99,11 @@ fn server_events_have_the_agreed_shapes() {
         ),
         (
             ServerEvent::Failed {
-                code: FailCode::KeyMissing,
-                message: "the office's key is missing".into(),
+                code: FailCode::InUse,
+                message: "the office is in use".into(),
             },
-            serde_json::json!({"v":1,"event":"failed","code":"key_missing",
-                "message":"the office's key is missing"}),
+            serde_json::json!({"v":1,"event":"failed","code":"in_use",
+                "message":"the office is in use"}),
         ),
         (
             ServerEvent::Created {
@@ -130,7 +130,6 @@ fn every_fail_code_has_its_wire_name() {
         (FailCode::UnsupportedVersion, "unsupported_version"),
         (FailCode::InvalidName, "invalid_name"),
         (FailCode::AlreadyExists, "already_exists"),
-        (FailCode::KeyMissing, "key_missing"),
         (FailCode::InUse, "in_use"),
         (FailCode::StorageError, "storage_error"),
     ];
@@ -152,15 +151,19 @@ fn unknown_events_and_failure_codes_are_tolerated() {
         Some(ServerEvent::Unknown)
     );
 
-    let line = br#"{"v":1,"event":"failed","code":"disk_on_fire","message":"m"}
-"#;
-    assert_eq!(
-        decode_event(&mut Cursor::new(&line[..])).unwrap(),
-        Some(ServerEvent::Failed {
-            code: FailCode::StorageError,
-            message: "m".into()
-        })
-    );
+    // An unknown code, the retired `key_missing` included, is a retried storage error.
+    for code in ["disk_on_fire", "key_missing"] {
+        let line =
+            format!("{{\"v\":1,\"event\":\"failed\",\"code\":\"{code}\",\"message\":\"m\"}}\n");
+        assert_eq!(
+            decode_event(&mut Cursor::new(line.as_bytes())).unwrap(),
+            Some(ServerEvent::Failed {
+                code: FailCode::StorageError,
+                message: "m".into()
+            }),
+            "{code}"
+        );
+    }
 }
 
 #[test]

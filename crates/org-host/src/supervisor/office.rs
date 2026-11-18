@@ -414,7 +414,6 @@ fn after_exit(failure: Option<FailCode>, ready_at: Option<Instant>) -> Ending {
 pub(crate) fn reason_for(code: FailCode) -> (OfficeStatusReason, bool) {
     match code {
         FailCode::InUse => (OfficeStatusReason::InUse, false),
-        FailCode::KeyMissing => (OfficeStatusReason::KeyMissing, true),
         FailCode::UnsupportedVersion => (OfficeStatusReason::UnsupportedVersion, true),
         FailCode::InvalidRequest | FailCode::InvalidName | FailCode::AlreadyExists => {
             (OfficeStatusReason::InvalidRequest, true)
@@ -527,7 +526,6 @@ mod tests {
         for (code, reason, fatal) in [
             (FailCode::InUse, R::InUse, false),
             (FailCode::StorageError, R::StorageError, false),
-            (FailCode::KeyMissing, R::KeyMissing, true),
             (FailCode::UnsupportedVersion, R::UnsupportedVersion, true),
             (FailCode::InvalidRequest, R::InvalidRequest, true),
             (FailCode::InvalidName, R::InvalidRequest, true),

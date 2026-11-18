@@ -147,17 +147,19 @@ fn native_restart_follows_the_runtime_contract() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     home.write_office(&hq(B, "01ORGB", "Beta", T));
-    // A's key is missing at first, then found; B's server speaks another version.
+    // A gives up after one crash, then gets ready; B's server speaks another version.
     home.script(json!({
-        A: [{"do": "fail", "code": "key_missing"}, {"do": "ready"}],
+        A: [{"do": "crash"}, {"do": "ready"}],
         B: {"do": "fail", "code": "unsupported_version"}
     }));
-    let host = home.start(app_config(&home)).unwrap();
+    let mut config = app_config(&home);
+    config.timings.give_up_after = 1;
+    let host = home.start(config).unwrap();
     wait_for_state(
         &host,
         A,
         OfficeStatus::Unavailable,
-        Some(OfficeStatusReason::KeyMissing),
+        Some(OfficeStatusReason::RestartsExhausted),
     );
     wait_for_state(
         &host,
@@ -169,7 +171,7 @@ fn native_restart_follows_the_runtime_contract() {
     thread::sleep(Duration::from_millis(500));
     assert_eq!(home.runs(A), 1);
 
-    // `key_missing` is retried by a restart; this time the key is there.
+    // `restarts_exhausted` is retried by a restart; this time it gets ready.
     restart(&host, A).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
     assert_eq!(home.runs(A), 2);
@@ -227,10 +229,11 @@ fn every_way_a_start_ends_has_its_reason() {
             Offline,
             R::StorageError,
         ),
+        // The retired `key_missing` is a code this build doesn't know: a retried storage error.
         (
             json!({"do": "fail", "code": "key_missing"}),
-            Unavailable,
-            R::KeyMissing,
+            Offline,
+            R::StorageError,
         ),
         (
             json!({"do": "fail", "code": "unsupported_version"}),

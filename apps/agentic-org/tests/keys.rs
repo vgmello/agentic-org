@@ -20,7 +20,6 @@ use std::time::{Duration, Instant};
 
 use org_host::{Host, HostError};
 use org_proto::{OfficeStatus, OfficeStatusReason};
-use serde_json::json;
 use support::{hq, office_info, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -80,7 +79,6 @@ fn a_missing_or_unreadable_key_still_starts_the_office_with_a_null_key() {
         assert_eq!(home.runs(office), 1, "{office}");
         assert_eq!(home.db_key_fingerprints(office), ["null"], "{office}");
     }
-
     host.shutdown();
 
     // Once the key is back, the next start hands it over.
@@ -94,28 +92,6 @@ fn a_missing_or_unreadable_key_still_starts_the_office_with_a_null_key() {
     );
     // The host never replaces or deletes an item, even one that isn't a key.
     assert_eq!(home.key_text(B).as_deref(), Some("not a key"));
-    host.shutdown();
-    home.assert_no_secret_in_home();
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_servers_key_missing_is_key_missing_with_no_restarts_and_the_key_untouched() {
-    let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
-    let before = home.key_text(A).unwrap();
-    home.script(json!({ A: {"do": "fail", "code": "key_missing"} }));
-    let host = home.start(home.config()).unwrap();
-    wait_for_state(
-        &host,
-        A,
-        OfficeStatus::Unavailable,
-        Some(OfficeStatusReason::KeyMissing),
-    );
-    // Several backoff periods pass without a restart.
-    thread::sleep(Duration::from_millis(800));
-    assert_eq!(home.runs(A), 1);
-    assert_eq!(home.key_text(A).unwrap(), before);
     host.shutdown();
     home.assert_no_secret_in_home();
 }

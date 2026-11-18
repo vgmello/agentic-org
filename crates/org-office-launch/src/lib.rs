@@ -532,11 +532,6 @@ pub enum FailCode {
     /// `--create` for an office whose folder or `office.json` already exists, or `--discard`
     /// of an office that has `office.json` or a committed organization.
     AlreadyExists,
-    /// `--office`: the key the host sent doesn't open the office's existing databases. The
-    /// server deletes nothing on it, and it is never retried automatically. The host also shows
-    /// an office as `key_missing` when its own key item is gone, without starting a server.
-    /// `--discard` reports [`FailCode::StorageError`] instead.
-    KeyMissing,
     /// The office lock wasn't free within [`OFFICE_LOCK_WAIT`].
     InUse,
     /// Anything else: I/O, the database; for `--discard`, databases it can't open or check, and

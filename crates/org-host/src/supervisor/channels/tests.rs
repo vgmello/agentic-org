@@ -251,11 +251,11 @@ fn a_discard_stream_ends_at_a_non_server_event() {
             },
         )
         .unwrap();
-        org_office_launch::write_rendezvous_event(
+        // The host may already have closed the stream at the receipt: a broken pipe here is fine.
+        let _ = org_office_launch::write_rendezvous_event(
             &mut worker,
             &org_office_launch::RendezvousEvent::Server(ServerEvent::Discarded),
-        )
-        .unwrap();
+        );
         worker
     });
     let (signals, events) = mpsc::channel();
