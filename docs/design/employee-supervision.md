@@ -173,7 +173,7 @@ real organization.
 ## What the code does today
 
 `crates/org-supervise` starts, stops and cleans up processes with ownership marks, and
-`crates/org-runtime` defines the runtime contract. The office uses `org-supervise`
-only to recover owned processes at startup (`apps/agentic-org-office/src/owned_recovery.rs`);
+`crates/org-runtime` defines the runtime contract. The office does not use `org-supervise`:
+B1b removed its startup recovery of owned processes, which returns with C3;
 nothing launches an agent, and there is no permit or placement code
 (implementation plan C3).
