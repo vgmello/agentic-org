@@ -470,8 +470,8 @@ fn first_line(
 }
 
 /// The v3 handshake on the rendezvous socket at `path`, as the real server does it. Any fault
-/// fails the run (`storage_error`; `invalid_request` for a bad header, or one whose op isn't
-/// `line`'s). As in the real server, events go on the stream as soon as it is connected, so a
+/// fails the run (`storage_error`; `invalid_request` for a bad header, a fatal receive, or a
+/// header whose op isn't `line`'s). As in the real server, events go on the stream as soon as it is connected, so a
 /// failure during the handshake reaches the host there, never on stdout.
 fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Handoff {
     let mut stream = UnixStream::connect(path).unwrap_or_else(|_| fail(FailCode::StorageError));
@@ -569,7 +569,9 @@ fn receive<T>(stream: &UnixStream, mut call: impl FnMut() -> Result<T, ReceiveEr
                     Err(_) => bail(stream, FailCode::StorageError),
                 }
             }
-            Err(ReceiveError::Fatal(_)) => bail(stream, FailCode::StorageError),
+            // As the real server: a fatal receive (a descriptor on a header byte, a wrong
+            // marker, the stream ending mid-header) is an invalid handoff.
+            Err(ReceiveError::Fatal(_)) => bail(stream, FailCode::InvalidRequest),
         }
     }
 }

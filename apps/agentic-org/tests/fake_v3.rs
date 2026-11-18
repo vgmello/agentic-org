@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use org_office_launch::v3::{self, HostFirstLine, RendezvousEvent};
-use org_office_launch::{ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
+use org_office_launch::{FailCode, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
 use org_proto::location::{OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::{DbKey, GrantKey, RecoveryCode};
 use serde_json::json;
@@ -235,7 +235,15 @@ fn the_fake_discards_over_the_rendezvous_without_a_transfer_socket() {
         &json!({"op": "discard", "office_id": OFFICE}),
     );
     let mut reader = accept_ready(&listener);
-    let header = v3::encode_discard_handoff(Some(&DbKey::from_bytes([7; 32]))).unwrap();
+    // An unfinished office's folder holding databases: a v3 discard removes it without a key.
+    let dir = home
+        .home
+        .join(org_office_launch::OFFICES_DIR_NAME)
+        .join(OFFICE);
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("db"), b"databases").unwrap();
+    // The host never sends a key with a discard now.
+    let header = v3::encode_discard_handoff(None).unwrap();
     reader.get_mut().write_all(&header).unwrap();
     // No marker is sent and no receipt comes: the first event is the report.
     assert_eq!(
@@ -243,10 +251,117 @@ fn the_fake_discards_over_the_rendezvous_without_a_transfer_socket() {
         Some(RendezvousEvent::Server(ServerEvent::Discarded))
     );
     assert_eq!(wait_exit(&mut child), 0);
+    assert!(!dir.exists(), "the discard left the office folder");
     let pid = child.id();
     let log = home.log();
     assert!(log_has(&log, &format!("launch discard {pid} v3")), "{log}");
     assert!(!log.contains("transfer discard"), "{log}");
+}
+
+/// Reads the rendezvous stream to its end: the one `failed` it carries, then nothing.
+fn failed_then_end(reader: &mut BufReader<UnixStream>) -> FailCode {
+    let code = match event(reader) {
+        Some(RendezvousEvent::Server(ServerEvent::Failed { code, .. })) => code,
+        other => panic!("expected failed, got {other:?}"),
+    };
+    assert_eq!(event(reader), None, "nothing follows `failed`");
+    code
+}
+
+#[test]
+fn the_fake_refuses_a_start_line_naming_another_office_before_connecting() {
+    let home = Home::new();
+    let (mut child, listener) = home.launch(
+        &[OFFICE_FLAG, OFFICE],
+        &json!({"op": "start", "office_id": "01JD5Z0000000000000000OFFB"}),
+    );
+    assert_eq!(wait_exit(&mut child), 1);
+    listener.set_nonblocking(true).unwrap();
+    assert!(
+        matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+        "the fake connected to the rendezvous"
+    );
+    // Not connected, so the refusal goes to stdout.
+    let out = stdout_of(&mut child);
+    assert!(
+        out.contains("failed") && out.contains("invalid_request"),
+        "{out}"
+    );
+    let pid = child.id();
+    let log = home.log();
+    assert!(
+        log_has(&log, &format!("first-line-refused {OFFICE} {pid}")),
+        "{log}"
+    );
+    assert!(!log_has(&log, &format!("transfer {OFFICE} {pid}")), "{log}");
+}
+
+#[test]
+fn the_fake_refuses_a_handoff_whose_op_is_not_the_start_lines() {
+    let create = v3::encode_create_handoff(
+        &DbKey::from_bytes([7; 32]),
+        &GrantKey::from_bytes([9; 32]),
+        &RecoveryCode::new("a recovery code".into()).unwrap(),
+    )
+    .unwrap();
+    let discard = v3::encode_discard_handoff(None).unwrap();
+    for header in [create, discard] {
+        let home = Home::new();
+        let (mut child, listener) = home.launch(
+            &[OFFICE_FLAG, OFFICE],
+            &json!({"op": "start", "office_id": OFFICE}),
+        );
+        let mut reader = accept_ready(&listener);
+        reader.get_mut().write_all(&header).unwrap();
+        // The first event is the refusal: no `fds_received` precedes it.
+        assert_eq!(failed_then_end(&mut reader), FailCode::InvalidRequest);
+        assert_eq!(wait_exit(&mut child), 1);
+        assert_eq!(stdout_of(&mut child), "", "v3 events never go to stdout");
+        let pid = child.id();
+        let log = home.log();
+        assert!(
+            log_has(&log, &format!("handoff-op-refused {OFFICE} {pid}")),
+            "{log}"
+        );
+        assert!(!log_has(&log, &format!("transfer {OFFICE} {pid}")), "{log}");
+    }
+}
+
+#[test]
+fn the_fake_fails_a_bad_header_on_the_stream_not_stdout() {
+    // An oversized header (no newline within the limit), then a header byte carrying an fd.
+    type Send = fn(&UnixStream);
+    let oversized: Send = |stream| {
+        let mut stream = stream;
+        stream
+            .write_all(&vec![b'a'; v3::TRANSFER_HEADER_MAX_BYTES + 1])
+            .unwrap();
+    };
+    let fd_on_header: Send = |stream| {
+        let (_spare, carried) = UnixDatagram::pair().unwrap();
+        org_socket::rights::send(
+            stream.as_fd(),
+            b"{",
+            &[carried.as_fd()],
+            Instant::now() + WAIT,
+        )
+        .unwrap();
+    };
+    for send in [oversized, fd_on_header] {
+        let home = Home::new();
+        let (mut child, listener) = home.launch(
+            &[OFFICE_FLAG, OFFICE],
+            &json!({"op": "start", "office_id": OFFICE}),
+        );
+        let mut reader = accept_ready(&listener);
+        send(reader.get_ref());
+        // A whole `failed` event: `bail` made the stream blocking again before writing it.
+        assert_eq!(failed_then_end(&mut reader), FailCode::InvalidRequest);
+        assert_eq!(wait_exit(&mut child), 1);
+        assert_eq!(stdout_of(&mut child), "", "v3 events never go to stdout");
+        let pid = child.id();
+        assert!(!log_has(&home.log(), &format!("transfer {OFFICE} {pid}")));
+    }
 }
 
 #[test]
