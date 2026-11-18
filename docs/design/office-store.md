@@ -316,6 +316,12 @@ their results. A decision that panics fails its own operation alone: the writer 
 the panic, undoes to that operation's mark, answers it with an error, and the batch
 continues.
 
+**A decision can be run and discarded.** A dry run asks what a change would do: the
+writer takes the mark, runs `decide`, undoes to the mark and answers what `submit`
+would have answered. Nothing is appended, applied, recorded as a receipt or published.
+It is the `--dry-run` of the [agent command line](agent-os-command-line.md) (section
+2.6), and the store gains its entry point with the first writing command (B2).
+
 **How a family declares its classes:** one enum of its operations with one exhaustive
 `ack()` match, in `features/mod.rs`. That is the one place ACK-4 asks for.
 

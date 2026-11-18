@@ -121,18 +121,21 @@ The decisions this design applies:
        workspace or home. Every user-writable folder on it is a fixed write deny.
      - `HOME` (the private home), `LANG`, `USER`, `LOGNAME`, `SHELL`.
      - `TMPDIR`: the session's own directory (below).
-     - `ORG_AGENT`, `ORG_OFFICE` and `ORG_OFFICE_SOCKET` (the exact resolved office
-       socket), from the launch.
-     - `ORG_SESSION_TOKEN`: a random token per run (one process's life), held only in
+     - `AGENT_OS_SOCKET` (the exact resolved office socket), from the launch.
+     - `AGENT_OS_SESSION_TOKEN`: a random token per run (one process's life), held only in
        office memory, required on `msg.bind`, never in argv or a file, never logged.
-     - `ORG_SESSION_MARK`: a random value per session, recorded before spawn, used to
+     - `AGENT_OS_SESSION_MARK`: a random value per session, recorded before spawn, used to
        find orphans. It is not a secret.
+     - `AGENT_OS_ORG`, `AGENT_OS_OFFICE`, `AGENT_OS_AGENT_ID`, `AGENT_OS_SESSION_ID` and,
+       when the run has them, `AGENT_OS_PROJECT` and `AGENT_OS_TASK`: context for the
+       agent's own scripts. They are never identity: the office takes who is calling
+       from the binding ([agent command line](agent-os-command-line.md), section 2.8).
      - Git: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, and through
        `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` the commit identity, an
        empty `credential.helper`, `core.hooksPath=/dev/null`, `core.fsmonitor=false`,
        `gc.auto=0` and `maintenance.auto=false`.
      - `GH_CONFIG_DIR=<TMPDIR>/gh/`, an empty folder, so `gh` sees no login. Agents hold
-       no GitHub or Git credential; they publish only through `agent-os push`
+       no GitHub or Git credential; they publish only through `agent-os repo push`
        ([Git design](projects-git-github.md)).
      - Office-set runtime switches such as `DISABLE_AUTOUPDATER=1`.
 
@@ -176,7 +179,7 @@ The decisions this design applies:
        for a task session the parts of the repository cache a commit needs (Git
        design). Where a sandbox opens more by itself, the office adds `denyWrite`
        entries.
-     - Each sandbox allows exactly the office socket in `ORG_OFFICE_SOCKET` (Claude
+     - Each sandbox allows exactly the office socket in `AGENT_OS_SOCKET` (Claude
        `allowUnixSockets`, Codex `network.unix_sockets`) and refuses every other socket.
      - **Codex's profile is required and fails closed.** One `-c` value holds the whole
        `permissions.<name>` table, plus `-c features.network_proxy=true`. It extends
@@ -185,13 +188,16 @@ The decisions this design applies:
        `sandboxPolicy` has no read deny, so Codex is not office-run until the profile
        holds every fixed deny in live turns.
    - **Claude's tools are an explicit allowlist:** `Read`, `Edit`, `Write`, `Glob`,
-     `Grep`, `Bash` (sandboxed) and the office's MCP tools, nothing else. Claude's
+     `Grep`, `Bash` (sandboxed) and the tools of the connectors the office granted
+     this agent, nothing else. No product command is an MCP tool, and milestones one
+     and two grant no connector, so the MCP configuration is empty
+     ([agent command line](agent-os-command-line.md), section 2.10). Claude's
      other tools act outside the office or the sandbox (cross-session messaging,
      scheduling and remote triggers, background and sub-agent work, worktrees, web
      access). The adapter passes the built-in names as `--tools`, the whole list as the
      inline agent's `tools`, and every other known tool in `--disallowedTools`.
-     `ToolSearch` is disallowed and `ENABLE_TOOL_SEARCH=false`, so the office's MCP
-     tools are never deferred. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` turns off Bash's
+     `ToolSearch` is disallowed and `ENABLE_TOOL_SEARCH=false`, so a granted
+     connector's tools are never deferred. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` turns off Bash's
      background mode. The adapter checks every `init`: `init.tools` must be a subset of
      the allowlist, or the start fails or the session is stopped with the fast stop
      (an in-band `interrupt`, every later `can_use_tool` denied, `Abort`). Remote
@@ -435,7 +441,7 @@ again on hand-back, and the command warns about this when it starts.
 ## Messaging
 
 - **Binding.** An office-run agent binds with `msg.bind` and both the live run's
-  `ORG_SESSION_TOKEN` and **peer ancestry**: the office reads the caller's process
+  `AGENT_OS_SESSION_TOKEN` and **peer ancestry**: the office reads the caller's process
   identity from the socket (on macOS the audit token, so a reused PID does not match)
   and walks its parent chain, which must include the session's recorded child.
   Otherwise `not_authorized`. Tokens are compared in constant time. The port is
@@ -550,7 +556,7 @@ whole instance or a parent of a granted root.
 | Other offices' and other instances' roots, runtime directories, credentials and temp folders | Denied, by canonical path |
 | Under the instance's temp folder: other offices' folders, and other employees' folders in this office | Denied |
 | The web process's logs and temp directories | Denied |
-| The instance's private runtime directory | Denied; only a connection to the exact `ORG_OFFICE_SOCKET` is granted |
+| The instance's private runtime directory | Denied; only a connection to the exact `AGENT_OS_SOCKET` is granted |
 | The pinned release directory, `agent-os` and runtime executables | Read and execute; fixed write deny |
 
 Before a newly provisioned private home, office or instance becomes accessible, the
@@ -596,7 +602,7 @@ receipts, expected revisions and immutable input references.
 Each item fails closed: until it holds, that runtime's agents are not run by the
 office.
 
-- Tools see `ORG_SESSION_TOKEN` and `agent-os` binds from a tool shell (Codex with its
+- Tools see `AGENT_OS_SESSION_TOKEN` and `agent-os` binds from a tool shell (Codex with its
   `shell_environment_policy` pins).
 - The runtime signs in from the private home with the connection the pool selected, and
   a file search from its tools finds nothing of the service user's vendor folders
@@ -605,8 +611,8 @@ office.
   shown to steer only that task's sessions.
 - Claude: under the isolation switches, no user instruction file, skill, agent,
   command, synced plugin or user MCP server loads; `init.tools` holds only the allowlist
-  under `--tools` and `--disallowedTools`; the office's MCP tools appear and can be
-  called; no work continues after a `result`; remote control is off.
+  under `--tools` and `--disallowedTools`; `init.mcp_servers` is empty while no
+  connector is granted; no work continues after a `result`; remote control is off.
 - Codex: the permissions profile holds every fixed deny in live turns; commits work in
   a worktree under it; managed requirements are tried to lock `danger-full-access` out
   of the interactive tool.

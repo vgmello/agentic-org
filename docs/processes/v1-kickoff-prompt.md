@@ -48,3 +48,6 @@ B1a. B1a to B1c, the store foundation, are built from the
 A third agent can take Track X, Linux, from X1a at the same time. X1a is the shared
 platform crate's skeleton, its CI check and the service contract agreed with the
 agent on A2; read it with [the Linux host design](../design/linux-host.md).
+K1, the command contract, needs nothing and suits any free agent: it is the one
+grammar and answer format that every `agent-os` and `agentic-org` command is written
+against; read it with the [agent command line design](../design/agent-os-command-line.md).
