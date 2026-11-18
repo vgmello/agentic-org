@@ -2,7 +2,7 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "Codex lead01a1dd82 (F3c); Claude session_015ExbMo (docs 2026-11-17); Claude session_015ExbMnxeFeac1c16wAFWyh (UI manifest 2026-11-18); full earlier IDs at 34ca1855",
-  "rationale": "UI manifest reassessment 2026-11-18 by Claude session_015ExbMnxeFeac1c16wAFWyh: since the recorded hash, apps/agentic-org-ui/package.json gained only the script \"dev:mock\" (vite dev --mode e2e, commit 8fb84616), which serves the e2e mock composition for local viewing. No dependency, version, framework or check changed; the static-ui rule and its role/skill references still cover it. No new skill, role or tool; only that one evidence hash is refreshed. Earlier rationale (F3c native composition, docs reassessment 2026-11-17 with ADR0004-0020) is unchanged and preserved in Git at 34ca1855:.agent-kit/skill-catalog.json.",
+  "rationale": "UI manifest reassessment 2026-11-18 by Claude session_015ExbMnxeFeac1c16wAFWyh: since the recorded hash, apps/agentic-org-ui/package.json gained only the script \"dev:mock\" (vite dev --mode e2e, commit 8fb84616), which serves the e2e mock composition for local viewing. No dependency, version, framework or check changed; the static-ui rule and its role/skill references still cover it. No new skill, role or tool; only that one evidence hash is refreshed. Earlier rationale (F3c native composition, docs reassessment 2026-11-17 with ADR0004-0020) is unchanged and preserved in Git at 34ca1855:.agent-kit/skill-catalog.json. Codex model reassessment 2026-11-18 (same session): owner switched Codex from gpt-6.1-sol to gpt-6.2-sol (live call confirmed access); .codex/config.toml changed only its model line. Roles, skills, efforts and checks unchanged; only that evidence hash is refreshed.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -70,7 +70,7 @@
     },
     {
       "path": ".codex/config.toml",
-      "sha256": "a1cdbc3c7a52ba6cb3d7bcd37e34f04a0c28564aa8595dbdad62b6f446fef4f3"
+      "sha256": "df51918b40eec9c98b07a642eb6dc9e983126710a6ed3793ec0b08076068ebdb"
     },
     {
       "path": ".github/workflows/ci.yml",

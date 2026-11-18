@@ -75,27 +75,23 @@ case "${PLAYWRIGHT_BROWSERS_PATH:-}" in
 esac
 pw_json="$ui/node_modules/playwright-core/browsers.json"
 if [ -f "$pw_json" ] && has node; then
-	# One line per browser listing every acceptable revision, since some
-	# platforms (older macOS for webkit) use a revisionOverrides entry.
-	while read -r browser revisions; do
-		[ -n "$browser" ] || continue
-		found=
-		for rev in $revisions; do
-			[ -d "$pw_cache/$browser-$rev" ] && found=1
-		done
-		if [ -z "$found" ]; then
-			need "Playwright browsers" "the UI browser tests need chromium, webkit and firefox at the revisions the installed Playwright expects" \
-				"\`cd apps/agentic-org-ui && bunx --no-install playwright install chromium webkit firefox\`"
-			break
-		fi
-	done <<EOF_PW
-$(node -e '
+	# Prints the first browser with none of its acceptable revisions installed;
+	# some platforms (older macOS for webkit) use a revisionOverrides entry.
+	# No heredoc: a read-only sandbox (Codex review) cannot create its temp file.
+	pw_missing="$(node -e '
+	const fs = require("fs");
 	const b = require(process.argv[1]).browsers;
 	for (const n of ["chromium", "firefox", "webkit"]) {
 		const e = b.find((x) => x.name === n);
-		if (e) console.log(n, e.revision, ...Object.values(e.revisionOverrides || {}));
-	}' "$pw_json" 2>/dev/null)
-EOF_PW
+		if (!e) continue;
+		const revisions = [e.revision, ...Object.values(e.revisionOverrides || {})];
+		const found = revisions.some((r) => { try { return fs.statSync(process.argv[2] + "/" + n + "-" + r).isDirectory(); } catch { return false; } });
+		if (!found) { console.log(n); break; }
+	}' "$pw_json" "$pw_cache" 2>/dev/null)"
+	if [ -n "$pw_missing" ]; then
+		need "Playwright browsers" "the UI browser tests need chromium, webkit and firefox at the revisions the installed Playwright expects" \
+			"\`cd apps/agentic-org-ui && bunx --no-install playwright install chromium webkit firefox\`"
+	fi
 fi
 
 if ! has rustup; then
@@ -141,10 +137,20 @@ ready .agent-kit/logs/context/setup.json CONTEXT_READY ||
 		"\`python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs\`"
 memory=.agent-kit/logs/memory/hindsight/setup.json
 pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$memory" 2>/dev/null)"
+running() { # running <pid>: a sandbox (Codex review) may refuse the signal to our own daemon
+	local out owner
+	out="$(kill -0 "$1" 2>&1)" && return 0
+	case "$out" in *"not permitted"*) ;; *) return 1 ;; esac
+	# Outside a sandbox "not permitted" means the PID now belongs to another user (reused
+	# after a reboot): not our daemon. Inside one, ps is refused too (126), so trust the signal.
+	owner="$(ps -o user= -p "$1" 2>/dev/null)"
+	case $? in 126) return 0 ;; esac
+	[ "$(echo $owner)" = "$(id -un)" ]
+}
 if ! has hindsight-embed; then
 	need "Hindsight memory" "the starter_kit_context recall tool needs the local hindsight-embed daemon" \
 		"install it as in the \"Local memory daemon\" section of .agent-kit/ADOPTION.md, then \`python3 .agent-kit/runtime/kit_memory.py setup\`"
-elif ! ready "$memory" HINDSIGHT_READY || [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+elif ! ready "$memory" HINDSIGHT_READY || [ -z "$pid" ] || ! running "$pid"; then
 	need "Hindsight memory" "the local hindsight-embed daemon is not set up or not running for this checkout" \
 		"\`python3 .agent-kit/runtime/kit_memory.py setup\`"
 fi

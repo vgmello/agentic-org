@@ -48,7 +48,7 @@ and relevant source, then run (create the ignored output folder first):
 
 ```bash
 HINDSIGHT_DISABLED=true AGENT_KIT_MEMORY_ACCESS=review \
-codex exec -m gpt-6.1-sol -c 'model_reasoning_effort="xhigh"' \
+codex exec -m gpt-6.2-sol -c 'model_reasoning_effort="xhigh"' \
   -c 'agents.enabled=false' -c 'features.hooks=false' \
   -c 'mcp_servers.hindsight.enabled=false' -c 'approval_policy="never"' -s read-only --json \
   --output-schema .agent-kit/templates/PLAN_REVIEW_SCHEMA.json \

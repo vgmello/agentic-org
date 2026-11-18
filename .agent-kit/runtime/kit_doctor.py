@@ -103,7 +103,7 @@ def diagnose(project, config_dir):
                     f"{tool} version probe: " + (result.stdout.strip()[:200] or f"exit {result.returncode}"))
             except (OSError, subprocess.TimeoutExpired) as exc:
                 add("error", f"{tool} version probe failed: {exc}")
-    add("info", "Sol review default: gpt-6.1-sol / high; explicit fresh exec then resume by ID. "
+    add("info", "Sol review default: gpt-6.2-sol / high; explicit fresh exec then resume by ID. "
         "Version probes do not establish working authentication or model availability.")
     try:
         guidance = codex_instruction_file(project)

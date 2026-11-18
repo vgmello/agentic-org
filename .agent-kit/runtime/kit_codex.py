@@ -24,7 +24,7 @@ from kit_hooks import protected_name, verify
 from kit_policy import load_policy, route
 from kit_skills import current as current_skills, resolve as resolve_skills
 
-MODEL = "gpt-6.1-sol"
+MODEL = "gpt-6.2-sol"
 
 
 def obj(properties):

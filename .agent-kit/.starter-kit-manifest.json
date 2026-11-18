@@ -10,26 +10,26 @@
     ".agent-kit/policy/hindsight/download_models.py": "48c15a4eb4e68074b4405c4998c442dd5f0aef897f81bdc55e50ebe5531624ba",
     ".agent-kit/policy/hindsight/requirements.txt": "669692449bd95131b226878484b29de49bdce4797f784b29464caee0530c7a88",
     ".agent-kit/policy/hindsight/runtime.json": "d77a37b4225ea1098a9e73e8a4c894d535dea891a8467ef0c4f3243795da676f",
-    ".agent-kit/policy/model-routing.json": "ac5d854bd1099d450b46cf216efd059f01e7eeac3d83377109de269bff1f0fbe",
+    ".agent-kit/policy/model-routing.json": "4e2419772f7014f13964f213bbbeca95a1b38f4175c41088908626e5ebeafe22",
     ".agent-kit/policy/repowise-requirements.txt": "71bcdffbeb3f5586d3fddc462160cd9840acd25a42261b6b8a11233912d70c79",
     ".agent-kit/policy/repowise.in": "f64b303ded1d62559d58d1ecb016bd0b853a1e66002fa1543264602d7083d24c",
     ".agent-kit/reference/ADOPT.md": "392cbb62bc36910e1949e95952b48cde58c7cd1f38393c0f7564c4ff0ffea55e",
-    ".agent-kit/reference/CODEX_ONLY.md": "5d7a29a0d958f37780df1cc998c9d25c926a6ea599f3bfcd5a6bea42e6c6fe59",
-    ".agent-kit/reference/CONTEXT_TOOLS.md": "72fb89bfab36f75ec00ee9f32fd925b8ee62ca0b33130505d795a23d56ebc1fe",
+    ".agent-kit/reference/CODEX_ONLY.md": "e58954dd49137948bc02d5f0556ca9cccf5b6b1ebe69c74f614af0c50e127ea8",
+    ".agent-kit/reference/CONTEXT_TOOLS.md": "8dee331705b95453870e4bd4d691a84ef122851fb9b1389f34a68b332456933e",
     ".agent-kit/reference/HINDSIGHT.md": "a2744f7b427f6e32db6370686403274a785acf10dfe76e3aaa68ba0e82296008",
     ".agent-kit/reference/PROJECT_CAPABILITIES.md": "2ca5efb0992d078b8b858f2eb1af9d7d68d31dae3d987fdf012ea41713fdf67b",
-    ".agent-kit/runtime/kit_codex.py": "d22fdc642d69b6be0dc602164e67fea26d285a930539cc48d6e4da601ecc8f9a",
+    ".agent-kit/runtime/kit_codex.py": "e4435b5acaf3022fd0575b728e6cb99da85a88029291bfc163ccb6cc3bed3139",
     ".agent-kit/runtime/kit_codex_hooks.py": "8dfc1893876d81fc87ed47f1ae6b9bca97da1a123a5cefc24d0ef0be12eb26ae",
     ".agent-kit/runtime/kit_config.py": "9fcd60f0e7572f7b145267e05ed04871c883a8e6e8943b53560c6ba57f2d224f",
     ".agent-kit/runtime/kit_context.py": "8dbcefebfc9e80d9fc58f37499f873ab32529a3455a142f750c4ce005768146d",
     ".agent-kit/runtime/kit_context_setup.py": "ab2b78c41e2cd146a36c81d928ab58125197cb0b18bdc2dca7ed86a7d5767bd4",
-    ".agent-kit/runtime/kit_doctor.py": "38a7b2950c53b41dc44992b63cf6a1598766e41c5a8b5743c9cd9a32a111b83d",
+    ".agent-kit/runtime/kit_doctor.py": "c0bbbdb48f8036f89f4b20b4abd3fa6f11b6a1d45d46209b877a6074abbcc061",
     ".agent-kit/runtime/kit_evidence.py": "a7c9d7160dd62ea273feb8870b8836dde116ecae00731e0fbd9f5c747d2d80e9",
     ".agent-kit/runtime/kit_hindsight.py": "f926893df907114de43e4b76f8fc08dab53a1378a1989bfc312a0a5f01ed8adc",
     ".agent-kit/runtime/kit_hooks.py": "07b7e1d6cc9ee915eb04484592a4cf03d7caad4373383afb2f6e6f682f754f03",
     ".agent-kit/runtime/kit_memory.py": "94a0190e2d998a0cbff9dfe2164e770de6b275f59fd27fe5cba36b7b37cbfdba",
     ".agent-kit/runtime/kit_metrics.py": "e3c031653f3e436ef7a417618b43ae23b7169a06a6339c461e46c7670a063078",
-    ".agent-kit/runtime/kit_policy.py": "94c5f7259dbd590616d0ea8767732a7ad7edd83664b5dea2b3cc5f7b74602b1e",
+    ".agent-kit/runtime/kit_policy.py": "3aa4bcd7ddaab23e65ae7323422e99fae2c9cfd2a846b73b354dd627e5cd668f",
     ".agent-kit/runtime/kit_review.py": "e8f3e1ef3b191cb50f7afa73eb0961eafe319a5e104f834a6b035faa3b9f950c",
     ".agent-kit/runtime/kit_skills.py": "8b208ee6cc5b3baf12f18d8e18de4b1ed85217702067eb68706cf6305a298f94",
     ".agent-kit/skill-catalog.json": "021ed08f485d60c611947647770ef0f762b312a6a811dcdc007e79dcf4d837f4",
@@ -51,11 +51,11 @@
     ".agent-kit/templates/TASK_STATE.md": "d96a929eba32ff53f864552bed15b0c634bb2aaf69680787c5240276319e1131",
     ".agent-kit/verification.json": "da0e44b6a33c53f87d1141c734096fe38718d0342c4fc4b7f89f919e2a2457d4",
     ".agents/skills/architecture-decisions/SKILL.md": "81f28f4dfd2531ec9b88e7844db0dbc30ba382c6512e969e8a3d5ad3286fa0c8",
-    ".agents/skills/bounded-lookup/SKILL.md": "c1a0a1b0c8a801eb5d6c46ad9acd8df6bbf80096ff6879628e3df6befd919a9d",
+    ".agents/skills/bounded-lookup/SKILL.md": "88ccf1ca292dbf264dd18983db0e5189a356fb57d31dfaa1a44b0da697a15726",
     ".agents/skills/code-navigation/SKILL.md": "194ffe11f756fef9003ef4019f62601d8d6a7d9ebe409b638af504b7f191916c",
     ".agents/skills/cost-aware-execution/SKILL.md": "2ea7639a3bec786f6efd7d7e09bfd3b03aeb2d530844051ed00b41d0a1ac75cc",
     ".agents/skills/indexed-context/SKILL.md": "91cb55b720ee1ddc720c7ecf3a67832e844686435ff49613ea11abf4123b5799",
-    ".agents/skills/plan-review/SKILL.md": "89d73828bbbfab5183eaae92b83b00620b40157bb052b57c42d557cb48a6e577",
+    ".agents/skills/plan-review/SKILL.md": "c90cfb2e1edd1a0234eca7678979f93bf216d656c21c39ea61754ab4fc4c6b46",
     ".agents/skills/process-improvement/SKILL.md": "350ac236bb1e0fe9a7193a88871732cd1455e934c07dd21fc44385316fcd5708",
     ".agents/skills/project-capabilities/SKILL.md": "2c80679ba5f55bb5b6e40abe9cdb65f12bfc6b616c295c2bda8a720a824c2af9",
     ".agents/skills/project-memory/SKILL.md": "3406a79fa1a0e612f5c6b3f779b4f5f44c3c275b128bbd14005ed7e5770a0490",
@@ -63,11 +63,11 @@
     ".agents/skills/setup-health/SKILL.md": "bea1808fc4917fb3cc2868f73f7ef40d741f0d13c2dd3bfaefabf19f0f0754e5",
     ".agents/skills/skill-routing/SKILL.md": "451a87e1b7c8fe733ad735402fee8d0ed89d2d6de5a89a56308929cdf727cb06",
     ".agents/skills/task-routing/SKILL.md": "630b45ca6cce995e9a7e524e9f670f41e6e2a2622cc29d0bc91e67307a1bce9c",
-    ".codex/agents/architecture-reviewer.toml": "a1cb9d199b8bf2616cecd581052b2f2bfb5586e5e65a2934ca8aa628674d1002",
-    ".codex/agents/code-reviewer.toml": "a3601c4805b20207f5a1ff8c1d002b5276415275dbffcc36b9831db4b14714dd",
-    ".codex/agents/codebase-scout.toml": "0edfb177190ab952e1c8e42932392cb979c7f87108f01287e7b4b7e2d9bdb94b",
-    ".codex/agents/fullstack-engineer.toml": "48bd08838e056a7874162b75c0dfbea0e3fdb135aadb534257d54a1d40148685",
-    ".codex/agents/staff-engineer.toml": "95923ebe0deefae124f0da03b42c51750e6154d59f6b035ce4adea04e8095162",
+    ".codex/agents/architecture-reviewer.toml": "57a23ca878fd677e28108e296037719fda530e20578ee28029c68e16d99e3c97",
+    ".codex/agents/code-reviewer.toml": "1af8b33cfa22f6cb92dea08979b5217ea0cd41519c269bb972666a43802fd480",
+    ".codex/agents/codebase-scout.toml": "3594d91002a9101b2be82afd3dbddbf2d64cc8aa35b8ffda63ac8a2958cfcbbb",
+    ".codex/agents/fullstack-engineer.toml": "7e6721cf784f6a88009e92bc7447e714fd7c97fc1b9ce7af95e785b44fbe9cc2",
+    ".codex/agents/staff-engineer.toml": "eaa824d546a72f1692badf189989d099abf597635f0d8aa552c999e8da8405da",
     ".codex/config.toml": "e011d15040c3e784be0c377bf2883132a7cd640cb7e42846aecf37b75d2b4974",
     ".codex/hooks.json": "44d5eeb100bfe70c9e5c2ec6868345567bc87851662bb97492d6ac433de3a525",
     "AGENTS.md": "cc2dd7a13948e5ee836acbe072dfd4c0f7e18ad91973c710b5efad6861f22f19",
@@ -78,7 +78,7 @@
   "mode": "codex-only",
   "version": 1,
   "local_adaptations": {
-    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process.",
+    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process. Owner switched the Codex model from gpt-6.1-sol to gpt-6.2-sol on 2026-11-18 (live call confirmed access); the routing policy, runner, validator, doctor text, Codex roles, plan-review recipe and model references in reference/skills docs carry that local model pin. Efforts and gates unchanged.",
     "source_revision": "01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1",
     "files": {
       ".agent-kit/runtime/kit_hindsight.py": {
@@ -87,7 +87,7 @@
       },
       ".agent-kit/runtime/kit_doctor.py": {
         "upstream_sha256": "86e1d6738a47d2cbc518fa22623af8c8dfe09ed1e642caad78e38b4df59c43c7",
-        "local_sha256": "38a7b2950c53b41dc44992b63cf6a1598766e41c5a8b5743c9cd9a32a111b83d"
+        "local_sha256": "c0bbbdb48f8036f89f4b20b4abd3fa6f11b6a1d45d46209b877a6074abbcc061"
       },
       ".agent-kit/runtime/kit_hindsight_embed.py": {
         "upstream_sha256": null,
@@ -99,15 +99,51 @@
       },
       ".agent-kit/runtime/kit_codex.py": {
         "upstream_sha256": "730b2ae4f14611886d9ed5f8cbaabf1daec3aeac52b5f53a9e0950c6fbccf878",
-        "local_sha256": "d22fdc642d69b6be0dc602164e67fea26d285a930539cc48d6e4da601ecc8f9a"
+        "local_sha256": "e4435b5acaf3022fd0575b728e6cb99da85a88029291bfc163ccb6cc3bed3139"
       },
       ".agents/skills/plan-review/SKILL.md": {
         "upstream_sha256": "241ed1641b19611521e3f759d4a5c0c041e7ed1f68a4dcccf4d1dff09924e5c8",
-        "local_sha256": "89d73828bbbfab5183eaae92b83b00620b40157bb052b57c42d557cb48a6e577"
+        "local_sha256": "c90cfb2e1edd1a0234eca7678979f93bf216d656c21c39ea61754ab4fc4c6b46"
       },
       ".codex/agents/architecture-reviewer.toml": {
         "upstream_sha256": "e26421b2f2aed013c0cce96705df398e4cf88bfd6b5d1202d2af1f3c31557dcc",
-        "local_sha256": "a1cb9d199b8bf2616cecd581052b2f2bfb5586e5e65a2934ca8aa628674d1002"
+        "local_sha256": "57a23ca878fd677e28108e296037719fda530e20578ee28029c68e16d99e3c97"
+      },
+      ".agent-kit/policy/model-routing.json": {
+        "upstream_sha256": "ac5d854bd1099d450b46cf216efd059f01e7eeac3d83377109de269bff1f0fbe",
+        "local_sha256": "4e2419772f7014f13964f213bbbeca95a1b38f4175c41088908626e5ebeafe22"
+      },
+      ".agent-kit/reference/CODEX_ONLY.md": {
+        "upstream_sha256": "5d7a29a0d958f37780df1cc998c9d25c926a6ea599f3bfcd5a6bea42e6c6fe59",
+        "local_sha256": "e58954dd49137948bc02d5f0556ca9cccf5b6b1ebe69c74f614af0c50e127ea8"
+      },
+      ".agent-kit/reference/CONTEXT_TOOLS.md": {
+        "upstream_sha256": "72fb89bfab36f75ec00ee9f32fd925b8ee62ca0b33130505d795a23d56ebc1fe",
+        "local_sha256": "8dee331705b95453870e4bd4d691a84ef122851fb9b1389f34a68b332456933e"
+      },
+      ".agent-kit/runtime/kit_policy.py": {
+        "upstream_sha256": "94c5f7259dbd590616d0ea8767732a7ad7edd83664b5dea2b3cc5f7b74602b1e",
+        "local_sha256": "3aa4bcd7ddaab23e65ae7323422e99fae2c9cfd2a846b73b354dd627e5cd668f"
+      },
+      ".agents/skills/bounded-lookup/SKILL.md": {
+        "upstream_sha256": "c1a0a1b0c8a801eb5d6c46ad9acd8df6bbf80096ff6879628e3df6befd919a9d",
+        "local_sha256": "88ccf1ca292dbf264dd18983db0e5189a356fb57d31dfaa1a44b0da697a15726"
+      },
+      ".codex/agents/code-reviewer.toml": {
+        "upstream_sha256": "a3601c4805b20207f5a1ff8c1d002b5276415275dbffcc36b9831db4b14714dd",
+        "local_sha256": "1af8b33cfa22f6cb92dea08979b5217ea0cd41519c269bb972666a43802fd480"
+      },
+      ".codex/agents/codebase-scout.toml": {
+        "upstream_sha256": "0edfb177190ab952e1c8e42932392cb979c7f87108f01287e7b4b7e2d9bdb94b",
+        "local_sha256": "3594d91002a9101b2be82afd3dbddbf2d64cc8aa35b8ffda63ac8a2958cfcbbb"
+      },
+      ".codex/agents/fullstack-engineer.toml": {
+        "upstream_sha256": "48bd08838e056a7874162b75c0dfbea0e3fdb135aadb534257d54a1d40148685",
+        "local_sha256": "7e6721cf784f6a88009e92bc7447e714fd7c97fc1b9ce7af95e785b44fbe9cc2"
+      },
+      ".codex/agents/staff-engineer.toml": {
+        "upstream_sha256": "95923ebe0deefae124f0da03b42c51750e6154d59f6b035ce4adea04e8095162",
+        "local_sha256": "eaa824d546a72f1692badf189989d099abf597635f0d8aa552c999e8da8405da"
       }
     }
   }
