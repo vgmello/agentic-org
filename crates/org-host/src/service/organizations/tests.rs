@@ -624,6 +624,64 @@ fn a_replay_returns_the_same_organization_and_another_plan_or_account_is_operati
     assert!(!wire.contains(recovery.expose()));
 }
 
+/// The 30-day rule is about an id the host has never seen. An operation it knows answers
+/// its stored state at any age: its organization exists.
+#[test]
+fn a_known_operation_replays_its_state_after_thirty_days_and_only_an_unseen_old_id_expires() {
+    let host = host(Worker::Creates);
+    let auth = host.sign_in("Owner", 1);
+    let (id, unseen) = (op(), op());
+    let example = plan("Example", "example");
+    assert_eq!(
+        host.create(&auth, &id, &example).unwrap(),
+        HostOpResult::Accepted
+    );
+    let view = host.completed(&auth, &id);
+    // The host's clock moves 31 days on (it never goes back).
+    let credentials = host
+        .db
+        .account_credentials(&crate::accounts::identity::LoginKey::new("Owner").unwrap())
+        .unwrap()
+        .unwrap();
+    let account = host
+        .db
+        .account_authority(
+            &crate::accounts::identity::AccountId::parse(credentials.account().account_id())
+                .unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    let fingerprint = journal::fingerprint(&CreateParams {
+        auth: auth.clone(),
+        operation_id: id.clone(),
+        plan: example.clone(),
+    })
+    .unwrap();
+    assert!(host
+        .db
+        .provisioning(&account, &id, &fingerprint, now() + 31 * 86_400_000)
+        .unwrap()
+        .is_some());
+    let later = host.sign_in("Owner", 3);
+    let completed = HostOpResult::Completed { result: view };
+    assert_eq!(host.create(&later, &id, &example).unwrap(), completed);
+    assert_eq!(host.lookup(&later, &id).unwrap(), completed);
+    assert_eq!(
+        code(host.create(&later, &id, &plan("Other", "other"))),
+        ErrorCode::OperationReused
+    );
+    // An id made 31 days before the host's clock that it has never seen is refused, and
+    // nothing is stored for it.
+    let custody = host.custody_names();
+    assert_eq!(
+        code(host.create(&later, &unseen, &plan("Late", "late"))),
+        ErrorCode::Expired
+    );
+    assert_eq!(code(host.lookup(&later, &unseen)), ErrorCode::NotFound);
+    assert_eq!(host.custody_names(), custody);
+    assert_eq!(host.reserved(), 0);
+}
+
 #[test]
 fn polls_never_wait_for_a_creation_or_an_admission_and_start_one_creation() {
     let host = Arc::new(host(Worker::Blocks));

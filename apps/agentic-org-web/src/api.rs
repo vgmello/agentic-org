@@ -222,7 +222,6 @@ fn organization_error(host: GatewayError) -> GatewayError {
         InvalidRequest => "This doesn't meet the organization rules.",
         AlreadyExists => "An organization with that name or slug already exists.",
         OperationReused => "This operation ID was already used for another request.",
-        Expired => "This request expired. Start again.",
         ClockSkew => "This device's clock differs too much from the server's.",
         NotAuthorized => "Only the instance administrator can create an organization.",
         _ => {
@@ -279,7 +278,6 @@ fn create_outcome(
                 GatewayErrorCode::InvalidRequest
                     | GatewayErrorCode::AlreadyExists
                     | GatewayErrorCode::OperationReused
-                    | GatewayErrorCode::Expired
                     | GatewayErrorCode::ClockSkew
             ) {
                 return Err(Failure::Unavailable);
@@ -639,6 +637,18 @@ impl ApiBackend for SessionApi {
                 } else {
                     Err(Failure::Denied)
                 };
+                // The host answers `expired` only for an id it has never seen (one it
+                // knows answers its stored state at any age), so no create has this id:
+                // a plain error, never an outcome of the operation.
+                if matches!(&reply, Err(Failure::Refused(error))
+                    if error.code == org_proto::ErrorCode::Expired)
+                {
+                    return ApiReply::error(
+                        StatusCode::GONE,
+                        GatewayErrorCode::Expired,
+                        "This request expired. Start again.",
+                    );
+                }
                 // No stated answer: the create may or may not have been admitted. The
                 // same id asks again.
                 mutation(
@@ -660,7 +670,9 @@ impl ApiBackend for SessionApi {
                         return failure(e)
                     }
                     // A refused lookup is the lookup's own error, never a stored refusal
-                    // of the create: `expired` is 410, anything else is unavailable.
+                    // of the create: `expired` is 410, anything else is unavailable. (The
+                    // host looks a known operation up at any age and answers `not_found`
+                    // for any other, so it sends no `expired` here today.)
                     Err(Failure::Refused(error)) => {
                         return if error.code == org_proto::ErrorCode::Expired {
                             ApiReply::error(

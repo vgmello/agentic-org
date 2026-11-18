@@ -175,10 +175,9 @@ impl HostDb {
             if r.account != account.account_id() || &r.fingerprint != fingerprint {
                 return Err(Error::OperationReused);
             }
-            let time = org_proto::ulid_time_ms(operation).ok_or(Error::InvalidId)? as i64;
-            if now >= time + 30 * 86_400_000 {
-                return Err(Error::Expired);
-            }
+            // An operation the host knows answers its stored state whatever its age: its
+            // organization exists or is still being created. Only an id it has never
+            // seen can be too old.
         } else {
             let time = org_proto::ulid_time_ms(operation).ok_or(Error::InvalidId)? as i64;
             if time < now.saturating_sub(29 * 86_400_000) {

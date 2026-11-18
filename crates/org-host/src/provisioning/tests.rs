@@ -487,9 +487,24 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
         db.provisioning(&actor, &r.operation_id, &[0; 32], wall),
         Err(crate::hostdb::Error::OperationReused)
     ));
+    // A known operation answers its stored state whatever its age.
+    let old = wall + 31 * 86_400_000;
+    assert_eq!(
+        db.provisioning(&actor, &r.operation_id, &fp, old)
+            .unwrap()
+            .map(|known| (known.prepared, known.linked)),
+        Some((r.prepared.clone(), false))
+    );
+    // Only an id the host has never seen is too old (this one was made 31 days before
+    // the host's clock) or too far ahead of it.
+    let unseen = crate::ids::generate().unwrap();
     assert!(matches!(
-        db.provisioning(&actor, &r.operation_id, &fp, wall + 30 * 86_400_000),
+        db.provisioning(&actor, &unseen, &fp, old),
         Err(crate::hostdb::Error::Expired)
+    ));
+    assert!(matches!(
+        db.provisioning(&actor, &r.operation_id, &[0; 32], old),
+        Err(crate::hostdb::Error::OperationReused)
     ));
     // Retention is explicit even when the ordinary retry window has expired.
     assert!(db

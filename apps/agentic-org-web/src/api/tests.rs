@@ -995,6 +995,23 @@ fn host_refusals_of_a_create_keep_their_class_and_a_lost_answer_is_unknown() {
     }
 }
 
+/// The host says `expired` only about an id it has never seen, so the answer is a plain
+/// 410 error: there is no operation for an outcome to be about.
+#[test]
+fn a_create_whose_new_id_is_too_old_is_a_plain_410_and_never_an_outcome() {
+    let (gateway, _) = gateway(organization_script(|method, _| {
+        (method == "organization.create")
+            .then(|| vec![json!({"error": {"code": "expired", "message": "host words"}})])
+    }));
+    let pair = sign_in(&gateway).pair();
+    let reply = create(&gateway, &pair, &create_body(OPERATION, remote()));
+    assert_eq!(reply.status, StatusCode::GONE);
+    assert_eq!(reply.body["error"]["code"], "expired");
+    assert!(reply.body.get("outcome").is_none(), "{}", reply.body);
+    assert!(reply.body.get("operation_id").is_none(), "{}", reply.body);
+    assert!(!reply.body.to_string().contains("host words"));
+}
+
 #[test]
 fn an_account_that_is_not_the_administrator_is_403_with_no_create_call() {
     let (gateway, calls) = gateway(organization_script(|method, _| {
