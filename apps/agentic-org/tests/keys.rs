@@ -9,9 +9,6 @@
 // Development key folders exist in debug builds only (a release host uses the Keychain, which
 // tests never touch), and `office.restart` needs the debug-build development fallback.
 #![cfg(debug_assertions)]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -76,7 +73,6 @@ fn a_debug_host_without_a_dev_key_folder_refuses_to_start() {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_missing_or_unreadable_key_is_key_missing_with_no_spawn_until_a_restart_finds_it() {
     let home = TestHome::registered();
@@ -112,7 +108,6 @@ fn a_missing_or_unreadable_key_is_key_missing_with_no_spawn_until_a_restart_find
     home.assert_no_secret_in_home();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_servers_key_missing_is_key_missing_with_no_restarts_and_the_key_untouched() {
     let home = TestHome::registered();

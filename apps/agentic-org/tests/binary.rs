@@ -8,14 +8,8 @@
 //! build reads (a release host uses the Keychain, which tests never touch), so every test that
 //! starts one runs in debug builds only.
 
-// Only the argument checks run in release builds, and only macOS can spawn the office servers
-// the other tests here start (BUG-187): in a release build or off macOS their helpers are unused.
-// One attribute, because two identical `allow`s on the file are a clippy error (`duplicated_attributes`)
-// in a release build off macOS, where both conditions hold.
-#![cfg_attr(
-    any(not(debug_assertions), not(target_os = "macos")),
-    allow(unused_imports, dead_code)
-)]
+// Only the argument checks run in release builds: their helpers are unused there.
+#![cfg_attr(not(debug_assertions), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -34,7 +28,7 @@ use org_host::setup_flow::fixture::{registered_account, RegisteredAccount};
 use org_office_launch::OfficeFile;
 #[cfg(not(debug_assertions))]
 use support::TestHome;
-use support::{alive, eventually, fake_server, hq, Client};
+use support::{alive, eventually, fake_server, hq, may_run_the_service, Client};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -83,10 +77,7 @@ struct Registered {
 #[cfg(debug_assertions)]
 impl Registered {
     fn new() -> Self {
-        let dir = tempfile::Builder::new()
-            .prefix("ob")
-            .tempdir_in("/tmp")
-            .unwrap();
+        let dir = support::short_tempdir("ob");
         let root = dir.path().canonicalize().unwrap();
         for name in ["a", "k"] {
             fs::DirBuilder::new()
@@ -239,9 +230,11 @@ fn signal(child: &Child, signal: i32) {
 }
 
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn sigterm_stops_the_servers_cleanly_and_exits_0() {
+    if !may_run_the_service("sigterm_stops_the_servers_cleanly_and_exits_0") {
+        return;
+    }
     let instance = Registered::new();
     let mut host = instance.spawn_host("host.err");
     instance.wait_until_active(&mut host);
@@ -263,9 +256,11 @@ fn sigterm_stops_the_servers_cleanly_and_exits_0() {
 }
 
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn sigint_also_stops_it() {
+    if !may_run_the_service("sigint_also_stops_it") {
+        return;
+    }
     let instance = Registered::new();
     let mut host = instance.spawn_host("host.err");
     instance.wait_until_active(&mut host);
@@ -280,9 +275,11 @@ fn sigint_also_stops_it() {
 }
 
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn a_killed_host_takes_its_servers_with_it() {
+    if !may_run_the_service("a_killed_host_takes_its_servers_with_it") {
+        return;
+    }
     let instance = Registered::new();
     let mut host = instance.spawn_host("host.err");
     instance.wait_until_active(&mut host);
@@ -298,9 +295,11 @@ fn a_killed_host_takes_its_servers_with_it() {
 }
 
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn a_second_host_binary_on_the_same_home_exits_at_once() {
+    if !may_run_the_service("a_second_host_binary_on_the_same_home_exits_at_once") {
+        return;
+    }
     let instance = Registered::new();
     let mut first = instance.spawn_host("first.err");
     instance.wait_until_active(&mut first);
@@ -325,6 +324,59 @@ fn a_second_host_binary_on_the_same_home_exits_at_once() {
     assert!(UnixStream::connect(instance.host_socket()).is_ok());
     signal(&first, libc::SIGTERM);
     assert!(wait_for_exit(&mut first).success());
+}
+
+/// The service is an ordinary user's on every system: started as root, `serve` refuses before
+/// it opens or creates anything, saying to run it as the service user. Only root can show
+/// this, so the test does its work where the tests run as root (a development container)
+/// and says so elsewhere; the rule itself is unit-tested for every user in `org-host`.
+#[cfg(debug_assertions)]
+#[test]
+fn serve_started_as_root_refuses_before_it_makes_anything() {
+    // SAFETY: no arguments and no side effects; it cannot fail.
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!(
+            "serve_started_as_root_refuses_before_it_makes_anything: SKIPPED: only root can \
+             start the service as root"
+        );
+        return;
+    }
+    let dir = support::short_tempdir("or");
+    let base = dir.path().canonicalize().unwrap();
+    let listing = |path: &Path| -> Vec<PathBuf> {
+        fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect()
+    };
+    for arguments in [
+        vec!["serve", "--name", "default"],
+        vec!["serve", "--home", base.join("h").to_str().unwrap()],
+        vec!["serve"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+            .args(&arguments)
+            .env_clear()
+            .env("HOME", &base)
+            .env("ORG_DEV_ACCOUNT_BASE", base.join("a"))
+            .env("ORG_OFFICE_DEV_KEY_DIR", base.join("k"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{arguments:?}: {stderr}");
+        assert!(
+            stderr.contains("does not run as root") && stderr.contains("service user"),
+            "{arguments:?}: {stderr}"
+        );
+        assert_eq!(listing(&base), Vec::<PathBuf>::new(), "{arguments:?}");
+    }
+    // Asking for the version starts no service and is answered to anyone.
+    let version = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+        .args(["serve", "--version"])
+        .output()
+        .unwrap();
+    assert!(version.status.success());
 }
 
 #[test]

@@ -594,23 +594,29 @@ fn an_unavailable_other_instance_does_not_block_default_or_release_its_reservati
     }
 }
 
-#[cfg(target_os = "macos")]
+/// An unavailable root keeps every spelling this system's filesystems may take for its name
+/// (`org_platform_host::names::paths_may_alias`): where the composed and the decomposed
+/// spelling may be one name, the second cannot be claimed while the first is unavailable;
+/// where names are bytes, it is another name and another root.
 #[test]
 fn an_unavailable_root_reserves_unicode_normalization_aliases() {
     let fixture = Fixture::new();
     let composed = fixture.root("caf\u{e9}");
     let decomposed = fixture.root("cafe\u{301}");
+    let one_name = org_platform_host::names::paths_may_alias(&composed, &decomposed).unwrap();
     let held = fixture.registry.reserve(Some("lab"), &composed).unwrap();
     drop(held);
     fs::rename(&composed, fixture.root("moved-lab")).unwrap();
-    assert!(
-        fixture
-            .registry
-            .reserve(Some("other"), &decomposed)
-            .is_err(),
+    let claimed = fixture.registry.reserve(Some("other"), &decomposed);
+    assert_eq!(
+        claimed.is_err(),
+        one_name,
         "an unavailable NFC path must not be taken over through its NFD spelling"
     );
-    assert!(!composed.exists() && !decomposed.exists());
+    assert!(!composed.exists());
+    if one_name {
+        assert!(!decomposed.exists());
+    }
 }
 
 /// The spellings a system may take for the same names are the platform's rule

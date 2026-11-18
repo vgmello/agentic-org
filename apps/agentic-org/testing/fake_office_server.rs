@@ -25,6 +25,11 @@
 //! - `do`: `ready` (default), `fail` (with `code`), `crash` (exit 3 without a line, `at`
 //!   `start` (default), `stored` (`--create`: after writing `office.json`, before `created`),
 //!   `created` or `ready`), `hang` (never report anything).
+//! - `stdin`: read this text as its standard input instead of what the host writes there (the
+//!   host's pipe is kept open, unread, so the host's write still succeeds): a first line the
+//!   host never wrote, or, with an empty text, a standard input that ends before any first
+//!   line. What a shell wrapper around a real server would do with `printf … |` or
+//!   `</dev/null`, in a compiled program a host can start on every system.
 //! - `ignore_eof`: on stdin EOF, keep running (until SIGKILLed) instead of exiting 0.
 //! - `linger` (with `fail`): after the `failed` line, keep running (until SIGKILLed).
 //! - `orphan_stdout_ms`: first start a `sleep` of this long that holds the fake's stdout, so the
@@ -139,6 +144,7 @@ struct Step {
     corrupt_office_file: bool,
     orphan_stdout_ms: Option<u64>,
     ready_delay: Duration,
+    stdin: Option<String>,
 }
 
 fn main() {
@@ -194,6 +200,9 @@ fn main() {
         }
     }
 
+    if let Some(text) = &step.stdin {
+        replace_stdin(text);
+    }
     let mut stdin = BufReader::new(io::stdin());
     if discard {
         discard_office(
@@ -306,6 +315,33 @@ fn main() {
     let _ = fs::remove_file(&socket);
     drop(lock);
     exit(0);
+}
+
+/// Makes `text` this process's whole standard input (`stdin` in the script): a pipe that
+/// holds `text` and has no writer left replaces descriptor 0. The host's pipe moves to
+/// another descriptor and stays open, never read, for the life of the process.
+fn replace_stdin(text: &str) {
+    let mut ends = [0 as libc::c_int; 2];
+    // SAFETY: `pipe` writes two descriptors into the array it is given.
+    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+        exit(2);
+    }
+    let [read_end, write_end] = ends;
+    // A first line is far below a pipe's capacity, so the write cannot block.
+    // SAFETY: `write_end` is a pipe this function made, and `text` is valid for its length.
+    let written = unsafe { libc::write(write_end, text.as_ptr().cast(), text.len()) };
+    // SAFETY: descriptors this function owns; 0 is this process's standard input. `dup`
+    // keeps the host's pipe open on a new descriptor before 0 is replaced.
+    unsafe {
+        libc::close(write_end);
+        if written != text.len() as isize
+            || libc::dup(0) < 0
+            || libc::dup2(read_end, 0) != 0
+            || libc::close(read_end) != 0
+        {
+            exit(2);
+        }
+    }
 }
 
 /// Records the names of the environment variables it got: `env <key> <pid> <names,sorted>`.
@@ -857,6 +893,10 @@ fn step(home: &Path, key: &str, run: u64) -> Step {
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
         ),
+        stdin: entry
+            .get("stdin")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }
 

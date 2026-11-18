@@ -44,7 +44,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
 | X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
-| X2 first worker on Linux (LNX-1) | The Linux admission adapter is integrated, reviewed (ACCEPT) and repaired; the host composition is in work | See below |
+| X2 first worker on Linux (LNX-1) | Both slices integrated; LNX-1 passes on Linux; the host slice is under fresh review | See below |
 | X3 host secrets on Linux (LNX-4) | Not started | |
 | X4 web process confined on Linux (LNX-3) | The Linux confinement adapter is integrated (`458ed8b1`) and under fresh review; the host slice is in work | See below |
 | X5 service and container (LNX-2) | Not started | |
@@ -538,14 +538,41 @@ the presence adapter reads the peer through `admission::peer` and the admission
 adapter module is private again. The error class of a check that may not start a
 server moves with the host slice (it is host code).
 
-**Slice 2, the host composition:** in work in worktree `x/x2-host` (one worker; the
-other writer is X4's). Baseline on Linux at its base, whole workspace unprivileged:
-3,263 tests pass and 43 fail, none because of this track's merge: 28 of them make
-their temporary directory under the macOS path `/private/tmp` or build an admission
-for a file that does not exist (Track A's tests never ran on Linux, where CI excludes
-the host), 8 need service registration on Linux (X5), 2 need Linux confinement (X4),
-and the rest are the sandbox's (no IPv6, no network) and the pre-existing release
-store tests.
+**Slice 2, the host composition: integrated** (branch `x/x2-host`, eight commits ending
+at `83e2ab02`; its production-path test, a real host bringing a real worker to
+`ready`, first passed at its first commit). What it built:
+
+- One admission per host lifetime, built on its own thread when the supervisor is made
+  (a debug build's hash of the image took over a second and three supervision tests
+  assert that a start does not wait); a start waits for a build under way; a failed
+  build is logged and asked again by the next start; `host.sock` serves meanwhile.
+- Both image identities from the verified manifest (`Pin { sha256, macos_cdhash }`),
+  the host's own image by its digest, and the Linux static rule (ELF header and the
+  signed digest), chosen by the manifest's platform, with no predicate.
+- Native clients on Linux admitted by their user (`app_auth`, one path; the platform
+  marks such an identity with `Peer::uid`), and a command accepting a host of its own
+  user (`human::verify_host`, not in the brief: without it every Linux command refuses
+  the host).
+- `Config::refuse_root`, called by `serve`; `org_platform::process::harden_self` first
+  in every host start (no core dumps; on Linux non-dumpable, read back).
+- Script workers through `ServerCheck::ByPath` in unit tests only; integration tests
+  start only compiled programs (`wrapper()` is gone); a compiled recording worker for
+  unit tests that need an admitted child.
+- `apps/agentic-org/tests/lnx1.rs` (LNX-1, on both systems) and the two refusal tests
+  through the real adapter and the host's real supervisor.
+- CI: no package excluded on Linux. The list of platform predicates: 18 files, 109
+  predicates (from 35 and 182).
+
+Lead's decisions on what the worker raised:
+
+| Question | Decision |
+| --- | --- |
+| `agent-os` cannot reach the socket of a registered instance on any system (it looks in `<office home>/run`, the registered host serves in the instance's temporary folder); the LNX-1 test hard-links the socket into an office home of its own | The bridge stays, stated in the test and in FC-164. The product fix belongs to the agent launch binding (Track A, C increments), not to Track X. Reported to the owner. |
+| A group-writable image is refused, so a development host on a stock Ubuntu account (umask `002`) refuses its own cargo-built worker | The private-group exception of the credential store applies to the image file as well; built with X3, where the rule is written. Until then `DEVELOPMENT.md` says what to do. |
+| A debug build hashes slowly | `[profile.dev.package.sha2] opt-level = 3` in the workspace manifest. The background build stays. |
+| Root for `admin reset` is not admitted | X5, with the container's `docker exec -u 0` path. |
+| Two host tests are macOS adapter tests by nature and keep their predicate | They move into `org-platform-host`'s macOS tests in X6. |
+| The setup tests fail when the whole suite is run as root | Accepted: the host refuses root; tests run as an ordinary user, as in CI. |
 
 ## X4 · The web process confined on Linux (in work)
 

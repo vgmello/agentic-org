@@ -128,6 +128,13 @@ pub mod testing {
     pub fn disk_backed_temp() -> Result<PathBuf, Refused> {
         super::native::disk_backed_temp()
     }
+
+    /// A shared temporary directory that is in memory, for tests of rules that refuse a
+    /// memory filesystem where data must persist. `None` on a system that mounts none by
+    /// default: such a rule cannot be met there, and its test has nothing to run against.
+    pub fn memory_backed_temp() -> Result<Option<PathBuf>, Refused> {
+        super::native::memory_backed_temp()
+    }
 }
 
 #[cfg(test)]

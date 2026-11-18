@@ -49,6 +49,36 @@ fn sysctl(name: &str) -> io::Result<String> {
         .map_err(|_| invalid("invalid system identity"))
 }
 
+/// Disables core dumps. macOS has no attribute that closes a process to its own user:
+/// a signed release image is kept closed by its code signature.
+pub(super) fn harden_self() -> io::Result<()> {
+    super::no_core_dumps()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn hardened() -> io::Result<bool> {
+    super::shared::core_dumps_disabled()
+}
+
+/// The names `lsof` lists for this process's open files.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("/usr/sbin/lsof")
+        .args(["-n", "-P", "-Fn", "-p", &pid])
+        .output()?;
+    let listing = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() || !listing.lines().any(|line| line == format!("p{pid}")) {
+        return Err(io::Error::other("lsof did not list this process"));
+    }
+    Ok(listing
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .filter(|name| name.starts_with('/'))
+        .map(std::path::PathBuf::from)
+        .collect())
+}
+
 pub(super) fn check_version() -> io::Result<()> {
     if sysctl("kern.osrelease")?
         .split('.')

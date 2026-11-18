@@ -28,6 +28,20 @@ pub(super) fn check_version() -> io::Result<()> {
     refused()
 }
 
+pub(super) fn harden_self() -> io::Result<()> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn hardened() -> io::Result<bool> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
+    refused()
+}
+
 pub(super) enum Watch {}
 
 impl Watch {
@@ -157,6 +171,14 @@ mod tests {
     fn the_preparation_check_refuses_before_reading_anything() {
         assert_refused(super::uids());
         assert_refused(super::check_version());
+    }
+
+    /// Hardening refuses and changes nothing: it never reports a process as closed.
+    #[test]
+    fn hardening_refuses_and_reports_nothing() {
+        assert_refused(super::harden_self());
+        assert_refused(super::hardened());
+        assert_refused(super::open_paths());
     }
 
     #[test]

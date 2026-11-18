@@ -171,8 +171,8 @@ Section 3.3 sets the kernel floor; admission alone needs 5.9 (`close_range`).
 
 The service account is an ordinary user on every system: `agentic-org serve`
 refuses to run as root. That refusal is a check in the `serve` composition
-(`Config::refuse_root`, on in every production entry), not in an adapter, so tests can
-run the adapters as any user.
+(`Config::refuse_root`, which `agentic-org serve` calls before anything is opened or
+made; built in X2), not in an adapter, so tests can run the adapters as any user.
 
 ### 3.1 Process admission
 
@@ -217,6 +217,18 @@ is called on the accepted rendezvous before and after `ReadyForSecrets`, exactly
 `reader_is_child` and `ServerCheck::still` are called today. The same `Admission`
 type starts the office worker and the web process, each with its own
 `ExpectedImage`.
+
+Built in X2 on the host's side. The office worker's admission is built once per host
+lifetime, on its own thread when the supervisor is made, so that a host start does
+not wait for the hash of the image; a start that comes first waits for it, a failed
+build is logged ("no office server can be started") and asked again by the next
+start, and `host.sock` serves meanwhile. `ServerCheck::Pinned` carries both identities
+of the image from the same verified manifest (`Pin { sha256, macos_cdhash }`), and
+each system's adapter uses its own. A development host logs the digest of the image it
+admitted, once. A check that may not start a server, an image the platform refuses
+when the admission is built, and a refused loader variable are refusals
+(`SpawnError::Untrusted`) with the check's wording, as a refused child is. The web
+process's admission is still built at each start (X4's host slice).
 
 `ChildEnv` refuses, on every system, a variable that changes how the loader runs the
 image: any name beginning `LD_` or `DYLD_`, and `GLIBC_TUNABLES`. Today's host passes
@@ -309,7 +321,13 @@ only, section 4): a command started by the person has no code identity the kerne
 can vouch for, so its authority is only the session the person approved in the
 browser (A5). `own_image` hashes `/proc/self/exe` and compares it with the manifest
 entry for `agentic-org`; `release/platform.rs` accepts a Linux executable on the
-signed manifest digest alone, after its ELF header check.
+signed manifest digest alone, after its ELF header check. Built in X2: the host's
+peer policy has one path (`app_auth`), in which a peer the platform names by its user
+alone is admitted when that user is the host's own, and a command accepts a host of
+its own user the same way (`human::verify_host`); the platform says which kind of
+system it is with each identity (`Peer::uid`). Root for `admin reset` is not built:
+the listener refuses every other user when it accepts (X5, with the container's
+`docker exec -u 0` path).
 
 The worker's `current_exe()` is `/memfd:… (deleted)`, so a worker cannot find sibling
 executables (for example `agent-os`) next to itself. The host passes the release's
@@ -337,12 +355,16 @@ container profile that refuses `memfd_create`, `clone` with `CLONE_PIDFD`,
 
 **Tests.** The host's supervisor tests start shell-script workers today
 (`script()` in `org-host/src/supervisor/mod.rs`, ten uses; `wrapper()` in
-`apps/agentic-org/tests/support/mod.rs`), and a script cannot be admitted. X2 adds
-`org_platform::testing::path_admission()`, a test adapter built from the same
-contract that starts a program by path with `posix_spawn` and checks the reader by
-PID, available only under the `test-support` feature and never in a production
-composition; those tests move onto it. The real Linux adapter is tested with a
-compiled worker fixture. The non-dumpable test needs an unprivileged child: when the
+`apps/agentic-org/tests/support/mod.rs`), and a script cannot be admitted. X2 added
+`org_platform_host::testing::admission::path_admission()`, a test adapter built from
+the same contract that starts a program by path and checks the reader by PID,
+available only under the `test-support` feature and never in a production
+composition; the host's unit tests that need a script reach it through
+`ServerCheck::ByPath`, which exists only in test builds. The integration tests start
+only compiled programs: `wrapper()` is gone, the fake office server reads what a
+wrapper did from its script, and a compiled recording worker
+(`crates/org-host/examples/recording_worker.rs`) stands in where a unit test needs a
+real admitted child. The real Linux adapter is tested with a compiled worker fixture. The non-dumpable test needs an unprivileged child: when the
 test runs as root (a development container), it drops the child to UID 65534 with
 `setresuid` before `spawn`, so it runs, and passes or fails, the same everywhere.
 

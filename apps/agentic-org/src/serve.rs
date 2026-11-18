@@ -26,6 +26,11 @@
 //! the host is compiled), never read from the command line, a config file or the environment at
 //! run time. If it doesn't exist when the host starts, the fallback is off (logged).
 //!
+//! `serve` refuses to run as root, on every system and in both builds, before it opens or
+//! creates anything ([`Config::refuse_root`], ADR-0017 decision 10): the service account is
+//! an ordinary user. The host then closes itself to the other processes of that user before
+//! it reads a key (no core dump; on Linux not dumpable).
+//!
 //! A debug build keeps the offices' database keys as files in the folder `ORG_OFFICE_DEV_KEY_DIR`
 //! names, never in the Keychain, and refuses to start without it. Release builds ignore the
 //! variable. The host never passes the variable on to its servers.
@@ -76,6 +81,8 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
         println!("agentic-org {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    // The service is an ordinary user's on every system. Before anything is opened or made.
+    Config::refuse_root()?;
     let name = args.name.clone();
     #[cfg_attr(not(debug_assertions), allow(unused_mut))]
     let mut config = config(args)?;

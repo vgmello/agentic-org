@@ -955,8 +955,16 @@ half of LNX-6 run).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.1 and 4,
   [host boundary design](design/office-host-boundary.md) (admission and the verified
   rendezvous). LNX-1.
-- **Code today:** the admission contract's Linux adapter (`crates/org-platform-host/src/admission/linux.rs`) refuses, where `crates/org-host/src/spawn.rs` returned "office servers run only on
-  macOS"; six tests in `supervisor/channels/tests.rs` fail on Linux.
+- **Built (2026-11-18):** the Linux admission adapter
+  (`crates/org-platform-host/src/admission/linux.rs`), reviewed and hardened; the
+  host's composition of it (one admission per host lifetime, both image identities
+  from the manifest, native clients by user, the root refusal, the non-dumpable
+  host); the by-path test admission; the host's tests and `apps/agentic-org`'s on
+  Linux; `apps/agentic-org/tests/lnx1.rs`. CI excludes no package on Linux. Open from
+  this increment: `agent-os` cannot find the socket of a registered instance on any
+  system, so the LNX-1 test links it into place (the agent launch binding owns the
+  fix); root is not admitted for `admin reset` (X5); two host tests of the macOS
+  adapter keep their predicate until they move into the platform crate (X6).
 - **Done when:** LNX-1 passes in a test that starts the real host composition on Linux
   and uses `agent-os` through the same authenticated route the macOS tests use when X2
   lands; a worker image one byte different from the expected digest, and a child

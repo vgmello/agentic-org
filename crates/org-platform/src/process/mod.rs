@@ -64,7 +64,7 @@ use refused as native;
 #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
 mod shared;
 #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
-use shared::{check_time, native_mark, valid_pid};
+use shared::{check_time, native_mark, no_core_dumps, valid_pid};
 
 #[cfg(all(
     test,
@@ -74,6 +74,52 @@ mod adapter_tests;
 
 #[cfg(test)]
 mod tests;
+
+/// Close this process to the other processes of its user, before it holds a secret.
+///
+/// A process that will hold keys calls this first, before it reads one and before it
+/// starts a thread or a child. It cannot be undone.
+///
+/// - Every system with an adapter: core dumps are disabled (`RLIMIT_CORE` soft and hard
+///   limit 0), so a crash writes no memory to disk.
+/// - GNU/Linux: the process is also made non-dumpable (`PR_SET_DUMPABLE` 0, then read
+///   back). From then on no process of the same user can attach to it, read or write
+///   its memory, follow its executable link or open its descriptors through
+///   `/proc/<pid>`; root still can. The attribute is inherited by a child until that
+///   child executes a program (a readable program image makes the child dumpable
+///   again), so a child that must stay closed executes an image nobody can read.
+/// - macOS: nothing more. What keeps another process out of a release image there is
+///   its code signature (the hardened runtime, no `get-task-allow`), which the
+///   consumer checks; an unsigned development image is not protected.
+/// - Every other Unix target: the `process` refusal; nothing is changed.
+///
+/// An error is the system's, naming the call that failed: the caller does not go on to
+/// read a secret.
+pub fn harden_self() -> io::Result<()> {
+    native::harden_self()
+}
+
+/// Whether [`harden_self`] holds for this process now: core dumps are disabled, and
+/// where the system has such an attribute the process is not dumpable. For a
+/// consumer's test of its own start path (`test-support`).
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use std::io;
+
+    /// See the module documentation. The refusing adapter refuses.
+    pub fn hardened() -> io::Result<bool> {
+        super::native::hardened()
+    }
+
+    /// The paths of the files this process holds open now, one entry per open descriptor
+    /// that the system names by a path (a file opened twice is listed twice; sockets and
+    /// pipes are left out or carry a name that is no path). For a consumer's test that
+    /// its code leaves no file open. GNU/Linux reads `/proc/self/fd`; macOS asks
+    /// `lsof` about this process. The refusing adapter refuses.
+    pub fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
+        super::native::open_paths()
+    }
+}
 
 fn check(rc: libc::c_int) -> io::Result<()> {
     if rc == 0 {

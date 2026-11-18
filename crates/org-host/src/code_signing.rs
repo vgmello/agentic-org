@@ -8,8 +8,8 @@
 //!
 //! Everything here fails closed: an error is "no".
 
-use crate::peer::AuditToken;
-use org_platform_host::admission::{Peer, SigningRule};
+use crate::peer::Identity;
+use org_platform_host::admission::SigningRule;
 
 /// The requirement for code signed as `identifier` with the Developer ID of team `team_id`
 /// ([`DEVELOPER_ID`]). The identifier must be a reverse-DNS name (ASCII letters, digits, `.`
@@ -87,10 +87,11 @@ pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {
     HARDENED.flags_and_rejections_pass(signing)
 }
 
-/// Whether the process `token` names satisfies `requirement` and runs hardened code without the
-/// [`REJECTED_ENTITLEMENTS`], all checked on one code object. Fails closed.
-pub(crate) fn satisfies_hardened(token: &AuditToken, requirement: &str) -> bool {
-    Peer::from_macos_audit_token(*token).satisfies(requirement, &HARDENED)
+/// Whether the process `peer` names satisfies `requirement` and runs hardened code without the
+/// [`REJECTED_ENTITLEMENTS`], all checked on one code object. Fails closed: `false` on any
+/// error, and always on a system without code signatures.
+pub(crate) fn satisfies_hardened(peer: &Identity, requirement: &str) -> bool {
+    peer.satisfies(requirement, &HARDENED)
 }
 
 /// This process's own signing information (through `SecCodeCopySelf`): its flags (the

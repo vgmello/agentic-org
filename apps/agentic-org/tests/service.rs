@@ -4,9 +4,6 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -179,7 +176,6 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
 /// answers ends promptly. It would hang if waking the accept thread, ending a connection's writer
 /// or stopping a worker mid-start broke, so a watchdog turns that into a failure instead of a
 /// stuck test run.
-#[cfg(target_os = "macos")]
 #[test]
 fn shutdown_with_clients_connected_finishes_promptly() {
     const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -221,7 +217,6 @@ fn shutdown_with_clients_connected_finishes_promptly() {
 /// message on a subscribed connection shows an office in an earlier state than one before it.
 /// List calls stream in on one subscribed connection (handled up to 16 at a time) while the
 /// host's offices go from `starting` to `active`, each after its own delay.
-#[cfg(target_os = "macos")]
 #[test]
 fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
     use std::collections::HashMap;

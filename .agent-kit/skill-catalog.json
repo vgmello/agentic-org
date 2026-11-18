@@ -26,7 +26,7 @@
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "f958c21e2260814c8c58b688b6c9d9f8470a1d8224d1d3f259e2af5bce378693"
+      "sha256": "28f7f045c1d802def5fb97bf0b915aa81cfc1dae6e170a6e4fa4cd0e5a384bf3"
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
@@ -54,7 +54,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "105573fcb2315a125ea0ca3da8c1f5db2867fbadd693c0842c0bf82ac69296a2"
+      "sha256": "929a33ddbee821c582db26d844bedb5a3d1918b74f6880b515a4bbe53d296eb2"
     },
     {
       "path": "AGENTS.md",
@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "941f4ca9426e0d657959bfce006aa5622b4fa417a89aece826e6081f2dd2d1b5"
+      "sha256": "d513de4e26a0a5e2cf49299423baeb49c2ea54416cb29214cc3cd35ff7b9d62d"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "7e07b46ca5eddefb8ffad3688f978c7eae992b98f56b1072cb5fb79fd9f0bbbc"
+      "sha256": "804e41ee5bed002f456c7bbbcf4b9409d52bc72f9707216efb3fe2c4adf63c92"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",

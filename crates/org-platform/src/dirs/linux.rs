@@ -42,6 +42,12 @@ pub(super) fn disk_backed_temp() -> Result<PathBuf, Refused> {
     Ok(PathBuf::from("/var/tmp"))
 }
 
+/// The POSIX shared-memory directory, a `tmpfs` wherever glibc's `shm_open` works.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn memory_backed_temp() -> Result<Option<PathBuf>, Refused> {
+    Ok(Some(PathBuf::from("/dev/shm")))
+}
+
 /// `<XDG_DATA_HOME>/agentic-org`, or `<home>/.local/share/agentic-org`.
 fn application_base_from(data_home: Option<OsString>, home: &Path) -> PathBuf {
     xdg_base(data_home, home, ".local/share").join(PRODUCT)

@@ -40,6 +40,9 @@ impl Host {
         paths: &Paths,
         name: Option<&str>,
     ) -> Result<Self, HostError> {
+        // Before any key or custody is read (this path opens custody before the ordinary
+        // composition is reached).
+        crate::harden()?;
         // Before anything is touched on disk: a release build without a pinned runtime
         // release refuses here.
         config.admit_runtime()?;

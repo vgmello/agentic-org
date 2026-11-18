@@ -95,3 +95,9 @@ core-foundation = "=0.10.1"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# The host hashes each program it starts (the office worker, the web process) when it
+# builds their admission. Unoptimised SHA-256 takes over a second for a debug-built
+# executable, on every host start and in every test that starts a host.
+[profile.dev.package.sha2]
+opt-level = 3

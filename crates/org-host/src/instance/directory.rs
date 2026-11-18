@@ -749,7 +749,6 @@ mod tests {
     }
 
     /// The native fixture mounts a second disk below a supported instance root.
-    #[cfg(target_os = "linux")]
     #[test]
     fn native_instance_children_refuse_a_different_device() {
         let Some(path) = std::env::var_os("ORG_INSTANCE_NESTED_MOUNT_FIXTURE") else {
