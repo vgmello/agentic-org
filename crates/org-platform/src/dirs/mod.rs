@@ -61,6 +61,15 @@ pub fn application_base_variables() -> Result<&'static [&'static str], Refused> 
     native::application_base_variables()
 }
 
+/// The environment variables that can move any location of this module on this system:
+/// [`application_base`], [`user_temp_base`] and [`credential_directory_base`]. A consumer
+/// that has another program resolve the same locations (a service manager starts its units
+/// with an environment of its own) gives it these, with their values. macOS: none.
+/// GNU/Linux: `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME`.
+pub fn location_variables() -> Result<&'static [&'static str], Refused> {
+    native::location_variables()
+}
+
 /// The default folder for the credential directories of the account whose home is
 /// `home`, on a system whose release host keeps its secrets in a directory. The
 /// consumer appends one name per instance, creates the result, and records the

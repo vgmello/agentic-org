@@ -18,6 +18,10 @@ pub(super) fn application_base_variables() -> Result<&'static [&'static str], Re
     Err(refusal())
 }
 
+pub(super) fn location_variables() -> Result<&'static [&'static str], Refused> {
+    Err(refusal())
+}
+
 pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     Err(UserTempError::Unsupported(refusal()))
 }
@@ -57,6 +61,7 @@ mod tests {
             Err(UserTempError::Unsupported(refused)) if refused == refusal()
         ));
         assert_eq!(credential_directory_base(home), Err(refusal()));
+        assert_eq!(location_variables(), Err(refusal()));
         assert_eq!(environment_spelling(home), Err(refusal()));
         assert_eq!(socket_path_limit(), Err(refusal()));
         assert_eq!(disk_backed_temp(), Err(refusal()));
