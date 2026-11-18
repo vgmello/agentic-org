@@ -32,6 +32,7 @@ pub mod path;
 pub mod process;
 mod release;
 pub mod service;
+pub mod session;
 mod static_ui;
 pub mod tls;
 pub mod transport;
