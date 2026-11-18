@@ -130,20 +130,8 @@ fn gateway(script: Arc<Script>) -> (Gateway<SessionApi>, Calls) {
         UnixDatagram::pair().unwrap().0.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
-        Arc::new(move |name: &str, data: &Value| {
-            if name == "session.ended" {
-                sink_cache.ended(
-                    data["session_id"].as_str().unwrap(),
-                    *sink_generation.get().unwrap(),
-                );
-            }
-            if name == "account.changed" {
-                sink_cache.account_changed(
-                    data["account_id"].as_str().unwrap(),
-                    *sink_generation.get().unwrap(),
-                );
-            }
-        }),
+        // The sink the web process installs, not a copy of it.
+        crate::process::session_events(sink_cache, sink_generation),
     )
     .unwrap();
     generation.set(host.generation()).unwrap();
@@ -1024,6 +1012,60 @@ fn an_account_that_is_not_the_administrator_is_403_with_no_create_call() {
     assert!(!calls.methods().contains(&"organization.create".to_owned()));
 }
 
+/// A `session.validate` answer the host wrote before `account.changed` is applied before
+/// it: the reader caches the answer and then the event drops it, so a session that
+/// predates the link is never served from the cache afterwards.
+#[test]
+fn a_session_validated_before_account_changed_is_not_cached_after_it() {
+    let (lists, validates) = (
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let changed = || json!({"event": "account.changed", "seq": 1, "data": {"account_id": "A1"}});
+    let listed = || json!({"result": {"organizations": [], "creating": []}});
+    let base = default_script();
+    let (gateway, calls) = gateway(Arc::new(move |method: &str, params: &Value| {
+        use std::sync::atomic::Ordering::SeqCst;
+        match method {
+            // The first list drops the session the sign-in cached; later ones say nothing.
+            "organization.list" if lists.fetch_add(1, SeqCst) == 0 => vec![changed(), listed()],
+            "organization.list" => vec![listed()],
+            // The first validation is answered, then the account changes.
+            "session.validate" if validates.fetch_add(1, SeqCst) == 0 => {
+                let mut frames = base(method, params);
+                frames.push(changed());
+                frames
+            }
+            _ => base(method, params),
+        }
+    }));
+    let pair = sign_in(&gateway).pair();
+    let get = |target: &str| send(&gateway, Method::GET, target, "", Some(&pair), &[]);
+    let validations = || {
+        calls
+            .methods()
+            .iter()
+            .filter(|m| *m == "session.validate")
+            .count()
+    };
+    assert_eq!(get("/api/v1/organizations").status, StatusCode::OK);
+    assert_eq!(validations(), 0, "the sign-in was cached");
+    assert_eq!(get("/api/v1/session").status, StatusCode::OK);
+    assert_eq!(validations(), 1, "validated: its answer precedes the event");
+    // A host answer written after the event and asked for without this pair: once it is
+    // read, the reader has applied the event.
+    assert_eq!(sign_in(&gateway).status, StatusCode::OK);
+    assert_eq!(get("/api/v1/session").status, StatusCode::OK);
+    assert_eq!(
+        validations(),
+        2,
+        "the stale session was served from the cache"
+    );
+    // That validation had no event after it: it is current and stays cached.
+    assert_eq!(get("/api/v1/session").status, StatusCode::OK);
+    assert_eq!(validations(), 2);
+}
+
 #[test]
 fn the_list_is_the_hosts_answer_and_account_changed_drops_the_cached_session() {
     let (gateway, calls) = gateway(organization_script(|method, _| {
@@ -1102,6 +1144,13 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
         json!({"operation_id": OPERATION, "kind": "host", "state": "reserved",
             "outcome": "accepted"})
     );
+    assert_eq!(calls.last()["operation_id"], OPERATION);
+    // HEAD reads the same operation and carries no body.
+    let asked = calls.methods().len();
+    let head = send(&gateway, Method::HEAD, &scoped, "", Some(&pair), &[]);
+    assert_eq!(head.status, StatusCode::OK);
+    assert_eq!(head.body, Value::Null);
+    assert_eq!(calls.methods().len(), asked + 1, "HEAD asked the host");
     assert_eq!(calls.last()["operation_id"], OPERATION);
     let before = calls.methods();
     for target in [

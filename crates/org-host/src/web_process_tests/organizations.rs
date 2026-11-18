@@ -18,8 +18,8 @@
 //! real-instance browser tests.
 use super::{
     browser_sessions::{credentials, established, pair, wait_serving, Pair},
-    create_body, fixture_config, host_at, http, launch, lookup, remote, send, wait_completed,
-    wait_until, web_pids, Launched, Reply, Seed, PASSWORD,
+    create_body, fixture_config, host_at, http, launch, lookup, remote, send, wait_until, web_pids,
+    Launched, Reply, Seed, PASSWORD,
 };
 use crate::{
     enc1_process_tests::{contains, encodings, files, unhex},
@@ -107,14 +107,18 @@ impl Browser {
         (operation, view)
     }
     fn completed(&self, operation: &str) -> Value {
-        let view = wait_completed(
+        // Every poll reply is kept, the ones before completion too.
+        super::wait_completed_seen(
             self.address,
             &self.pair.headers(),
             &self.instance,
             operation,
-        );
-        self.seen.borrow_mut().push(view.to_string());
-        view
+            &mut |reply| {
+                self.seen
+                    .borrow_mut()
+                    .push(format!("{}\n{}", reply.headers, reply.body));
+            },
+        )
     }
     /// `GET /api/v1/organizations`: the account's organizations and its creates in flight.
     fn list(&self) -> Value {
@@ -436,8 +440,13 @@ fn actual_host_stopped_in_the_middle_of_a_create_finishes_it_at_its_next_start_w
     } = launch(Seed::Administrator);
     wait_serving(&host, address);
     let browser = Browser::sign_in(&host, address);
-    // Admitted, then the host stops before the create is linked. The browser never asks
-    // about this operation again.
+    // Admitted, then the host stops before the create is linked: its creation thread is
+    // held until the stop, so it cannot link first. The browser never asks about this
+    // operation again.
+    host.service
+        .provisioning_for_test()
+        .expect("a registered host creates organizations")
+        .hold_drives();
     let operation = crate::ids::generate().unwrap();
     let posted = browser.post(
         "/api/v1/organizations",
@@ -446,9 +455,11 @@ fn actual_host_stopped_in_the_middle_of_a_create_finishes_it_at_its_next_start_w
     assert_eq!(posted.status, 202, "{}", posted.body);
     assert_eq!(posted.body["outcome"], "accepted");
     stop(host, &base);
+    assert!(!linked_on_disk(&base, &operation), "held until the stop");
+    let state = base.join("instance/durable/state");
     assert!(
-        !linked_on_disk(&base, &operation),
-        "the create finished before the host stopped: this run proves nothing about a restart"
+        !state.exists() || all_files(&state).is_empty(),
+        "nothing of the organization was written before the stop"
     );
 
     // The starting host continues the reserved create by itself.
@@ -552,7 +563,10 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
         let reply = http(address, method, &path, "", body);
         assert_eq!(reply.status, 401, "{method} {path}: {}", reply.body);
     }
-    // Refusals the web process decides from the body: 400 naming the input.
+    // Refusals the web process decides from the body: 400 naming the input. The pair is
+    // only parsed before the body is checked; the session is validated when the call
+    // runs, so a refused body reaches no host call at all.
+    let ops_before = host.service.browser_ops();
     let instance = browser.instance.as_str();
     let other_instance = "0193a5c0-0000-7000-8000-000000000009";
     let uuid_operation = "0193a5c0-0000-7000-8000-000000000001";
@@ -601,8 +615,8 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
                 "example",
                 json!({ "kind": "local", "path": "/tmp/example" }),
             ),
-            None,
-            None,
+            Some("organization_repository"),
+            Some("remote_required"),
             "a local repository with a path",
         ),
         (
@@ -685,6 +699,11 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
         host.service.organization_ops(),
         before,
         "a refused request reached a host organization call"
+    );
+    assert_eq!(
+        host.service.browser_ops(),
+        ops_before,
+        "a refused body or lookup target reached a host call"
     );
     assert_eq!(
         browser.list(),
@@ -780,7 +799,11 @@ fn actual_recovery_code_is_released_once_natively_and_no_credential_reaches_http
         },
     )
     .unwrap();
-    assert!(native.orgs.iter().any(|o| o.org_id == organization));
+    // The native sign-in names the organization: what `recovery --org <name>` resolves.
+    assert!(native
+        .orgs
+        .iter()
+        .any(|o| o.org_id == organization && o.name == "Example"));
     let session = || org_host_control::SessionHandle::new(native.session.expose().into()).unwrap();
     let release = |redeliver| ops::RecoveryReleaseParams {
         session: session(),
@@ -846,6 +869,9 @@ fn actual_recovery_code_is_released_once_natively_and_no_credential_reaches_http
     }
     drop(seen);
     stop(host, &base);
+    // What the web process printed, which the host keeps in no file.
+    let web_stderr = crate::web::captured_stderr(&browser.instance)
+        .expect("this instance's web process stderr was drained into the capture");
 
     // ENC-2: scan the stopped instance. The office secrets key is in its custody file
     // (positive control) and custody is owner-only.
@@ -873,6 +899,12 @@ fn actual_recovery_code_is_released_once_natively_and_no_credential_reaches_http
         ("recovery code", compact.into_bytes()),
     ];
     secrets.extend(encodings(&key).map(|form| ("office secrets key", form)));
+    for (what, secret) in &secrets {
+        assert!(
+            !contains(&web_stderr, secret),
+            "{what} in the web process's stderr"
+        );
+    }
     let (mut scanned, mut databases) = (0, 0);
     for path in all_files(&base) {
         if path.starts_with(base.join("bin")) || path.starts_with(&custody) {

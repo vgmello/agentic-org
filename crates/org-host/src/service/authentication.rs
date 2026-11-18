@@ -183,6 +183,16 @@ impl Authentication {
     pub(crate) fn provisioning_storage(&self) -> (Arc<HostDb>, Arc<dyn HostSecrets>) {
         (Arc::clone(&self.db), Arc::clone(&self._custody))
     }
+    /// The name the organization was created with; empty when no create of this host
+    /// made it or the registry cannot be read.
+    fn organization_name(&self, org: &str) -> String {
+        self.db
+            .provisioning_linked_to(org)
+            .ok()
+            .flatten()
+            .map(|r| r.prepared.plan.name)
+            .unwrap_or_default()
+    }
     pub(super) fn inspect(
         &self,
         connection: &Connection,
@@ -212,6 +222,7 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
+                    name: String::new(),
                     employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })
@@ -434,6 +445,7 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
+                    name: self.organization_name(l.org_id()),
                     employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })

@@ -51,6 +51,16 @@ const STABLE_RUNNING: Duration = Duration::from_secs(60);
 /// First restart delay; each further consecutive failure doubles it.
 const RESTART_BACKOFF: Duration = Duration::from_secs(1);
 
+/// What each instance's web processes wrote to stderr. The host keeps none of it; a
+/// real-process test reads it to prove what the web process never prints.
+#[cfg(test)]
+static CAPTURED_STDERR: Mutex<std::collections::BTreeMap<String, Vec<u8>>> =
+    Mutex::new(std::collections::BTreeMap::new());
+#[cfg(test)]
+pub(crate) fn captured_stderr(instance: &str) -> Option<Vec<u8>> {
+    lock(&CAPTURED_STDERR).get(instance).cloned()
+}
+
 /// Supervisor timing. Production uses [`Timing::PRODUCTION`]; tests shorten it.
 #[derive(Clone, Copy)]
 struct Timing {
@@ -455,11 +465,23 @@ impl Running {
             })
             .map_err(os_failed("start the stdout drain"))?;
         let mut stderr = spawned.stderr;
+        #[cfg(test)]
+        let captured = config.instance.clone();
         thread::Builder::new()
             .name("web-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
-                while matches!(stderr.read(&mut bytes), Ok(n) if n > 0) {}
+                #[cfg(test)]
+                lock(&CAPTURED_STDERR).entry(captured.clone()).or_default();
+                while let Ok(n @ 1..) = stderr.read(&mut bytes) {
+                    #[cfg(test)]
+                    lock(&CAPTURED_STDERR)
+                        .entry(captured.clone())
+                        .or_default()
+                        .extend_from_slice(&bytes[..n]);
+                    #[cfg(not(test))]
+                    let _ = n;
+                }
             })
             .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + wait;

@@ -31,6 +31,14 @@ fn malformed_cli_arguments_do_not_collect_credentials_or_open_a_socket() {
         vec!["release", "--force"],
         vec!["release", "--login"],
         vec!["release", "--login", "one", "--login", "two"],
+        vec![
+            "release",
+            "--org",
+            "Acme",
+            "--org-id",
+            "0193a5c0-0000-7000-8000-000000000001",
+        ],
+        vec!["status", "--org"],
     ] {
         assert!(recovery(&args.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err());
     }
@@ -56,4 +64,40 @@ fn an_explicit_recovery_target_takes_only_a_canonical_uuid_v7_instance() {
     }
     let relative = BTreeMap::from([("--host-socket", "host.sock"), ("--instance-id", canonical)]);
     assert!(recovery_target(&relative).is_err());
+}
+
+#[test]
+fn an_organization_name_resolves_among_the_accounts_linked_organizations_only() {
+    let linked = |id: &str, name: &str| ops::LinkedOrg {
+        org_id: id.into(),
+        name: name.into(),
+        employee_id: "0193a5c0-0000-7000-8000-000000000006".into(),
+        office_ids: vec![],
+    };
+    let orgs = [
+        linked("0193a5c0-0000-7000-8000-000000000001", "Acme"),
+        linked("0193a5c0-0000-7000-8000-000000000002", "Other \u{1b}[31m"),
+        // An answer from a host that sends no names.
+        linked("0193a5c0-0000-7000-8000-000000000003", ""),
+    ];
+    for name in ["Acme", "acme", "ACME", " Acme "] {
+        assert_eq!(
+            resolve_org(&orgs, name).as_deref(),
+            Ok("0193a5c0-0000-7000-8000-000000000001"),
+            "{name}"
+        );
+    }
+    // Unknown, or empty: refused, naming what the account can see with nothing a
+    // terminal would interpret.
+    for name in ["Missing", ""] {
+        let refused = resolve_org(&orgs, name).unwrap_err();
+        assert!(refused.contains("\"Acme\""), "{refused}");
+        assert!(
+            refused.contains("Other") && !refused.contains('\u{1b}'),
+            "{refused}"
+        );
+    }
+    assert!(resolve_org(&[], "Acme")
+        .unwrap_err()
+        .ends_with("it can see: none"));
 }

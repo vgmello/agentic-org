@@ -12,7 +12,7 @@ use std::{
     },
     path::{Path, PathBuf},
 };
-const HELP:&str="agentic-org recovery <status|release> [--name NAME] [--org-id ID] [--login LOGIN] [--redeliver] [--package NEW_FILE]\nOr select an explicit --host-socket PATH --instance-id ID. Collection requires this Mac's foreground terminal and a fresh OS confirmation. REC-1 HQ-loss recovery is unsupported.";
+const HELP:&str="agentic-org recovery <status|release> [--name NAME] [--org ORGANIZATION_NAME | --org-id ID] [--login LOGIN] [--redeliver] [--package NEW_FILE]\nOr select an explicit --host-socket PATH --instance-id ID. Collection requires this Mac's foreground terminal and a fresh OS confirmation. REC-1 HQ-loss recovery is unsupported.";
 fn error<T>(_: T) -> String {
     "recovery is unresolved; inspect persisted status before explicit redelivery; no retention acknowledgement was inferred".into()
 }
@@ -272,7 +272,13 @@ fn recovery_options<'a>(
         }
         if !matches!(
             flag.as_str(),
-            "--name" | "--org-id" | "--login" | "--host-socket" | "--instance-id" | "--package"
+            "--name"
+                | "--org"
+                | "--org-id"
+                | "--login"
+                | "--host-socket"
+                | "--instance-id"
+                | "--package"
         ) || options
             .insert(flag.as_str(), args.next().ok_or(HELP)?.as_str())
             .is_some()
@@ -281,6 +287,9 @@ fn recovery_options<'a>(
         }
     }
     if command == "status" && options.contains_key("--package") {
+        return Err(HELP.into());
+    }
+    if options.contains_key("--org") && options.contains_key("--org-id") {
         return Err(HELP.into());
     }
     Ok((options, redeliver))
@@ -333,6 +342,36 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
     })
 }
 
+/// The id of the organization named `name` among those the signed-in account is linked
+/// to. Names are unique on an instance whatever their letter case, so at most one
+/// matches. An unknown name is refused with the names the account can see.
+fn resolve_org(orgs: &[ops::LinkedOrg], name: &str) -> Result<String, String> {
+    // The instance's own rule for "the same name": surrounding space and letter case
+    // do not tell two names apart.
+    let key = |name: &str| name.trim().to_lowercase();
+    let wanted = key(name);
+    let mut found = orgs
+        .iter()
+        .filter(|o| !o.name.is_empty() && key(&o.name) == wanted);
+    if let (Some(org), None) = (found.next(), found.next()) {
+        return Ok(org.org_id.clone());
+    }
+    // Debug formatting escapes anything a terminal would interpret.
+    let visible: Vec<String> = orgs
+        .iter()
+        .filter(|o| !o.name.is_empty())
+        .map(|o| format!("{:?}", o.name))
+        .collect();
+    Err(format!(
+        "no organization named {name:?} for this account; it can see: {}",
+        if visible.is_empty() {
+            "none".into()
+        } else {
+            visible.join(", ")
+        }
+    ))
+}
+
 pub fn recovery(arguments: &[String]) -> Result<(), String> {
     if arguments.is_empty() || arguments == ["--help"] || arguments == ["-h"] {
         println!("{HELP}");
@@ -354,12 +393,19 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         default_org,
         default_login,
     } = recovery_target(&options)?;
-    let org = options
+    let org_name = options.get("--org").map(|s| s.to_string());
+    let org_id = options
         .get("--org-id")
         .map(|s| s.to_string())
-        .or(default_org)
-        .ok_or("explicit --org-id required")?;
-    if !org_office_launch::is_storage_id(&org) {
+        .or(default_org);
+    if org_name.is_none() && org_id.is_none() {
+        return Err("explicit --org ORGANIZATION_NAME or --org-id ID required".into());
+    }
+    if org_name.as_deref().is_some_and(str::is_empty)
+        || org_id
+            .as_deref()
+            .is_some_and(|id| !org_office_launch::is_storage_id(id))
+    {
         return Err(HELP.into());
     }
     let login = options
@@ -391,18 +437,28 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
     if !signed.admin {
         return Err("instance administrator required".into());
     }
-    let result = if command == "release" {
-        collect(
-            &mut wire,
-            &signed.session,
-            &instance,
-            &org,
-            redeliver,
-            options.get("--package").map(PathBuf::from),
-        )
-    } else {
-        status(&mut wire, &signed.session, &org).map(drop)
+    // A name is resolved among the organizations this account is linked to, after it
+    // signed in; the session is ended whatever the answer.
+    // A name the person gave wins over an organization the target supplied.
+    let org = match (org_name, org_id) {
+        (Some(name), _) => resolve_org(&signed.orgs, &name),
+        (None, Some(id)) => Ok(id),
+        (None, None) => Err(HELP.into()),
     };
+    let result = org.and_then(|org| {
+        if command == "release" {
+            collect(
+                &mut wire,
+                &signed.session,
+                &instance,
+                &org,
+                redeliver,
+                options.get("--package").map(PathBuf::from),
+            )
+        } else {
+            status(&mut wire, &signed.session, &org).map(drop)
+        }
+    });
     // Logout cannot undo accepted office transactions or acknowledged delivery.
     let _ = wire.call::<ops::SessionEnd>(
         &ops::SessionParams {

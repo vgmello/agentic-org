@@ -49,10 +49,17 @@ pub(crate) struct Provisioning {
     web: Broadcast,
     /// The operations a creation is running for right now.
     driving: Arc<Mutex<std::collections::BTreeSet<String>>>,
+    /// Set when the host stops: no attempt starts and no link is recorded afterwards.
+    stopping: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     drives_started: std::sync::atomic::AtomicUsize,
+    /// While set, a creation thread holds its claim and creates nothing until the host
+    /// stops.
+    #[cfg(test)]
+    hold_drives: std::sync::atomic::AtomicBool,
     /// 1: the next reservation commit fails; 2: the host is lost between staging the code
-    /// and the commit, so the staged entry stays.
+    /// and the commit, so the staged entry stays; 3: the account's administrator authority
+    /// is revoked after every earlier check, just before the reservation commit.
     #[cfg(test)]
     reservation_fault: std::sync::atomic::AtomicU8,
 }
@@ -166,8 +173,11 @@ impl Provisioning {
             gate: Mutex::new(()),
             hq: std::sync::OnceLock::new(),
             driving: Arc::default(),
+            stopping: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             drives_started: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            hold_drives: std::sync::atomic::AtomicBool::new(false),
             web: Broadcast::default(),
             #[cfg(test)]
             reservation_fault: std::sync::atomic::AtomicU8::new(0),
@@ -190,6 +200,35 @@ impl Provisioning {
             }
             Err(_) => crate::host_log::log("reserved organization creates could not be read"),
         }
+    }
+
+    /// The host is stopping: no creation attempt starts from now on, a waiting retry ends
+    /// and a creation whose worker answers later records no link (the next start continues
+    /// it). Call before the offices stop.
+    pub(crate) fn halt(&self) {
+        self.stopping
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// [`Self::halt`], then waits until no creation thread is left, so nothing writes
+    /// custody or the registry after the host stopped. The wait is bounded: a thread
+    /// still running when it ends is logged, records no link (see [`Self::drive`]), but
+    /// may still finish a custody or file write it had begun. Call after the offices
+    /// stopped: a creation waiting for its worker ends when the supervisor stops it.
+    pub(crate) fn stop(&self) {
+        self.halt();
+        let until = std::time::Instant::now() + STOP_WAIT;
+        while self.driving.lock().is_ok_and(|driving| !driving.is_empty()) {
+            if std::time::Instant::now() >= until {
+                crate::host_log::log("an organization create did not end with the host");
+                return;
+            }
+            std::thread::sleep(STOP_POLL);
+        }
+    }
+
+    fn stopping(&self) -> bool {
+        self.stopping.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// The admitted web connections: the service adds each one when its hello completes.
@@ -234,8 +273,12 @@ impl Provisioning {
 
     /// [`Self::ensure_driving`] with up to `attempts` tries on the one thread. A client's
     /// poll tries once, because the client asks again. The start of the host has no
-    /// client behind it, so it tries again by itself after a short wait.
+    /// client behind it, so it tries again by itself after a short wait, unless the
+    /// refusal is one a later try cannot change or the host is stopping.
     fn drive_on_thread(self: &Arc<Self>, r: &Reservation, attempts: u32) -> Result<(), ApiError> {
+        if self.stopping() {
+            return Err(unavailable());
+        }
         let hq = Arc::clone(self.hq.get().ok_or_else(unavailable)?);
         let Some(claim) = self.claim(&r.operation_id)? else {
             return Ok(());
@@ -246,7 +289,16 @@ impl Provisioning {
             .name("organization-create".into())
             .spawn(move || {
                 let _claim = claim;
+                #[cfg(test)]
+                while this.hold_drives.load(std::sync::atomic::Ordering::Acquire)
+                    && !this.stopping()
+                {
+                    std::thread::sleep(STOP_POLL);
+                }
                 for attempt in 1..=attempts {
+                    if this.stopping() {
+                        return;
+                    }
                     // The caller read its row before this attempt held the claim; an
                     // earlier attempt may have linked the organization since. Only the
                     // row read under the claim decides, and only it is created from.
@@ -257,14 +309,26 @@ impl Provisioning {
                             return;
                         }
                     };
-                    if fresh.linked || this.drive(&fresh, &*hq).is_ok() {
+                    if fresh.linked {
                         return;
                     }
+                    let Err(error) = this.drive(&fresh, &*hq) else {
+                        return;
+                    };
                     // The reservation, the key and the code stay; a poll or a restart
                     // continues the same operation.
                     crate::host_log::log("an organization create attempt did not complete");
+                    if !retryable(&error) {
+                        return;
+                    }
                     if attempt < attempts {
-                        std::thread::sleep(RESUME_WAIT * attempt);
+                        let until = std::time::Instant::now() + RESUME_WAIT * attempt;
+                        while std::time::Instant::now() < until {
+                            if this.stopping() {
+                                return;
+                            }
+                            std::thread::sleep(STOP_POLL);
+                        }
                     }
                 }
             })
@@ -291,6 +355,12 @@ impl Provisioning {
         self.drives_started
             .load(std::sync::atomic::Ordering::Acquire)
     }
+    /// Creation threads started from now on wait, holding their claim, until the host stops.
+    #[cfg(test)]
+    pub(crate) fn hold_drives(&self) {
+        self.hold_drives
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
     #[cfg(test)]
     pub(crate) fn driving_now(&self) -> usize {
         self.driving.lock().unwrap().len()
@@ -312,10 +382,21 @@ impl Provisioning {
         self.reservation_fault
             .store(2, std::sync::atomic::Ordering::Release);
     }
+    /// The next admission's account is revoked between its last check and its commit.
+    #[cfg(test)]
+    pub(crate) fn revoke_before_next_reservation(&self) {
+        self.reservation_fault
+            .store(3, std::sync::atomic::Ordering::Release);
+    }
     /// Starts a creation from `r` as a poll that read `r` earlier would.
     #[cfg(test)]
     pub(crate) fn continue_from(self: &Arc<Self>, r: &Reservation) {
         self.ensure_driving(r).unwrap();
+    }
+    /// What a poll's attempt to start a creation answers.
+    #[cfg(test)]
+    pub(crate) fn try_continue_from(self: &Arc<Self>, r: &Reservation) -> Result<(), ApiError> {
+        self.ensure_driving(r)
     }
     #[cfg(test)]
     pub(crate) fn sweep_for_test(&self) {
@@ -419,6 +500,9 @@ impl Provisioning {
         {
             1 => return Err(taken(fresh).unwrap_or_else(unavailable)),
             2 => return Err(unavailable()),
+            3 => crate::accounts::identity::AccountId::parse(account.account_id())
+                .map_err(storage)
+                .and_then(|id| self.db.change_authority_fixture(&id, true).map_err(storage))?,
             _ => {}
         }
         self.db
@@ -492,6 +576,11 @@ impl Provisioning {
         // broadcast: a reader that sees the organization linked has `account.changed`
         // queued on its connection before its answer.
         self.web.critical(|held| {
+            // A host that is stopping records nothing more; its next start finds the
+            // office adopted and links it then.
+            if self.stopping() {
+                return Err(unavailable());
+            }
             self.db.provision_linked(r).map_err(storage)?;
             held.publish::<AccountChanged>(&AccountChangedData {
                 account_id: r.account.clone(),
@@ -834,6 +923,19 @@ impl Hq for Offices {
 const RESUME_ATTEMPTS: u32 = 3;
 /// The wait after a failed try at the start of the host, times the number of the try.
 const RESUME_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// How long a stopping host waits for its creation threads to end.
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Whether a later try of the same creation can end differently. A refusal that states a
+/// decision (the account is no administrator, the request is not admissible) cannot.
+fn retryable(error: &ApiError) -> bool {
+    matches!(
+        error.code,
+        ErrorCode::Unavailable | ErrorCode::StorageError | ErrorCode::Timeout
+    )
+}
 
 /// One running creation of one operation; dropping it lets the next attempt start.
 struct Claim {

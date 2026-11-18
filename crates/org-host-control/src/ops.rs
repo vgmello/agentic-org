@@ -47,6 +47,10 @@ pub struct AccountVerifyResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedOrg {
     pub org_id: String,
+    /// The organization's name, when the answer carries it (`account.verify` does). An
+    /// answer without it reads as an empty name; an empty name is not written.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
     pub employee_id: String,
     pub office_ids: Vec<String>,
 }
@@ -874,4 +878,26 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(hex, "{b:02x}");
         hex
     })
+}
+
+#[cfg(test)]
+mod linked_org_tests {
+    use super::LinkedOrg;
+    use serde_json::json;
+
+    /// `name` is additive: an answer without it still reads, and an empty name is not
+    /// written, so a peer that does not know the field sees what it saw before.
+    #[test]
+    fn a_linked_organization_carries_its_name_and_reads_an_answer_without_one() {
+        let named = json!({"org_id": "0193a5c0-0000-7000-8000-000000000001", "name": "Acme",
+            "employee_id": "0193a5c0-0000-7000-8000-000000000006", "office_ids": []});
+        let read: LinkedOrg = serde_json::from_value(named.clone()).unwrap();
+        assert_eq!(read.name, "Acme");
+        assert_eq!(serde_json::to_value(&read).unwrap(), named);
+        let unnamed = json!({"org_id": "0193a5c0-0000-7000-8000-000000000001",
+            "employee_id": "0193a5c0-0000-7000-8000-000000000006", "office_ids": []});
+        let read: LinkedOrg = serde_json::from_value(unnamed.clone()).unwrap();
+        assert_eq!(read.name, "");
+        assert_eq!(serde_json::to_value(&read).unwrap(), unnamed);
+    }
 }

@@ -435,9 +435,21 @@ fn wait_completed(
     instance: &str,
     operation: &str,
 ) -> serde_json::Value {
+    wait_completed_seen(address, headers, instance, operation, &mut |_| {})
+}
+
+/// [`wait_completed`], showing `seen` every poll reply, the ones before completion too.
+fn wait_completed_seen(
+    address: SocketAddr,
+    headers: &str,
+    instance: &str,
+    operation: &str,
+    seen: &mut dyn FnMut(&Reply),
+) -> serde_json::Value {
     let until = Instant::now() + WAIT;
     loop {
         let reply = lookup(address, headers, instance, operation);
+        seen(&reply);
         assert_eq!(reply.status, 200, "lookup: {}", reply.body);
         let result = &reply.body["result"];
         assert_eq!(result["kind"], "host", "{result}");

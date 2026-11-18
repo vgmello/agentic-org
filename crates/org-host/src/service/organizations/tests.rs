@@ -25,6 +25,10 @@ const PASSWORD: &str = "synthetic test password";
 enum Worker {
     Creates,
     Fails,
+    /// Fails the first time it is asked and creates from then on.
+    FailsOnce,
+    /// Refuses with a decision no later try changes.
+    Refuses,
     /// The worker created the office and the host adopted it, then the host stopped
     /// before it recorded the link.
     AdoptsThenFails,
@@ -64,6 +68,13 @@ impl Hq for FakeHq {
         }
         if *worker == Worker::Fails {
             return Err(ApiError::new(ErrorCode::Unavailable, "worker failed"));
+        }
+        if *worker == Worker::FailsOnce {
+            *worker = Worker::Creates;
+            return Err(ApiError::new(ErrorCode::Unavailable, "worker failed once"));
+        }
+        if *worker == Worker::Refuses {
+            return Err(ApiError::new(ErrorCode::NotAuthorized, "refused"));
         }
         let bootstrap = first.hq_creation.unwrap().bootstrap.unwrap();
         assert_eq!(bootstrap.creator.employee_id, first.owner_member_id);
@@ -857,6 +868,116 @@ fn an_administrator_revoked_after_admission_creates_nothing_more() {
     assert_eq!(host.reserved(), 1);
 }
 
+/// A host with one reserved create whose first worker failed, and what a second host
+/// process over the same instance creates with.
+fn reserved_then_restarted(worker: Worker) -> (Host, Arc<Provisioning>, Arc<FakeHq>) {
+    let host = host(Worker::Blocks);
+    let auth = host.sign_in("Owner", 1);
+    assert_eq!(
+        host.create(&auth, &op(), &plan("Example", "example"))
+            .unwrap(),
+        HostOpResult::Accepted
+    );
+    host.hq.set(Worker::Fails);
+    host.idle();
+    assert_eq!(host.reserved(), 1);
+    let restarted = host.parts.provisioning(&host.db, &host.custody);
+    (host, restarted, FakeHq::new(worker))
+}
+fn wait_idle(provisioning: &Provisioning) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while provisioning.driving_now() != 0 || provisioning.drives_started() == 0 {
+        assert!(Instant::now() < deadline, "the creation thread never ended");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_starting_host_tries_a_reserved_create_again_on_the_one_thread_after_a_failed_try() {
+    let (host, restarted, hq) = reserved_then_restarted(Worker::FailsOnce);
+    let events = subscribe(&restarted);
+    restarted.start(hq.clone());
+    wait_idle(&restarted);
+    assert_eq!(host.reserved(), 0, "linked with no client asking");
+    assert_eq!(
+        hq.calls.load(Ordering::Acquire),
+        2,
+        "one failed try, one retry"
+    );
+    assert_eq!(
+        restarted.drives_started(),
+        1,
+        "both tries on the one thread"
+    );
+    assert_eq!(events.0.lock().unwrap().len(), 1, "account.changed once");
+}
+
+#[test]
+fn a_starting_host_does_not_retry_a_refusal_no_later_try_changes() {
+    let (host, restarted, hq) = reserved_then_restarted(Worker::Refuses);
+    restarted.start(hq.clone());
+    wait_idle(&restarted);
+    assert_eq!(
+        hq.calls.load(Ordering::Acquire),
+        1,
+        "asked once, not three times"
+    );
+    assert_eq!(restarted.drives_started(), 1);
+    assert_eq!(
+        host.reserved(),
+        1,
+        "the reservation stays for a later decision"
+    );
+}
+
+#[test]
+fn a_stopped_host_ends_its_retry_and_neither_creates_nor_links_afterwards() {
+    // A retry that is waiting ends at the stop instead of trying again.
+    let (host, restarted, hq) = reserved_then_restarted(Worker::Fails);
+    restarted.start(hq.clone());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while hq.calls.load(Ordering::Acquire) == 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    restarted.stop();
+    assert_eq!(
+        restarted.driving_now(),
+        0,
+        "stop returns after the thread ended"
+    );
+    assert_eq!(hq.calls.load(Ordering::Acquire), 1, "no try after the stop");
+    assert_eq!(host.reserved(), 1);
+    // A stopped host starts no creation for a poll either.
+    let reserved = host.db.provisioning_reserved().unwrap().remove(0);
+    assert_eq!(
+        restarted.try_continue_from(&reserved).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(restarted.drives_started(), 1);
+
+    // A worker that answers after the stop began records no link and no event.
+    let (host, restarted, hq) = reserved_then_restarted(Worker::Blocks);
+    let events = subscribe(&restarted);
+    restarted.start(hq.clone());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while hq.calls.load(Ordering::Acquire) == 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    restarted.halt();
+    hq.set(Worker::Creates);
+    restarted.stop();
+    assert_eq!(restarted.driving_now(), 0);
+    assert_eq!(host.reserved(), 1, "no link after the stop began");
+    assert!(events.0.lock().unwrap().is_empty());
+    // The next start finds the office adopted and links it.
+    let next = host.parts.provisioning(&host.db, &host.custody);
+    next.start(hq.clone());
+    wait_idle(&next);
+    assert_eq!(host.reserved(), 0);
+}
+
 fn staged(host: &Host, operation: &str) -> Option<Value> {
     let name = crate::host_secrets::Name::parse(&format!("recovery.{operation}")).unwrap();
     host.custody
@@ -939,6 +1060,63 @@ fn an_administrator_revoked_before_the_reservation_is_not_authorized_and_stores_
     assert_eq!(host.custody_names(), clean);
     assert_eq!(host.reserved(), 0);
     assert_eq!(host.hq.calls.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn an_administrator_revoked_inside_the_reservation_commit_is_not_authorized_and_stores_nothing() {
+    let host = host(Worker::Creates);
+    let clean = host.custody_names();
+    let auth = host.sign_in("Owner", 1);
+    // Every check before the commit passes; the commit's own check refuses.
+    host.provisioning.revoke_before_next_reservation();
+    assert_eq!(
+        code(host.create(&auth, &op(), &plan("Example", "example"))),
+        ErrorCode::NotAuthorized
+    );
+    assert_eq!(host.custody_names(), clean, "the staged code is removed");
+    assert_eq!(host.reserved(), 0);
+    assert_eq!(host.hq.calls.load(Ordering::Acquire), 0);
+}
+
+fn registry_file(root: &std::path::Path) -> std::path::PathBuf {
+    let mut folders = vec![root.to_owned()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if path.file_name().unwrap() == "host-registry.db" {
+                return path;
+            }
+        }
+    }
+    panic!("no host registry under the fixture");
+}
+
+#[test]
+fn a_registry_that_cannot_be_read_fails_the_list_instead_of_hiding_organizations() {
+    let host = host(Worker::Creates);
+    let auth = host.sign_in("Owner", 1);
+    let id = op();
+    host.create(&auth, &id, &plan("Example", "example"))
+        .unwrap();
+    host.completed(&auth, &id);
+    host.idle();
+    assert_eq!(host.list(&auth).organizations.len(), 1);
+    // The linked row no longer reads: a second connection breaks its stored plan.
+    let raw = rusqlite::Connection::open(registry_file(host._root.path())).unwrap();
+    raw.execute_batch("PRAGMA ignore_check_constraints=ON;")
+        .unwrap();
+    assert_eq!(
+        raw.execute("UPDATE selected_provisioning SET prepared='{'", [])
+            .unwrap(),
+        1
+    );
+    drop(raw);
+    assert_eq!(
+        code(host.call::<List>(true, &ListParams { auth: auth.clone() })),
+        ErrorCode::Unavailable
+    );
 }
 
 #[test]

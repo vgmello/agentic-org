@@ -29,9 +29,25 @@ pub struct RepositoryRegistration {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_url: Option<String>,
+    /// A local path. Read only so its refusal can name the repository field: a repository
+    /// on the host's own disk is never accepted, under any kind.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub path: Option<serde_json::Value>,
     /// A reference to an office-held credential. Not supported yet: its presence is refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_ref: Option<serde_json::Value>,
+}
+
+/// A key that is present is `Some`, whatever its value: `"path": null` is still a path
+/// key and is refused like any other.
+fn present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 pub type SelectedCreateRequest = CommandEnvelope<SelectedCreateParams>;
@@ -64,7 +80,7 @@ impl SelectedCreateParams {
                 CredentialRule::RemoteRequired,
             )
         };
-        if repository.kind != "remote" {
+        if repository.kind != "remote" || repository.path.is_some() {
             return Err(remote_required());
         }
         if repository.credential_ref.is_some() {
@@ -181,6 +197,26 @@ mod tests {
                 }
                 other => panic!("unknown category {other}"),
             }
+        }
+    }
+
+    #[test]
+    fn a_local_path_is_refused_by_the_repository_field_under_any_kind() {
+        for repository in [
+            serde_json::json!({ "kind": "local", "path": "/tmp/example" }),
+            serde_json::json!({ "kind": "remote", "path": "/tmp/example",
+                "remote_url": "https://example.test/example.git" }),
+            serde_json::json!({ "kind": "remote", "path": null,
+                "remote_url": "https://example.test/example.git" }),
+        ] {
+            let params: SelectedCreateParams = serde_json::from_value(serde_json::json!({
+                "name": "Example", "slug": "example", "state_branch": "org/state",
+                "organization_repository": repository,
+            }))
+            .unwrap();
+            let error = serde_json::to_value(params.plan().unwrap_err()).unwrap();
+            assert_eq!(error["field"], "organization_repository");
+            assert_eq!(error["rule"], "remote_required");
         }
     }
 

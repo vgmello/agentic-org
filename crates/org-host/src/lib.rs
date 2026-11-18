@@ -319,6 +319,8 @@ pub struct Host {
     authentication_lifecycle: Option<service::authentication::Lifecycle>,
     web: Option<web::Supervisor>,
     service: Arc<Service>,
+    /// Organization creation, kept to end its threads when the host stops.
+    creating: Option<Arc<provisioning::Provisioning>>,
 }
 
 fn startup_server_check(config: &Config) -> Result<ServerCheck, HostError> {
@@ -723,6 +725,7 @@ impl Host {
         if let Some(provisioning) = &provisioning {
             provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
         }
+        let creating = provisioning.clone();
         let service = Arc::new(
             Service::new(
                 Arc::clone(&offices),
@@ -763,6 +766,7 @@ impl Host {
             authentication_lifecycle,
             web,
             service,
+            creating,
         })
     }
 
@@ -795,10 +799,18 @@ impl Host {
         listener.close();
         // Ends the web process control connection (and its sessions), then kills/reaps it.
         self.web.take();
+        // No creation attempt starts from here on, and none records a link.
+        if let Some(creating) = &self.creating {
+            creating.halt();
+        }
         // Before joining the listener: a create still running answers as soon as the
         // supervisor stops its server.
         self.offices.shutdown();
         listener.join();
+        // Nothing of a create writes custody or the registry after this.
+        if let Some(creating) = self.creating.take() {
+            creating.stop();
+        }
         self.authentication_lifecycle.take();
         if let Ok(meta) = fs::symlink_metadata(&self.layout.host_socket) {
             if meta.file_type().is_socket() {

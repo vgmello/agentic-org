@@ -158,7 +158,10 @@ fn watch_stdin(mut input: impl Read + Send + 'static, host: Arc<HostControl>) ->
 /// reader thread.
 /// No session request precedes serving, so the generation is set before any
 /// event can name a cached session; an event before then has nothing to drop.
-fn session_events(cache: Arc<SessionCache>, generation: Arc<OnceLock<u64>>) -> EventSink {
+pub(crate) fn session_events(
+    cache: Arc<SessionCache>,
+    generation: Arc<OnceLock<u64>>,
+) -> EventSink {
     use org_host_control::browser::{SessionEnded, SESSION_ENDED};
     use org_host_control::organization::AccountChangedData;
     Arc::new(move |name: &str, data: &serde_json::Value| {

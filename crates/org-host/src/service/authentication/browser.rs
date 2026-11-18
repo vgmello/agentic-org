@@ -328,6 +328,7 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
+                    name: String::new(),
                     employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })
