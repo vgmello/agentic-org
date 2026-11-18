@@ -1,6 +1,7 @@
 //! The production `/api/v1` backend (web-api-v1 §2 and §4, ADR-0013): the public
 //! version constant, sign-in, registration-link redemption, the session view,
-//! sign-out, the instance view and the organization list. Every other `/api/v1` path is a JSON 404.
+//! sign-out, the instance view, the organization list, organization creation and the
+//! lookup of a host operation. Every other `/api/v1` path is a JSON 404.
 //!
 //! The web process mints each browser cookie and proof, sends only their digests
 //! to the host over its admitted control connection, and caches a validated
@@ -23,13 +24,21 @@ use org_host_control::{
         SessionValidate, SessionValidateParams,
     },
     listen::{ListenOrigin, OriginScheme},
-    GatewayState, LinkToken, Password,
+    organization::{self as host_org, BrowserAuth},
+    GatewayState, HostOpResult, LinkToken, Password,
 };
 use org_proto::gateway::{
-    self as gateway, AccountView, GatewayError, GatewayErrorCode, GatewayStatus, ListenScheme,
-    Milliseconds, OrganizationLink, ReadResponse, SessionEstablished, SessionProof, SessionView,
-    Version,
+    self as gateway,
+    organizations::{
+        self, CreatingOrganization, SelectedCreateRequest, SelectedOrganizationList,
+        SelectedOrganizationView,
+    },
+    AccountView, CreateState, GatewayError, GatewayErrorCode, GatewayStatus, ListenScheme,
+    LookupQuery, Milliseconds, MutationOutcome, OfficeView, OperationId, OperationKind,
+    OperationLookup, OrganizationLink, ReadResponse, Scope, SessionEstablished, SessionProof,
+    SessionView, Version,
 };
+use org_proto::selected_bootstrap::PlanV1;
 use serde::Deserialize;
 use std::{
     net::IpAddr,
@@ -75,6 +84,8 @@ pub enum Route {
     SignOut(PresentedPair),
     Instance(PresentedPair),
     Organizations(PresentedPair),
+    CreateOrganization(PresentedPair),
+    Operation(PresentedPair, OperationId),
 }
 
 pub enum Call {
@@ -85,6 +96,8 @@ pub enum Call {
     SignOut(PresentedPair),
     Instance(PresentedPair),
     Organizations(PresentedPair),
+    CreateOrganization(PresentedPair, OperationId, PlanV1),
+    Operation(PresentedPair, OperationId),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -193,6 +206,101 @@ fn failure(failure: Failure) -> ApiReply {
     }
 }
 
+/// A refusal decided here, before any host call: the body or the path broke a rule.
+fn bad_input(error: GatewayError) -> ApiReply {
+    ApiReply::json(
+        StatusCode::BAD_REQUEST,
+        serde_json::to_value(ReadResponse::<()>::Error(error)).expect("gateway error serializes"),
+    )
+}
+
+/// The browser's wording for a host refusal of a create: the code, `field` and `rule`
+/// are the host's, the message is this process's own.
+fn organization_error(host: GatewayError) -> GatewayError {
+    use GatewayErrorCode::*;
+    let message = match host.code {
+        InvalidRequest => "This doesn't meet the organization rules.",
+        AlreadyExists => "An organization with that name or slug already exists.",
+        OperationReused => "This operation ID was already used for another request.",
+        ClockSkew => "This device's clock differs too much from the server's.",
+        NotAuthorized => "Only the instance administrator can create an organization.",
+        _ => {
+            return GatewayError::new(Unavailable, "Service unavailable.");
+        }
+    };
+    let mut error = GatewayError::new(host.code, message);
+    (error.field, error.rule) = (host.field, host.rule);
+    error
+}
+
+/// The public organization view of the host's: no private endpoint, no recovery code.
+fn organization_view(
+    host: host_org::OrganizationView,
+) -> Result<SelectedOrganizationView, Failure> {
+    Ok(SelectedOrganizationView {
+        id: host.id,
+        name: host.name,
+        slug: host.slug,
+        created_at: host.created_at,
+        employee_id: host.employee_id,
+        offices: host.offices.into_iter().map(OfficeView::from).collect(),
+        recovery: serde_json::to_value(host.recovery)
+            .and_then(serde_json::from_value)
+            .map_err(|_| Failure::Unavailable)?,
+    })
+}
+
+/// What a host answer about one create means for the browser. A refusal the host stated
+/// is `rejected`; a lost or unreadable answer is the caller's to report.
+fn create_outcome(
+    id: &OperationId,
+    reply: Result<HostOpResult<host_org::OrganizationView>, Failure>,
+) -> Result<MutationOutcome<SelectedOrganizationView>, Failure> {
+    let operation_id = id.clone();
+    let rejected = |error| MutationOutcome::Rejected {
+        operation_id: id.clone(),
+        error: organization_error(error),
+    };
+    Ok(match reply {
+        Ok(HostOpResult::Accepted) => MutationOutcome::Accepted { operation_id },
+        Ok(HostOpResult::Completed { result }) => MutationOutcome::Completed {
+            operation_id,
+            result: organization_view(result)?,
+        },
+        Ok(HostOpResult::Rejected { refusal }) => rejected(GatewayError::from(refusal)),
+        Ok(_) => MutationOutcome::Unknown { operation_id },
+        Err(Failure::Refused(error)) => {
+            let error = GatewayError::from(*error);
+            // Only a refusal this route names is final. Anything else (a rate limit, a
+            // code from a newer host) leaves the outcome unknown: the same id asks again.
+            if !matches!(
+                error.code,
+                GatewayErrorCode::InvalidRequest
+                    | GatewayErrorCode::AlreadyExists
+                    | GatewayErrorCode::OperationReused
+                    | GatewayErrorCode::ClockSkew
+            ) {
+                return Err(Failure::Unavailable);
+            }
+            rejected(error)
+        }
+        Err(Failure::Denied) => rejected(GatewayError::new(GatewayErrorCode::NotAuthorized, "")),
+        Err(other) => return Err(other),
+    })
+}
+
+/// A mutation outcome with its HTTP class (202, 200, the refusal's class, 504 unknown).
+fn mutation(outcome: MutationOutcome<SelectedOrganizationView>) -> ApiReply {
+    let status = outcome
+        .http_status(true)
+        .and_then(|status| StatusCode::from_u16(status).ok())
+        .unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+    match serde_json::to_value(&outcome) {
+        Ok(body) => ApiReply::json(status, body),
+        Err(_) => unavailable(),
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -254,6 +362,31 @@ impl SessionApi {
             .get::<PeerAddress>()
             .map(|p| p.0.ip())
             .ok_or_else(unavailable)
+    }
+
+    fn auth(&self, pair: &PresentedPair) -> BrowserAuth {
+        BrowserAuth {
+            cookie_digest: pair.cookie_digest,
+            proof_digest: pair.proof_digest,
+            origin: self.origin.clone(),
+        }
+    }
+
+    /// The lookup's query names this instance and nothing else (web-api-v1 §5): checked
+    /// before any host call. Ids need no escaping, so an escape is refused.
+    fn host_lookup_scope(&self, query: Option<&str>) -> Result<(), ApiReply> {
+        let query = query
+            .filter(|q| !q.contains(['%', '+']))
+            .ok_or_else(invalid)?;
+        let fields = query
+            .split('&')
+            .map(|pair| pair.split_once('='))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(invalid)?;
+        LookupQuery::from_fields(fields)
+            .and_then(|query| query.scope(OperationKind::Host, self.host.instance()))
+            .map(drop)
+            .map_err(|_| invalid())
     }
 
     /// A protected route needs exactly one cookie of this instance's name and one
@@ -355,6 +488,17 @@ impl ApiBackend for SessionApi {
                 Route::SignOut(self.pair(request).map_err(|r| self.clear(r))?)
             }
             ["api", "v1", "organizations"] if get => Route::Organizations(self.pair(request)?),
+            ["api", "v1", "organizations"] if post => {
+                Route::CreateOrganization(self.pair(request)?)
+            }
+            ["api", "v1", "operations", "host", id]
+                if matches!(request.method, Method::GET | Method::HEAD) =>
+            {
+                let pair = self.pair(request)?;
+                let id = organizations::host_operation_id(id).map_err(bad_input)?;
+                self.host_lookup_scope(request.uri.query())?;
+                Route::Operation(pair, id)
+            }
             ["api", "v1", "instance"] if get => Route::Instance(self.pair(request)?),
             ["api", "v1", "version"]
             | ["api", "v1", "instance"]
@@ -362,7 +506,8 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "links", "register"]
             | ["api", "v1", "session"]
             | ["api", "v1", "session", "sign-out"]
-            | ["api", "v1", "organizations"] => return Err(invalid()),
+            | ["api", "v1", "organizations"]
+            | ["api", "v1", "operations", "host", _] => return Err(invalid()),
             _ => return Err(not_found()),
         })
     }
@@ -374,6 +519,34 @@ impl ApiBackend for SessionApi {
             Route::Session(pair) => empty().map(|()| Call::Session(pair))?,
             Route::Organizations(pair) => empty().map(|()| Call::Organizations(pair))?,
             Route::Instance(pair) => empty().map(|()| Call::Instance(pair))?,
+            Route::Operation(pair, id) => empty().map(|()| Call::Operation(pair, id))?,
+            Route::CreateOrganization(pair) => {
+                // The operation id's format is decided first and named, then the envelope,
+                // its scope and the payload's rules: all before any host call.
+                let raw: serde_json::Value =
+                    serde_json::from_slice(bytes).map_err(|_| invalid())?;
+                // A missing id, or one that is not a string, is named the same way.
+                let id = raw
+                    .get("operation_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let id = organizations::host_operation_id(id).map_err(bad_input)?;
+                let request: SelectedCreateRequest =
+                    gateway::decode_request(bytes).map_err(|_| invalid())?;
+                let instance = Scope::Instance {
+                    instance_id: self.host.instance().to_owned(),
+                };
+                request
+                    .scope
+                    .check_target(&instance)
+                    .map_err(|_| invalid())?;
+                let plan = request.params.plan().map_err(bad_input)?;
+                return Ok(PreparedCall::mutation(
+                    Call::CreateOrganization(pair, id.clone(), plan),
+                    id,
+                    bytes.len(),
+                ));
+            }
             Route::SignOut(pair) => {
                 serde_json::from_slice::<EmptyBody>(bytes).map_err(|_| invalid())?;
                 Call::SignOut(pair)
@@ -412,11 +585,122 @@ impl ApiBackend for SessionApi {
                 Ok(view) => result(view),
                 Err(e) => failure(e),
             },
-            // No organization exists before A4: an authenticated empty list, no host call.
-            Call::Organizations(pair) => match self.validate(pair) {
-                Ok(_) => result(serde_json::json!({ "organizations": [] })),
-                Err(e) => failure(e),
-            },
+            // Always the host's answer: what an account can open is never read from a cache.
+            Call::Organizations(pair) => {
+                let listed = self
+                    .validate(pair)
+                    .and_then(|_| {
+                        self.host.request::<host_org::List>(&host_org::ListParams {
+                            auth: self.auth(&pair),
+                        })
+                    })
+                    .and_then(|list| {
+                        Ok(SelectedOrganizationList {
+                            organizations: list
+                                .organizations
+                                .into_iter()
+                                .map(organization_view)
+                                .collect::<Result<_, _>>()?,
+                            creating: list
+                                .creating
+                                .into_iter()
+                                .map(|c| {
+                                    Ok(CreatingOrganization {
+                                        operation_id: OperationId::parse(c.operation_id)
+                                            .map_err(|_| Failure::Unavailable)?,
+                                        name: c.name,
+                                        slug: c.slug,
+                                    })
+                                })
+                                .collect::<Result<_, Failure>>()?,
+                        })
+                    });
+                match listed {
+                    Ok(list) => result(list),
+                    Err(Failure::Refused(_)) => unavailable(),
+                    Err(e) => failure(e),
+                }
+            }
+            Call::CreateOrganization(pair, id, plan) => {
+                let session = match self.validate(pair) {
+                    Ok(session) => session,
+                    Err(e) => return failure(e),
+                };
+                // The host decides again; this spares it a call it would refuse.
+                let reply = if session.admin {
+                    self.host
+                        .request::<host_org::Create>(&host_org::CreateParams {
+                            auth: self.auth(&pair),
+                            operation_id: id.as_str().to_owned(),
+                            plan,
+                        })
+                } else {
+                    Err(Failure::Denied)
+                };
+                // The host answers `expired` only for an id it has never seen (one it
+                // knows answers its stored state at any age), so no create has this id:
+                // a plain error, never an outcome of the operation.
+                if matches!(&reply, Err(Failure::Refused(error))
+                    if error.code == org_proto::ErrorCode::Expired)
+                {
+                    return ApiReply::error(
+                        StatusCode::GONE,
+                        GatewayErrorCode::Expired,
+                        "This request expired. Start again.",
+                    );
+                }
+                // No stated answer: the create may or may not have been admitted. The
+                // same id asks again.
+                mutation(
+                    create_outcome(&id, reply)
+                        .unwrap_or(MutationOutcome::Unknown { operation_id: id }),
+                )
+            }
+            Call::Operation(pair, id) => {
+                let reply = self.validate(pair).and_then(|_| {
+                    self.host.request::<host_org::OperationLookup>(
+                        &host_org::OperationLookupParams {
+                            auth: self.auth(&pair),
+                            operation_id: id.as_str().to_owned(),
+                        },
+                    )
+                });
+                let outcome = match reply {
+                    Err(e @ (Failure::Denied | Failure::NotFound | Failure::Unavailable)) => {
+                        return failure(e)
+                    }
+                    // A refused lookup is the lookup's own error, never a stored refusal
+                    // of the create: `expired` is 410, anything else is unavailable. (The
+                    // host looks a known operation up at any age and answers `not_found`
+                    // for any other, so it sends no `expired` here today.)
+                    Err(Failure::Refused(error)) => {
+                        return if error.code == org_proto::ErrorCode::Expired {
+                            ApiReply::error(
+                                StatusCode::GONE,
+                                GatewayErrorCode::Expired,
+                                "This operation is too old to look up.",
+                            )
+                        } else {
+                            unavailable()
+                        };
+                    }
+                    stated => create_outcome(&id, stated),
+                };
+                let state = match &outcome {
+                    Ok(MutationOutcome::Accepted { .. }) => Some(CreateState::Reserved),
+                    Ok(MutationOutcome::Completed { .. }) => Some(CreateState::Linked),
+                    Ok(MutationOutcome::Rejected { .. }) => None,
+                    _ => return unavailable(),
+                };
+                match outcome {
+                    Ok(outcome) => result(OperationLookup::Outcome {
+                        kind: OperationKind::Host,
+                        state,
+                        outcome,
+                    }),
+                    Err(e) => failure(e),
+                }
+            }
             Call::SignOut(pair) => {
                 // The host deletes the record and pushes `session.ended` before this
                 // reply; the event sink drops the cache entry on the reader thread.

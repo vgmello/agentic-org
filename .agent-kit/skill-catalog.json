@@ -54,7 +54,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "e16c8c2c13dbc6acf0d9dbe74e148069a9110f506e1bce9a71cc9bca75e954e0"
+      "sha256": "b134a25f8bfa76bc73615ad5184d0a525e5775ae5afb9a066ddb1c9bd5ab095a"
     },
     {
       "path": "AGENTS.md",
@@ -66,7 +66,7 @@
     },
     {
       "path": "Cargo.toml",
-      "sha256": "10393c33b5b5b1f5fd5a9b261da414313ffef6a4ce31d75e5d1cfc194867e6f1"
+      "sha256": "591cf095cf4cb7f69693dd3448e935e6b5159b3d60b6d7b49923cc2e74b3456c"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",

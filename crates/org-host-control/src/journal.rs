@@ -52,8 +52,8 @@ use org_proto::Call;
 use serde::Serialize;
 
 use crate::ops::{
-    AccountCreate, AccountCreateParams, OfficeRestart, OfficeRestartParams, OrganizationCreate,
-    OrganizationCreateParams, TlsPairFingerprint, TlsSet, TlsSetParams,
+    AccountCreate, AccountCreateParams, OfficeRestart, OfficeRestartParams, TlsPairFingerprint,
+    TlsSet, TlsSetParams,
 };
 
 /// A journaled op's params. Each implementation destructures its params exhaustively, so adding
@@ -86,28 +86,6 @@ pub fn fingerprint<J: Journaled>(params: &J) -> Result<[u8; 32], serde_json::Err
     Ok(Sha256::digest(fingerprint_input(params)?).into())
 }
 
-impl Journaled for OrganizationCreateParams {
-    const METHOD: &'static str = OrganizationCreate::METHOD;
-
-    fn operation_id(&self) -> &str {
-        &self.operation_id
-    }
-
-    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
-        #[derive(Serialize)]
-        struct Fields<'a> {
-            name: &'a str,
-        }
-        // Exhaustive, so a param added later must be fingerprinted or excluded here to compile.
-        let OrganizationCreateParams {
-            session: _,
-            operation_id: _,
-            name,
-        } = self;
-        serde_json::to_string(&Fields { name })
-    }
-}
-
 impl Journaled for OfficeRestartParams {
     const METHOD: &'static str = OfficeRestart::METHOD;
 
@@ -120,6 +98,7 @@ impl Journaled for OfficeRestartParams {
         struct Fields<'a> {
             office_id: &'a str,
         }
+        // Exhaustive, so a param added later must be fingerprinted or excluded here to compile.
         let OfficeRestartParams {
             session: _,
             operation_id: _,

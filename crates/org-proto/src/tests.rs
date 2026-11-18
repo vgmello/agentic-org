@@ -6,6 +6,21 @@ use serde_json::json;
 use crate::frame::{read_line, read_message, write_message, FrameError};
 use crate::*;
 
+/// A call of this test file's own: one string in, an organization out. The wire and
+/// framing rules under test do not depend on which method carries them.
+struct Named;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+struct NamedParams {
+    name: String,
+}
+
+impl Call for Named {
+    const METHOD: &'static str = "test.named";
+    type Params = NamedParams;
+    type Result = Organization;
+}
+
 #[test]
 fn shared_office_wire_payloads_survive_desktop_removal() {
     let shapes: serde_json::Value =
@@ -60,20 +75,20 @@ fn offline_hq() -> OfficeInfo {
 
 #[test]
 fn request_wire_shape_and_typed_params() {
-    let req = Request::new::<OrganizationCreate>(
+    let req = Request::new::<Named>(
         7,
-        &OrganizationCreateParams {
+        &NamedParams {
             name: "Acme".into(),
         },
     )
     .unwrap();
     assert_eq!(
         serde_json::to_value(&req).unwrap(),
-        json!({"id": 7, "method": "organization.create", "params": {"name": "Acme"}})
+        json!({"id": 7, "method": "test.named", "params": {"name": "Acme"}})
     );
-    assert!(req.is::<OrganizationCreate>());
+    assert!(req.is::<Named>());
     assert!(!req.is::<Hello>());
-    assert_eq!(req.params::<OrganizationCreate>().unwrap().name, "Acme");
+    assert_eq!(req.params::<Named>().unwrap().name, "Acme");
 }
 
 #[test]
@@ -92,11 +107,10 @@ fn missing_or_null_params_read_as_empty() {
 #[test]
 fn wrong_params_shape_is_an_error_not_a_panic() {
     let req: Request =
-        serde_json::from_str(r#"{"id":1,"method":"organization.create","params":{"name":5}}"#)
-            .unwrap();
-    assert!(req.params::<OrganizationCreate>().is_err());
-    let req: Request = serde_json::from_str(r#"{"id":1,"method":"organization.create"}"#).unwrap();
-    assert!(req.params::<OrganizationCreate>().is_err());
+        serde_json::from_str(r#"{"id":1,"method":"test.named","params":{"name":5}}"#).unwrap();
+    assert!(req.params::<Named>().is_err());
+    let req: Request = serde_json::from_str(r#"{"id":1,"method":"test.named"}"#).unwrap();
+    assert!(req.params::<Named>().is_err());
 }
 
 #[test]
@@ -108,7 +122,7 @@ fn unknown_method_still_parses() {
 
 #[test]
 fn response_ok_and_error_wire_shapes() {
-    let ok = Response::ok::<OrganizationCreate>(7, &org()).unwrap();
+    let ok = Response::ok::<Named>(7, &org()).unwrap();
     let v = serde_json::to_value(&ok).unwrap();
     assert_eq!(v["id"], 7);
     assert_eq!(v["result"]["name"], "Acme");
@@ -123,16 +137,15 @@ fn response_ok_and_error_wire_shapes() {
 
 #[test]
 fn response_round_trip_into_typed_result() {
-    let line =
-        serde_json::to_string(&Response::ok::<OrganizationCreate>(7, &org()).unwrap()).unwrap();
+    let line = serde_json::to_string(&Response::ok::<Named>(7, &org()).unwrap()).unwrap();
     let back: Response = serde_json::from_str(&line).unwrap();
     assert_eq!(back.id, 7);
-    assert_eq!(back.into_result::<OrganizationCreate>().unwrap(), org());
+    assert_eq!(back.into_result::<Named>().unwrap(), org());
 
     let back: Response =
         serde_json::from_str(r#"{"id":8,"error":{"code":"invalid_name","message":"empty"}}"#)
             .unwrap();
-    match back.into_result::<OrganizationCreate>() {
+    match back.into_result::<Named>() {
         Err(CallError::Api(e)) => assert_eq!(e.code, ErrorCode::InvalidName),
         other => panic!("expected an api error, got {other:?}"),
     }
@@ -223,14 +236,10 @@ fn unknown_event_parses_and_typed_read_returns_none() {
 #[test]
 fn frames_round_trip_and_newlines_in_strings_are_escaped() {
     let mut buf = Vec::new();
-    let params = OrganizationCreateParams {
+    let params = NamedParams {
         name: "two\nlines".into(),
     };
-    write_message(
-        &mut buf,
-        &Request::new::<OrganizationCreate>(1, &params).unwrap(),
-    )
-    .unwrap();
+    write_message(&mut buf, &Request::new::<Named>(1, &params).unwrap()).unwrap();
     write_message(
         &mut buf,
         &Request::new::<Hello>(2, &HelloParams::default()).unwrap(),
@@ -240,7 +249,7 @@ fn frames_round_trip_and_newlines_in_strings_are_escaped() {
 
     let mut r = Cursor::new(buf);
     let a: Request = read_message(&mut r).unwrap().unwrap();
-    assert_eq!(a.params::<OrganizationCreate>().unwrap().name, "two\nlines");
+    assert_eq!(a.params::<Named>().unwrap().name, "two\nlines");
     let b: Request = read_message(&mut r).unwrap().unwrap();
     assert_eq!(b.id, 2);
     assert!(read_message::<Request>(&mut r).unwrap().is_none());
@@ -298,12 +307,9 @@ fn response_with_both_result_and_error_is_rejected_in_either_order() {
 #[test]
 fn array_or_scalar_params_are_rejected() {
     for params in [r#"["Acme"]"#, "[]", "5", r#""Acme""#] {
-        let line = format!(r#"{{"id":1,"method":"organization.create","params":{params}}}"#);
+        let line = format!(r#"{{"id":1,"method":"test.named","params":{params}}}"#);
         let req: Request = serde_json::from_str(&line).unwrap();
-        assert!(
-            req.params::<OrganizationCreate>().is_err(),
-            "accepted {params}"
-        );
+        assert!(req.params::<Named>().is_err(), "accepted {params}");
     }
     let req: Request = serde_json::from_str(r#"{"id":1,"method":"hello","params":[]}"#).unwrap();
     assert!(req.params::<Hello>().is_err());
@@ -372,7 +378,7 @@ fn error_responses_decode_through_server_message() {
         serde_json::from_str(r#"{"id":9,"error":{"code":"storage_error","message":"disk full"}}"#)
             .unwrap();
     match m {
-        ServerMessage::Response(r) => match r.into_result::<OrganizationCreate>() {
+        ServerMessage::Response(r) => match r.into_result::<Named>() {
             Err(CallError::Api(e)) => assert_eq!(e.code, ErrorCode::StorageError),
             other => panic!("expected an api error, got {other:?}"),
         },
@@ -393,10 +399,10 @@ fn error_responses_decode_through_server_message() {
 
 #[test]
 fn oversize_outgoing_message_keeps_the_stream_open() {
-    let huge = OrganizationCreateParams {
+    let huge = NamedParams {
         name: "x".repeat(MAX_FRAME_BYTES),
     };
-    let req = Request::new::<OrganizationCreate>(1, &huge).unwrap();
+    let req = Request::new::<Named>(1, &huge).unwrap();
     let mut out = Vec::new();
     let err = write_message(&mut out, &req).unwrap_err();
     assert!(matches!(err, FrameError::TooLargeToSend));
@@ -419,7 +425,6 @@ fn null_result_is_refused_when_building_a_response() {
 #[test]
 fn wire_names_are_pinned() {
     assert_eq!(Hello::METHOD, "hello");
-    assert_eq!(OrganizationCreate::METHOD, "organization.create");
     assert_eq!(OrganizationList::METHOD, "organization.list");
     assert_eq!(Subscribe::METHOD, "subscribe");
     assert_eq!(OrganizationCreated::NAME, "organization.created");
@@ -1812,6 +1817,7 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
         "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "01arz3ndektsv4rrffq69g5fav",
         "00000000000000000000000000",
+        "01900000-0000-7000-8000-000000000001",
     ] {
         assert!(is_valid_member_id(good), "{good}");
         assert!(
@@ -1828,6 +1834,9 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
         "01ARZ3NDEKTSV4RRFFQ69G5F-V",
         "01ARZ3NDEKTSV4RRFFQ69G5FAé",
         " 01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "01900000-0000-4000-8000-000000000001",
+        "01900000-0000-7000-8000-00000000000",
+        "01900000000070008000000000000001",
     ] {
         assert!(!is_valid_member_id(bad), "{bad:?}");
     }

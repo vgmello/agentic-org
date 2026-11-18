@@ -131,6 +131,8 @@ pub fn service_in(
 
 /// Checks shared by every adapter, so a definition never carries path syntax in its name,
 /// a relative program, or loader variables.
+// Until the Linux adapter exists (X5), only the macOS adapter and the test fake call this.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn validate(unit: &Unit) -> Result<(), ServiceError> {
     valid_instance_id(&unit.instance_id)?;
     if !unit.program.is_absolute() || !unit.program.to_str().is_some_and(xml_text) {
@@ -173,12 +175,16 @@ pub(crate) fn validate(unit: &Unit) -> Result<(), ServiceError> {
 
 /// Text every definition format can carry: XML 1.0 has no NUL, no C0 control other than
 /// tab, line feed and carriage return, and no U+FFFE or U+FFFF.
+// Until the Linux adapter exists (X5), only the macOS adapter and the test fake call this.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn xml_text(text: &str) -> bool {
     !text.chars().any(|c| {
         (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '\u{FFFE}' | '\u{FFFF}')
     })
 }
 
+// Until the Linux adapter exists (X5), only the macOS adapter and the test fake call this.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn valid_instance_id(id: &str) -> Result<(), ServiceError> {
     if id.is_empty()
         || id.len() > 64

@@ -4,6 +4,7 @@
 
 pub(crate) mod authentication;
 pub(crate) mod listener;
+pub(crate) mod organizations;
 use authentication::Authentication;
 mod request;
 
@@ -38,6 +39,10 @@ pub(crate) struct Service {
     /// that an ingress refusal reaches no host op.
     #[cfg(test)]
     browser_ops: std::sync::atomic::AtomicUsize,
+    /// Organization calls answered on the admitted web connection; real-process tests
+    /// prove that a refused request reaches none.
+    #[cfg(test)]
+    organization_ops: std::sync::atomic::AtomicUsize,
 }
 
 impl Service {
@@ -57,6 +62,8 @@ impl Service {
             instance_name: std::sync::OnceLock::new(),
             #[cfg(test)]
             browser_ops: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            organization_ops: std::sync::atomic::AtomicUsize::new(0),
             gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
         }
     }
@@ -92,6 +99,16 @@ impl Service {
     #[cfg(test)]
     pub(crate) fn browser_ops(&self) -> usize {
         self.browser_ops.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// The creation state a create thread keeps alive until it ends.
+    #[cfg(test)]
+    pub(crate) fn provisioning_for_test(&self) -> Option<&Arc<crate::provisioning::Provisioning>> {
+        self.provisioning.as_ref()
+    }
+    #[cfg(test)]
+    pub(crate) fn organization_ops(&self) -> usize {
+        self.organization_ops
+            .load(std::sync::atomic::Ordering::Acquire)
     }
     /// The registered name `instance.view` reports. Installed at most once.
     pub(crate) fn install_instance_name(&self, name: &str) -> bool {
@@ -611,25 +628,25 @@ impl Handler for Service {
             }));
             return;
         }
-        if request.is::<org_host_control::provision::OrganizationProvision>() {
-            connection.send_response(
-                answer::<org_host_control::provision::OrganizationProvision>(&request, |params| {
-                    let authentication = self.authentication.as_ref().ok_or_else(|| {
-                        ApiError::new(ErrorCode::Unavailable, "protected registry unavailable")
-                    })?;
-                    let account = authentication.authorize(connection, &params.session)?;
-                    let provisioning = self.provisioning.as_ref().ok_or_else(|| {
-                        ApiError::new(ErrorCode::Unavailable, "selected provisioning unavailable")
-                    })?;
-                    provisioning.run(&account, &params, &self.offices)
-                }),
-            );
-            return;
-        }
         if self.administer(&request, connection, received) {
             return;
         }
         if self.recover(&request, connection, received) {
+            return;
+        }
+        if let Some(reply) = organizations::dispatch(
+            &request,
+            connection.gateway_listen().is_some(),
+            self.authentication.as_deref(),
+            self.provisioning.as_ref(),
+            &mut |name, data| connection.send_event(name, data),
+        ) {
+            #[cfg(test)]
+            if connection.gateway_listen().is_some() {
+                self.organization_ops
+                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            }
+            connection.send_response(reply);
             return;
         }
         if self.browser_op(&request, connection) {
@@ -662,6 +679,22 @@ impl Handler for Service {
                 let mut result = hello(instance_id);
                 result.api_version = org_host_control::API_VERSION;
                 connection.complete_hello();
+                // `account.changed` goes to the admitted web connection and to no other.
+                // The hello answer is queued under the same lock that adds the connection,
+                // so no event is written ahead of it.
+                if let (true, Some(provisioning)) = (
+                    connection.gateway_listen().is_some(),
+                    self.provisioning.as_ref(),
+                ) {
+                    let subscriber: Arc<dyn crate::broadcast::Subscriber> = connection.clone();
+                    provisioning
+                        .web()
+                        .subscribe(Arc::downgrade(&subscriber), || {
+                            connection.send_response(ok::<Hello>(request.id, &result));
+                            true
+                        });
+                    return;
+                }
                 connection.send_response(ok::<Hello>(request.id, &result));
             }
             OpenOperation::InstanceStatus => {
@@ -879,10 +912,7 @@ pub(crate) mod tests {
     use super::*;
     use std::path::Path;
 
-    use org_proto::{
-        Empty, HelloParams, OfficeList, OfficeRestart, OfficeRestartParams, OrganizationCreate,
-        OrganizationCreateParams,
-    };
+    use org_proto::{Empty, HelloParams, OfficeList, OfficeRestart, OfficeRestartParams};
 
     use crate::catalog::Catalog;
     use crate::keys::memory::MemoryKeys;
@@ -1514,13 +1544,13 @@ pub(crate) mod tests {
         let threaded = [
             Request::new::<InstanceStatus>(1, &Default::default()).unwrap(),
             Request::new::<OfficeList>(1, &Empty {}).unwrap(),
-            Request::new::<OrganizationCreate>(
-                1,
-                &OrganizationCreateParams {
-                    name: "Acme".into(),
-                },
-            )
-            .unwrap(),
+            // The retired name-only create: no typed call exists for it any more.
+            Request {
+                id: 1,
+                method: "organization.create".to_owned(),
+                params: serde_json::json!({"name": "Acme"}),
+                principal: None,
+            },
         ];
         let connection = Connection::for_test();
         for request in inline.iter().chain(&threaded) {

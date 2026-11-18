@@ -106,6 +106,27 @@ impl SessionCache {
         }
         true
     }
+    /// What `account_id` can open changed on `generation`: drop its entries, so its next
+    /// request validates again and reads the new links. Nothing is remembered: a later
+    /// validation of the same session is current and may be cached.
+    pub fn account_changed(&self, account_id: &str, generation: u64) {
+        let mut state = self.state();
+        if generation < state.generation {
+            return;
+        }
+        state.enter(generation);
+        state
+            .entries
+            .retain(|_, e| e.session.account.id != account_id);
+        let entries = &state.entries;
+        let kept: VecDeque<[u8; 32]> = state
+            .order
+            .iter()
+            .filter(|k| entries.contains_key(*k))
+            .copied()
+            .collect();
+        state.order = kept;
+    }
     /// The host ended `session_id` on `generation`: drop every entry for it
     /// and refuse any later insert of it.
     pub fn ended(&self, session_id: &str, generation: u64) {

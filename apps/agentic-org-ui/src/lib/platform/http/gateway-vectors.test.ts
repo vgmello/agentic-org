@@ -77,15 +77,20 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 }
 
 it('pins core main cases and every landed gateway file', () => {
+	// gateway-organizations is read by the Rust contract only until the create page lands its readers (A4.5); its count is pinned here.
+	const landed = { ...counts, 'gateway-organizations': 18 };
 	expect(
 		readdirSync(root)
 			.filter((name) => /^gateway-.*\.json$/.test(name))
 			.sort()
 	).toEqual(
-		Object.keys(counts)
+		Object.keys(landed)
 			.map((name) => `${name}.json`)
 			.sort()
 	);
+	expect(
+		JSON.parse(readFileSync(new URL('gateway-organizations.json', root), 'utf8')).cases
+	).toHaveLength(landed['gateway-organizations']);
 	assertCoreCounts(fixtures);
 });
 

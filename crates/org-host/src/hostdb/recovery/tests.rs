@@ -26,6 +26,7 @@ fn fixture() -> Fixture {
         crate::accounts::identity::AccountId::parse(credentials.account().account_id()).unwrap();
     let account = db.account_authority(&id).unwrap().unwrap();
     let op = crate::ids::generate().unwrap();
+    let owner_member = crate::ids::uuid_v7().unwrap();
     let r = provisioning::Reservation {
         operation_id: op.clone(),
         account: account.account_id().into(),
@@ -37,15 +38,18 @@ fn fixture() -> Fixture {
                 slug: "example".into(),
                 repository_remote_url: "https://example.test/org.git".into(),
                 state_branch: "org/state".into(),
-                home_team_name: "Core".into(),
             },
             organization_id: crate::ids::uuid_v7().unwrap(),
             office_id: crate::ids::uuid_v7().unwrap(),
             repository_id: crate::ids::uuid_v7().unwrap(),
             home_team_id: crate::ids::uuid_v7().unwrap(),
             hr_employee_id: crate::ids::uuid_v7().unwrap(),
+            creator: org_proto::selected_bootstrap::CreatorV1::from_login(
+                owner_member.clone(),
+                "Ana",
+            ),
         },
-        owner_member: crate::ids::generate().unwrap(),
+        owner_member,
         recovery_handle: format!("recovery.{op}"),
         key_fingerprint: None,
         linked: false,

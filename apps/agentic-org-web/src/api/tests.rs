@@ -80,6 +80,9 @@ fn default_script() -> Arc<Script> {
                     json!({"result":{}}),
                 ]
             }
+            "organization.list" => {
+                vec![json!({"result": {"organizations": [], "creating": []}})]
+            }
             "instance.view" => vec![json!({"result": {
                 "name": "studio", "status": "service", "web_status": "running",
                 "administrator": "present"
@@ -127,14 +130,8 @@ fn gateway(script: Arc<Script>) -> (Gateway<SessionApi>, Calls) {
         UnixDatagram::pair().unwrap().0.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
-        Arc::new(move |name: &str, data: &Value| {
-            if name == "session.ended" {
-                sink_cache.ended(
-                    data["session_id"].as_str().unwrap(),
-                    *sink_generation.get().unwrap(),
-                );
-            }
-        }),
+        // The sink the web process installs, not a copy of it.
+        crate::process::session_events(sink_cache, sink_generation),
     )
     .unwrap();
     generation.set(host.generation()).unwrap();
@@ -342,8 +339,12 @@ fn sign_in_sets_the_pair_and_caches_the_session() {
         &[],
     );
     assert_eq!(orgs.status, StatusCode::OK);
-    assert_eq!(orgs.body, json!({"result":{"organizations":[]}}));
-    assert_eq!(calls.methods(), ["session.sign_in"]);
+    assert_eq!(
+        orgs.body,
+        json!({"result":{"organizations":[],"creating":[]}})
+    );
+    // The session came from the cache; the list is always the host's answer.
+    assert_eq!(calls.methods(), ["session.sign_in", "organization.list"]);
 }
 
 /// `GET /instance` validates the pair (here from the cache), then asks the host's
@@ -453,18 +454,18 @@ fn a_validated_pair_is_cached_for_later_requests() {
     let pair = sign_in(&first).pair();
     let (gateway, calls) = gateway(Arc::new(|method, _| match method {
         "session.validate" => vec![json!({ "result": record(1) })],
+        "instance.view" => vec![json!({"result": {
+            "name": "studio", "status": "service", "web_status": "running",
+            "administrator": "present"
+        }})],
         _ => vec![json!({"error":{"code":"unavailable","message":"no"}})],
     }));
-    for target in [
-        "/api/v1/session",
-        "/api/v1/organizations",
-        "/api/v1/session",
-    ] {
+    for target in ["/api/v1/session", "/api/v1/instance", "/api/v1/session"] {
         let answer = send(&gateway, Method::GET, target, "", Some(&pair), &[]);
         assert_eq!(answer.status, StatusCode::OK, "{target}");
     }
-    assert_eq!(calls.methods(), ["session.validate"]);
-    let sent = calls.last();
+    assert_eq!(calls.methods(), ["session.validate", "instance.view"]);
+    let sent = calls.0.lock().unwrap()[0].1.clone();
     assert_eq!(
         sent["origin"],
         json!({"scheme":"http","host":"127.0.0.1","port":8080})
@@ -781,4 +782,433 @@ fn the_web_process_sends_only_browser_session_ops() {
             assert!(!source.contains(&forbidden), "{name} contains {forbidden}");
         }
     }
+}
+
+const OPERATION: &str = "01M72N8MG00000000000000006";
+const ORG: &str = "0193a5c0-0000-7000-8000-000000000001";
+
+fn create_body(operation: &str, repository: Value) -> String {
+    json!({
+        "operation_id": operation,
+        "scope": {"kind": "instance", "instance_id": INSTANCE},
+        "params": {"name": "Acme", "slug": "acme", "organization_repository": repository,
+            "state_branch": "org/state"},
+    })
+    .to_string()
+}
+fn remote() -> Value {
+    json!({"kind": "remote", "remote_url": "https://example.test/acme.git"})
+}
+fn host_organization() -> Value {
+    json!({
+        "id": ORG, "name": "Acme", "slug": "acme", "created_at": "2026-11-10T12:00:00.000Z",
+        "employee_id": "0193a5c0-0000-7000-8000-000000000006",
+        "offices": [{"id": "0193a5c0-0000-7000-8000-000000000002", "organization_id": ORG,
+            "name": "HQ", "role": "hq", "host": "This Mac", "status": "active",
+            "endpoint": "/private/office.sock"}],
+        "recovery": "pending",
+    })
+}
+/// The default host, with `answers` deciding the organization calls.
+fn organization_script(
+    answers: impl Fn(&str, &Value) -> Option<Vec<Value>> + Send + Sync + 'static,
+) -> Arc<Script> {
+    let base = default_script();
+    Arc::new(move |method, params| answers(method, params).unwrap_or_else(|| base(method, params)))
+}
+fn create(gateway: &Gateway<SessionApi>, pair: &Pair, body: &str) -> Answer {
+    send(
+        gateway,
+        Method::POST,
+        "/api/v1/organizations",
+        body,
+        Some(pair),
+        &[],
+    )
+}
+
+#[test]
+fn create_is_accepted_then_completed_and_sends_the_plan_with_the_pair_digests() {
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = Arc::clone(&asked);
+    let (gateway, calls) = gateway(organization_script(move |method, _| {
+        (method == "organization.create").then(|| {
+            if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                vec![json!({"result": {"status": "accepted"}})]
+            } else {
+                vec![json!({"result": {"status": "completed", "result": host_organization()}})]
+            }
+        })
+    }));
+    let pair = sign_in(&gateway).pair();
+    let body = create_body(OPERATION, remote());
+    let accepted = create(&gateway, &pair, &body);
+    assert_eq!(accepted.status, StatusCode::ACCEPTED);
+    assert_eq!(
+        accepted.body,
+        json!({"outcome": "accepted", "operation_id": OPERATION})
+    );
+    let sent = calls.last();
+    assert_eq!(sent["operation_id"], OPERATION);
+    assert_eq!(
+        sent["plan"],
+        json!({"version": 1, "name": "Acme", "slug": "acme",
+            "repository_remote_url": "https://example.test/acme.git", "state_branch": "org/state"})
+    );
+    assert_eq!(sent["auth"]["origin"]["port"], 8080);
+    assert!(sent["auth"]["cookie_digest"].is_string() && sent["auth"]["proof_digest"].is_string());
+    assert!(
+        !sent.to_string().contains(&pair.proof),
+        "only digests leave"
+    );
+    // The same request again: the lost-response replay.
+    let completed = create(&gateway, &pair, &body);
+    assert_eq!(completed.status, StatusCode::OK);
+    assert_eq!(completed.body["outcome"], "completed");
+    assert_eq!(completed.body["result"]["slug"], "acme");
+    assert_eq!(completed.body["result"]["recovery"], "pending");
+    assert_eq!(completed.body["result"]["offices"][0]["role"], "hq");
+    assert!(!completed.body.to_string().contains("endpoint"));
+}
+
+#[test]
+fn a_create_that_breaks_a_rule_is_400_with_its_field_before_any_host_call() {
+    let (gateway, calls) = gateway(default_script());
+    let pair = sign_in(&gateway).pair();
+    let before = calls.methods();
+    for (body, field, rule) in [
+        (
+            create_body("0193a5c0-0000-7000-8000-000000000007", remote()),
+            "operation_id",
+            "format",
+        ),
+        (
+            create_body(OPERATION, json!({"kind": "local"})),
+            "organization_repository",
+            "remote_required",
+        ),
+        (
+            create_body(
+                OPERATION,
+                json!({"kind": "remote", "remote_url": "file:///tmp/acme.git"}),
+            ),
+            "organization_repository",
+            "remote_required",
+        ),
+        (
+            create_body(
+                OPERATION,
+                json!({"kind": "remote", "remote_url": "https://example.test/a.git",
+                    "credential_ref": {"id": "deploy"}}),
+            ),
+            "organization_repository",
+            "unsupported",
+        ),
+    ] {
+        let refused = create(&gateway, &pair, &body);
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(refused.body["error"]["code"], "invalid_request");
+        assert_eq!(refused.body["error"]["field"], field, "{body}");
+        assert_eq!(refused.body["error"]["rule"], rule, "{body}");
+    }
+    // Another instance's scope, a team field, and no pair at all.
+    let mut other: Value = serde_json::from_str(&create_body(OPERATION, remote())).unwrap();
+    other["scope"]["instance_id"] = json!("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+    assert_eq!(
+        create(&gateway, &pair, &other.to_string()).status,
+        StatusCode::BAD_REQUEST
+    );
+    let mut team: Value = serde_json::from_str(&create_body(OPERATION, remote())).unwrap();
+    team["params"]["home_team_name"] = json!("Core");
+    assert_eq!(
+        create(&gateway, &pair, &team.to_string()).status,
+        StatusCode::BAD_REQUEST
+    );
+    let mut unnamed: Value = serde_json::from_str(&create_body(OPERATION, remote())).unwrap();
+    unnamed.as_object_mut().unwrap().remove("operation_id");
+    let unnamed = create(&gateway, &pair, &unnamed.to_string());
+    assert_eq!(unnamed.status, StatusCode::BAD_REQUEST);
+    assert_eq!(unnamed.body["error"]["field"], "operation_id");
+    let signed_out = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/organizations",
+        &create_body(OPERATION, remote()),
+        None,
+        &[],
+    );
+    assert_eq!(signed_out.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(calls.methods(), before, "no host call for any of them");
+}
+
+#[test]
+fn host_refusals_of_a_create_keep_their_class_and_a_lost_answer_is_unknown() {
+    for (error, status, outcome, code) in [
+        (
+            json!({"code": "already_exists", "message": "host words", "field": "name", "rule": "taken"}),
+            StatusCode::CONFLICT,
+            "rejected",
+            "already_exists",
+        ),
+        (
+            json!({"code": "operation_reused", "message": "host words"}),
+            StatusCode::CONFLICT,
+            "rejected",
+            "operation_reused",
+        ),
+        (
+            json!({"code": "not_authorized", "message": "host words"}),
+            StatusCode::FORBIDDEN,
+            "rejected",
+            "not_authorized",
+        ),
+        (
+            json!({"code": "unavailable", "message": "host words"}),
+            StatusCode::GATEWAY_TIMEOUT,
+            "unknown",
+            "",
+        ),
+        (
+            json!({"code": "rate_limited", "message": "host words", "retry_after_ms": 5}),
+            StatusCode::GATEWAY_TIMEOUT,
+            "unknown",
+            "",
+        ),
+    ] {
+        let answer = error.clone();
+        let (gateway, _) = gateway(organization_script(move |method, _| {
+            (method == "organization.create").then(|| vec![json!({"error": answer})])
+        }));
+        let pair = sign_in(&gateway).pair();
+        let reply = create(&gateway, &pair, &create_body(OPERATION, remote()));
+        assert_eq!(reply.status, status, "{error}");
+        assert_eq!(reply.body["outcome"], outcome, "{error}");
+        assert_eq!(reply.body["operation_id"], OPERATION);
+        if !code.is_empty() {
+            assert_eq!(reply.body["error"]["code"], code);
+        }
+        if code == "already_exists" {
+            assert_eq!(reply.body["error"]["field"], "name");
+            assert_eq!(reply.body["error"]["rule"], "taken");
+        }
+        assert!(!reply.body.to_string().contains("host words"));
+    }
+}
+
+/// The host says `expired` only about an id it has never seen, so the answer is a plain
+/// 410 error: there is no operation for an outcome to be about.
+#[test]
+fn a_create_whose_new_id_is_too_old_is_a_plain_410_and_never_an_outcome() {
+    let (gateway, _) = gateway(organization_script(|method, _| {
+        (method == "organization.create")
+            .then(|| vec![json!({"error": {"code": "expired", "message": "host words"}})])
+    }));
+    let pair = sign_in(&gateway).pair();
+    let reply = create(&gateway, &pair, &create_body(OPERATION, remote()));
+    assert_eq!(reply.status, StatusCode::GONE);
+    assert_eq!(reply.body["error"]["code"], "expired");
+    assert!(reply.body.get("outcome").is_none(), "{}", reply.body);
+    assert!(reply.body.get("operation_id").is_none(), "{}", reply.body);
+    assert!(!reply.body.to_string().contains("host words"));
+}
+
+#[test]
+fn an_account_that_is_not_the_administrator_is_403_with_no_create_call() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        matches!(method, "session.sign_in" | "session.validate").then(|| {
+            let mut session = record(1);
+            session["admin"] = json!(false);
+            vec![json!({"result": session})]
+        })
+    }));
+    let pair = sign_in(&gateway).pair();
+    let reply = create(&gateway, &pair, &create_body(OPERATION, remote()));
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    assert_eq!(reply.body["outcome"], "rejected");
+    assert_eq!(reply.body["error"]["code"], "not_authorized");
+    assert!(!calls.methods().contains(&"organization.create".to_owned()));
+}
+
+/// A `session.validate` answer the host wrote before `account.changed` is applied before
+/// it: the reader caches the answer and then the event drops it, so a session that
+/// predates the link is never served from the cache afterwards.
+#[test]
+fn a_session_validated_before_account_changed_is_not_cached_after_it() {
+    let (lists, validates) = (
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let changed = || json!({"event": "account.changed", "seq": 1, "data": {"account_id": "A1"}});
+    let listed = || json!({"result": {"organizations": [], "creating": []}});
+    let base = default_script();
+    let (gateway, calls) = gateway(Arc::new(move |method: &str, params: &Value| {
+        use std::sync::atomic::Ordering::SeqCst;
+        match method {
+            // The first list drops the session the sign-in cached; later ones say nothing.
+            "organization.list" if lists.fetch_add(1, SeqCst) == 0 => vec![changed(), listed()],
+            "organization.list" => vec![listed()],
+            // The first validation is answered, then the account changes.
+            "session.validate" if validates.fetch_add(1, SeqCst) == 0 => {
+                let mut frames = base(method, params);
+                frames.push(changed());
+                frames
+            }
+            _ => base(method, params),
+        }
+    }));
+    let pair = sign_in(&gateway).pair();
+    let get = |target: &str| send(&gateway, Method::GET, target, "", Some(&pair), &[]);
+    let validations = || {
+        calls
+            .methods()
+            .iter()
+            .filter(|m| *m == "session.validate")
+            .count()
+    };
+    assert_eq!(get("/api/v1/organizations").status, StatusCode::OK);
+    assert_eq!(validations(), 0, "the sign-in was cached");
+    assert_eq!(get("/api/v1/session").status, StatusCode::OK);
+    assert_eq!(validations(), 1, "validated: its answer precedes the event");
+    // A host answer written after the event and asked for without this pair: once it is
+    // read, the reader has applied the event.
+    assert_eq!(sign_in(&gateway).status, StatusCode::OK);
+    assert_eq!(get("/api/v1/session").status, StatusCode::OK);
+    assert_eq!(
+        validations(),
+        2,
+        "the stale session was served from the cache"
+    );
+    // That validation had no event after it: it is current and stays cached.
+    assert_eq!(get("/api/v1/session").status, StatusCode::OK);
+    assert_eq!(validations(), 2);
+}
+
+#[test]
+fn the_list_is_the_hosts_answer_and_account_changed_drops_the_cached_session() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![
+                json!({"event": "account.changed", "seq": 1, "data": {"account_id": "A1"}}),
+                json!({"result": {"organizations": [host_organization()],
+                    "creating": [{"operation_id": OPERATION, "name": "Other", "slug": "other"}]}}),
+            ]
+        })
+    }));
+    let pair = sign_in(&gateway).pair();
+    let validations = |calls: &Calls| {
+        calls
+            .methods()
+            .iter()
+            .filter(|m| *m == "session.validate")
+            .count()
+    };
+    let session = |gateway: &Gateway<SessionApi>| {
+        send(
+            gateway,
+            Method::GET,
+            "/api/v1/session",
+            "",
+            Some(&pair),
+            &[],
+        )
+    };
+    assert_eq!(session(&gateway).status, StatusCode::OK);
+    assert_eq!(validations(&calls), 0, "the sign-in was cached");
+    let listed = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/organizations",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(listed.status, StatusCode::OK);
+    let result = &listed.body["result"];
+    assert_eq!(result["organizations"][0]["id"], ORG);
+    assert_eq!(result["organizations"][0]["offices"][0]["name"], "HQ");
+    assert_eq!(result["creating"][0]["operation_id"], OPERATION);
+    assert!(!listed.body.to_string().contains("endpoint"));
+    assert!(calls.last()["auth"]["cookie_digest"].is_string());
+    // The event came before the list's answer: the next request validates again.
+    assert_eq!(session(&gateway).status, StatusCode::OK);
+    assert_eq!(validations(&calls), 1, "the cached session was dropped");
+    assert_eq!(session(&gateway).status, StatusCode::OK);
+    assert_eq!(validations(&calls), 1, "and the fresh one is cached");
+}
+
+#[test]
+fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
+    let (gateway, calls) = gateway(organization_script(|method, params| {
+        (method == "operation.lookup").then(|| {
+            if params["operation_id"] == OPERATION {
+                vec![json!({"result": {"status": "accepted"}})]
+            } else if params["operation_id"] == "01M72N8MG00000000000000008" {
+                vec![json!({"result": {"status": "completed", "result": host_organization()}})]
+            } else if params["operation_id"] == "01M72N8MG00000000000000009" {
+                vec![json!({"error": {"code": "expired", "message": "host words"}})]
+            } else {
+                vec![json!({"error": {"code": "not_found", "message": "no"}})]
+            }
+        })
+    }));
+    let pair = sign_in(&gateway).pair();
+    let get = |target: &str| send(&gateway, Method::GET, target, "", Some(&pair), &[]);
+    let scoped = format!("/api/v1/operations/host/{OPERATION}?instance_id={INSTANCE}");
+    let found = get(&scoped);
+    assert_eq!(found.status, StatusCode::OK);
+    assert_eq!(
+        found.body["result"],
+        json!({"operation_id": OPERATION, "kind": "host", "state": "reserved",
+            "outcome": "accepted"})
+    );
+    assert_eq!(calls.last()["operation_id"], OPERATION);
+    // HEAD reads the same operation and carries no body.
+    let asked = calls.methods().len();
+    let head = send(&gateway, Method::HEAD, &scoped, "", Some(&pair), &[]);
+    assert_eq!(head.status, StatusCode::OK);
+    assert_eq!(head.body, Value::Null);
+    assert_eq!(calls.methods().len(), asked + 1, "HEAD asked the host");
+    assert_eq!(calls.last()["operation_id"], OPERATION);
+    let before = calls.methods();
+    for target in [
+        format!("/api/v1/operations/host/{OPERATION}"),
+        format!("/api/v1/operations/host/{OPERATION}?instance_id=01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+        format!("/api/v1/operations/host/{OPERATION}?instance_id={INSTANCE}&org_id={ORG}"),
+        format!("/api/v1/operations/host/{OPERATION}?instance_id=%30"),
+    ] {
+        assert_eq!(get(&target).status, StatusCode::BAD_REQUEST, "{target}");
+    }
+    let unshaped = get(&format!(
+        "/api/v1/operations/host/{ORG}?instance_id={INSTANCE}"
+    ));
+    assert_eq!(unshaped.status, StatusCode::BAD_REQUEST);
+    assert_eq!(unshaped.body["error"]["field"], "operation_id");
+    assert_eq!(
+        get(&format!(
+            "/api/v1/operations/org/{OPERATION}?instance_id={INSTANCE}"
+        ))
+        .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(calls.methods(), before, "none of them reached the host");
+    let other = "01M72N8MG00000000000000007";
+    let missing = get(&format!(
+        "/api/v1/operations/host/{other}?instance_id={INSTANCE}"
+    ));
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    let linked = get(&format!(
+        "/api/v1/operations/host/01M72N8MG00000000000000008?instance_id={INSTANCE}"
+    ));
+    assert_eq!(linked.status, StatusCode::OK);
+    assert_eq!(linked.body["result"]["state"], "linked");
+    assert_eq!(linked.body["result"]["outcome"], "completed");
+    assert_eq!(linked.body["result"]["result"]["slug"], "acme");
+    // A refused lookup is an error, never a `rejected` create.
+    let expired = get(&format!(
+        "/api/v1/operations/host/01M72N8MG00000000000000009?instance_id={INSTANCE}"
+    ));
+    assert_eq!(expired.status, StatusCode::GONE);
+    assert_eq!(expired.body["error"]["code"], "expired");
+    assert!(expired.body.get("result").is_none());
+    assert!(!expired.body.to_string().contains("host words"));
 }

@@ -93,7 +93,10 @@ fn check_business_params(params: &Value) -> Result<(), &'static str> {
 
 impl<'de, P: DeserializeOwned> Deserialize<'de> for CommandEnvelope<P> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // The envelope has exactly these three keys. Another key is refused, not ignored:
+        // an input the gateway does not read must not look accepted.
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Raw {
             operation_id: OperationId,
             scope: Scope,
@@ -185,12 +188,20 @@ pub struct GatewayError {
     pub rule: Option<CredentialRule>,
 }
 
-/// The credential input a rule refusal names. Unknown names decode to `unknown`.
+/// The input a rule refusal names: a credential, or a field of the create-organization
+/// payload. Unknown names decode to `unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialField {
     Login,
     Password,
+    Name,
+    Slug,
+    /// The host names the same input by its plan field.
+    #[serde(alias = "repository_remote_url")]
+    OrganizationRepository,
+    StateBranch,
+    OperationId,
     #[serde(other)]
     Unknown,
 }
@@ -203,6 +214,9 @@ pub enum CredentialRule {
     Taken,
     TooShort,
     TooLong,
+    /// The organization's repository must be a remote one.
+    RemoteRequired,
+    Unsupported,
     #[serde(other)]
     Unknown,
 }
@@ -332,7 +346,10 @@ impl From<crate::ApiError> for GatewayError {
             out.retry_after_ms =
                 super::Milliseconds::new(error.retry_after_ms.unwrap_or(0).min((1 << 53) - 1)).ok();
         }
-        if code == GatewayErrorCode::InvalidRequest {
+        if matches!(
+            code,
+            GatewayErrorCode::InvalidRequest | GatewayErrorCode::AlreadyExists
+        ) {
             fn named<T: DeserializeOwned>(text: Option<String>) -> Option<T> {
                 text.and_then(|t| serde_json::from_value(Value::String(t)).ok())
             }

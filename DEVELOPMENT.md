@@ -110,3 +110,23 @@ Newly installed skills are available to an agent from its next turn.
 
 `cargo-nextest` is optional for local test selection and reporting. It does not
 replace the repository's required `cargo test --workspace` gate.
+
+### The principal designer agent
+
+For a new or changed screen, component or flow in `apps/agentic-org-ui`, and for UX
+reviews, a lead may dispatch the `principal-designer` agent when it is useful. It is defined
+for both tools:
+`.claude/agents/principal-designer.md` for Claude Code and
+`.codex/agents/principal-designer.toml` for Codex. Both are thin: they point at one persona,
+`.agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
+place. The assignment names the job: design (propose), implement (build) or review
+(read-only). The agent sorts what a screen shows by what the data is worth to the person,
+weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect while building,
+and runs a measured consistency audit before handing over. Product specs outrank it. The
+lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
+
+The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
+checkout (`.claude/skills/`, ignored by Git). It is optional and nothing depends on it.
+Installing it is a lead's decision: the installer adds six other, uninspected skills that
+must be removed, and whatever is left is offered to every Claude session in that checkout.
+The persona file gives the pinned command and the limits.

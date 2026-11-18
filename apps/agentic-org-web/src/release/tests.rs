@@ -208,7 +208,11 @@ fn held_release_directory_cannot_switch_to_replaced_path() {
     let root = input.directory();
     let (manifest, signature) = input.verified();
     let moved = input.temp.path().join("original");
+    // macOS refuses to rename a directory its owner cannot write, so it is made writable for the
+    // move and sealed again at its new name; the held directory handle is what the test is about.
+    mode(&input.path, 0o700);
     fs::rename(&input.path, &moved).unwrap();
+    mode(&moved, 0o500);
     fs::create_dir(&input.path).unwrap();
     mode(&input.path, 0o500);
     let files = preload(&root, &manifest, &signature).unwrap();

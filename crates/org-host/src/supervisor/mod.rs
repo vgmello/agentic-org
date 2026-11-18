@@ -145,24 +145,27 @@ impl std::fmt::Display for CreateStartError {
 
 /// A `--create` run in flight.
 pub(crate) struct PendingCreate<'a> {
-    registration: Registration<'a>,
     child: RunningChild,
     signals: Receiver<Signal>,
     sender: Sender<Signal>,
     log: Arc<Mutex<RotatingLog>>,
+    /// Last, so it is dropped after `child`: the run stays registered until its server is
+    /// killed and reaped (see [`Supervisor::shutdown`]).
+    registration: Registration<'a>,
 }
 
 /// A server that has created its office, to hand to [`Supervisor::adopt`]. Dropping it instead
 /// kills the server.
 pub(crate) struct Adoptable<'a> {
     pub(crate) office: OfficeFile,
-    registration: Registration<'a>,
     child: RunningChild,
     signals: Receiver<Signal>,
     sender: Sender<Signal>,
     log: Arc<Mutex<RotatingLog>>,
     backlog: Vec<Signal>,
     ready: bool,
+    /// Last, so it is dropped after `child` (as in [`PendingCreate`]).
+    registration: Registration<'a>,
 }
 
 /// How a `--discard` run ended. Only [`DiscardOutcome::Discarded`] deletes the office's key.
@@ -183,7 +186,13 @@ pub(crate) enum DiscardOutcome {
     Stopped,
 }
 
-/// A short run's entry in [`State::runs`], removed when dropped.
+/// How long past the grace period a shutdown waits for its short runs to end: the time a
+/// run's owner needs to SIGKILL and reap its server at the deadline and drop its entry.
+const RUN_END_MARGIN: Duration = Duration::from_secs(1);
+const RUN_END_POLL: Duration = Duration::from_millis(10);
+
+/// A short run's entry in [`State::runs`], removed when dropped: after its server was
+/// stopped (or handed to supervision by [`Supervisor::adopt`]).
 struct Registration<'a> {
     supervisor: &'a Supervisor,
     key: Option<u64>,
@@ -460,17 +469,20 @@ impl Supervisor {
             ready,
         } = adoptable;
         let mut state = lock(&self.state);
-        if let Some(key) = registration.key.take() {
-            state.runs.remove(&key);
-        }
         if state.stopping {
             drop(state);
             child.stop(Instant::now() + self.config.timings.shutdown_grace);
+            // Only now: the shutdown waits for this run until its server is gone.
+            drop(registration);
             return OfficeState {
                 status: OfficeStatus::Offline,
                 reason: None,
                 next_restart_at: None,
             };
+        }
+        // Supervision owns the server from here on: it is no short run any more.
+        if let Some(key) = registration.key.take() {
+            state.runs.remove(&key);
         }
         let adopted = Adopted {
             child,
@@ -506,7 +518,11 @@ impl Supervisor {
 
     /// Stops every server: closes their stdins, waits up to the grace period, SIGKILLs the
     /// rest, and waits for every supervision thread. Short runs (`--create`, `--discard`) in
-    /// flight are stopped too.
+    /// flight are stopped too, and this waits for them: a run leaves [`State::runs`] only
+    /// after its server was stopped or killed and reaped, so no server of a run is left when
+    /// this returns. That wait ends [`RUN_END_MARGIN`] after the grace period at the latest
+    /// (a run whose owner never takes its stop signal is logged, and its server is killed
+    /// when the owner drops it).
     pub(crate) fn shutdown(&self) {
         let deadline = Instant::now() + self.config.timings.shutdown_grace;
         let threads: Vec<JoinHandle<()>> = {
@@ -526,6 +542,14 @@ impl Supervisor {
         };
         for thread in threads {
             let _ = thread.join();
+        }
+        let until = deadline + RUN_END_MARGIN;
+        while !lock(&self.state).runs.is_empty() {
+            if Instant::now() >= until {
+                host_log::log("a create or discard run did not end with the host");
+                return;
+            }
+            thread::sleep(RUN_END_POLL);
         }
     }
 
@@ -683,7 +707,7 @@ impl<'a> PendingCreate<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use std::fs;
@@ -1035,6 +1059,47 @@ mod tests {
     /// Names the file where this test binary, run again as a launch HQ `--create` server by
     /// [`an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted`], records its pid.
     const CREATE_PID: &str = "ORG_HOST_TEST_CREATE_PID";
+    /// Set for a create server that takes its handoff and then never reports and never
+    /// exits by itself (its closed stdin does not end it).
+    const CREATE_HANG: &str = "ORG_HOST_TEST_CREATE_HANG";
+
+    /// Writes `path`: a program that runs this test binary as the launch HQ `--create` server
+    /// ([`hq_create_server`]), which records its pid in `pid_file`. With `hang` it takes its
+    /// handoff and then never reports `created` and ignores its closed stdin.
+    pub(crate) fn write_create_server(path: &Path, pid_file: &Path, hang: bool) {
+        // The host closes the server's stdout over the rendezvous, so libtest's output goes nowhere.
+        let hang = if hang {
+            format!("{CREATE_HANG}=1 ")
+        } else {
+            String::new()
+        };
+        let body = format!(
+            "{CREATE_PID}='{}' {hang}exec '{}' --exact supervisor::tests::hq_create_server \
+             --ignored --test-threads=1 >/dev/null",
+            pid_file.display(),
+            std::env::current_exe().unwrap().display()
+        );
+        fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    fn hq_create_line() -> org_office_launch::CreateLine {
+        org_office_launch::CreateLine {
+            office: org_office_launch::OfficeLine {
+                id_profile: None,
+                selected_writer_required: false,
+                instance_id: INSTANCE.into(),
+                office_id: OFFICE.into(),
+                rendezvous: String::new(),
+            },
+            org_id: "01ORG".into(),
+            org_name: "Acme".into(),
+            office_name: "HQ".into(),
+            role: org_proto::OfficeRole::Hq,
+            owner_member_id: "01M72N8MG00000000000000M01".into(),
+            hq_creation: None,
+        }
+    }
 
     /// Not a test: a launch HQ `--create` server, as the real worker speaks it (first line on
     /// stdin, the rendezvous connect, `ready_for_secrets`, the handoff header, the transfer
@@ -1104,6 +1169,11 @@ mod tests {
             },
         )
         .unwrap();
+        if std::env::var_os(CREATE_HANG).is_some() {
+            // Never reports, and ignores its closed stdin: only a SIGKILL ends it.
+            std::thread::sleep(Duration::from_secs(600));
+            std::process::exit(0);
+        }
         let office = OfficeFile::new(
             &create.office.office_id,
             &create.office_name,
@@ -1132,33 +1202,10 @@ mod tests {
         let key = OfficeSecretsKey::from_bytes([2; 32]);
         keys.create(OFFICE, &key).unwrap();
         let pid_file = dir.path().join("pid");
-        // The host closes the server's stdout over the rendezvous, so libtest's output goes nowhere.
-        let program = script(
-            dir.path(),
-            "server",
-            &format!(
-                "{CREATE_PID}='{}' exec '{}' --exact supervisor::tests::hq_create_server \
-                 --ignored --test-threads=1 >/dev/null",
-                pid_file.display(),
-                std::env::current_exe().unwrap().display()
-            ),
-        );
+        let program = dir.path().join("server");
+        write_create_server(&program, &pid_file, false);
         let supervisor = supervisor(dir.path(), program, &keys);
-        let first = org_office_launch::CreateLine {
-            office: org_office_launch::OfficeLine {
-                id_profile: None,
-                selected_writer_required: false,
-                instance_id: INSTANCE.into(),
-                office_id: OFFICE.into(),
-                rendezvous: String::new(),
-            },
-            org_id: "01ORG".into(),
-            org_name: "Acme".into(),
-            office_name: "HQ".into(),
-            role: org_proto::OfficeRole::Hq,
-            owner_member_id: "01M72N8MG00000000000000M01".into(),
-            hq_creation: None,
-        };
+        let first = hq_create_line();
         let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
         let pending = supervisor.begin_hq_create(first, recovery).unwrap();
         let CreateOutcome::Created(adoptable) = pending.wait(Duration::from_secs(10)) else {
@@ -1177,6 +1224,47 @@ mod tests {
         );
         // The HQ's original key stays: it was installed before the create, not by it.
         assert!(keys.holds(OFFICE, &key));
+    }
+
+    /// A shutdown returns only after a create in flight is over: its server, which ignores
+    /// its closed stdin, is killed at the end of the grace period and reaped, and no process
+    /// of it is left the moment `shutdown` returns (the create's own thread has not been
+    /// joined yet).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_shutdown_returns_only_after_a_create_in_flight_has_no_server_left() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
+        let pid_file = dir.path().join("pid");
+        let program = dir.path().join("server");
+        write_create_server(&program, &pid_file, true);
+        let supervisor = supervisor(dir.path(), program, &keys);
+        let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+        let pending = supervisor
+            .begin_hq_create(hq_create_line(), recovery)
+            .unwrap();
+        let pid: libc::pid_t = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        thread::scope(|scope| {
+            let waiting = scope.spawn(move || pending.wait(Duration::from_secs(30)));
+            let began = Instant::now();
+            supervisor.shutdown();
+            // SAFETY: signal 0 only checks the pid.
+            let left = unsafe { libc::kill(pid, 0) } == 0;
+            assert!(!left, "the create's server outlived the shutdown");
+            assert!(
+                began.elapsed() >= Duration::from_millis(200),
+                "it ignores its stdin, so only the kill after the grace period ends it"
+            );
+            assert!(matches!(waiting.join().unwrap(), CreateOutcome::Stopped));
+        });
+        assert!(supervisor
+            .begin_hq_create(
+                hq_create_line(),
+                org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()
+            )
+            .is_err());
     }
 
     #[test]
