@@ -44,6 +44,7 @@
 #[cfg(not(unix))]
 compile_error!("org-platform builds only for Unix targets");
 
+pub mod confinement;
 pub mod dirs;
 pub mod disk;
 pub mod fs;

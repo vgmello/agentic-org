@@ -1,5 +1,13 @@
+//! The macOS web confinement adapter (ADR-0008): the entry preconditions, the fixed
+//! Seatbelt profile and the host's `sandbox_check` probes.
+
 use super::refused;
 use std::{ffi::CString, io, mem, path::Path, ptr};
+
+pub(super) use super::shared::fill_entropy;
+use super::Enforcement;
+use crate::Refused;
+use std::os::unix::net::UnixStream;
 
 const PROFILE: &std::ffi::CStr = c"(version 1)(deny default)(allow network-inbound)(deny network-bind)(allow network-outbound (remote unix-socket (path-literal (param \"RENDEZVOUS\"))))";
 #[link(name = "sandbox")]
@@ -131,4 +139,93 @@ pub(super) fn verify(pid: u32, paths: &[&Path]) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// What a confined macOS web process reports: Seatbelt has no Landlock ABI and no
+/// seccomp filter.
+const REPORT: Enforcement = Enforcement {
+    landlock_abi: None,
+    seccomp: false,
+};
+
+pub(super) fn supported() -> Result<(), Refused> {
+    Ok(())
+}
+
+/// ADR-0008 order: the entry preconditions and the profile, then the one connection
+/// the profile allows. Nothing is read from or written to the stream here.
+pub(super) fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
+    restrict(rendezvous)?;
+    let stream = UnixStream::connect(rendezvous)?;
+    Ok((stream, REPORT))
+}
+
+pub(super) fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()> {
+    if enforcement.landlock_abi.is_some() {
+        return Err(io::Error::other("the ready line reports landlock on macOS"));
+    }
+    if enforcement.seccomp {
+        return Err(io::Error::other("the ready line reports seccomp on macOS"));
+    }
+    Ok(())
+}
+
+pub(super) fn verify_web(
+    pid: u32,
+    enforcement: &Enforcement,
+    critical: &[&Path],
+) -> io::Result<()> {
+    verify_ready_report(enforcement)?;
+    verify(pid, critical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn macos_supports_the_web_process_and_refuses_a_landlock_report() {
+        super::super::web_confinement_supported().unwrap();
+        super::super::verify_ready_report(&REPORT).unwrap();
+        let error = super::super::verify_ready_report(&Enforcement {
+            landlock_abi: Some(4),
+            seccomp: false,
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the ready line reports landlock on macOS"
+        );
+    }
+
+    #[test]
+    fn macos_refuses_a_seccomp_report() {
+        let error = verify_ready_report(&Enforcement {
+            landlock_abi: None,
+            seccomp: true,
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "the ready line reports seccomp on macOS");
+    }
+
+    #[test]
+    fn a_foreign_report_refuses_before_any_probe_of_the_child() {
+        // PID 0 and an empty path list would each refuse with the adapter's fixed
+        // text; the report is checked first and names its own cause.
+        let error = verify_web(
+            0,
+            &Enforcement {
+                landlock_abi: Some(3),
+                seccomp: true,
+            },
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the ready line reports landlock on macOS"
+        );
+        let error = verify_web(0, &REPORT, &[]).unwrap_err();
+        assert_eq!(error.to_string(), "gateway confinement unavailable");
+    }
 }

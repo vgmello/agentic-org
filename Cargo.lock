@@ -75,6 +75,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "org-host-control",
+ "org-platform",
  "org-proto",
  "org-release",
  "org-socket",
@@ -645,7 +646,6 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "caseless",
- "cc",
  "core-foundation",
  "flate2",
  "hmac",
@@ -744,6 +744,7 @@ dependencies = [
 name = "org-platform-host"
 version = "0.0.0"
 dependencies = [
+ "cc",
  "core-foundation",
  "libc",
  "org-platform",

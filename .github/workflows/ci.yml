@@ -77,7 +77,7 @@ jobs:
         run: |
           rustup target add x86_64-unknown-linux-musl
           cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
-          cargo clippy --locked -p org-supervise -p org-spool --lib --target x86_64-unknown-linux-musl -- -D warnings
+          cargo clippy --locked -p org-supervise -p org-spool -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
           cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
 
       - name: cargo clippy

@@ -132,7 +132,11 @@ impl Supervisor {
         // No bind, child or secret handoff for unverified TLS or a platform without a
         // web process confinement adapter.
         // Each refusal names its cause for the host log.
-        org_socket::confinement::web_confinement_supported()?;
+        org_platform::confinement::web_confinement_supported().map_err(|_| {
+            io::Error::other(
+                "the web process requires process confinement, which has no adapter on this platform",
+            )
+        })?;
         if config.listen.scheme() != ListenMode::HttpLoopback {
             return Err(io::Error::other(
                 "the web process requires a verified HTTP loopback listener",
@@ -466,8 +470,19 @@ impl Running {
         let ready: GatewayReadyForSecrets =
             serde_json::from_slice(&line(&mut receiver, until, "ready line")?)
                 .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
-        org_socket::confinement::verify_ready_report(ready.landlock.is_some())
+        // The ready line has no seccomp field.
+        let enforcement = org_platform::confinement::Enforcement {
+            landlock_abi: ready.landlock.map(|status| status.abi),
+            seccomp: false,
+        };
+        org_platform::confinement::verify_ready_report(&enforcement)
             .map_err(|error| failed(&error.to_string()))?;
+        // The report above carries the ABI only: a domain not enforced in full is refused here.
+        if ready.landlock.is_some_and(|status| {
+            status.enforcement != org_host_control::gateway::LandlockEnforcement::FullyEnforced
+        }) {
+            return Err(failed("the ready line reports landlock not fully enforced"));
+        }
         crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
             .map_err(|_| failed("the ready-line peer is not the admitted child"))?;
         config
@@ -480,7 +495,7 @@ impl Running {
             ));
         }
         let paths: Vec<_> = config.critical_paths.iter().map(PathBuf::as_path).collect();
-        org_socket::confinement::verify_gateway(pid, &paths)
+        org_platform::confinement::verify_web(pid, &enforcement, &paths)
             .map_err(os_failed("verify the web process sandbox"))?;
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)

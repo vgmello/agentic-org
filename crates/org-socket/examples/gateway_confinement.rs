@@ -1,12 +1,11 @@
 //! Disposable real-process confinement check. Run outside a restricting parent
 //! sandbox: cargo run --locked --offline -p org-socket --example gateway_confinement.
 //! Never touches services, credentials or organization roots.
-#[cfg(target_os = "macos")]
-mod macos {
-    use org_socket::{
-        confinement,
-        rights::{self, StreamReceiver},
-    };
+//! The vector is written for the macOS adapter (ADR-0008); where the web process has
+//! no confinement adapter it refuses to run.
+mod vector {
+    use org_platform::confinement::{self, Enforcement};
+    use org_socket::rights::{self, StreamReceiver};
     use std::{
         fs,
         io::{BufRead, BufReader, Read, Write},
@@ -23,6 +22,11 @@ mod macos {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     const WAIT: Duration = Duration::from_secs(5);
+    /// What the macOS adapter reports, and what the parent verifies the child with.
+    const REPORT: Enforcement = Enforcement {
+        landlock_abi: None,
+        seccomp: false,
+    };
     struct Root(PathBuf);
     impl Drop for Root {
         fn drop(&mut self) {
@@ -56,15 +60,16 @@ mod macos {
         let rendezvous = Path::new(&args[2]);
         if args[0] == "--thread" {
             std::thread::spawn(|| {}).join().unwrap();
-            assert!(confinement::restrict_gateway(rendezvous).is_err());
+            assert!(confinement::confine_web(rendezvous).is_err());
             println!("thread-refused");
             return;
         }
         confinement::disable_core_dumps().unwrap();
-        confinement::restrict_gateway(rendezvous).unwrap();
+        // Confined first, then connected to the approved rendezvous, inside the adapter.
+        let (mut approved, report) = confinement::confine_web(rendezvous).unwrap();
+        assert_eq!(report, REPORT);
         println!("enforced");
         std::io::stdout().flush().unwrap();
-        let mut approved = UnixStream::connect(rendezvous).unwrap();
         approved.set_read_timeout(Some(WAIT)).unwrap();
         denied(fs::read(root.join("fixture")));
         denied(fs::write(root.join("fixture"), b"changed"));
@@ -139,7 +144,7 @@ mod macos {
             );
             let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
             assert_eq!(line(&mut stdout), "enforced\n");
-            confinement::verify_gateway(process.0.id(), &[&root.0.join("fixture")]).unwrap();
+            confinement::verify_web(process.0.id(), &REPORT, &[&root.0.join("fixture")]).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(WAIT)).unwrap();
             let inherited = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -184,12 +189,10 @@ mod macos {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn main() {
-    macos::run();
-}
-
-#[cfg(not(target_os = "macos"))]
-fn main() {
-    panic!("this reviewed vector is macOS only");
+    // No adapter, no run: the vector never reports a pass without enforcement.
+    if let Err(refused) = org_platform::confinement::web_confinement_supported() {
+        panic!("this reviewed vector is macOS only: {refused}");
+    }
+    vector::run();
 }

@@ -9,14 +9,13 @@ use crate::{
 };
 use org_host_control::{
     gateway::{
-        GatewayFd, GatewayFirstLine, GatewayHandoff, GatewayReadyForSecrets, GATEWAY_HANDOFF_FDS,
+        GatewayFd, GatewayFirstLine, GatewayHandoff, GatewayReadyForSecrets, LandlockEnforcement,
+        LandlockStatus, GATEWAY_HANDOFF_FDS,
     },
     ops::{TlsFetchResult, HOST_SOCK_MARKER},
 };
-use org_socket::{
-    confinement,
-    rights::{self, ReceiveError, StreamReceiver},
-};
+use org_platform::confinement::{self, Enforcement};
+use org_socket::rights::{self, ReceiveError, StreamReceiver};
 use std::{
     io::{self, BufRead, Read, Write},
     net::TcpListener,
@@ -99,9 +98,22 @@ fn descriptors(marker: u8, fds: Vec<OwnedFd>) -> io::Result<(UnixDatagram, TcpLi
     }
     Ok((transfer.ok_or_else(failure)?, listener.ok_or_else(failure)?))
 }
-fn handoff(mut stream: UnixStream) -> io::Result<(OwnedFd, OwnedFd, TcpListener)> {
+/// The ready line for what confinement reported. A Landlock ABI is reported only by an
+/// adapter that restricted this process under it in full; seccomp has no wire field.
+fn ready(enforcement: Enforcement) -> GatewayReadyForSecrets {
+    GatewayReadyForSecrets {
+        landlock: enforcement.landlock_abi.map(|abi| LandlockStatus {
+            abi,
+            enforcement: LandlockEnforcement::FullyEnforced,
+        }),
+    }
+}
+fn handoff(
+    mut stream: UnixStream,
+    enforcement: Enforcement,
+) -> io::Result<(OwnedFd, OwnedFd, TcpListener)> {
     stream.set_write_timeout(Some(WAIT))?;
-    send(&mut stream, &GatewayReadyForSecrets { landlock: None })?;
+    send(&mut stream, &ready(enforcement))?;
     let mut receiver = StreamReceiver::new(stream.try_clone()?);
     let until = Instant::now() + WAIT;
     let fence = Mutex::new(()); // still the only thread; no concurrent spawn exists
@@ -136,9 +148,8 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     confinement::disable_core_dumps()?;
     let line = first_line(&mut io::stdin().lock())?;
     let files = crate::release::load(assets, line.release.as_ref()).map_err(|_| failure())?;
-    confinement::restrict_gateway(Path::new(&line.rendezvous))?;
-    let stream = UnixStream::connect(&line.rendezvous)?;
-    let (control, transfer, listener) = handoff(stream)?;
+    let (stream, enforcement) = confinement::confine_web(Path::new(&line.rendezvous))?;
+    let (control, transfer, listener) = handoff(stream, enforcement)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
     let host =
         HostControl::from_handoff(control, transfer, line.instance_id, Arc::new(|| fatal()))?;
