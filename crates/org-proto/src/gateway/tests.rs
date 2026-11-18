@@ -201,11 +201,15 @@ fn typed_core_commands_and_cancellation_do_not_accept_another_operation_identity
     let vectors: Value =
         serde_json::from_str(include_str!("../../test-vectors/v2/gateway-envelopes.json")).unwrap();
     let request = &vectors["cases"][0]["wire"];
-    let typed: OrganizationCreateRequest = parse(request).unwrap();
+    #[derive(Debug, serde::Deserialize)]
+    struct Named {
+        name: String,
+    }
+    let typed: CommandEnvelope<Named> = parse(request).unwrap();
     assert_eq!(typed.params.name, "Acme");
     let mut invalid = request.clone();
     invalid["params"] = json!({});
-    assert!(parse::<OrganizationCreateRequest>(&invalid).is_err());
+    assert!(parse::<CommandEnvelope<Named>>(&invalid).is_err());
 }
 
 #[test]

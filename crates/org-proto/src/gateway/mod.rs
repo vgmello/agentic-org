@@ -364,7 +364,6 @@ pub enum OperationKind {
     Msg,
 }
 
-pub type OrganizationCreateRequest = CommandEnvelope<crate::OrganizationCreateParams>;
 pub type OfficeRestartRequest = CommandEnvelope<crate::Empty>;
 pub type OrganizationCreateOutcome = MutationOutcome<OrganizationView>;
 pub type OrganizationCreateLookup = OperationLookup<OrganizationView>;

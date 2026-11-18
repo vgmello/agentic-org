@@ -912,10 +912,7 @@ pub(crate) mod tests {
     use super::*;
     use std::path::Path;
 
-    use org_proto::{
-        Empty, HelloParams, OfficeList, OfficeRestart, OfficeRestartParams, OrganizationCreate,
-        OrganizationCreateParams,
-    };
+    use org_proto::{Empty, HelloParams, OfficeList, OfficeRestart, OfficeRestartParams};
 
     use crate::catalog::Catalog;
     use crate::keys::memory::MemoryKeys;
@@ -1547,13 +1544,13 @@ pub(crate) mod tests {
         let threaded = [
             Request::new::<InstanceStatus>(1, &Default::default()).unwrap(),
             Request::new::<OfficeList>(1, &Empty {}).unwrap(),
-            Request::new::<OrganizationCreate>(
-                1,
-                &OrganizationCreateParams {
-                    name: "Acme".into(),
-                },
-            )
-            .unwrap(),
+            // The retired name-only create: no typed call exists for it any more.
+            Request {
+                id: 1,
+                method: "organization.create".to_owned(),
+                params: serde_json::json!({"name": "Acme"}),
+                principal: None,
+            },
         ];
         let connection = Connection::for_test();
         for request in inline.iter().chain(&threaded) {
