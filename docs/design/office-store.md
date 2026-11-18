@@ -472,8 +472,9 @@ file larger than 1 MiB is written first as a content-addressed blob, flushed, an
 entry names its digest. Ordinals, origin positions, feed positions and task revisions
 stay distinct (ADR-0006).
 
-Rejected: one file per entry (section 8 measures it 25 times slower to write, and each
-needs its own flush); SQL row images in the entry, as today (they tie the journal to one
+Rejected: one file per entry (in section 8's indicative harness, 16 µs median per
+entry against 0.65 µs for an append, and 580 µs against 228 µs with a flush; and each
+file needs its own flush); SQL row images in the entry, as today (they tie the journal to one
 engine and one projection schema).
 
 **States of an entry.**

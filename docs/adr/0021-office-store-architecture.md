@@ -72,8 +72,9 @@ the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
 - The projection as the commit point: a cache must be deletable.
 - SQL row images in the journal, as today: they bind the journal to one engine and one
   schema, against ADR-0018.
-- One file per journal entry: about 25 times slower to write than an append in a first
-  measurement, and a flush per entry.
+- One file per journal entry: in an indicative harness, 16 µs median per entry
+  against 0.65 µs for an append (580 µs against 228 µs with a flush), and a flush per
+  entry.
 - A separate SQLite adapter crate: it would depend on `org-office` for the families that
   live there.
 - A database, writer or crate per family: cross-family reads would lose one snapshot,
@@ -92,8 +93,8 @@ the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
 | STORE-4 | A committed operation is answered while a flush is held back; a durable one is not answered before the flush that covers it; no outbox consumer and no file sees an entry before its flush. |
 | STORE-5 | Reads still answer with `durable/` made unreadable and the host channel closed (they read no file and call no host), and see every change acknowledged before they began. |
 | STORE-6 | Every materialized file is at the data contract's path in its exact bytes, written atomically; bytes the office did not write stop materialization and name the path. |
-| STORE-8 | A flush error injected on a segment, a materialized file or a directory makes the office answer no waiting durable request as success and exit without retrying the flush, and the reopened office holds exactly what the journal on the drive holds; a failed or short append fails its whole batch, leaves no acknowledged operation, and is truncated before the next batch. |
 | STORE-7 | Adding a family (projects, B3) adds its own module and one SQL module and changes no file of `org-store`. |
+| STORE-8 | A flush error injected on a segment, a materialized file or a directory makes the office answer no waiting durable request as success and exit without retrying the flush, and the reopened office holds exactly what the journal on the drive holds; a failed or short append fails its whole batch, leaves no acknowledged operation, and is truncated before the next batch. |
 
 ## Consequences
 
