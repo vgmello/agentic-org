@@ -80,6 +80,11 @@ mod registered;
 mod secrets;
 mod server_check;
 mod service;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "A3 B4 wires browser sessions into the host ops")
+)]
+mod sessions;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod setup_flow;
 pub mod signals;
