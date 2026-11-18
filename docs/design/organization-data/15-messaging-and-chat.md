@@ -76,6 +76,8 @@ Each employee's state is stored in that employee's own files (see [Storage and d
 | `message_reactions` | `participants/<employee-id>/reactions/<message-id>.json`: employee/reaction/time |
 | Card state shown with a message (no table of its own; assembled in the `messages` projection) | `answer` and acceptance from the answerer's `participants/<employee-id>/answers/<message-id>.json`; the close outcome from `messages/<message-id>.close.json`; pins from `pins[]` in `conversation.json`. None of it is stored in the message file. |
 
+**What reaches an agent's inbox** ([ADR-0024](../../adr/0024-a-channel-question-is-watched-for-its-answer.md)). A recipient-state file exists for an agent only when a message is addressed to it, and `delivered_because` says why: `addressed` (a direct message, an ask or a hand-off), `mention` (the message's `metadata_json.mentions[]` holds the agent's employee ID; the accepting office resolves each mention and refuses one it cannot resolve), `thread_reply` (a reply in a thread the agent started or replied in) or `answer_candidate` (the watch judged the message to answer the agent's open channel question; `related_message_id` is that question). Other channel messages create no recipient state for an agent. A watch is a durable local record of the asker's office, outside organization data.
+
 Thread last-message/time/count, participant summaries, unread lists/counts and urgent flags are derived. Preserve each original delivery identity `(origin_office_id, origin_incarnation, origin_sequence)` and organization epoch/sequence; a retry cannot create a second message. Recipient-state origin is independent of message-content origin.
 
 For selected chat cards, `metadata_json` uses versioned `card` objects with fields `addressed_to`, `required` (the asker cannot continue without the answer, [ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md)), `question_type` (`choice`, `yes_no` or `free_text`), `options[{id,label,description}]`, `allow_multiple`, `default_option`, `default_at`, `blocks`, `approval`, `answer{by,at,option_id,option_ids,text}`, `accepted_by`, `accepted_at`, `reason`, `linked_ref`, `folded`. These mirror existing UI contracts and the owner's [REQ-04](../../specs/req-04-channel-messaging-and-question-components.md) question schema (`question_type`, option `description`, `allow_multiple` and the multi-select `option_ids` were added for it on 2026-11-17); validate employee/task references, unique option IDs and that the options fit the question type. An office failure notice preserves `dead_reason` in metadata and recipient `reason`. The card fields split by who writes them. Written once at send by the origin office, inside the message file and covered by its hash: `addressed_to`, `required`, `question_type`, `options`, `allow_multiple`, `default_option`, `default_at`, `blocks`, `approval`, `linked_ref` and `folded` (the system's folding of an announcement, decided at send). Written by the answering employee's office in that employee's `answers/<message-id>.json`: `answer` and, for a hand-off, `accepted_by`, `accepted_at` and `reason`. Written once by the origin office in `messages/<message-id>.close.json`: which answer or withdrawal closed the ask. A pin is conversation-wide, so `pins[]` is part of `conversation.json` and is written by that file's writer. The projection assembles these into the card a screen shows. Only the addressed actor may answer/accept; approval still requires its existing authorized application path. This is structured data, not authorization implemented by JSON. A default is never recorded as the person's answer. When the asker's wait ends on an ask that is not required and has a default, the asker receives the default with the timeout; if it continues with it, its office records that as the close outcome in `messages/<message-id>.close.json` ("continued with the default"), `default_at` being the end of the wait, and a later reply arrives as an ordinary message ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md) decision 14). The only automatic start of an agent is the resume of one suspended on a required ask; no other work transition or wake engine is introduced.
@@ -196,6 +198,8 @@ CREATE TABLE message_recipient_states (
   read_at TEXT,
   updated_at TEXT NOT NULL,
   reason TEXT,
+  delivered_because TEXT NOT NULL DEFAULT 'addressed' CHECK (delivered_because IN ('addressed','mention','thread_reply','answer_candidate')),
+  related_message_id TEXT,
   expired_waiting_person INTEGER NOT NULL DEFAULT 0 CHECK (expired_waiting_person IN (0,1)),
   owner_office_id TEXT NOT NULL,
   origin_incarnation TEXT NOT NULL,
@@ -334,6 +338,8 @@ erDiagram
         TEXT read_at "optional"
         TEXT updated_at "required"
         TEXT reason "optional"
+        TEXT delivered_because "required"
+        TEXT related_message_id "optional"
         INTEGER expired_waiting_person "required"
         TEXT owner_office_id FK "required"
         TEXT origin_incarnation "required"

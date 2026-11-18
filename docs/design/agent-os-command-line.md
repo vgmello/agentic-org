@@ -351,14 +351,15 @@ command is used. The names are the ones the office's calls already have (`msg.se
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `handoff`, or `announcement` with its reason. A hand-off to an idle agent starts a turn for it (C8) | [Chat UX](../specs/chat-ux.md) section 5; [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) | B6 |
-| `msg ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there. An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
+| `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `handoff`, or `announcement` with its reason. `--mention <employee>` mentions someone by name, and may be repeated. A hand-off or a mention sent to an idle agent starts a turn for it (C8) | [Chat UX](../specs/chat-ux.md) section 5; [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) | B6 |
+| `msg ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there: it returns the question's ID at once, the office watches the channel for its answer, and `meta` says whether a watch is open (C9). An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
 | `msg reply` | Replies in a thread (B6); answers an ask (B7) | Messaging; ADR-0020 | B6, B7 |
 | `msg accept` | Accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
 | `msg withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
-| `msg inbox`, `msg read` | Everything addressed to the caller, whatever its kind, unread first; one message with its thread | ADR-0003 decisions 10 and 11 | B6 |
-| `msg done`, `msg defer` | The caller's own triage state | ADR-0003 decision 11 | B6 |
-| `msg wait` | Holds until something arrives or the wait ends | [Agent sessions](agent-sessions.md) (holds are capped) | B6 |
+| `msg inbox`, `msg read` | Everything addressed to the caller, unread first, each entry with the reason it is there (`addressed`, `mention`, `thread_reply`, `answer_candidate`) and, for an answer, the question it answers; `--because <reason>` and `--thread <id>` narrow it. One message with its thread. Nothing else from a channel is in the inbox | ADR-0003 decisions 10 and 11; [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) | B6 |
+| `msg list` | The messages of one channel, conversation or thread, when the agent chooses to read it | Messaging (`msg.list`) | B6 |
+| `msg done`, `msg defer` | The caller's own triage state. `msg done` on the caller's own channel question closes it and ends its watch | ADR-0003 decision 11; ADR-0024 | B6 |
+| `msg wait` | Holds until something arrives or the wait ends; `--thread <id>` waits for an answer to one question | [Agent sessions](agent-sessions.md) (holds are capped) | B6 |
 | `channel list`, `channel join`, `channel leave` | The channels the caller may see; joining and leaving a manual channel | Chat UX (CHAT-19) | B6 |
 
 **Approvals in milestone one.** An approval here is a record with its own rules: who
@@ -368,6 +369,14 @@ rejection needs a reason ([the hire flow](../specs/our-org-in-the-app.md), secti
 for it. For anything else an agent that needs a person's go-ahead asks a required
 yes-or-no question with `msg ask`; that is a question, not a recorded approval.
 `gate open` and `gate status` are in section 6.
+
+**How an agent gets the answer to a channel question.** It does not read the channel.
+It asks with `msg ask --to <channel>` and keeps the ID. A reply in the question's thread
+comes to its inbox as `thread_reply`. A message posted in the channel outside the
+thread is judged by the watch, a short run of a cheaper model made by the office, and
+comes to its inbox as `answer_candidate` when it answers the question. If the agent is
+still working, it sees the answer with `msg inbox` or `msg wait --thread`. If it has
+ended its turn, the answer starts a turn for it in the same session.
 
 ### 3.4 Tasks
 
@@ -449,10 +458,11 @@ the table.
 | 3 | C2 | `role list`, `role inspect`, `hr hire` and the `gate_required` outcome |
 | 3 | C3 | The binding and the launch variables of 2.8; `agent-os` refuses to run without a binding; `session inspect`, `grant list`; the short catalogue in the agent's instructions; the empty MCP configuration |
 | 3 | C5 | `process list`, `process inspect`, for processes and standards alike; `skill list`, `skill read` |
-| 4 | B6 | `msg send`, `reply`, `accept`, `inbox`, `read`, `done`, `defer`, `wait`; `channel list`, `join`, `leave`; `status set`, `clear`; `session attach`. Every `msg` command goes to the office; the file queue and the relay are deleted |
+| 4 | B6 | `msg send` with `--mention`, `reply`, `accept`, `inbox` with its reasons, `read`, `list`, `done`, `defer`, `wait`; `channel list`, `join`, `leave`; `status set`, `clear`; `session attach`. Every `msg` command goes to the office; the file queue and the relay are deleted |
 | 4 | B7 | `msg ask`, answering with `msg reply`, `msg withdraw`, and the `timed_out` and `withdrawn` outcomes |
 | 4 | C6 | The `suspended` outcome of a required ask |
-| 4 | C8 | No new command: an ask or a hand-off from an agent starts a turn for an idle agent, and `meta` says whether it did |
+| 4 | C8 | No new command: an ask, a hand-off or a mention from an agent, and an answer to the agent's own question, start a turn for an idle agent, and `meta` says whether one started |
+| 4 | C9 | No new command: a channel question is watched for its answer, and answers arrive in the inbox as `answer_candidate` |
 | 5 | B5 | `task` and `checklist` |
 | 5 | C7 | `repo list`, `repo attach`, `worktree list`, `repo push` |
 

@@ -2,7 +2,7 @@
 
 These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. 
 
-There are **13 categories, 169 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
+There are **13 categories, 170 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 ## Categorization rules
 
@@ -23,7 +23,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 11 | 1 | 0 | 0 | 0 |
 | [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 16 | 2 | 0 | 5 | 0 |
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring and release/deployment records | 14 | 0 | 1 | 12 | 0 | 1 | 0 |
-| [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks and handoffs | 14 | 2 | 6 | 4 | 0 | 2 | 0 |
+| [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks and handoffs | 15 | 2 | 6 | 5 | 0 | 2 | 0 |
 | [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 10 | 0 | 1 | 0 |
 | [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 16 | 1 | 2 | 9 | 0 | 4 | 0 |
 | [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content and deferred learning engines | 9 | 0 | 3 | 1 | 0 | 5 | 0 |
@@ -31,7 +31,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 14 | 1 | 4 | 6 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **169** | **9** | **62** | **55** | **1** | **42** | **0** |
+| **Total** | | **170** | **9** | **62** | **56** | **1** | **42** | **0** |
 
 ## AREA-01
 

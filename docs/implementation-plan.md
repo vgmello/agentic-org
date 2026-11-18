@@ -30,7 +30,7 @@ single office on macOS. Its steps, in order:
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 and K1 alongside |
 | 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1a to B1c, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
-| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asks another agent and gets it running | B6, B7, C6, C8 |
+| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asks another agent and gets it running; an agent asks a channel and gets its answer without reading the channel | B6, B7, C6, C8, C9 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
 
 **Milestone two: Linux, in parallel (Track X).** The same server runs on Linux, including inside a
@@ -674,8 +674,10 @@ on the offers of design section 10.
   - A send is acknowledged at the local commit and relayed afterwards.
   - `agent-os` talks to the office for every call and gains the long-running mode. The
     file queue, `crates/org-spool` and the route through it are deleted.
-- **Commands:** `msg send`, `reply`, `accept`, `inbox`, `read`, `done`, `defer` and
-  `wait`, keeping today's names in the new grammar; `channel list`, `join` and `leave`;
+- **Commands:** `msg send` (with `--mention`), `reply`, `accept`, `inbox`, `read`, `list`,
+  `done`, `defer` and `wait`, keeping today's names in the new grammar. An agent's inbox
+  holds only what is addressed to it, and each entry says why it is there (ADR-0024
+  decisions 5 to 7; WATCH-1, 2 and 9); `channel list`, `join` and `leave`;
   `status set` and `clear`; `session attach`, which is the long-running mode. The file
   queue goes, and every `msg` command goes to the office
   ([command line design](design/agent-os-command-line.md), sections 2.9, 2.11, 3.3 and 3.7; CLI-13, and CLI-15 for the
@@ -733,14 +735,36 @@ on the offers of design section 10.
 - **Outcome:** an agent asks another agent a question, or hands work to it, and the
   second agent runs and answers without a person starting it.
 - **Build:** the office starts one ordinary turn for an idle recipient when another
-  agent sends it an ask or a hand-off; the same admission as a person's Run; the hourly
+  agent sends it an ask, a hand-off or a mention by name, and when an answer to its own
+  question arrives; the same admission as a person's Run; the hourly
   limit (a system setting, 12 unless changed); the record of what started the turn. No
   new command: the answer's `meta` says whether a turn was started.
-- **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-6),
+- **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-7),
   [how agents run](specs/agent-run-modes-ux.md) (RUN-3),
   [command line design](design/agent-os-command-line.md) section 3.3. Row FC-169.
-- **Done when:** WAKE-1 to WAKE-6 pass.
+- **Done when:** WAKE-1 to WAKE-7 pass.
 - **Needs:** B7, C3.
+
+### C9 · A channel question is watched for its answer
+
+- **Outcome:** an agent asks a question in a channel, somebody answers in the channel
+  without replying in the thread, and the agent receives that answer in its inbox. It
+  never reads the rest of the channel.
+- **Build:** the watch, a durable local record of the asker's office; the short,
+  tool-less model run that judges whether new messages answer the question, through
+  the copilot's runtime port and a registry entry of its own; the organization's
+  watching model profile, with the feature off when none is set; the bounds (one run
+  in 30 seconds for a question, 24 hours, 200 messages, 5 open watches for an agent);
+  the cost recorded against the asker; the `answer_candidate` inbox entry linked to its
+  question.
+- **Read:** [ADR-0024](adr/0024-a-channel-question-is-watched-for-its-answer.md)
+  (WATCH-1 to WATCH-9), [smart features](design/smart-features.md) (how a tool-less
+  run is made and validated), [messaging](design/organization-data/15-messaging-and-chat.md),
+  [command line design](design/agent-os-command-line.md) section 3.3. Row FC-170.
+- **Code today:** `crates/org-copilot` has the registry, rendering and validation for
+  tool-less runs, wired to no model.
+- **Done when:** WATCH-3 to WATCH-8 pass. WATCH-1, 2 and 9 pass with B6.
+- **Needs:** B7, C3, C8.
 
 ---
 
