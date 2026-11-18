@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { Plugin } from 'vite';
@@ -11,6 +12,12 @@ export function testComposition(): Plugin {
 		['platform/shell/capabilities', 'capabilities'], ['office/api', 'office-api'],
 		['org/api', 'org-api'], ['work', 'work-api']
 	].map(([source, target]) => [resolve(app, `src/lib/${source}`), resolve(fakes, `${target}.ts`)]));
+	// A module's mock API is found by name: e2e/fakes/modules/<module>.ts stands in for src/lib/modules/<module>/api.ts.
+	const moduleFakes = resolve(fakes, 'modules');
+	if (existsSync(moduleFakes))
+		for (const file of readdirSync(moduleFakes))
+			if (file.endsWith('.ts') && !file.endsWith('.test.ts'))
+				replacements.set(resolve(app, 'src/lib/modules', file.slice(0, -3), 'api'), resolve(moduleFakes, file));
 	return {
 		name: 'org-test-owned-composition',
 		enforce: 'pre',
