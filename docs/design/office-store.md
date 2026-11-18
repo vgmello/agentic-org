@@ -641,6 +641,37 @@ twice its recorded value.
 
 ## 9. Engine independence
 
+The engine only holds the projection. The journal and the files, which carry every
+guarantee, do not depend on it, so a second engine changes neither.
+
+| Criterion ([ADR-0018](../adr/0018-storage-engine-independence.md)) | How it is met |
+| --- | --- |
+| ENG-1 SQL only in adapters | The office's SQL and `rusqlite` types live only in `org-office/src/store/sqlite/`; the host's in `org-host/src/hostdb/`. Checked as below |
+| ENG-2 one seam, second implementation | `open_store` is the one place an engine is chosen. `MemoryEngine` (in `org-store`'s testkit) is selectable there under the `testkit` feature, and the office's own tests compose the office on it |
+| ENG-3 a suite per contract | Each family's testkit holds a conformance macro over its two ports and `Store::submit`; `org-office/src/store/sqlite/<family>.rs` and the family's memory tests both invoke it. `org-store` adds an engine suite for `Engine` and `CorePort` (cursor, sources, receipts, atomic `replace`, snapshot isolation) and the rebuild harness of section 6. Organization in B1a, projects B3, work B4, messaging B6, execution C3, host A3, replication S1 |
+| ENG-4 guarantees stated without SQLite | Journal and acknowledgement guarantees here and in ADR-0021 name no engine mechanism; B1c checks documents 06 and 11 and the ADRs |
+| ENG-5 trigger and generated-column constraints listed | B1c adds them in words to schema coverage, so another engine can enforce them its own way |
+
+**The check that keeps SQL in the adapter**, run by `cargo test --workspace`:
+
+1. A test reads every `Cargo.toml` in the workspace and fails if `rusqlite` is a
+   dependency of anything but `org-office` and `org-host`.
+2. A test in `org-office`, built like today's `store/tests/opener_policy.rs` with `syn`,
+   parses every `.rs` file of the crate, tests included, and fails on a path that starts
+   with `rusqlite` or a string literal that starts with an SQL keyword (`SELECT`,
+   `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `PRAGMA`, `BEGIN`, `WITH`, `REPLACE`)
+   anywhere outside `src/store/sqlite/`.
+
+**The memory engine** keeps each family's tables as plain `BTreeMap`s in a type map:
+`begin` clones the state, `commit` swaps an `Arc`, a snapshot is an `Arc` clone and a
+mark is a clone. It is slow on large data and never used in production; its job is to
+prove the seam and to make family tests fast.
+
+**A later PostgreSQL engine** is a module `store/postgres/` that implements `Engine`,
+`CorePort` and every family's two ports and passes every suite; `open_store` gains one
+arm. Its `synchronous_commit` can stay off for every transaction, because the journal,
+not the database, is the commit point.
+
 ## 10. Replication's place
 
 ## 11. What is deleted and what is kept
