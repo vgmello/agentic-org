@@ -64,7 +64,7 @@ fn public_version_has_only_constant_protocol_metadata() {
 fn shared_mutation_outcomes_preserve_identity_and_http_meaning() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-outcomes.json"),
-        35,
+        38,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let result: Result<MutationOutcome<Value>, _> = parse(&case["wire"]);

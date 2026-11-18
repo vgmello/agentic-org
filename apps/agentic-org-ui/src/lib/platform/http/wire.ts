@@ -158,13 +158,17 @@ export const validRawPathSegment = (segment: string): boolean => typeof segment 
 
 const sessionReason = word(['session_ended'] as const);
 const cancelState = word(['abandoned', 'linked', 'in_progress'] as const);
+const credentialField = word(['login', 'password'] as const);
+const credentialRule = word(['format', 'taken', 'too_short', 'too_long'] as const);
 const gatewayErrorReader = object({
 	code: text, message: text, retry_after_ms: optional(readSafeInteger), session_reason: optional(sessionReason),
-	operation_id: optional(operationId), state: optional(cancelState)
+	operation_id: optional(operationId), state: optional(cancelState),
+	field: optional(credentialField), rule: optional(credentialRule)
 });
 export const readGatewayError = checked((value) => {
 	const error = gatewayErrorReader(value);
 	if (error.code === 'rate_limited' && error.retry_after_ms === undefined) return invalid();
+	if ((error.field === undefined) !== (error.rule === undefined)) return invalid();
 	return error;
 });
 export type GatewayError = ReturnType<typeof readGatewayError>;
