@@ -617,7 +617,7 @@ offices/
     <div>
       <h4>Admission</h4>
       <ul>
-        <li>A turn starts from a person's Run, from the answer to a required ask, when another agent addresses an idle agent (an ask, a hand-off or a mention), or when an answer to the agent's own question arrives. The last two are under an hourly limit (ADR-0023). There is no scheduler and no queue. A second open turn returns <code>BUSY</code>.</li>
+        <li>A turn starts from a person's Run, from the answer to a required ask, and from anything addressed to an idle agent: a direct message, a mention, an ask or a hand-off, from a person or an agent, a task assigned to it, or an answer to its own question (ADR-0023, ADR-0028). Starts by agents are under an hourly limit; starts by people are not. There is no scheduler and no queue. A second open turn returns <code>BUSY</code>.</li>
         <li>An agent can start sub-agents inside its turn with its runtime's own tool. A sub-agent has the parent's sandbox, tools and policy and never more; its commands and cost are the employee's; it ends with the turn (ADR-0025).</li>
         <li>By ADR-0028 a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way, under the same admission and the same hourly limit. An agent that is not working shows as Available whatever its process is doing, and a send or an ask returns the recipient's presence.</li>
         <li>An agent without an execution config is not runnable. The framework never chooses a default model.</li>

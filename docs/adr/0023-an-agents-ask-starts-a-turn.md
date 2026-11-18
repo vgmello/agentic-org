@@ -66,9 +66,10 @@ when the turn ends.
 9. **Only the office starts a run.** There is no command by which an agent launches
    another agent's process. `runner spawn` in REQ-08 is not built.
 
-A person still starts an agent's turn with Run. A message, an ask or a mention from a
-person waits for the agent's next turn, as before. The one thing from a person that
-starts a turn is an answer to a question the agent asked.
+This record is about what one agent starts for another, and about answers. What a
+person's message, a person's mention and a task assignment start is decided by
+[ADR-0028](0028-an-agent-is-always-available.md): they start an idle agent too. A
+person can also still start a turn with Run.
 
 The built-in HR lead is unchanged: it runs when it is called, by a person or by an
 agent, as the [run modes spec](../specs/agent-run-modes-ux.md) says.
@@ -78,7 +79,7 @@ agent, as the [run modes spec](../specs/agent-run-modes-ux.md) says.
 | ID | Passing evidence |
 | --- | --- |
 | WAKE-1 | An ask from one agent to an idle agent starts exactly one turn for the recipient, whose instruction is the ask; the answer returns to the asker within its wait |
-| WAKE-2 | A hand-off, and a mention by name, from one agent to an idle agent each start one turn; an announcement, `@here`, an ordinary channel post, and a message or mention from a person start none |
+| WAKE-2 | A hand-off, and a mention by name, from one agent to an idle agent each start one turn; an announcement, `@here` and an ordinary channel post start none. A message or a mention from a person is tested by ADR-0028 (AVAIL-1) |
 | WAKE-3 | A busy recipient is not interrupted and receives the message at its next turn boundary; a paused, suspended or offboarded recipient is not started |
 | WAKE-4 | Past the hourly limit no turn starts, the message is delivered and waits, and the held start is recorded; a person's Run is unaffected |
 | WAKE-5 | Two agents that ask each other in a loop start no more turns for either than the limit allows |
