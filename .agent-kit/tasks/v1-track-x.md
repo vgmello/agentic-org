@@ -813,8 +813,34 @@ target; guard tests; the refusing target's tests; `org-platform`, `org-platform-
 `org-host` and `agentic-org` unprivileged: 1,053 passed, none failed. The list of
 platform predicates: 17 files, 104 predicates.
 
-A fresh read-only review of `4823b23a..d13aa040` is in progress; it is asked to attack
-the checks on a real filesystem with trees arranged as root.
+**Review: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the lead, on
+`4823b23a..d13aa040`). It built trees as root on ext4, tmpfs and overlay and attacked
+them as three other users; ran the store's tests ten times as uid 1000 and as root
+with nothing left behind; and read the release-only branches that no test executes.
+
+| Finding | Severity | State |
+| --- | --- | --- |
+| S1 A store that is a bind mount of a subdirectory of the data root is accepted (and the reverse): the `..` walk from a mount root leaves through the mount point, so the chains never meet, and the mount-point rule passes too. The container mistake `-v ./agentic:/data -v ./agentic/secrets:/secrets` puts every key in the data volume, silently (probed) | MAJOR | With the author: containment decided on paths inside the filesystem, read from the mount table; refused when it cannot be determined |
+| S2 The private-group rule admits a group another account has as its primary group; that account can read and plant nothing but can roll the store back to an older copy, and can rewrite a group-writable development image (probed) | MINOR: root must have made such an account | Not closed (it needs every account enumerated, which is unbounded under a directory service); stated in the code and in design section 5 |
+| S3 An item store with a wrong mode is reported as "credentials missing", and any file in any `0700` subdirectory counts as an item | MINOR | With the author: the host names its item stores; a wrong mode is its own refusal; only real items count |
+| S4 Setup creates the directories by path before any check and can leave them behind on a refusal, and records an unnormalized path | MINOR, latent until setup works on Linux | With X5's worker, who owns `setup_flow.rs` now |
+| S5 A POSIX ACL on an ancestor admitted by the group-write exception is not seen (probed) | MINOR: only the owner or root can set it | With the author: such a directory, and such an image, must carry no access ACL |
+| S6 Texts and the mode of a lock made under a restrictive umask | NIT | With the author |
+| S7 Commands now create the application folder on Linux before they fail on a missing record | NIT | Noted, not changed |
+| S8 A macOS record now carries `"credentials": null`, which an older binary would reject | NIT | Rejected: nothing has shipped |
+| S9 The account helper has one adapter | NIT | With the author: the crate's three-adapter layout |
+| S10 The LNX-4 test is at the level of the two views | NIT | X5: LNX-4 on the instance the container sets up |
+
+Found correct, by probe: every spelling, symbolic link, ancestor, mode, filesystem,
+mount-point, empty-store and lock case of design 3.2, each refusal naming the right
+directory (`/tmp`, `/var/tmp` and `/dev/shm` are always refused as ancestors, as the
+design intends). By reading: every check is made on the descriptor the next `openat`
+uses; no office with records ever gets a fresh key (`provisioning.rs`,
+`supervisor/office.rs` end with `KeyMissing`); a release host has no fallback to a
+development store, to the environment, or to no store; macOS is unchanged in
+substance. Not verified: macOS at run time, a release-profile host, XFS/Btrfs/F2FS
+and network filesystems live, directory services, an actual race, and whether a lost
+host-secrets directory alone is noticed (asked of the author).
 
 ## Merges with v1-integration
 

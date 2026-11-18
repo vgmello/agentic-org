@@ -902,6 +902,17 @@ everything. The cases that matter run as the service user:
   that names the setup operation, which the setup record holds, can take it, once.
   That user can also write the host's registry directly, so the link gives it nothing
   more.
+- **Another account that shares the service user's group.** The credential store and
+  the admission of a development image accept a directory or file that the service
+  user's group can write when that group is the user's private group: its primary
+  group, named as the user, with a member list that is empty or names only the user.
+  An account that root created with that group as its own primary group is not in the
+  member list and is not detected (finding it means enumerating every account). Such
+  an account can read no item and plant none, but it can rename an ancestor of the
+  store and put an older copy the service user owns in its place, and it can rewrite a
+  development build's group-writable executable before the host hashes it. A release
+  image is covered by its pinned digest. Do not give another account the service
+  user's group.
 - **Stop the service**: kill or stop the host or its children. This denies service and
   exposes nothing; recovery is as after a crash.
 - **Make the web process refuse to start** on a kernel without Landlock or under a
