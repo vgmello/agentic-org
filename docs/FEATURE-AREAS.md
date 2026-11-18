@@ -65,7 +65,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** People and teams are organizational identity; offices are execution locations. Execution routing/holds belong to AREA-08, and account security grants belong to AREA-02. A chart position never proves authority.
 
-**Verification focus:** Check home-team/lead enforcement, reporting, the account-to-person link (the owner is a person), the top-level team and project teams made by default, the HR lead made at organization creation and run only when called, hire approval before any provisioning, and runtime effects of employee controls. Verify Inbox clearing and fresh, real activity sources.
+**Verification focus:** Check home-team/lead enforcement, reporting, the account-to-person link (the owner is a person), the top-level team and project teams made by default, the HR lead made at organization creation and run only when called, the check of who may hire and the hirer's confirmation before any provisioning, and runtime effects of employee controls. Verify Inbox clearing and fresh, real activity sources.
 
 **Requirements:** [Organization UX](specs/offices-and-teams-ux.md), [Employee/Home UX](specs/our-org-in-the-app.md), [Organization contract](design/organization-data/01-organization-structure.md), [Employee contract](design/organization-data/04-agent-structure.md).
 
