@@ -4,6 +4,7 @@
 //! start yet: A2 B3 composes it into start and setup; today only tests open it.
 
 pub(crate) mod accounts;
+mod administrator;
 mod clock;
 pub(crate) mod journal;
 pub(crate) mod links;

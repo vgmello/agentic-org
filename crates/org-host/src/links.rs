@@ -212,6 +212,10 @@ pub(crate) trait OneTimeLinks {
         digest: LinkDigest,
         now_ms: i64,
     ) -> Result<Result<String, Refused>, Error>;
+    /// Insert `link` only if no link of the same kind and subject was ever
+    /// stored, in any state, checked and inserted in one transaction. Returns
+    /// whether it was inserted.
+    fn insert_first(&self, link: NewLink<'_>) -> Result<bool, Error>;
     /// The pending link of this kind and subject, expired or not.
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error>;
 
@@ -232,6 +236,31 @@ pub(crate) trait OneTimeLinks {
             token,
             expires_at_ms,
         })
+    }
+    /// Issues the first link ever for this kind and subject, or nothing if one
+    /// was already issued (whatever its state). A replay never yields a secret.
+    fn issue_first(
+        &self,
+        kind: LinkKind,
+        subject: &Subject,
+        now_ms: i64,
+    ) -> Result<Option<Issued>, Error> {
+        let token = Token::generate()?;
+        let link_id = crate::ids::uuid_v7()?;
+        let expires_at_ms = now_ms.checked_add(kind.ttl_ms()).ok_or(Error::Invalid)?;
+        let inserted = self.insert_first(NewLink {
+            link_id: &link_id,
+            kind,
+            subject,
+            digest: LinkDigest::of(self.instance_id(), kind, &token),
+            issued_at_ms: now_ms,
+            expires_at_ms,
+        })?;
+        Ok(inserted.then_some(Issued {
+            link_id,
+            token,
+            expires_at_ms,
+        }))
     }
     /// Redeems a token once. A malformed token is `Unknown`.
     fn consume(

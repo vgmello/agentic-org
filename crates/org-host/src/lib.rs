@@ -38,6 +38,7 @@ compile_error!(
 );
 
 mod accounts;
+mod admin;
 mod app_auth;
 mod broadcast;
 mod catalog;

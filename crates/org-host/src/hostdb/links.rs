@@ -67,6 +67,36 @@ impl OneTimeLinks for HostDb {
         .map_err(store)?;
         tx.commit().map_err(store)
     }
+    fn insert_first(&self, link: NewLink<'_>) -> Result<bool, Error> {
+        let mut db = self.connection.lock().map_err(poisoned)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store)?;
+        let any: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM one_time_links WHERE kind=?1 AND subject=?2)",
+                (link.kind.as_str(), link.subject.as_str()),
+                |r| r.get(0),
+            )
+            .map_err(store)?;
+        if any {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO one_time_links VALUES (?1,?2,?3,?4,?5,?6,'pending',NULL)",
+            (
+                link.link_id,
+                link.kind.as_str(),
+                link.subject.as_str(),
+                &link.digest.0[..],
+                link.issued_at_ms,
+                link.expires_at_ms,
+            ),
+        )
+        .map_err(store)?;
+        tx.commit().map_err(store)?;
+        Ok(true)
+    }
     fn redeem(
         &self,
         kind: LinkKind,

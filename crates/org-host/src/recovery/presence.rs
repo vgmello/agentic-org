@@ -60,7 +60,7 @@ mod macos {
         }
     }
 }
-pub(super) fn local(connection: &crate::service::listener::Connection) -> bool {
+pub(crate) fn local(connection: &crate::service::listener::Connection) -> bool {
     #[cfg(target_os = "macos")]
     {
         crate::peer::audit_token(connection.socket()).is_ok_and(|token| macos::local(&token))
@@ -81,7 +81,7 @@ pub(crate) fn current() -> bool {
         false
     }
 }
-pub(super) fn confirm(cancelled: impl Fn() -> bool) -> Result<(), ()> {
+pub(crate) fn confirm(cancelled: impl Fn() -> bool) -> Result<(), ()> {
     #[cfg(target_os = "macos")]
     {
         macos::confirm(cancelled)
