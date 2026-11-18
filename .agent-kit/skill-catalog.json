@@ -114,7 +114,7 @@
     },
     {
       "path": "crates/org-socket/Cargo.toml",
-      "sha256": "8903e238421390660cf3badf1dfcc6b950e6841d8ada0ed9d279e56422544e3c"
+      "sha256": "0635ffe4bc3e4fa4787249bb719ee437f7d7042d18e1e71cceb6c884e14a9297"
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",

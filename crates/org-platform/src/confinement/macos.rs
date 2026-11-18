@@ -4,9 +4,11 @@
 use super::refused;
 use std::{ffi::CString, io, mem, path::Path, ptr};
 
+// Test support: Seatbelt has no system calls a container's profile could refuse.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) use super::refused::refuse_call;
 pub(super) use super::shared::fill_entropy;
 use super::Enforcement;
-use crate::Refused;
 use std::os::unix::net::UnixStream;
 
 const PROFILE: &std::ffi::CStr = c"(version 1)(deny default)(allow network-inbound)(deny network-bind)(allow network-outbound (remote unix-socket (path-literal (param \"RENDEZVOUS\"))))";
@@ -148,7 +150,7 @@ const REPORT: Enforcement = Enforcement {
     seccomp: false,
 };
 
-pub(super) fn supported() -> Result<(), Refused> {
+pub(super) fn supported() -> io::Result<()> {
     Ok(())
 }
 
