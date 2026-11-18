@@ -50,7 +50,10 @@ mod host_log;
 mod host_secrets;
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "2b.3 activates hostdb after accepted bootstrap")
+    expect(
+        dead_code,
+        reason = "A2 B3 composes the registry into service start and setup"
+    )
 )]
 mod hostdb;
 pub mod human;

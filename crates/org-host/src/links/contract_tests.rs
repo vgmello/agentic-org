@@ -143,13 +143,13 @@ fn unknown_and_malformed_tokens_are_unknown() {
     each(|links| {
         let s = subject("initial-administrator");
         let issued = links.issue(REG, &s, NOW).unwrap();
-        let mut wrong = issued.token.encode().into_bytes();
+        let mut wrong = issued.token.encode().as_bytes().to_vec();
         wrong[0] = if wrong[0] == b'A' { b'B' } else { b'A' };
         let wrong = String::from_utf8(wrong).unwrap();
-        let padded = format!("{}=", issued.token.encode());
+        let padded = format!("{}=", issued.token.encode().as_str());
         let short = &issued.token.encode()[..42];
-        let mut noncanonical = issued.token.encode().into_bytes();
-        // The final character carries 4 unused bits; any of them set is not canonical.
+        let mut noncanonical = issued.token.encode().as_bytes().to_vec();
+        // The final character carries 2 unused bits; any of them set is not canonical.
         let last = noncanonical.len() - 1;
         noncanonical[last] = match ALPHABET
             .iter()
@@ -180,6 +180,10 @@ fn the_digest_is_bound_to_the_instance_and_kind() {
     let token = Token::parse(&"A".repeat(43)).unwrap();
     let here = LinkDigest::of(INSTANCE, REG, &token);
     assert_ne!(here, LinkDigest::of(OTHER_INSTANCE, REG, &token));
+    // `Registration` is the only kind today, so bind through the field the
+    // kind fills: another kind name gives another digest for the same token.
+    assert_eq!(here.0, digest(INSTANCE, REG.as_str(), &token.0));
+    assert_ne!(here.0, digest(INSTANCE, "invitation", &token.0));
     // Fixed vector: SHA-256 over length-prefixed domain, instance and kind, then
     // the 32 zero token bytes.
     let mut input = Vec::new();
@@ -238,6 +242,7 @@ fn subjects_are_bounded_printable_identifiers() {
 #[test]
 fn token_parse_refuses_wrong_lengths_before_decoding() {
     let good = Token::generate().unwrap().encode();
+    let good = good.as_str();
     for bad in [
         String::new(),
         good[..42].to_owned(),
@@ -247,7 +252,39 @@ fn token_parse_refuses_wrong_lengths_before_decoding() {
     ] {
         assert!(Token::parse(&bad).is_none(), "{}", bad.len());
     }
-    assert!(Token::parse(&good).is_some());
+    assert!(Token::parse(good).is_some());
+}
+
+#[test]
+fn token_parse_refuses_every_noncanonical_final_character() {
+    // 43 characters carry 258 bits for 256; the last character's low 2 bits
+    // are unused. Exactly one of each group of four final characters parses.
+    let prefix = "A".repeat(42);
+    for (p, c) in ALPHABET.iter().enumerate() {
+        let text = format!("{prefix}{}", *c as char);
+        let parsed = Token::parse(&text);
+        assert_eq!(parsed.is_some(), p % 4 == 0, "{text}");
+        if let Some(token) = parsed {
+            assert_eq!(token.encode().as_str(), text);
+        }
+    }
+    // Shorter partial groups follow the same rule inside the decoder.
+    assert_eq!(
+        base64url_decode("AQ").as_deref().map(Vec::as_slice),
+        Some(&[1u8][..])
+    );
+    assert!(base64url_decode("AR").is_none());
+    assert_eq!(
+        base64url_decode("AAE").as_deref().map(Vec::as_slice),
+        Some(&[0u8, 1][..])
+    );
+    assert!(base64url_decode("AAF").is_none());
+}
+
+#[test]
+fn encoded_token_text_is_zeroized_on_drop() {
+    fn zeroized_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+    zeroized_on_drop(&Token::generate().unwrap().encode());
 }
 
 #[test]

@@ -84,17 +84,19 @@ impl Token {
         Ok(Self(bytes))
     }
     /// Only exactly 32 bytes in canonical unpadded base64url parse. The length
-    /// is checked before decoding, so oversized input costs nothing.
+    /// is checked before decoding, so oversized input costs nothing. The
+    /// decoder refuses set unused low bits, so no re-encoding is needed to
+    /// reject a second spelling of the same bytes.
     pub(crate) fn parse(text: &str) -> Option<Self> {
         if text.len() != TOKEN_TEXT_LEN {
             return None;
         }
         let bytes = base64url_decode(text)?;
-        let token = Self(bytes.as_slice().try_into().ok()?);
-        (token.encode() == text).then_some(token)
+        Some(Self(bytes.as_slice().try_into().ok()?))
     }
-    /// The text that goes after `#` in the link.
-    pub(crate) fn encode(&self) -> String {
+    /// The text that goes after `#` in the link. It is the secret, so it is
+    /// zeroed when dropped.
+    pub(crate) fn encode(&self) -> Zeroizing<String> {
         base64url_encode(&self.0)
     }
 }
@@ -273,8 +275,9 @@ pub(crate) fn redeem_rule(state: &str, expires_at_ms: i64, now_ms: i64) -> Resul
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-fn base64url_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+fn base64url_encode(bytes: &[u8]) -> Zeroizing<String> {
+    // Exact capacity, so the buffer never reallocates and leaves no unzeroed copy.
+    let mut out = Zeroizing::new(String::with_capacity(bytes.len().div_ceil(3) * 4));
     for chunk in bytes.chunks(3) {
         let n = chunk
             .iter()
@@ -286,6 +289,8 @@ fn base64url_encode(bytes: &[u8]) -> String {
     }
     out
 }
+/// Strict unpadded base64url: a partial final group must leave its unused low
+/// bits zero (canonical form), so each byte string has exactly one spelling.
 fn base64url_decode(text: &str) -> Option<Zeroizing<Vec<u8>>> {
     if text.len() % 4 == 1 {
         return None;
@@ -297,8 +302,14 @@ fn base64url_decode(text: &str) -> Option<Zeroizing<Vec<u8>>> {
             let v = ALPHABET.iter().position(|a| a == c)? as u32;
             n |= v << (18 - 6 * i);
         }
+        // `chunk.len() - 1` bytes are decoded; the bits below them must be zero.
+        let unused = 24 - 8 * (chunk.len() as u32 - 1);
+        let canonical = unused == 0 || n & ((1 << unused) - 1) == 0;
         out.extend_from_slice(&n.to_be_bytes()[1..chunk.len()]);
         n.zeroize();
+        if !canonical {
+            return None;
+        }
     }
     Some(out)
 }
