@@ -20,6 +20,17 @@
 //! Every step is idempotent; a second run reuses the frozen record and prints no link.
 //! Ports other instances saved are never chosen, and a saved port another program holds
 //! is reported before the service starts.
+//!
+//! Before step 1, [`run`] asks the service manager whether it answers at all (a Linux
+//! machine or container without a systemd user manager is refused there, with the
+//! foreground mode named) and makes the account folders a fresh Linux account lacks.
+//!
+//! Non-interactive setup ([`configuration`], [`Request::configuration`]) takes step 2's
+//! whole input from a strict file instead of choosing a port, is offline, and never asks
+//! for a link. With the file's service mode `foreground` (a container) the credential
+//! directory of step 3 is a mounted volume that setup checks and never makes, and setup
+//! ends after step 4: nothing is registered, started or waited for, and no service manager
+//! is asked anything. `agentic-org serve --setup <file>` runs exactly that and then serves.
 use std::ffi::OsString;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;

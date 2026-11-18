@@ -24,7 +24,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         [command, flag] if command == "serve" && matches!(flag.as_str(), "--help" | "-h") => {
-            println!("Run the installed service host: agentic-org serve [--name <instance>]\nDevelopment builds also support --home, --server-bin and --app-team-id.");
+            println!("Run the installed service host: agentic-org serve [--name <instance>]\nIn the foreground from a setup file (a container): agentic-org serve --setup <file> [--name <instance>]\nDevelopment builds also support --home, --server-bin and --app-team-id.");
             Ok(())
         }
         [command, rest @ ..] if command == "serve" => serve::run(rest.to_vec()),
