@@ -71,8 +71,8 @@ does not promise available capacity.
    next turn boundary ([ADR-0004](../adr/0004-headless-agent-sessions.md)). Taking
    over an agent is a local command-line operation, never a browser action.
 7. **An agent follows the people above it.** It always replies to a person. It
-   follows instructions from a person above it in the organization's hierarchy (its
-   team lead chain, up to the owner); a message from anyone else is a request, and
+   follows instructions from whoever it reports to, a person or an agent, and up
+   that reporting line to the owner; a message from anyone else is a request, and
    its own chain wins. The rule is defined once, in the
    [supervision design](../design/employee-supervision.md) (decision 6).
 
