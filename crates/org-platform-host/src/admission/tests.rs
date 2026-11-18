@@ -303,6 +303,16 @@ fn on_a_refusing_build_every_public_entry_refuses_first() {
         let signed_releases = org_platform::image::release_target()
             .is_ok_and(|target| target.platform == org_platform::image::ReleasePlatform::Macos);
         assert_eq!(static_images().is_ok(), signed_releases);
+        // The adapter says which identity it checks, and it is the code signature
+        // exactly where a release is signed code.
+        assert_eq!(
+            super::image_identity(),
+            Ok(if signed_releases {
+                super::ImageIdentity::CodeSignature
+            } else {
+                super::ImageIdentity::VerifiedBytes
+            })
+        );
         if !signed_releases {
             assert_eq!(static_images().err(), Some(super::refusal()));
         }
@@ -310,6 +320,7 @@ fn on_a_refusing_build_every_public_entry_refuses_first() {
     };
     assert_eq!(refused, super::refusal());
     assert_eq!(static_images().err(), Some(super::refusal()));
+    assert_eq!(super::image_identity(), Err(super::refusal()));
     assert_eq!(native_peers(), Err(super::peer_refusal()));
     let (a, _b) = UnixStream::pair().unwrap();
     let error = peer(&a).unwrap_err();

@@ -32,6 +32,12 @@ pub(super) fn full_sync(file: &File) -> io::Result<()> {
     Ok(())
 }
 
+/// One `F_FULLFSYNC` after every `fsync`.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn device_flushes_per_full_sync() -> Result<u64, crate::Refused> {
+    Ok(1)
+}
+
 pub(super) fn rename_noreplace_at(
     from_dir: &File,
     from: &CStr,

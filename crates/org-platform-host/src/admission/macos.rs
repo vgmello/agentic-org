@@ -204,6 +204,11 @@ pub(super) fn native_peers() -> Result<(), Refused> {
     Ok(())
 }
 
+/// The loaded image's code signature.
+pub(super) fn image_identity() -> Result<super::ImageIdentity, Refused> {
+    Ok(super::ImageIdentity::CodeSignature)
+}
+
 pub(super) fn peer_satisfies(peer: &Peer, requirement: &str, rule: &SigningRule) -> bool {
     let token = &peer.macos_audit_token;
     // The requirement and the hardening checked on the same code object.

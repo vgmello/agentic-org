@@ -30,3 +30,13 @@ thread_local! {
 pub fn full_sync_counts() -> FullSyncCounts {
     COUNTS.get()
 }
+
+/// How many device flushes one successful [`full_sync`](super::full_sync) makes on this
+/// system, as a fixed fact of the adapter and not a measurement: 1 on macOS
+/// (`F_FULLFSYNC` after every `fsync`), 0 on GNU/Linux (`fsync` is the device flush).
+/// A consumer's test multiplies its own count of flushed files by this and requires
+/// exactly that many device flushes, so a publication that skipped one fails where the
+/// system has one. The refusing adapter refuses.
+pub fn device_flushes_per_full_sync() -> Result<u64, crate::Refused> {
+    super::native::device_flushes_per_full_sync()
+}

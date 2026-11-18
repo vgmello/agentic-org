@@ -32,9 +32,23 @@ pub(super) fn paths_may_alias(a: &Path, b: &Path) -> Result<bool, Refused> {
         }))
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn equivalent_spellings_are_one_name() -> Result<bool, Refused> {
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fact_for_tests_is_what_the_comparison_answers() {
+        assert_eq!(
+            equivalent_spellings_are_one_name(),
+            paths_may_alias(Path::new("/d/caf\u{e9}"), Path::new("/d/cafe\u{301}"))
+        );
+        assert_eq!(equivalent_spellings_are_one_name(), Ok(true));
+    }
 
     #[test]
     fn unavailable_path_comparison_preserves_component_and_accent_boundaries() {
