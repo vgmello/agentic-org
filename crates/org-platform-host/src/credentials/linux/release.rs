@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::account;
-use crate::credentials::mounts::{self, Mount, Place};
+use crate::credentials::mounts::{self, Mount, Place, Table};
 use crate::credentials::rules::{self, Ancestor, Identity};
 use crate::credentials::{
     directory, valid_name, CredentialError, ItemStore, MountDoubt, ReleaseDirectory, ReleaseItems,
@@ -185,12 +185,16 @@ fn open(
     // doubt about either place refuses.
     let undetermined = |doubt| refused(RootRule::Undetermined(doubt), &path);
     let table = mount_table().map_err(undetermined)?;
-    let store_place = place(directory.as_fd(), &table).map_err(undetermined)?;
-    let data_place = place(location.data_root, &table).map_err(undetermined)?;
+    let table = Table::of(&table).map_err(undetermined)?;
+    let (store_place, _) = place(directory.as_fd(), &table).map_err(undetermined)?;
+    let (data_place, data_mount) = place(location.data_root, &table).map_err(undetermined)?;
     mounts::disjoint(&store_place, &data_place).map_err(refuse)?;
     if location.mount_point_required {
         let (attributes, reported) = mount_attributes(directory.as_fd()).map_err(unavailable)?;
         rules::mount_point(attributes, reported).map_err(refuse)?;
+        // A volume of its own: not anywhere in what the data root's mount shows.
+        let data_volume = mounts::shown(&data_mount).map_err(undetermined)?;
+        mounts::separate_volumes(&store_place, &data_volume).map_err(refuse)?;
     }
     // The host's item stores that exist, each judged by its own rule and named.
     let existing = item_store_directories(&directory, &path, item_stores, service_user)?;
@@ -636,8 +640,9 @@ fn open_lock(
     })
 }
 
-/// The kernel's mount table of this process, parsed, or the doubt it leaves.
-fn mount_table() -> Result<Vec<Mount>, MountDoubt> {
+/// The bytes of the kernel's mount table of this process, or the doubt that not
+/// having them leaves.
+fn mount_table() -> Result<Vec<u8>, MountDoubt> {
     let unreadable = |error: io::Error| MountDoubt::Unreadable(error.kind());
     let mut table = Vec::new();
     File::open(MOUNT_TABLE)
@@ -645,16 +650,17 @@ fn mount_table() -> Result<Vec<Mount>, MountDoubt> {
         .take(mounts::LARGEST_TABLE as u64 + 1)
         .read_to_end(&mut table)
         .map_err(unreadable)?;
-    mounts::parse(&table)
+    Ok(table)
 }
 
-/// Where the open directory `fd` is inside its filesystem: the mount the kernel says
-/// it is in (`statx`), and its path from this process's root (its descriptor's entry
-/// in `/proc/self/fd`), placed by the mount table `table`.
+/// Where the open directory `fd` is inside its filesystem, and the mount it is in:
+/// the mount the kernel says it is in (`statx`), found in the mount table `table` by
+/// its id, and the directory's path from this process's root (its descriptor's entry
+/// in `/proc/self/fd`), placed below that mount.
 ///
 /// The path is only believed if it names the same directory the descriptor holds: a
 /// directory that was deleted or moved has a path that does not.
-fn place(fd: BorrowedFd<'_>, table: &[Mount]) -> Result<Place, MountDoubt> {
+fn place(fd: BorrowedFd<'_>, table: &Table<'_>) -> Result<(Place, Mount), MountDoubt> {
     let unreadable = |error: io::Error| MountDoubt::Unreadable(error.kind());
     // SAFETY: an all-zero `statx` is a valid value for the call to overwrite.
     let mut stat: libc::statx = unsafe { std::mem::zeroed() };
@@ -676,7 +682,7 @@ fn place(fd: BorrowedFd<'_>, table: &[Mount]) -> Result<Place, MountDoubt> {
         return Err(MountDoubt::NoMountId);
     }
     // The mount first: where its root was deleted, no path names the directory.
-    mounts::listed(table, stat.stx_mnt_id)?;
+    let mount = table.mount(stat.stx_mnt_id)?;
     let path =
         std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).map_err(unreadable)?;
     let held = File::from(fd.try_clone_to_owned().map_err(unreadable)?)
@@ -686,7 +692,8 @@ fn place(fd: BorrowedFd<'_>, table: &[Mount]) -> Result<Place, MountDoubt> {
     if identity(&named) != identity(&held) {
         return Err(MountDoubt::PathOutsideMount);
     }
-    mounts::place(table, stat.stx_mnt_id, path.as_os_str().as_bytes())
+    let place = mounts::place(&mount, path.as_os_str().as_bytes())?;
+    Ok((place, mount))
 }
 
 #[cfg(test)]
