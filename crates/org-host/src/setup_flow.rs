@@ -74,32 +74,23 @@ const LOCATOR_WAIT: Duration = Duration::from_secs(5);
 /// its units with its own environment, not the shell's that ran setup: without these, a
 /// base moved by a variable is looked for elsewhere and the service never becomes ready.
 ///
-/// Only variables that are set to an absolute path are carried; anything else is ignored
-/// by the path rule itself. The names are the system's: where no variable can move the
-/// application base (macOS) there are none, and where one can (GNU/Linux, the XDG base
-/// directories) its two siblings, which place the user temp base and the default
-/// credential directory by the same rule, are carried with it.
-///
-/// Known limit: the platform names only the application base's variable
-/// (`dirs::application_base_variables`); the two siblings are written here by name until
-/// `org_platform::dirs` names the variables of the temp base and the credential base too.
+/// The names are the system's (`org_platform::dirs::location_variables`): every variable
+/// that can move the application base, the user temp base or the default credential
+/// directory; none where nothing can move them. Only variables that are set to an absolute
+/// path are carried; anything else is ignored by the path rule itself.
 pub fn path_environment() -> Vec<(OsString, OsString)> {
     path_environment_from(
-        org_platform::dirs::application_base_variables().unwrap_or(&[]),
+        org_platform::dirs::location_variables().unwrap_or(&[]),
         |name| std::env::var_os(name),
     )
 }
 
 fn path_environment_from(
-    application_base: &[&str],
+    names: &[&str],
     value: impl Fn(&str) -> Option<OsString>,
 ) -> Vec<(OsString, OsString)> {
-    let mut names: Vec<&str> = application_base.to_vec();
-    if names.contains(&"XDG_DATA_HOME") {
-        names.extend(["XDG_CACHE_HOME", "XDG_STATE_HOME"]);
-    }
     names
-        .into_iter()
+        .iter()
         .filter_map(|name| {
             let value = value(name).filter(|v| Path::new(v).is_absolute())?;
             Some((OsString::from(name), value))
@@ -217,20 +208,25 @@ fn open_as_the_host_will(
     )
 }
 
-/// What can refuse a configuration from a file, asked before anything is saved (X5 review
-/// V1), so that a refused file leaves nothing and a corrected one works on the next run:
+/// What can refuse a configuration from a file, asked before anything is saved or reserved
+/// (X5 review V1, and its second round), so that a refused file leaves nothing and a
+/// corrected one works on the next run:
 ///
-/// - a registered service's address must be free now (its service is started by setup);
+/// - the address must be free now, in either service mode: a registered service is started
+///   by setup, and a foreground instance is served by this process right after it. The
+///   address is reserved with the instance and never changes, so a port another program
+///   holds is refused here and not found by the web process after the instance was set up;
 /// - the credential directory the file names must pass the host's own check. The check
 ///   compares it with the data folder, which is made for the question when it is missing
-///   and removed again before this returns, whatever the answer.
+///   and removed again before this returns, whatever the answer. The data folder is opened
+///   as a directory only, so a path that is something else (a FIFO) is refused, never
+///   waited on.
 fn preflight(input: &Input) -> Result<(), String> {
     use std::os::fd::AsFd;
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::DirBuilderExt;
     let listen = &input.listen;
-    if input.service == Service::Registered
-        && std::net::TcpListener::bind((listen.address(), listen.port())).is_err()
-    {
+    if std::net::TcpListener::bind((listen.address(), listen.port())).is_err() {
         return Err(format!(
             "port {} on {} is in use by another program; choose another port in the file, or \
              stop that program; nothing was saved",
@@ -251,7 +247,9 @@ fn preflight(input: &Input) -> Result<(), String> {
             ))
         }
     };
-    let checked = std::fs::File::open(&input.root)
+    let checked = std::ffi::CString::new(input.root.as_os_str().as_bytes())
+        .map_err(std::io::Error::other)
+        .and_then(|path| store_directories::open_directory(None, &path))
         .map_err(|e| format!("the data folder {}: {e}", input.root.display()))
         .and_then(|root| {
             use_credential_directory(
@@ -387,7 +385,13 @@ mod store_directories {
         }
     }
 
-    fn open_directory(parent: Option<&OwnedFd>, name: &CString) -> std::io::Result<OwnedFd> {
+    /// `name` as a directory, below `parent` or (without one) as a whole path: never a
+    /// symbolic link in its last component, and never anything but a directory, which is
+    /// refused at once (a FIFO is not opened and waited on).
+    pub(super) fn open_directory(
+        parent: Option<&OwnedFd>,
+        name: &CString,
+    ) -> std::io::Result<OwnedFd> {
         let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         // SAFETY: `name` is NUL-terminated and `parent`, when given, is an open directory.
         let fd = unsafe {
@@ -564,13 +568,26 @@ impl Configuration {
 ///   runtime publishes on the Docker host's loopback). It is never implied: `http_loopback`
 ///   with another address is refused. `"https"` is refused: no build serves it yet.
 ///
-/// Nothing is created or changed by reading it.
+/// Nothing is created or changed by reading it. It must be a regular file: anything else (a
+/// FIFO, a device, a directory) is refused when it is opened, without waiting for a writer,
+/// so that a stop signal that arrives meanwhile is not held up behind it.
 pub fn configuration(path: &Path) -> Result<Configuration, String> {
     use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
     let shown = path.display();
     let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .and_then(|file| file.take(64 * 1024 + 1).read_to_end(&mut bytes))
+    std::fs::OpenOptions::new()
+        .read(true)
+        // Opening a FIFO without a writer would wait; with this it returns at once. A
+        // terminal named here never becomes this process's controlling terminal.
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
+        .and_then(|file| {
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::other("it is not a regular file"));
+            }
+            file.take(64 * 1024 + 1).read_to_end(&mut bytes)
+        })
         .map_err(|e| format!("reading the setup configuration {shown}: {e}"))?;
     let input = Input::from_configuration(&bytes).map_err(|e| {
         // The rule alone: the error's own prefix speaks of choosing an instance.
@@ -1009,6 +1026,9 @@ pub(crate) fn run_at(
             (id, temp.join("host.sock"))
         }
         None => {
+            // Whether the registry holds the reservation: from then on it binds the instance's
+            // name to its data folder and its address, whatever happens to this run.
+            let published = std::cell::Cell::new(false);
             let reserve = |record: &mut Record| -> Result<(String, PathBuf), String> {
                 registry
                     .restore_temp_folders()
@@ -1020,6 +1040,7 @@ pub(crate) fn run_at(
                     instance
                         .set_browser(&record.input.listen)
                         .map_err(|e| fail("recording the instance address", e))?;
+                    published.set(true);
                     instance
                         .prepare_layout()
                         .map_err(|e| fail("preparing the instance folder", e))?;
@@ -1059,15 +1080,32 @@ pub(crate) fn run_at(
                 Ok(reserved) => reserved,
                 Err(refused) => {
                     // What this run froze from a file is not left to refuse the next,
-                    // corrected one. (A reservation that was made stays the registry's:
-                    // the same data folder is reserved again by the next run.)
-                    // Known limit: the registry has no way to undo a reservation, so a
-                    // registered setup that fails after this point (when its service is
-                    // registered) keeps its record, and only the same file continues it.
-                    if froze_from_file {
-                        let _ = journal.abandon();
+                    // corrected one. A reservation that was made stays the registry's: the
+                    // same data folder and address are reserved again by the next run, and
+                    // the refusal says so (X5 review, second round). Both were asked before
+                    // the reservation (`preflight`), so what remains reserved can be served;
+                    // what refused here (the credential directory, or the disk) is not part
+                    // of it, and a file that corrects only that continues the setup.
+                    // Known limit: the registry has no way to undo a reservation, so a file
+                    // with another data folder or address is refused by it until the
+                    // instance is removed; and a registered setup that fails after this
+                    // point (when its service is registered) keeps its record, and only the
+                    // same file continues it.
+                    if !froze_from_file {
+                        return Err(refused);
                     }
-                    return Err(refused);
+                    let _ = journal.abandon();
+                    if !published.get() {
+                        return Err(refused);
+                    }
+                    return Err(format!(
+                        "{refused}; instance \"{shown}\" stays reserved with the data folder {} \
+                         and the address {}: run setup again with a file that keeps both (it \
+                         may change the credential directory); another data folder or address \
+                         needs the instance removed, which no command offers yet",
+                        record.input.root.display(),
+                        record.input.listen.origin().as_str()
+                    ));
                 }
             }
         }
@@ -1432,38 +1470,57 @@ pub fn admin_reset(
     if acting_for.is_none() && crate::human::host_is_named_by_user_alone() {
         return Err(reset_needs_root(name));
     }
-    let not_running = |why: String| {
-        format!(
-            "{why}; the service is not running: start it with agentic-org service start{}",
-            name.map(|n| format!(" --name {n}")).unwrap_or_default()
-        )
-    };
-    let (record, wire) = match acting_for {
-        Some(account) => {
-            let (record, id, socket) =
-                as_account(account, || registered(&crate::human::paths(name)?, name))?;
-            // The first line names the user whose instance this is, so that a reset never
-            // lands on another user's instance unnoticed (SIGN-33).
-            say(
-                out,
-                format!(
-                    "Instance {} of Linux user {}.",
-                    name.unwrap_or("default"),
-                    account_name(account.uid)
-                ),
-            )?;
-            let wire = connect_verified(&socket, &id, |stream| {
-                crate::human::verify_service_host(stream, account.uid)
-            })
-            .map_err(not_running)?;
-            (record, wire)
-        }
+    match acting_for {
+        Some(account) => reset_for(account, name, || crate::human::paths(name), out),
         None => {
             let (record, id, socket) = registered(&crate::human::paths(name)?, name)?;
-            (record, connect(&socket, &id).map_err(not_running)?)
+            let wire = connect(&socket, &id).map_err(|why| not_running(name, why))?;
+            reset_over(wire, record.input.listen.origin(), name, out)
         }
+    }
+}
+
+/// Root's reset of the instance `name` of the service user `account`, whose instance
+/// locations `paths` gives. Root finds the instance as that user ([`as_account`]) and connects
+/// as root.
+///
+/// Every refusal is escaped before it is returned (`host_log::untrusted`): its text comes from
+/// that user's folders (a registered data folder's path, a setup record) and from its service,
+/// all of which that user controls, and it is printed on root's terminal, where a control
+/// character could act (X5 review, second round).
+fn reset_for(
+    account: Account,
+    name: Option<&str>,
+    paths: impl FnOnce() -> Result<Paths, String>,
+    out: &mut dyn Write,
+) -> Result<(), String> {
+    let reset = || {
+        let (record, id, socket) = as_account(account, || registered(&paths()?, name))?;
+        // The first line names the user whose instance this is, so that a reset never
+        // lands on another user's instance unnoticed (SIGN-33).
+        say(
+            out,
+            format!(
+                "Instance {} of Linux user {}.",
+                name.unwrap_or("default"),
+                account_name(account.uid)
+            ),
+        )?;
+        let wire = connect_verified(&socket, &id, |stream| {
+            crate::human::verify_service_host(stream, account.uid)
+        })
+        .map_err(|why| not_running(name, why))?;
+        reset_over(wire, record.input.listen.origin(), name, out)
     };
-    reset_over(wire, record.input.listen.origin(), name, out)
+    reset().map_err(|why| crate::host_log::untrusted(&why))
+}
+
+/// What `admin reset` says when it cannot reach the instance's service.
+fn not_running(name: Option<&str>, why: String) -> String {
+    format!(
+        "{why}; the service is not running: start it with agentic-org service start{}",
+        name.map(|n| format!(" --name {n}")).unwrap_or_default()
+    )
 }
 
 /// What `admin reset` answers on Linux to anyone but root (spec §4a.2, SIGN-33).

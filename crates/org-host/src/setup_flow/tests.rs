@@ -310,12 +310,13 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
     let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    let port = free_port();
     let input = Input {
         version: 1,
         service: Service::Foreground,
         root: base.join("data"),
         credentials: None,
-        listen: loopback(7420).unwrap(),
+        listen: loopback(port).unwrap(),
     };
     let platform = Platform {
         service: Box::new(Untouchable),
@@ -380,7 +381,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
     let mut other = input.clone();
     other.service = Service::Registered;
     let mut moved = input.clone();
-    moved.listen = loopback(7421).unwrap();
+    moved.listen = loopback(port.checked_add(1).unwrap_or(port - 1)).unwrap();
     for changed in [other, moved] {
         let request = Request {
             name: None,
@@ -496,17 +497,20 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
             listing(&base.join("locator")),
         )
     };
-    let foreground = |credentials: Option<PathBuf>| {
-        Input {
+    let published = |port: u16| -> ListenConfig {
+        serde_json::from_value(serde_json::json!({
+            "address": "0.0.0.0", "port": port, "scheme": "http_published",
+            "origin": format!("http://localhost:{port}"), "hsts": "off"
+        }))
+        .unwrap()
+    };
+    let port = free_port();
+    let foreground = |credentials: Option<PathBuf>| Input {
         version: 1,
         service: Service::Foreground,
         root: outside.join("data"),
         credentials,
-        listen: serde_json::from_str(
-            r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
-        )
-        .unwrap(),
-    }
+        listen: published(port),
     };
     // 1. A credential directory that cannot be used (a path that does not exist: the typo;
     //    a plain folder, which is no mount and, here, below a shared temporary folder).
@@ -545,6 +549,23 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
         "{refused}"
     );
     assert_eq!(state(), before);
+    // 2b. And a foreground instance's (second round): its address is reserved with it and
+    //     never changes, so a held one is refused before anything is saved, not left for the
+    //     web process to fail on after the instance was set up.
+    let wildcard = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+    let mut held_foreground = foreground(None);
+    held_foreground.listen = published(wildcard.local_addr().unwrap().port());
+    let refused = run(&held_foreground).unwrap_err();
+    assert!(
+        refused.contains("is in use by another program") && refused.ends_with("nothing was saved"),
+        "{refused}"
+    );
+    assert_eq!(state(), before);
+    assert!(
+        Journal::snapshot(&base, None).is_err(),
+        "a record was saved"
+    );
+    drop(wildcard);
     // 3. A record an earlier run froze and could not continue pins nothing.
     let journal = Journal::open(&base, None).unwrap();
     journal
@@ -643,37 +664,173 @@ fn only_this_instances_own_link_is_ever_printed() {
     assert!(!refused.contains("evil") && !refused.contains('\u{1b}'));
 }
 
+/// X5 review, second round: root's reset for the service user prints nothing that user
+/// controls unescaped. Here the lookup itself fails: the user's registered data folder, whose
+/// path carries terminal control sequences, is gone, and the locator's refusal names it.
+/// (Root acts as this test's own user, which needs no privilege.)
+#[test]
+fn roots_reset_escapes_what_a_failed_lookup_of_the_service_users_instance_says() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap().join("b");
+    for dir in [base.clone(), base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    let root = base.join("data\u{1b}]0;pwned\u{7}\u{1b}[2J");
+    let id = Registry::open(&paths.locator, &paths.user_temp)
+        .unwrap()
+        .reserve(None, &root)
+        .unwrap()
+        .id()
+        .to_owned();
+    let journal = Journal::open(&base, None).unwrap();
+    let input = Input {
+        version: 1,
+        service: Service::Registered,
+        root: root.clone(),
+        credentials: None,
+        listen: loopback(7420).unwrap(),
+    };
+    let record = journal
+        .freeze(input, false, release_pin().unwrap())
+        .unwrap();
+    journal
+        .write(&Record {
+            instance_id: Some(id),
+            ..record
+        })
+        .unwrap();
+    drop(journal);
+    std::fs::rename(&root, base.join("moved")).unwrap();
+    // SAFETY: getegid and geteuid have no preconditions and cannot fail.
+    let me = Account {
+        uid: unsafe { libc::geteuid() },
+        gid: unsafe { libc::getegid() },
+    };
+    let mut out = Vec::new();
+    let refused = reset_for(me, None, || Ok(paths), &mut out).unwrap_err();
+    assert!(refused.contains("is unavailable"), "{refused}");
+    assert!(
+        !refused.contains(char::is_control) && refused.contains("data\\u{1b}]0;pwned\\u{7}"),
+        "{refused:?}"
+    );
+    assert!(
+        out.is_empty(),
+        "nothing is printed before the instance is found"
+    );
+}
+
+/// X5 review, second round: a configuration that is not a regular file, and a data folder
+/// that is not a directory, are refused at once: a FIFO without a writer is never waited on
+/// (a stop signal waits behind such a wait), and nothing is saved.
+#[test]
+fn a_fifo_is_refused_as_a_configuration_and_as_a_data_folder_without_waiting() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let fifo = |path: &Path| {
+        let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    };
+    // Each call runs on its own thread, so a wait fails the test instead of hanging it.
+    let within = |what: &str, call: Box<dyn FnOnce() -> String + Send>| {
+        let (sent, received) = std::sync::mpsc::channel();
+        std::thread::spawn(move || sent.send(call()).unwrap());
+        received
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("{what} waited on a FIFO"))
+    };
+    let file = dir.join("setup.json");
+    fifo(&file);
+    let refused = within(
+        "reading the configuration",
+        Box::new(move || configuration(&file).unwrap_err()),
+    );
+    assert!(
+        refused.starts_with("reading the setup configuration ")
+            && refused.contains("not a regular file"),
+        "{refused}"
+    );
+    // A directory is no configuration either.
+    let refused = configuration(&dir).unwrap_err();
+    assert!(refused.contains("not a regular file"), "{refused}");
+    // A data folder that is a FIFO, with a credential directory to check against it.
+    let root = dir.join("data");
+    fifo(&root);
+    let secrets = dir.join("secrets");
+    std::fs::create_dir(&secrets).unwrap();
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let input = Input {
+        version: 1,
+        service: Service::Foreground,
+        root: root.clone(),
+        credentials: Some(secrets),
+        listen: loopback(free_port()).unwrap(),
+    };
+    let refused = within(
+        "the data folder check",
+        Box::new(move || preflight(&input).unwrap_err()),
+    );
+    assert!(
+        refused.starts_with(&format!("the data folder {}: ", root.display()))
+            && refused.ends_with("nothing was saved"),
+        "{refused}"
+    );
+    use std::os::unix::fs::FileTypeExt;
+    assert!(std::fs::symlink_metadata(&root)
+        .unwrap()
+        .file_type()
+        .is_fifo());
+}
+
+/// A port no other program holds now.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
 /// X5 review V7: the unit is given exactly the variables that decided the instance's
-/// paths, when they are set to an absolute path.
+/// paths, when they are set to an absolute path. The names are the platform's: nothing here
+/// knows which system's variables they are (second round).
 #[test]
 fn a_registered_service_is_given_the_variables_that_decided_its_paths() {
     let set = |name: &str| match name {
-        "XDG_DATA_HOME" => Some(OsString::from("/srv/data")),
-        "XDG_CACHE_HOME" => Some(OsString::from("relative/cache")),
-        "XDG_STATE_HOME" => Some(OsString::from("/srv/state")),
+        "DATA" => Some(OsString::from("/srv/data")),
+        "CACHE" => Some(OsString::from("relative/cache")),
+        "STATE" => Some(OsString::from("/srv/state")),
         _ => Some(OsString::from("/never")),
     };
     assert_eq!(
-        path_environment_from(&["XDG_DATA_HOME"], set),
+        path_environment_from(&["DATA", "CACHE", "STATE"], set),
         [
-            ("XDG_DATA_HOME".into(), "/srv/data".into()),
-            ("XDG_STATE_HOME".into(), "/srv/state".into()),
+            ("DATA".into(), "/srv/data".into()),
+            ("STATE".into(), "/srv/state".into()),
         ]
     );
-    // Unset, empty and relative values are not carried.
+    // Unset, empty and relative values are not carried, nor any name the platform omits.
     let unset = |name: &str| match name {
-        "XDG_CACHE_HOME" => Some(OsString::from("/srv/cache")),
-        "XDG_STATE_HOME" => Some(OsString::new()),
+        "CACHE" => Some(OsString::from("/srv/cache")),
+        "STATE" => Some(OsString::new()),
         _ => None,
     };
     assert_eq!(
-        path_environment_from(&["XDG_DATA_HOME"], unset),
-        [("XDG_CACHE_HOME".into(), "/srv/cache".into())]
+        path_environment_from(&["DATA", "CACHE", "STATE"], unset),
+        [("CACHE".into(), "/srv/cache".into())]
     );
-    // A system on which no variable moves the application base carries none.
+    assert!(path_environment_from(&["DATA"], unset).is_empty());
+    // A system on which no variable moves a location carries none.
     assert!(path_environment_from(&[], set).is_empty());
-    // This system's own answer names only variables that are set and absolute.
+    // This system's own answer names only the platform's variables that are set and absolute.
+    let names = org_platform::dirs::location_variables().unwrap();
     for (name, value) in path_environment() {
+        assert!(names.contains(&name.to_str().unwrap()), "{name:?}");
         assert_eq!(std::env::var_os(&name).as_ref(), Some(&value));
         assert!(Path::new(&value).is_absolute());
     }
@@ -1117,6 +1274,78 @@ mod credentials {
         let mut out = Vec::new();
         let result = run_at(&paths, &platform, request, &mut out);
         (result, String::from_utf8(out).unwrap())
+    }
+
+    /// X5 review, second round: a setup from a file that is refused after its instance was
+    /// reserved (here by the platform's credential directory, which the host would refuse)
+    /// leaves no record and says what stays reserved, and the same file continues once the
+    /// cause is gone.
+    #[test]
+    fn a_file_refused_after_its_reservation_says_what_stays_reserved_and_then_continues() {
+        let account = account();
+        let temp = account.base.join("t");
+        fs::create_dir(&temp).unwrap();
+        fs::set_permissions(&temp, fs::Permissions::from_mode(0o700)).unwrap();
+        let paths = Paths::at(&account.base, temp, None).unwrap();
+        let port = free_port();
+        let input = Input {
+            version: 1,
+            service: Service::Registered,
+            root: account.base.join("data"),
+            credentials: None,
+            listen: loopback(port).unwrap(),
+        };
+        let run = |credentials: CredentialDirectory| {
+            let platform = Platform {
+                service: Box::new(NoService),
+                disk: Box::new(org_platform::testing::FakeDiskEncryption(
+                    EncryptionState::On,
+                )),
+                credentials,
+            };
+            let request = Request {
+                name: None,
+                port: None,
+                prompt: None,
+                named_port_base: NAMED_PORT_BASE,
+                program: PathBuf::from("/no-such-program"),
+                env: Vec::new(),
+                terminal: false,
+                configuration: Some(Configuration(input.clone())),
+            };
+            let mut out = Vec::new();
+            run_at(&paths, &platform, request, &mut out)
+        };
+        // Below a shared temporary directory, which others can write to: refused after the
+        // reservation, since the directory is named by the instance's ID.
+        let state = account.base.join("state");
+        let refused = run(CredentialDirectory::Below(state.clone())).unwrap_err();
+        assert!(
+            refused.starts_with("the credential directory cannot be used: "),
+            "{refused}"
+        );
+        assert!(
+            refused.ends_with(&format!(
+                "; instance \"default\" stays reserved with the data folder {} and the address \
+                 http://127.0.0.1:{port}: run setup again with a file that keeps both (it may \
+                 change the credential directory); another data folder or address needs the \
+                 instance removed, which no command offers yet",
+                account.base.join("data").display()
+            )),
+            "{refused}"
+        );
+        assert!(
+            Journal::snapshot(&account.base, None).is_err(),
+            "the record was kept"
+        );
+        assert!(!state.exists());
+        // Once the cause is gone the same file continues, up to the service, which this
+        // test's manager refuses.
+        let stopped = run(CredentialDirectory::Unused).unwrap_err();
+        assert!(stopped.starts_with("registering the service"), "{stopped}");
+        let record = Journal::snapshot(&account.base, None).unwrap();
+        assert_eq!(record.input, input);
+        assert!(record.instance_id.is_some());
     }
 
     /// Setup on this machine, with the host's own walk from `/`. A credential directory

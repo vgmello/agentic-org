@@ -460,6 +460,14 @@ checks and a lock.
   new, empty ones, and the empty-store check then refuses rather than silently losing
   the keys) and never to bind-mount a macOS folder (refused by the filesystem rule).
   Without a mounted secrets volume, setup refuses.
+  A development build in a container keeps its development store in one folder
+  directly in the recorded secrets volume (`/secrets/dev-keys` in the image): a host
+  in the foreground mode refuses, before anything is written, a development key folder
+  anywhere else (in the data volume, a copy of which would then hold the keys), one
+  reached through a link, or one on another filesystem mounted inside the volume; and
+  a foreground record that names no secrets volume does not start on Linux. Known limit:
+  the development stores reopen that folder by its path after the check, which only
+  the service user, who can read the keys anyway, could exploit.
 
 **Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
 `Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,
@@ -859,7 +867,10 @@ same three adapters, and LNX-5's check covers them.
   `application_base` and, with the environment left out, `account_application_base`
   (a release host is pinned to the second and refuses when the first differs, so
   `XDG_DATA_HOME` cannot move it), `user_temp_base`, `environment_spelling`,
-  `socket_path_limit`. The runtime base for sockets is built when X2 needs it. macOS:
+  `socket_path_limit`; and `location_variables`, every variable that can move one of
+  the locations (none on macOS; the three XDG base variables on Linux), which setup
+  gives a registered unit with their values so that the service resolves what setup
+  resolved. The runtime base for sockets is built when X2 needs it. macOS:
   `~/Library/Application Support/agentic.org`, `_CS_DARWIN_USER_TEMP_DIR`, 103 bytes.
   Linux: `${XDG_DATA_HOME:-~/.local/share}/agentic-org/`,
   `${XDG_CACHE_HOME:-~/.cache}/agentic-org/tmp/` (on disk; `require_disk` applies)

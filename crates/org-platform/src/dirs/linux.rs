@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 /// The folder of this product inside an XDG base directory.
 const PRODUCT: &str = "agentic-org";
 
+/// The XDG base directory variable of each location.
+const DATA_HOME: &str = "XDG_DATA_HOME";
+const CACHE_HOME: &str = "XDG_CACHE_HOME";
+const STATE_HOME: &str = "XDG_STATE_HOME";
+
 pub(super) fn application_base(home: &Path) -> Result<PathBuf, Refused> {
-    Ok(application_base_from(
-        std::env::var_os("XDG_DATA_HOME"),
-        home,
-    ))
+    Ok(application_base_from(std::env::var_os(DATA_HOME), home))
 }
 
 pub(super) fn account_application_base(home: &Path) -> Result<PathBuf, Refused> {
@@ -18,19 +20,20 @@ pub(super) fn account_application_base(home: &Path) -> Result<PathBuf, Refused> 
 }
 
 pub(super) fn application_base_variables() -> Result<&'static [&'static str], Refused> {
-    Ok(&["XDG_DATA_HOME"])
+    Ok(&[DATA_HOME])
+}
+
+pub(super) fn location_variables() -> Result<&'static [&'static str], Refused> {
+    Ok(&[DATA_HOME, CACHE_HOME, STATE_HOME])
 }
 
 pub(super) fn user_temp_base(home: &Path) -> Result<PathBuf, UserTempError> {
-    Ok(user_temp_base_from(
-        std::env::var_os("XDG_CACHE_HOME"),
-        home,
-    ))
+    Ok(user_temp_base_from(std::env::var_os(CACHE_HOME), home))
 }
 
 pub(super) fn credential_directory_base(home: &Path) -> Result<PathBuf, Refused> {
     Ok(credential_directory_base_from(
-        std::env::var_os("XDG_STATE_HOME"),
+        std::env::var_os(STATE_HOME),
         home,
     ))
 }
@@ -115,6 +118,18 @@ mod tests {
             Path::new("/home/a/.local/share/agentic-org")
         );
         assert_eq!(application_base_variables().unwrap(), ["XDG_DATA_HOME"]);
+    }
+
+    /// The variables that move the three locations, the application base's among them.
+    #[test]
+    fn the_location_variables_are_the_three_xdg_bases() {
+        assert_eq!(
+            location_variables().unwrap(),
+            ["XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]
+        );
+        for name in application_base_variables().unwrap() {
+            assert!(location_variables().unwrap().contains(name));
+        }
     }
 
     #[test]

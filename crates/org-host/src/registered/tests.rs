@@ -313,3 +313,148 @@ fn a_start_without_admitted_runtime_refuses_before_touching_the_instance() {
         "no custody"
     );
 }
+
+/// X5 review, second round, P1: in the foreground mode a development build keeps its keys in
+/// the secrets volume setup recorded, and nowhere else. A development key folder named
+/// elsewhere (here beside the instance's data folder, as `/data/keys` is in a container) is
+/// refused before any key or secret is written, whatever the volume itself is. Only a system
+/// that keeps a host's secrets in a directory records one; on another this cannot arise.
+#[test]
+fn a_foreground_start_refuses_a_development_key_folder_outside_the_secrets_volume() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore};
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        println!("skipped: this system records no credential directory");
+        return;
+    }
+    let f = fixture();
+    let secrets = f.base.join("secrets");
+    fs::create_dir(&secrets).unwrap();
+    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700)).unwrap();
+    let listen = listen(7420);
+    let id = f.reserve(Some(&listen));
+    let journal = Journal::open(&f.base, None).unwrap();
+    let input = Input {
+        version: 1,
+        service: crate::instance::setup::Service::Foreground,
+        root: f.base.join("instance"),
+        credentials: Some(secrets.clone()),
+        listen,
+    };
+    let pin = ReleasePin {
+        release_id: "fixture-1".into(),
+        sequence: 1,
+        manifest_sha256: "a".repeat(64),
+    };
+    let record = journal.freeze(input, true, pin).unwrap();
+    journal
+        .write(&Record {
+            instance_id: Some(id),
+            credentials: Some(secrets.clone()),
+            ..record
+        })
+        .unwrap();
+    drop(journal);
+    // The fixture's key folder (`<base>/keys`) is in the "data volume", not in `secrets`.
+    let refused = f.start().err().expect("refused").to_string();
+    assert!(
+        refused.contains("is not a folder directly in the credential directory")
+            && refused.contains("nothing was written"),
+        "{refused}"
+    );
+    assert!(f.custody().is_empty(), "custody was written");
+    assert!(!f.registry_db().exists());
+    assert_eq!(fs::read_dir(&secrets).unwrap().count(), 0);
+}
+
+/// The rule itself: one folder directly in the credential directory, made there owner-only
+/// when it is missing and opened from it; anything else is refused and nothing is made.
+#[test]
+fn the_foreground_development_key_folder_is_one_folder_directly_in_the_secrets_volume() {
+    let f = fixture();
+    let secrets = f.base.join("secrets");
+    let data = f.base.join("data");
+    for dir in [&secrets, &data] {
+        fs::create_dir(dir).unwrap();
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    for outside in [
+        data.join("keys"),
+        secrets.join("a/keys"),
+        secrets.join("../data/keys"),
+        f.base.join("secrets-keys"),
+        secrets.clone(),
+    ] {
+        let refused = development_key_folder(&secrets, &outside).unwrap_err();
+        assert!(
+            refused.contains("is not a folder directly in the credential directory"),
+            "{refused}"
+        );
+    }
+    // A link in the volume to a folder elsewhere is not followed, and nothing is made there.
+    fs::create_dir(data.join("elsewhere")).unwrap();
+    fs::set_permissions(data.join("elsewhere"), fs::Permissions::from_mode(0o700)).unwrap();
+    std::os::unix::fs::symlink(data.join("elsewhere"), secrets.join("linked")).unwrap();
+    let linked = secrets.join("linked");
+    let name = development_key_folder(&secrets, &linked).unwrap();
+    let refused = make_development_key_folder(&secrets, name).unwrap_err();
+    assert!(refused.contains("is not a folder of its own"), "{refused}");
+    assert_eq!(fs::read_dir(data.join("elsewhere")).unwrap().count(), 0);
+    // The folder in the volume is made owner-only, and found again on the next start.
+    let folder = secrets.join("dev-keys");
+    let name = development_key_folder(&secrets, &folder).unwrap();
+    make_development_key_folder(&secrets, name).unwrap();
+    assert_eq!(
+        fs::metadata(&folder).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+    make_development_key_folder(&secrets, name).unwrap();
+    // A folder that breaks the mode is refused, never repaired.
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+    let refused = make_development_key_folder(&secrets, name).unwrap_err();
+    assert!(refused.contains("with mode 700"), "{refused}");
+    assert_eq!(
+        fs::metadata(&folder).unwrap().permissions().mode() & 0o7777,
+        0o755
+    );
+}
+
+/// X5 review, second round: on a system that keeps a host's secrets in a directory, a
+/// foreground record that names no secrets volume (setup refuses such a file; this one is
+/// written by hand) does not start, so neither the volume's checks nor the development key
+/// folder's rule can be skipped. Nothing is written.
+#[test]
+fn a_foreground_record_without_its_secrets_volume_does_not_start_where_one_is_required() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore};
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        println!("skipped: this system keeps no host secrets in a directory");
+        return;
+    }
+    let f = fixture();
+    let listen = listen(7420);
+    let id = f.reserve(Some(&listen));
+    let journal = Journal::open(&f.base, None).unwrap();
+    let input = Input {
+        version: 1,
+        service: crate::instance::setup::Service::Foreground,
+        root: f.base.join("instance"),
+        credentials: None,
+        listen,
+    };
+    let pin = ReleasePin {
+        release_id: "fixture-1".into(),
+        sequence: 1,
+        manifest_sha256: "a".repeat(64),
+    };
+    let record = journal.freeze(input, true, pin).unwrap();
+    journal
+        .write(&Record {
+            instance_id: Some(id),
+            ..record
+        })
+        .unwrap();
+    drop(journal);
+    let refused = f.start().err().expect("refused").to_string();
+    assert!(refused.contains(FOREGROUND_WITHOUT_VOLUME), "{refused}");
+    assert!(f.custody().is_empty(), "custody was written");
+    assert!(!f.registry_db().exists());
+}
