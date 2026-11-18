@@ -40,7 +40,9 @@
 //! An adapter's own refusal (a precondition that does not hold, a mechanism that is
 //! unavailable, a child that is not confined) is an error without an OS error number
 //! whose text is `gateway confinement unavailable`. The Linux adapter appends a colon
-//! and the cause. A failed connection to the rendezvous keeps its OS error number.
+//! and the cause, and so does the macOS adapter for an entry precondition that does not
+//! hold (a thread, or a descriptor other than 0 to 2, which is for whoever started the
+//! process to close). A failed connection to the rendezvous keeps its OS error number.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
