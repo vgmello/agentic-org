@@ -83,9 +83,7 @@ fn without_a_feed_subscribe_is_unsupported_for_every_caller() {
     server.join().unwrap();
 }
 
-/// With no feed there is no organization change to wait for: the member watcher looks on every
-/// idle tick, so a connection bound as a member that is gone from the directory is still
-/// revoked, without the connection sending anything.
+/// A connection bound as a member that disappears is revoked without sending another call.
 #[test]
 fn without_a_feed_the_watcher_still_revokes_a_member_gone_from_the_directory() {
     let _spawn = crate::transfer::tests::without_process_spawn();
@@ -101,37 +99,121 @@ fn without_a_feed_the_watcher_still_revokes_a_member_gone_from_the_directory() {
         idle: Duration::from_millis(50),
         ..Timing::default()
     };
-    let shared =
-        Arc::new(Shared::new(&test_info(), &path, ports, launch_key()).with_timing(timing));
+    let token = Arc::new(AtomicU64::new(0));
+    let mut shared = Shared::new(&test_info(), &path, ports, launch_key()).with_timing(timing);
+    shared.watch_directory_changes({
+        let token = Arc::clone(&token);
+        move || token.load(Ordering::SeqCst)
+    });
+    let shared = Arc::new(shared);
     let (stop, server) = start(&path, &shared);
 
     let ada = Client::bound_as(&path, "ada");
     let remy = Client::bound_as(&path, "remy");
-    let revoked = |member: &str| {
+    let control = |member: &str| {
         shared
             .bound
             .lock()
             .unwrap()
             .values()
-            .any(|(bound, control)| bound == member && control.revoked.load(Ordering::SeqCst))
+            .find(|(bound, _)| bound == member)
+            .map(|(_, control)| Arc::clone(control))
+            .unwrap()
     };
-    // Nothing changes: a tick that looks finds both still bindable.
+    let ada_control = control(ADA_ID);
+    let remy_control = control(REMY_ID);
     std::thread::sleep(Duration::from_millis(200));
-    assert!(!revoked(ADA_ID) && !revoked(REMY_ID));
+    assert!(!ada_control.revoked.load(Ordering::SeqCst));
+    assert!(!remy_control.revoked.load(Ordering::SeqCst));
+
     directory.remove(ADA_ID, POSITION);
     let started = std::time::Instant::now();
-    // No feed moved, and the idle connection sends nothing: a tick looks and revokes it.
-    until("ada's idle connection is revoked", || revoked(ADA_ID));
+    token.fetch_add(1, Ordering::SeqCst);
+    until("ada's idle connection is revoked", || {
+        ada_control.revoked.load(Ordering::SeqCst)
+    });
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "{:?}",
         started.elapsed()
     );
-    // Another member's connection is left alone.
-    assert!(!revoked(REMY_ID));
+    assert!(!remy_control.revoked.load(Ordering::SeqCst));
     drop(ada);
     drop(remy);
 
     stop.store(true, Ordering::SeqCst);
     server.join().unwrap();
+}
+
+struct CountedDirectory {
+    inner: Arc<org_mailbox::testkit::InMemoryDirectory>,
+    lookups: AtomicUsize,
+}
+
+impl MemberDirectory for CountedDirectory {
+    fn resolve_member(
+        &self,
+        id_or_handle: &str,
+    ) -> Result<Option<(org_proto::Member, org_proto::Position)>, org_mailbox::StoreError> {
+        if self.lookups.fetch_add(1, Ordering::SeqCst) == 2 {
+            return Err(org_mailbox::StoreError::new(
+                "directory temporarily unavailable",
+            ));
+        }
+        self.inner.resolve_member(id_or_handle)
+    }
+}
+
+#[test]
+fn without_a_feed_the_watcher_checks_changes_and_retries_a_failed_confirmation() {
+    use org_mailbox::testkit::fixture::POSITION;
+    let (_mailbox, directory) = messaging();
+    let counted = Arc::new(CountedDirectory {
+        inner: Arc::clone(&directory),
+        lookups: AtomicUsize::new(0),
+    });
+    let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    ports.mailbox = None;
+    ports.feed = None;
+    ports.directory = counted.clone();
+    let timing = Timing {
+        idle: Duration::from_millis(1),
+        ..Timing::default()
+    };
+    let mut shared = Shared::new(&test_info(), Path::new("unused.sock"), ports, launch_key())
+        .with_timing(timing);
+    let control = Arc::new(Control::default());
+    shared
+        .bound
+        .get_mut()
+        .unwrap()
+        .insert(1, (ADA_ID.to_owned(), Arc::clone(&control)));
+    let (sampled, samples) = std::sync::mpsc::channel();
+    shared.watch_directory_changes({
+        let counted = Arc::clone(&counted);
+        let ticks = AtomicUsize::new(0);
+        move || {
+            let tick = ticks.fetch_add(1, Ordering::SeqCst) + 1;
+            if tick == 4 {
+                // Only the initial pass looked up Ada. The two idle ticks did no directory work.
+                assert_eq!(counted.lookups.load(Ordering::SeqCst), 1);
+                directory.remove(ADA_ID, POSITION);
+            }
+            if tick == 6 {
+                sampled.send(()).unwrap();
+            }
+            u64::from(tick >= 4)
+        }
+    });
+    let watching = AtomicBool::new(true);
+    std::thread::scope(|scope| {
+        let watcher = scope.spawn(|| watch(&shared, &watching));
+        let sampled = samples.recv_timeout(Duration::from_secs(5));
+        watching.store(false, Ordering::SeqCst);
+        watcher.join().unwrap();
+        sampled.expect("the watcher should sample the directory token");
+    });
+    // The confirmation failed on tick 4. Tick 5 retried the same token and revoked Ada.
+    assert!(control.revoked.load(Ordering::SeqCst));
+    assert_eq!(counted.lookups.load(Ordering::SeqCst), 5);
 }

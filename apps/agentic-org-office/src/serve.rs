@@ -88,9 +88,8 @@ pub struct OfficePorts {
     pub operation_get: OperationFn,
     pub who: WhoFn,
     pub status: StatusFn,
-    /// The log, for `subscribe`. `None`: this office does not serve `subscribe` yet (it
-    /// answers `unsupported`), the inbox sends no `inbox.changed` hints, and the member
-    /// watcher looks at every bound member on each idle tick instead of on a log change.
+    /// The log, for `subscribe`. With `None`, `subscribe` answers `unsupported` and the
+    /// inbox sends no `inbox.changed` hints.
     pub feed: Option<Box<dyn OrgFeed>>,
     /// Live events for `subscribe` (messages, status lines).
     pub live: Arc<LiveEvents>,
@@ -307,6 +306,7 @@ pub struct Shared {
     timing: Timing,
     /// The connections bound as a member, for the watcher.
     bound: Bound,
+    directory_change_token: Option<Box<dyn Fn() -> u64 + Send + Sync>>,
     pub(crate) inbox: Option<crate::inbox::Hq>,
     hint: Option<crate::inbox::Hint>,
 }
@@ -332,6 +332,7 @@ impl Shared {
             auth: auth.into(),
             timing: Timing::default(),
             bound: Mutex::default(),
+            directory_change_token: None,
             inbox: None,
             hint: None,
             // Part 1 implements only what every server of this api_version has: no capabilities.
@@ -356,6 +357,14 @@ impl Shared {
                 },
             ),
         }
+    }
+
+    /// Track organization changes for revocation even when no subscription feed is served.
+    pub(crate) fn watch_directory_changes(
+        &mut self,
+        token: impl Fn() -> u64 + Send + Sync + 'static,
+    ) {
+        self.directory_change_token = Some(Box::new(token));
     }
 
     /// Only a known HQ composition registers real sources; other offices stay dark.
@@ -537,27 +546,30 @@ fn run_for_uid(
     }
 }
 
-/// Whenever the organization's log has moved (and the first time), looks at each member-bound
+/// Whenever the organization has changed (and the first time), looks at each member-bound
 /// connection's member: one that is no longer bindable (offboarded, made office-run, removed) has
 /// its held `msg.wait` calls ended with `not_bound` and its subscription ended, without waiting
 /// for the connection's next call. An idle revoked connection closes at its next reader tick;
 /// a call that arrives first receives `not_bound`, then the connection closes. A lookup that
-/// fails ends nothing. Organization changes are what can unbind a member, so a quiet log costs
-/// one cheap head read per tick.
+/// fails ends nothing. With no subscription feed, check the directory's change token each tick.
 fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
-    let mut last_head = None;
+    let feed = shared.ports.feed.as_deref();
+    let mut checked = (None, None);
     while watching.load(Ordering::SeqCst) {
-        // Before looking, so a change while looking wakes the wait below at once. With no
-        // feed there is no head to compare: every tick looks.
-        let feed = shared.ports.feed.as_deref();
+        // Sample before looking so a change during the pass gets another pass.
         let token = feed.map(|feed| feed.token());
-        let head = feed.and_then(|feed| feed.head().ok());
-        if head.is_none() || head != last_head {
+        let position = match feed {
+            Some(feed) => (feed.head().ok(), None),
+            None => (
+                None,
+                shared.directory_change_token.as_ref().map(|token| token()),
+            ),
+        };
+        if position == (None, None) || position != checked {
             // A panic in a lookup must not end the watching for good.
             let pass = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| revoke(shared)));
             match pass {
-                // Settled: this head is done with.
-                Ok(false) => last_head = head,
+                Ok(false) => checked = position,
                 // A lookup could not answer: look again on the next tick.
                 Ok(true) => {}
                 Err(_) => {
@@ -604,8 +616,13 @@ fn revoke(shared: &Shared) -> bool {
         // one that bound as someone else, or bound again after the member was restored, is left
         // alone.
         let bound = shared.bound.lock().unwrap_or_else(|p| p.into_inner());
-        if !is_gone(shared, &member) {
-            continue;
+        match lookup_binding(shared, &member) {
+            Lookup::Failed => {
+                undecided = true;
+                continue;
+            }
+            Lookup::Bindable(_) => continue,
+            Lookup::Not => {}
         }
         for (_, control) in bound.values().filter(|(m, _)| *m == member) {
             // `revoked` first: a wait that starts after the cancel below sees it.

@@ -451,6 +451,8 @@ fn serve_office(
         },
         auth,
     );
+    let directory_office = Arc::clone(&office);
+    shared.watch_directory_changes(move || directory_office.org_change_token());
     shared.register_inbox(inbox, office.is_replication_hq());
     // The host's lifetime is the authenticated rendezvous (stdin is drained elsewhere).
     // The fixed-buffer watcher never parses later input.
