@@ -35,7 +35,9 @@ it is mechanical (implementation plan, L10) and does not change the routes.
 
 All JSON responses use `Cache-Control: no-store`, except hashed UI assets. The page
 and API share the configured origin. A missing API route is a JSON 404, never SPA
-HTML. Unknown operations are never forwarded to a local socket.
+HTML. Unknown operations are never forwarded to a local socket. `HEAD` on a GET
+route answers that route's status and headers, through the same pair check, with
+no body; on any other route it is `invalid_request`.
 
 | Method/path | Body/result | Access and source |
 | --- | --- | --- |
@@ -50,7 +52,7 @@ HTML. Unknown operations are never forwarded to a local socket.
 | POST `/api/v1/session/refresh` | `{}` → session view plus rotated proof | Pair; host `session.renew`; both browser values rotate atomically |
 | POST `/api/v1/session/sign-out` | `{}` → `{}` | Pair; ends the host session, clears the browser pair and closes streams |
 | GET `/api/v1/capabilities` | Capability view (§7) | Pair; authorized scopes only |
-| GET `/api/v1/instance` | Instance view (§3) | Pair; host-derived status, no paths, sockets or credentials |
+| GET `/api/v1/instance` | Instance view (§3) | Pair; host `instance.view` (web connection only); host-derived status, no paths, sockets or credentials |
 | GET `/api/v1/organizations` | `{organizations:[...]}` | Pair; host `organization.list`, linked organizations only |
 | POST `/api/v1/organizations` | Command envelope with the [create payload](#selected-create-organization-payload) | Pair; host `organization.create`, the administrator only |
 | POST `/api/v1/organizations/operations/{id}/cancel` | `{}` → cancellation result (§5) | Pair; host `organization.cancel`; the same account or the administrator; the original create ID |
@@ -207,7 +209,8 @@ Host session handles, grant MACs and channels never appear in a view.
 
 **Instance view:** `{instance_id,name,server_version,web_status,listen_scheme,tls,server_time_ms}`.
 `server_version` is the release pin's version; `web_status` is `ok|degraded`;
-`listen_scheme` is `https|http_loopback`; `tls` is `ok|missing|expiring`. Unknown
+`listen_scheme` is `https|http_loopback`; `tls` is `ok|missing|expiring`, and is
+absent until the instance serves TLS (the loopback listener has none). Unknown
 enum values decode to `unknown`. The view has no paths, endpoints, sockets,
 handles or certificate material.
 
@@ -581,7 +584,16 @@ returning 404 confirms that.
   validated sessions in an in-memory cache bound to its control connection; the host's
   `session.ended` push drops an entry. `GET organizations` answers
   `{organizations: []}` after validating the session, with no host call, until A4
-  creates organizations. `GET instance`, `session/refresh`, the other link and password
+  creates organizations. `GET instance` validates the pair, then asks the host's
+  `instance.view` (web connection only) for the name and web state; it omits `tls`
+  while the listener is loopback HTTP. `HEAD` serves the GET routes without a body.
+  The pair is minted from the system generator (`getentropy`): the sandboxed web
+  process cannot open `/dev/urandom`. `session/refresh`, the other link and password
   routes, events and the domain routes are still JSON 404. Every POST needs JSON
-  (415 otherwise); `OPTIONS` is 405; `Sec-Fetch-Site: cross-site` is 403. Native
+  (415 otherwise); `OPTIONS` is 405; `Sec-Fetch-Site: cross-site` is 403; host
+  refusals carry `field`/`rule` and `retry_after_ms` through to the error body. Real-
+  process tests over loopback TCP prove registration from a link, sign-in, restart
+  survival (SES-1, SES-2), sign-out while cached (SES-3), one validate then memory
+  (SES-5) and that every ingress refusal reaches no host op
+  (`crates/org-host/src/web_process_tests/browser_sessions.rs`). Native
   command-line sessions stay in memory and end with their connection.
