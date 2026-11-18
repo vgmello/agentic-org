@@ -23,9 +23,11 @@
 //!   It is compiled and tested on every target, so it cannot rot.
 //!
 //! `adapters!()` at the top of the contract declares the three modules and binds
-//! `native` to the build target's. That macro, and the `compile_error!` below, are the
-//! only places a new capability needs a platform predicate; an adapter file is already
-//! compiled for one system only.
+//! `native` to the build target's. Code that the macOS and Linux adapters share, and
+//! the refusing one does not use, goes in the contract file inside `supported! { … }`.
+//! Those two macros, and the `compile_error!` below, are the only places a new
+//! capability needs a platform predicate; an adapter file is already compiled for one
+//! system only.
 //!
 //! A difference found later becomes a new function in the capability it belongs to,
 //! or a new capability, with all three adapters, and a row in section 2 of the design.
@@ -38,8 +40,6 @@ compile_error!(
 
 /// Declares `macos`, `linux` and `refused` beside the calling module and binds
 /// `native` to the build target's adapter.
-// Unused until the first capability of X1b lands.
-#[allow(unused_macros)]
 macro_rules! adapters {
     () => {
         #[cfg(target_os = "macos")]
@@ -60,6 +60,17 @@ macro_rules! adapters {
         mod refused;
         #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
         use refused as native;
+    };
+}
+
+/// Wraps items that only the macOS and GNU/Linux adapters use (code the two share),
+/// so a build for a refusing target does not compile them.
+macro_rules! supported {
+    ($($item:item)*) => {
+        $(
+            #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+            $item
+        )*
     };
 }
 

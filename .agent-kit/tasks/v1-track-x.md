@@ -56,11 +56,15 @@ real workspace sources in `cargo test --workspace` and as its own CI step on bot
 systems.
 
 **Files owned.** New: `crates/org-platform/` (`Cargo.toml`, `src/lib.rs`,
-`src/refusal.rs`, `src/service.rs`, `src/service/refused.rs`, `src/service/tests.rs`,
-`tests/platform_conditionals.rs`), `.github/platform-conditionals.allow`. Edited:
-the workspace `Cargo.toml` and `Cargo.lock`, `.github/workflows/ci.yml` (one step),
-`docs/design/linux-host.md`, `docs/implementation-plan.md` (X1a),
-`docs/FEATURES.md` and `docs/FEATURE-AREAS.md` (FC-164), this file and `v1-state.md`.
+`src/refusal.rs`, `src/service.rs`, `src/service/{macos,linux,refused,testing,tests}.rs`,
+`tests/platform_conditionals.rs`, and the X1b module stubs `src/{dirs,fs,process,socket}.rs`),
+`.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`.
+Edited: the workspace `Cargo.toml` and `Cargo.lock`, `.github/workflows/ci.yml` (one
+step and one job), `docs/design/linux-host.md`, `docs/implementation-plan.md` (X1a),
+`docs/FEATURES.md` and `docs/FEATURE-AREAS.md` (FC-164), this file, `v1-state.md`,
+`.agent-kit/project-skills/rust-workspace/SKILL.md` (the platform rule for every Rust
+worker) and `.agent-kit/skill-catalog.json` (`crates/org-platform` joins the critical
+host-and-storage area; evidence hashes).
 **Deleted.** Nothing.
 
 **Decisions taken where the documents were silent** (each is written into the
@@ -72,16 +76,29 @@ the workspace `Cargo.toml` and `Cargo.lock`, `.github/workflows/ci.yml` (one ste
 2. The allowlist carries a count per file, and the check requires the exact count.
    A file-only list would let a listed file gain predicates unnoticed; the plan's
    "Done when" requires failing on a new predicate.
-3. `service(mode)` refuses for every target in X1a, for both modes. The launchd
-   adapter is A2's and the systemd and foreground adapters are X5's; each adds its
-   target's branch to the constructor.
-4. The contract's status and error types (`ServiceStatus`, `ServiceState`,
-   `Availability`, `ServiceError`), the idempotence and conflict rules of each method,
-   and `Unit::check` (instance id shape, absolute program path, no NUL or line break,
-   no loader variable in the unit's environment).
-5. `ServiceManager` is `Send + Sync`, so a composition can hold one across threads.
+3. The check works on each file's whole token stream, with `syn` as the gate that the
+   file is Rust. A walk of the syntax tree missed predicates in places `syn` keeps as
+   raw tokens (review findings R2, R3). It also counts `cfg_select!` and `cfg_match!`,
+   raw identifiers, and any other use of the four target names, which are reserved
+   for `org-platform`.
+4. A second CI job compares the list with the commit where the branch left
+   `v1-integration` and fails on an added path or a raised count. Without it "the list
+   only shrinks" was a convention.
+5. Every capability has the same layout: a contract module and `macos`, `linux` and
+   `refused` adapters declared by `adapters!()`. The refusing adapter is compiled and
+   tested on every target. "Linux" is GNU/Linux; another C library gets the refusing
+   adapter.
+6. The `service` contract: `InstanceId` and `Unit` are checked types, so an adapter
+   cannot receive an unchecked one; `ServiceStatus` is one enum, so a status cannot
+   combine states that do not go together; a foreign registration is `Foreign` for
+   every method; `register` never starts; each mode's behaviour for every method is
+   stated and held by `service::testing::check_registered` and `check_foreground`.
+7. Foreground mode is built now, the same code on macOS and Linux, because it calls
+   nothing in the system. Registered mode refuses on every target until A2 (launchd)
+   and X5 (systemd).
+8. `ServiceManager` is `Send + Sync`, so a composition can hold one across threads.
 
-**Still open.** The A2 lead reviews the `service` contract when A2 starts. Nothing in
-Track X depends on that answer before X5.
+**Still open.** The A2 lead reviews the `service` contract when A2 starts; that is
+the unmet part of the plan's "Done when". Nothing in Track X depends on it before X5.
 
 **Checks and review.** Recorded here when run.

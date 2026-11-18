@@ -25,7 +25,9 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   has `macos.rs`, `linux.rs` and `refused.rs`, and exports one non-conditional
   constructor that returns the build target's implementation or the refusing one. The
   refusing adapter returns `Refused::Unsupported { capability, os }` and never falls
-  back to another system's behaviour.
+  back to another system's behaviour. It is compiled and unit-tested on every target,
+  and CI also builds and tests the crate for Linux with musl, a target that gets only
+  the refusing adapters.
 - **Targets.** A non-Unix target is a `compile_error!` in `org-platform`. Every other
   Unix target builds and gets the refusing adapters, including Linux with a C library
   other than glibc: the Linux adapters need glibc 2.34 or later (for example
@@ -63,27 +65,38 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   `EAFNOSUPPORT_ON_UNIX_BIND`, `SEND_BUFFER_FULL`, `INIT_ARRAY_SECTION`), or uses a
   portable `libc` constant, instead of a `cfg`. Consumer tests otherwise run on both
   systems against the real adapter or a test adapter built from the contract.
-- **The check (LNX-5).** `crates/org-platform/tests/platform_conditionals.rs` parses
-  every `.rs` file outside `crates/org-platform/` with `syn` and counts each `cfg`,
-  `cfg_attr` and `cfg!` predicate that names `target_os`, `target_vendor`,
-  `target_env` or `target_family`, including those inside macro calls and
-  definitions. It is a test of the workspace, so `cargo test --workspace` runs it on
-  every system, and CI also runs it as its own step on macOS and Linux. String
+- **The check (LNX-5).** `crates/org-platform/tests/platform_conditionals.rs` reads
+  every `.rs` file outside `crates/org-platform/`, requires that `syn` parses it,
+  and counts in its tokens each `cfg` or `cfg_attr` attribute and each `cfg!`,
+  `cfg_select!` or `cfg_match!` call that names `target_os`, `target_vendor`,
+  `target_env` or `target_family`, wherever it is written (macro calls and
+  definitions, attribute arguments, `extern` blocks, raw identifiers), and each other
+  use of one of those four names as an identifier: the names are reserved for
+  `org-platform`. It is a test of the workspace, so `cargo test --workspace` runs it
+  on every system, and CI also runs it as its own step on macOS and Linux. String
   literals and fixtures (for example the TOML and `syn` fixtures in
   `org-office/src/store/tests/opener_policy.rs`) are not predicates and do not
-  match; a file that does not parse fails the check. Its allowlist,
-  `.github/platform-conditionals.allow`, was written in X1a from the check's own
-  findings: 79 files with 495 predicates, one `path count` line each (a text search
-  finds 81 files, two of them only through fixtures). The check fails on a predicate
-  in a file that is not listed, on a listed file with more predicates than its
-  count, and on a listed file with fewer than its count or none, so no file gains a
-  predicate and the list only shrinks. X1b to X1d remove the source files, X2
-  and the `testing` module remove the test files, and the list is empty at X6.
-  Outside the check, and harmless: `cfg(unix)`, because a non-Unix target cannot
-  build `org-platform` at all, so such a branch never selects between supported
-  systems; and build scripts, of which only `org-host/build.rs` reads
-  `CARGO_CFG_TARGET_OS` today, to compile the presence bridge, which moves with the
-  bridge into `org-platform/build.rs` in X1c.
+  match. It fails on a file that does not parse, and on `include!` or `#[path]` of
+  anything but a literal `.rs` path, because it could not read that source. It reads
+  every directory except hidden ones, `node_modules` and build output (a directory
+  holding `CACHEDIR.TAG`).
+  Its allowlist, `.github/platform-conditionals.allow`, was written in X1a from the
+  check's own findings: 79 files with 495 predicates, one `path count` line each (a
+  text search finds 81 files, two of them only through fixtures). The check fails on
+  a predicate in a file that is not listed, on a listed file with more predicates
+  than its count, and on a listed file with fewer than its count or none, so the
+  list always equals the sources. A second CI job
+  (`.github/scripts/platform_allowlist_shrinks.py`) compares the list with the commit
+  where the branch left `v1-integration` and fails on an added path or a raised count,
+  so the list only shrinks. X1b to X1d remove the source files, X2 and the `testing`
+  module remove the test files, and the list is empty at X6.
+  Outside the check: `cfg(unix)`, harmless because a non-Unix target cannot build
+  `org-platform` at all, so such a branch never selects between supported systems;
+  and what no source scan sees, which review covers: a `--cfg` flag, a comparison
+  with `std::env::consts::OS` at run time, and a build script that emits its own
+  `cfg` after reading `CARGO_CFG_TARGET_OS`. Only `org-host/build.rs` reads that
+  variable today, to compile the presence bridge, which moves with the bridge into
+  `org-platform/build.rs` in X1c.
 
 Rejected: renaming `org-socket` to `org-platform`, because the rename ripples through
 files the macOS track is editing (`apps/agentic-org-office/src/serve.rs`, the host
@@ -111,6 +124,7 @@ would be declared four times.
 | `agentic-org-office` | Start, watch, stop and recover agent processes | `org-supervise/src/lib.rs`, `platform.rs`, `spawn.rs`, `child.rs`, `recovery.rs`, `recovery/scan.rs`, `recovery/native/` | `process`, `isolation` |
 | `agentic-org-office` | Durable flush of accepted work | `org-office/src/store/acceptance/durable.rs` | `fs` |
 | `agentic-org-web` | Confine itself before input | `org-socket/src/confinement.rs`, `confinement/macos.rs` | `confinement` |
+| `agentic-org-web` | Which platform's release it is, when it authenticates its own image | `apps/agentic-org-web/src/release.rs` (`policy`, a `cfg!` on the system) | `admission` (X1c, with `org-host/src/release.rs`) |
 | `agentic-org-web` | Check the inherited listener and received descriptors | `org-socket/src/rights/stream.rs` (`listening`), `rights.rs` | `socket` |
 | `agent-os` | Find and connect to the office socket | `org-proto/src/location.rs` through `apps/agent-os/src/office.rs` and `org-client`; the ticked reader is portable | `dirs` |
 | `agent-os` | Durable queue writes and safe reads | `org-client/src/agent.rs` (`rename_new`, `full_sync`), `org-spool/src/safe_read.rs` (deleted with B6) | `fs` |
@@ -118,14 +132,18 @@ would be declared four times.
 Portable already, and staying where they are: core-dump limits in each `main.rs`,
 signal handlers in `apps/agentic-org-office/src/signals.rs`, `apps/agent-os/src/main.rs`
 and `org-host/src/signals.rs`, and the descriptor swap in
-`apps/agentic-org-office/src/fdswap.rs`. No executable's own source has a platform
-conditional outside its tests.
+`apps/agentic-org-office/src/fdswap.rs`. One executable's own source has a platform
+conditional outside its tests: `apps/agentic-org-web/src/release.rs`, in the table
+above.
 
-Count today: 79 `.rs` files outside any adapter name a platform target in their text. 44 are
-source files: 29 in `org-host`, 6 in `org-socket`, 6 in `org-supervise`, and
-`org-office/src/store/acceptance/durable.rs`, `org-client/src/agent.rs` and
-`org-spool/src/safe_read.rs`; each is in a row above. 35 are test files. Milestone-one
-work in these files adds no new predicate; a new need goes into `org-platform`.
+Count when the check was written (X1a): 79 `.rs` files outside `org-platform` have a
+platform predicate. 45 are source files: 29 in `org-host`, 6 in `org-socket`, 6 in
+`org-supervise`, and `org-office/src/store/acceptance/durable.rs`,
+`org-client/src/agent.rs`, `org-spool/src/safe_read.rs` and
+`apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
+(`org-socket/examples/gateway_confinement.rs`, which moves with confinement in X1c),
+and 33 are test files. Milestone-one work in these files adds no new predicate; a new
+need goes into `org-platform`.
 
 ## 3. The five contracts
 
@@ -454,46 +472,63 @@ the 6.2 floor, and denying `connect` outright is simpler.
 
 ```rust
 pub enum ServiceMode { Registered, Foreground }
-pub struct Unit { pub instance_id: String, pub program: PathBuf, pub args: Vec<OsString>, pub env: Vec<(OsString, OsString)> }
-impl Unit { pub fn check(&self) -> Result<(), ServiceError>; }
+pub struct InstanceId(/* 1 to 64 ASCII letters, digits, '-' or '_' */);
+pub struct Unit(/* instance, program, args, env; built only by Unit::new, which checks it */);
+impl Unit { pub fn new(instance: InstanceId, program: PathBuf, args: Vec<String>, env: Vec<(String, String)>) -> Result<Unit, ServiceError>; }
 pub fn service(mode: ServiceMode) -> Result<Box<dyn ServiceManager>, Refused>;
 pub trait ServiceManager: Send + Sync {
-    fn register(&self, unit: &Unit) -> Result<(), ServiceError>;   // idempotent, never takes over another unit
-    fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
-    fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
-    fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>;
-    fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
+    fn register(&self, unit: &Unit) -> Result<(), ServiceError>;
+    fn start(&self, instance: &InstanceId) -> Result<(), ServiceError>;
+    fn stop(&self, instance: &InstanceId) -> Result<(), ServiceError>;
+    fn status(&self, instance: &InstanceId) -> Result<ServiceStatus, ServiceError>;
+    fn unregister(&self, instance: &InstanceId) -> Result<(), ServiceError>;
 }
-pub struct ServiceStatus { pub state: ServiceState, pub availability: Availability }
-pub enum ServiceState { NotRegistered, Stopped, Running }
+pub enum ServiceStatus { Unmanaged, NotRegistered, Registered { running: bool, availability: Availability } }
 pub enum Availability { Always, WhileLoggedIn { remedy: Option<String> } }
-pub enum ServiceError { InvalidUnit { reason }, NotRegistered, Conflict, Manager { action, detail } }
+pub enum ServiceError { InvalidUnit { reason }, NotRegistered, Conflict, Foreign, Unmanaged, Manager { action, detail } }
 ```
 
-The rules every adapter keeps (the contract's documentation in
-`crates/org-platform/src/service.rs` is the full text):
+The rules every adapter keeps. The module documentation of
+`crates/org-platform/src/service.rs` is the full text, and
+`org_platform::service::testing` (feature `test-support`) holds them as executable
+checks, `check_registered` and `check_foreground`, with an in-memory manager for
+consumers' tests:
 
-- `register` records the unit and does not start it. The same unit again succeeds and
-  changes nothing. A different registration already under the instance's name is
-  `Conflict` and nothing changes; a unit is replaced by `unregister`, then `register`.
-- `start` and `stop` succeed when the instance is already in that state, and are
-  `NotRegistered` for an instance without a registration. `status` reports
-  `ServiceState::NotRegistered` instead of failing. `unregister` stops the instance,
-  removes the registration, and succeeds when there is none.
-- `Availability` is the login requirement: `Always`, or `WhileLoggedIn` with the
-  command that lifts the limit when the system has one. Setup prints that command and
-  never runs it unasked.
-- `Unit::check` is applied by every adapter before it writes anything: an instance id
-  of 1 to 64 ASCII letters, digits, `-` or `_` (it becomes part of a unit or label
-  name), an absolute program path, no NUL or line break in any value, well-formed
-  environment names, and no loader variable (`LD_*`, `DYLD_*`, `GLIBC_TUNABLES`), the
-  rule `ChildEnv` applies to children (section 3.1).
+- A *registration* is the record, under a name derived from the instance id, that
+  makes the user's service manager start the unit at each login of that user and
+  restart it when it fails. An adapter marks the registrations it writes. Anything
+  else under the name is *foreign*: every method returns `Foreign` and changes
+  nothing, so an adapter never takes over or removes what it did not write.
+- `register` writes the registration and does not start the instance. The same unit
+  again succeeds, changes nothing and leaves a running instance alone. This product's
+  registration for the instance with a different unit is `Conflict`; a unit is
+  replaced by `unregister`, then `register`.
+- `start` makes the manager run the instance now; `stop` stops it, returns when the
+  manager reports it stopped, and the manager then leaves it stopped until `start` or
+  the user's next login. Each succeeds when the instance is already in that state and
+  is `NotRegistered` without a registration.
+- `status` reports `NotRegistered`, or `Registered` with `running` (started and not
+  seen to exit; a failed instance, or one waiting to be restarted, is not running) and
+  the login requirement: `Always`, or `WhileLoggedIn` with the command that lifts the
+  limit when the system has one. Setup prints that command and never runs it unasked.
+- `unregister` stops the instance, removes the registration, and succeeds when there
+  is none.
+- In `Foreground` mode there is nothing to register: `register` and `unregister`
+  succeed without effect, `status` is `Unmanaged`, and `start` and `stop` are
+  `Unmanaged`, because only whoever started `serve` can start or stop it. Setup does
+  not branch on the system; it is told the mode.
+- An adapter only ever receives a checked `InstanceId` and a checked `Unit`.
+  `Unit::new` requires what a launchd property list and a systemd unit file can both
+  hold exactly: an absolute UTF-8 program path, no control character in any value,
+  environment names that are identifiers and appear once, and no loader variable
+  (`LD_*`, `DYLD_*`, `GLIBC_TUNABLES`), the rule `ChildEnv` applies to children
+  (section 3.1).
 
-The contract landed in X1a with the refusing adapter for every target, so A2 writes
-the launchd adapter in `service/macos.rs` behind it and X5 the Linux adapters in
-`service/linux.rs`; each adds its target's branch to the constructor. The Track A lead
-reviews the contract when A2 starts; a change A2 needs is made in this section and in
-the contract together.
+X1a landed the contract, the foreground manager (the same code on macOS and Linux)
+and the refusing adapter. Registered mode refuses on every target until its adapters
+are written: A2 writes the launchd agent in `service/macos.rs` and X5 the systemd
+user unit in `service/linux.rs`. The Track A lead has not yet reviewed the contract;
+a change A2 needs is made in this section and in the contract together.
 
 `agentic-org serve` is the same foreground process in every mode; it stops on
 `SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
@@ -506,8 +541,9 @@ exits 0 within 8 s, inside a container runtime's default 10-second grace.
 `~/.config/systemd/user/agentic-org-<instance-id>.service`, with
 `ExecStart=<pinned agentic-org> serve --instance <id>`, `Type=exec`,
 `KillMode=mixed`, `TimeoutStopSec=15`, `Restart=on-failure`, `UMask=0077` and
-`NoNewPrivileges=yes`, registered with `systemctl --user daemon-reload` and
-`enable --now`. Without a user manager (no `XDG_RUNTIME_DIR` or user bus) it refuses
+`NoNewPrivileges=yes`. `register` writes the unit and runs `systemctl --user
+daemon-reload` and `enable`; `start` and `stop` are `systemctl --user start` and
+`stop`. Without a user manager (no `XDG_RUNTIME_DIR` or user bus) it refuses
 and names `Foreground`. When lingering is off, `status` and setup report that the
 instance runs only while the user is logged in and print
 `loginctl enable-linger <user>`, which polkit normally lets a local, active user run
@@ -739,7 +775,7 @@ How the tracks avoid each other:
 
 - **Land the crate and the check on the first day.** X1a creates `org-platform`, the
   CI check with today's files as a shrinking allowlist, and the `service` contract,
-  agreed with the A2 lead, so that A2 writes launchd code behind it from the start.
+  which the A2 lead reviews when A2 starts, so that A2 writes launchd code behind it.
   From then on the check refuses any new platform predicate outside `org-platform`.
 - **Then carve the seams in three merges.** X1b moves the capabilities no Track A
   increment is redesigning; X1c moves admission, confinement and presence, ordered

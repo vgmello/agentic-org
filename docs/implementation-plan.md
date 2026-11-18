@@ -652,20 +652,24 @@ half of LNX-6 run).
 - **Outcome:** none a person can see. No change can add a platform branch outside one
   crate, and A2 has a contract to write service registration behind.
 - **Built (2026-11-18):**
-  - The crate `crates/org-platform` with the `Refused` type and the `service`
-    contract ([design, section 3.4](design/linux-host.md#34-service-lifecycle)); its
-    constructor refuses on every target until A2 writes the launchd adapter and X5 the
-    Linux adapters.
-  - The check `crates/org-platform/tests/platform_conditionals.rs`: it parses every
-    `.rs` file outside `crates/org-platform/` with `syn` and fails on a `cfg`,
-    `cfg_attr` or `cfg!` predicate naming `target_os`, `target_vendor`, `target_env`
-    or `target_family`, beyond `.github/platform-conditionals.allow`. The list has
-    the 79 files and 495 predicates of that day, each file with its count; no file
-    is added and no count grows. CI runs the check on macOS and Linux.
+  - The crate `crates/org-platform` with the `Refused` type, the adapter layout every
+    capability follows, and the `service`
+    contract ([design, section 3.4](design/linux-host.md#34-service-lifecycle)) with
+    its foreground manager, its refusing adapter and its rules as executable checks.
+    Registered mode refuses on every target until A2 writes the launchd adapter and
+    X5 the systemd one.
+  - The check `crates/org-platform/tests/platform_conditionals.rs`: it reads every
+    `.rs` file outside `crates/org-platform/`, requires that `syn` parses it, and
+    fails on a `cfg`, `cfg_attr`, `cfg!`, `cfg_select!` or `cfg_match!` predicate
+    naming `target_os`, `target_vendor`, `target_env` or `target_family`, or any
+    other use of those names, beyond `.github/platform-conditionals.allow`. The list
+    has the 79 files and 495 predicates of that day, each file with its count, and
+    must equal the sources. CI runs the check on macOS and Linux, and a second job
+    fails a change that adds a file to the list or raises a count.
 - **Read:** [Linux host design](design/linux-host.md) sections 1, 3.4 and 7,
   [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
-- **Code today:** the 79 listed files are 44 source files and 35 test files. The
-  source files are 29 in `org-host` (among them `spawn.rs`,
+- **Code today:** the 79 listed files are 45 source files, one example and 33 test
+  files. The source files are 29 in `org-host` (among them `spawn.rs`,
   `server_check.rs`, `code_signing.rs`, `peer.rs`, `app_auth.rs`, `bootstrap.rs`,
   `human.rs`, `offices.rs`, `recovery.rs`, `release.rs`, `writer.rs`, `hostdb.rs`,
   `lib.rs`, `keys/mod.rs`, `host_secrets.rs`, `supervisor/mod.rs`,
@@ -673,13 +677,17 @@ half of LNX-6 run).
   `instance/mod.rs`, `instance/registry.rs`, `recovery/presence.rs`,
   `release/platform.rs`), 6 in `org-socket`, 6 in `org-supervise` (among them the
   `compile_error!` in `lib.rs`), `org-office`'s `store/acceptance/durable.rs`,
-  `org-client`'s `agent.rs` and `org-spool`'s `safe_read.rs`.
-  `org-proto/src/location.rs` hard-codes macOS values with no conditional. The
+  `org-client`'s `agent.rs`, `org-spool`'s `safe_read.rs` and `agentic-org-web`'s
+  `release.rs`. `org-proto/src/location.rs` hard-codes macOS values with no
+  conditional. The
   [design](design/linux-host.md#2-what-each-executable-needs-from-the-platform) maps
   each to its contract. Milestone-one work in those files adds no new conditional.
   CI lints `org-host` and `agentic-org` on Linux with `dead_code` and
   `unused_imports` allowed and runs none of their tests there.
-- **Still open:** the A2 lead reviews the `service` contract when A2 starts.
+- **Done when:** the crate builds on macOS and Linux; the check runs in CI on both and
+  fails on a new predicate; the A2 lead has accepted the `service` contract. The
+  first two are met; the third is not yet: the A2 lead reviews the contract when A2
+  starts.
 - **Needs:** nothing.
 
 ### X1b · Files, locations, processes and sockets behind the crate

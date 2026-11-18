@@ -6,23 +6,61 @@
 //! - [`ServiceMode::Registered`]: the user's service manager. macOS: a per-user launchd
 //!   agent. Linux: a systemd user unit.
 //! - [`ServiceMode::Foreground`]: nothing is registered, because something else
-//!   supervises the process (a container runtime). Setup is told the mode; nothing
-//!   detects a container.
+//!   supervises the process (a container runtime, a developer's terminal). Setup is
+//!   told the mode; nothing detects a container.
 //!
 //! The consumer (`org-host` setup and `serve`) decides which instance, program,
-//! arguments and environment make a unit, and passes them as plain data.
+//! arguments and environment make a unit, and passes them as plain data. An adapter
+//! only ever receives a checked [`InstanceId`] and a checked [`Unit`].
+//!
+//! # The rules every adapter keeps
+//!
+//! A *registration* is the record, under a name the adapter derives from the instance
+//! id, that makes the user's service manager start the unit at each login of that
+//! user and restart it when it fails. An adapter marks the registrations it writes
+//! and recognises them by that mark. Anything else it finds under the name is
+//! *foreign*: every method returns [`ServiceError::Foreign`] and changes nothing.
+//!
+//! In [`ServiceMode::Registered`]:
+//!
+//! - `register` writes the registration and does not start the instance. The same
+//!   unit again succeeds, changes nothing and does not disturb a running instance. A
+//!   registration of this product for the same instance with a different unit is
+//!   [`ServiceError::Conflict`] and nothing changes; a unit is replaced by
+//!   `unregister`, then `register`.
+//! - `start` makes the manager run the instance now and succeeds when it already
+//!   runs. Without a registration it is [`ServiceError::NotRegistered`].
+//! - `stop` stops the instance and returns once the manager reports it stopped. The
+//!   manager then leaves it stopped until `start` or the user's next login. It
+//!   succeeds when the instance is already stopped. Without a registration it is
+//!   [`ServiceError::NotRegistered`].
+//! - `status` reports [`ServiceStatus::NotRegistered`], or
+//!   [`ServiceStatus::Registered`] with whether the manager has the instance running
+//!   (started and not seen to exit; an instance that failed, or that waits to be
+//!   restarted, is not running) and when it runs.
+//! - `unregister` stops the instance if it runs and removes the registration, so the
+//!   manager never starts it again. It succeeds when there is none.
+//!
+//! In [`ServiceMode::Foreground`] there is nothing to register: `register` and
+//! `unregister` succeed without effect, `status` reports
+//! [`ServiceStatus::Unmanaged`], and `start` and `stop` are
+//! [`ServiceError::Unmanaged`], because only whoever started `serve` can start or stop
+//! it.
+//!
+//! Every method takes effect before it returns or fails; none leaves a partly written
+//! registration behind. [`testing`] holds these rules as executable checks.
 
-use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::Refused;
 
-mod refused;
+adapters!();
 
-/// The longest instance id a unit may carry. Adapters put the id in a file or label
-/// name, so it is short and has no separator.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
+/// The longest instance id. Adapters put the id in a file or label name.
 pub const MAX_INSTANCE_ID_BYTES: usize = 64;
 
 /// Who supervises `agentic-org serve`.
@@ -34,66 +72,126 @@ pub enum ServiceMode {
     Foreground,
 }
 
-/// One instance's service: the program the manager runs, with its arguments and
-/// environment. The manager derives its own unit or label name from `instance_id`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Unit {
-    /// The instance this unit serves. See [`check_instance_id`].
-    pub instance_id: String,
-    /// The absolute path of the pinned `agentic-org` executable.
-    pub program: PathBuf,
-    /// Arguments after the program name, for example `serve --instance <id>`.
-    pub args: Vec<OsString>,
-    /// Environment the manager sets for the program, beyond its own defaults.
-    pub env: Vec<(OsString, OsString)>,
-}
+/// An instance id an adapter can put in a unit or label name: 1 to
+/// [`MAX_INSTANCE_ID_BYTES`] bytes of ASCII letters, digits, `-` and `_`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InstanceId(String);
 
-impl Unit {
-    /// The rules every adapter applies before it writes anything: a valid instance
-    /// id, an absolute program path, no NUL or line break anywhere, well-formed
-    /// environment names, and no variable that changes how the loader runs the image
-    /// (any `LD_` or `DYLD_` name, and `GLIBC_TUNABLES`).
-    pub fn check(&self) -> Result<(), ServiceError> {
-        check_instance_id(&self.instance_id)?;
-        if !self.program.is_absolute() {
-            return Err(invalid("the program path is not absolute"));
+impl InstanceId {
+    /// Checks `id` and wraps it.
+    pub fn new(id: &str) -> Result<Self, ServiceError> {
+        let valid = !id.is_empty()
+            && id.len() <= MAX_INSTANCE_ID_BYTES
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if valid {
+            Ok(Self(id.to_owned()))
+        } else {
+            Err(invalid(
+                "the instance id is not 1 to 64 ASCII letters, digits, '-' or '_'",
+            ))
         }
-        plain(
-            self.program.as_os_str(),
-            "the program path has a NUL or a line break",
-        )?;
-        for arg in &self.args {
-            plain(arg, "an argument has a NUL or a line break")?;
-        }
-        for (name, value) in &self.env {
-            let bytes = name.as_bytes();
-            if bytes.is_empty() || bytes.contains(&b'=') {
-                return Err(invalid("an environment name is empty or contains '='"));
-            }
-            plain(name, "an environment name has a NUL or a line break")?;
-            plain(value, "an environment value has a NUL or a line break")?;
-            if loader_variable(name) {
-                return Err(invalid("the environment sets a loader variable"));
-            }
-        }
-        Ok(())
+    }
+
+    /// The id as given.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
-/// An instance id an adapter can put in a unit or label name: 1 to
-/// [`MAX_INSTANCE_ID_BYTES`] bytes of ASCII letters, digits, `-` and `_`.
-pub fn check_instance_id(instance_id: &str) -> Result<(), ServiceError> {
-    let valid = !instance_id.is_empty()
-        && instance_id.len() <= MAX_INSTANCE_ID_BYTES
-        && instance_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    if valid {
-        Ok(())
-    } else {
-        Err(invalid(
-            "the instance id is not 1 to 64 ASCII letters, digits, '-' or '_'",
-        ))
+impl fmt::Display for InstanceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// One instance's service: the program the manager runs, with its arguments and
+/// environment. It can only be built through [`Unit::new`], so every unit an adapter
+/// sees has passed the checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unit {
+    instance: InstanceId,
+    program: PathBuf,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+}
+
+impl Unit {
+    /// A unit for `instance` that runs `program` with `args` and, beyond the
+    /// manager's own defaults, the variables in `env`.
+    ///
+    /// Refused, because a launchd property list and a systemd unit file must both be
+    /// able to hold the unit exactly:
+    ///
+    /// - a program path that is not absolute or not UTF-8;
+    /// - a control character (which includes NUL and line breaks) in the program
+    ///   path, an argument or an environment value;
+    /// - an environment name that is not an ASCII letter or `_` followed by ASCII
+    ///   letters, digits or `_`, or that appears twice;
+    /// - a variable that changes how the loader runs the image: any `LD_` or `DYLD_`
+    ///   name, and `GLIBC_TUNABLES` (the rule `ChildEnv` applies to children).
+    pub fn new(
+        instance: InstanceId,
+        program: PathBuf,
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+    ) -> Result<Self, ServiceError> {
+        if !program.is_absolute() {
+            return Err(invalid("the program path is not absolute"));
+        }
+        let Some(program_text) = program.to_str() else {
+            return Err(invalid("the program path is not UTF-8"));
+        };
+        printable(program_text, "the program path has a control character")?;
+        for arg in &args {
+            printable(arg, "an argument has a control character")?;
+        }
+        for (index, (name, value)) in env.iter().enumerate() {
+            let mut bytes = name.bytes();
+            let well_formed = bytes
+                .next()
+                .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+                && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_');
+            if !well_formed {
+                return Err(invalid(
+                    "an environment name is not a letter or '_' followed by letters, digits or '_'",
+                ));
+            }
+            if env[..index].iter().any(|(earlier, _)| earlier == name) {
+                return Err(invalid("an environment name appears twice"));
+            }
+            if loader_variable(name.as_bytes()) {
+                return Err(invalid("the environment sets a loader variable"));
+            }
+            printable(value, "an environment value has a control character")?;
+        }
+        Ok(Self {
+            instance,
+            program,
+            args,
+            env,
+        })
+    }
+
+    /// The instance this unit serves.
+    pub fn instance(&self) -> &InstanceId {
+        &self.instance
+    }
+
+    /// The absolute path of the pinned `agentic-org` executable.
+    pub fn program(&self) -> &Path {
+        &self.program
+    }
+
+    /// Arguments after the program name, for example `serve --instance <id>`.
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    /// Environment the manager sets for the program, beyond its own defaults.
+    pub fn env(&self) -> &[(String, String)] {
+        &self.env
     }
 }
 
@@ -101,35 +199,17 @@ fn invalid(reason: &'static str) -> ServiceError {
     ServiceError::InvalidUnit { reason }
 }
 
-/// Unit files are line-oriented on both systems: no NUL, line feed or carriage return.
-fn plain(value: &OsStr, reason: &'static str) -> Result<(), ServiceError> {
-    if value
-        .as_bytes()
-        .iter()
-        .any(|b| matches!(b, 0 | b'\n' | b'\r'))
-    {
+fn printable(value: &str, reason: &'static str) -> Result<(), ServiceError> {
+    if value.chars().any(char::is_control) {
         return Err(invalid(reason));
     }
     Ok(())
 }
 
 /// Whether `name` changes how the dynamic loader runs an image: any name beginning
-/// `LD_` or `DYLD_`, and `GLIBC_TUNABLES` (Linux host design section 3.1). Such a
-/// variable is refused in a unit's environment on every system.
-pub(crate) fn loader_variable(name: &OsStr) -> bool {
-    let name = name.as_bytes();
+/// `LD_` or `DYLD_`, and `GLIBC_TUNABLES` (Linux host design section 3.1).
+pub(crate) fn loader_variable(name: &[u8]) -> bool {
     name.starts_with(b"LD_") || name.starts_with(b"DYLD_") || name == b"GLIBC_TUNABLES"
-}
-
-/// Whether the manager is running the instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServiceState {
-    /// The manager has no registration for the instance.
-    NotRegistered,
-    /// Registered and not running.
-    Stopped,
-    /// Registered and running.
-    Running,
 }
 
 /// When a registered instance runs.
@@ -145,22 +225,38 @@ pub enum Availability {
 
 /// What [`ServiceManager::status`] reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceStatus {
-    pub state: ServiceState,
-    pub availability: Availability,
+pub enum ServiceStatus {
+    /// Foreground mode: nothing is registered, and whoever started `serve`
+    /// supervises it.
+    Unmanaged,
+    /// The manager has no registration for the instance.
+    NotRegistered,
+    /// The instance is registered.
+    Registered {
+        /// The manager started the instance and has not seen it exit.
+        running: bool,
+        /// When the manager runs it.
+        availability: Availability,
+    },
 }
 
 /// Why a service operation failed. No variant carries a secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ServiceError {
-    /// The unit or instance id breaks a rule of [`Unit::check`].
+    /// The instance id or the unit breaks a rule of [`InstanceId::new`] or
+    /// [`Unit::new`].
     InvalidUnit { reason: &'static str },
     /// `start` or `stop` named an instance the manager has no registration for.
     NotRegistered,
-    /// `register` found a registration under this instance's name that differs from
-    /// the unit. Nothing was changed: the manager never takes over another unit.
+    /// `register` found this product's registration for the instance with a
+    /// different unit. Nothing was changed.
     Conflict,
+    /// Something this product did not write holds the instance's name in the service
+    /// manager. Nothing was changed: an adapter never takes over or removes it.
+    Foreign,
+    /// `start` or `stop` in foreground mode: only whoever started `serve` can.
+    Unmanaged,
     /// The service manager itself failed or could not be reached. `action` is the
     /// step (for example `daemon-reload`), `detail` the manager's own message.
     Manager {
@@ -175,8 +271,14 @@ impl fmt::Display for ServiceError {
             Self::InvalidUnit { reason } => write!(f, "invalid service unit: {reason}"),
             Self::NotRegistered => f.write_str("the instance has no registered service"),
             Self::Conflict => {
-                f.write_str("a different service is already registered under this instance's name")
+                f.write_str("the instance is already registered with a different service unit")
             }
+            Self::Foreign => f.write_str(
+                "something else is registered under this instance's service name; it was left alone",
+            ),
+            Self::Unmanaged => f.write_str(
+                "the instance runs in the foreground; whoever started it starts and stops it",
+            ),
             Self::Manager { action, detail } => {
                 write!(f, "the service manager failed at {action}: {detail}")
             }
@@ -186,36 +288,59 @@ impl fmt::Display for ServiceError {
 
 impl std::error::Error for ServiceError {}
 
-/// One user's service manager, for the instances of that user.
-///
-/// Every method takes effect before it returns or fails; none leaves a partly
-/// written registration behind.
+/// One user's service manager, for the instances of that user. The module
+/// documentation states what each method does in each mode.
 pub trait ServiceManager: Send + Sync {
-    /// Registers `unit` so the manager starts it at login and restarts it on failure.
-    /// It does not start it now; call [`ServiceManager::start`]. Idempotent: the same
-    /// unit again succeeds and changes nothing. A different registration already
-    /// under this instance's name is [`ServiceError::Conflict`]; to replace a unit,
-    /// `unregister` it first.
+    /// Registers `unit` without starting it.
     fn register(&self, unit: &Unit) -> Result<(), ServiceError>;
-    /// Starts the registered instance. Succeeds when it is already running.
-    fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
-    /// Stops the registered instance and waits for the manager to report it stopped.
-    /// Succeeds when it is already stopped.
-    fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
-    /// Whether the instance is registered and running, and when it runs. An instance
-    /// without a registration is [`ServiceState::NotRegistered`], not an error.
-    fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>;
-    /// Stops the instance and removes its registration. Succeeds when there is none.
-    fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
+    /// Makes the manager run the registered instance now.
+    fn start(&self, instance: &InstanceId) -> Result<(), ServiceError>;
+    /// Stops the registered instance and waits until it has stopped.
+    fn stop(&self, instance: &InstanceId) -> Result<(), ServiceError>;
+    /// Whether the instance is registered and running, and when it runs.
+    fn status(&self, instance: &InstanceId) -> Result<ServiceStatus, ServiceError>;
+    /// Stops the instance and removes its registration.
+    fn unregister(&self, instance: &InstanceId) -> Result<(), ServiceError>;
 }
 
 /// The service manager for `mode` on the build target, or the refusal.
 ///
-/// Today every target refuses. The macOS adapter (a per-user launchd agent,
-/// increment A2) and the Linux adapter (a systemd user unit and the foreground mode,
-/// increment X5) are selected here, by build target, when they are written.
+/// Foreground mode works on macOS and GNU/Linux today. Registered mode refuses on
+/// every target until its adapters are written: the launchd agent in
+/// `service/macos.rs` (increment A2) and the systemd user unit in `service/linux.rs`
+/// (increment X5).
 pub fn service(mode: ServiceMode) -> Result<Box<dyn ServiceManager>, Refused> {
-    refused::service(mode)
+    native::service(mode)
+}
+
+supported! {
+    /// Foreground mode, the same on every system that has it: there is nothing to
+    /// register, start or stop.
+    struct Foreground;
+
+    impl ServiceManager for Foreground {
+        fn register(&self, _: &Unit) -> Result<(), ServiceError> {
+            Ok(())
+        }
+        fn start(&self, _: &InstanceId) -> Result<(), ServiceError> {
+            Err(ServiceError::Unmanaged)
+        }
+        fn stop(&self, _: &InstanceId) -> Result<(), ServiceError> {
+            Err(ServiceError::Unmanaged)
+        }
+        fn status(&self, _: &InstanceId) -> Result<ServiceStatus, ServiceError> {
+            Ok(ServiceStatus::Unmanaged)
+        }
+        fn unregister(&self, _: &InstanceId) -> Result<(), ServiceError> {
+            Ok(())
+        }
+    }
+
+    /// What the macOS and Linux adapters answer for registered mode until they have
+    /// a manager for it.
+    fn registered_mode_unwritten() -> Refused {
+        Refused::unsupported("registered service")
+    }
 }
 
 #[cfg(test)]

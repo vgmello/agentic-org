@@ -40,8 +40,8 @@ and in the "Code today" line of each increment.
 ## Known facts that affect the first increments
 
 - `crates/org-platform` exists from X1a. No file outside it gains a platform predicate:
-  `crates/org-platform/tests/platform_conditionals.rs` fails on one, and
-  `.github/platform-conditionals.allow` only shrinks. A new operating-system need goes
+  `crates/org-platform/tests/platform_conditionals.rs` fails on one, and CI fails a
+  change that adds a file to `.github/platform-conditionals.allow` or raises a count. A new operating-system need goes
   into that crate, with its macOS adapter and a refusing one, and a note for Track X.
 - `crates/org-host` compiles on Linux but refuses to start an office worker there: the
   check that a started worker is the intended program exists only for macOS, and the

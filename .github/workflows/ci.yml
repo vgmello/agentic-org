@@ -67,6 +67,15 @@ jobs:
       - name: Platform conditionals (LNX-5)
         run: cargo test --locked -p org-platform --test platform_conditionals
 
+      # A Unix target that is neither macOS nor GNU/Linux gets org-platform's refusing adapters.
+      # Linux with musl is such a target, and its test binaries run on this runner.
+      - name: Refusing adapters (a target without an adapter)
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo clippy --locked -p org-platform --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
+          cargo test --locked -p org-platform --all-features --target x86_64-unknown-linux-musl
+
       - name: cargo clippy
         run: cargo clippy --locked --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
 
@@ -80,6 +89,33 @@ jobs:
 
       - name: cargo test
         run: cargo test --locked --workspace ${{ matrix.test-flags }}
+
+  # ADR-0017 LNX-5: a change never adds a file to .github/platform-conditionals.allow or raises a
+  # count in it. A branch is compared with where it left v1-integration; a push to v1-integration
+  # with the commit it replaced.
+  platform-list:
+    name: Platform conditionals list only shrinks
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare the list with its base
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/v1-integration" ]; then
+            base="$BEFORE"
+          else
+            base="$(git merge-base HEAD origin/v1-integration)"
+          fi
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              echo "No base commit to compare with."; exit 0 ;;
+          esac
+          python3 .github/scripts/platform_allowlist_shrinks.py "$base"
 
   # The UI checks run in a browser against the app's own code and fakes, with no Tauri and nothing
   # platform-specific, so they run on Linux only. Node and Bun are both pinned.

@@ -1,20 +1,35 @@
 //! The platform-conditional check (ADR-0017 LNX-5).
 //!
-//! Every operating-system difference lives in `crates/org-platform`. This test parses
-//! every other `.rs` file of the repository with `syn` and counts the `cfg`,
-//! `cfg_attr` and `cfg!` predicates that name `target_os`, `target_vendor`,
-//! `target_env` or `target_family`. The files that had such predicates when the crate
-//! was created are listed, each with its count, in `.github/platform-conditionals.allow`.
-//! The test fails when:
+//! Every operating-system difference lives in `crates/org-platform`. This test reads
+//! every other `.rs` file of the repository, requires that `syn` parses it, and
+//! counts in its tokens:
+//!
+//! - each `cfg` or `cfg_attr` attribute and each `cfg!`, `cfg_select!` or
+//!   `cfg_match!` call that names `target_os`, `target_vendor`, `target_env` or
+//!   `target_family`, wherever it is written, including inside macro calls and
+//!   definitions;
+//! - each other use of one of those four names as an identifier (for example a key
+//!   handed to a macro that builds the `cfg`). The names are reserved for
+//!   `org-platform`.
+//!
+//! The files that had such predicates when the crate was created are listed, each
+//! with its count, in `.github/platform-conditionals.allow`. The test fails when:
 //!
 //! - a file that is not listed has a predicate;
 //! - a listed file has more predicates than its entry (a listed file gains none);
 //! - a listed file has fewer than its entry, or is gone (the entry is lowered or
-//!   deleted in the same change, so the list always states what is left).
+//!   deleted in the same change, so the list always states what is left);
+//! - a file includes source this test cannot follow: `include!` of anything but a
+//!   literal `.rs` path, or a `#[path]` that does not end in `.rs`.
 //!
-//! The list therefore only shrinks, and is empty when Track X is complete. String
-//! literals and comments are not predicates. `cfg(unix)` is outside the check: a
-//! non-Unix target cannot build `org-platform` at all.
+//! The list is empty when Track X is complete. CI also checks that a change never
+//! adds a line to it or raises a count (`.github/scripts/platform_allowlist_shrinks.py`).
+//!
+//! Not predicates: string literals and comments. Outside the check: `cfg(unix)`,
+//! because a non-Unix target cannot build `org-platform` at all; and what no source
+//! scan can see, which review covers (a build script that emits its own `cfg`, a
+//! `--cfg` flag, `std::env::consts::OS` compared at run time). If a later `syn`
+//! cannot parse valid new syntax, the check fails and the `syn` pin is raised.
 //!
 //! To see what the check finds, in the allowlist's format:
 //! `PLATFORM_CONDITIONALS_PRINT=1 cargo test -p org-platform --test platform_conditionals -- --nocapture`
@@ -24,100 +39,118 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
-use syn::visit::Visit;
+use proc_macro2::{Delimiter, Ident, TokenStream, TokenTree};
 
 const ALLOWLIST: &str = ".github/platform-conditionals.allow";
 const EXEMPT: &str = "crates/org-platform";
 const TARGET_KEYS: [&str; 4] = ["target_os", "target_vendor", "target_env", "target_family"];
-/// Never source: build output, dependencies and tool state.
-const SKIPPED_DIRECTORIES: [&str; 2] = ["target", "node_modules"];
+/// The attributes and macros whose arguments are configuration predicates.
+const CONDITIONALS: [&str; 4] = ["cfg", "cfg_attr", "cfg_select", "cfg_match"];
+/// A build output directory, wherever it is and whatever it is called, has this file.
+const BUILD_OUTPUT_MARKER: &str = "CACHEDIR.TAG";
 
-/// The line of every platform predicate in one source file.
-fn predicates(source: &str) -> Result<Vec<usize>, syn::Error> {
-    let file = syn::parse_file(source)?;
-    let mut found = Found(Vec::new());
-    found.visit_file(&file);
-    found.0.sort_unstable();
-    Ok(found.0)
+/// What one source file holds.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Findings {
+    /// The line of every platform predicate.
+    predicates: Vec<usize>,
+    /// `(line, what)` for every inclusion of source the check cannot follow.
+    unfollowed: Vec<(usize, &'static str)>,
 }
 
-struct Found(Vec<usize>);
+fn scan(source: &str) -> Result<Findings, String> {
+    syn::parse_file(source).map_err(|error| error.to_string())?;
+    let tokens: TokenStream = source.parse().map_err(|error| format!("{error}"))?;
+    let mut findings = Findings::default();
+    walk(tokens, &mut findings);
+    findings.predicates.sort_unstable();
+    findings.unfollowed.sort_unstable();
+    Ok(findings)
+}
 
-impl Found {
-    /// `tokens` is the argument list of one `cfg`, `cfg_attr` or `cfg!`.
-    fn predicate(&mut self, tokens: TokenStream, line: usize) {
-        if names_a_target(tokens) {
-            self.0.push(line);
-        }
-    }
+/// A raw identifier (`r#cfg`) is the same name.
+fn named(ident: &Ident, names: &[&str]) -> bool {
+    let name = ident.to_string();
+    names.contains(&name.strip_prefix("r#").unwrap_or(&name))
+}
 
-    /// The body of a macro call or definition is not parsed by `syn`, so the
-    /// conditionals inside it are found in its tokens: `#[cfg(..)]`, `#![cfg(..)]`,
-    /// `#[cfg_attr(..)]` and `cfg!(..)`.
-    fn macro_body(&mut self, tokens: TokenStream) {
-        let tokens: Vec<TokenTree> = tokens.into_iter().collect();
-        for (i, token) in tokens.iter().enumerate() {
-            let TokenTree::Group(group) = token else {
-                continue;
-            };
-            let after_cfg_bang = i >= 2
-                && matches!(&tokens[i - 1], TokenTree::Punct(p) if p.as_char() == '!')
-                && matches!(&tokens[i - 2], TokenTree::Ident(name) if name == "cfg");
-            let after_hash = (i >= 1
-                && matches!(&tokens[i - 1], TokenTree::Punct(p) if p.as_char() == '#'))
-                || (i >= 2
-                    && matches!(&tokens[i - 1], TokenTree::Punct(p) if p.as_char() == '!')
-                    && matches!(&tokens[i - 2], TokenTree::Punct(p) if p.as_char() == '#'));
-            if after_cfg_bang {
-                self.predicate(group.stream(), group.span().start().line);
-            } else if after_hash && group.delimiter() == Delimiter::Bracket {
-                let inner: Vec<TokenTree> = group.stream().into_iter().collect();
-                match inner.as_slice() {
-                    [TokenTree::Ident(name), TokenTree::Group(arguments)]
-                        if name == "cfg" || name == "cfg_attr" =>
-                    {
-                        self.predicate(arguments.stream(), name.span().start().line);
+fn punct(token: Option<&TokenTree>, character: char) -> bool {
+    matches!(token, Some(TokenTree::Punct(p)) if p.as_char() == character)
+}
+
+fn walk(tokens: TokenStream, findings: &mut Findings) {
+    let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut index = 0;
+    while index < tokens.len() {
+        match &tokens[index] {
+            TokenTree::Ident(ident) if named(ident, &CONDITIONALS) => {
+                // `cfg(..)` in an attribute, or `cfg!(..)` with any delimiter.
+                let after_bang = usize::from(punct(tokens.get(index + 1), '!'));
+                if let Some(TokenTree::Group(arguments)) = tokens.get(index + 1 + after_bang) {
+                    if names_a_target(arguments.stream()) {
+                        findings.predicates.push(ident.span().start().line);
                     }
-                    _ => self.macro_body(group.stream()),
+                    index += 2 + after_bang;
+                    continue;
                 }
-            } else {
-                self.macro_body(group.stream());
+            }
+            TokenTree::Ident(ident) if named(ident, &TARGET_KEYS) => {
+                findings.predicates.push(ident.span().start().line);
+            }
+            TokenTree::Ident(ident) if named(ident, &["include"]) => {
+                if let (true, Some(TokenTree::Group(arguments))) =
+                    (punct(tokens.get(index + 1), '!'), tokens.get(index + 2))
+                {
+                    if !rust_path_literal(arguments.stream()) {
+                        let line = ident.span().start().line;
+                        findings
+                            .unfollowed
+                            .push((line, "include! of something other than a literal .rs path"));
+                    }
+                }
+            }
+            TokenTree::Group(group) => {
+                if group.delimiter() == Delimiter::Bracket && punct_before(&tokens, index) {
+                    path_attribute(group.stream(), findings);
+                }
+                walk(group.stream(), findings);
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+/// Whether the bracket group at `index` follows `#` or `#!`: an attribute.
+fn punct_before(tokens: &[TokenTree], index: usize) -> bool {
+    let before = |back: usize| index.checked_sub(back).and_then(|at| tokens.get(at));
+    punct(before(1), '#') || (punct(before(1), '!') && punct(before(2), '#'))
+}
+
+/// `#[path = "…"]` names a module file; the check follows it only as a `.rs` file.
+fn path_attribute(attribute: TokenStream, findings: &mut Findings) {
+    let tokens: Vec<TokenTree> = attribute.into_iter().collect();
+    if let [TokenTree::Ident(name), equals, value @ ..] = tokens.as_slice() {
+        if named(name, &["path"]) && punct(Some(equals), '=') {
+            let followed = rust_path_literal(value.iter().cloned().collect());
+            if !followed {
+                findings.unfollowed.push((
+                    name.span().start().line,
+                    "#[path] that is not a literal .rs path",
+                ));
             }
         }
     }
 }
 
-impl<'ast> Visit<'ast> for Found {
-    fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
-        let path = attribute.path();
-        if path.is_ident("cfg") || path.is_ident("cfg_attr") {
-            if let syn::Meta::List(list) = &attribute.meta {
-                let line = path
-                    .segments
-                    .first()
-                    .map_or(0, |segment| segment.ident.span().start().line);
-                self.predicate(list.tokens.clone(), line);
-            }
-        }
-        syn::visit::visit_attribute(self, attribute);
-    }
-
-    fn visit_macro(&mut self, call: &'ast syn::Macro) {
-        let name = call.path.segments.last().map(|segment| &segment.ident);
-        match name {
-            Some(name) if name == "cfg" => {
-                self.predicate(call.tokens.clone(), name.span().start().line);
-            }
-            _ => self.macro_body(call.tokens.clone()),
-        }
-        syn::visit::visit_macro(self, call);
-    }
+/// Whether `tokens` is exactly one string literal ending in `.rs`.
+fn rust_path_literal(tokens: TokenStream) -> bool {
+    syn::parse2::<syn::LitStr>(tokens).is_ok_and(|literal| literal.value().ends_with(".rs"))
 }
 
 fn names_a_target(tokens: TokenStream) -> bool {
     tokens.into_iter().any(|token| match token {
-        TokenTree::Ident(name) => TARGET_KEYS.iter().any(|key| name == key),
+        TokenTree::Ident(ident) => named(&ident, &TARGET_KEYS),
         TokenTree::Group(group) => names_a_target(group.stream()),
         _ => false,
     })
@@ -131,8 +164,10 @@ fn repository() -> PathBuf {
         .to_path_buf()
 }
 
-/// Every `.rs` file of the repository outside `crates/org-platform`, as a path
-/// relative to the root with `/` separators, sorted.
+/// Every `.rs` file under `root` outside `crates/org-platform`, as a path relative to
+/// the root with `/` separators, sorted. Skipped: hidden directories, `node_modules`,
+/// and build output (a directory holding `CACHEDIR.TAG`, as every cargo target
+/// directory does), so a source directory that happens to be named `target` is read.
 fn sources(root: &Path) -> Vec<String> {
     let mut found = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -144,20 +179,21 @@ fn sources(root: &Path) -> Vec<String> {
             let path = entry.path();
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let kind = entry.file_type().expect("a file type");
             let relative = path
                 .strip_prefix(root)
                 .expect("under the root")
                 .to_string_lossy()
                 .replace('\\', "/");
-            if kind.is_dir() {
+            if entry.file_type().expect("a file type").is_dir() {
                 let skipped = name.starts_with('.')
-                    || SKIPPED_DIRECTORIES.contains(&name.as_ref())
-                    || relative == EXEMPT;
+                    || name == "node_modules"
+                    || relative == EXEMPT
+                    || path.join(BUILD_OUTPUT_MARKER).exists();
                 if !skipped {
                     pending.push(path);
                 }
-            } else if kind.is_file() && name.ends_with(".rs") {
+            } else if name.ends_with(".rs") && path.is_file() {
+                // `is_file` follows a symbolic link, so a linked source file is read.
                 found.push(relative);
             }
         }
@@ -198,9 +234,18 @@ fn allowlist(text: &str) -> Result<BTreeMap<String, usize>, String> {
 }
 
 /// What is wrong, one line each; empty when the sources and the list agree.
-fn compare(found: &BTreeMap<String, Vec<usize>>, listed: &BTreeMap<String, usize>) -> Vec<String> {
+fn compare(found: &BTreeMap<String, Findings>, listed: &BTreeMap<String, usize>) -> Vec<String> {
     let mut problems = Vec::new();
-    for (path, lines) in found {
+    for (path, findings) in found {
+        for (line, what) in &findings.unfollowed {
+            problems.push(format!(
+                "{path} (line {line}): {what}. The check cannot read what it includes."
+            ));
+        }
+        let lines = &findings.predicates;
+        if lines.is_empty() {
+            continue;
+        }
         let lines_text = lines
             .iter()
             .map(usize::to_string)
@@ -225,7 +270,10 @@ fn compare(found: &BTreeMap<String, Vec<usize>>, listed: &BTreeMap<String, usize
         }
     }
     for path in listed.keys() {
-        if !found.contains_key(path) {
+        if found
+            .get(path)
+            .is_none_or(|findings| findings.predicates.is_empty())
+        {
             problems.push(format!(
                 "{path}: no platform predicate left. Delete its line from {ALLOWLIST}."
             ));
@@ -241,16 +289,18 @@ fn platform_predicates_stay_inside_org_platform() {
     for path in sources(&root) {
         let source =
             fs::read_to_string(root.join(&path)).unwrap_or_else(|error| panic!("{path}: {error}"));
-        let lines = predicates(&source)
+        let findings = scan(&source)
             .unwrap_or_else(|error| panic!("{path}: not parsed, so not checked: {error}"));
-        if !lines.is_empty() {
-            found.insert(path, lines);
+        if findings != Findings::default() {
+            found.insert(path, findings);
         }
     }
     if std::env::var_os("PLATFORM_CONDITIONALS_PRINT").is_some() {
         let mut text = String::new();
-        for (path, lines) in &found {
-            writeln!(text, "{path} {}", lines.len()).expect("a string");
+        for (path, findings) in &found {
+            if !findings.predicates.is_empty() {
+                writeln!(text, "{path} {}", findings.predicates.len()).expect("a string");
+            }
         }
         println!("{text}");
     }
@@ -266,10 +316,16 @@ fn platform_predicates_stay_inside_org_platform() {
 }
 
 mod scanner {
-    use super::predicates;
+    use super::scan;
 
     fn lines(source: &str) -> Vec<usize> {
-        predicates(source).expect("the fixture parses")
+        let findings = scan(source).expect("the fixture parses");
+        assert_eq!(
+            findings.unfollowed,
+            [],
+            "nothing unfollowed in this fixture"
+        );
+        findings.predicates
     }
 
     #[test]
@@ -296,15 +352,22 @@ fn f(x: u8) -> u8 {
     }
 
     #[test]
-    fn cfg_attr_and_the_cfg_macro_are_found() {
+    fn cfg_attr_and_the_cfg_macros_are_found_once_each() {
         let source = r#"
 #[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(test, cfg(target_os = "linux"))]
 fn f() -> bool {
     if cfg!(target_os = "linux") { return true; }
+    if core::cfg!(any(target_os = "macos", target_os = "ios")) { return true; }
     cfg!(all(test, not(target_vendor = "apple")))
 }
+cfg_select! {
+    target_os = "linux" => { fn os() -> u8 { 1 } }
+    target_os = "macos" => { fn os() -> u8 { 2 } }
+    _ => { fn os() -> u8 { 0 } }
+}
 "#;
-        assert_eq!(lines(source), [2, 4, 5]);
+        assert_eq!(lines(source), [2, 3, 5, 6, 7, 9]);
     }
 
     #[test]
@@ -332,6 +395,48 @@ macro_rules! gated {
     }
 
     #[test]
+    fn items_syn_keeps_verbatim_and_arguments_of_other_attributes_are_read() {
+        let source = r#"
+unsafe extern "C" {
+    #[cfg(target_os = "linux")]
+    pub unsafe static mut errno_x: i32;
+    #[cfg(target_os = "linux")]
+    safe fn abs(x: i32) -> i32;
+}
+#[derive(Debug)]
+#[error("built for linux: {}", cfg!(target_os = "linux"))]
+struct E;
+"#;
+        assert_eq!(lines(source), [3, 5, 9]);
+    }
+
+    #[test]
+    fn raw_identifiers_are_the_same_names() {
+        let source = r#"
+#[cfg(r#target_os = "linux")]
+fn a() {}
+#[r#cfg(target_os = "linux")]
+fn b() {}
+#[r#cfg_attr(target_os = "linux", allow(dead_code))]
+fn c() -> bool { r#cfg!(target_os = "linux") }
+"#;
+        assert_eq!(lines(source), [2, 4, 6, 7]);
+    }
+
+    #[test]
+    fn a_target_key_outside_a_conditional_is_found() {
+        let source = r#"
+macro_rules! when { ([$($p:tt)*] $i:item) => { #[cfg($($p)*)] $i }; }
+when!([target_os = "linux"] fn indirect() {});
+fn f() {
+    let target_env = "a local named like the key";
+    let _ = target_env;
+}
+"#;
+        assert_eq!(lines(source), [3, 5, 6]);
+    }
+
+    #[test]
     fn other_conditions_strings_and_comments_are_not_predicates() {
         let source = r##"
 // #[cfg(target_os = "macos")]
@@ -340,9 +445,10 @@ macro_rules! gated {
 #[cfg(test)]
 #[cfg(all(feature = "x", target_arch = "x86_64", target_pointer_width = "64"))]
 #[cfg_attr(test, allow(dead_code))]
+#[doc = "#[cfg(target_os = \"macos\")]"]
 fn f() -> &'static str {
-    let target_os = "a local named like the key";
-    let _ = (target_os, cfg!(debug_assertions));
+    let cfg = 1;
+    let _ = (cfg, cfg!(debug_assertions));
     let _ = std::env::var("CARGO_CFG_TARGET_OS");
     assert!(!r#"#[cfg(target_os = "macos")] cfg!(target_family = "unix")"#.is_empty());
     "[target.'cfg(target_os = \"macos\")'.dependencies]"
@@ -352,20 +458,100 @@ fn f() -> &'static str {
     }
 
     #[test]
+    fn included_source_must_be_a_rust_file_the_walk_reads() {
+        let followed = r#"
+#[path = "tests/instance.rs"]
+mod instance;
+include!("generated.rs");
+const TEXT: &str = include_str!("notes.txt");
+const BYTES: &[u8] = include_bytes!("blob.bin");
+"#;
+        assert_eq!(scan(followed).unwrap().unfollowed, []);
+
+        let unfollowed = r#"
+#[path = "linux.inc"]
+mod os;
+include!("linux.inc");
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+macro_rules! m { () => { include!("inner.inc"); }; }
+"#;
+        let findings = scan(unfollowed).unwrap();
+        assert_eq!(
+            findings.unfollowed,
+            [
+                (2, "#[path] that is not a literal .rs path"),
+                (4, "include! of something other than a literal .rs path"),
+                (5, "include! of something other than a literal .rs path"),
+                (6, "include! of something other than a literal .rs path"),
+            ]
+        );
+        assert_eq!(findings.predicates, [] as [usize; 0]);
+    }
+
+    #[test]
     fn a_file_that_does_not_parse_is_an_error_not_a_pass() {
-        assert!(predicates("fn broken( {").is_err());
+        assert!(scan("fn broken( {").is_err());
+    }
+}
+
+mod walk {
+    use std::fs;
+
+    use super::sources;
+
+    #[test]
+    fn the_walk_reads_sources_and_skips_only_build_output_and_tool_state() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |path: &str| {
+            let path = root.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "").unwrap();
+        };
+        write("crates/a/src/lib.rs");
+        write("crates/a/src/target/mod.rs");
+        write("apps/b/build.rs");
+        write("apps/b/notes.md");
+        write("crates/org-platform/src/lib.rs");
+        write("crates/org-platform-extra/src/lib.rs");
+        write("target/debug/build/generated.rs");
+        write("target/CACHEDIR.TAG");
+        write("other-output/CACHEDIR.TAG");
+        write("other-output/generated.rs");
+        write("apps/ui/node_modules/dep/index.rs");
+        write(".git/hooks/sample.rs");
+        std::os::unix::fs::symlink(
+            root.path().join("crates/a/src/lib.rs"),
+            root.path().join("crates/a/src/linked.rs"),
+        )
+        .unwrap();
+        assert_eq!(
+            sources(root.path()),
+            [
+                "apps/b/build.rs",
+                "crates/a/src/lib.rs",
+                "crates/a/src/linked.rs",
+                "crates/a/src/target/mod.rs",
+                "crates/org-platform-extra/src/lib.rs",
+            ]
+        );
     }
 }
 
 mod list {
     use std::collections::BTreeMap;
 
-    use super::{allowlist, compare};
+    use super::{allowlist, compare, Findings};
 
-    fn found(entries: &[(&str, usize)]) -> BTreeMap<String, Vec<usize>> {
+    fn found(entries: &[(&str, usize)]) -> BTreeMap<String, Findings> {
         entries
             .iter()
-            .map(|(path, count)| ((*path).to_owned(), (1..=*count).collect()))
+            .map(|(path, count)| {
+                let findings = Findings {
+                    predicates: (1..=*count).collect(),
+                    unfollowed: Vec::new(),
+                };
+                ((*path).to_owned(), findings)
+            })
             .collect()
     }
 
@@ -410,10 +596,24 @@ mod list {
     }
 
     #[test]
-    fn a_stale_entry_fails_so_the_list_only_shrinks() {
+    fn a_stale_entry_fails_so_the_list_states_what_is_left() {
         let problems = compare(&found(&[("a.rs", 1)]), &listed("a.rs 2\ngone.rs 1\n"));
         assert_eq!(problems.len(), 2);
         assert!(problems[0].contains("1 platform predicates left, and its entry says 2"));
         assert!(problems[1].starts_with("gone.rs: no platform predicate left"));
+    }
+
+    #[test]
+    fn source_the_check_cannot_follow_fails_even_in_a_listed_file() {
+        let mut sources = found(&[("a.rs", 1), ("b.rs", 0)]);
+        for findings in sources.values_mut() {
+            findings
+                .unfollowed
+                .push((7, "include! of something other than a literal .rs path"));
+        }
+        let problems = compare(&sources, &listed("a.rs 1\n"));
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].starts_with("a.rs (line 7): include! of something other"));
+        assert!(problems[1].starts_with("b.rs (line 7): include! of something other"));
     }
 }
