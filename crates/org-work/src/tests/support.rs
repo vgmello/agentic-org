@@ -37,7 +37,7 @@ pub fn agent() -> Caller {
     Caller::agent("ada")
 }
 
-/// A person who reports bugs through the app.
+/// A person who reports bugs through their grant.
 pub fn pat() -> Caller {
     Caller::grant_bound("pat")
 }
@@ -153,7 +153,7 @@ impl World {
         }
     }
 
-    /// Creates a task in `PROJECT` as the app; returns its id.
+    /// Creates a task in `PROJECT` as the owner, through a grant; returns its id.
     pub fn task(&self) -> String {
         self.task_with(|_| {})
     }
@@ -193,7 +193,7 @@ impl World {
         }
     }
 
-    /// Moves a task to `status` as the app (with a reason if blocked).
+    /// Moves a task to `status` as the owner, through a grant (with a reason if blocked).
     pub fn set(&self, id: &str, status: ItemStatus) -> WorkAccepted {
         let p = self.status(id, status);
         self.ok(&owner_by_grant(), WorkCall::TaskSetStatus(p))

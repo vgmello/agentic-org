@@ -240,7 +240,7 @@ fn comment_with_watch_and_work_watch() {
             watching: false
         }
     );
-    // The creator (the app's owner here) always watches.
+    // The creator (the grant-bound owner here) always watches.
     assert_eq!(
         w.code(&owner_by_grant(), watch(false)),
         ErrorCode::InvalidRequest
@@ -596,7 +596,7 @@ fn a_connection_that_isnt_the_apps_acts_only_as_an_agent() {
         &Caller::agent("pau"),
         WorkCall::TaskCreate(w.create_params(PROJECT)),
     );
-    // The app may act as the owner or a person.
+    // A grant-bound connection may act as the owner or a person.
     w.ok(
         &Caller::grant_bound("pat"),
         WorkCall::TaskCreate(w.create_params(PROJECT)),

@@ -308,7 +308,7 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
-/// is gone, otherwise a `failed` line has been written.
+/// is gone; otherwise the failure is logged and reported on the rendezvous if one exists.
 fn first_line(
     control: &mut Control,
     expected: FirstLine,

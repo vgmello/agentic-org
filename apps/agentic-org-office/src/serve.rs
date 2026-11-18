@@ -1089,13 +1089,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
                 );
             };
             if WorkCall::is_grant_only(request) && !*via_grant {
-                return Response::error(
-                    request.id,
-                    ApiError::new(
-                        ErrorCode::NotAuthorized,
-                        format!("`{}` is for the app", request.method),
-                    ),
-                );
+                return Response::error(request.id, WorkCall::grant_only_refusal(&request.method));
             }
             let call = match parsed {
                 Err(refusal) => return Response::error(request.id, refusal),

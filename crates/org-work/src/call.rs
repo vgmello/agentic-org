@@ -135,4 +135,14 @@ impl WorkCall {
     pub fn grant_only(&self) -> bool {
         GRANT_ONLY.contains(&self.method())
     }
+
+    /// The refusal for a grant-only `method` on a connection that isn't grant-bound. The
+    /// engine and the worker's early check both answer with it, so a caller sees one message
+    /// whichever layer refuses.
+    pub fn grant_only_refusal(method: &str) -> ApiError {
+        ApiError::new(
+            ErrorCode::NotAuthorized,
+            format!("`{method}` can only be made through a person's grant"),
+        )
+    }
 }

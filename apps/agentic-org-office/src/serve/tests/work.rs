@@ -85,7 +85,9 @@ fn c1_work_guard_matrix_checks_binding_and_grant_only_before_params() {
                 if let Some(code) = expected {
                     let message = match code {
                         ErrorCode::NotBound => Some("bind as a member to change work"),
-                        ErrorCode::NotAuthorized => Some("`work.delete` is for the app"),
+                        ErrorCode::NotAuthorized => {
+                            Some("`work.delete` can only be made through a person's grant")
+                        }
                         _ => None,
                     };
                     assert_error(response, code, message);

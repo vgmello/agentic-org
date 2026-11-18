@@ -2,8 +2,9 @@
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
 //! It follows the launch protocol (`org-office-launch`) without SQLCipher or a key store, and
-//! does what the test scripted. It accepts either launch version for the rollout, as the real
-//! server does (`v3::read_first_line_any`):
+//! does what the test scripted. It still accepts either launch version (`v3::read_first_line_any`)
+//! so the host's remaining v2 tests run; the real server reads only v3, and this fake's v2
+//! branch goes with them:
 //! - **v2:** the first stdin line carries the secrets; events go to stdout; the host's lifetime
 //!   is stdin.
 //! - **v3:** the first stdin line names the rendezvous socket. The fake connects to it, sends

@@ -1,4 +1,4 @@
-//! `change_id` idempotency (§2.3), the age checks, app-only calls, sizes and re-runs.
+//! `change_id` idempotency (§2.3), the age checks, grant-only calls, sizes and re-runs.
 
 use org_proto::work::*;
 use org_proto::ErrorCode;
@@ -161,7 +161,12 @@ fn delete_over_an_agent_connection_is_not_authorized_before_any_other_check() {
         expected_version: 99,
     });
     assert_eq!(w.code(&agent(), call), ErrorCode::NotAuthorized);
-    assert_eq!(w.code(&agent(), w.delete(&id)), ErrorCode::NotAuthorized);
+    let refusal = w.err(&agent(), w.delete(&id));
+    assert_eq!(refusal.code, ErrorCode::NotAuthorized);
+    assert_eq!(
+        refusal.message,
+        "`work.delete` can only be made through a person's grant"
+    );
     assert!(!w.item(&id).deleted);
     w.ok(&owner_by_grant(), w.delete(&id));
     assert!(w.item(&id).deleted);
