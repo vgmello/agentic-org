@@ -700,6 +700,55 @@ three adds an operation kind and a consumer, not another store.
 
 ## 11. What is deleted and what is kept
 
+Today's store is `crates/org-office/src/store.rs` and `store/`: 14,694 lines outside
+test files and 33,948 with them, over two SQLCipher databases (`org.db` and `office.db`
+under the host home's `offices/<office-id>/`, `crates/org-office/src/office.rs`), with the
+old tables as the source of truth. **B1b deletes all of it**, rather than family by
+family, so that the office has one writer, one database and one place for SQL. Calls
+that only the old tables served answer `unsupported` until their family is rebuilt on
+the new store: work in B4; messaging and status in B6; process ownership in C3. Nobody
+uses them yet.
+
+| Deleted in B1b | Replaced by |
+| --- | --- |
+| `store.rs` (writer, `Schema` upgrades, `Opening`, key pragma) | `org-store` writer; the SQLite engine |
+| `store/org.rs`, `store/org/` (activity, operation, snapshot, work view, replication and its tests) | The organization family; replication in S1 (section 10) |
+| `store/acceptance.rs`, `store/acceptance/` (`rows.rs` capture triggers, `schema.rs`, `crash.rs`, `durable.rs`, tests) | `org-store` journal, flusher, files and crash points |
+| `store/origin.rs` | `org-store` sequences |
+| `store/hq_creation.rs` (`local_hq_creation`) | The organization family; the CA key as a protected record wrapped by the office secrets key (ADR-0016) under `local/offices/<office-id>/` |
+| `store/work.rs`, `store/work/` | The work family (B4) |
+| `store/messages.rs`, `store/status.rs`, `crates/org-office/src/messaging.rs` | The messaging family (B6) |
+| `store/owned_processes.rs` | Process cleanup records as files under `recovery/offices/<office-id>/cleanup/` (C3, document 16) |
+| `store/sync.rs` | Nothing: the old sync attempt runner goes with the old writer |
+| `store/tests/` (opener policy, SQLCipher initialization) | The ENG-1 check reuses the opener policy's `syn` approach |
+| SQL in `organization/bootstrap.rs`, `organization/admission.rs`, `office.rs` (`put_meta`, `meta`) and `office/hq_creation.rs` | Organization family decisions; office identity in the journal anchor and `offices/<office-id>.yaml` |
+
+**Kept, and how it changes.**
+
+- **The acceptance journal's rules** (`store/acceptance.rs`): a decision is frozen and
+  never rerun once published; an anchor and a hash chain; ordinals apart from origin
+  positions; exhaustion checked before publication (writes stop, receipt lookups
+  continue); files materialized to their final state from a verified predecessor, and
+  unfamiliar bytes stop recovery; the crash points `Prepared`, `SqlCommitted` and
+  `BeforeReply` and their reopen tests. What changes: an entry carries file changes,
+  not SQL rows with a projection-schema digest; entries are appended to segments, not
+  written one file each; the hash is over the stored bytes; the host confirms once per
+  flush; there are no capture triggers and no per-read verification.
+- **The publication primitives** of `store/acceptance/durable.rs` (path validation,
+  directory checks, temporary file, flush, exclusive rename): into `org-store`'s
+  `files.rs`, over `org-platform`'s `fs` once X1b has moved the flush there.
+- **The batching rules of ADR-0002 decision 3** and their tests in `store.rs` (one failing
+  request fails alone; when SQLite ends the transaction the others run again; a failed
+  commit fails every request): ported to `org-store`'s writer suite.
+- **`WriterAuthority`** and its host channel adapter in
+  `apps/agentic-org-office/src/transfer/writer.rs`: moved to `org-store` unchanged in
+  shape.
+- **The conformance suites** of `org-mailbox` (`testkit/conformance.rs`,
+  `triage_conformance.rs`) and `org-sync`: restated over the new ports in B6 and S1.
+  `org-work`'s `MemStore` becomes the work family's memory port in B4.
+- **`org-work`'s `selected_codec`, `selected_assignment` and `selected_history`**: the
+  task event codec and assignment rules B4 builds on.
+
 ## 12. What it does not do
 
 ## 13. Open points
