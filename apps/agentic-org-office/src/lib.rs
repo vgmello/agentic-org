@@ -382,7 +382,10 @@ fn serve_office(
     let office = Arc::new(office);
     let mut transfer = control.transfer();
     let admitted = initial_writer_admission(&mut transfer, &office, instance.as_deref(), &control);
-    if admitted.is_err() {
+    if let Err(error) = &admitted {
+        // The log (stderr) is the only place the cause goes; the host gets a fixed text.
+        eprintln!("agentic-org-office: protected writer admission failed: {error}");
+        log_causes(error);
         return fail(
             &mut control,
             FailCode::StorageError,

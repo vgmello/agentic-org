@@ -173,10 +173,16 @@ struct Session {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
     transfer: Option<UnixDatagram>,
+    // Sender copy of a descriptor in flight on `transfer`, kept until the worker answers
+    // (as the host's pending registry does). Closing it while in flight lets the macOS
+    // unix-socket GC flush the in-flight socket.
+    in_flight: std::cell::RefCell<Option<UnixStream>>,
 }
 impl Session {
     fn event(&mut self) -> Value {
-        line(&mut self.reader)
+        let event = line(&mut self.reader);
+        self.in_flight.get_mut().take();
+        event
     }
     fn no_stdout(&self) {
         assert!(
@@ -276,6 +282,7 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
         stream,
         reader,
         transfer: transfer_host,
+        in_flight: Default::default(),
     }
 }
 fn ready_create(world: &World) -> Session {
@@ -761,6 +768,7 @@ fn selected_handshake(world: &World, start: bool) -> Session {
         stream,
         reader,
         transfer: Some(host),
+        in_flight: Default::default(),
     };
     if !start {
         assert_eq!(session.event()["event"], "created");
@@ -889,6 +897,7 @@ fn selected_writer_attempt(
     )
     .map(|_| ())
     .map_err(|error| error.to_string());
+    *session.in_flight.borrow_mut() = Some(worker);
     (thread, sent)
 }
 #[test]
