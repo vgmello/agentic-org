@@ -5,7 +5,7 @@ use std::process::ExitStatus;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::platform::Watch;
+use org_platform::process::{self, Watch};
 
 /// Identity to persist before the first protocol write. Start and boot IDs are opaque
 /// platform-native values; a numeric pid alone is never a restart/cleanup identity.
@@ -94,7 +94,6 @@ pub struct OwnedChild {
 // Keep the whole exceptional permission decision together, including the ownership
 // recheck after the snapshot. Its refusal paths cannot be provoked by a same-UID live
 // fixture, whose group signal succeeds; exercise those paths through these capabilities.
-#[cfg(any(target_os = "macos", test))]
 fn tolerate_zombie_group_eperm(
     mut exited: impl FnMut() -> io::Result<bool>,
     singleton: impl FnOnce() -> io::Result<bool>,
@@ -115,14 +114,8 @@ impl OwnedChild {
     }
 
     pub(crate) fn release_after_record(&mut self) -> io::Result<()> {
-        #[cfg(target_os = "macos")]
-        if self.try_exit()?.is_none() {
-            // SAFETY: the leader is our unreaped child; no identity can be reused here.
-            if unsafe { libc::kill(self.pid, libc::SIGCONT) } != 0 {
-                return Err(io::Error::last_os_error());
-            }
-        }
-        Ok(())
+        // The leader is our unreaped child; no identity can be reused here.
+        process::release_spawned(self.pid, || self.try_exit().map(|status| status.is_some()))
     }
 
     /// The recorded identity. Available on every successfully spawned public handle.
@@ -138,44 +131,11 @@ impl OwnedChild {
             return Err(io::Error::from_raw_os_error(libc::ECHILD));
         }
         loop {
-            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-            // SAFETY: only our own child's pid, valid siginfo slot. WNOWAIT is mandatory.
-            let rc = unsafe {
-                libc::waitid(
-                    libc::P_PID,
-                    self.pid as _,
-                    info.as_mut_ptr(),
-                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-                )
+            // Only our own child's pid. The platform observation never reaps (WNOWAIT).
+            let e = match process::try_exit(self.pid) {
+                Ok(status) => return Ok(status),
+                Err(e) => e,
             };
-            if rc == 0 {
-                // SAFETY: waitid initialized the zeroed siginfo slot.
-                let info = unsafe { info.assume_init() };
-                #[cfg(target_os = "macos")]
-                let (pid, status) = (info.si_pid, info.si_status);
-                #[cfg(target_os = "linux")]
-                // SAFETY: waitid returns the SIGCHLD variant of this union.
-                let (pid, status) = unsafe { (info.si_pid(), info.si_status()) };
-                // Darwin reports START_SUSPENDED as CLD_STOPPED even with WEXITED.
-                // Only terminal codes are exits; a stop must still be resumed/reaped.
-                let exited = matches!(
-                    info.si_code,
-                    libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
-                );
-                return Ok((pid != 0 && exited).then(|| {
-                    ExitStatus::from_raw(if info.si_code == libc::CLD_EXITED {
-                        status << 8
-                    } else {
-                        (status & 0x7f)
-                            | if info.si_code == libc::CLD_DUMPED {
-                                0x80
-                            } else {
-                                0
-                            }
-                    })
-                }));
-            }
-            let e = io::Error::last_os_error();
             if e.raw_os_error() == Some(libc::ECHILD) {
                 self.owned = false;
             }
@@ -239,19 +199,16 @@ impl OwnedChild {
                 // The child exited between observation and signal, or its group is empty.
                 return Ok(());
             }
-            #[cfg(target_os = "macos")]
+            let pid = self.pid;
+            if target == crate::SignalTarget::Group
+                && process::is_exited_group_denial(&error)
+                && tolerate_zombie_group_eperm(
+                    || self.try_exit().map(|status| status.is_some()),
+                    || process::group_contains_only_leader(pid),
+                )?
             {
-                let pid = self.pid;
-                if target == crate::SignalTarget::Group
-                    && error.raw_os_error() == Some(libc::EPERM)
-                    && tolerate_zombie_group_eperm(
-                        || self.try_exit().map(|status| status.is_some()),
-                        || crate::platform::group_contains_only_leader(pid),
-                    )?
-                {
-                    // D-B34: any ownership/query error or additional member is unresolved.
-                    return Ok(());
-                }
+                // D-B34: any ownership/query error or additional member is unresolved.
+                return Ok(());
             }
             if error.kind() != io::ErrorKind::Interrupted {
                 return Err(error);

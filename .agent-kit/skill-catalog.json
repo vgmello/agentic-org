@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "52e9973a787cf61dbdaccc0d736295f4fcd9b660603293af5f9cfce685b20276"
+      "sha256": "9ea56b86673a4760a52a0775fafaf8e2af85acfb1d183357cbc15b7f2b99ef0a"
     },
     {
       "path": "Cargo.toml",

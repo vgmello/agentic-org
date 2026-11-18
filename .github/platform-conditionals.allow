@@ -82,12 +82,7 @@ crates/org-socket/src/rights/tests.rs 6
 crates/org-socket/src/rights/tests/bounded.rs 5
 crates/org-socket/tests/stream_adoption.rs 1
 crates/org-spool/src/safe_read.rs 5
-crates/org-supervise/src/child.rs 5
-crates/org-supervise/src/lib.rs 1
-crates/org-supervise/src/platform.rs 15
-crates/org-supervise/src/recovery.rs 2
-crates/org-supervise/src/recovery/scan.rs 2
-crates/org-supervise/src/spawn.rs 6
+crates/org-supervise/src/spawn.rs 1
 crates/org-supervise/tests/lifecycle.rs 1
 crates/org-supervise/tests/recovery_native.rs 25
 crates/org-supervise/tests/spawn.rs 4

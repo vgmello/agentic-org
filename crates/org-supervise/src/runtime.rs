@@ -111,7 +111,7 @@ pub fn prepare_probe(
         .map(|(name, value)| (name.as_str().into(), value.into()))
         .collect::<Vec<_>>();
     let environment = environment.with_additions(&additions, REVIEWED_ENV_SWITCHES)?;
-    crate::platform::validate()?;
+    org_platform::process::validate()?;
     let directory = files::PrivateDirectory::new(temp_root)?;
     let cwd = directory.path().to_owned();
     let prepared = PreparedSpawn::new(

@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::io;
 use std::time::{Duration, Instant};
 
-use super::{
-    native_mark, sealed, valid_pid, MarkEvidence, ProcessIdentity, ProcessObservation,
-    RecoveryContext, RecoveryProcesses, RecoverySignal, SignalOutcome, VerifiedTarget,
+use crate::process::{
+    check_time, native_mark, valid_pid, JobObservation, MarkEvidence, ProcessIdentity,
+    ProcessObservation, RecoveryContext, RecoverySignal, SignalOutcome,
 };
 
 // SDK sys/proc_info.h.
@@ -36,19 +36,21 @@ unsafe extern "C" {
 /// Native macOS recovery operations. Signals recheck start identity and credentials,
 /// and directly marked targets also require the exact current mark. For non-child
 /// processes, macOS can still recycle a PID between the final check and `kill`.
-pub struct NativeRecovery {
+pub(in crate::process) struct RecoveryScan {
     context: RecoveryContext,
     arg_max: usize,
     captured: BTreeMap<u32, String>,
+    /// The mark variable's name followed by `=`.
+    mark_prefix: Vec<u8>,
 }
 
-impl NativeRecovery {
+impl RecoveryScan {
     /// Validate the host and initialize bounded native process queries.
-    pub fn new() -> io::Result<Self> {
-        crate::platform::validate()?;
+    pub(in crate::process) fn new(mark_prefix: Vec<u8>) -> io::Result<Self> {
+        crate::process::validate()?;
         // SAFETY: simple identity getters without pointer arguments.
         let (pid, uid) = unsafe { (libc::getpid(), libc::getuid()) };
-        let (_, _, boot) = crate::platform::identity(pid)?;
+        let (_, _, boot) = super::identity(pid)?;
         let mut arg_max = 0i32;
         let mut length = std::mem::size_of_val(&arg_max);
         let mut oid = [libc::CTL_KERN, libc::KERN_ARGMAX];
@@ -79,7 +81,12 @@ impl NativeRecovery {
             },
             arg_max: arg_max as usize,
             captured: BTreeMap::new(),
+            mark_prefix,
         })
+    }
+
+    pub(in crate::process) fn context(&self) -> &RecoveryContext {
+        &self.context
     }
 
     fn identity(&self, info: &libc::proc_bsdinfo) -> ProcessIdentity {
@@ -90,11 +97,11 @@ impl NativeRecovery {
         }
     }
 
-    fn job_observation(
+    pub(in crate::process) fn job_observation(
         &self,
         identity: &ProcessIdentity,
         deadline: Instant,
-    ) -> io::Result<Option<super::job::JobObservation>> {
+    ) -> io::Result<Option<JobObservation>> {
         self.job_observation_with(identity, deadline, bsd_info, |pid| {
             // SAFETY: positive PID validated by the proof helper; checked again after this call.
             unsafe { libc::getsid(pid as libc::pid_t) }
@@ -107,7 +114,7 @@ impl NativeRecovery {
         deadline: Instant,
         mut observe: impl FnMut(u32) -> io::Result<Option<libc::proc_bsdinfo>>,
         mut session: impl FnMut(u32) -> libc::pid_t,
-    ) -> io::Result<Option<super::job::JobObservation>> {
+    ) -> io::Result<Option<JobObservation>> {
         if self.captured.get(&identity.pid) != Some(&identity.started) {
             return Ok(None);
         }
@@ -125,7 +132,7 @@ impl NativeRecovery {
             && !is_zombie(&after)
             && safe_credentials(&before, self.context.uid)
             && safe_credentials(&after, self.context.uid);
-        Ok(Some(super::job::JobObservation {
+        Ok(Some(JobObservation {
             identity: self.identity(&after),
             order: (after.pbi_start_tvsec, after.pbi_start_tvusec),
             group: after.pbi_pgid,
@@ -178,7 +185,11 @@ impl NativeRecovery {
         if result != 0 || count > bytes.len() || !unrestricted(pid) {
             return Ok(MarkEvidence::Unreadable);
         }
-        Ok(procargs_mark(&bytes[..count], expected_size))
+        Ok(procargs_mark(
+            &bytes[..count],
+            expected_size,
+            &self.mark_prefix,
+        ))
     }
 
     fn pids(&self, deadline: Instant) -> io::Result<Vec<libc::pid_t>> {
@@ -241,30 +252,11 @@ impl NativeRecovery {
     }
 }
 
-impl sealed::Processes for NativeRecovery {}
-
-impl RecoveryProcesses for NativeRecovery {
-    fn context(&mut self) -> io::Result<RecoveryContext> {
-        Ok(self.context.clone())
-    }
-
-    fn verify_recorded_job(
+impl RecoveryScan {
+    pub(in crate::process) fn snapshot(
         &mut self,
-        target: &ProcessIdentity,
-        leader: &crate::ChildIdentity,
         deadline: Instant,
-    ) -> io::Result<bool> {
-        super::job::verify(
-            target,
-            leader,
-            &self.context,
-            deadline,
-            Instant::now,
-            |id| self.job_observation(id, deadline),
-        )
-    }
-
-    fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>> {
+    ) -> io::Result<Vec<ProcessObservation>> {
         self.captured.clear();
         let mut rows = Vec::new();
         let mut observations = BTreeMap::new();
@@ -364,14 +356,15 @@ impl RecoveryProcesses for NativeRecovery {
         Ok(rows)
     }
 
-    fn signal_checked(
+    pub(in crate::process) fn signal_checked(
         &mut self,
-        target: &VerifiedTarget,
+        target: &ProcessIdentity,
+        mark_accepted: &dyn Fn(&MarkEvidence) -> bool,
         signal: RecoverySignal,
         deadline: Instant,
     ) -> io::Result<SignalOutcome> {
         check_time(deadline)?;
-        let identity = target.identity();
+        let identity = target;
         if !valid_pid(identity.pid)
             || identity.pid == self.context.pid
             || identity.boot != self.context.boot
@@ -383,6 +376,7 @@ impl RecoveryProcesses for NativeRecovery {
         }
         signal_with(
             target,
+            mark_accepted,
             deadline,
             self.context.uid,
             || bsd_info(identity.pid),
@@ -409,7 +403,11 @@ impl RecoveryProcesses for NativeRecovery {
         )
     }
 
-    fn wait_exited(&mut self, identity: &ProcessIdentity, deadline: Instant) -> io::Result<bool> {
+    pub(in crate::process) fn wait_exited(
+        &mut self,
+        identity: &ProcessIdentity,
+        deadline: Instant,
+    ) -> io::Result<bool> {
         if identity.boot != self.context.boot {
             return Ok(true);
         }
@@ -428,16 +426,8 @@ impl RecoveryProcesses for NativeRecovery {
         if Instant::now() >= deadline {
             return Ok(false);
         }
-        let watch = crate::platform::Watch::new(identity.pid as libc::pid_t)?;
+        let watch = crate::process::Watch::new(identity.pid as libc::pid_t)?;
         wait_after_registration(deadline, Instant::now, gone, |until| watch.wait(until))
-    }
-
-    fn now(&mut self) -> Instant {
-        Instant::now()
-    }
-
-    fn wait_until(&mut self, deadline: Instant) -> io::Result<()> {
-        super::native_wait_until(deadline)
     }
 }
 
@@ -575,7 +565,8 @@ fn same_identity(first: &libc::proc_bsdinfo, second: &libc::proc_bsdinfo) -> boo
 
 // Keep the read-mark-read-check-signal ordering testable without a racing process.
 fn signal_with(
-    target: &VerifiedTarget,
+    target: &ProcessIdentity,
+    mark_accepted: &dyn Fn(&MarkEvidence) -> bool,
     deadline: Instant,
     uid: u32,
     mut info: impl FnMut() -> io::Result<Option<libc::proc_bsdinfo>>,
@@ -587,7 +578,7 @@ fn signal_with(
     let Some(before) = before? else {
         return Ok(SignalOutcome::Gone);
     };
-    if !live_matches(&before, target.identity()) {
+    if !live_matches(&before, target) {
         return Ok(SignalOutcome::Gone);
     }
     if !safe_credentials(&before, uid) {
@@ -596,7 +587,7 @@ fn signal_with(
     let mark = mark(&before)?;
     let after = info();
     check_time(deadline)?;
-    if !recheck_after_mark(target, after?.as_ref(), &mark, uid)? {
+    if !recheck_after_mark(target, mark_accepted, after?.as_ref(), &mark, uid)? {
         return Ok(SignalOutcome::Gone);
     }
     check_time(deadline)?;
@@ -606,7 +597,8 @@ fn signal_with(
 }
 
 fn recheck_after_mark(
-    target: &VerifiedTarget,
+    target: &ProcessIdentity,
+    mark_accepted: &dyn Fn(&MarkEvidence) -> bool,
     after: Option<&libc::proc_bsdinfo>,
     mark: &MarkEvidence,
     uid: u32,
@@ -614,13 +606,13 @@ fn recheck_after_mark(
     let Some(after) = after else {
         return Ok(false);
     };
-    if !live_matches(after, target.identity()) {
+    if !live_matches(after, target) {
         return Ok(false);
     }
     if !safe_credentials(after, uid) {
         return Err(unsafe_target());
     }
-    if !super::signal_mark_matches(target, mark) {
+    if !mark_accepted(mark) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "recovery mark changed or is unreadable",
@@ -668,10 +660,6 @@ fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-fn check_time(deadline: Instant) -> io::Result<()> {
-    super::failure::check_deadline(Instant::now(), deadline, "native recovery deadline elapsed")
-}
-
 fn unrestricted(pid: libc::pid_t) -> bool {
     let mut flags = 0u32;
     // SAFETY: CS_OPS_STATUS writes one u32 to the correctly sized output slot.
@@ -690,7 +678,7 @@ fn code_signing_allows(status: libc::c_int, flags: u32) -> bool {
     status == 0 && flags & CS_RESTRICT == 0
 }
 
-fn procargs_mark(bytes: &[u8], expected_size: usize) -> MarkEvidence {
+fn procargs_mark(bytes: &[u8], expected_size: usize, mark_prefix: &[u8]) -> MarkEvidence {
     if bytes.len() != expected_size {
         return MarkEvidence::Unreadable;
     }
@@ -732,7 +720,7 @@ fn procargs_mark(bytes: &[u8], expected_size: usize) -> MarkEvidence {
     // The kernel supplies the launch argc and reads the current stack strings.
     // Deliberate same-UID argv mutation can forge the boundary if the process
     // already knows the exact mark. Recovery trusts cooperating same-UID code.
-    native_mark(rest)
+    native_mark(rest, mark_prefix)
 }
 
 #[cfg(test)]
@@ -741,9 +729,16 @@ mod tests {
         proc_list_pids, procargs_mark, wait_after_registration, KINFO_PROC_PID_OFFSET,
         KINFO_PROC_SIZE,
     };
-    use crate::recovery::MarkEvidence;
+    use crate::process::MarkEvidence;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    const MARK: &[u8] = b"ORG_SESSION_MARK=";
+
+    /// What a consumer asks for a target that carries the mark itself: the exact value.
+    fn exact_mark(mark: &MarkEvidence) -> bool {
+        *mark == MarkEvidence::Present("guard-mark".into())
+    }
 
     fn ordinary_info() -> libc::proc_bsdinfo {
         // SAFETY: proc_bsdinfo is a C record of integer fields and arrays.
@@ -762,7 +757,7 @@ mod tests {
 
     #[test]
     fn native_job_observation_rechecks_membership_identity_and_credentials() {
-        use crate::recovery::{ProcessIdentity, RecoveryContext};
+        use crate::process::{ProcessIdentity, RecoveryContext};
         let info = libc::proc_bsdinfo {
             pbi_pgid: 40,
             ..ordinary_info()
@@ -772,7 +767,7 @@ mod tests {
             started: super::start(&info),
             boot: "boot".into(),
         };
-        let mut native = super::NativeRecovery {
+        let mut native = super::RecoveryScan {
             context: RecoveryContext {
                 uid: 501,
                 pid: 999,
@@ -780,6 +775,7 @@ mod tests {
             },
             arg_max: 4096,
             captured: [(identity.pid, identity.started.clone())].into(),
+            mark_prefix: MARK.to_vec(),
         };
         for variant in 0..20 {
             let mut before = info;
@@ -903,20 +899,16 @@ mod tests {
 
     #[test]
     fn native_guards_recheck_identity_credentials_and_mark_after_reading_it() {
-        use crate::recovery::{ProcessIdentity, TargetEvidence, VerifiedTarget};
+        use crate::process::ProcessIdentity;
         let info = ordinary_info();
-        let target = VerifiedTarget {
-            identity: ProcessIdentity {
-                pid: 42,
-                started: super::start(&info),
-                boot: "boot".into(),
-            },
-            mark: "guard-mark".into(),
-            evidence: TargetEvidence::Marked,
+        let target = ProcessIdentity {
+            pid: 42,
+            started: super::start(&info),
+            boot: "boot".into(),
         };
         let mark = MarkEvidence::Present("guard-mark".into());
-        assert!(super::recheck_after_mark(&target, Some(&info), &mark, 501).unwrap());
-        assert!(!super::recheck_after_mark(&target, None, &mark, 501).unwrap());
+        assert!(super::recheck_after_mark(&target, &exact_mark, Some(&info), &mark, 501).unwrap());
+        assert!(!super::recheck_after_mark(&target, &exact_mark, None, &mark, 501).unwrap());
         for changed in [
             libc::proc_bsdinfo {
                 pbi_pid: 43,
@@ -935,14 +927,19 @@ mod tests {
                 ..info
             },
         ] {
-            assert!(!super::recheck_after_mark(&target, Some(&changed), &mark, 501).unwrap());
+            assert!(
+                !super::recheck_after_mark(&target, &exact_mark, Some(&changed), &mark, 501)
+                    .unwrap()
+            );
         }
         for mark in [
             MarkEvidence::Absent,
             MarkEvidence::Unreadable,
             MarkEvidence::Present("other".into()),
         ] {
-            assert!(super::recheck_after_mark(&target, Some(&info), &mark, 501).is_err());
+            assert!(
+                super::recheck_after_mark(&target, &exact_mark, Some(&info), &mark, 501).is_err()
+            );
         }
         for changed in [
             libc::proc_bsdinfo { pbi_uid: 0, ..info },
@@ -969,7 +966,7 @@ mod tests {
             },
         ] {
             assert_eq!(
-                super::recheck_after_mark(&target, Some(&changed), &mark, 501)
+                super::recheck_after_mark(&target, &exact_mark, Some(&changed), &mark, 501)
                     .unwrap_err()
                     .kind(),
                 std::io::ErrorKind::PermissionDenied
@@ -986,18 +983,14 @@ mod tests {
 
     #[test]
     fn native_signal_wiring_refuses_changes_during_the_mark_read() {
-        use crate::recovery::{ProcessIdentity, SignalOutcome, TargetEvidence, VerifiedTarget};
+        use crate::process::{ProcessIdentity, SignalOutcome};
         let before = ordinary_info();
-        let target = VerifiedTarget {
-            identity: ProcessIdentity {
-                pid: 42,
-                started: super::start(&before),
-                boot: "boot".into(),
-            },
-            mark: "guard-mark".into(),
-            evidence: TargetEvidence::Marked,
+        let target = ProcessIdentity {
+            pid: 42,
+            started: super::start(&before),
+            boot: "boot".into(),
         };
-        let exact = MarkEvidence::Present(target.mark.clone());
+        let exact = MarkEvidence::Present("guard-mark".into());
         let cases = [
             (Some(before), exact.clone(), "signal"),
             (None, exact.clone(), "gone"),
@@ -1038,6 +1031,7 @@ mod tests {
             let sent = Cell::new(false);
             let outcome = super::signal_with(
                 &target,
+                &exact_mark,
                 Instant::now() + Duration::from_secs(1),
                 501,
                 || {
@@ -1187,12 +1181,12 @@ mod tests {
             b"tool\0\0ORG_SESSION_MARK=argument\0ORG_SESSION_MARK=environment\0",
         );
         assert_eq!(
-            procargs_mark(&bytes, bytes.len()),
+            procargs_mark(&bytes, bytes.len(), MARK),
             MarkEvidence::Present("environment".into())
         );
         let unrelated = capture(1, b"tool\0PREFIX_ORG_SESSION_MARK=prefix\0");
         assert_eq!(
-            procargs_mark(&unrelated, unrelated.len()),
+            procargs_mark(&unrelated, unrelated.len(), MARK),
             MarkEvidence::Absent
         );
     }
@@ -1204,7 +1198,10 @@ mod tests {
             1,
             b"tool\0ORG_SESSION_MARK=mark\0ORG_SESSION_MARK=conflict\0",
         );
-        assert_eq!(procargs_mark(&prefix, full.len()), MarkEvidence::Unreadable);
+        assert_eq!(
+            procargs_mark(&prefix, full.len(), MARK),
+            MarkEvidence::Unreadable
+        );
     }
 
     #[test]
@@ -1219,29 +1216,10 @@ mod tests {
             &conflicting,
             &valid[..valid.len() - 1],
         ] {
-            assert_eq!(procargs_mark(bad, bad.len()), MarkEvidence::Unreadable);
+            assert_eq!(
+                procargs_mark(bad, bad.len(), MARK),
+                MarkEvidence::Unreadable
+            );
         }
-    }
-}
-
-#[cfg(test)]
-mod failure_tests {
-    use super::*;
-    use crate::recovery::{RecoveryReport, ScanFailure, ScanFailureKind};
-
-    #[test]
-    fn native_deadline_failure_classification_preserves_io() {
-        check_time(Instant::now() + std::time::Duration::from_secs(3600)).unwrap();
-        let error = check_time(Instant::now() - std::time::Duration::from_nanos(1)).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert_eq!(error.to_string(), "native recovery deadline elapsed");
-        assert_eq!(
-            ScanFailure {
-                error,
-                report: RecoveryReport::default()
-            }
-            .kind(),
-            ScanFailureKind::DeadlineElapsed
-        );
     }
 }
