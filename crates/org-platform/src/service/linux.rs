@@ -4,16 +4,18 @@
 //! user's manager starts the host when the manager starts, restarts it after a crash, and
 //! an explicit stop (`SIGTERM`, a clean exit) stays stopped. `KillMode=mixed` sends
 //! `SIGTERM` to the host alone and, after `TimeoutStopSec=15`, `SIGKILL` to what is left of
-//! its group; the host itself stops within 8 s.
+//! its group; the host itself stops within 2.5 s.
 //!
 //! The launchd adapter's guarantees, in systemd's terms:
 //!
 //! - **Nothing under the name that is someone else's is ever taken over.** A unit systemd
 //!   holds under the name from any file other than our definition (its `FragmentPath`: a
 //!   unit in another directory, a transient or a masked one) is a conflict for register,
-//!   start, stop, status and unregister. So is a unit of ours with a drop-in of its own
-//!   (`<name>.d/*.conf`, in any unit directory): a drop-in can replace `ExecStart` or add
-//!   to the environment, so what systemd would run is no longer the definition. A definition file with different bytes than the
+//!   start, stop, status and unregister. So is a unit of ours with a drop-in that applies
+//!   to it by name (`<name>.d/*.conf`, or in the folder of a prefix of the name that ends
+//!   at a dash, such as `agentic-org-.service.d/`, in any unit directory): a drop-in can
+//!   replace `ExecStart` or add to the environment, so what systemd would run is no longer
+//!   the definition. A definition file with different bytes than the
 //!   rendered unit is a conflict for register, which never replaces, reloads or enables it.
 //! - **An identical, settled registration is left alone**: the file has the rendered bytes,
 //!   systemd loaded it from that file, nothing changed on disk since, and it is enabled.
@@ -308,12 +310,12 @@ impl Systemd {
                 shown.active.escape_default()
             )));
         }
-        // A drop-in of this unit's own changes what systemd runs under our name.
-        let own_drop_ins = format!("/{name}.d/");
+        // A drop-in that systemd applies to this unit by its name changes what it runs
+        // under our name.
         if let Some(drop_in) = shown
             .drop_ins
             .split_whitespace()
-            .find(|path| path.contains(&own_drop_ins))
+            .find(|path| applies_by_name(name, path))
         {
             return Err(ServiceError::Conflict(format!(
                 "systemd applies a drop-in to {name} ({}); the definition is not the only \
@@ -621,6 +623,30 @@ fn parse_show(output: &str) -> Option<Shown> {
         needs_reload: property(output, "NeedDaemonReload") == Some("yes"),
         drop_ins: property(output, "DropInPaths").unwrap_or("").to_owned(),
     })
+}
+
+/// Whether the drop-in file `path` is one systemd applies to the unit `name` by its name:
+/// it is in `<name>.d/`, or in the folder of a prefix of the name that ends at a dash
+/// (`agentic-org-.service.d/` for `agentic-org-<id>.service`, and every longer one up to
+/// the last dash of the instance ID), as systemd.unit(5) has it. Such a drop-in reaches
+/// only units named like ours, and can replace `ExecStart` while the unit's file is still
+/// our definition. The folder for every unit of the type (`service.d/`) is not one: it
+/// applies to every service of the user, and distributions ship drop-ins there.
+fn applies_by_name(name: &str, path: &str) -> bool {
+    let Some(folder) = Path::new(path)
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(OsStr::to_str)
+    else {
+        return false;
+    };
+    let Some(stem) = name.strip_suffix(".service") else {
+        return folder == format!("{name}.d");
+    };
+    folder == format!("{name}.d")
+        || stem
+            .match_indices('-')
+            .any(|(dash, _)| folder == format!("{}.service.d", &stem[..=dash]))
 }
 
 fn canonical(path: &Path) -> Option<PathBuf> {
