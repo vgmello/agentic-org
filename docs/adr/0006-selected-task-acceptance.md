@@ -164,8 +164,8 @@ durable-class.
 Document 16 defines the acceptance journal, its layout and its anchor. These
 rules apply:
 
-- A journal ordinal orders accepted entries, including receipt-only ones. It is neither a work-event allocator nor a replication
-  position. Each published transaction consumes exactly one ordinal, whatever its
+- A journal ordinal orders accepted entries, including receipt-only ones. It is
+  neither a work-event allocator nor a replication position. Each appended entry consumes exactly one ordinal, whatever its
   event count. Read-only receipt replay and refusals that create no durable record
   consume neither an ordinal nor event positions.
 - Each entry records the work-origin office, incarnation and high-water before
@@ -175,14 +175,14 @@ rules apply:
 - The office writer prepares both counters and all changes together. Task
   revisions, work-origin positions, client and feed positions and journal ordinals
   stay distinct. Replication consumes event origins unchanged; receipt-only
-  transactions leave no event-sequence holes. The message allocator is separate.
+  entries leave no event-sequence holes. The message allocator is separate.
 
 A new office's journal starts at ordinal 1 from an anchor written at creation. A
 restart or projection rebuild continues the same journal incarnation and verified
 prefix, and recovers the cursor and origin high-water from the durable sources,
 never from SQL defaults. Replay validates journal continuity and each recorded
 mapping, projects frozen changes and both cursors atomically, skips an already
-applied transaction whose identity and digest match, and never reruns a domain
+applied entry whose identity and hash match, and never reruns a domain
 decision or allocates a replacement position. A verified restore may start a new
 journal incarnation only with the predecessor head's identity and digest, watermark
 evidence and writer fencing. Journal rotation never rotates work or message
@@ -196,14 +196,14 @@ origins.
 | 2 | Admitted stale-revision rejection; protected receipt only | Empty | 41 → 41 |
 | 3 | A change that produces three events | `(I,42)`, `(I,43)`, `(I,44)` | 41 → 44 |
 
-A crash before transaction 3 is published establishes nothing; an uncertain
-publication is reconciled by scanning. A crash after publication but before files
+A crash before entry 3 is appended establishes nothing; a torn append above the
+confirmed head is truncated at reopening. A crash after the append but before files
 and SQL finish replays the three frozen events and the original receipt exactly
 once, ending at ordinal 3 and high-water 44.
 
 **Exhaustion.** Arithmetic is checked before publication. When event positions are
 exhausted, a zero-event exhaustion rejection is still recorded if journal capacity
-remains. When journal ordinals are exhausted, new durable transactions stop before
+remains. When journal ordinals are exhausted, new entries stop before
 any effect and receipt lookups stay available. Nothing wraps, resets or
 automatically creates an incarnation.
 
@@ -234,7 +234,7 @@ The assignment command fingerprint is computed over the validated typed command,
 never over the incoming JSON text: equivalent string escapes give the same
 fingerprint, and fractional or exponent spellings of a revision are invalid.
 
-Resource limits are the `selected-task-resources/1` profile, defined across [document 03](../design/organization-data/03-features-and-work.md) (task snapshots), [document 05](../design/organization-data/05-operational-data.md) (events and public blobs) and [document 16](../design/organization-data/16-recovery-and-office-continuity.md) (journal manifests). Native
+Resource limits are the `selected-task-resources/1` profile, defined across [document 03](../design/organization-data/03-features-and-work.md) (task snapshots), [document 05](../design/organization-data/05-operational-data.md) (events and public blobs) and [document 16](../design/organization-data/16-recovery-and-office-continuity.md) (journal entries). Native
 `MAX_FRAME_BYTES` and HTTP `MAX_BUSINESS_BODY_BYTES` stay at 1 MiB; large history
 reads and content use byte-bounded pages and authenticated content-reference
 chunks of at most 256 KiB raw bytes per request or response.
