@@ -34,6 +34,69 @@ const HEADER: usize = 1024;
 fn failure() -> io::Error {
     io::Error::other("authenticated web process startup unavailable")
 }
+
+/// What a web process that could not confine itself writes to its standard error
+/// before it exits, so that the host that started it can log why:
+///
+/// ```text
+/// line   = "agentic-org-web: startup refused: confinement: " reason LF
+/// reason = 1*240 ( %x20-7E )
+/// ```
+///
+/// The reason is the confinement adapter's own text: the names of the system call
+/// and of its error, never a path, an argument or anything it was sent. It is for
+/// display only. The host reads at most this one line, and only from a child that
+/// ended before it reported ready; the same grammar is in `org-host`'s `web.rs`.
+pub const REFUSAL_PREFIX: &str = "agentic-org-web: startup refused: confinement: ";
+/// The longest reason of a refusal line, in bytes.
+pub const REFUSAL_REASON_BYTES: usize = 240;
+/// What every other failed start writes: one fixed line that says nothing more.
+const UNAVAILABLE: &str = "agentic-org-web: authenticated startup unavailable";
+
+/// Why this process could not confine itself: the adapter's reason, as the refusal
+/// line carries it.
+#[derive(Debug)]
+struct ConfinementRefused(String);
+impl std::fmt::Display for ConfinementRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for ConfinementRefused {}
+
+/// `text` as a refusal line's reason: printable ASCII only (anything else becomes
+/// `?`), at most [`REFUSAL_REASON_BYTES`] long, never empty.
+fn refusal_reason(text: &str) -> String {
+    let reason: String = text
+        .chars()
+        .take(REFUSAL_REASON_BYTES)
+        .map(|c| if matches!(c, ' '..='~') { c } else { '?' })
+        .collect();
+    if reason.is_empty() {
+        "no reason given".to_owned()
+    } else {
+        reason
+    }
+}
+
+/// The error of a failed `confine_web`, kept apart from every other startup failure:
+/// it alone is reported with its reason.
+fn confinement_refused(error: io::Error) -> io::Error {
+    io::Error::other(ConfinementRefused(refusal_reason(&error.to_string())))
+}
+
+/// The one line the executable writes to its standard error for a failed
+/// [`serve`], without its line feed: the refusal line with the adapter's reason when
+/// the process could not confine itself, and one fixed line for anything else.
+pub fn startup_failure_line(error: &io::Error) -> String {
+    match error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<ConfinementRefused>())
+    {
+        Some(ConfinementRefused(reason)) => format!("{REFUSAL_PREFIX}{reason}"),
+        None => UNAVAILABLE.to_owned(),
+    }
+}
 fn fatal() -> ! {
     std::process::exit(1)
 }
@@ -173,13 +236,44 @@ async fn host_lost(host: Arc<HostControl>) {
     }
 }
 
+/// The directory that holds this image's file, and beside it the release's `ui`
+/// build: the directory of `image` (what the system says this process executes)
+/// when that names a file, as it does for an image started from its path.
+///
+/// A host on GNU/Linux starts the image from a sealed copy in memory, which has no
+/// path: the system then names a file that does not exist. The host's admission
+/// gives every child its pinned path as its first argument, `started_as`, on every
+/// system, so that names the release instead; it must be absolute and name a file.
+/// Nothing a request sends can reach either value.
+pub fn release_root(
+    image: io::Result<std::path::PathBuf>,
+    started_as: Option<std::ffi::OsString>,
+) -> io::Result<std::path::PathBuf> {
+    let directory = |path: &Path| path.parent().map(Path::to_owned);
+    if let Some(root) = image
+        .ok()
+        .filter(|path| path.is_file())
+        .as_deref()
+        .and_then(directory)
+    {
+        return Ok(root);
+    }
+    started_as
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+        .as_deref()
+        .and_then(directory)
+        .ok_or_else(|| io::Error::other("missing release root"))
+}
+
 /// Called only by the thin executable before any application concurrency.
 /// The immutable verified release owns `assets`; no request can pick this path.
 pub fn serve(assets: &Path) -> io::Result<()> {
     confinement::disable_core_dumps()?;
     let line = first_line(&mut io::stdin().lock())?;
     let files = crate::release::load(assets, line.release.as_ref()).map_err(|_| failure())?;
-    let (stream, enforcement) = confinement::confine_web(Path::new(&line.rendezvous))?;
+    let (stream, enforcement) =
+        confinement::confine_web(Path::new(&line.rendezvous)).map_err(confinement_refused)?;
     let (control, transfer, listener) = handoff(stream, enforcement)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
     let host =
@@ -235,6 +329,95 @@ pub fn serve(assets: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_confinement_refusal_is_reported_with_its_reason_on_one_bounded_line() {
+        let refusal = io::Error::other(
+            "gateway confinement unavailable: landlock_restrict_self failed with EPERM \
+             (Operation not permitted (os error 1))",
+        );
+        assert_eq!(
+            startup_failure_line(&confinement_refused(refusal)),
+            "agentic-org-web: startup refused: confinement: gateway confinement unavailable: \
+             landlock_restrict_self failed with EPERM (Operation not permitted (os error 1))"
+        );
+        // Control characters, line breaks and anything outside ASCII never reach the
+        // line, and a long reason is cut.
+        let forged = confinement_refused(io::Error::other(format!(
+            "a\nagentic-org-web: startup refused: b\r\t\u{1b}[31m\u{202e}é{}",
+            "x".repeat(400)
+        )));
+        let line = startup_failure_line(&forged);
+        let reason = line.strip_prefix(REFUSAL_PREFIX).unwrap();
+        assert_eq!(reason.len(), REFUSAL_REASON_BYTES);
+        assert!(
+            reason.bytes().all(|b| (0x20..=0x7e).contains(&b)),
+            "{reason}"
+        );
+        assert!(reason.starts_with("a?agentic-org-web: startup refused: b???[31m??xxx"));
+        assert_eq!(
+            startup_failure_line(&confinement_refused(io::Error::other(""))),
+            format!("{REFUSAL_PREFIX}no reason given")
+        );
+    }
+
+    #[test]
+    fn the_release_root_is_the_images_directory_or_that_of_the_pinned_path() {
+        let release = tempfile::tempdir().unwrap();
+        let program = release.path().join("agentic-org-web");
+        std::fs::write(&program, b"image").unwrap();
+        let root = |image: io::Result<&Path>, started_as: Option<&Path>| {
+            release_root(
+                image.map(Path::to_owned),
+                started_as.map(|path| path.as_os_str().to_owned()),
+            )
+        };
+        // Started from its path: the image's own file decides, whatever the argument.
+        assert_eq!(root(Ok(&program), None).unwrap(), release.path());
+        assert_eq!(
+            root(Ok(&program), Some(Path::new("/elsewhere/agentic-org-web"))).unwrap(),
+            release.path()
+        );
+        // Started from a sealed copy in memory: the system names no file, and the
+        // pinned path the host started it by names the release.
+        let sealed = Path::new("/memfd:agentic-org-web (deleted)");
+        assert_eq!(root(Ok(sealed), Some(&program)).unwrap(), release.path());
+        assert_eq!(
+            root(Err(io::Error::other("no image")), Some(&program)).unwrap(),
+            release.path()
+        );
+        // Never a relative path, a missing file, a directory or nothing.
+        for started_as in [
+            None,
+            Some(Path::new("agentic-org-web")),
+            Some(Path::new("./agentic-org-web")),
+            Some(release.path().join("missing").as_path()),
+            Some(release.path()),
+        ] {
+            let error = root(Ok(sealed), started_as).unwrap_err();
+            assert_eq!(error.to_string(), "missing release root", "{started_as:?}");
+        }
+    }
+
+    #[test]
+    fn every_other_failed_start_is_one_fixed_line() {
+        for error in [
+            failure(),
+            io::Error::other("host hello failed"),
+            io::Error::from_raw_os_error(2),
+            io::Error::other(format!("{REFUSAL_PREFIX}forged")),
+        ] {
+            assert_eq!(
+                startup_failure_line(&error),
+                "agentic-org-web: authenticated startup unavailable"
+            );
+        }
+        assert_eq!(
+            REFUSAL_PREFIX,
+            "agentic-org-web: startup refused: confinement: "
+        );
+        assert_eq!(REFUSAL_REASON_BYTES, 240);
+    }
     #[test]
     fn launch_input_is_one_strict_bounded_complete_frame() {
         let valid = br#"{"v":1,"rendezvous":"/private/tmp/r","instance_id":"INSTANCE"}"#;

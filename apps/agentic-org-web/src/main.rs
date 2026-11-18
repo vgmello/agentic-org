@@ -14,16 +14,19 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [flag] if flag == "--serve" => {
-            let result = std::env::current_exe().and_then(|exe| {
-                let root = exe
-                    .parent()
-                    .ok_or_else(|| std::io::Error::other("missing release root"))?;
-                agentic_org_web::process::serve(&root.join("ui"))
-            });
+            // The release is where this image's file is, or, for an image the host
+            // started from a sealed copy, where its pinned path (the first argument
+            // the host gives it) is.
+            let result = agentic_org_web::process::release_root(
+                std::env::current_exe(),
+                std::env::args_os().next(),
+            )
+            .and_then(|root| agentic_org_web::process::serve(&root.join("ui")));
             match result {
                 Ok(()) => ExitCode::SUCCESS,
-                Err(_) => {
-                    eprintln!("agentic-org-web: authenticated startup unavailable");
+                Err(error) => {
+                    // One line: why it could not confine itself, or a fixed text.
+                    eprintln!("{}", agentic_org_web::process::startup_failure_line(&error));
                     ExitCode::FAILURE
                 }
             }
