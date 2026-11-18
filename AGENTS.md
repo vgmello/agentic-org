@@ -58,6 +58,82 @@ Engineers and their agents make architectural decisions themselves, inside the
    - For app changes, the type check, tests, build and relevant browser checks pass; capture UI evidence where applicable.
    - For documentation/workflow-only changes, run relevant kit/catalog checks and review the changed instructions; no unrelated application test run is required.
 4. **Never write to a user's organization workspace from tests.** Use temporary directories.
+5. **Required tools are green before any work starts.** See [Tools for agents](#tools-for-agents).
+
+## Tools for agents
+
+Start the agent (Claude Code or Codex) at the repository root; it is the entry point for
+all work, including the UI. **Every tool below is required and must be green before
+any work starts**, in every checkout and worktree (each is prepared on its own; a new
+worktree runs the setup commands below first). Run `.agents/check-tools.sh` from the
+repository root to check: it prints nothing when all are present. When it reports a
+missing tool, do not start or continue the task: tell the user each missing tool, what
+it is for and the command that fixes it, and wait until the check passes. Never work
+around a missing tool, and never disable or bypass the check (for example by creating
+its `.agents/.tools-ready` marker by hand).
+
+- **Claude Code** runs the check automatically at session start and before every
+  Edit/Write tool call, and blocks those calls while a tool is missing. Shell commands
+  stay available only to install the tools; never write project files through the
+  shell while the check is red.
+- **Codex** runs `.agents/check-tools.sh --codex` itself before starting work; that
+  mode skips the rows marked *Claude Code only*.
+- **Required skills loaded:** `svelte-code-writer`, `svelte-core-bestpractices`,
+  `shadcn-svelte` and `playwright-cli`. The check proves each is installed and valid;
+  only the agent can see whether its session loaded them. At session start, confirm
+  each appears in your list of available skills (Claude Code loads them from
+  `.claude/skills/`, pre-approved in `.claude/settings.json`; Codex from
+  `.agents/skills/` and its Svelte plugin). If any is missing, stop, name it and tell
+  the user; do not start work.
+- **Worktrees:** a subagent in a separate worktree is gated against the session's
+  checkout, so prepare and check the worktree (`cd` into it and run the check) before
+  that subagent starts.
+
+| Tool | What it gives agents | Set up with |
+| --- | --- | --- |
+| UI dependencies | Svelte MCP server, pinned shadcn-svelte CLI, type checks, lint, tests | `cd apps/agentic-org-ui && bun install --frozen-lockfile` |
+| Playwright browsers | UI browser tests | `cd apps/agentic-org-ui && bunx --no-install playwright install chromium webkit firefox` |
+| Node (`.node-version`) and Bun (`packageManager` in the UI `package.json`) | UI toolchain | install the pinned versions |
+| rustup and the pinned toolchain | Rust toolchain from `rust-toolchain.toml` | <https://rustup.rs>, then `rustup toolchain install` at the repository root |
+| rust-analyzer | Rust navigation (Claude Code LSP tool, Codex Rust LSP MCP) | `rustup component add rust-analyzer` at the repository root |
+| typescript-language-server with TypeScript 6 (*Claude Code only*) | TypeScript navigation through the LSP tool (TypeScript 7 has no `tsserver`) | `npm i -g typescript-language-server@6.1.0 typescript@6.0.3` |
+| python3 | agent kit checks (`.agent-kit/runtime/kit_hooks.py check`) | install Python 3 |
+| Repowise code index | `starter_kit_context` `lookup`: search, symbols, relationships and history | `python3 .agent-kit/runtime/kit_context.py setup --query Client --expect-path crates/org-client/src/lib.rs` |
+| Hindsight memory (local `hindsight-embed` daemon) | `starter_kit_context` `recall`: reviewed project memory | install as in "Local memory daemon" in `.agent-kit/ADOPTION.md`, then `python3 .agent-kit/runtime/kit_memory.py setup` (also restarts a stopped daemon) |
+| cargo-deny 0.20.2, Gitleaks 8.30.1 | required local checks | Homebrew on macOS; see `DEVELOPMENT.md` |
+| playwright-cli | browser skill | `bun add --global --exact @playwright/cli@0.1.24` |
+| Required skills (links: *Claude Code only*) | the skills below | committed; `git checkout -- .claude/skills .agents/skills` restores them |
+
+If tools that are installed are reported missing, the agent was probably started
+without your shell's `PATH`; start it from a terminal with your normal profile.
+
+Claude Code configuration in the repository supplies the rest; approve it when Claude
+Code first asks (Codex uses `.codex/config.toml`, managed by the agent kit):
+
+- `.mcp.json`: the Svelte MCP server, run from the lockfile-pinned
+  `apps/agentic-org-ui/node_modules`, never downloaded at run time; and the agent
+  kit's `starter_kit_context` server (the launcher from `.agent-kit/context-mcp.json`).
+  Use its `lookup` for code discovery before broad searches and its `recall` for
+  project memory, as `.agent-kit/reference/CONTEXT_TOOLS.md` describes.
+- `.claude/skills/`: links to the required skills. `svelte-code-writer` and
+  `svelte-core-bestpractices` (with `.claude/agents/svelte-file-editor.md`) come from
+  the UI app; follow `apps/agentic-org-ui/AGENTS.md` for Svelte documentation and
+  autofixer use. `shadcn-svelte` and `playwright-cli` come from `.agents/skills`
+  (sources in `skills-lock.json`); do not edit those vendored copies.
+- `.claude/settings.json`: the `typescript-lsp` and `rust-analyzer-lsp` plugins, the
+  tool check at session start and before Edit/Write tool calls, pre-approval of the
+  required skills, and `permissions.deny` rules for the download forms below.
+
+Use only pinned tools; never download a package at run time. The vendored skills show
+download forms (`npx`, `pnpm dlx`, `bunx --bun`, `@latest`, `npm init`, `npm install -g`).
+Use these instead:
+
+- shadcn-svelte: `cd apps/agentic-org-ui && bunx --no-install shadcn-svelte <command>`
+  (the version in the UI's `package.json`).
+- Playwright test runner: `cd apps/agentic-org-ui && bunx --no-install playwright <command>`.
+- Browser automation: the pinned global `playwright-cli`.
+
+`DEVELOPMENT.md` has the full list of checks and versions.
 
 ## The goal: work inside the product as soon as possible
 

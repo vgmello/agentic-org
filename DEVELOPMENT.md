@@ -84,8 +84,10 @@ regenerate `scripts/format-baseline.json` to make a failing check pass.
 Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte
 and Microsoft's Playwright CLI. `skills-lock.json` records their sources. Claude Code
 starts at the repository root: the root `.mcp.json` runs the pinned Svelte MCP server,
-linked Svelte skills and agent come from the UI app, and `CLAUDE.md` lists the tools
-agents need, which a session-start hook checks. For Codex, the Svelte plugin supplies
+linked Svelte skills and agent come from the UI app, and `AGENTS.md` lists the tools
+agents need. They are required: hooks check them at session start and before
+Edit/Write tool calls, and work does not start until they all pass (`AGENTS.md`,
+"Tools for agents"). For Codex, the Svelte plugin supplies
 Svelte skills and MCP tools; the Rust LSP MCP supplies
 rust-analyzer navigation, types, references and rename edits. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.

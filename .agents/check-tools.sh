@@ -1,14 +1,39 @@
 #!/usr/bin/env bash
-# Session-start check for the tools agents need in this repository.
-# Prints nothing when everything is present; otherwise lists what is missing and
-# how to fix it, so Claude can tell the user before starting work.
-# CLAUDE.md lists the same tools. Keep the two in step.
+# Checks the tools agents (Claude Code and Codex) must have before any work here.
+#   (no argument)  Prints nothing when everything is present; otherwise lists what
+#                  is missing and how to fix it. Exits 0. Run it by hand, or as
+#                  Claude Code's SessionStart hook.
+#   --gate         Claude Code PreToolUse hook on file edits: allows the edit when
+#                  the tools are present and blocks it (exit 2) with the same list.
+#   --codex        For Codex: same report, skipping the Claude Code only items
+#                  (TypeScript language server, .claude/skills links).
+# A green Claude Code result is remembered in .agents/.tools-ready until the next
+# run without an argument, so the gate re-runs the check only while something is
+# missing.
+# Never installs, downloads or starts anything.
+# AGENTS.md ("Tools for agents") lists the same tools. Keep them in step.
 set -u
 
-root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+mode="${1:-}"
+root="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}"
 ui="$root/apps/agentic-org-ui"
 home="${HOME:-}"
-cd "$root" 2>/dev/null || exit 0
+if ! cd "$root" 2>/dev/null; then
+	# The gate fails closed; the report never blocks but must not look green.
+	msg="REQUIRED TOOLS NOT CHECKED: cannot open the project directory ($root). Do not start work."
+	[ "$mode" = --gate ] && echo "$msg" >&2 && exit 2
+	echo "$msg"
+	exit 0
+fi
+ready_file=.agents/.tools-ready
+claude=1
+case "$mode" in
+--gate)
+	[ -t 0 ] || cat >/dev/null # the hook's JSON input is not needed
+	[ -f "$ready_file" ] && exit 0 ;;
+--codex) claude= ;;
+*) rm -f "$ready_file" ;;
+esac
 missing=()
 
 need() { # need <name> <reason> <fix>
@@ -33,8 +58,8 @@ elif [ "$(bun -v)" != "$want_bun" ]; then
 	need bun "found $(bun -v), the repository pins $want_bun" "install Bun $want_bun"
 fi
 
-if [ ! -f "$ui/node_modules/@sveltejs/mcp/dist/index.mjs" ]; then
-	need "UI dependencies" "the Svelte MCP server, type checks and tests run from apps/agentic-org-ui/node_modules" \
+if [ ! -f "$ui/node_modules/@sveltejs/mcp/dist/index.mjs" ] || [ ! -x "$ui/node_modules/.bin/shadcn-svelte" ]; then
+	need "UI dependencies" "the Svelte MCP server, the pinned shadcn-svelte CLI, type checks and tests run from apps/agentic-org-ui/node_modules" \
 		"\`cd apps/agentic-org-ui && bun install --frozen-lockfile\`"
 fi
 
@@ -86,6 +111,7 @@ else
 	fi
 fi
 
+if [ -n "$claude" ]; then
 has typescript-language-server || need typescript-language-server "TypeScript code navigation for the LSP tool" \
 	"\`npm i -g typescript-language-server@6.1.0 typescript@6.0.3\`"
 if has typescript-language-server; then
@@ -94,6 +120,7 @@ if has typescript-language-server; then
 		need "global TypeScript" "typescript-language-server needs a TypeScript 6 with tsserver in npm's global packages" \
 			"\`npm i -g typescript@6.0.3\`"
 	fi
+fi
 fi
 
 has python3 || need python3 "runs the agent kit checks (.agent-kit/runtime/kit_hooks.py check)" "install Python 3"
@@ -120,9 +147,34 @@ has cargo-deny || need cargo-deny "required local check (cargo deny --locked che
 has gitleaks || need gitleaks "required local secret scan" "install Gitleaks 8.30.1 (see DEVELOPMENT.md)"
 has playwright-cli || need playwright-cli "the playwright-cli browser skill" "\`bun add --global --exact @playwright/cli@0.1.24\`"
 
-if [ ${#missing[@]} -gt 0 ]; then
-	echo "Development tools missing in this checkout (Node, Bun, Playwright browsers and Rust are also checked against their pinned versions):"
-	printf '%s\n' "${missing[@]}"
-	echo "Before starting work, tell the user which tools are missing, why each matters and the fixes above (see CLAUDE.md, \"Tools for agents\"). Without them you work less efficiently or cannot run the required checks."
+# Every required skill has a loadable SKILL.md whose front matter names it; Claude
+# Code also needs its .claude/skills link. Whether a session actually loaded them is
+# checked by the agent itself (AGENTS.md, "Tools for agents").
+skill_named() { # skill_named <SKILL.md> <name>
+	awk -v want="name: $2" 'NR == 1 && $0 != "---" { exit 1 } NR > 1 && $0 == "---" { exit found ? 0 : 1 } $0 == want { found = 1 } END { exit found ? 0 : 1 }' "$1" 2>/dev/null
+}
+for source in apps/agentic-org-ui/.claude/skills/svelte-code-writer apps/agentic-org-ui/.claude/skills/svelte-core-bestpractices \
+	.agents/skills/shadcn-svelte .agents/skills/playwright-cli; do
+	skill="${source##*/}"
+	if ! skill_named "$source/SKILL.md" "$skill"; then
+		need "skill $skill" "$source/SKILL.md is missing or its front matter does not name the skill" "restore it from Git (\`git checkout -- $source\`)"
+	elif [ -n "$claude" ] && ! skill_named ".claude/skills/$skill/SKILL.md" "$skill"; then
+		need "skill $skill" "the .claude/skills/$skill link Claude Code loads it from is missing or broken" "restore it from Git (\`git checkout -- .claude/skills/$skill\`)"
+	fi
+done
+
+if [ ${#missing[@]} -eq 0 ]; then
+	[ -n "$claude" ] && : >"$ready_file" 2>/dev/null
+	exit 0
 fi
+report() {
+	echo "REQUIRED TOOLS MISSING. Do not start work in this repository until every required tool is green (AGENTS.md, \"Tools for agents\"). Node, Bun, Playwright browsers and Rust are also checked against their pinned versions."
+	printf '%s\n' "${missing[@]}"
+	echo "Tell the user which tools are missing, why each matters and the fixes above, and wait for them to be installed (in Claude Code, file edits are blocked until this check passes). If installed tools are reported missing, the agent was probably started without the shell PATH."
+}
+if [ "$mode" = --gate ]; then
+	report >&2
+	exit 2
+fi
+report
 exit 0
