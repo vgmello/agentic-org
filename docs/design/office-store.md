@@ -171,6 +171,188 @@ crates/org-mailbox/src/   # the same (B6)
 
 ## 3. The contracts
 
+The sketches are illustrations: names may change, the responsibilities may not.
+
+**What an operation produces** (`org-store`, `change.rs`):
+
+```rust
+/// When the office may answer (ADR-0014). Declared by the family that owns the operation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ack { Committed, Durable }
+
+/// A relative path under `durable/`: normal components only, the first naming a known tree.
+pub struct DurablePath(/* private */);
+
+/// One file an operation leaves behind, in the exact bytes the data contract defines.
+pub enum FileChange {
+    Create(DurablePath, Bytes), // immutable (an event, a message); other bytes there are a fault
+    Put(DurablePath, Bytes),    // mutable (a task, a team); replaces what this office wrote last
+    Remove(DurablePath),
+}
+
+/// Everything one admitted operation commits, as one unit.
+pub struct Change { pub ack: Ack, pub files: Vec<FileChange>, pub reply: Bytes }
+
+pub enum Refusal {
+    Rejected(Bytes),    // admitted and rejected: a receipt-only entry, so a retry gets the same answer
+    Invalid(StoreError) // refused before admission: nothing is recorded
+}
+
+/// What a retry is matched on: document 16's receipt identity.
+pub struct Operation { pub id: OperationId, pub kind: &'static str, pub actor: Actor, pub fingerprint: Sha256 }
+```
+
+**The unit of work** keeps sequence allocation, idempotency receipt, journal append and
+the outbox atomic, because all four are one journal entry. A decision sees only this:
+
+```rust
+impl<E: Engine> UnitOfWork<'_, E> {
+    /// The projection at head, earlier operations of this batch included.
+    pub fn view(&self) -> &E::Tx;
+    /// Current bytes of a source file, unmaterialized journal entries included (source-preserving edits).
+    pub fn source(&self, path: &DurablePath) -> Result<Option<Bytes>, StoreError>;
+    /// The next position of one of this office's origin streams; recorded in the entry.
+    pub fn next(&mut self, stream: Stream) -> Result<u64, StoreError>;
+    /// The writer's clock, recorded in the entry. A decision reads no other clock.
+    pub fn now(&self) -> Timestamp;
+}
+
+impl<E: Engine> Store<E> {
+    /// Runs `decide` on the single writer; answers in the class its Change declares, or
+    /// durable when the caller asks (ADR-0014 decision 4). `FnMut`: a decision may run again
+    /// until its entry is appended, never after.
+    pub fn submit<F>(&self, op: Option<Operation>, durable: bool, decide: F) -> Result<Bytes, StoreError>
+    where F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static;
+    pub fn read<R>(&self, f: impl FnOnce(&E::Snapshot) -> Result<R, StoreError>)
+        -> Result<(R, FeedPosition), StoreError>;
+    pub fn subscribe(&self, after: FeedPosition) -> Result<ChangeStream, Resync>;
+}
+```
+
+**The engine seam** (`engine.rs`): the only traits with two implementations.
+
+```rust
+/// The database the projection lives in (ADR-0018). SqliteEngine and MemoryEngine implement it.
+pub trait Engine: Send + Sync + 'static {
+    type Tx: CorePort + Send;   // the writer's open transaction
+    type Snapshot: CoreRead;    // a consistent read view
+    fn begin(&self) -> Result<Self::Tx, EngineError>;
+    fn commit(&self, tx: Self::Tx, cursor: &Cursor) -> Result<(), EngineError>;
+    fn snapshot(&self) -> Result<Self::Snapshot, EngineError>;
+    /// Builds a new projection with `build` and installs it atomically in place of this one.
+    fn replace(&self, build: &mut dyn FnMut(&mut Self::Tx) -> Result<Cursor, StoreError>)
+        -> Result<(), EngineError>;
+}
+
+/// The store's own rows: the applied cursor, the hash of every source file, the receipts.
+pub trait CoreRead {
+    fn cursor(&self) -> Result<Option<Cursor>, EngineError>;
+    fn source_hash(&self, path: &DurablePath) -> Result<Option<Sha256>, EngineError>;
+    fn sources_under(&self, prefix: &DurablePath) -> Result<Vec<DurablePath>, EngineError>;
+    fn receipt(&self, id: &OperationId) -> Result<Option<Receipt>, EngineError>;
+}
+pub trait CorePort: CoreRead {
+    fn mark(&mut self) -> Result<Mark, EngineError>;             // a savepoint per operation
+    fn undo_to(&mut self, mark: Mark) -> Result<(), EngineError>;
+    fn set_source(&mut self, path: &DurablePath, hash: Option<Sha256>) -> Result<(), EngineError>;
+}
+
+/// A family's projection of its own files: the same function on the write path and in rebuild.
+pub trait Projector<E: Engine>: Send + Sync {
+    fn owns(&self, path: &DurablePath) -> bool;   // every source path has exactly one owner
+    /// Replaces every row this file contributes; `None` when the file is removed.
+    fn apply(&self, tx: &mut E::Tx, path: &DurablePath, bytes: Option<&[u8]>) -> Result<(), ProjectionError>;
+    /// After a rebuild: checks that span files (references, contiguous task history).
+    fn validate(&self, _tx: &E::Tx) -> Result<(), ProjectionError> { Ok(()) }
+}
+```
+
+Receipts are the core's own family: a receipt is the file
+`recovery/commands/<operation-id>.json` with its result inline or under `results/`
+(document 16), projected into `mutation_receipts` by a core projector through
+`CorePort`.
+
+**The journal and the files are concrete types**, not traits: there is one way to
+write them.
+
+```rust
+impl Journal {
+    pub fn open(dir: &JournalDir, id: &OfficeIdentity, custody: &dyn WriterAuthority)
+        -> Result<(Journal, Recovered), JournalError>;           // verify chain, truncate a torn tail
+    pub fn append(&mut self, entries: &[Entry]) -> Result<Ordinal, JournalError>; // one write
+    pub fn flush(&self) -> Result<Ordinal, JournalError>;        // full flush; flushed through
+    pub fn after(&self, ordinal: Ordinal) -> Entries<'_>;         // replay, outbox
+    pub fn release_through(&mut self, ordinal: Ordinal) -> Result<(), JournalError>; // checkpoint, drop segments
+}
+impl Files {
+    /// Writes the final state of each path over `entries`: atomic, data flushed before rename.
+    pub fn materialize(&self, entries: &[Entry]) -> Result<(), FilesError>;
+    pub fn read(&self, path: &DurablePath) -> Result<Option<Bytes>, FilesError>;
+    pub fn walk(&self, tree: Tree) -> Walk<'_>;                   // sorted, for rebuild
+}
+```
+
+`WriterAuthority` is today's host custody contract
+(`crates/org-office/src/store/acceptance.rs`, implemented by
+`apps/agentic-org-office/src/transfer/writer.rs`); it moves to `org-store` unchanged in
+shape and is called once at open and once per flush (section 4).
+
+**How a family declares its classes:** one enum of its operations with one exhaustive
+`ack()` match, in `features/mod.rs`. That is the one place ACK-4 asks for.
+
+**Worked example: create a team.**
+
+```rust
+// org-office/src/organization/features/mod.rs: the one place classes are declared
+pub enum Op { CreateOrganization, CreateTeam /* B2 adds the rest */ }
+impl Op { pub const fn ack(self) -> Ack { match self { Op::CreateOrganization | Op::CreateTeam => Ack::Durable } } }
+
+// org-office/src/organization/features/create_team.rs
+pub struct CreateTeam { pub id: TeamId, pub name: TeamName, pub parent: TeamId }
+
+pub fn decide<E: Engine>(uow: &mut UnitOfWork<'_, E>, by: &Actor, cmd: &CreateTeam) -> Result<Change, Refusal>
+where E::Tx: OrganizationRead {
+    let view = uow.view();
+    let parent = view.team(&cmd.parent)?.ok_or(Refusal::invalid("no such parent team"))?;
+    if !parent.is_active() { return Err(Refusal::rejected(&Rejection::ParentArchived)); }
+    if view.team(&cmd.id)?.is_some() { return Err(Refusal::invalid("team id in use")); }
+    let counter = view.team_counter()?.advance();                // HQ only; refused at a satellite
+    let team = Team::new(cmd, counter.last_number, &parent, by, uow.now());
+    Ok(Change::new(Op::CreateTeam.ack())
+        .put(records::team_path(view, &team)?, records::encode_team(&team)?)
+        .put(counter.path(), counter.encode()?)
+        .create(counter.allocation(team.id, uow.now()).path(), counter.allocation(..).encode()?)
+        .reply(&TeamCreated { id: team.id, number: team.number }))
+}
+
+// org-office/src/organization/projector.rs: one function, live and in rebuild
+impl<E: Engine> Projector<E> for OrganizationFiles where E::Tx: OrganizationWrite {
+    fn owns(&self, p: &DurablePath) -> bool { records::kind_of(p).is_some() }
+    fn apply(&self, tx: &mut E::Tx, p: &DurablePath, bytes: Option<&[u8]>) -> Result<(), ProjectionError> {
+        match (records::kind_of(p).expect("owned"), bytes) {
+            (Kind::Team, Some(b)) => tx.put_team(&records::decode_team(p, b)?),
+            (Kind::Team, None) => tx.remove_team(&records::team_id(p)?),
+            // organization, office, employee, counter, allocation: the same two arms each
+        }
+    }
+}
+
+// org-office/src/store/sqlite/organization.rs: the only place this family's SQL lives
+impl OrganizationWrite for SqliteTx<'_> {
+    fn put_team(&mut self, t: &Team) -> Result<(), StoreError> {
+        self.upsert(TEAM_UPSERT, team_params(t))?;   // and its record_refs row
+        Ok(())
+    }
+}
+
+// the handler: authorize, then one call
+let reply = store.submit(Some(op), false, move |uow| create_team::decide(uow, &actor, &cmd))?;
+```
+
+The memory engine's `OrganizationWrite` is the same four lines over a `BTreeMap` in
+`organization/testkit.rs`. The conformance suite drives both through the ports and
+`Store::submit`.
+
 ## 4. Writing
 
 ## 5. Files
