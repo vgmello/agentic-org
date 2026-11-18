@@ -910,9 +910,11 @@ fn a_confined_process_uses_its_stream_threads_memory_clock_and_randomness() {
         let mut child = Child::start_under(refused, "use", &fixture, "");
         let mut stream = fixture.accept(&mut child).unwrap();
         stream.write_all(b"ping").unwrap();
+        // The child answers before it ends, so the answer is read once it has ended:
+        // its work takes longer than the stream's read timeout on a loaded machine.
+        let (ended, report) = child.finish();
         let mut pong = [0u8; 4];
         let answered = stream.read_exact(&mut pong);
-        let (ended, report) = child.finish();
         // The report first: it says how far a child that died had come.
         assert_eq!(
             report,

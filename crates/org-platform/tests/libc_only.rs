@@ -11,23 +11,65 @@ use std::path::Path;
 /// The dependency names in every `[dependencies]`, `[build-dependencies]` and
 /// `[target.….dependencies]` table of a manifest. `[dev-dependencies]` are not linked
 /// into an executable and are left out.
+/// A dependency table's own name and a package it renames (`package = "…"`) are both
+/// listed, so a dependency in its own table (`[dependencies.name]`) or under another
+/// name is found.
 fn linked_dependencies(manifest: &str) -> Vec<String> {
+    /// Which table the reader is in.
+    enum Table {
+        /// One dependency per line.
+        List,
+        /// The keys of one dependency.
+        One,
+        Other,
+    }
+    let linked = |table: &str| {
+        (table == "dependencies"
+            || table == "build-dependencies"
+            || table.ends_with(".dependencies")
+            || table.ends_with(".build-dependencies"))
+            && !table.ends_with("dev-dependencies")
+    };
     let mut found = Vec::new();
-    let mut linked = false;
+    let mut table = Table::Other;
     for line in manifest.lines().map(str::trim) {
-        if let Some(table) = line.strip_prefix('[') {
-            let table = table.trim_end_matches(']');
-            linked = (table == "dependencies"
-                || table == "build-dependencies"
-                || table.ends_with(".dependencies")
-                || table.ends_with(".build-dependencies"))
-                && !table.ends_with("dev-dependencies");
-        } else if linked && !line.is_empty() && !line.starts_with('#') {
-            let name = line.split(['=', '.', ' ']).next().unwrap_or(line);
-            found.push(name.trim_matches('"').to_owned());
+        if let Some(header) = line.strip_prefix('[') {
+            let header = header.trim_end_matches(']');
+            table = if linked(header) {
+                Table::List
+            } else if let Some((_, name)) =
+                header.rsplit_once('.').filter(|(owner, _)| linked(owner))
+            {
+                found.push(name.trim_matches('"').to_owned());
+                Table::One
+            } else {
+                Table::Other
+            };
+            continue;
+        }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        match table {
+            Table::List => {
+                let name = line.split(['=', '.', ' ']).next().unwrap_or(line);
+                found.push(name.trim_matches('"').to_owned());
+                found.extend(renamed_package(line));
+            }
+            Table::One if line.starts_with("package") => found.extend(renamed_package(line)),
+            Table::One | Table::Other => {}
         }
     }
     found
+}
+
+/// The value of a `package = "…"` key in `line`, as a dependency's own table or an
+/// inline table writes it.
+fn renamed_package(line: &str) -> Option<String> {
+    let (_, after) = line.split_once("package")?;
+    let after = after.trim_start().strip_prefix('=')?.trim_start();
+    let value = after.strip_prefix('"')?;
+    value.split_once('"').map(|(name, _)| name.to_owned())
 }
 
 fn manifest(relative: &str) -> String {
@@ -56,6 +98,16 @@ tempfile.workspace = true
 proptest = "1"
 [features]
 x = []
+[dependencies.hostish]
+path = "../org-platform-host"
+package = "org-platform-host"
+[target.'cfg(unix)'.dependencies.cf]
+package = "core-foundation"
+version = "0.10"
+[dependencies]
+alias = { package = "org-host", path = "../org-host" }
+[dev-dependencies.only-in-tests]
+package = "security-framework"
 "#;
     assert_eq!(
         linked_dependencies(text),
@@ -65,7 +117,13 @@ x = []
             "core-foundation",
             "security-framework",
             "cc",
-            "bindgen"
+            "bindgen",
+            "hostish",
+            "org-platform-host",
+            "cf",
+            "core-foundation",
+            "alias",
+            "org-host",
         ]
     );
 }

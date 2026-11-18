@@ -51,14 +51,26 @@ const STABLE_RUNNING: Duration = Duration::from_secs(60);
 /// First restart delay; each further consecutive failure doubles it.
 const RESTART_BACKOFF: Duration = Duration::from_secs(1);
 
-/// What each instance's web processes wrote to stderr. The host keeps none of it; a
-/// real-process test reads it to prove what the web process never prints.
+/// What each instance's web processes wrote to stderr, and how many of their readers
+/// are still draining it. The host keeps none of it; a real-process test reads it to
+/// prove what the web process never prints.
 #[cfg(test)]
-static CAPTURED_STDERR: Mutex<std::collections::BTreeMap<String, Vec<u8>>> =
+static CAPTURED_STDERR: Mutex<std::collections::BTreeMap<String, (Vec<u8>, usize)>> =
     Mutex::new(std::collections::BTreeMap::new());
+/// What `instance`'s web processes wrote to stderr, once every reader has reached the
+/// end of its pipe (or after ten seconds, with what was read by then).
 #[cfg(test)]
 pub(crate) fn captured_stderr(instance: &str) -> Option<Vec<u8>> {
-    lock(&CAPTURED_STDERR).get(instance).cloned()
+    let until = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let captured = lock(&CAPTURED_STDERR).get(instance).cloned();
+        match captured {
+            Some((bytes, 0)) => return Some(bytes),
+            Some((bytes, _)) if std::time::Instant::now() >= until => return Some(bytes),
+            None => return None,
+            Some(_) => thread::sleep(Duration::from_millis(10)),
+        }
+    }
 }
 
 /// Supervisor timing. Production uses [`Timing::PRODUCTION`]; tests shorten it.
@@ -202,17 +214,36 @@ impl Stderr {
             changed: Condvar::new(),
         });
         let filling = Arc::clone(&captured);
-        thread::Builder::new()
+        // Counted before the reader starts, so a test that reads the capture after the
+        // process ended waits for this reader too.
+        #[cfg(test)]
+        {
+            lock(&CAPTURED_STDERR)
+                .entry(instance.clone())
+                .or_default()
+                .1 += 1;
+        }
+        #[cfg(test)]
+        let ended = {
+            let instance = instance.clone();
+            move || {
+                if let Some(entry) = lock(&CAPTURED_STDERR).get_mut(&instance) {
+                    entry.1 -= 1;
+                }
+            }
+        };
+        #[cfg(test)]
+        let on_spawn_failure = ended.clone();
+        let spawned = thread::Builder::new()
             .name("web-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
-                #[cfg(test)]
-                lock(&CAPTURED_STDERR).entry(instance.clone()).or_default();
                 while let Ok(read @ 1..) = stderr.read(&mut bytes) {
                     #[cfg(test)]
                     lock(&CAPTURED_STDERR)
                         .entry(instance.clone())
                         .or_default()
+                        .0
                         .extend_from_slice(&bytes[..read]);
                     let mut kept = lock(&filling.kept);
                     let room = STDERR_KEPT - kept.0.len();
@@ -222,7 +253,14 @@ impl Stderr {
                 }
                 lock(&filling.kept).1 = true;
                 filling.changed.notify_all();
-            })?;
+                #[cfg(test)]
+                ended();
+            });
+        #[cfg(test)]
+        if spawned.is_err() {
+            on_spawn_failure();
+        }
+        spawned?;
         Ok(captured)
     }
 

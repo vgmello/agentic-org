@@ -302,7 +302,8 @@
         "crates/org-socket",
         "crates/org-release",
         "crates/org-platform",
-        "crates/org-platform-host"
+        "crates/org-platform-host",
+        "crates/org-store"
       ],
       "risks": [],
       "implementation": [

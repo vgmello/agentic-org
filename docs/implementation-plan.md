@@ -1116,8 +1116,9 @@ half of LNX-6 run).
 
 ### X4 · The web process confined on Linux
 
-- **Outcome:** on Linux the web process confines itself with Landlock and seccomp
-  before it handles input, and refuses to start where it cannot.
+- **Outcome:** on Linux the web process confines itself with a seccomp filter, and with
+  Landlock where the kernel has it, before it handles input, and refuses to start where
+  it cannot install the filter.
 - **Build:**
   - First, on the first day of Track X: a one-hour probe of Docker Desktop's kernel on
     a Mac (Landlock ABI, seccomp, `memfd_create` and `execveat`). If it has no
@@ -1131,9 +1132,11 @@ half of LNX-6 run).
   [ADR-0008](adr/0008-gateway-macos-sandbox.md). LNX-3.
 - **Code today:** `org-platform/src/confinement/linux.rs` has a refusing adapter, as on every
   system but macOS; the host does not start the web process yet (A3).
-- **Done when:** LNX-3 passes: with Landlock unavailable, below ABI 3 or blocked by a
-  seccomp profile, the web process refuses and reports which (proved first with the
-  confinement example process); confined, it cannot open a file, create a socket or
+- **Done when:** LNX-3 passes: the seccomp filter is mandatory, and a web process that
+  cannot install it refuses and reports why; Landlock is applied when the kernel offers
+  it (ABI 3 or later) and, when it is unavailable or blocked by a seccomp profile, the
+  web process serves under the filter alone and the host logs which (ADR-0017
+  decision 9, amended 2026-11-18; proved first with the confinement example process); confined, it cannot open a file, create a socket or
   start a program, and its whole HTTP and TLS path works under the filter on the
   development system and in the container image.
 - **Needs:** X1c; the HTTP and TLS proof needs A3.
