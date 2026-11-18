@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import AccountMenu from '$lib/platform/auth/AccountMenu.svelte';
@@ -10,14 +11,19 @@
 
 	type Listing = { kind: 'loading' } | { kind: 'ready'; names: string[] } | { kind: 'failed' };
 	let listing = $state<Listing>({ kind: 'loading' });
-	const session = $derived(appSession.state.kind === 'signed-in' ? appSession.state.session : undefined);
+	const session = $derived(
+		appSession.state.kind === 'signed-in' ? appSession.state.session : undefined
+	);
 
 	async function load() {
 		listing = { kind: 'loading' };
 		try {
 			const response = await appSession.controller().read('/api/v1/organizations');
 			const body = readResponse(response.body, readOrganizationList);
-			listing = 'result' in body ? { kind: 'ready', names: body.result.organizations.map((o) => o.name) } : { kind: 'failed' };
+			listing =
+				'result' in body
+					? { kind: 'ready', names: body.result.organizations.map((o) => o.name) }
+					: { kind: 'failed' };
 		} catch {
 			listing = { kind: 'failed' };
 		}
@@ -26,7 +32,7 @@
 	onMount(async () => {
 		await appSession.boot();
 		if (appSession.state.kind !== 'signed-in') {
-			await goto(signInHref('/welcome', location.origin), { replaceState: true });
+			await goto(resolve(signInHref('/welcome', location.origin)), { replaceState: true });
 			return;
 		}
 		await load();
@@ -35,10 +41,13 @@
 	// Another tab signed out, or this one did: every tab shows the sign-in page (SIGN-20).
 	$effect(() => {
 		const state = appSession.state;
-		if (state.kind === 'signed-out' && state.reason === 'signed-out') void goto('/sign-in?note=signed-out', { replaceState: true });
+		if (state.kind === 'signed-out' && state.reason === 'signed-out')
+			void goto(resolve('/sign-in?note=signed-out'), { replaceState: true });
 		// SIGN-31: another account signed in from another tab; this tab keeps none of the previous account's data.
-		else if (state.kind === 'signed-out' && state.reason === 'changed-account') void goto('/sign-in', { replaceState: true });
-		else if (state.kind === 'signed-out' && state.reason === 'ended') void goto(signInHref('/welcome', location.origin, 'ended'), { replaceState: true });
+		else if (state.kind === 'signed-out' && state.reason === 'changed-account')
+			void goto(resolve('/sign-in'), { replaceState: true });
+		else if (state.kind === 'signed-out' && state.reason === 'ended')
+			void goto(resolve(signInHref('/welcome', location.origin, 'ended')), { replaceState: true });
 	});
 
 	const signOut = () => signOutFlow.request();
@@ -62,16 +71,38 @@
 		</ul>
 	{:else if session.admin}
 		<!-- SIGN-9, administrator: what the administrator sees right after registering. -->
-		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">No organizations yet. Create one to get started.</h1>
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">
+			No organizations yet. Create one to get started.
+		</h1>
 		<div class="mt-6 flex items-center gap-x-4">
-			<a href="/create" class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">
+			<a
+				href={resolve('/create')}
+				class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+			>
 				<Plus class="size-4" aria-hidden="true" />Create organization
 			</a>
-			<button type="button" disabled={signOutFlow.signingOut} onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button>
+			<button
+				type="button"
+				disabled={signOutFlow.signingOut}
+				onclick={signOut}
+				class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20"
+				>Sign out</button
+			>
 		</div>
 	{:else}
 		<!-- SIGN-9, any other account. -->
-		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">This account can't open any organization on this HQ. Ask the owner of your organization to invite you again.</h1>
-		<div class="mt-6"><button type="button" disabled={signOutFlow.signingOut} onclick={signOut} class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20">Sign out</button></div>
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">
+			This account can't open any organization on this HQ. Ask the owner of your organization to
+			invite you again.
+		</h1>
+		<div class="mt-6">
+			<button
+				type="button"
+				disabled={signOutFlow.signingOut}
+				onclick={signOut}
+				class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20"
+				>Sign out</button
+			>
+		</div>
 	{/if}
 {/if}

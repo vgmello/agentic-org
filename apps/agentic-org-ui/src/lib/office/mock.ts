@@ -1,4 +1,11 @@
-import type { AppError, Connection, HelloResult, OfficeInfo, Organization, StatusUpdate } from '$lib/proto';
+import type {
+	AppError,
+	Connection,
+	HelloResult,
+	OfficeInfo,
+	Organization,
+	StatusUpdate
+} from '$lib/proto';
 import { validateName } from '$lib/name';
 import type { OfficeApi } from './api';
 
@@ -14,14 +21,34 @@ const ORGANIZATIONS_KEY = 'agentic-org.mock.organizations';
  * stopped office with a reason, so the Offices screen's reason lines can be seen and tested (spec §3.3).
  */
 /** A current host's `hello`: it lists the optional calls and events the app uses (`office.status_changed`, `office.restart`). */
-const HELLO: HelloResult = { api_version: 1, server_version: '0.0.0-mock', host: 'This Mac', capabilities: ['office.status_changed', 'office.restart'] };
+const HELLO: HelloResult = {
+	api_version: 1,
+	server_version: '0.0.0-mock',
+	host: 'This Mac',
+	capabilities: ['office.status_changed', 'office.restart']
+};
 
 const hqOffice = (organizationId: string): OfficeInfo => {
-	const base: OfficeInfo = { id: `office-${organizationId}`, organization_id: organizationId, name: 'HQ', role: 'hq', host: 'This Mac', status: 'active' };
-	const stopped = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('office');
+	const base: OfficeInfo = {
+		id: `office-${organizationId}`,
+		organization_id: organizationId,
+		name: 'HQ',
+		role: 'hq',
+		host: 'This Mac',
+		status: 'active'
+	};
+	const stopped =
+		typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('office');
 	if (stopped === 'crashed') return { ...base, status: 'unavailable', status_reason: 'crashed' };
-	if (stopped === 'restarting') return { ...base, status: 'offline', status_reason: 'crashed', next_restart_at: new Date(Date.now() + 10 * 60_000).toISOString() };
-	if (stopped === 'stopped_by_owner') return { ...base, status: 'unavailable', status_reason: 'stopped_by_owner' };
+	if (stopped === 'restarting')
+		return {
+			...base,
+			status: 'offline',
+			status_reason: 'crashed',
+			next_restart_at: new Date(Date.now() + 10 * 60_000).toISOString()
+		};
+	if (stopped === 'stopped_by_owner')
+		return { ...base, status: 'unavailable', status_reason: 'stopped_by_owner' };
 	if (stopped === 'unknown') return { ...base, status: 'unavailable' };
 	return base;
 };
@@ -71,11 +98,19 @@ export function createMockOffice({
 	scenario = scenarioFromUrl(),
 	storage = browserStorage(),
 	testHook = false
-}: { delayMs?: number; scenario?: Scenario; storage?: MockStorage; testHook?: boolean } = {}): OfficeApi {
+}: {
+	delayMs?: number;
+	scenario?: Scenario;
+	storage?: MockStorage;
+	testHook?: boolean;
+} = {}): OfficeApi {
 	let connected = false;
 	// Who listens to status updates. With `testHook`, a browser test pushes one with `window.__mockOfficeStatus(update)`.
 	const listeners = new Set<(update: StatusUpdate) => void>();
-	if (testHook && typeof window !== 'undefined') (window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }).__mockOfficeStatus = (update) => listeners.forEach((l) => l(update));
+	if (testHook && typeof window !== 'undefined')
+		(
+			window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }
+		).__mockOfficeStatus = (update) => listeners.forEach((l) => l(update));
 	// Oldest first, like the Rust store.
 	const load = (): Connection[] => {
 		try {
@@ -95,10 +130,16 @@ export function createMockOffice({
 		}
 		return sampleOrganizations();
 	};
-	const saveHosted = (list: Organization[]) => storage.setItem(ORGANIZATIONS_KEY, JSON.stringify(list));
+	const saveHosted = (list: Organization[]) =>
+		storage.setItem(ORGANIZATIONS_KEY, JSON.stringify(list));
 	const remember = (organization: Organization): Connection => {
 		const office = organization.offices.find((o) => o.role === 'hq') ?? organization.offices[0];
-		if (!office) fail({ source: 'app', code: 'no_office', message: 'That organization has no office on this Mac.' });
+		if (!office)
+			fail({
+				source: 'app',
+				code: 'no_office',
+				message: 'That organization has no office on this Mac.'
+			});
 		const connection: Connection = { office, organization };
 		save([...load().filter((c) => c.organization.id !== organization.id), connection]);
 		return connection;
@@ -110,13 +151,18 @@ export function createMockOffice({
 		async ensureRunning(): Promise<HelloResult> {
 			await wait(delayMs);
 			if (scenario === 'unreachable')
-				fail({ source: 'setup', code: 'unreachable', message: "The office server started but isn't answering." });
+				fail({
+					source: 'setup',
+					code: 'unreachable',
+					message: "The office server started but isn't answering."
+				});
 			connected = true;
 			return HELLO;
 		},
 		async peekOrganizations() {
 			await wait(delayMs / 3);
-			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			if (!connected)
+				fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			return hosted();
 		},
 		async onOfficeStatus(listener) {
@@ -124,14 +170,24 @@ export function createMockOffice({
 			return () => void listeners.delete(listener);
 		},
 		async restartOffice(officeId): Promise<void> {
-			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			if (!connected)
+				fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			await wait(delayMs / 3);
 			// `?restart=` makes the host's answer something the screen must cope with (spec §3.3).
-			const mode = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('restart');
-			if (mode === 'not_ready') fail({ source: 'api', code: 'not_ready', message: 'The office host is still starting. Try again in a moment.' });
+			const mode =
+				typeof location === 'undefined'
+					? null
+					: new URLSearchParams(location.search).get('restart');
+			if (mode === 'not_ready')
+				fail({
+					source: 'api',
+					code: 'not_ready',
+					message: 'The office host is still starting. Try again in a moment.'
+				});
 			if (mode === 'stuck') return; // accepted, but the office stays stopped
 			const list = hosted();
-			if (!list.some((o) => o.offices.some((f) => f.id === officeId))) fail({ source: 'api', code: 'not_found', message: "That office isn't here." });
+			if (!list.some((o) => o.offices.some((f) => f.id === officeId)))
+				fail({ source: 'api', code: 'not_found', message: "That office isn't here." });
 			// It comes back: running, with no reason and no restart pending.
 			const running = (o: OfficeInfo): OfficeInfo => {
 				if (o.id !== officeId) return o;
@@ -139,25 +195,41 @@ export function createMockOffice({
 				return { ...rest, status: 'active' };
 			};
 			saveHosted(list.map((org) => ({ ...org, offices: org.offices.map(running) })));
-			save(load().map((c) => ({ ...c, office: running(c.office), organization: { ...c.organization, offices: c.organization.offices.map(running) } })));
+			save(
+				load().map((c) => ({
+					...c,
+					office: running(c.office),
+					organization: { ...c.organization, offices: c.organization.offices.map(running) }
+				}))
+			);
 		},
 		async ping(): Promise<HelloResult> {
 			await wait(delayMs / 3);
-			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			if (!connected)
+				fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			if (scenario === 'unreachable')
 				fail({ source: 'setup', code: 'unreachable', message: "The office isn't answering." });
 			return HELLO;
 		},
 		async createOrganization(rawName): Promise<Connection> {
-			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			if (!connected)
+				fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			const checked = validateName(rawName);
 			if (!checked.ok) fail({ source: 'api', code: 'invalid_name', message: checked.message });
 			await wait(delayMs / 3);
 			if (scenario === 'storage_error')
-				fail({ source: 'api', code: 'storage_error', message: "The office couldn't write the organization's folder." });
+				fail({
+					source: 'api',
+					code: 'storage_error',
+					message: "The office couldn't write the organization's folder."
+				});
 			const list = hosted();
 			if (list.some((o) => o.name.toLowerCase() === checked.name.toLowerCase()))
-				fail({ source: 'api', code: 'already_exists', message: 'An organization with that name already exists.' });
+				fail({
+					source: 'api',
+					code: 'already_exists',
+					message: 'An organization with that name already exists.'
+				});
 			const id = `org-${Date.now().toString(36)}-${list.length}`;
 			const organization: Organization = {
 				id,
@@ -170,19 +242,28 @@ export function createMockOffice({
 			return connection;
 		},
 		async listOrganizations() {
-			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			if (!connected)
+				fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			return hosted();
 		},
 		async openOrganization(id) {
-			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			if (!connected)
+				fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			const organization = hosted().find((o) => o.id === id);
 			if (!organization)
-				fail({ source: 'app', code: 'not_found', message: "That organization isn't on this Mac any more." });
+				fail({
+					source: 'app',
+					code: 'not_found',
+					message: "That organization isn't on this Mac any more."
+				});
 			const here = organization.offices.find((o) => o.role === 'hq') ?? organization.offices[0];
 			if (here?.status === 'unavailable')
-				fail({ source: 'app', code: 'office_unavailable', message: "That organization's office isn't available right now." });
+				fail({
+					source: 'app',
+					code: 'office_unavailable',
+					message: "That organization's office isn't available right now."
+				});
 			return remember(organization);
 		}
 	};
 }
-

@@ -1,9 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
-	import { credentialCopy, describeCredentialFailure, rateLimitCopy, rateLimitExpired, type CredentialFailure } from '$lib/platform/auth/credential-copy';
+	import {
+		credentialCopy,
+		describeCredentialFailure,
+		rateLimitCopy,
+		rateLimitExpired,
+		type CredentialFailure
+	} from '$lib/platform/auth/credential-copy';
 	import { checkSignIn } from '$lib/platform/auth/credential-rules';
 	import PasswordField from '$lib/platform/auth/PasswordField.svelte';
 	import { safeReturnTarget } from '$lib/platform/auth/return-target';
@@ -30,12 +37,16 @@
 	);
 	const limited = $derived(retryUntil !== undefined && now < retryUntil);
 	const failureText = $derived(
-		failure?.kind === 'rate_limited' && retryUntil !== undefined ? rateLimitCopy(retryUntil - now) : failure?.message
+		failure?.kind === 'rate_limited' && retryUntil !== undefined
+			? rateLimitCopy(retryUntil - now)
+			: failure?.message
 	);
 	const ready = $derived(appSession.state.kind !== 'loading');
 	// SIGN-31: this tab's account was replaced by a sign-in in another tab.
 	const replacedBy = $derived(
-		appSession.state.kind === 'signed-out' && appSession.state.reason === 'changed-account' ? appSession.state.login : undefined
+		appSession.state.kind === 'signed-out' && appSession.state.reason === 'changed-account'
+			? appSession.state.login
+			: undefined
 	);
 
 	function destination() {
@@ -49,9 +60,20 @@
 	 */
 	async function enter() {
 		try {
-			await goto(destination(), { replaceState: true });
+			// resolve() reads a query as route segments: an unencoded '/', '(' or '[' in it would
+			// change or reject the target (/chat?thread=a//b). The query is rebuilt with
+			// URLSearchParams, which encodes them; every parameter keeps its value.
+			const target = destination();
+			const query = target.indexOf('?');
+			const path = query < 0 ? target : target.slice(0, query);
+			const search = query < 0 ? '' : new URLSearchParams(target.slice(query)).toString();
+			await goto(resolve((search ? `${path}?${search}` : path) as `/${string}`), {
+				replaceState: true
+			});
 		} catch {
-			await goto('/welcome', { replaceState: true }).catch(() => location.assign('/welcome'));
+			await goto(resolve('/welcome'), { replaceState: true }).catch(() =>
+				location.assign(resolve('/welcome'))
+			);
 		}
 	}
 
@@ -128,25 +150,45 @@
 	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">Sign in to HQ at {address}</h1>
 	{#if replacedBy !== undefined}
 		<div role="status" class="mt-2 text-sm/6 text-gray-300">
-			<p>You're now signed in as {replacedBy} in another tab. Reload to continue as {replacedBy}.</p>
-			<button type="button" class="mt-1 font-semibold underline" onclick={() => location.reload()}>Reload</button>
+			<p>
+				You're now signed in as {replacedBy} in another tab. Reload to continue as {replacedBy}.
+			</p>
+			<button type="button" class="mt-1 font-semibold underline" onclick={() => location.reload()}
+				>Reload</button
+			>
 		</div>
 	{:else if note}<p class="mt-2 text-sm/6 text-gray-300" role="status">{note}</p>{/if}
 
 	<div aria-live="assertive">
 		{#if failure && failureText}
-			<div id="sign-in-error" role="alert" class="mt-6 border-l-4 border-red-400 bg-red-500/10 p-3 text-sm/6 text-red-200">
+			<div
+				id="sign-in-error"
+				role="alert"
+				class="mt-6 border-l-4 border-red-400 bg-red-500/10 p-3 text-sm/6 text-red-200"
+			>
 				<p>{failureText}</p>
 				{#if failure.kind === 'unreachable' || failure.kind === 'hq_error'}
-					<button type="submit" form="sign-in-form" class="mt-2 font-semibold underline">Try again</button>
+					<button type="submit" form="sign-in-form" class="mt-2 font-semibold underline"
+						>Try again</button
+					>
 				{:else if failure.kind === 'out_of_date'}
-					<button type="button" class="mt-2 font-semibold underline" onclick={() => location.reload()}>Reload</button>
+					<button
+						type="button"
+						class="mt-2 font-semibold underline"
+						onclick={() => location.reload()}>Reload</button
+					>
 				{/if}
 			</div>
 		{/if}
 	</div>
 
-	<form id="sign-in-form" class="mt-6 space-y-6" novalidate onsubmit={submit} aria-describedby={failure ? 'sign-in-error' : undefined}>
+	<form
+		id="sign-in-form"
+		class="mt-6 space-y-6"
+		novalidate
+		onsubmit={submit}
+		aria-describedby={failure ? 'sign-in-error' : undefined}
+	>
 		<div>
 			<label for="login" class="block text-sm/6 font-medium text-white">Username</label>
 			<input
@@ -163,7 +205,15 @@
 			/>
 			{#if loginError}<p id="login-error" class="mt-2 text-sm/6 text-red-400">{loginError}</p>{/if}
 		</div>
-		<PasswordField id="password" label="Password" autocomplete="current-password" bind:value={password} bind:input={passwordInput} error={passwordError} readonly={busy} />
+		<PasswordField
+			id="password"
+			label="Password"
+			autocomplete="current-password"
+			bind:value={password}
+			bind:input={passwordInput}
+			error={passwordError}
+			readonly={busy}
+		/>
 		<button
 			type="submit"
 			disabled={busy || limited}
@@ -173,9 +223,15 @@
 	</form>
 
 	<div class="mt-8 space-y-2 text-sm/6 text-gray-400">
-		<p>Forgot your password? Ask the owner of your organization for a new sign-in link. The administrator, at the HQ machine, runs:</p>
+		<p>
+			Forgot your password? Ask the owner of your organization for a new sign-in link. The
+			administrator, at the HQ machine, runs:
+		</p>
 		<p><code class="text-gray-200">agentic-org admin reset --name &lt;instance&gt;</code></p>
-		<p>(on Linux, with <code class="text-gray-200">sudo</code> in front: <code class="text-gray-200">sudo agentic-org admin reset --name &lt;instance&gt;</code>).</p>
+		<p>
+			(on Linux, with <code class="text-gray-200">sudo</code> in front:
+			<code class="text-gray-200">sudo agentic-org admin reset --name &lt;instance&gt;</code>).
+		</p>
 		<p>Need an account? Ask the owner of your organization to invite you.</p>
 	</div>
 {/if}

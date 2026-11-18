@@ -1,5 +1,13 @@
 import type { createGatewayPublicHttp, createJsonHttp } from '../http/json-http';
-import { readEstablishedSession, readResponse, readSession, readVersion, WireDecodeError, type GatewayError, type Reader } from '../http/wire';
+import {
+	readEstablishedSession,
+	readResponse,
+	readSession,
+	readVersion,
+	WireDecodeError,
+	type GatewayError,
+	type Reader
+} from '../http/wire';
 
 /** HTTP failure metadata only: no server message or credential appears in an error. */
 export class SessionRequestError extends Error {
@@ -8,7 +16,10 @@ export class SessionRequestError extends Error {
 	readonly code: string;
 	readonly field: GatewayError['field'];
 	readonly rule: GatewayError['rule'];
-	constructor(readonly status: number, error: GatewayError) {
+	constructor(
+		readonly status: number,
+		error: GatewayError
+	) {
 		super('Session request failed');
 		this.name = 'SessionRequestError';
 		this.retryAfterMs = error.retry_after_ms;
@@ -25,8 +36,14 @@ export type EstablishedSession = ReturnType<typeof readEstablishedSession>;
 const emptySessionResult: Reader<Record<string, never>> = () => ({});
 
 /** Fixed session operations over the shared bounded, same-origin HTTP boundary. */
-export function createSessionGateway(publicHttp: ReturnType<typeof createGatewayPublicHttp>, protectedHttp: ReturnType<typeof createJsonHttp>) {
-	async function result<T>(request: Promise<{ status: number; body: unknown }>, reader: Reader<T>): Promise<T> {
+export function createSessionGateway(
+	publicHttp: ReturnType<typeof createGatewayPublicHttp>,
+	protectedHttp: ReturnType<typeof createJsonHttp>
+) {
+	async function result<T>(
+		request: Promise<{ status: number; body: unknown }>,
+		reader: Reader<T>
+	): Promise<T> {
 		const response = await request;
 		const envelope = readResponse(response.body, reader);
 		if ('error' in envelope) {
@@ -38,11 +55,28 @@ export function createSessionGateway(publicHttp: ReturnType<typeof createGateway
 	}
 	return Object.freeze({
 		version: (signal?: AbortSignal) => result(publicHttp.version(signal), readVersion),
-		signIn: (credentials: unknown, signal?: AbortSignal) => result(publicHttp.signIn(credentials, signal), readEstablishedSession),
-		register: (request: unknown, signal?: AbortSignal) => result(publicHttp.register(request, signal), readEstablishedSession),
-		get: (proof: string, signal?: AbortSignal) => result(protectedHttp({ method: 'GET', path: '/api/v1/session', proof, signal }), readSession),
-		refresh: (proof: string, signal?: AbortSignal) => result(protectedHttp({ method: 'POST', path: '/api/v1/session/refresh', body: {}, proof, signal }), readEstablishedSession),
-		signOut: (proof: string, signal?: AbortSignal) => result(protectedHttp({ method: 'POST', path: '/api/v1/session/sign-out', body: {}, proof, signal }), emptySessionResult)
+		signIn: (credentials: unknown, signal?: AbortSignal) =>
+			result(publicHttp.signIn(credentials, signal), readEstablishedSession),
+		register: (request: unknown, signal?: AbortSignal) =>
+			result(publicHttp.register(request, signal), readEstablishedSession),
+		get: (proof: string, signal?: AbortSignal) =>
+			result(protectedHttp({ method: 'GET', path: '/api/v1/session', proof, signal }), readSession),
+		refresh: (proof: string, signal?: AbortSignal) =>
+			result(
+				protectedHttp({ method: 'POST', path: '/api/v1/session/refresh', body: {}, proof, signal }),
+				readEstablishedSession
+			),
+		signOut: (proof: string, signal?: AbortSignal) =>
+			result(
+				protectedHttp({
+					method: 'POST',
+					path: '/api/v1/session/sign-out',
+					body: {},
+					proof,
+					signal
+				}),
+				emptySessionResult
+			)
 	});
 }
 export type SessionGateway = ReturnType<typeof createSessionGateway>;
