@@ -5,6 +5,24 @@ screen and interaction the specs call for that is not already built, with mock d
 leave review for one final pass before the branch is merged. This page is the list of
 screens and the order they are built in. Each row's Status is updated as it lands.
 
+## Where the work stands (handover, 2026-11-18)
+
+- Steps 0 and 1 are complete and were checked (type check, unit tests, build) when merged.
+- Steps 2, 3 and Chat were stopped part-way and merged as they were, in commits titled
+  "UI work in progress". **The merged branch has not been type-checked, tested or built.**
+  Start by running `bun run check` and `bun run build` in `apps/agentic-org-ui` and fixing
+  what they report, then walk each step's rows against the running app to see which
+  screens exist.
+- Steps 4 to 9 have not started.
+- Each builder followed [the builder brief](v1-ui-builder-brief.md): file ownership, the
+  mock rules, the checks and the report format. The assignment for each step is its table
+  below plus the specs named in the inventory of `docs/specs/`.
+- Known loose ends from step 1: the navigation's Inbox count is loaded once and does not
+  drop after an item is resolved; Home's empty Projects state has no Create project action
+  until step 4 builds one; `?mock=` on the first URL opened selects mock states
+  (`error`, `empty`, `slow` and others listed in `e2e/fakes/mock-mode.ts`).
+- The New menu omits Project and Work item until step 4 provides those flows.
+
 ## Rules for this branch
 
 - **Code layout stays as it is.** Routes are thin entry points in `src/routes`. Each domain
@@ -47,39 +65,39 @@ screens and the order they are built in. Each row's Status is updated as it land
 
 | Screen | Route | Status |
 | --- | --- | --- |
-| Home: Needs you, Projects, Happening now, Recent activity, month line | `/home` | To do |
-| Inbox: All, Approvals, Questions, Decisions, Problems, Handled; list and detail; reply, approve, deny | `/inbox` | To do |
-| Activity: feed, filters, search, run rows, thread panel, "n new" | `/activity` | To do |
-| Search results, grouped | `/search?q=` | To do |
-| Your preferences: Keyboard, Time zone | `/preferences` | To do |
+| Home: Needs you, Projects, Happening now, Recent activity, month line | `/home` | Done |
+| Inbox: All, Approvals, Questions, Decisions, Problems, Handled; list and detail; reply, approve, deny | `/inbox` | Done |
+| Activity: feed, filters, search, run rows, thread panel, "n new" | `/activity` | Done |
+| Search results, grouped | `/search?q=` | Done |
+| Your preferences: Keyboard, Time zone | `/preferences` | Done |
 | About | account menu | Done in step 0 |
 
 ## Step 2 · Teams and people
 
 | Screen | Route | Status |
 | --- | --- | --- |
-| Teams index: tree of teams, lead, counts, projects | `/teams` | To do |
-| Members directory: people and agents, filter, Can sign in | `/teams/members` | To do |
-| Org chart: one reporting tree, owner bar, Hand over ownership | `/teams/org-chart` | To do |
-| Team page: header, members; tabs Work, Projects, Activity, Conversations, Processes | `/teams/[teamId]` | To do |
-| Member profile: header and actions; tabs Overview, Work, Conversations, Activity, Runs, Processes, Role, Cost, Notes and memory | `/members/[memberId]` | To do |
-| Supervision and execution view, attempt history, Run now | member profile | To do |
-| Session log viewer (messages, tool calls, files, usage) | `/members/[memberId]/runs/[runId]` | To do |
-| Sign-in access dialogs for a person: Invite, New link, Remove access | member profile | To do |
-| Hire: refused view, requests list, Allow hiring switch | Teams | To do |
+| Teams index: tree of teams, lead, counts, projects | `/teams` | In progress (stopped part-way) |
+| Members directory: people and agents, filter, Can sign in | `/teams/members` | In progress (stopped part-way) |
+| Org chart: one reporting tree, owner bar, Hand over ownership | `/teams/org-chart` | In progress (stopped part-way) |
+| Team page: header, members; tabs Work, Projects, Activity, Conversations, Processes | `/teams/[teamId]` | In progress (stopped part-way) |
+| Member profile: header and actions; tabs Overview, Work, Conversations, Activity, Runs, Processes, Role, Cost, Notes and memory | `/members/[memberId]` | In progress (stopped part-way) |
+| Supervision and execution view, attempt history, Run now | member profile | In progress (stopped part-way) |
+| Session log viewer (messages, tool calls, files, usage) | `/members/[memberId]/runs/[runId]` | In progress (stopped part-way) |
+| Sign-in access dialogs for a person: Invite, New link, Remove access | member profile | In progress (stopped part-way) |
+| Hire: refused view, requests list, Allow hiring switch | Teams | In progress (stopped part-way) |
 
 ## Step 3 · Organization settings
 
 | Screen | Route | Status |
 | --- | --- | --- |
-| General: name, workspace, runtime, recovery code row, administrator | `/settings` | To do |
-| Offices: Add office, invitation, Approve a join, Remove, Rename, unplaced agents, outbox | `/settings/offices` | To do |
-| Agent setup: list and one agent's setup, health | `/settings/agents`, `/settings/agents/[memberId]` | To do |
-| Roles: list, role page, editor, New role | `/settings/roles`, `/settings/roles/[roleId]` | To do |
-| Processes: Standards tab, editor, development processes | `/settings/processes` | To do |
-| Members and access | `/settings/access` | To do |
-| Costs: prices, organization cost | `/settings/costs` | To do |
-| Updates | `/settings/updates` | To do |
+| General: name, workspace, runtime, recovery code row, administrator | `/settings` | Done |
+| Offices: Add office, invitation, Approve a join, Remove, Rename, unplaced agents, outbox | `/settings/offices` | In progress (stopped part-way) |
+| Agent setup: list and one agent's setup, health | `/settings/agents`, `/settings/agents/[memberId]` | In progress (stopped part-way) |
+| Roles: list, role page, editor, New role | `/settings/roles`, `/settings/roles/[roleId]` | In progress (stopped part-way) |
+| Processes: Standards tab, editor, development processes | `/settings/processes` | In progress (stopped part-way) |
+| Members and access | `/settings/access` | In progress (stopped part-way) |
+| Costs: prices, organization cost | `/settings/costs` | In progress (stopped part-way) |
+| Updates | `/settings/updates` | In progress (stopped part-way) |
 
 ## Step 4 · Projects
 
@@ -128,7 +146,7 @@ screens and the order they are built in. Each row's Status is updated as it land
 | --- | --- | --- |
 | Set a new password, Approve a terminal sign-in, invited registration | `/set-password`, `/approve`, `/register` | To do |
 | Change password, recovery code banner, organization switcher | shell | To do |
-| Chat: browse channels, pins, mute, system notices, Inbox link | `/chat` | To do |
+| Chat: question, approval and hand-off cards, browse channels, pins, mute, system notices, Inbox link, states | `/chat` | In progress (stopped part-way) |
 
 ## Step 9 · Closing
 
