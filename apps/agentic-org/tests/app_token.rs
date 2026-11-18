@@ -17,9 +17,9 @@ use std::time::Duration;
 
 use org_host::Host;
 use org_office_launch::{write_host_message, CreateOffice, HostMessage};
-use org_proto::{AppToken, DbKey, Empty, OfficeList, OfficeRole, OfficeStatus};
+use org_proto::{AppToken, DbKey, Empty, OfficeList, OfficeRole, OfficeStatus, OfficeStatusReason};
 use serde_json::json;
-use support::{eventually, has_hex_run, hq, Client, TestHome};
+use support::{eventually, has_hex_run, hq, office_info, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -127,6 +127,36 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
         assert!(home.db_key_fingerprints(A).is_empty(), "{name}");
         host.shutdown();
     }
+}
+
+/// A worker that refuses every first line is given up on: with a give-up limit of 3 its third
+/// short exit makes the office `unavailable`/`restarts_exhausted`, and no further run starts.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
+    let home = TestHome::registered();
+    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    let mut config = home.config();
+    config.set_server_program(home.wrapper("malformed", r#"printf 'not json\n' | "$FAKE" "$@""#));
+    config.timings.give_up_after = 3;
+    config.timings.backoff_initial = Duration::from_millis(20);
+    config.timings.backoff_max = Duration::from_millis(40);
+    let host = home.start(config).unwrap();
+    eventually(WAIT, "the office to be given up on", || {
+        office_info(&host, A).is_some_and(|info| {
+            info.status == OfficeStatus::Unavailable
+                && info.status_reason == Some(OfficeStatusReason::RestartsExhausted)
+        })
+    });
+    assert_eq!(home.first_line_refusals(A).len(), 3);
+    // Many backoff periods later, still three runs: nothing restarts it.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(home.first_line_refusals(A).len(), 3);
+    assert_eq!(home.runs(A), 3);
+    assert_eq!(status(&host, A), OfficeStatus::Unavailable);
+    assert!(home.grant_fingerprints(A).is_empty());
+    assert!(home.db_key_fingerprints(A).is_empty());
+    host.shutdown();
 }
 
 #[cfg(target_os = "macos")]

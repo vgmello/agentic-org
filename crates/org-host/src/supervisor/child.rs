@@ -4,7 +4,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -50,6 +50,27 @@ pub(crate) enum Signal {
 /// never touch a key store, they get their key on the first line). SQLCipher needs only the
 /// user's identity and home; `TMPDIR` is the user's temporary folder.
 const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"];
+
+/// A server's whole environment: the [`PASSED_ENV`] names the host has (read through `host_var`),
+/// then `ORG_OFFICE_HOME` and, if set, `ORG_OFFICE_RUNTIME_DIR`. Nothing else of the host's.
+fn server_env(
+    home: &Path,
+    runtime_dir: Option<&Path>,
+    host_var: impl Fn(&str) -> Option<OsString>,
+) -> Vec<(OsString, OsString)> {
+    let mut env: Vec<(OsString, OsString)> = PASSED_ENV
+        .iter()
+        .filter_map(|name| host_var(name).map(|value| ((*name).into(), value)))
+        .collect();
+    env.push((OFFICE_HOME_ENV.into(), home.as_os_str().to_owned()));
+    if let Some(runtime) = runtime_dir {
+        env.push((
+            OFFICE_RUNTIME_DIR_ENV.into(),
+            runtime.as_os_str().to_owned(),
+        ));
+    }
+    env
+}
 
 /// How to start a server: the program and the office home it is given.
 #[derive(Debug, Clone)]
@@ -192,17 +213,9 @@ impl Spawner {
             Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
             Mode::Discard(id) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
         };
-        let mut env: Vec<(OsString, OsString)> = PASSED_ENV
-            .iter()
-            .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
-            .collect();
-        env.push((OFFICE_HOME_ENV.into(), self.home.clone().into_os_string()));
-        if let Some(runtime) = &self.runtime_dir {
-            env.push((
-                OFFICE_RUNTIME_DIR_ENV.into(),
-                runtime.clone().into_os_string(),
-            ));
-        }
+        let env = server_env(&self.home, self.runtime_dir.as_deref(), |name| {
+            std::env::var_os(name)
+        });
         let spawned = {
             // See `cloexec`: no fd of ours may be half-made while a child is spawned.
             let _one_at_a_time = lock(&SPAWN_LOCK);
@@ -447,5 +460,65 @@ fn copy_stderr(mut stderr: impl Read, log: &Mutex<RotatingLog>) {
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A host environment holding every allowed name plus others (the development key folder,
+    /// a canary, a lookalike): only the allowed names reach the server, with their values, then
+    /// the office home and runtime folder.
+    #[test]
+    fn a_server_gets_only_the_allowed_environment() {
+        let host_var = |name: &str| Some(OsString::from(format!("value-of-{name}")));
+        let asked = std::cell::RefCell::new(Vec::new());
+        let env = server_env(Path::new("/h"), Some(Path::new("/r")), |name| {
+            asked.borrow_mut().push(name.to_owned());
+            host_var(name)
+        });
+        // Only the allowlist is ever read from the host: nothing else can be passed on.
+        assert_eq!(*asked.borrow(), PASSED_ENV);
+        let names: Vec<&OsStr> = env.iter().map(|(n, _)| n.as_os_str()).collect();
+        // Spelled out, not read from `PASSED_ENV`: widening the allowlist must change this test.
+        let want = [
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "PATH",
+            "TMPDIR",
+            "LANG",
+            OFFICE_HOME_ENV,
+            OFFICE_RUNTIME_DIR_ENV,
+        ]
+        .map(OsStr::new);
+        assert_eq!(names, want);
+        for (name, value) in &env[..PASSED_ENV.len()] {
+            assert_eq!(value, &host_var(name.to_str().unwrap()).unwrap());
+        }
+        assert_eq!(env[PASSED_ENV.len()].1, "/h");
+        assert_eq!(env[PASSED_ENV.len() + 1].1, "/r");
+        for excluded in [
+            "ORG_OFFICE_DEV_KEY_DIR",
+            "ORG_HOST_TEST_CANARY",
+            "HOMEX",
+            "DYLD_INSERT_LIBRARIES",
+        ] {
+            assert!(
+                !names.contains(&OsStr::new(excluded)),
+                "{excluded} passed on"
+            );
+        }
+    }
+
+    /// A name the host doesn't have is left out, and no runtime folder means no variable for it.
+    #[test]
+    fn missing_host_names_and_no_runtime_folder_are_left_out() {
+        let env = server_env(Path::new("/h"), None, |name| {
+            (name == "PATH").then(|| OsString::from("/bin"))
+        });
+        let names: Vec<&OsStr> = env.iter().map(|(n, _)| n.as_os_str()).collect();
+        assert_eq!(names, [OsStr::new("PATH"), OsStr::new(OFFICE_HOME_ENV)]);
     }
 }
