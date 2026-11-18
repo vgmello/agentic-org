@@ -46,6 +46,14 @@ mod store;
 pub use store::acceptance::{
     AcceptanceConfig, AcceptanceIdentity, JournalPosition, WriterAuthority,
 };
+#[cfg(any(test, feature = "testkit"))]
+pub use store::open::Testing;
+/// Opening an office's store on the engine its configuration names, and the operations
+/// run on it whichever engine that is.
+pub use store::open::{
+    open_store, CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, EngineChoice,
+    OfficeEngine, OfficeStore, Opened, ReadOp, StoreConfig, StoreOp,
+};
 /// The SQLite engine of the office store: the projection as one plain database file.
 pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};
 mod time;

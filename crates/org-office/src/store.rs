@@ -15,6 +15,7 @@
 pub(crate) mod acceptance;
 pub(crate) mod hq_creation;
 pub(crate) mod messages;
+pub(crate) mod open;
 pub(crate) mod org;
 #[cfg_attr(
     not(test),

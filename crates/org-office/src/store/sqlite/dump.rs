@@ -46,3 +46,14 @@ impl Dump for SqliteEngine {
         lines
     }
 }
+
+#[cfg(test)]
+impl SqliteEngine {
+    /// The projection as a build with `ddl` after this build's schema makes it.
+    pub(crate) fn open_with(
+        path: &std::path::Path,
+        ddl: &'static str,
+    ) -> Result<Self, org_store::EngineError> {
+        Self::open_as(path, super::schema::Schema::current().with(ddl))
+    }
+}

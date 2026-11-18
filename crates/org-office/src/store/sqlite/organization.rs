@@ -653,22 +653,7 @@ impl OrganizationWrite for SqliteTx {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use org_store::testkit::identity;
-
     use crate::store::sqlite::SqliteEngine;
-
-    /// A fresh projection of the suite's organization, in a temporary directory.
-    fn open() -> (Arc<SqliteEngine>, tempfile::TempDir) {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let root = dir.path().canonicalize().expect("a real path");
-        let engine = SqliteEngine::open(&root.join("office.db")).expect("a new projection");
-        let engine = engine.for_organization(&identity().organization_id);
-        (Arc::new(engine), dir)
-    }
-
-    crate::organization_conformance_tests!(open);
 
     #[test]
     fn a_projection_opened_for_no_organization_refuses_the_family() {
