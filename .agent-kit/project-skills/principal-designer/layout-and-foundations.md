@@ -164,3 +164,27 @@ chat") makes the person do the ranking. Arrange by what they need next.
 - **Borders can be lower contrast than you first make them**, and most layouts need fewer.
   Decorative dividers are exempt from 3:1. A boundary a person needs in order to find a
   control is not.
+
+## Access beyond contrast
+
+These are thresholds from WCAG 2.2, level A and AA. They are requirements, and each one
+also makes the product better for everyone.
+
+- **Everything works from the keyboard**, in an order that matches what is seen, with a
+  visible focus indicator at every step.
+- **The focused control is never hidden** behind a sticky header, footer, banner or
+  overlay.
+- **Headings form an outline.** One per page at the top level, no skipped levels. People
+  using a screen reader navigate by headings the way sighted people scan them.
+- **Every control has a name, every field a label, every meaningful image a text
+  alternative.** Decorative images and icons beside visible text are hidden from assistive
+  technology.
+- **Content reflows at 320 px and at 200% text** without loss and without scrolling in two
+  directions.
+- **Anything done by dragging can also be done with single clicks or the keyboard.**
+- **Do not ask twice.** Information the person already gave in the same process is filled
+  in or offered for selection.
+- **Signing in does not depend on memory or a puzzle.** Allow paste and password managers.
+- **Help sits in the same place on every page.**
+- **A changed count or status is announced** as a complete phrase, once, without moving
+  focus.

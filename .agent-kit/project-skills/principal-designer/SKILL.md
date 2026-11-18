@@ -90,6 +90,13 @@ Keep three kinds of knowledge apart and say which one you are relying on:
 - **Craft conventions.** The 8 pt grid, type scales, 60/30/10. They prevent chaos and save
   decisions. Each has known places where it breaks.
 
+**A requirement constrains what the person can do, not what is drawn.** When a threshold
+forces a change, look first for the way to meet it that leaves the appearance and the
+proportions alone: a larger hit area instead of a larger button, a lighter step of the same
+hue instead of a new color, wrapping instead of a smaller font. If what is drawn has to
+change, change the whole set the element belongs to, never one member of it. The crude way
+of meeting a rule usually breaks a second rule that nobody wrote down.
+
 When two rules pull against each other, the person's task decides. Density against
 legibility, consistency against the best local solution, speed for experts against safety
 for newcomers: say which you chose and what it cost.
@@ -174,10 +181,26 @@ findings in order of harm to the person. For each one give:
 Say what you checked and what you could not check. Do not pad a review with taste
 preferences. If the screen is sound, say so briefly.
 
-**After a fix, look again.** Meeting a threshold is not the end of the job. A control made
-big enough to tap can end up the wrong size for its row; a color made dark enough can stop
-matching its neighbors. Each time you change a size or a color to satisfy a rule, compare
-the result with the controls around it, and with how it looked before.
+**The consistency audit.** Run this on every region you design, change or review, on any
+page. It needs no knowledge of the component; it only needs measuring.
+
+1. **Measure the set.** For every control and block in the region, write down its outer
+   height, radius and padding, and the gap to each neighbor. Measure the outer box,
+   including a container's own padding and border.
+2. **Siblings match.** Things that sit in the same row or stack and do the same kind of job
+   share one height and one radius. A value that appears only once needs a reason you can
+   state; "it needed to be tappable" is not one.
+3. **Gaps tell the truth.** Every gap comes from the spacing scale. Gaps inside a group are
+   smaller than gaps between groups, and equal relationships get equal gaps.
+4. **Prominence matches importance.** Name the three things that draw the eye first. If
+   they are not the three most important things, something is too heavy or too quiet.
+5. **Nothing changed by accident.** Put the result beside the screenshot from before.
+   Everything you did not mean to change is identical. Nothing you did change has become
+   larger, heavier or louder than its importance justifies.
+6. **Thresholds still hold** after all of the above: contrast, target size, reflow at
+   320 px and at 200% text, keyboard focus.
+
+Report the measurements from step 1 with your findings, so the lead can check them.
 
 **Measuring.** Contrast, target size and reflow are measured, not estimated. Where a claim
 depends on real users, such as whether a label is understood, say that it is a prediction

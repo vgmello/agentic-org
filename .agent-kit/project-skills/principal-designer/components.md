@@ -29,6 +29,8 @@ primitives in `apps/agentic-org-ui/src/lib/components/ui` before drawing a new o
   into the space around the control, not by inflating what is drawn. A button grown to 44 px
   inside a container that has its own padding makes the container 52 px, and it becomes the
   heaviest thing in its row.
+- **Separate touch targets need room between them**, about 8 px, so a thumb does not land
+  on the neighbor. *Breaks when* they are segments of one control, which touch by design.
 - **Controls that sit together share one outer height.** A search field, a segmented
   control, a select and a button in the same row or stack have the same outer height and
   the same radius family, so they read as one set. Measure the outer box, including a
@@ -202,6 +204,10 @@ as All, Active, Paused, Former, or a switch between views.
   skeleton shaped like the result. Beyond that show real progress and let the person leave
   and return. *Breaks when* the result's shape is unknown: a labeled spinner is more honest
   than a skeleton that guesses.
+- **Nothing moves under the pointer.** Reserve the space for content that arrives late
+  (images, counts, banners, validation messages), so the layout does not jump as it loads.
+  A jump at the moment of a click sends the click to the wrong control. *Breaks when* the
+  size cannot be known; then insert below the point of attention, never above it.
 - **Optimistic updates** are for operations that rarely fail and are cheap to reverse.
   Never present an unconfirmed result as confirmed.
 - **Design the whole set of states**: empty, loading, partial, error, success, stale or
