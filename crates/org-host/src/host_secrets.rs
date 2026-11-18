@@ -15,10 +15,6 @@ pub(crate) const MAX_BYTES: usize = 16 * 1024;
 pub(crate) struct Name(String);
 
 impl Name {
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn parse(name: &str) -> Result<Self, Error> {
         let valid = name == "registry"
             || name == "writer-device"
@@ -41,10 +37,6 @@ impl Name {
             .then(|| Self(name.to_owned()))
             .ok_or(Error::InvalidName)
     }
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -67,10 +59,6 @@ impl Value {
         }
         Ok(Self(bytes))
     }
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn expose(&self) -> &[u8] {
         &self.0
     }
