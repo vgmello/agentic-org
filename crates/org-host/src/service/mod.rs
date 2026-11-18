@@ -72,7 +72,10 @@ impl Service {
         self
     }
     /// The registered host's administrator link calls. Installed at most once.
-    #[allow(dead_code)] // Composed by `Host::start_registered` in the next change.
+    #[cfg(test)]
+    pub(crate) fn admin(&self) -> Option<&Arc<crate::admin::Admin>> {
+        self.admin.get()
+    }
     pub(crate) fn install_admin(&self, admin: Arc<crate::admin::Admin>) -> bool {
         self.admin.set(admin).is_ok()
     }

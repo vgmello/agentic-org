@@ -32,8 +32,6 @@ pub(crate) trait Presence: Send + Sync {
 }
 
 /// The platform presence bridge (Touch ID or the login password on macOS; refuses elsewhere).
-// Composed by `Host::start_registered` in the next change.
-#[allow(dead_code)]
 pub(crate) struct NativePresence;
 impl Presence for NativePresence {
     fn local(&self, connection: &Connection) -> bool {
@@ -78,7 +76,6 @@ fn wall() -> Result<i64, ApiError> {
 }
 
 impl Admin {
-    #[allow(dead_code)] // Composed by `Host::start_registered` in the next change.
     pub(crate) fn new(
         db: Arc<HostDb>,
         setup_operation: &str,
@@ -94,6 +91,11 @@ impl Admin {
             presence,
             resetting: AtomicBool::new(false),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn issues_for(&self, setup_operation: &str, origin: &str) -> bool {
+        self.setup_operation == setup_operation && self.origin.as_str() == origin
     }
 
     /// The caller is a local `host.sock` client that passes the host's signing check.

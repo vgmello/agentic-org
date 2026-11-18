@@ -5,8 +5,13 @@
 //!
 //! ```text
 //! agentic-org serve [--version]
+//! agentic-org serve --name <instance>
 //! agentic-org serve [--home <absolute path>] [--server-bin <path>] [--app-team-id <team id>]   (debug builds)
 //! ```
+//! `--name` serves the registered instance setup reserved under that name ([`Host::start_registered`]):
+//! it creates the instance's host registry at its first start and answers the administrator
+//! link calls. It is accepted by both builds and excludes `--home`. A release build without a
+//! pinned runtime release refuses at runtime admission, before any custody is opened.
 //! **A release build trusts only what it was built with** ([`Config::trusted`]): the app's
 //! bundle id and team id (`ORG_APP_TEAM_ID` at build time; without it no signed app can use
 //! `office.app_token` or `office.restart`, logged loudly), its Keychain access group
@@ -30,8 +35,9 @@ use std::path::PathBuf;
 use org_host::signals::ShutdownSignals;
 use org_host::{Config, Host};
 
-const USAGE: &str = "usage: agentic-org serve [--version] | (debug builds only) [--home <absolute \
-                     path>] [--server-bin <path>] [--app-team-id <team id>]";
+const USAGE: &str = "usage: agentic-org serve [--version] | --name <instance> | (debug builds \
+                     only) [--home <absolute path>] [--server-bin <path>] [--app-team-id <team \
+                     id>]";
 
 /// Which kind of build this is: a release build refuses the arguments that change what it
 /// trusts.
@@ -55,6 +61,8 @@ impl Build {
 #[cfg_attr(not(debug_assertions), allow(dead_code))]
 struct Args {
     version: bool,
+    /// The registered instance to serve.
+    name: Option<String>,
     home: Option<PathBuf>,
     server_bin: Option<PathBuf>,
     app_team_id: Option<String>,
@@ -68,7 +76,13 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
         println!("agentic-org {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    let host = Host::start(config(args)?).map_err(|e| e.to_string())?;
+    let name = args.name.clone();
+    let config = config(args)?;
+    let host = match name {
+        Some(name) => Host::start_registered(config, Some(&name)),
+        None => Host::start(config),
+    }
+    .map_err(|e| e.to_string())?;
     let waited = signals.wait();
     host.shutdown();
     waited
@@ -128,6 +142,15 @@ fn parse_args(args: impl IntoIterator<Item = String>, build: Build) -> Result<Ar
             parsed.version = true;
             continue;
         }
+        if arg == "--name" {
+            let value = args
+                .next()
+                .ok_or_else(|| format!("--name needs a value\n{USAGE}"))?;
+            if parsed.name.replace(value).is_some() {
+                return Err(format!("--name may be given once\n{USAGE}"));
+            }
+            continue;
+        }
         let known = ["--home", "--server-bin", "--app-team-id"];
         if !known.contains(&arg.as_str()) {
             return Err(format!("unexpected argument {arg:?}\n{USAGE}"));
@@ -146,6 +169,11 @@ fn parse_args(args: impl IntoIterator<Item = String>, build: Build) -> Result<Ar
             "--server-bin" => parsed.server_bin = Some(PathBuf::from(value)),
             _ => parsed.app_team_id = Some(value),
         }
+    }
+    if parsed.name.is_some() && parsed.home.is_some() {
+        return Err(format!(
+            "--name and --home can't be combined: a registered instance has its own home\n{USAGE}"
+        ));
     }
     Ok(parsed)
 }
@@ -176,6 +204,7 @@ mod tests {
             parsed,
             Args {
                 version: false,
+                name: None,
                 home: Some("/tmp/h".into()),
                 server_bin: Some("srv".into()),
                 app_team_id: Some("AB12CD34EF".into()),
@@ -215,5 +244,27 @@ mod tests {
         }
         let err = parse_args(args(&["--home"]), Build::Debug).unwrap_err();
         assert!(err.contains("needs a value"), "{err}");
+    }
+
+    #[test]
+    fn both_builds_take_one_name_which_excludes_home() {
+        for build in [Build::Debug, Build::Release] {
+            let parsed = parse_args(args(&["--name", "office"]), build).unwrap();
+            assert_eq!(parsed.name.as_deref(), Some("office"));
+            let err = parse_args(args(&["--name"]), build).unwrap_err();
+            assert!(err.contains("needs a value"), "{err}");
+            let err = parse_args(args(&["--name", "a", "--name", "b"]), build).unwrap_err();
+            assert!(err.contains("once"), "{err}");
+        }
+        for list in [
+            ["--name", "a", "--home", "/tmp/h"],
+            ["--home", "/tmp/h", "--name", "a"],
+        ] {
+            let err = parse_args(args(&list), Build::Debug).unwrap_err();
+            assert!(err.contains("can't be combined"), "{err}");
+        }
+        let parsed =
+            parse_args(args(&["--name", "a", "--server-bin", "srv"]), Build::Debug).unwrap();
+        assert_eq!(parsed.server_bin, Some("srv".into()));
     }
 }

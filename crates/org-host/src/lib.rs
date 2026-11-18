@@ -76,6 +76,7 @@ mod offices;
 mod peer;
 mod provisioning;
 mod recovery;
+mod registered;
 mod secrets;
 mod server_check;
 mod service;
