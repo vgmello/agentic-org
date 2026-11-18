@@ -350,7 +350,7 @@ fn runs_unfiltered() -> bool {
 
 #[test]
 fn this_system_supports_the_web_process() {
-    assert_eq!(confinement::web_confinement_supported(), Ok(()));
+    confinement::web_confinement_supported().unwrap();
     let (arch, abi) = super::available().unwrap();
     assert!(abi >= 3);
     assert_eq!(arch.audit, syscalls::native().unwrap().audit);
@@ -360,66 +360,61 @@ fn this_system_supports_the_web_process() {
 fn support_is_decided_by_the_architecture_then_landlock_then_seccomp() {
     let native = syscalls::native();
     assert!(super::decide(native, Ok(3), Ok(())).is_ok());
-    assert_eq!(
-        super::decide(None, Ok(7), Ok(())).unwrap_err(),
-        Unavailable::Architecture
-    );
+    let refusal = super::decide(None, Ok(7), Ok(())).unwrap_err();
+    assert_eq!(refusal, Unavailable::Architecture);
+    assert!(refusal
+        .to_string()
+        .starts_with("no system call list for the "));
     for old in [0, 1, 2] {
         let refusal = super::decide(native, landlock::decide(Ok(old)), Ok(())).unwrap_err();
         assert_eq!(
             refusal,
             Unavailable::Landlock(landlock::Unavailable::TooOld(old))
         );
-        assert!(refusal
-            .to_string()
-            .contains(&format!("Landlock ABI is {old}, below 3")));
-        assert!(refusal
-            .refused()
-            .to_string()
-            .contains("Landlock ABI is below 3; Linux 6.2 or later is required"));
+        assert_eq!(
+            refusal.to_string(),
+            format!(
+                "this kernel's Landlock ABI is {old}, below 3 (Linux 6.2 or later is required)"
+            )
+        );
     }
-    for (errno, typed, fixed) in [
+    for (errno, reason) in [
         (
             libc::ENOSYS,
-            "ENOSYS: this kernel has no Landlock",
-            "ENOSYS",
+            "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock (Linux \
+             6.2 or later with Landlock is required)",
         ),
         (
             libc::EOPNOTSUPP,
-            "EOPNOTSUPP: Landlock is built into this kernel but is not an enabled",
-            "EOPNOTSUPP",
+            "landlock_create_ruleset failed with EOPNOTSUPP: Landlock is built into this \
+             kernel but is not an enabled security module",
         ),
         (
             libc::EPERM,
-            "landlock_create_ruleset failed with EPERM",
-            "EPERM",
+            "landlock_create_ruleset failed with EPERM: the Landlock version query was refused",
         ),
         (
             libc::EINVAL,
-            "landlock_create_ruleset failed with EINVAL",
-            "failed",
+            "landlock_create_ruleset failed with EINVAL: the Landlock version query was refused",
         ),
     ] {
         let refusal = super::decide(native, landlock::decide(Err(errno)), Ok(())).unwrap_err();
-        assert!(refusal.to_string().contains(typed), "{refusal}");
-        let refused = refusal.refused().to_string();
-        assert!(refused.contains("landlock_create_ruleset"), "{refused}");
-        assert!(refused.contains(fixed), "{refused}");
-        assert!(
-            refused.starts_with("web process confinement ("),
-            "{refused}"
-        );
-        assert!(refused.contains("is not available on linux"), "{refused}");
+        assert_eq!(refusal.to_string(), reason);
     }
-    for (errno, typed) in [
-        (libc::EPERM, "seccomp failed with EPERM"),
-        (libc::ENOSYS, "seccomp failed with ENOSYS"),
-        (libc::EOPNOTSUPP, "seccomp failed with EOPNOTSUPP"),
+    for (errno, name) in [
+        (libc::EPERM, "EPERM"),
+        (libc::ENOSYS, "ENOSYS"),
+        (libc::EOPNOTSUPP, "EOPNOTSUPP"),
     ] {
         let refusal = super::decide(native, Ok(7), Err(errno)).unwrap_err();
         assert_eq!(refusal, Unavailable::Seccomp(errno));
-        assert!(refusal.to_string().contains(typed), "{refusal}");
-        assert!(refusal.refused().to_string().contains("seccomp failed"));
+        assert_eq!(
+            refusal.to_string(),
+            format!(
+                "seccomp failed with {name}: this kernel or its profile has no seccomp filter \
+                 that kills the process"
+            )
+        );
     }
     // Landlock is named before seccomp when both are missing.
     assert_eq!(
@@ -431,8 +426,6 @@ fn support_is_decided_by_the_architecture_then_landlock_then_seccomp() {
         .unwrap_err(),
         Unavailable::Landlock(landlock::Unavailable::Missing)
     );
-    let text = Unavailable::Architecture.refused().to_string();
-    assert!(text.contains("no system call list for this processor architecture"));
 }
 
 #[test]
@@ -636,7 +629,7 @@ fn run(role: &str, report: &Report) -> i32 {
             profile::enter(&profile::refusing(&[call], errno)).unwrap();
             report.line(&format!(
                 "supported: {:?}",
-                super::supported().map_err(|refused| refused.to_string())
+                super::supported().map_err(|refused| (refused.to_string(), refused.raw_os_error()))
             ));
             let error = confinement::confine_web(&rendezvous).unwrap_err();
             report.line(&format!("{error}"));
@@ -1176,35 +1169,34 @@ fn confine_under_profile(refused: &str) -> (String, bool) {
 
 #[test]
 fn a_profile_that_refuses_landlock_makes_the_process_refuse_with_the_reason() {
-    for (refused, reason, cause) in [
+    for (refused, cause) in [
         (
             "create EPERM",
-            "landlock_create_ruleset failed with EPERM, as under a profile that refuses it",
             "landlock_create_ruleset failed with EPERM: the Landlock version query was refused",
         ),
         (
             "create ENOSYS",
-            "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock",
             "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock (Linux 6.2 \
              or later with Landlock is required)",
         ),
         (
             "create EOPNOTSUPP",
-            "landlock_create_ruleset failed with EOPNOTSUPP",
             "landlock_create_ruleset failed with EOPNOTSUPP: Landlock is built into this kernel \
              but is not an enabled security module",
         ),
     ] {
         let (report, dropped) = confine_under_profile(refused);
-        let mut lines = report.lines();
-        let supported = lines.next().unwrap();
-        assert!(supported.starts_with("supported: Err("), "{report}");
-        assert!(supported.contains(reason), "{report}");
-        assert_eq!(lines.next(), Some(format!("{REFUSAL}: {cause}").as_str()));
-        assert_eq!(lines.next(), Some("os error: None"));
-        // Nothing was restricted: the file is still readable.
-        assert_eq!(lines.next(), Some("file: Ok(8)"));
-        assert!(dropped, "the connected stream was dropped unused");
+        let refusal = format!("{REFUSAL}: {cause}");
+        // The host's question and the web process's own attempt give the same reason.
+        assert_eq!(
+            report,
+            format!(
+                "supported: Err(({refusal:?}, None))\n{refusal}\nos error: None\nfile: Ok(8)\n"
+            )
+        );
+        // Nothing was restricted (the file is still readable), and the stream that
+        // was connected before the refusal was dropped unused.
+        assert!(dropped);
     }
 }
 
@@ -1225,10 +1217,18 @@ fn a_profile_that_refuses_restriction_makes_the_process_refuse_with_the_reason()
 fn a_profile_that_refuses_seccomp_leaves_a_half_confined_process_that_refuses() {
     let (report, dropped) = confine_under_profile("seccomp EPERM");
     let mut lines = report.lines();
-    let supported = lines.next().unwrap();
-    assert!(
-        supported.contains("seccomp failed with EPERM, as under a profile that refuses it"),
-        "{report}"
+    assert_eq!(
+        lines.next(),
+        Some(
+            format!(
+                "supported: Err(({:?}, None))",
+                format!(
+                    "{REFUSAL}: seccomp failed with EPERM: this kernel or its profile has no \
+                     seccomp filter that kills the process"
+                )
+            )
+            .as_str()
+        )
     );
     assert_eq!(
         lines.next(),

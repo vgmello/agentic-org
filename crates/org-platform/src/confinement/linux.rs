@@ -13,7 +13,6 @@ use std::path::Path;
 
 pub(super) use super::shared::fill_entropy;
 use super::Enforcement;
-use crate::Refused;
 #[cfg(any(test, feature = "test-support"))]
 pub(super) use profile::refuse_call;
 
@@ -96,48 +95,6 @@ impl fmt::Display for Unavailable {
     }
 }
 
-impl Unavailable {
-    /// The refusal as the contract's [`Refused`], whose text is fixed at build time:
-    /// the capability, with the reason in brackets.
-    fn refused(self) -> Refused {
-        use landlock::Unavailable as Landlock;
-        Refused::unsupported(match self {
-            Self::Architecture => {
-                "web process confinement (no system call list for this processor \
-                 architecture; x86_64 and aarch64 have one)"
-            }
-            Self::Landlock(Landlock::Missing) => {
-                "web process confinement (landlock_create_ruleset failed with ENOSYS: \
-                 this kernel has no Landlock; Linux 6.2 or later with Landlock is required)"
-            }
-            Self::Landlock(Landlock::Disabled) => {
-                "web process confinement (landlock_create_ruleset failed with EOPNOTSUPP: \
-                 Landlock is built into this kernel but is not an enabled security module)"
-            }
-            Self::Landlock(Landlock::TooOld(_)) => {
-                "web process confinement (this kernel's Landlock ABI is below 3; Linux 6.2 \
-                 or later is required)"
-            }
-            Self::Landlock(Landlock::Failed(libc::EPERM)) => {
-                "web process confinement (landlock_create_ruleset failed with EPERM, as \
-                 under a profile that refuses it)"
-            }
-            Self::Landlock(Landlock::Failed(_)) => {
-                "web process confinement (landlock_create_ruleset failed: the Landlock \
-                 version query was refused)"
-            }
-            Self::Seccomp(libc::EPERM) => {
-                "web process confinement (seccomp failed with EPERM, as under a profile \
-                 that refuses it)"
-            }
-            Self::Seccomp(_) => {
-                "web process confinement (seccomp failed: this kernel has no seccomp \
-                 filter that kills the process)"
-            }
-        })
-    }
-}
-
 /// The decision of [`supported`] over what the three queries answered. Pure.
 fn decide(
     arch: Option<&'static syscalls::Arch>,
@@ -160,8 +117,9 @@ fn available() -> Result<(&'static syscalls::Arch, u32), Unavailable> {
     )
 }
 
-pub(super) fn supported() -> Result<(), Refused> {
-    available().map(drop).map_err(Unavailable::refused)
+/// A refusal has the form of [`confine_web`]'s: the fixed text, then the reason.
+pub(super) fn supported() -> io::Result<()> {
+    available().map(drop).map_err(refuse)
 }
 
 /// `prctl` with one argument and the rest zero, as these options require.

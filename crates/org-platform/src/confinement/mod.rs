@@ -26,8 +26,7 @@
 //!   [`web_confinement_supported`] refuse and name the call and the cause
 //!   (ADR-0017 LNX-3).
 //! - Every other Unix target: each adapter function returns the refusal
-//!   ([`crate::Refused`], as an [`io::ErrorKind::Unsupported`] error where the
-//!   function returns `io::Result`).
+//!   ([`crate::Refused`], as an [`io::ErrorKind::Unsupported`] error).
 //!
 //! [`disable_core_dumps`] is the same call on every system and is not an adapter
 //! function. [`fill_entropy`] is the same `getentropy` loop on macOS and GNU/Linux and
@@ -45,8 +44,6 @@
 use std::io;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-
-use crate::Refused;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -168,11 +165,14 @@ pub fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
 /// GNU/Linux: answered from what the asking process can observe without confining
 /// itself: the architecture has a system call list, the Landlock version query
 /// answers ABI 3 or higher, and the kernel can kill a process from a seccomp filter.
-/// A refusal's `capability` text carries the reason in brackets (which call failed,
-/// with which error, or which ABI is too old). The web process can still fail to
-/// confine itself afterwards, for example under a profile that refuses
-/// `landlock_restrict_self`; then it exits before it reports ready.
-pub fn web_confinement_supported() -> Result<(), Refused> {
+/// A refusal is this module's own, with the reason: which call failed with which
+/// error, or which ABI is too old. The web process can still fail to confine itself
+/// afterwards, for example under a profile that refuses `landlock_restrict_self`;
+/// then it exits before it reports ready.
+///
+/// A target without an adapter answers [`crate::Refused`], as an
+/// [`io::ErrorKind::Unsupported`] error.
+pub fn web_confinement_supported() -> io::Result<()> {
     native::supported()
 }
 
@@ -197,10 +197,13 @@ pub fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()> {
 /// more is the web process's own. A missing or unreadable entry refuses. It cannot
 /// observe another process's Landlock domain, so `critical` is not used and the
 /// Landlock state is the report's alone: the host trusts it as far as it trusts the
-/// image it admitted. It cannot tell which filter the process installed either. The
-/// caller must hold the child unreaped across this call and check through its own
-/// child handle that it is still alive: the process id then names the admitted child
-/// and no other process.
+/// image it admitted. It cannot tell which filter the process installed either.
+///
+/// It takes a process id, and a process id alone can be reused: once a child has
+/// been reaped, another process may get its number. The caller must therefore hold
+/// the child, unreaped, across this call, and check through its own child handle
+/// after the call that the child has not exited. Only then was the status read that
+/// of the admitted child.
 pub fn verify_web(pid: u32, enforcement: &Enforcement, critical: &[&Path]) -> io::Result<()> {
     native::verify_web(pid, enforcement, critical)
 }

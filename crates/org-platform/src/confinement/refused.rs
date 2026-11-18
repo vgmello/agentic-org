@@ -11,8 +11,8 @@ use crate::Refused;
 /// The capability every refusal names.
 pub(super) const CAPABILITY: &str = "web process confinement";
 
-pub(super) fn supported() -> Result<(), Refused> {
-    Err(Refused::unsupported(CAPABILITY))
+pub(super) fn supported() -> io::Result<()> {
+    Err(Refused::unsupported(CAPABILITY).into())
 }
 
 pub(super) fn confine_web(_rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
@@ -77,9 +77,16 @@ mod tests {
 
     #[test]
     fn a_target_without_an_adapter_refuses_with_the_reason() {
-        let Refused::Unsupported { capability, os } = supported().unwrap_err();
-        assert_eq!(capability, "web process confinement");
-        assert_eq!(os, std::env::consts::OS);
+        let error = supported().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        let Some(Refused::Unsupported { capability, os }) = error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<Refused>())
+        else {
+            panic!("the refusal is the error's inner error: {error}");
+        };
+        assert_eq!(*capability, "web process confinement");
+        assert_eq!(*os, std::env::consts::OS);
         for report in &REPORTS {
             assert_refused(verify_ready_report(report));
         }
