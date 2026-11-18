@@ -330,14 +330,6 @@ impl Authentication {
             return Err(denied());
         }
         let key = LoginKey::new(login).map_err(|_| denied())?;
-        let permit = self
-            .hashing
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                (n < MAX_HASHES).then_some(n + 1)
-            })
-            .map_err(|_| unavailable())?;
-        let _ = permit;
-        let _permit = HashPermit(&self.hashing);
         let now = wall_ms()?;
         let socket = if connection.channel_kind() == org_office_launch::v3::ChannelKind::Gateway {
             Socket::Control
@@ -357,6 +349,16 @@ impl Authentication {
         {
             return Err(denied());
         }
+        // The permit follows the lockout read: a locked login or socket never
+        // occupies a hash slot, so locked calls cannot starve verification.
+        let permit = self
+            .hashing
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < MAX_HASHES).then_some(n + 1)
+            })
+            .map_err(|_| unavailable())?;
+        let _ = permit;
+        let _permit = HashPermit(&self.hashing);
         let credentials = self.db.account_credentials(&key).map_err(storage)?;
         let verifier = credentials.as_ref().map_or(&self.dummy, |c| c.verifier());
         let parsed = PasswordHash::new(verifier.expose()).map_err(|_| unavailable())?;

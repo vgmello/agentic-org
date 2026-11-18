@@ -33,7 +33,7 @@ impl Username {
         if scalars == 0 || scalars > USERNAME_MAX_SCALARS {
             return Err(UsernameRule::Length);
         }
-        if display.chars().any(char::is_control) {
+        if display.chars().any(is_invisible_or_control) {
             return Err(UsernameRule::Control);
         }
         let edge = |c: Option<char>| c.is_some_and(char::is_whitespace);
@@ -50,6 +50,44 @@ impl Username {
     pub(crate) fn key(&self) -> &LoginKey {
         &self.key
     }
+}
+
+/// General Category Format (Cf) code points, Unicode 16.0, as inclusive
+/// ranges. Listed explicitly so the rule needs no Unicode-data dependency; a
+/// Cf character added by a later Unicode version is not refused until it is
+/// added here.
+const FORMAT_RANGES: &[(char, char)] = &[
+    ('\u{00AD}', '\u{00AD}'),
+    ('\u{0600}', '\u{0605}'),
+    ('\u{061C}', '\u{061C}'),
+    ('\u{06DD}', '\u{06DD}'),
+    ('\u{070F}', '\u{070F}'),
+    ('\u{0890}', '\u{0891}'),
+    ('\u{08E2}', '\u{08E2}'),
+    ('\u{180E}', '\u{180E}'),
+    ('\u{200B}', '\u{200F}'),
+    ('\u{202A}', '\u{202E}'),
+    ('\u{2060}', '\u{2064}'),
+    ('\u{2066}', '\u{206F}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+    ('\u{FFF9}', '\u{FFFB}'),
+    ('\u{110BD}', '\u{110BD}'),
+    ('\u{110CD}', '\u{110CD}'),
+    ('\u{13430}', '\u{1343F}'),
+    ('\u{1BCA0}', '\u{1BCA3}'),
+    ('\u{1D173}', '\u{1D17A}'),
+    ('\u{E0001}', '\u{E0001}'),
+    ('\u{E0020}', '\u{E007F}'),
+];
+
+/// A username refuses controls (Cc), format characters (Cf: zero-width,
+/// joiners, bidirectional embeddings, overrides and isolates, BOM) and the
+/// line and paragraph separators U+2028/U+2029, so two names that look the
+/// same cannot differ only by invisible characters.
+fn is_invisible_or_control(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{2028}' | '\u{2029}')
+        || FORMAT_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&c))
 }
 
 /// Which password rule failed.
@@ -77,7 +115,16 @@ mod tests {
 
     #[test]
     fn usernames_are_1_to_64_nfc_scalars_without_edge_space_or_controls() {
-        for good in ["a", "Ålice", "ada lovelace", &"é".repeat(64)] {
+        // Visible neighbours of the refused ranges stay allowed.
+        for good in [
+            "a",
+            "Ålice",
+            "ada lovelace",
+            &"é".repeat(64),
+            "al\u{2010}ice",
+            "al\u{2027}ice\u{2030}",
+            "\u{1F469}\u{1F4BB}",
+        ] {
             assert_eq!(Username::new(good).unwrap().display(), good);
         }
         // Decomposed input is counted and stored after NFC.
@@ -97,6 +144,28 @@ mod tests {
             ("alice\u{3000}", UsernameRule::EdgeWhitespace),
             ("al\u{7}ice", UsernameRule::Control),
             ("al\nice", UsernameRule::Control),
+            ("al\u{7F}ice", UsernameRule::Control),
+            ("al\u{85}ice", UsernameRule::Control),
+            // Zero-width space, non-joiner, joiner, LRM, RLM.
+            ("al\u{200B}ice", UsernameRule::Control),
+            ("al\u{200C}ice", UsernameRule::Control),
+            ("al\u{200D}ice", UsernameRule::Control),
+            ("\u{1F469}\u{200D}\u{1F4BB}", UsernameRule::Control),
+            ("alice\u{200E}", UsernameRule::Control),
+            ("al\u{200F}ice", UsernameRule::Control),
+            // Bidirectional embeddings and overrides (U+202E spoofs "alice.exe").
+            ("al\u{202A}ice", UsernameRule::Control),
+            ("\u{202E}exe.ecila", UsernameRule::Control),
+            // Isolates, word joiner, invisible operators, BOM, soft hyphen, tags.
+            ("al\u{2066}ice\u{2069}", UsernameRule::Control),
+            ("al\u{2060}ice", UsernameRule::Control),
+            ("al\u{2064}ice", UsernameRule::Control),
+            ("\u{FEFF}alice", UsernameRule::Control),
+            ("al\u{AD}ice", UsernameRule::Control),
+            ("alice\u{E0041}", UsernameRule::Control),
+            // Line and paragraph separators.
+            ("al\u{2028}ice", UsernameRule::Control),
+            ("al\u{2029}ice", UsernameRule::Control),
         ] {
             assert_eq!(Username::new(bad), Err(rule), "{bad:?}");
         }

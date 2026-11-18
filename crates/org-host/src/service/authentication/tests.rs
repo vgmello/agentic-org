@@ -356,6 +356,43 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
     assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
 }
 
+/// A locked native login is refused before it takes a hash permit: with every
+/// permit held, a locked call answers `not_authorized`, not `unavailable`, and
+/// leaves the permit count unchanged.
+#[test]
+fn a_locked_native_verify_takes_no_hash_permit() {
+    let (_root, auth, connection) = fixture();
+    let key = LoginKey::new("Owner").unwrap();
+    // Failures recorded an hour ahead move the host clock there, so the lock
+    // holds however long the test runs.
+    let ahead = wall_ms().unwrap() + 3_600_000;
+    for socket in [Socket::Local, Socket::Control] {
+        for _ in 0..6 {
+            auth.db
+                .record_login(socket, key.as_str(), ahead, Outcome::Failure)
+                .unwrap();
+        }
+        assert!(auth
+            .db
+            .login_lockout(socket, key.as_str(), ahead)
+            .unwrap()
+            .is_locked());
+    }
+    auth.hashing.store(MAX_HASHES, Ordering::SeqCst);
+    let right = Password::new("synthetic test password".into()).unwrap();
+    assert_eq!(
+        auth.verify(&connection, "Owner", &right).unwrap_err().code,
+        ErrorCode::NotAuthorized
+    );
+    assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
+    // An unlocked login with the pool full still answers `unavailable`.
+    assert_eq!(
+        auth.verify(&connection, "Other", &right).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
+}
+
 #[test]
 fn session_absolute_and_idle_expiry_remain_independent_of_wall_clock() {
     let (_root, auth, connection) = fixture();
