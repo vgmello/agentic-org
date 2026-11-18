@@ -1,8 +1,8 @@
 //! F4 production-path proof (GW-01 falsification): the real host, started for a
 //! registered instance whose registry holds a seeded administrator, spawns the
 //! real built `agentic-org-web`, which serves `/api/v1/version` over loopback
-//! HTTP. Browser sign-in waits for stored sessions (FC-159): the session routes
-//! are JSON 404 and sign in nobody.
+//! HTTP. A protected session route without the browser pair is 401 before any
+//! host call; routes not yet built are JSON 404.
 //! The administrator is seeded directly (A2 D1: the reverse bootstrap is gone and
 //! A3 creates administrators through a one-time link); HQ is provisioned over
 //! `host.sock` exactly as before.
@@ -79,17 +79,25 @@ fn assert_missing(reply: &Reply, what: &str) {
     );
 }
 
-/// Every browser session route is absent until FC-159.
+/// Without a cookie and proof the protected session routes are 401 and set no
+/// session cookie; routes not yet built stay JSON 404.
 fn assert_no_sign_in(address: SocketAddr) {
-    let credentials = serde_json::json!({ "login": "Owner", "password": PASSWORD }).to_string();
     for (method, path, body) in [
-        ("POST", "/api/v1/session/sign-in", credentials.as_str()),
         ("GET", "/api/v1/session", ""),
-        ("POST", "/api/v1/session/refresh", "{}"),
-        ("POST", "/api/v1/session/sign-out", "{}"),
+        ("GET", "/api/v1/organizations", ""),
     ] {
-        assert_missing(&http(address, method, path, "", body), path);
+        let reply = http(address, method, path, "", body);
+        assert_eq!(reply.status, 401, "{path}: {}", reply.headers);
+        assert_eq!(reply.body["error"]["code"], "not_authorized", "{path}");
+        assert!(
+            !reply.headers.to_ascii_lowercase().contains("set-cookie"),
+            "{path}: no cookie"
+        );
     }
+    assert_missing(
+        &http(address, "POST", "/api/v1/session/refresh", "", "{}"),
+        "/api/v1/session/refresh",
+    );
 }
 
 fn wait_until(what: &str, mut done: impl FnMut() -> bool) {

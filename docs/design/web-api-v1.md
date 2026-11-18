@@ -557,8 +557,7 @@ returning 404 confirms that.
 
 - `org_proto::gateway` implements the DTOs, outcome classifier, session and stream
   types and the organization mutation codec, with vectors in
-  `crates/org-proto/test-vectors/v2/`. No HTTP route is served:
-  `agentic-org-web` refuses to start a listener.
+  `crates/org-proto/test-vectors/v2/`.
 - The create request accepts `{name}` only; it changes to the selected payload under
   FC-018.
 - The mutation codec carries the older membership operations
@@ -575,6 +574,14 @@ returning 404 confirms that.
   contract (`crates/org-host/src/sessions.rs`) and answers `link.register`,
   `session.sign_in`, `session.validate` and `session.end` on the web process's
   control connection only (`crates/org-host/src/service/authentication/browser.rs`).
-  The web process does not call them yet: its session routes, the 415/405 request
-  rules and the cache are A3 B5. Native command-line sessions stay in memory and end
-  with their connection.
+  The web process (`apps/agentic-org-web/src/api.rs`) serves `GET version`,
+  `POST session/sign-in`, `POST links/register`, `GET session`, `POST session/sign-out`
+  and `GET organizations` over them. It mints the cookie and proof, sends only their
+  digests and the accepted socket's peer address (never a forwarding header), and keeps
+  validated sessions in an in-memory cache bound to its control connection; the host's
+  `session.ended` push drops an entry. `GET organizations` answers
+  `{organizations: []}` after validating the session, with no host call, until A4
+  creates organizations. `GET instance`, `session/refresh`, the other link and password
+  routes, events and the domain routes are still JSON 404. Every POST needs JSON
+  (415 otherwise); `OPTIONS` is 405; `Sec-Fetch-Site: cross-site` is 403. Native
+  command-line sessions stay in memory and end with their connection.
