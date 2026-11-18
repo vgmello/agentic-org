@@ -102,13 +102,22 @@ mod vector {
             }
         }
     }
-    fn denied<T>(result: std::io::Result<T>) {
+    /// `operation`, run by a confined process, was refused by the confinement itself.
+    fn denied<T>(operation: &str, result: std::io::Result<T>) {
+        refused_with(operation, result, &[]);
+    }
+    /// [`denied`], where the system may also report the refusal as one of `also`.
+    fn refused_with<T>(operation: &str, result: std::io::Result<T>, also: &[i32]) {
         let Err(error) = result else {
-            panic!("ambient operation unexpectedly allowed");
+            panic!("{operation}: ambient operation unexpectedly allowed");
         };
         assert!(
-            matches!(error.raw_os_error(), Some(1 | 13)),
-            "must be enforcement, not an absent fixture: {error}"
+            matches!(error.raw_os_error(), Some(1 | 13))
+                || error
+                    .raw_os_error()
+                    .is_some_and(|errno| also.contains(&errno)),
+            "{operation}: must be enforcement, not an absent fixture: {error} (errno {:?})",
+            error.raw_os_error()
         );
     }
     fn line(reader: &mut BufReader<impl Read + AsRawFd>) -> String {
@@ -359,14 +368,25 @@ mod vector {
             assert!(started.elapsed() < WAIT);
             assert!(SystemTime::now().duration_since(UNIX_EPOCH).is_ok());
         } else {
-            denied(fs::read(root.join("fixture")));
-            denied(fs::write(root.join("fixture"), b"changed"));
-            denied(UnixStream::connect(root.join("unrelated")));
-            denied(TcpStream::connect(&args[3]));
-            denied(TcpListener::bind("127.0.0.1:0"));
-            denied(Command::new(own_program()).arg(NOOP).status());
+            denied("read a file", fs::read(root.join("fixture")));
+            denied("write a file", fs::write(root.join("fixture"), b"changed"));
+            denied(
+                "connect to another Unix socket",
+                UnixStream::connect(root.join("unrelated")),
+            );
+            denied("connect over TCP", TcpStream::connect(&args[3]));
+            denied("bind a TCP listener", TcpListener::bind("127.0.0.1:0"));
+            // The program is this process's own executable, which the parent starts
+            // unconfined before and after (`starts_unconfined`). Observed: macOS 15 fails
+            // this confined start with ENOENT, later systems with EPERM. Either way it
+            // never ran.
+            refused_with(
+                "start a program",
+                Command::new(own_program()).arg(NOOP).status(),
+                &[libc::ENOENT],
+            );
             let fixture = root.join("fixture");
-            std::thread::spawn(move || denied(fs::read(fixture)))
+            std::thread::spawn(move || denied("read a file on another thread", fs::read(fixture)))
                 .join()
                 .unwrap();
         }
@@ -468,6 +488,16 @@ mod vector {
         let unrelated = UnixListener::bind(root.0.join("unrelated")).unwrap();
         let outbound = TcpListener::bind("127.0.0.1:0").unwrap();
         let outbound_address = outbound.local_addr().unwrap().to_string();
+        // The program a confined child must not start, started here unconfined: an ENOENT
+        // there is the refusal, not a program that went missing.
+        let starts_unconfined = || {
+            let started = Command::new(std::env::current_exe().unwrap())
+                .arg(NOOP)
+                .status()
+                .unwrap();
+            assert!(started.success(), "the unconfined start: {started}");
+        };
+        starts_unconfined();
         let mut kills = false;
         let mut confined_by = None;
         for name in ["r", "r\"\\\né"] {
@@ -563,6 +593,7 @@ mod vector {
             }
             other => panic!("a process that had a thread: {other:?}"),
         };
+        starts_unconfined();
         drop((unrelated, outbound, joined_listener));
         assert_eq!(fs::read(root.0.join("fixture")).unwrap(), b"retained");
         let confined_by = confined_by.expect("two children were confined");
