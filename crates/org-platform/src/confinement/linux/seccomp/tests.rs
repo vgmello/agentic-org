@@ -818,6 +818,18 @@ fn this_kernel_can_kill_a_process_from_a_filter() {
     assert_eq!(kill_process_available(), Ok(()));
 }
 
+#[test]
+fn asking_whether_a_filter_can_be_installed_installs_none() {
+    let filters = || {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        ["NoNewPrivs", "Seccomp", "Seccomp_filters"]
+            .map(|name| super::super::status::field(&status, name).map(str::to_owned))
+    };
+    let before = filters();
+    assert_eq!(installable(), Ok(()));
+    assert_eq!(filters(), before);
+}
+
 // The numbers of the killed calls are the C library's, checked when this
 // architecture's tests are built.
 #[cfg(target_arch = "x86_64")]

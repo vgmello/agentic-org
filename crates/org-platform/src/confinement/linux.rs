@@ -1,10 +1,17 @@
 //! The GNU/Linux web confinement adapter (Linux host design, section 3.3; ADR-0017
 //! decision 9): the entry preconditions, the connection to the rendezvous,
-//! no-new-privileges, a Landlock domain that allows no path, and a seccomp filter
-//! that kills the process on every system call outside a fixed list.
+//! no-new-privileges, a Landlock domain that allows no path where the kernel offers
+//! one, and a seccomp filter that kills the process on every system call outside a
+//! fixed list.
 //!
-//! Linux 6.2 or later with Landlock enabled, on x86-64 or aarch64. The crate links
-//! the C library only, so Landlock and seccomp are raw system calls.
+//! The filter is the layer that must hold, and it holds every guarantee by itself:
+//! without it the adapter refuses. Landlock is a second layer under it. A kernel
+//! without Landlock, one that has it turned off, or a container profile that refuses
+//! its calls does not stop the web process: it is then confined by the filter alone
+//! and says why. Nothing chooses this but what the kernel answers.
+//!
+//! x86-64 or aarch64. The crate links the C library only, so Landlock and seccomp
+//! are raw system calls.
 
 use std::fmt;
 use std::io;
@@ -12,7 +19,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 pub(super) use super::shared::fill_entropy;
-use super::Enforcement;
+use super::{Confined, Enforcement, Layers};
 #[cfg(any(test, feature = "test-support"))]
 pub(super) use profile::refuse_call;
 
@@ -70,10 +77,12 @@ fn failed_call(call: &str) -> io::Error {
 enum Unavailable {
     /// The adapter has no system call list for this processor architecture.
     Architecture,
-    Landlock(landlock::Unavailable),
     /// The kernel cannot kill a process from a seccomp filter, or refuses the
     /// `seccomp` call, by its error number.
     Seccomp(i32),
+    /// The kernel or a profile does not let this process install a filter on all its
+    /// threads: what it answered instead of the expected `EFAULT`.
+    Install(i32),
 }
 
 impl fmt::Display for Unavailable {
@@ -84,36 +93,43 @@ impl fmt::Display for Unavailable {
                 "no system call list for the {} architecture (x86_64 and aarch64 have one)",
                 std::env::consts::ARCH
             ),
-            Self::Landlock(reason) => reason.fmt(f),
             Self::Seccomp(errno) => write!(
                 f,
                 "seccomp failed with {}: this kernel or its profile has no seccomp \
                  filter that kills the process",
                 errno_text(*errno)
             ),
+            Self::Install(errno) => write!(
+                f,
+                "seccomp failed with {}: this kernel or its profile does not let a \
+                 process install a seccomp filter on all its threads",
+                errno_text(*errno)
+            ),
         }
     }
 }
 
-/// The decision of [`supported`] over what the three queries answered. Pure.
+/// The decision of [`supported`] over what its questions answered: the
+/// architecture's list, whether a filter can kill the process, whether a filter can
+/// be installed. Landlock is not asked: it is never a reason to refuse. Pure.
 fn decide(
     arch: Option<&'static syscalls::Arch>,
-    landlock: Result<u32, landlock::Unavailable>,
-    seccomp: Result<(), i32>,
-) -> Result<(&'static syscalls::Arch, u32), Unavailable> {
+    kill: Result<(), i32>,
+    install: Result<(), i32>,
+) -> Result<&'static syscalls::Arch, Unavailable> {
     let arch = arch.ok_or(Unavailable::Architecture)?;
-    let abi = landlock.map_err(Unavailable::Landlock)?;
-    seccomp.map_err(Unavailable::Seccomp)?;
-    Ok((arch, abi))
+    kill.map_err(Unavailable::Seccomp)?;
+    install.map_err(Unavailable::Install)?;
+    Ok(arch)
 }
 
-/// What this system offers, asked without confining anything: the architecture's
-/// list, the Landlock version query and the seccomp action query.
-fn available() -> Result<(&'static syscalls::Arch, u32), Unavailable> {
+/// What this system offers of what the filter needs, asked without confining
+/// anything: the architecture's list and the two seccomp questions.
+fn available() -> Result<&'static syscalls::Arch, Unavailable> {
     decide(
         syscalls::native(),
-        landlock::abi(),
         seccomp::kill_process_available(),
+        seccomp::installable(),
     )
 }
 
@@ -161,10 +177,12 @@ fn one_arena(result: libc::c_int) -> io::Result<()> {
     }
 }
 
-/// The design's six steps, in order, after the allocator limit of [`one_arena`]. Any error leaves the caller without a stream:
-/// the one connected in step 2 is dropped here. After step 4 a failure leaves the
-/// process partly confined, and it still refuses.
-pub(super) fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
+/// The design's six steps, in order, after the allocator limit of [`one_arena`].
+/// Any error leaves the caller without a stream: the one connected in step 2 is
+/// dropped here. Step 4, Landlock, never fails the call: where it cannot be applied
+/// the process goes on without it and the reason is handed back. A failure of step
+/// 5 leaves the process partly confined, and it still refuses.
+pub(super) fn confine_web(rendezvous: &Path) -> io::Result<Confined> {
     let arch = syscalls::native().ok_or_else(|| refuse(Unavailable::Architecture))?;
     if !rendezvous.is_absolute() {
         return Err(refuse("the rendezvous path is not absolute"));
@@ -181,34 +199,56 @@ pub(super) fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcem
     let stream = UnixStream::connect(rendezvous)?;
     // 3.
     no_new_privileges()?;
-    // 4. No path can be read, written, executed, created, renamed, linked or
-    //    truncated; no TCP socket bound or connected; no abstract Unix socket or
-    //    signal outside the process.
-    let kernel = landlock::abi().map_err(refuse)?;
-    let landlock_abi = landlock::restrict(kernel)?;
-    // 5.
+    // 4. Where the kernel has Landlock and lets this process use it, at the
+    //    kernel's ABI: no path can be read, written, executed, created, renamed or
+    //    linked; from ABI 3 none truncated; from ABI 4 no TCP socket bound or
+    //    connected; from ABI 6 no abstract Unix socket or signal outside the
+    //    process. Where it cannot be applied, for whatever reason, the filter below
+    //    is the whole confinement, and it stops each of those by itself.
+    let (landlock_abi, landlock_not_applied) = match landlock::apply() {
+        Ok(abi) => (Some(abi), None),
+        Err(reason) => (None, Some(reason.to_string())),
+    };
+    // 5. The layer that must hold.
     seccomp::install(arch)?;
     // 6.
-    Ok((
+    Ok(Confined {
         stream,
-        Enforcement {
-            landlock_abi: Some(landlock_abi),
+        enforcement: Enforcement {
+            landlock_abi,
             seccomp: true,
         },
-    ))
+        landlock_not_applied,
+    })
 }
 
-/// The report is the Landlock ABI alone: the ready line has no seccomp field, and
-/// the host observes seccomp on the process itself in [`verify_web`].
+/// The report is the Landlock ABI where Landlock was applied: the ready line has no
+/// seccomp field, and the host observes seccomp on the process itself in
+/// [`verify_web`]. A report without Landlock is one of a process confined by the
+/// filter alone, and is accepted.
 pub(super) fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()> {
     match enforcement.landlock_abi {
-        Some(abi) if abi >= landlock::MINIMUM_ABI => Ok(()),
-        Some(abi) => Err(refuse(format_args!(
-            "the ready line reports Landlock ABI {abi}, below {}",
-            landlock::MINIMUM_ABI
+        Some(abi) if abi < landlock::MINIMUM_ABI => Err(refuse(format_args!(
+            "the ready line reports Landlock ABI {abi}, which is no ABI"
         ))),
-        None => Err(refuse("the ready line reports no Landlock domain")),
+        Some(_) | None => Ok(()),
     }
+}
+
+/// What a process with this report is confined by, once [`verify_web`] has seen its
+/// filter.
+pub(super) fn layers(enforcement: &Enforcement) -> io::Result<Layers> {
+    verify_ready_report(enforcement)?;
+    Ok(match enforcement.landlock_abi {
+        Some(abi) => Layers {
+            description: format!("the seccomp filter and Landlock ABI {abi}"),
+            landlock_missing: false,
+        },
+        None => Layers {
+            description: "the seccomp filter alone".to_owned(),
+            landlock_missing: true,
+        },
+    })
 }
 
 /// The report, then one read of `/proc/<pid>/status`. `critical` is not used: one

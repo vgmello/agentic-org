@@ -337,6 +337,30 @@ pub(super) fn kill_process_available() -> Result<(), i32> {
     Ok(())
 }
 
+/// Whether this process may install a filter on all its threads, asked without
+/// installing one: the installing call itself, with the flag [`install`] passes and
+/// no filter. A kernel that would take a filter answers `EFAULT`, having read
+/// nothing and changed nothing. Any other answer is returned as the reason: `EPERM`
+/// from a profile that refuses the call, `ENOSYS` from a kernel without it, `EINVAL`
+/// from one that does not know the flag.
+pub(super) fn installable() -> Result<(), i32> {
+    // SAFETY: the kernel checks the flag, then fails to read a filter description
+    // from the null pointer; nothing is installed.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            SET_MODE_FILTER,
+            FLAG_TSYNC,
+            std::ptr::null::<libc::sock_fprog>(),
+        )
+    };
+    match io::Error::last_os_error().raw_os_error() {
+        Some(libc::EFAULT) if result == -1 => Ok(()),
+        Some(errno) if result == -1 => Err(errno),
+        _ => Err(0),
+    }
+}
+
 /// Installs the filter on the calling thread, which must be the process's only one
 /// and must have no-new-privileges set. It cannot be removed, and every thread
 /// created later inherits it.

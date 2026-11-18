@@ -272,9 +272,9 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     confinement::disable_core_dumps()?;
     let line = first_line(&mut io::stdin().lock())?;
     let files = crate::release::load(assets, line.release.as_ref()).map_err(|_| failure())?;
-    let (stream, enforcement) =
+    let confined =
         confinement::confine_web(Path::new(&line.rendezvous)).map_err(confinement_refused)?;
-    let (control, transfer, listener) = handoff(stream, enforcement)?;
+    let (control, transfer, listener) = handoff(confined.stream, confined.enforcement)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
     let host =
         HostControl::from_handoff(control, transfer, line.instance_id, Arc::new(|| fatal()))?;

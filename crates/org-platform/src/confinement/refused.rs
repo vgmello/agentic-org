@@ -2,10 +2,9 @@
 //! no report is accepted. Nothing here falls back to another system's mechanism.
 
 use std::io;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-use super::Enforcement;
+use super::{Confined, Enforcement, Layers};
 use crate::Refused;
 
 /// The capability every refusal names.
@@ -15,7 +14,11 @@ pub(super) fn supported() -> io::Result<()> {
     Err(Refused::unsupported(CAPABILITY).into())
 }
 
-pub(super) fn confine_web(_rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
+pub(super) fn confine_web(_rendezvous: &Path) -> io::Result<Confined> {
+    Err(Refused::unsupported(CAPABILITY).into())
+}
+
+pub(super) fn layers(_enforcement: &Enforcement) -> io::Result<Layers> {
     Err(Refused::unsupported(CAPABILITY).into())
 }
 
@@ -120,8 +123,10 @@ mod tests {
         use super::super::testing::RefusedCall;
         for call in [
             RefusedCall::LandlockCreateRuleset,
+            RefusedCall::LandlockRuleset,
             RefusedCall::LandlockRestrictSelf,
             RefusedCall::Seccomp,
+            RefusedCall::SeccompInstall,
         ] {
             let mut command = std::process::Command::new("/nonexistent/program");
             assert_refused(refuse_call(&mut command, call));
@@ -136,6 +141,7 @@ mod tests {
             assert_refused(verify_web(own, report, &[root]));
             assert_refused(verify_web(own, report, &[]));
             assert_refused(verify_web(0, report, &[root]));
+            assert_refused(layers(report));
         }
     }
 }

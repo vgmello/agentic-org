@@ -9,8 +9,13 @@
 //! reported, as the web process's ready line does, and a report with a seccomp filter
 //! means a forbidden operation kills the process instead of returning an error. There
 //! each denial is proved by its own child, which must die of `SIGSYS`.
+//!
+//! The layers that were enforced are the contract's too (`confinement::layers`), and
+//! the `PASS` line names them. Where the adapter has a layer it applies only when
+//! the system offers it (Landlock on GNU/Linux), a child that went without it prints
+//! why, the vector holds with the remaining layer alone, and the `PASS` line says so.
 mod vector {
-    use org_platform::confinement::{self, Enforcement};
+    use org_platform::confinement::{self, Confined, Enforcement};
     use org_socket::rights::{self, StreamReceiver};
     use std::{
         fs,
@@ -70,7 +75,10 @@ mod vector {
         );
     }
     fn line(reader: &mut BufReader<impl Read + AsRawFd>) -> String {
-        assert!(org_socket::poll_readable(reader.get_ref().as_raw_fd(), WAIT).unwrap());
+        // A line already read from the pipe with the one before it is not waited for.
+        if !reader.buffer().contains(&b'\n') {
+            assert!(org_socket::poll_readable(reader.get_ref().as_raw_fd(), WAIT).unwrap());
+        }
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         line
@@ -82,6 +90,31 @@ mod vector {
             .landlock_abi
             .map_or("none".to_owned(), |abi| abi.to_string());
         format!("enforced landlock={landlock} seccomp={}\n", report.seccomp)
+    }
+    /// What a child that went without Landlock prints after its `enforced` line.
+    const NOT_APPLIED: &str = "landlock not applied: ";
+    /// A child's report as the parent takes it: its `enforced` line and, where the
+    /// contract says a Landlock layer is missing from it, the line that says why.
+    /// Returns the report and the layers in words.
+    fn report(stdout: &mut BufReader<impl Read + AsRawFd>) -> (Enforcement, String) {
+        let report = reported(&line(stdout));
+        let layers = confinement::layers(&report).unwrap();
+        if !layers.landlock_missing {
+            return (report, layers.description);
+        }
+        let why = line(stdout);
+        let reason = why
+            .strip_prefix(NOT_APPLIED)
+            .and_then(|rest| rest.strip_suffix('\n'))
+            .filter(|reason| !reason.is_empty())
+            .unwrap_or_else(|| panic!("the child did not say why it has no Landlock: {why:?}"));
+        (
+            report,
+            format!(
+                "{} (Landlock was not applied: {reason})",
+                layers.description
+            ),
+        )
     }
     /// The report of a child's `enforced` line.
     fn reported(line: &str) -> Enforcement {
@@ -142,7 +175,11 @@ mod vector {
     fn confine(rendezvous: &Path) -> (UnixStream, Enforcement) {
         confinement::disable_core_dumps().unwrap();
         // Connected to the approved rendezvous and confined, inside the adapter.
-        let (approved, report) = match confinement::confine_web(rendezvous) {
+        let Confined {
+            stream: approved,
+            enforcement: report,
+            landlock_not_applied,
+        } = match confinement::confine_web(rendezvous) {
             Ok(confined) => confined,
             Err(error) => {
                 println!("refused: {error}");
@@ -151,6 +188,9 @@ mod vector {
         };
         confinement::verify_ready_report(&report).unwrap();
         print!("{}", enforced(&report));
+        if let Some(reason) = landlock_not_applied {
+            println!("{NOT_APPLIED}{reason}");
+        }
         std::io::stdout().flush().unwrap();
         (approved, report)
     }
@@ -179,8 +219,8 @@ mod vector {
                     entry_refusal(root, &error);
                     println!("joined-thread-refused");
                 }
-                Ok((_approved, report)) => {
-                    confinement::verify_ready_report(&report).unwrap();
+                Ok(confined) => {
+                    confinement::verify_ready_report(&confined.enforcement).unwrap();
                     println!("joined-thread-confined");
                 }
             }
@@ -344,6 +384,7 @@ mod vector {
         let outbound = TcpListener::bind("127.0.0.1:0").unwrap();
         let outbound_address = outbound.local_addr().unwrap().to_string();
         let mut kills = false;
+        let mut confined_by = None;
         for name in ["r", "r\"\\\né"] {
             let path = root.0.join(name);
             let listener = UnixListener::bind(&path).unwrap();
@@ -351,10 +392,12 @@ mod vector {
             let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
             // The report is checked as the host checks the ready line's, then the
             // process itself.
-            let report = reported(&line(&mut stdout));
+            let (report, layers) = report(&mut stdout);
             confinement::verify_ready_report(&report).unwrap();
             confinement::verify_web(process.0.id(), &report, &[&root.0.join("fixture")]).unwrap();
             kills = report.seccomp;
+            // Every child is confined by the same layers.
+            assert_eq!(*confined_by.get_or_insert_with(|| layers.clone()), layers);
             let (mut stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(WAIT)).unwrap();
             let inherited = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -383,8 +426,9 @@ mod vector {
             for probe in PROBES {
                 let mut process = spawn(&["--probe", probe], &root.0, &path, &outbound_address);
                 let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
-                let report = reported(&line(&mut stdout));
+                let (report, layers) = report(&mut stdout);
                 assert!(report.seccomp, "{probe}");
+                assert_eq!(Some(&layers), confined_by.as_ref(), "{probe}");
                 let (held, _) = listener.accept().unwrap();
                 let mut rest = String::new();
                 stdout.read_to_string(&mut rest).unwrap();
@@ -439,11 +483,13 @@ mod vector {
         };
         drop((unrelated, outbound, joined_listener));
         assert_eq!(fs::read(root.0.join("fixture")).unwrap(), b"retained");
+        let confined_by = confined_by.expect("two children were confined");
         println!(
-            "PASS: normal/special pathname, main-thread enforcement, parent observation, \
-             inherited listener/rights, denied ambient I/O/exec/connect, inherited thread \
-             policy, refusal of a process with a second thread, {joined_thread}, refusal of a \
-             process with a fourth descriptor; disposable roots only"
+            "PASS: confined by {confined_by}; normal/special pathname, main-thread \
+             enforcement, parent observation, inherited listener/rights, denied ambient \
+             I/O/exec/connect, inherited thread policy, refusal of a process with a second \
+             thread, {joined_thread}, refusal of a process with a fourth descriptor; \
+             disposable roots only"
         );
     }
 }

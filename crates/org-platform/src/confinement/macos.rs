@@ -8,7 +8,7 @@ use std::{ffi::CString, io, mem, path::Path, ptr};
 #[cfg(any(test, feature = "test-support"))]
 pub(super) use super::refused::refuse_call;
 pub(super) use super::shared::fill_entropy;
-use super::Enforcement;
+use super::{Confined, Enforcement, Layers};
 use std::os::unix::net::UnixStream;
 
 const PROFILE: &std::ffi::CStr = c"(version 1)(deny default)(allow network-inbound)(deny network-bind)(allow network-outbound (remote unix-socket (path-literal (param \"RENDEZVOUS\"))))";
@@ -156,10 +156,14 @@ pub(super) fn supported() -> io::Result<()> {
 
 /// ADR-0008 order: the entry preconditions and the profile, then the one connection
 /// the profile allows. Nothing is read from or written to the stream here.
-pub(super) fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
+pub(super) fn confine_web(rendezvous: &Path) -> io::Result<Confined> {
     restrict(rendezvous)?;
     let stream = UnixStream::connect(rendezvous)?;
-    Ok((stream, REPORT))
+    Ok(Confined {
+        stream,
+        enforcement: REPORT,
+        landlock_not_applied: None,
+    })
 }
 
 pub(super) fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()> {
@@ -181,6 +185,15 @@ pub(super) fn verify_web(
     verify(pid, critical)
 }
 
+/// One layer, which a confined process always has: there is no Landlock to miss.
+pub(super) fn layers(enforcement: &Enforcement) -> io::Result<Layers> {
+    verify_ready_report(enforcement)?;
+    Ok(Layers {
+        description: "the Seatbelt profile".to_owned(),
+        landlock_missing: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +203,26 @@ mod tests {
         super::super::web_confinement_supported().unwrap();
         super::super::verify_ready_report(&REPORT).unwrap();
         let error = super::super::verify_ready_report(&Enforcement {
+            landlock_abi: Some(4),
+            seccomp: false,
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the ready line reports landlock on macOS"
+        );
+    }
+
+    #[test]
+    fn macos_names_its_one_layer_and_misses_no_landlock() {
+        assert_eq!(
+            super::super::layers(&REPORT).unwrap(),
+            Layers {
+                description: "the Seatbelt profile".to_owned(),
+                landlock_missing: false,
+            }
+        );
+        let error = layers(&Enforcement {
             landlock_abi: Some(4),
             seccomp: false,
         })

@@ -1,7 +1,10 @@
 //! The confinement example process, run as a test: `examples/gateway_confinement.rs`
 //! proves on the running kernel what a confined web process can and cannot do, and
-//! ADR-0017's LNX-3 with it: where the kernel feature is refused, the process
-//! refuses to start and reports the reason.
+//! ADR-0017's LNX-3 with it: where the layer that must hold (on GNU/Linux the
+//! seccomp filter) is refused, the process refuses to start and reports the reason.
+//! A layer the adapter applies only where the system offers it (Landlock) is not
+//! such a reason: under a profile that refuses it, the whole example passes with
+//! the filter alone and says so.
 //!
 //! `cargo test` builds this package's examples before it runs its tests.
 
@@ -54,7 +57,8 @@ fn the_example_passes_where_the_web_process_can_be_confined() {
                 output.status
             );
             let last = stdout.lines().last().unwrap_or_default();
-            assert!(last.starts_with("PASS: "), "{stdout}\n{stderr}");
+            // The line names the layers that were enforced.
+            assert!(last.starts_with("PASS: confined by "), "{stdout}\n{stderr}");
         }
         // No adapter, no run: the vector never reports a pass without enforcement.
         Err(refused) => {
@@ -151,22 +155,104 @@ fn assert_refused(outcome: Option<(Output, bool)>, reason: &str) {
     assert!(dropped, "the connected stream was dropped unused");
 }
 
+/// The whole example, parent and children, under a profile that refuses `call`.
+/// `None` where this system has no such profile.
+fn example_under(call: RefusedCall) -> Option<Output> {
+    let mut command = Command::new(example());
+    command.env_remove("RUST_BACKTRACE").stdin(Stdio::null());
+    if let Err(error) = testing::refuse_call(&mut command, call) {
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{error}");
+        return None;
+    }
+    Some(command.output().unwrap())
+}
+
+/// Landlock refused at its version query, at the creation of the ruleset and at the
+/// restriction: each time every part of the example holds with the filter alone
+/// (the forbidden operations kill, the approved descriptors work, the parent's
+/// observation accepts the child), and the PASS line says why Landlock is absent.
 #[test]
-fn lnx_3_a_profile_that_refuses_landlock_makes_the_process_refuse_with_the_reason() {
-    assert_refused(
-        refused_under(RefusedCall::LandlockCreateRuleset, "create"),
-        "landlock_create_ruleset failed with EPERM: the Landlock version query was refused",
-    );
-    assert_refused(
-        refused_under(RefusedCall::LandlockRestrictSelf, "restrict"),
-        "landlock_restrict_self failed with EPERM (Operation not permitted (os error 1))",
+fn under_a_profile_that_refuses_landlock_the_example_passes_with_the_filter_alone() {
+    let not_permitted = "EPERM (Operation not permitted (os error 1))";
+    for (call, reason) in [
+        (
+            RefusedCall::LandlockCreateRuleset,
+            "landlock_create_ruleset failed with EPERM: the Landlock version query was refused"
+                .to_owned(),
+        ),
+        (
+            RefusedCall::LandlockRuleset,
+            format!("landlock_create_ruleset failed with {not_permitted}"),
+        ),
+        (
+            RefusedCall::LandlockRestrictSelf,
+            format!("landlock_restrict_self failed with {not_permitted}"),
+        ),
+    ] {
+        let Some(output) = example_under(call) else {
+            return;
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "{call:?}: {}\n{stdout}\n{stderr}",
+            output.status
+        );
+        assert!(
+            stdout.contains("forbidden operations each killed their confined process with SIGSYS"),
+            "{call:?}: {stdout}"
+        );
+        let last = stdout.lines().last().unwrap_or_default();
+        // A kernel without Landlock gives its own reason, whatever the profile.
+        if last.contains("failed with ENOSYS") || last.contains("failed with EOPNOTSUPP") {
+            assert!(
+                last.starts_with("PASS: confined by the seccomp filter alone (Landlock was not "),
+                "{call:?}: {stdout}"
+            );
+            continue;
+        }
+        assert!(
+            last.starts_with(&format!(
+                "PASS: confined by the seccomp filter alone (Landlock was not applied: \
+                 {reason}); "
+            )),
+            "{call:?}: {stdout}\n{stderr}"
+        );
+    }
+}
+
+/// LNX-3 for the whole example: under a profile that refuses `seccomp` the parent
+/// is told before it starts a child, and nothing passes.
+#[test]
+fn lnx_3_under_a_profile_that_refuses_seccomp_the_example_starts_nothing() {
+    let Some(output) = example_under(RefusedCall::Seccomp) else {
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(!stdout.contains("PASS"), "{stdout}");
+    assert!(
+        stderr.contains(
+            "needs a web confinement adapter: gateway confinement unavailable: seccomp failed \
+             with EPERM: this kernel or its profile has no seccomp filter that kills the process"
+        ),
+        "{stderr}"
     );
 }
 
+/// LNX-3 for the process itself: one that cannot install its filter refuses to
+/// start and says why, whether the kernel refuses `seccomp` outright or only the
+/// installation fails.
 #[test]
-fn lnx_3_a_profile_that_refuses_seccomp_makes_the_process_refuse_with_the_reason() {
+fn lnx_3_a_process_that_cannot_install_its_filter_refuses_with_the_reason() {
     assert_refused(
         refused_under(RefusedCall::Seccomp, "seccomp"),
         "seccomp failed with EPERM (Operation not permitted (os error 1))",
+    );
+    assert_refused(
+        refused_under(RefusedCall::SeccompInstall, "install"),
+        "seccomp failed with ENOMEM (Cannot allocate memory (os error 12))",
     );
 }

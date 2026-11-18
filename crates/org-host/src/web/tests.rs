@@ -1127,59 +1127,69 @@ fn under_profile(
     Some(printed)
 }
 
-/// ADR-0017 LNX-3 at the host: where a profile refuses the kernel feature, the host
-/// starts no web process and says which call failed with which error.
+/// ADR-0017 LNX-3 at the host: under a profile that refuses `seccomp`, the layer
+/// that must hold, the host starts no web process and says which call failed with
+/// which error. A profile that refuses Landlock is no such reason: the host starts
+/// its supervisor as anywhere else.
 #[test]
-fn lnx_3_a_host_under_a_profile_that_refuses_confinement_starts_nothing_and_says_why() {
+fn lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused() {
     use org_platform::confinement::testing::RefusedCall;
     const NAME: &str =
-        "web::tests::lnx_3_a_host_under_a_profile_that_refuses_confinement_starts_nothing_and_says_why";
+        "web::tests::lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused";
     if std::env::var_os(UNDER_PROFILE).is_some() {
-        // The host under the profile.
+        // The host under the profile. It is never eligible, so a supervisor that
+        // does start waits and binds nothing.
         let dir = tempfile::tempdir().unwrap();
         let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
         let started = Supervisor::start(
             startable(dir.path()),
             Arc::new(NoOps),
             Arc::clone(&state),
-            Arc::new(|| true),
+            Arc::new(|| false),
         );
-        let Err(error) = started else {
-            panic!("no web process where it cannot be confined")
-        };
-        assert_eq!(*lock(&state), GatewayState::NotConfigured);
         assert_eq!(
             fs::read_dir(dir.path()).unwrap().count(),
             0,
             "nothing bound"
         );
-        println!("\nrefused: {error}");
+        match started {
+            Ok(supervisor) => {
+                drop(supervisor);
+                println!("\nstarted");
+            }
+            Err(error) => {
+                assert_eq!(*lock(&state), GatewayState::NotConfigured);
+                println!("\nrefused: {error}");
+            }
+        }
         return;
     }
-    const WORDING: &str =
-        "refused: the web process requires process confinement, which is unavailable here: \
-         gateway confinement unavailable: ";
-    for (call, reason) in [
-        (
-            RefusedCall::LandlockCreateRuleset,
-            "landlock_create_ruleset failed with EPERM: the Landlock version query was refused",
-        ),
-        (
-            RefusedCall::Seccomp,
-            "seccomp failed with EPERM: this kernel or its profile has no seccomp filter that \
-             kills the process",
-        ),
+    for call in [
+        RefusedCall::LandlockCreateRuleset,
+        RefusedCall::LandlockRuleset,
+        RefusedCall::LandlockRestrictSelf,
+        // The installation that fails is the web process's to report: the host's
+        // question passes.
+        RefusedCall::SeccompInstall,
     ] {
         let Some(printed) = under_profile(NAME, call) else {
             return;
         };
         assert!(
-            printed
-                .lines()
-                .any(|line| line == format!("{WORDING}{reason}")),
+            printed.lines().any(|line| line == "started"),
             "{call:?}: {printed}"
         );
+        assert!(!printed.contains("refused: "), "{call:?}: {printed}");
     }
+    let printed = under_profile(NAME, RefusedCall::Seccomp).unwrap();
+    assert!(
+        printed.lines().any(|line| line
+            == "refused: the web process requires process confinement, which is unavailable \
+                here: gateway confinement unavailable: seccomp failed with EPERM: this kernel \
+                or its profile has no seccomp filter that kills the process"),
+        "{printed}"
+    );
+    assert!(!printed.lines().any(|line| line == "started"), "{printed}");
 }
 
 /// A receiver over one end of a fresh stream pair, and the other (sending) end.
@@ -2050,25 +2060,25 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
     web.offices.shutdown();
 }
 
-/// ADR-0017 LNX-3 for the web process's own refusal: under a profile that lets the
-/// host's question pass and refuses the restriction itself, the real web process
-/// exits before it reports ready, and every failed start is logged with the call
-/// and the error it named. Nothing is handed to it.
+/// ADR-0017 LNX-3 for the web process's own refusal: where the host's question
+/// passes and the installation of the filter then fails, the real web process exits
+/// before it reports ready, and every failed start is logged with the call and the
+/// error it named. Nothing is handed to it.
 #[test]
 #[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
 fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reason() {
     use org_platform::confinement::testing::RefusedCall;
     const NAME: &str =
         "web::tests::lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reason";
-    // The child connects, fails to restrict itself, drops its stream and exits. The
-    // host meets one of the two, whichever it reaches first, and the same reason.
+    // The child connects, fails to install its filter, drops its stream and exits.
+    // The host meets one of the two, whichever it reaches first, and the same reason.
     const ENDED: [&str; 2] = [
         "web process start failed: control EOF before the ready line",
         "web process start failed: the child exited before its ready line (exit code 1)",
     ];
     const REASON: &str = "; it reported that it cannot confine itself: gateway confinement \
-                          unavailable: landlock_restrict_self failed with EPERM (Operation not \
-                          permitted (os error 1))";
+                          unavailable: seccomp failed with ENOMEM (Cannot allocate memory (os \
+                          error 12))";
     let is_cause = |text: &str| ENDED.iter().any(|ended| text == format!("{ended}{REASON}"));
     if std::env::var_os(UNDER_PROFILE).is_some() {
         // The host under the profile.
@@ -2100,7 +2110,7 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
         web.offices.shutdown();
         return;
     }
-    let Some(printed) = under_profile(NAME, RefusedCall::LandlockRestrictSelf) else {
+    let Some(printed) = under_profile(NAME, RefusedCall::SeccompInstall) else {
         return;
     };
     let lines: Vec<&str> = printed.lines().collect();

@@ -5,6 +5,11 @@
 //! descriptors 0 to 2, as the web process is when it calls `confine_web`. The child
 //! reports on its standard output and never reaches the harness.
 //!
+//! The filter must hold every guarantee by itself, so what a confined process can
+//! and cannot do is tested four times ([`LAYERINGS`]): with Landlock under the
+//! filter, and with the filter alone, Landlock refused at each of its three calls
+//! by a profile as a container runtime's.
+//!
 //! The pure parts (the Landlock rights of each ABI, the filter program, the entry
 //! and status parsers) are tested beside their code.
 
@@ -13,8 +18,9 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::linux::net::SocketAddrExt;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::{SocketAddr, UnixDatagram, UnixListener, UnixStream};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::panic;
 use std::path::{Path, PathBuf};
@@ -22,7 +28,8 @@ use std::process::{ChildStderr, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::{landlock, profile, status, syscalls, Unavailable};
-use crate::confinement::{self, Enforcement, REFUSAL};
+use crate::confinement::testing::RefusedCall;
+use crate::confinement::{self, Enforcement, Layers, REFUSAL};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -104,6 +111,16 @@ impl Child {
     /// whatever this process holds, and no `RUST_BACKTRACE`, as the host starts the
     /// web process.
     fn start(role: &str, fixture: &Fixture, word: &str) -> Self {
+        Self::start_under(None, role, fixture, word)
+    }
+
+    /// The same, under a profile that refuses `refused` where one is named.
+    fn start_under(
+        refused: Option<RefusedCall>,
+        role: &str,
+        fixture: &Fixture,
+        word: &str,
+    ) -> Self {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .env(ROLE, role)
@@ -124,6 +141,9 @@ impl Child {
                     _ => Err(io::Error::last_os_error()),
                 }
             });
+        }
+        if let Some(call) = refused {
+            profile::refuse_call(&mut command, call).unwrap();
         }
         let mut process = command.spawn().unwrap();
         let report = process.stdout.take().unwrap();
@@ -191,7 +211,7 @@ struct Fixture {
     file: PathBuf,
     listener: UnixListener,
     target: TcpListener,
-    datagrams: std::os::unix::net::UnixDatagram,
+    datagrams: UnixDatagram,
 }
 
 impl Fixture {
@@ -207,8 +227,7 @@ impl Fixture {
         listener.set_nonblocking(true).unwrap();
         let target = TcpListener::bind("127.0.0.1:0").unwrap();
         target.set_nonblocking(true).unwrap();
-        let datagrams =
-            std::os::unix::net::UnixDatagram::bind(directory.path().join("datagrams")).unwrap();
+        let datagrams = UnixDatagram::bind(directory.path().join("datagrams")).unwrap();
         datagrams.set_nonblocking(true).unwrap();
         Self {
             _directory: directory,
@@ -243,6 +262,11 @@ impl Fixture {
         self.file.with_file_name(name)
     }
 
+    /// An address in the abstract namespace that only this fixture uses.
+    fn abstract_address(&self, name: &str) -> SocketAddr {
+        abstract_address(&self.path(name))
+    }
+
     /// The child's connection, or `None` when it ended without connecting.
     fn accept(&self, child: &mut Child) -> Option<UnixStream> {
         let until = Instant::now() + WAIT;
@@ -266,6 +290,11 @@ impl Fixture {
             }
         }
     }
+}
+
+/// The abstract Unix address named by `path`'s bytes. No file is made.
+fn abstract_address(path: &Path) -> SocketAddr {
+    SocketAddr::from_abstract_name(path.as_os_str().as_bytes()).unwrap()
 }
 
 fn c_path(path: &Path) -> CString {
@@ -336,20 +365,80 @@ fn receive_descriptor(stream: &UnixStream) -> OwnedFd {
     }
 }
 
+/// What a process says of the confinement it applied: the layers, and why Landlock
+/// is not among them.
+fn confined_report(enforcement: &Enforcement, not_applied: Option<&str>) -> String {
+    format!(
+        "confined: landlock {:?} seccomp {} not applied {:?}",
+        enforcement.landlock_abi, enforcement.seccomp, not_applied
+    )
+}
+
 /// The child's half of every confined test: confine, then report what was enforced.
 fn confine(report: &Report, rendezvous: &Path) -> UnixStream {
-    let (stream, enforcement) = confinement::confine_web(rendezvous).unwrap();
-    report.line(&format!(
-        "confined: landlock {:?} seccomp {}",
-        enforcement.landlock_abi, enforcement.seccomp
+    let confined = confinement::confine_web(rendezvous).unwrap();
+    report.line(&confined_report(
+        &confined.enforcement,
+        confined.landlock_not_applied.as_deref(),
     ));
-    stream
+    confined.stream
+}
+
+/// How the tests confine a process: with whatever this kernel offers, which is both
+/// layers where it has Landlock, and under a profile that refuses Landlock at its
+/// version query, at the creation of the ruleset and at the restriction, which
+/// leaves the filter alone each time.
+const LAYERINGS: [Option<RefusedCall>; 4] = [
+    None,
+    Some(RefusedCall::LandlockCreateRuleset),
+    Some(RefusedCall::LandlockRuleset),
+    Some(RefusedCall::LandlockRestrictSelf),
+];
+
+/// How a refused call's error reads in a reason.
+const NOT_PERMITTED: &str = "EPERM (Operation not permitted (os error 1))";
+const VERSION_QUERY_REFUSED: &str =
+    "landlock_create_ruleset failed with EPERM: the Landlock version query was refused";
+
+/// The Landlock ABI a process confines itself under on this kernel, or why it has
+/// none. The tests run wherever the web process does, with or without Landlock.
+fn kernel_landlock() -> Result<u32, String> {
+    landlock::abi()
+        .map(landlock::enforced_abi)
+        .map_err(|reason| reason.to_string())
+}
+
+/// What a child that confined itself reports, here or under a profile.
+fn confined_line_under(refused: Option<RefusedCall>) -> String {
+    let landlock = match (refused, kernel_landlock()) {
+        (None, kernel) => kernel,
+        (Some(RefusedCall::LandlockCreateRuleset), _) => Err(VERSION_QUERY_REFUSED.to_owned()),
+        // The version query is answered before the other two calls are made: a
+        // kernel without Landlock says so itself.
+        (Some(RefusedCall::LandlockRuleset | RefusedCall::LandlockRestrictSelf), Err(reason)) => {
+            Err(reason)
+        }
+        (Some(RefusedCall::LandlockRuleset), Ok(_)) => Err(format!(
+            "landlock_create_ruleset failed with {NOT_PERMITTED}"
+        )),
+        (Some(RefusedCall::LandlockRestrictSelf), Ok(_)) => Err(format!(
+            "landlock_restrict_self failed with {NOT_PERMITTED}"
+        )),
+        (Some(other), _) => panic!("{other:?} leaves nothing confined"),
+    };
+    let enforcement = Enforcement {
+        landlock_abi: landlock.as_ref().ok().copied(),
+        seccomp: true,
+    };
+    format!(
+        "{}\n",
+        confined_report(&enforcement, landlock.as_ref().err().map(String::as_str))
+    )
 }
 
 /// What a child that confined itself on this kernel reports.
 fn confined_line() -> String {
-    let abi = landlock::enforced_abi(landlock::abi().unwrap());
-    format!("confined: landlock Some({abi}) seccomp true\n")
+    confined_line_under(None)
 }
 
 fn own_status() -> String {
@@ -383,62 +472,27 @@ fn runs_unfiltered() -> bool {
 #[test]
 fn this_system_supports_the_web_process() {
     confinement::web_confinement_supported().unwrap();
-    let (arch, abi) = super::available().unwrap();
-    assert!(abi >= 3);
+    let arch = super::available().unwrap();
     assert_eq!(arch.audit, syscalls::native().unwrap().audit);
 }
 
 #[test]
-fn support_is_decided_by_the_architecture_then_landlock_then_seccomp() {
+fn support_is_decided_by_the_architecture_and_the_filter_and_never_by_landlock() {
+    // `decide` takes no Landlock answer at all: what it is given is everything the
+    // host's question depends on.
     let native = syscalls::native();
-    assert!(super::decide(native, Ok(3), Ok(())).is_ok());
-    let refusal = super::decide(None, Ok(7), Ok(())).unwrap_err();
+    assert!(super::decide(native, Ok(()), Ok(())).is_ok());
+    let refusal = super::decide(None, Ok(()), Ok(())).unwrap_err();
     assert_eq!(refusal, Unavailable::Architecture);
     assert!(refusal
         .to_string()
         .starts_with("no system call list for the "));
-    for old in [0, 1, 2] {
-        let refusal = super::decide(native, landlock::decide(Ok(old)), Ok(())).unwrap_err();
-        assert_eq!(
-            refusal,
-            Unavailable::Landlock(landlock::Unavailable::TooOld(old))
-        );
-        assert_eq!(
-            refusal.to_string(),
-            format!(
-                "this kernel's Landlock ABI is {old}, below 3 (Linux 6.2 or later is required)"
-            )
-        );
-    }
-    for (errno, reason) in [
-        (
-            libc::ENOSYS,
-            "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock (Linux \
-             6.2 or later with Landlock is required)",
-        ),
-        (
-            libc::EOPNOTSUPP,
-            "landlock_create_ruleset failed with EOPNOTSUPP: Landlock is built into this \
-             kernel but is not an enabled security module",
-        ),
-        (
-            libc::EPERM,
-            "landlock_create_ruleset failed with EPERM: the Landlock version query was refused",
-        ),
-        (
-            libc::EINVAL,
-            "landlock_create_ruleset failed with EINVAL: the Landlock version query was refused",
-        ),
-    ] {
-        let refusal = super::decide(native, landlock::decide(Err(errno)), Ok(())).unwrap_err();
-        assert_eq!(refusal.to_string(), reason);
-    }
     for (errno, name) in [
         (libc::EPERM, "EPERM"),
         (libc::ENOSYS, "ENOSYS"),
         (libc::EOPNOTSUPP, "EOPNOTSUPP"),
     ] {
-        let refusal = super::decide(native, Ok(7), Err(errno)).unwrap_err();
+        let refusal = super::decide(native, Err(errno), Ok(())).unwrap_err();
         assert_eq!(refusal, Unavailable::Seccomp(errno));
         assert_eq!(
             refusal.to_string(),
@@ -448,48 +502,91 @@ fn support_is_decided_by_the_architecture_then_landlock_then_seccomp() {
             )
         );
     }
-    // Landlock is named before seccomp when both are missing.
+    for (errno, name) in [
+        (libc::EPERM, "EPERM"),
+        (libc::ENOSYS, "ENOSYS"),
+        (libc::EINVAL, "EINVAL"),
+        (0, "error 0"),
+    ] {
+        let refusal = super::decide(native, Ok(()), Err(errno)).unwrap_err();
+        assert_eq!(refusal, Unavailable::Install(errno));
+        assert_eq!(
+            refusal.to_string(),
+            format!(
+                "seccomp failed with {name}: this kernel or its profile does not let a \
+                 process install a seccomp filter on all its threads"
+            )
+        );
+    }
+    // The architecture is named first, then the kill action.
     assert_eq!(
-        super::decide(
-            native,
-            landlock::decide(Err(libc::ENOSYS)),
-            Err(libc::ENOSYS)
-        )
-        .unwrap_err(),
-        Unavailable::Landlock(landlock::Unavailable::Missing)
+        super::decide(None, Err(libc::ENOSYS), Err(libc::ENOSYS)).unwrap_err(),
+        Unavailable::Architecture
+    );
+    assert_eq!(
+        super::decide(native, Err(libc::ENOSYS), Err(libc::EPERM)).unwrap_err(),
+        Unavailable::Seccomp(libc::ENOSYS)
     );
 }
 
+/// A report as the host builds it: the ready line has no seccomp field.
+fn report_of(abi: u32) -> Enforcement {
+    Enforcement {
+        landlock_abi: Some(abi),
+        seccomp: false,
+    }
+}
+
+/// The host's report of a web process that says it applied no Landlock domain.
+const FILTER_ALONE: Enforcement = Enforcement {
+    landlock_abi: None,
+    seccomp: false,
+};
+
 #[test]
-fn a_report_needs_a_landlock_abi_of_three_or_more_and_ignores_seccomp() {
-    for abi in [3, 4, 7, 9] {
-        for seccomp in [false, true] {
+fn a_report_is_accepted_with_or_without_landlock_and_ignores_seccomp() {
+    for seccomp in [false, true] {
+        for landlock_abi in [None, Some(1), Some(2), Some(3), Some(4), Some(7), Some(9)] {
             confinement::verify_ready_report(&Enforcement {
-                landlock_abi: Some(abi),
+                landlock_abi,
                 seccomp,
             })
             .unwrap();
         }
-    }
-    for abi in [0, 1, 2] {
         let error = confinement::verify_ready_report(&Enforcement {
-            landlock_abi: Some(abi),
-            seccomp: true,
+            landlock_abi: Some(0),
+            seccomp,
         })
         .unwrap_err();
         assert_eq!(
             error.to_string(),
-            format!("{REFUSAL}: the ready line reports Landlock ABI {abi}, below 3")
+            format!("{REFUSAL}: the ready line reports Landlock ABI 0, which is no ABI")
         );
     }
-    let error = confinement::verify_ready_report(&Enforcement {
-        landlock_abi: None,
-        seccomp: true,
-    })
-    .unwrap_err();
+}
+
+#[test]
+fn the_layers_are_the_filter_and_landlock_where_it_is_reported() {
+    assert_eq!(
+        confinement::layers(&FILTER_ALONE).unwrap(),
+        Layers {
+            description: "the seccomp filter alone".to_owned(),
+            landlock_missing: true,
+        }
+    );
+    for abi in [1, 3, 7] {
+        assert_eq!(
+            confinement::layers(&report_of(abi)).unwrap(),
+            Layers {
+                description: format!("the seccomp filter and Landlock ABI {abi}"),
+                landlock_missing: false,
+            }
+        );
+    }
+    let error = confinement::layers(&report_of(0)).unwrap_err();
     assert_eq!(
         error.to_string(),
-        format!("{REFUSAL}: the ready line reports no Landlock domain")
+        format!("{REFUSAL}: the ready line reports Landlock ABI 0, which is no ABI")
     );
 }
 
@@ -642,13 +739,35 @@ fn run(role: &str, report: &Report) -> i32 {
             report.line("served");
         }
         "forbidden" => {
+            // What the attempt needs is asked before confinement: asking for the
+            // parent's id is itself not on the list, and each attempt must be
+            // stopped at the call it names.
+            let paths = Paths::new(&file);
             let stream = confine(report, &rendezvous);
             let socket = receive_descriptor(&stream);
             let name = word();
-            report.outcome(
-                &name,
-                attempt(&name, &Paths::new(&file), socket.as_raw_fd()),
-            );
+            report.outcome(&name, attempt(&name, &paths, socket.as_raw_fd()));
+        }
+        "candidates" => {
+            // SAFETY: asks for the parent's id, while asking is still allowed.
+            let parent = unsafe { libc::getppid() };
+            let stream = match word().as_str() {
+                "confined" => confine(report, &rendezvous),
+                "landlock alone" => {
+                    let stream = UnixStream::connect(&rendezvous).unwrap();
+                    super::no_new_privileges().unwrap();
+                    landlock::apply().unwrap();
+                    report.line("landlock alone");
+                    stream
+                }
+                "unconfined" => {
+                    let stream = UnixStream::connect(&rendezvous).unwrap();
+                    report.line("unconfined");
+                    stream
+                }
+                other => panic!("an unknown way to run the candidates: {other}"),
+            };
+            candidates(report, &stream, parent);
         }
         "unconfined" => {
             // The same attempt with nothing confined.
@@ -716,28 +835,53 @@ fn run(role: &str, report: &Report) -> i32 {
         "landlock alone" => landlock_alone(report, &file),
         "under a profile" => {
             // The word names the refused call and its error number.
-            let (call, errno) = match word().as_str() {
-                "create EPERM" => (libc::SYS_landlock_create_ruleset, libc::EPERM),
-                "create ENOSYS" => (libc::SYS_landlock_create_ruleset, libc::ENOSYS),
-                "create EOPNOTSUPP" => (libc::SYS_landlock_create_ruleset, libc::EOPNOTSUPP),
-                "restrict EPERM" => (libc::SYS_landlock_restrict_self, libc::EPERM),
-                "seccomp EPERM" => (libc::SYS_seccomp, libc::EPERM),
+            let landlock = |errno| profile::refusing(&[libc::SYS_landlock_create_ruleset], errno);
+            let program = match word().as_str() {
+                "create EPERM" => landlock(libc::EPERM),
+                "create ENOSYS" => landlock(libc::ENOSYS),
+                "create EOPNOTSUPP" => landlock(libc::EOPNOTSUPP),
+                "ruleset EPERM" => profile::profile(RefusedCall::LandlockRuleset),
+                "restrict EPERM" => profile::profile(RefusedCall::LandlockRestrictSelf),
+                "seccomp EPERM" => profile::profile(RefusedCall::Seccomp),
+                "filter EPERM" => profile::refusing_when(
+                    &[(
+                        libc::SYS_seccomp,
+                        profile::When::Argument(0, libc::SECCOMP_SET_MODE_FILTER),
+                    )],
+                    libc::EPERM,
+                ),
+                "install ENOMEM" => profile::profile(RefusedCall::SeccompInstall),
+                "landlock and seccomp EPERM" => profile::refusing(
+                    &[
+                        libc::SYS_landlock_create_ruleset,
+                        libc::SYS_seccomp,
+                        libc::SYS_prctl,
+                    ],
+                    libc::EPERM,
+                ),
                 other => panic!("an unknown profile: {other}"),
             };
-            profile::enter(&profile::refusing(&[call], errno)).unwrap();
+            profile::enter(&program).unwrap();
             report.line(&format!(
                 "supported: {:?}",
                 super::supported().map_err(|refused| (refused.to_string(), refused.raw_os_error()))
             ));
-            let error = confinement::confine_web(&rendezvous).unwrap_err();
-            report.line(&format!("{error}"));
-            report.line(&format!("os error: {:?}", error.raw_os_error()));
-            report.line(&format!(
-                "file: {:?}",
-                std::fs::read(&file)
-                    .map(|bytes| bytes.len())
-                    .map_err(|error| error.raw_os_error())
-            ));
+            match confinement::confine_web(&rendezvous) {
+                Ok(confined) => report.line(&confined_report(
+                    &confined.enforcement,
+                    confined.landlock_not_applied.as_deref(),
+                )),
+                Err(error) => {
+                    report.line(&format!("{error}"));
+                    report.line(&format!("os error: {:?}", error.raw_os_error()));
+                    report.line(&format!(
+                        "file: {:?}",
+                        std::fs::read(&file)
+                            .map(|bytes| bytes.len())
+                            .map_err(|error| error.raw_os_error())
+                    ));
+                }
+            }
         }
         "stay confined" => {
             let mut stream = confine(report, &rendezvous);
@@ -753,7 +897,7 @@ fn run(role: &str, report: &Report) -> i32 {
             }
         }
         "exit" => (),
-        "host under a profile" => host_under_a_profile(report, &rendezvous),
+        "host under a profile" => host_under_a_profile(report, &rendezvous, &word()),
         other => panic!("an unknown role: {other}"),
     }
     0
@@ -761,46 +905,55 @@ fn run(role: &str, report: &Report) -> i32 {
 
 #[test]
 fn a_confined_process_uses_its_stream_threads_memory_clock_and_randomness() {
-    let fixture = Fixture::new();
-    let mut child = Child::start("use", &fixture, "");
-    let mut stream = fixture.accept(&mut child).unwrap();
-    stream.write_all(b"ping").unwrap();
-    let mut pong = [0u8; 4];
-    let answered = stream.read_exact(&mut pong);
-    let (ended, report) = child.finish();
-    // The report first: it says how far a child that died had come.
-    assert_eq!(
-        report,
-        format!("{}grew\ncontended\ndone\n", confined_line())
-    );
-    assert_eq!(ended, Ended::Exited(0));
-    answered.unwrap();
-    assert_eq!(&pong, b"pong");
+    for refused in LAYERINGS {
+        let fixture = Fixture::new();
+        let mut child = Child::start_under(refused, "use", &fixture, "");
+        let mut stream = fixture.accept(&mut child).unwrap();
+        stream.write_all(b"ping").unwrap();
+        let mut pong = [0u8; 4];
+        let answered = stream.read_exact(&mut pong);
+        let (ended, report) = child.finish();
+        // The report first: it says how far a child that died had come.
+        assert_eq!(
+            report,
+            format!("{}grew\ncontended\ndone\n", confined_line_under(refused)),
+            "{refused:?}"
+        );
+        assert_eq!(ended, Ended::Exited(0), "{refused:?}");
+        answered.unwrap();
+        assert_eq!(&pong, b"pong");
+    }
 }
 
 #[test]
 fn a_confined_process_serves_a_listener_it_was_handed() {
-    let fixture = Fixture::new();
-    let mut child = Child::start("serve", &fixture, "");
-    let stream = fixture.accept(&mut child).unwrap();
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    send_descriptor(&stream, listener.as_raw_fd());
-    drop(listener);
-    let mut browser = TcpStream::connect(address).unwrap();
-    browser.set_read_timeout(Some(WAIT)).unwrap();
-    browser.write_all(b"GET /").unwrap();
-    let mut reply = Vec::new();
-    browser.read_to_end(&mut reply).unwrap();
-    assert_eq!(reply, b"200 OK");
-    let mut browser = TcpStream::connect(address).unwrap();
-    browser.set_read_timeout(Some(WAIT)).unwrap();
-    let mut reply = Vec::new();
-    browser.read_to_end(&mut reply).unwrap();
-    assert_eq!(reply, b"again");
-    let (ended, report) = child.finish();
-    assert_eq!(report, format!("{}served\n", confined_line()));
-    assert_eq!(ended, Ended::Exited(0));
+    for refused in LAYERINGS {
+        let fixture = Fixture::new();
+        let mut child = Child::start_under(refused, "serve", &fixture, "");
+        let stream = fixture.accept(&mut child).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        send_descriptor(&stream, listener.as_raw_fd());
+        drop(listener);
+        let mut browser = TcpStream::connect(address).unwrap();
+        browser.set_read_timeout(Some(WAIT)).unwrap();
+        browser.write_all(b"GET /").unwrap();
+        let mut reply = Vec::new();
+        browser.read_to_end(&mut reply).unwrap();
+        assert_eq!(reply, b"200 OK");
+        let mut browser = TcpStream::connect(address).unwrap();
+        browser.set_read_timeout(Some(WAIT)).unwrap();
+        let mut reply = Vec::new();
+        browser.read_to_end(&mut reply).unwrap();
+        assert_eq!(reply, b"again");
+        let (ended, report) = child.finish();
+        assert_eq!(
+            report,
+            format!("{}served\n", confined_line_under(refused)),
+            "{refused:?}"
+        );
+        assert_eq!(ended, Ended::Exited(0), "{refused:?}");
+    }
 }
 
 /// What the forbidden calls act on.
@@ -809,11 +962,13 @@ struct Paths {
     created: CString,
     address: libc::sockaddr_in,
     datagrams: libc::sockaddr_un,
+    parent: libc::pid_t,
 }
 
 impl Paths {
     /// The fixture's file, a name beside it that does not exist, the address of its
-    /// TCP listener and the name of its datagram socket.
+    /// TCP listener, the name of its datagram socket and the parent's process id.
+    /// Made before confinement: asking for the parent is not on the list.
     fn new(file: &Path) -> Self {
         let std::net::SocketAddr::V4(target) = variable(TARGET).to_str().unwrap().parse().unwrap()
         else {
@@ -840,6 +995,8 @@ impl Paths {
                 sin_zero: [0; 8],
             },
             datagrams,
+            // SAFETY: takes no argument and cannot fail.
+            parent: unsafe { libc::getppid() },
         }
     }
 }
@@ -977,9 +1134,9 @@ fn attempt(name: &str, paths: &Paths, socket: RawFd) -> libc::c_long {
             }
             "fork" => libc::fork().into(),
             "trace a process" => libc::ptrace(libc::PTRACE_TRACEME, 0, 0, 0),
-            "signal its parent" => libc::kill(libc::getppid(), 0).into(),
+            "signal its parent" => libc::kill(paths.parent, 0).into(),
             "signal a thread of its parent" => {
-                libc::syscall(libc::SYS_tgkill, libc::getppid(), libc::getppid(), 0)
+                libc::syscall(libc::SYS_tgkill, paths.parent, paths.parent, 0)
             }
             "become dumpable again" => libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0).into(),
             "ask for its seccomp mode" => libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0).into(),
@@ -988,7 +1145,7 @@ fn attempt(name: &str, paths: &Paths, socket: RawFd) -> libc::c_long {
                 libc::ioctl(0, libc::TIOCGWINSZ, &mut size).into()
             }
             "make a descriptor signal its parent" => {
-                libc::fcntl(socket, libc::F_SETOWN, libc::getppid()).into()
+                libc::fcntl(socket, libc::F_SETOWN, paths.parent).into()
             }
             "set a descriptor's flags with fcntl" => {
                 libc::fcntl(socket, libc::F_SETFL, libc::O_ASYNC | libc::O_NONBLOCK).into()
@@ -1035,7 +1192,7 @@ fn attempt(name: &str, paths: &Paths, socket: RawFd) -> libc::c_long {
             )
             .into(),
             "read another process's memory" => {
-                libc::process_vm_readv(libc::getppid(), std::ptr::null(), 0, std::ptr::null(), 0, 0)
+                libc::process_vm_readv(paths.parent, std::ptr::null(), 0, std::ptr::null(), 0, 0)
                     as libc::c_long
             }
             "sleep by a call that is not listed" => {
@@ -1050,43 +1207,54 @@ fn attempt(name: &str, paths: &Paths, socket: RawFd) -> libc::c_long {
     }
 }
 
+/// Every forbidden call, the five sends among them, in each of the four layerings:
+/// the filter stops each one by itself, whether or not Landlock is under it.
 #[test]
 fn every_forbidden_call_kills_the_process_with_sigsys() {
-    let fixture = Fixture::new();
     assert!(Path::new("/bin/sh").exists());
-    for name in FORBIDDEN {
-        let mut child = Child::start("forbidden", &fixture, name);
-        let stream = fixture.accept(&mut child).unwrap();
-        let listening = TcpListener::bind("127.0.0.1:0").unwrap();
-        // An unconnected, unbound TCP socket is made by hand: std has none.
-        // SAFETY: a plain socket call; the result is checked and owned at once.
-        let unconnected = unsafe {
-            let socket = libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
-            assert!(socket >= 0);
-            OwnedFd::from_raw_fd(socket)
-        };
-        let datagram = std::os::unix::net::UnixDatagram::unbound().unwrap();
-        // "listen" needs a bound socket to succeed without the filter.
-        let handed = if name.starts_with("listen") {
-            listening.as_raw_fd()
-        } else if wants_a_datagram_socket(name) {
-            datagram.as_raw_fd()
-        } else {
-            unconnected.as_raw_fd()
-        };
-        send_descriptor(&stream, handed);
-        let (ended, report) = child.finish();
-        // The call never returned: nothing follows the report of confinement.
-        assert_eq!(report, confined_line(), "{name}");
-        assert_eq!(ended, Ended::Signaled(libc::SIGSYS), "{name}");
-    }
-    assert_eq!(std::fs::read(&fixture.file).unwrap(), b"retained");
-    assert!(!fixture.path("created").exists());
     assert_eq!(
-        fixture.reached(),
-        (None, None),
-        "a confined process sent out"
+        FORBIDDEN
+            .iter()
+            .filter(|name| name.starts_with("send") || **name == "call sendmsg")
+            .count(),
+        5
     );
+    for refused in LAYERINGS {
+        let fixture = Fixture::new();
+        for name in FORBIDDEN {
+            let mut child = Child::start_under(refused, "forbidden", &fixture, name);
+            let stream = fixture.accept(&mut child).unwrap();
+            let listening = TcpListener::bind("127.0.0.1:0").unwrap();
+            // An unconnected, unbound TCP socket is made by hand: std has none.
+            // SAFETY: a plain socket call; the result is checked and owned at once.
+            let unconnected = unsafe {
+                let socket = libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
+                assert!(socket >= 0);
+                OwnedFd::from_raw_fd(socket)
+            };
+            let datagram = UnixDatagram::unbound().unwrap();
+            // "listen" needs a bound socket to succeed without the filter.
+            let handed = if name.starts_with("listen") {
+                listening.as_raw_fd()
+            } else if wants_a_datagram_socket(name) {
+                datagram.as_raw_fd()
+            } else {
+                unconnected.as_raw_fd()
+            };
+            send_descriptor(&stream, handed);
+            let (ended, report) = child.finish();
+            // The call never returned: nothing follows the report of confinement.
+            assert_eq!(report, confined_line_under(refused), "{name} {refused:?}");
+            assert_eq!(ended, Ended::Signaled(libc::SIGSYS), "{name} {refused:?}");
+        }
+        assert_eq!(std::fs::read(&fixture.file).unwrap(), b"retained");
+        assert!(!fixture.path("created").exists());
+        assert_eq!(
+            fixture.reached(),
+            (None, None),
+            "a confined process sent out ({refused:?})"
+        );
+    }
 }
 
 /// Why a send may name no destination: without the filter, a send with one reaches
@@ -1156,12 +1324,14 @@ fn the_forbidden_calls_work_without_the_filter() {
 
 #[test]
 fn a_forbidden_call_on_a_second_thread_kills_the_whole_process() {
-    let fixture = Fixture::new();
-    let mut child = Child::start("forbidden on a thread", &fixture, "");
-    let _stream = fixture.accept(&mut child).unwrap();
-    let (ended, report) = child.finish();
-    assert_eq!(report, confined_line());
-    assert_eq!(ended, Ended::Signaled(libc::SIGSYS));
+    for refused in LAYERINGS {
+        let fixture = Fixture::new();
+        let mut child = Child::start_under(refused, "forbidden on a thread", &fixture, "");
+        let _stream = fixture.accept(&mut child).unwrap();
+        let (ended, report) = child.finish();
+        assert_eq!(report, confined_line_under(refused), "{refused:?}");
+        assert_eq!(ended, Ended::Signaled(libc::SIGSYS), "{refused:?}");
+    }
 }
 
 #[test]
@@ -1274,7 +1444,7 @@ fn a_missing_rendezvous_fails_at_the_connection_with_nothing_confined() {
 /// The child of the next test: steps 3 and 4 without the filter.
 fn landlock_alone(report: &Report, file: &Path) {
     super::no_new_privileges().unwrap();
-    let abi = landlock::restrict(landlock::abi().unwrap()).unwrap();
+    let abi = landlock::apply().unwrap();
     report.line(&format!("abi {abi}"));
     let (file_c, created_c) = (c_path(file), c_path(&file.with_file_name("created")));
     let program = [c"/bin/sh".as_ptr(), std::ptr::null()];
@@ -1312,6 +1482,18 @@ fn landlock_alone(report: &Report, file: &Path) {
         report.outcome("signal the parent", unsafe {
             libc::kill(libc::getppid(), 0).into()
         });
+        let abstract_name = abstract_address(&file.with_file_name("abstract"));
+        let connect = UnixStream::connect_addr(&abstract_name);
+        report.line(&format!(
+            "abstract unix connect: {:?}",
+            connect.map(drop).map_err(|error| error.raw_os_error())
+        ));
+        let datagram = UnixDatagram::unbound().unwrap();
+        let sent = datagram.send_to_addr(b"x", &abstract_address(&file.with_file_name("heard")));
+        report.line(&format!(
+            "datagram to an abstract name: {:?}",
+            sent.map_err(|error| error.raw_os_error())
+        ));
     }
     // Not controlled by Landlock: these succeed, and the filter kills them.
     let named = UnixStream::connect(file.with_file_name("named"));
@@ -1329,34 +1511,343 @@ fn landlock_alone(report: &Report, file: &Path) {
     }
 }
 
-/// Landlock alone. What it denies returns an error, and what it does not control
-/// is what the filter is for.
+/// Landlock alone, where the kernel has it. What it denies returns an error, and
+/// each of those is a call the filter kills: a path operation, a TCP `connect` or
+/// `bind`, a signal to another process, a `connect` or a send with a destination to
+/// an abstract Unix name. What it does not control is what the filter is for.
 #[test]
 fn landlock_alone_denies_every_path_and_leaves_the_rest_to_the_filter() {
+    let Ok(abi) = kernel_landlock() else {
+        eprintln!("this kernel has no Landlock: nothing to measure");
+        return;
+    };
     let fixture = Fixture::new();
     let named = UnixListener::bind(fixture.path("named")).unwrap();
+    let abstract_listener = UnixListener::bind_addr(&fixture.abstract_address("abstract")).unwrap();
+    let heard = UnixDatagram::bind_addr(&fixture.abstract_address("heard")).unwrap();
+    heard.set_nonblocking(true).unwrap();
     let outbound = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = outbound.local_addr().unwrap().to_string();
     let (ended, report) = Child::start("landlock alone", &fixture, &address).finish();
     assert_eq!(ended, Ended::Exited(0), "{report}");
-    let abi = landlock::enforced_abi(landlock::abi().unwrap());
     let denied = libc::EACCES;
-    let mut expected = format!(
-        "abi {abi}\nopen: error {denied}\ncreate: error {denied}\ntruncate: error {denied}\n\
-         rename: error {denied}\nunlink: error {denied}\nmkdir: error {denied}\n\
+    let mut expected = format!("abi {abi}\nopen: error {denied}\ncreate: error {denied}\n");
+    // Truncation by path is a right of its own from ABI 3. Below it the truncation
+    // succeeds under Landlock alone, and is one more thing only the filter stops.
+    expected += &match abi {
+        3.. => format!("truncate: error {denied}\n"),
+        _ => "truncate: succeeded\n".to_owned(),
+    };
+    expected += &format!(
+        "rename: error {denied}\nunlink: error {denied}\nmkdir: error {denied}\n\
          environ: error {denied}\nexecve: error {denied}\n"
     );
     if abi >= 4 {
         expected += &format!("tcp connect: Err(Some({denied}))\ntcp bind: Err(Some({denied}))\n");
     }
     if abi >= 6 {
-        expected += &format!("signal the parent: error {}\n", libc::EPERM);
+        let scoped = libc::EPERM;
+        expected += &format!(
+            "signal the parent: error {scoped}\nabstract unix connect: Err(Some({scoped}))\n\
+             datagram to an abstract name: Err(Some({scoped}))\n"
+        );
     }
     expected += "named unix connect: Ok(())\nchmod: succeeded\nsocket: succeeded\n";
     assert_eq!(report, expected);
-    assert_eq!(std::fs::read(&fixture.file).unwrap(), b"retained");
+    if abi >= 3 {
+        assert_eq!(std::fs::read(&fixture.file).unwrap(), b"retained");
+    }
     assert!(!fixture.path("created").exists());
-    drop((named, outbound));
+    assert!(
+        heard.recv(&mut [0u8; 4]).is_err(),
+        "a scoped datagram arrived"
+    );
+    drop((named, abstract_listener, outbound));
+}
+
+/// What the list lets a confined process do that comes closest to anything Landlock
+/// controls: files, devices and sockets it was handed, abstract Unix names behind
+/// them, signals to itself. Each line is one allowed call and its outcome.
+fn candidates(report: &Report, stream: &UnixStream, parent: libc::pid_t) {
+    let file = receive_descriptor(stream);
+    let null = receive_descriptor(stream);
+    let random = receive_descriptor(stream);
+    let datagram = receive_descriptor(stream);
+    let abstract_stream = receive_descriptor(stream);
+    let tcp = receive_descriptor(stream);
+    let unconnected = receive_descriptor(stream);
+    let (file, null, random) = (file.as_raw_fd(), null.as_raw_fd(), random.as_raw_fd());
+    let (datagram, abstract_stream) = (datagram.as_raw_fd(), abstract_stream.as_raw_fd());
+    let (tcp, unconnected) = (tcp.as_raw_fd(), unconnected.as_raw_fd());
+    let send = |socket, byte: &std::ffi::CStr| {
+        // SAFETY: one live byte, no destination, a flag the list allows.
+        unsafe {
+            libc::sendto(
+                socket,
+                byte.as_ptr().cast(),
+                1,
+                libc::MSG_NOSIGNAL,
+                std::ptr::null(),
+                0,
+            ) as libc::c_long
+        }
+    };
+    let mut bytes = [0u8; 8];
+    let mut left: libc::c_int = -1;
+    // SAFETY: raw calls on descriptors this process owns, with live buffers and out
+    // values; each result is only reported.
+    unsafe {
+        let read = libc::read(file, bytes.as_mut_ptr().cast(), 6);
+        report.line(&format!(
+            "read a file it was handed: {read} {:?}",
+            String::from_utf8_lossy(&bytes[..6])
+        ));
+        report.outcome(
+            "ask how much of the file is left",
+            libc::ioctl(file, libc::FIONREAD, &mut left).into(),
+        );
+        report.line(&format!("left: {left}"));
+        report.outcome(
+            "write to the file",
+            libc::write(file, c"!".as_ptr().cast(), 1) as libc::c_long,
+        );
+        let mapped = libc::mmap(
+            std::ptr::null_mut(),
+            11,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            file,
+            0,
+        );
+        if mapped == libc::MAP_FAILED {
+            report.outcome("write to the file through a shared mapping", -1);
+        } else {
+            mapped.cast::<u8>().write(b'H');
+            report.outcome(
+                "write to the file through a shared mapping",
+                libc::munmap(mapped, 11).into(),
+            );
+        }
+        report.outcome(
+            "duplicate the file's descriptor",
+            libc::fcntl(file, libc::F_DUPFD_CLOEXEC, 0).into(),
+        );
+        report.outcome(
+            "ask how much of the null device is left",
+            libc::ioctl(null, libc::FIONREAD, &mut left).into(),
+        );
+        let mut blocking: libc::c_int = 0;
+        report.outcome(
+            "make the null device blocking",
+            libc::ioctl(null, libc::FIONBIO, &mut blocking).into(),
+        );
+        report.outcome(
+            "write to the null device",
+            libc::write(null, c"x".as_ptr().cast(), 1) as libc::c_long,
+        );
+        report.outcome(
+            "read the random device",
+            libc::read(random, bytes.as_mut_ptr().cast(), 8) as libc::c_long,
+        );
+        report.outcome(
+            "ask how much of the random device is left",
+            libc::ioctl(random, libc::FIONREAD, &mut left).into(),
+        );
+        report.outcome(
+            "send on a datagram socket connected to an abstract name",
+            send(datagram, c"d"),
+        );
+        report.outcome(
+            "write on a stream connected to an abstract name",
+            libc::write(abstract_stream, c"s".as_ptr().cast(), 1) as libc::c_long,
+        );
+        report.outcome(
+            "write on a TCP connection",
+            libc::write(tcp, c"t".as_ptr().cast(), 1) as libc::c_long,
+        );
+        let mut peer: libc::sockaddr_storage = std::mem::zeroed();
+        let mut length = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        report.outcome(
+            "ask a TCP connection's peer",
+            libc::getpeername(
+                tcp,
+                (&mut peer as *mut libc::sockaddr_storage).cast(),
+                &mut length,
+            )
+            .into(),
+        );
+        let one: libc::c_int = 1;
+        report.outcome(
+            "set an option on a TCP connection",
+            libc::setsockopt(
+                tcp,
+                libc::IPPROTO_TCP,
+                libc::TCP_NODELAY,
+                (&one as *const libc::c_int).cast(),
+                4,
+            )
+            .into(),
+        );
+        report.outcome(
+            "shut down a TCP connection",
+            libc::shutdown(tcp, libc::SHUT_WR).into(),
+        );
+        report.outcome(
+            "send on an unconnected datagram socket",
+            send(unconnected, c"u"),
+        );
+        let own = libc::getpid();
+        report.outcome(
+            "signal its own thread",
+            libc::syscall(libc::SYS_tgkill, own, libc::syscall(libc::SYS_gettid), 0),
+        );
+        report.outcome(
+            "signal its parent as a thread of its own",
+            libc::syscall(libc::SYS_tgkill, own, parent, 0),
+        );
+        let mut processors: libc::cpu_set_t = std::mem::zeroed();
+        let asked = libc::syscall(
+            libc::SYS_sched_getaffinity,
+            parent,
+            std::mem::size_of::<libc::cpu_set_t>(),
+            &mut processors as *mut libc::cpu_set_t,
+        );
+        report.outcome("ask which processors its parent may use", asked);
+        let epoll = libc::epoll_create1(libc::EPOLL_CLOEXEC);
+        let event = libc::eventfd(1, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK);
+        let mut interest = libc::epoll_event {
+            events: libc::EPOLLIN as u32,
+            u64: 7,
+        };
+        let added = libc::epoll_ctl(epoll, libc::EPOLL_CTL_ADD, event, &mut interest);
+        let ready = libc::epoll_wait(epoll, &mut interest, 1, 0);
+        report.line(&format!(
+            "wait on an event descriptor it made: {}",
+            if epoll >= 0 && event >= 0 && added == 0 && ready == 1 {
+                "succeeded".to_owned()
+            } else {
+                format!("epoll {epoll} event {event} added {added} ready {ready}")
+            }
+        ));
+    }
+}
+
+/// What [`candidates`] reports, however the process is confined.
+fn candidate_outcomes() -> String {
+    format!(
+        "read a file it was handed: 6 \"handed\"\n\
+         ask how much of the file is left: succeeded\n\
+         left: 5\n\
+         write to the file: succeeded\n\
+         write to the file through a shared mapping: succeeded\n\
+         duplicate the file's descriptor: succeeded\n\
+         ask how much of the null device is left: error {not_a_terminal}\n\
+         make the null device blocking: succeeded\n\
+         write to the null device: succeeded\n\
+         read the random device: succeeded\n\
+         ask how much of the random device is left: error {invalid}\n\
+         send on a datagram socket connected to an abstract name: succeeded\n\
+         write on a stream connected to an abstract name: succeeded\n\
+         write on a TCP connection: succeeded\n\
+         ask a TCP connection's peer: succeeded\n\
+         set an option on a TCP connection: succeeded\n\
+         shut down a TCP connection: succeeded\n\
+         send on an unconnected datagram socket: error {not_connected}\n\
+         signal its own thread: succeeded\n\
+         signal its parent as a thread of its own: error {no_such_thread}\n\
+         ask which processors its parent may use: succeeded\n\
+         wait on an event descriptor it made: succeeded\n",
+        not_a_terminal = libc::ENOTTY,
+        invalid = libc::EINVAL,
+        not_connected = libc::ENOTCONN,
+        no_such_thread = libc::ESRCH,
+    )
+}
+
+/// The other direction of the layering: is there anything the list allows that only
+/// Landlock stopped? The candidates are run unconfined, under Landlock alone, under
+/// both layers and under the filter alone (Landlock refused at each of its three
+/// calls). Every run has the same outcomes, and what was sent arrived every time:
+/// Landlock denies none of them, so taking it away opens nothing.
+#[test]
+fn nothing_the_list_allows_is_stopped_by_landlock_alone() {
+    let mut runs = vec![("unconfined", None)];
+    if kernel_landlock().is_ok() {
+        runs.push(("landlock alone", None));
+    }
+    runs.extend(LAYERINGS.map(|refused| ("confined", refused)));
+    for (way, refused) in runs {
+        let fixture = Fixture::new();
+        let handed = fixture.path("handed");
+        std::fs::write(&handed, b"handed over").unwrap();
+        let heard = UnixDatagram::bind_addr(&fixture.abstract_address("heard")).unwrap();
+        heard.set_read_timeout(Some(WAIT)).unwrap();
+        let abstract_listener =
+            UnixListener::bind_addr(&fixture.abstract_address("abstract")).unwrap();
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+
+        let mut child = Child::start_under(refused, "candidates", &fixture, way);
+        let stream = fixture.accept(&mut child).unwrap();
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .open(&handed)
+            .unwrap();
+        let null = File::options()
+            .read(true)
+            .write(true)
+            .open("/dev/null")
+            .unwrap();
+        let random = File::open("/dev/urandom").unwrap();
+        let datagram = UnixDatagram::unbound().unwrap();
+        datagram
+            .connect_addr(&fixture.abstract_address("heard"))
+            .unwrap();
+        let abstract_stream =
+            UnixStream::connect_addr(&fixture.abstract_address("abstract")).unwrap();
+        let (mut abstract_peer, _) = abstract_listener.accept().unwrap();
+        let tcp = TcpStream::connect(tcp_listener.local_addr().unwrap()).unwrap();
+        let (mut tcp_peer, _) = tcp_listener.accept().unwrap();
+        let unconnected = UnixDatagram::unbound().unwrap();
+        for descriptor in [
+            file.as_raw_fd(),
+            null.as_raw_fd(),
+            random.as_raw_fd(),
+            datagram.as_raw_fd(),
+            abstract_stream.as_raw_fd(),
+            tcp.as_raw_fd(),
+            unconnected.as_raw_fd(),
+        ] {
+            send_descriptor(&stream, descriptor);
+        }
+        let (ended, report) = child.finish();
+        let (first, outcomes) = report.split_once('\n').unwrap_or((&report, ""));
+        let confined = confined_line_under(refused);
+        assert_eq!(
+            first,
+            match way {
+                "confined" => confined.trim_end(),
+                way => way,
+            },
+            "{way} {refused:?}"
+        );
+        assert_eq!(outcomes, candidate_outcomes(), "{way} {refused:?}");
+        assert_eq!(ended, Ended::Exited(0), "{way} {refused:?}");
+        // What was sent arrived, and the file was changed both ways.
+        let mut byte = [0u8; 4];
+        assert_eq!(heard.recv(&mut byte).unwrap(), 1, "{way} {refused:?}");
+        assert_eq!(byte[0], b'd');
+        abstract_peer.set_read_timeout(Some(WAIT)).unwrap();
+        tcp_peer.set_read_timeout(Some(WAIT)).unwrap();
+        for (peer, sent) in [
+            (&mut abstract_peer as &mut dyn Read, b's'),
+            (&mut tcp_peer as &mut dyn Read, b't'),
+        ] {
+            peer.read_exact(&mut byte[..1]).unwrap();
+            assert_eq!(byte[0], sent, "{way} {refused:?}");
+        }
+        assert_eq!(std::fs::read(&handed).unwrap(), b"Handed!over");
+    }
 }
 
 /// A child under a profile that refuses one call asks whether the web process is
@@ -1374,152 +1865,175 @@ fn confine_under_profile(refused: &str) -> (String, bool) {
     (report, dropped)
 }
 
+/// Landlock is never a reason to refuse: whatever its version query, the creation
+/// of the ruleset or the restriction answers, the host's question passes and the
+/// process confines itself with the filter alone and says why.
 #[test]
-fn a_profile_that_refuses_landlock_makes_the_process_refuse_with_the_reason() {
-    for (refused, cause) in [
-        (
-            "create EPERM",
-            "landlock_create_ruleset failed with EPERM: the Landlock version query was refused",
-        ),
+fn a_kernel_or_profile_without_landlock_leaves_the_filter_alone_and_says_why() {
+    let on_this_kernel = |reason: String| kernel_landlock().err().unwrap_or(reason);
+    for (refused, reason) in [
+        ("create EPERM", VERSION_QUERY_REFUSED.to_owned()),
         (
             "create ENOSYS",
-            "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock (Linux 6.2 \
-             or later with Landlock is required)",
+            "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock".to_owned(),
         ),
         (
             "create EOPNOTSUPP",
             "landlock_create_ruleset failed with EOPNOTSUPP: Landlock is built into this kernel \
-             but is not an enabled security module",
+             but is not an enabled security module"
+                .to_owned(),
+        ),
+        (
+            "ruleset EPERM",
+            on_this_kernel(format!(
+                "landlock_create_ruleset failed with {NOT_PERMITTED}"
+            )),
+        ),
+        (
+            "restrict EPERM",
+            on_this_kernel(format!(
+                "landlock_restrict_self failed with {NOT_PERMITTED}"
+            )),
         ),
     ] {
-        let (report, dropped) = confine_under_profile(refused);
-        let refusal = format!("{REFUSAL}: {cause}");
-        // The host's question and the web process's own attempt give the same reason.
+        let (report, connected) = confine_under_profile(refused);
         assert_eq!(
             report,
             format!(
-                "supported: Err(({refusal:?}, None))\n{refusal}\nos error: None\nfile: Ok(8)\n"
-            )
+                "supported: Ok(())\nconfined: landlock None seccomp true not applied \
+                 Some({reason:?})\n"
+            ),
+            "{refused}"
         );
-        // Nothing was restricted (the file is still readable), and the stream that
-        // was connected before the refusal was dropped unused.
-        assert!(dropped);
+        assert!(connected, "{refused}");
     }
 }
 
+/// What a process that could not install its filter reports: the refusal, no OS
+/// error number, and whether it can still read a file. Landlock was applied before
+/// the filter was refused, where this kernel has it: the process is half confined,
+/// and it refused.
+fn filter_refused(cause: &str) -> String {
+    let file = match kernel_landlock() {
+        Ok(_) => format!("Err(Some({}))", libc::EACCES),
+        Err(_) => "Ok(8)".to_owned(),
+    };
+    format!("{REFUSAL}: {cause}\nos error: None\nfile: {file}\n")
+}
+
+/// LNX-3: a profile that refuses `seccomp` stops the web process, and the host is
+/// told so before it starts one.
 #[test]
-fn a_profile_that_refuses_restriction_makes_the_process_refuse_with_the_reason() {
-    let (report, dropped) = confine_under_profile("restrict EPERM");
+fn a_profile_that_refuses_seccomp_makes_the_host_and_the_process_refuse_with_the_reason() {
+    for (refused, question) in [
+        (
+            "seccomp EPERM",
+            "seccomp failed with EPERM: this kernel or its profile has no seccomp filter that \
+             kills the process",
+        ),
+        (
+            "filter EPERM",
+            "seccomp failed with EPERM: this kernel or its profile does not let a process \
+             install a seccomp filter on all its threads",
+        ),
+    ] {
+        let (report, dropped) = confine_under_profile(refused);
+        assert_eq!(
+            report,
+            format!(
+                "supported: Err(({:?}, None))\n{}",
+                format!("{REFUSAL}: {question}"),
+                filter_refused(&format!("seccomp failed with {NOT_PERMITTED}"))
+            ),
+            "{refused}"
+        );
+        assert!(dropped, "the connected stream was dropped unused");
+    }
+}
+
+/// The host's question cannot foresee every failure of the installation. One that
+/// fails afterwards still refuses, in the web process itself.
+#[test]
+fn a_filter_that_cannot_be_installed_after_all_makes_the_process_refuse() {
+    let (report, dropped) = confine_under_profile("install ENOMEM");
     assert_eq!(
         report,
         format!(
-            "supported: Ok(())\n{REFUSAL}: landlock_restrict_self failed with EPERM (Operation \
-             not permitted (os error 1))\nos error: None\nfile: Ok(8)\n"
+            "supported: Ok(())\n{}",
+            filter_refused("seccomp failed with ENOMEM (Cannot allocate memory (os error 12))")
         )
-    );
-    assert!(dropped);
-}
-
-#[test]
-fn a_profile_that_refuses_seccomp_leaves_a_half_confined_process_that_refuses() {
-    let (report, dropped) = confine_under_profile("seccomp EPERM");
-    let mut lines = report.lines();
-    assert_eq!(
-        lines.next(),
-        Some(
-            format!(
-                "supported: Err(({:?}, None))",
-                format!(
-                    "{REFUSAL}: seccomp failed with EPERM: this kernel or its profile has no \
-                     seccomp filter that kills the process"
-                )
-            )
-            .as_str()
-        )
-    );
-    assert_eq!(
-        lines.next(),
-        Some(
-            format!("{REFUSAL}: seccomp failed with EPERM (Operation not permitted (os error 1))")
-                .as_str()
-        )
-    );
-    assert_eq!(lines.next(), Some("os error: None"));
-    // Landlock already holds: the process is half confined, and it refused.
-    assert_eq!(
-        lines.next(),
-        Some(format!("file: Err(Some({}))", libc::EACCES).as_str())
     );
     assert!(dropped, "the connected stream was dropped unused");
 }
 
-/// A report as the host builds it: the ready line has no seccomp field.
-fn report_of(abi: u32) -> Enforcement {
-    Enforcement {
-        landlock_abi: Some(abi),
-        seccomp: false,
-    }
+/// Without Landlock the filter is the only layer, and it is still required: where
+/// both are refused, nothing is restricted and the process refuses.
+#[test]
+fn without_landlock_a_refused_filter_still_refuses() {
+    let (report, dropped) = confine_under_profile("landlock and seccomp EPERM");
+    assert_eq!(
+        report,
+        format!(
+            "supported: Err(({:?}, None))\n{REFUSAL}: seccomp failed with {NOT_PERMITTED}\n\
+             os error: None\nfile: Ok(8)\n",
+            format!(
+                "{REFUSAL}: seccomp failed with EPERM: this kernel or its profile has no \
+                 seccomp filter that kills the process"
+            )
+        )
+    );
+    assert!(dropped, "the connected stream was dropped unused");
 }
 
+/// The host observes the filter, with or without Landlock under it: the report says
+/// which, and the host cannot see more.
 #[test]
-fn the_host_accepts_a_confined_process_and_refuses_a_low_report_of_it() {
-    let fixture = Fixture::new();
-    let mut child = Child::start("stay confined", &fixture, "");
-    let stream = fixture.accept(&mut child).unwrap();
-    // The connection is made before the filter: wait for the report of confinement.
-    child.reported(&confined_line());
-    let abi = landlock::enforced_abi(landlock::abi().unwrap());
-    confinement::verify_web(child.id(), &report_of(abi), &[]).unwrap();
-    confinement::verify_web(child.id(), &report_of(3), &[&fixture.file]).unwrap();
-    confinement::verify_web(
-        child.id(),
-        &Enforcement {
-            landlock_abi: Some(abi),
-            seccomp: true,
-        },
-        &[],
-    )
-    .unwrap();
-    for low in [0, 1, 2] {
-        let error = confinement::verify_web(child.id(), &report_of(low), &[]).unwrap_err();
+fn the_host_accepts_a_confined_process_with_or_without_landlock() {
+    for refused in LAYERINGS {
+        let fixture = Fixture::new();
+        let mut child = Child::start_under(refused, "stay confined", &fixture, "");
+        let stream = fixture.accept(&mut child).unwrap();
+        // The connection is made before the filter: wait for the report of
+        // confinement.
+        child.reported(&confined_line_under(refused));
+        for report in [FILTER_ALONE, report_of(1), report_of(3), report_of(7)] {
+            confinement::verify_web(child.id(), &report, &[]).unwrap();
+            confinement::verify_web(child.id(), &report, &[&fixture.file]).unwrap();
+            let seccomp = Enforcement {
+                seccomp: true,
+                ..report
+            };
+            confinement::verify_web(child.id(), &seccomp, &[]).unwrap();
+        }
+        let error = confinement::verify_web(child.id(), &report_of(0), &[]).unwrap_err();
         assert_eq!(
             error.to_string(),
-            format!("{REFUSAL}: the ready line reports Landlock ABI {low}, below 3")
+            format!("{REFUSAL}: the ready line reports Landlock ABI 0, which is no ABI")
         );
+        drop(stream);
+        assert_eq!(child.finish(), (Ended::Exited(0), String::new()));
     }
-    let error = confinement::verify_web(
-        child.id(),
-        &Enforcement {
-            landlock_abi: None,
-            seccomp: true,
-        },
-        &[],
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        format!("{REFUSAL}: the ready line reports no Landlock domain")
-    );
-    drop(stream);
-    assert_eq!(child.finish(), (Ended::Exited(0), String::new()));
 }
 
 #[test]
 fn the_host_refuses_a_process_that_is_not_confined() {
-    // This test process itself: it installed no filter, whatever it inherited.
-    let text = confinement::verify_web(std::process::id(), &report_of(7), &[])
-        .unwrap_err()
-        .to_string();
-    if runs_unfiltered() {
-        assert_eq!(
-            text,
-            format!("{REFUSAL}: the web process has not set no-new-privileges (NoNewPrivs: 0)")
-        );
-    } else {
-        assert!(
-            text.starts_with(&format!("{REFUSAL}: the web process")),
-            "{text}"
-        );
+    // This test process itself: it installed no filter, whatever it inherited and
+    // whatever is reported of it.
+    for report in [report_of(7), FILTER_ALONE] {
+        let text = confinement::verify_web(std::process::id(), &report, &[])
+            .unwrap_err()
+            .to_string();
+        if runs_unfiltered() {
+            assert_eq!(
+                text,
+                format!("{REFUSAL}: the web process has not set no-new-privileges (NoNewPrivs: 0)")
+            );
+        } else {
+            assert!(
+                text.starts_with(&format!("{REFUSAL}: the web process")),
+                "{text}"
+            );
+        }
     }
 }
 
@@ -1528,21 +2042,23 @@ fn the_host_refuses_a_process_with_no_new_privileges_but_no_filter() {
     let fixture = Fixture::new();
     let mut child = Child::start("privileges only", &fixture, "");
     child.reported("ready\n");
-    let text = confinement::verify_web(child.id(), &report_of(7), &[])
-        .unwrap_err()
-        .to_string();
-    if runs_unfiltered() {
-        assert_eq!(
-            text,
-            format!("{REFUSAL}: the web process runs without a seccomp filter (Seccomp: 0)")
-        );
-    } else {
-        assert!(
-            text.starts_with(&format!(
-                "{REFUSAL}: the web process installed no seccomp filter of its own"
-            )),
-            "{text}"
-        );
+    for report in [report_of(7), FILTER_ALONE] {
+        let text = confinement::verify_web(child.id(), &report, &[])
+            .unwrap_err()
+            .to_string();
+        if runs_unfiltered() {
+            assert_eq!(
+                text,
+                format!("{REFUSAL}: the web process runs without a seccomp filter (Seccomp: 0)")
+            );
+        } else {
+            assert!(
+                text.starts_with(&format!(
+                    "{REFUSAL}: the web process installed no seccomp filter of its own"
+                )),
+                "{text}"
+            );
+        }
     }
     assert!(!child.ended());
 }
@@ -1570,8 +2086,18 @@ fn the_host_refuses_a_process_that_no_longer_exists() {
 /// The child of the next test, as the "host": a process under a profile that
 /// allows everything, which starts one child that only inherits the profile and one
 /// that confines itself, and checks both as the host does.
-fn host_under_a_profile(report: &Report, rendezvous: &Path) {
-    profile::enter(&profile::refusing(&[], 0)).unwrap();
+fn host_under_a_profile(report: &Report, rendezvous: &Path, profile: &str) {
+    let (program, expected) = match profile {
+        "that allows everything" => (profile::refusing(&[], 0), report_of(3)),
+        "that refuses Landlock" => (
+            profile::profile(RefusedCall::LandlockCreateRuleset),
+            FILTER_ALONE,
+        ),
+        other => panic!("an unknown profile: {other}"),
+    };
+    profile::enter(&program).unwrap();
+    // The question is asked under the profile, as the host asks it.
+    report.line(&format!("supported: {:?}", super::supported().is_ok()));
     let inner = rendezvous.with_file_name("inner");
     let listener = UnixListener::bind(&inner).unwrap();
     let (mut wake, waiting) = UnixStream::pair().unwrap();
@@ -1586,9 +2112,12 @@ fn host_under_a_profile(report: &Report, rendezvous: &Path) {
         // SAFETY: closes every descriptor but the three standard ones.
         unsafe { libc::close_range(3, libc::c_uint::MAX, 0) };
         match confinement::confine_web(&inner) {
-            Ok((mut stream, _)) => {
-                let _ = stream.read(&mut [0u8]);
-                0
+            // Its exit status says whether it applied the layers this profile leaves.
+            Ok(mut confined) => {
+                let _ = confined.stream.read(&mut [0u8]);
+                let landlock = confined.enforcement.landlock_abi.is_some();
+                let expected = expected.landlock_abi.is_some() && kernel_landlock().is_ok();
+                i32::from(landlock != expected)
             }
             Err(_) => 9,
         }
@@ -1597,7 +2126,7 @@ fn host_under_a_profile(report: &Report, rendezvous: &Path) {
     // The connection is made before the filter: wait until the filter holds.
     let until = Instant::now() + WAIT;
     let accepted = loop {
-        match confinement::verify_web(web as u32, &report_of(3), &[]) {
+        match confinement::verify_web(web as u32, &expected, &[]) {
             Ok(()) => break "accepted".to_owned(),
             Err(error) if Instant::now() > until => break error.to_string(),
             Err(_) => std::thread::sleep(Duration::from_millis(2)),
@@ -1642,21 +2171,25 @@ fn fork_then(body: impl FnOnce() -> i32) -> libc::pid_t {
 }
 
 /// Under a container's own profile every process has a filter. The host then
-/// accepts only a child with one more than its own.
+/// accepts only a child with one more than its own, whether the profile lets the
+/// child use Landlock or not.
 #[test]
 fn under_a_profile_the_host_tells_an_inherited_filter_from_the_web_processs_own() {
-    let fixture = Fixture::new();
-    let (ended, report) = Child::start("host under a profile", &fixture, "").finish();
-    assert_eq!(ended, Ended::Exited(0), "{report}");
-    let mut lines = report.lines();
-    let refused = lines.next().unwrap();
-    assert!(
-        refused.starts_with(&format!(
-            "{REFUSAL}: the web process installed no seccomp filter of its own (it has "
-        )),
-        "{report}"
-    );
-    assert_eq!(lines.next(), Some("accepted"), "{report}");
-    assert_eq!(lines.next(), Some("plain 0 web 1"), "{report}");
-    assert_eq!(lines.next(), Some("web exited 0"), "{report}");
+    for profile in ["that allows everything", "that refuses Landlock"] {
+        let fixture = Fixture::new();
+        let (ended, report) = Child::start("host under a profile", &fixture, profile).finish();
+        assert_eq!(ended, Ended::Exited(0), "{report}");
+        let mut lines = report.lines();
+        assert_eq!(lines.next(), Some("supported: true"), "{report}");
+        let refused = lines.next().unwrap();
+        assert!(
+            refused.starts_with(&format!(
+                "{REFUSAL}: the web process installed no seccomp filter of its own (it has "
+            )),
+            "{report}"
+        );
+        assert_eq!(lines.next(), Some("accepted"), "{report}");
+        assert_eq!(lines.next(), Some("plain 0 web 1"), "{report}");
+        assert_eq!(lines.next(), Some("web exited 0"), "{report}");
+    }
 }
