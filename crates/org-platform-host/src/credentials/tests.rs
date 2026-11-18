@@ -121,9 +121,9 @@ fn on_a_refusing_build_every_location_refuses_first() {
         suffix: "",
     });
     let refused = CredentialError::Refused(refusal());
-    let Err(error) = credentials(directory) else {
-        panic!("a directory that is open to others was accepted");
-    };
+    // No real adapter accepts a directory that is open to others.
+    let error = credentials(directory).err();
+    let error = error.expect("a directory that is open to others was accepted");
     assert_eq!(std::fs::read_dir(&anchor).unwrap().count(), 0);
     if error != refused {
         return;
