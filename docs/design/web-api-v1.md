@@ -611,10 +611,15 @@ returning 404 confirms that.
   web connection only. The browser DTOs are `org_proto::gateway::organizations`
   (`SelectedCreateParams`, `SelectedOrganizationView`, `SelectedOrganizationList`,
   `host_operation_id`), pinned by `test-vectors/v2/gateway-organizations.json`
-  (18 cases). The list always asks the host. The older gateway `OrganizationView`
-  and its vectors remain because the UI reader still reads them; they are deleted
-  when the create page and the welcome list move to the real API (A4.5). The UI's
-  lookup reader still refuses `-` in a lookup ID and is widened in the same step.
+  (18 cases). The list always asks the host.
+- The UI's create page and organizations page read these routes through
+  `apps/agentic-org-ui/src/lib/platform/organizations` (A4.5); the UI's older
+  organization readers (`readOrganization`, `readOrganizationList`,
+  `readCreateRequest`) are deleted, and its lookup reader accepts `-` in a lookup
+  ID. The older Rust gateway `OrganizationView` (`gateway/views.rs`, with
+  `OrganizationCreateOutcome`, `OrganizationCreateLookup` and the gateway
+  `OrganizationList`) still exists: only `org-proto`'s own vector tests
+  (`gateway/tests.rs`) use it, and no route, host call or UI reader does.
 - `POST /api/v1/organizations/operations/{id}/cancel` is not served (JSON 404): no
   host call cancels a create, so a reserved name and slug stay reserved until the
   create completes (FC-188, deferred). The lookup state `abandoned` of §5 is
