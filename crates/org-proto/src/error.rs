@@ -69,7 +69,7 @@ pub enum ErrorCode {
     /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
     /// signature failed for `office.restart`, an app-only command
     /// (`member.set_run_mode`, `project.create`, `work.delete`) arrived on a connection that is
-    /// not the app's, `msg.bind` refused a member or a credential (it fails closed), or
+    /// not the app's, `msg.bind` refused a member (it fails closed), or
     /// `org.snapshot` or `subscribe` came on an office server connection that isn't bound (ADR-0003 §2.1.4;
     /// unlike `who`, which answers that with `not_bound`).
     NotAuthorized,

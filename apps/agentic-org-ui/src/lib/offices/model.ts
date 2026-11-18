@@ -257,7 +257,7 @@ export function copyDetails(o: OfficeInfo, statusLabel: string, now: Date, appVe
 
 /** What can be done about a stopped office (spec §3.3): the button's words, or why there is none. */
 export interface RestartAction {
-	/** "Restart office", "Try again" or "Start office"; absent when the contract refuses a restart for this reason. */
+	/** "Restart office" or "Start office"; absent when the contract refuses a restart for this reason. */
 	label?: string;
 	/** A line instead of a button (a host that can't restart from here). */
 	note?: string;
