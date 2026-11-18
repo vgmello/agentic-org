@@ -699,16 +699,19 @@ on the offers of design section 10.
 - **Outcome:** an agent or person asks a question with choices, a yes/no or free text;
   the other answers in chat; the asker gets the answer, or a timeout after the wait.
 - **Build:**
-  - An ask carries the question schema, an optional default, `required`, and how long
-    the asker waits (10 minutes unless stated).
+  - An ask carries one to eight questions in the question schema, each with an optional
+    default, plus `required` and how long the asker waits (10 minutes unless stated).
+    All its questions are answered together, by a person in one form or by an agent in
+    one `msg reply` that names each question by its ID.
   - The answer is the answerer's own record; the asker's office records the one close
     outcome.
   - The question components in the product's chat, built from shadcn-svelte and Bits UI:
     single choice, multiple choice, yes/no, free text. A default is preselected.
   - A required ask that is not answered in time returns "required answer pending". The
     suspension that follows is increment C6.
-- **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel;
-  answering with `msg reply`; `msg withdraw`; and the `timed_out` and `withdrawn`
+- **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel, with
+  one question in flags or several in a file (`--input-format yaml`); answering with
+  `msg reply --answer`; `msg withdraw`; and the `timed_out` and `withdrawn`
   outcomes ([command line design](design/agent-os-command-line.md), sections 2.3 and 3.3; CLI-14).
 - **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
   [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
