@@ -183,6 +183,47 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     );
 }
 
+/// A named instance without `--port` takes the first free port from 7421 (7420 is
+/// `default`'s). The test holds 7421 when it can, so the named instance must skip it.
+#[test]
+fn a_named_instance_takes_the_first_free_port_from_7421() {
+    let account = Account::new();
+    let held = std::net::TcpListener::bind(("127.0.0.1", 7421)).ok();
+    let output = account.run(&["setup", "--name", "lab"]);
+    let (out, err) = text(&output);
+    assert!(output.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.contains("Setting up instance \"lab\"."), "{out}");
+    let port: u16 = out
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Address: http://127.0.0.1:"))
+        .and_then(|p| p.trim_end_matches('/').parse().ok())
+        .unwrap_or_else(|| panic!("no address in:\n{out}"));
+    assert!(
+        port >= 7422,
+        "7421 is held by the test or another program: {port}"
+    );
+    assert_ne!(port, 7420);
+    drop(held);
+    // The unit serves the named instance, and a rerun keeps the frozen port even though
+    // 7421 may be free now.
+    let pids = account.service_pids();
+    assert_eq!(pids.len(), 1);
+    let unit = account.file(&pids[0].0, "unit");
+    assert!(
+        String::from_utf8_lossy(&unit).contains("a:serve\0a:--name\0a:lab"),
+        "{unit:?}"
+    );
+    let again = account.run(&["setup", "--name", "lab"]);
+    let (out2, err2) = text(&again);
+    assert!(again.status.success(), "stdout:\n{out2}\nstderr:\n{err2}");
+    assert!(
+        out2.contains(&format!("Address: http://127.0.0.1:{port}")),
+        "{out2}"
+    );
+    assert!(link_token(&out2).is_none(), "{out2}");
+    assert_eq!(account.service_pids(), pids);
+}
+
 #[test]
 fn an_occupied_port_is_refused_and_nothing_is_saved() {
     let account = Account::new();

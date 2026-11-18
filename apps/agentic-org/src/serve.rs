@@ -79,12 +79,15 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
     let name = args.name.clone();
     #[cfg_attr(not(debug_assertions), allow(unused_mut))]
     let mut config = config(args)?;
-    // A development build serving a registered instance admits its own executable as the
-    // unsigned development CLI peer (setup and `admin` run the same binary), unless the build
-    // names another one. Logged loudly by the host's app policy; release builds never do this.
+    // Release builds have no `dev_app_path` field: no development peer can be configured.
     #[cfg(debug_assertions)]
-    if name.is_some() && config.dev_app_path.is_none() {
-        config.dev_app_path = std::env::current_exe().ok();
+    {
+        config.dev_app_path = dev_cli_peer(
+            Build::CURRENT,
+            name.is_some(),
+            config.dev_app_path.take(),
+            || std::env::current_exe().ok(),
+        );
     }
     let host = match name {
         Some(name) => Host::start_registered(config, Some(&name)),
@@ -96,6 +99,26 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
     waited
         .map(drop)
         .map_err(|e| format!("waiting for a signal: {e}"))
+}
+
+/// The unsigned development CLI peer the host's app policy admits. A debug build serving a
+/// registered instance admits its own executable (setup and `admin` run the same binary)
+/// unless the build names another one; the host logs it loudly. A release build keeps what
+/// [`Config::trusted`] set (no development app), and its app policy has no development-app
+/// rule at all (`AppPolicy::with_dev_app` and `Config::dev_app_path` exist only in debug
+/// builds, so release code never calls this).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+fn dev_cli_peer(
+    build: Build,
+    named: bool,
+    built_in: Option<PathBuf>,
+    current_exe: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    match (build, named, built_in) {
+        (Build::Release, _, built_in) => built_in,
+        (Build::Debug, true, None) => current_exe(),
+        (Build::Debug, _, built_in) => built_in,
+    }
 }
 
 /// A release build's config: only what it was built with.
@@ -274,5 +297,32 @@ mod tests {
         let parsed =
             parse_args(args(&["--name", "a", "--server-bin", "srv"]), Build::Debug).unwrap();
         assert_eq!(parsed.server_bin, Some("srv".into()));
+    }
+
+    #[test]
+    fn only_a_debug_build_serving_a_named_instance_admits_its_own_executable() {
+        let own = || Some(PathBuf::from("/dev/build/agentic-org"));
+        let built_in = PathBuf::from("/dev/App.app/Contents/MacOS/App");
+        // A release build never admits a development CLI peer, named or not.
+        assert_eq!(dev_cli_peer(Build::Release, true, None, own), None);
+        assert_eq!(dev_cli_peer(Build::Release, false, None, own), None);
+        assert_eq!(
+            dev_cli_peer(Build::Release, true, None, || -> Option<PathBuf> {
+                panic!("a release build never asks for its own executable")
+            }),
+            None
+        );
+        // A debug build serving a registered instance admits itself unless the build names
+        // another development app; the legacy home entry admits only the built-in one.
+        assert_eq!(dev_cli_peer(Build::Debug, true, None, own), own());
+        assert_eq!(
+            dev_cli_peer(Build::Debug, true, Some(built_in.clone()), own),
+            Some(built_in.clone())
+        );
+        assert_eq!(dev_cli_peer(Build::Debug, false, None, own), None);
+        assert_eq!(
+            dev_cli_peer(Build::Debug, false, Some(built_in.clone()), own),
+            Some(built_in)
+        );
     }
 }
