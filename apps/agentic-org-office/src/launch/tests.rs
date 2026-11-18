@@ -80,8 +80,9 @@ fn request(version: u8, op: u8, key: bool) -> Request {
 }
 fn assert_auth(auth: &LaunchAuth, version: u8) {
     match (auth, version) {
-        (LaunchAuth::Legacy(actual), 2) => assert_eq!(actual, &token()),
-        (LaunchAuth::Grants { _key }, 3) => assert_eq!(_key, &grant()),
+        // The retired v2 start carries no grant key: its app token is not an authority.
+        (auth, 2) => assert!(auth.grant_key().is_none()),
+        (auth, 3) => assert_eq!(auth.grant_key(), Some(&grant())),
         _ => panic!("wrong authority kind"),
     }
 }

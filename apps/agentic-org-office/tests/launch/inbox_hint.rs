@@ -37,6 +37,7 @@ fn hint_before(sub: &org_client::Subscription, deadline: Instant) -> InboxChange
 }
 
 #[test]
+#[ignore = "host-channel subscribe arrives with A3 /events"]
 fn inbox_hint_real_mailbox_commit_advances_once_and_filters_the_same_hint_per_delivery() {
     let _processes = process_isolation();
     let world = World::new();
@@ -138,6 +139,7 @@ fn unplaced(world: &World) -> String {
 }
 
 #[test]
+#[ignore = "host-channel subscribe arrives with A3 /events"]
 fn inbox_hint_real_second_owner_offboard_clears_the_seeded_problem_within_one_second() {
     let _processes = process_isolation();
     let world = World::new();

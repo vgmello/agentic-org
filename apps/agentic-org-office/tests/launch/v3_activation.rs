@@ -441,39 +441,31 @@ fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
 #[test]
 fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() {
     let _process = process_isolation();
-    use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-    };
+    use org_proto::org::MemberAddAgent;
     let world = World::new();
-    // Seed through the supported Legacy owner path, then adopt/start the same office under v3.
-    let mut legacy = started(&world);
-    let seed = Client::connect(socket(&world)).unwrap();
-    bind(&seed, token()).unwrap();
+    // Seed through the library, then start under v3 and hire through the owner's grant.
+    seed(&world);
+    let owner_id = {
+        let office =
+            org_office::Office::open(world.folder(OFFICE), org_office::Key::from_db_key(db_key()))
+                .unwrap();
+        let owner = office
+            .org_snapshot()
+            .unwrap()
+            .members
+            .into_iter()
+            .find(|m| m.owner)
+            .unwrap()
+            .id;
+        drop(office);
+        owner
+    };
     let member_id = "AGENT00000000000000000000A";
-    seed.call::<MemberAddAgent>(&MemberAddAgentParams {
-        command_id: command_id(6),
-        member_id: member_id.into(),
-        name: "Ada".into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: "ada".into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    })
-    .unwrap();
-    drop(seed);
-    assert!(legacy.host_goes_away().success());
-    let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
-    assert_eq!(session.event()["event"], "ready");
+    let mut live = owner::live(&world);
+    live.caller(Some(&owner_id))
+        .call::<MemberAddAgent>(&owner::hire(6, member_id, "Ada", "ada"))
+        .unwrap();
+    let mut session = live.session;
     let mut stdin = session.run.stdin.take().unwrap();
     let (sent, complete) = std::sync::mpsc::channel();
     let writer = std::thread::spawn(move || {
@@ -489,19 +481,22 @@ fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() 
     writer.join().unwrap();
     let client = Client::connect(socket(&world)).unwrap();
     assert_eq!(client.hello().unwrap().api_version, 1);
+    // No member is not a bind at all (the app-wide bind is gone); a person, with or without
+    // a token, is refused the same way as an unknown member.
     for (member, app_token, expected) in [
         (None, None, ErrorCode::InvalidRequest),
-        (None, Some(token()), ErrorCode::NotAuthorized),
+        (None, Some(token()), ErrorCode::InvalidRequest),
         (
             None,
             Some(AppToken::from_bytes([7; 32])),
-            ErrorCode::NotAuthorized,
+            ErrorCode::InvalidRequest,
         ),
         (
             Some("owner".into()),
             Some(token()),
             ErrorCode::NotAuthorized,
         ),
+        (Some("owner".into()), None, ErrorCode::NotAuthorized),
     ] {
         assert!(
             matches!(client.call::<MsgBind>(&MsgBindParams{member,app_token}),Err(org_client::ClientError::Api(error)) if error.code==expected)
@@ -783,6 +778,9 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
 
 #[path = "v3_activation/transfer.rs"]
 mod transfer;
+
+#[path = "v3_activation/owner.rs"]
+mod owner;
 
 fn selected_plan() -> org_proto::selected_bootstrap::PreparedV1 {
     let id = |n| format!("01900000-0000-7000-8000-{n:012x}");

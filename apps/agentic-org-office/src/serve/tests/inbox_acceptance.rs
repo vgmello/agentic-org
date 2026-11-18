@@ -77,6 +77,8 @@ struct Fixture {
     directory: Arc<Lookup>,
     feed: Arc<FakeFeed>,
     stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
+    sockets: AtomicUsize,
     clients_joined: Arc<AtomicUsize>,
     server: Option<std::thread::JoinHandle<()>>,
 }
@@ -103,7 +105,7 @@ impl Fixture {
         ports.directory = directory.clone();
         ports.feed = Box::new(feed.clone());
         ports.live = live;
-        let mut shared = Shared::new(&test_info(), &path, ports, token());
+        let mut shared = Shared::new(&test_info(), &path, ports, launch_key());
         shared.register_inbox(
             Hq {
                 sources: vec![counts.clone()],
@@ -115,9 +117,10 @@ impl Fixture {
         let shared = Arc::new(shared);
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
-        let server = std::thread::spawn(move || {
-            run(&listener, &shared, &|| stopping.load(Ordering::SeqCst))
-        });
+        let server = {
+            let shared = Arc::clone(&shared);
+            std::thread::spawn(move || run(&listener, &shared, &|| stopping.load(Ordering::SeqCst)))
+        };
         Self {
             _dir: dir,
             path,
@@ -125,21 +128,30 @@ impl Fixture {
             directory,
             feed,
             stop,
+            shared,
+            sockets: AtomicUsize::new(0),
             clients_joined: Arc::new(AtomicUsize::new(0)),
             server: Some(server),
         }
     }
+    /// A client acting as the person `id` through a grant: no frame on the office socket binds
+    /// a person, so it connects to a socket of its own whose one connection starts grant-bound.
     fn client(&self, id: &str) -> JoinedClient {
+        let n = self.sockets.fetch_add(1, Ordering::SeqCst);
+        let path = self.path.with_file_name(format!("g{n}"));
+        super::grant_socket(&self.shared, &path, id);
+        JoinedClient {
+            client: org_client::Client::connect(&path).unwrap(),
+            joined: Arc::clone(&self.clients_joined),
+        }
+    }
+    /// An agent bound by handle on the office socket itself: its bind looks the member up.
+    fn agent_client(&self, handle: &str) -> JoinedClient {
         let client = JoinedClient {
             client: org_client::Client::connect(&self.path).unwrap(),
             joined: Arc::clone(&self.clients_joined),
         };
-        client
-            .call::<MsgBind>(&MsgBindParams {
-                member: Some(id.into()),
-                app_token: Some(token()),
-            })
-            .unwrap();
+        client.bind_member(handle).unwrap();
         client
     }
     fn commit(&self, total: u64) {
@@ -263,7 +275,7 @@ fn failed_bind_keeps_client_teardown_inside_the_case_fence() {
     let fixture = Fixture::new();
     fixture.directory.failed.store(true, Ordering::SeqCst);
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _client = fixture.client(OWNER_ID);
+        let _client = fixture.agent_client(org_mailbox::testkit::fixture::ADA_HANDLE);
     }));
     assert!(failure.is_err(), "the real bind was not refused");
     assert_eq!(
@@ -272,7 +284,7 @@ fn failed_bind_keeps_client_teardown_inside_the_case_fence() {
         "bind failure escaped explicit joining before the case fence is released"
     );
     fixture.directory.failed.store(false, Ordering::SeqCst);
-    let client = fixture.client(OWNER_ID);
+    let client = fixture.agent_client(org_mailbox::testkit::fixture::ADA_HANDLE);
     assert_eq!(fixture.clients_joined.load(Ordering::SeqCst), 1);
     drop(client);
     assert_eq!(

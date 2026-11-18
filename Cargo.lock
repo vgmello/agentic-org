@@ -17,6 +17,7 @@ dependencies = [
  "org-office",
  "org-office-launch",
  "org-proto",
+ "org-socket",
  "org-spool",
  "serde",
  "serde_json",
@@ -44,6 +45,7 @@ dependencies = [
 name = "agentic-org-office"
 version = "0.0.0"
 dependencies = [
+ "agentic-org-office",
  "hmac",
  "libc",
  "org-client",

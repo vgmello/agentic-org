@@ -10,7 +10,7 @@ fn assert_transfer_fatal(run: &mut Run, case: &str) {
         "{case}"
     );
 }
-fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[RawFd]) {
+pub(super) fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[RawFd]) {
     send_until(
         socket,
         payload,

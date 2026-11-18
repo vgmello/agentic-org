@@ -45,7 +45,8 @@ impl Launch {
         Ok(match request {
             Request::V2(HostMessage::Start(s)) => Self::Start {
                 key: Key::from_db_key(s.db_key),
-                auth: s.app_token.into(),
+                // The retired v2 start carries no grant key; its app token is not accepted.
+                auth: LaunchAuth::without_grants(),
                 office: None,
             },
             Request::V2(HostMessage::Discard(_)) => Self::Discard { office: None },
@@ -68,7 +69,7 @@ impl Launch {
                 },
                 role: c.role,
                 key: Key::from_db_key(db_key),
-                auth: LaunchAuth::Grants { _key: grant_key },
+                auth: grant_key.into(),
                 instance: c.office.instance_id,
                 owner_member_id: c.owner_member_id,
                 hq_creation: c.hq_creation,
@@ -82,7 +83,7 @@ impl Launch {
                     },
             } => Self::Start {
                 key: Key::from_db_key(db_key),
-                auth: LaunchAuth::Grants { _key: grant_key },
+                auth: grant_key.into(),
                 office: Some(OfficeIdentity {
                     office_id: s.office_id,
                     instance_id: s.instance_id,

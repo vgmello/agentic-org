@@ -23,11 +23,9 @@ fn running(path: &Path, shared: &Arc<Shared>) -> Running {
 }
 fn auth(grants: bool) -> LaunchAuth {
     if grants {
-        LaunchAuth::Grants {
-            _key: org_proto::GrantKey::from_bytes([7; 32]),
-        }
+        LaunchAuth::from(org_proto::GrantKey::from_bytes([7; 32]))
     } else {
-        token().into()
+        LaunchAuth::without_grants()
     }
 }
 pub(super) fn principal_values() -> [Value; 3] {
@@ -77,22 +75,21 @@ fn operation_lookup_refuses_agents_and_anonymous_without_calling_owner_port_in_b
                 (
                     Binding::Member {
                         id: "agent".into(),
-                        with_app_token: false,
+                        via_grant: false,
                     },
                     false,
                 ),
-                (Binding::App, true),
                 (
                     Binding::Member {
                         id: "owner".into(),
-                        with_app_token: true,
+                        via_grant: true,
                     },
                     true,
                 ),
                 (
                     Binding::Member {
                         id: "pat".into(),
-                        with_app_token: true,
+                        via_grant: true,
                     },
                     true,
                 ),
@@ -183,13 +180,11 @@ fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generati
     ports.submit = Box::new(|_| panic!("principal must not submit or store a command"));
     ports.feed = Box::new(Arc::clone(&feed));
     let mailbox = Arc::clone(&ports.mailbox);
-    let shared = Arc::new(Shared::new(&test_info(), &path, ports, token()));
+    let shared = Arc::new(Shared::new(&test_info(), &path, ports, launch_key()));
     let _server = running(&path, &shared);
-    let mut client = Client::connect(&path);
-    assert!(matches!(
-        client.bind(Some("pat"), Some(token())),
-        org_proto::Outcome::Result(_)
-    ));
+    // A person binds only through a grant (no office-socket frame binds one); the connection
+    // starts grant-bound, so it can hold calls and subscribe.
+    let mut client = Client::grant_bound(&path, "pat");
     let _wait = client.call_later::<MsgWait>(&wait_params());
     until("wait is held", || mailbox.held_waits() == 1);
     assert!(matches!(
@@ -403,10 +398,8 @@ fn principal_refusal_precedes_even_the_live_member_lookup() {
             next: 0,
         };
         assert!(matches!(
-            client.bind(
-                Some(if grants { "ada" } else { "pat" }),
-                if grants { None } else { Some(token()) },
-            ),
+            // An agent binds tokenless in both modes; no person binds on the office socket.
+            client.bind(Some("ada"), None),
             org_proto::Outcome::Result(_)
         ));
         forbidden.store(true, Ordering::SeqCst);

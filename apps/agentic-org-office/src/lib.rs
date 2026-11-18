@@ -29,6 +29,8 @@ mod revocations;
 mod serve;
 mod signals;
 mod startup;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod transfer;
 mod zeroed;
 
