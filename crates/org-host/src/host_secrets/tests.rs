@@ -1148,7 +1148,7 @@ fn release_selection_constructs_only_an_eligible_platform_backend_without_io() {
         assert_eq!(calls.get(), 1);
         match org_platform_host::credentials::protected_store() {
             // Construction does not call SecItem* or create any item.
-            Ok(()) => assert!(result.is_ok()),
+            Ok(_) => assert!(result.is_ok()),
             Err(_) => assert_eq!(selection_error(result), SelectionError::Unsupported),
         }
     }
@@ -1175,7 +1175,7 @@ fn keychain_custody_names_the_instances_service_and_refuses_an_invalid_instance_
         ));
     }
     match org_platform_host::credentials::protected_store() {
-        Ok(()) => assert!(Custody::keychain(HOST_GROUP, HOST_INSTANCE).is_ok()),
+        Ok(_) => assert!(Custody::keychain(HOST_GROUP, HOST_INSTANCE).is_ok()),
         Err(_) => assert!(matches!(
             Custody::keychain(HOST_GROUP, HOST_INSTANCE),
             Err(SelectionError::Unsupported)

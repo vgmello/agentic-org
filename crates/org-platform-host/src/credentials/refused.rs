@@ -5,16 +5,34 @@
 
 use org_platform::Refused;
 
-use super::{refusal, CredentialError, CredentialLocation, ItemName, Listing, Secret, WriteError};
+use super::{
+    refusal, CredentialError, CredentialLocation, ItemName, Listing, ProtectedStore,
+    ReleaseDirectory, ReleaseItems, Secret, WriteError,
+};
 
 pub(super) enum Store {}
+
+/// No release directory is opened, so there is none to open a store below.
+pub(super) enum ReleaseRoot {}
 
 pub(super) fn open(_location: CredentialLocation<'_>) -> Result<Store, CredentialError> {
     Err(refusal().into())
 }
 
-pub(super) fn protected_store() -> Result<(), Refused> {
+pub(super) fn protected_store() -> Result<ProtectedStore, Refused> {
     Err(refusal())
+}
+
+pub(super) fn release_directory(
+    _location: &ReleaseDirectory<'_>,
+) -> Result<ReleaseRoot, CredentialError> {
+    Err(refusal().into())
+}
+
+impl ReleaseRoot {
+    pub(super) fn store(&self, _items: &ReleaseItems<'_>) -> Result<Store, CredentialError> {
+        match *self {}
+    }
 }
 
 impl Store {
@@ -76,6 +94,23 @@ mod tests {
         }
         assert_eq!(std::fs::read_dir(&anchor).unwrap().count(), 0);
         assert_eq!(protected_store(), Err(refusal()));
+        // A release directory is refused before its path is read: nothing is opened,
+        // checked, locked or made, whatever is asked of it.
+        let data_root = std::fs::File::open(&anchor).unwrap();
+        for (path, mount_point_required, expect_items) in [
+            (anchor.join("store"), false, false),
+            (anchor.clone(), true, true),
+            (std::path::PathBuf::from("relative/../path"), false, true),
+        ] {
+            let refused = release_directory(&ReleaseDirectory {
+                path: &path,
+                data_root: std::os::fd::AsFd::as_fd(&data_root),
+                mount_point_required,
+                expect_items,
+            });
+            assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
+        }
+        assert_eq!(std::fs::read_dir(&anchor).unwrap().count(), 0);
         let Refused::Unsupported { capability, os } = refusal();
         assert_eq!(capability, "credentials");
         assert_eq!(os, std::env::consts::OS);

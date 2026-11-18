@@ -17,9 +17,12 @@
 //! - A value is at most [`MAX_ITEM_BYTES`] long. A longer one is refused before
 //!   anything is written, and a stored item that is longer is
 //!   [`CredentialError::Corrupt`].
-//! - No error, `Debug` or `Display` output holds a secret byte or a path: errors are
-//!   kinds, a Keychain status or an I/O error kind. A [`Secret`] zeroes its bytes when
-//!   dropped and prints as `<redacted>`.
+//! - No error, `Debug` or `Display` output holds a secret byte or an item's name:
+//!   errors are kinds, a Keychain status or an I/O error kind. None holds a path
+//!   either, with one exception: a release directory that is refused when it opens
+//!   ([`CredentialError::Root`]) names the directory that broke a rule, because that
+//!   path is configuration, not a secret, and the host has to say which directory to
+//!   fix. A [`Secret`] zeroes its bytes when dropped and prints as `<redacted>`.
 //!
 //! # Systems
 //!
@@ -27,14 +30,20 @@
 //!   passwords of one service in one access group, readable after the first unlock on
 //!   this device only and never synchronized. [`CredentialLocation::Directory`] is the
 //!   directory store below.
-//! - GNU/Linux: the directory store. A Keychain location is refused, and there is no
-//!   protected store for a release yet ([`protected_store`]); increment X3 writes it.
-//! - Every other Unix target: every location is refused.
+//!   A release build's protected store is the Keychain ([`protected_store`]).
+//! - GNU/Linux: the directory store. A Keychain location is refused. A release
+//!   build's protected store is a release directory ([`release_directory`]): a
+//!   checked, locked directory outside the data root, below which the host opens
+//!   directory stores.
+//! - Every other Unix target: every location is refused, and there is no protected
+//!   store.
 //!
 //! # The directory store
 //!
-//! One directory of owner-only files, for development builds on macOS and GNU/Linux.
-//! Its layout and every check it makes are described in `directory.rs`.
+//! One directory of owner-only files: every development build's store on macOS and
+//! GNU/Linux, and the store of each item store below a release directory. Its layout
+//! and every check it makes are described in `directory.rs`; the release directory's
+//! own checks are described in `release.rs`.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
@@ -74,6 +83,18 @@ mod directory;
     any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))
 ))]
 mod adapter_tests;
+
+// The release directory's contract: its types and its entry, on every target.
+mod release;
+pub use release::{
+    release_directory, FilesystemClass, ReleaseDirectory, ReleaseItems, ReleaseRoot, RootRefusal,
+    RootRule,
+};
+
+// The release directory's rules, pure. Only the GNU/Linux adapter calls them; every
+// target tests them.
+#[cfg(any(all(target_os = "linux", target_env = "gnu"), test))]
+mod rules;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod testing;
@@ -173,10 +194,19 @@ pub fn credentials(location: CredentialLocation<'_>) -> Result<Credentials, Cred
     native::open(location).map(|store| Credentials { store })
 }
 
-/// Whether this system has a protected store for a release build's secrets: one that
-/// [`CredentialLocation::Keychain`] opens. macOS has. GNU/Linux has none until
-/// increment X3 writes its release store; no other target has one.
-pub fn protected_store() -> Result<(), Refused> {
+/// The kind of protected store a release build keeps its secrets in on this system.
+/// The host selects its store on this value and never on the system's name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtectedStore {
+    /// The Data Protection keychain (macOS): [`CredentialLocation::Keychain`] opens it.
+    Keychain,
+    /// A release directory (GNU/Linux): [`release_directory`] opens it.
+    ReleaseDirectory,
+}
+
+/// Which protected store a release build has on this system: the Keychain on macOS, a
+/// release directory on GNU/Linux. Every other target has none and refuses.
+pub fn protected_store() -> Result<ProtectedStore, Refused> {
     native::protected_store()
 }
 
@@ -315,11 +345,16 @@ fn zero(bytes: &mut [u8]) {
     std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Why a store call failed. Kinds only: never a secret byte, a name or a path.
+/// Why a store call failed. Kinds only: never a secret byte or an item's name, and a
+/// path only in [`CredentialError::Root`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum CredentialError {
     /// This system has no adapter for the location; nothing was read or changed.
     Refused(Refused),
+    /// [`release_directory`]: the release directory, or a directory above it, broke a
+    /// rule. This is the one error that names a path: the directory to fix. No item
+    /// operation returns it.
+    Root(RootRefusal),
     /// The text is not an [`ItemName`], or a directory name in a location is not one.
     InvalidName,
     /// The value is longer than [`MAX_ITEM_BYTES`]; nothing was written.
@@ -349,6 +384,7 @@ impl fmt::Display for CredentialError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Refused(refused) => refused.fmt(f),
+            Self::Root(refusal) => refusal.fmt(f),
             Self::InvalidName => f.write_str("the name is not a credential item name"),
             Self::TooLarge => f.write_str("the value is too large for a credential item"),
             Self::Exists => f.write_str("the credential item already exists"),
@@ -369,6 +405,7 @@ impl std::error::Error for CredentialError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Refused(refused) => Some(refused),
+            Self::Root(refusal) => Some(refusal),
             _ => None,
         }
     }

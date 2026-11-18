@@ -141,6 +141,9 @@ impl From<CredentialError> for Error {
             CredentialError::Os(status) => Self::Os(status),
             CredentialError::Io(kind) => Self::Io(kind),
             CredentialError::Refused(_) => Self::Io(io::ErrorKind::Unsupported),
+            // A release directory that broke a rule. Only opening one answers this; no item
+            // operation does. Kinds only here: the path is reported where the store is opened.
+            CredentialError::Root(_) => Self::Unsafe,
         }
     }
 }

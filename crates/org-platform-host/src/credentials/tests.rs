@@ -5,8 +5,9 @@ use std::io;
 use std::path::Path;
 
 use super::{
-    credentials, protected_store, refusal, CredentialError, CredentialLocation, DirectoryStore,
-    ItemName, KeychainItems, Secret, Sharing, WriteError, MAX_ITEM_BYTES, MAX_NAME_BYTES,
+    credentials, protected_store, refusal, release_directory, CredentialError, CredentialLocation,
+    DirectoryStore, FilesystemClass, ItemName, KeychainItems, ProtectedStore, ReleaseDirectory,
+    RootRefusal, RootRule, Secret, Sharing, WriteError, MAX_ITEM_BYTES, MAX_NAME_BYTES,
 };
 
 #[test]
@@ -129,6 +130,15 @@ fn on_a_refusing_build_every_location_refuses_first() {
         return;
     }
     assert_eq!(protected_store(), Err(refusal()));
+    let data_root = std::fs::File::open(&anchor).unwrap();
+    let release = release_directory(ReleaseDirectory {
+        path: &anchor,
+        data_root: std::os::fd::AsFd::as_fd(&data_root),
+        mount_point_required: false,
+        expect_items: false,
+    });
+    assert_eq!(release.err().as_ref(), Some(&refused));
+    assert_eq!(std::fs::read_dir(&anchor).unwrap().count(), 0);
     for location in [
         CredentialLocation::Keychain(KeychainItems {
             access_group: "TEAMID1234.org.agentic.host",
@@ -160,4 +170,84 @@ fn a_location_prints_its_kind_and_no_path() {
     for hidden in ["/secret/place", "host-secrets", "an-instance"] {
         assert!(!printed.contains(hidden), "{printed}");
     }
+}
+
+/// The host selects its release store on [`protected_store`]'s answer. Whatever that is
+/// on this target, the release directory's entry agrees with it: it reads a location
+/// only where a release directory is the protected store, and refuses as unsupported
+/// everywhere else, before the location is looked at.
+#[test]
+fn the_protected_store_kind_says_which_entry_opens_a_release_builds_store() {
+    let fixture = tempfile::tempdir().unwrap();
+    let data_root = std::fs::File::open(fixture.path()).unwrap();
+    // A location no adapter can accept: its path is relative.
+    let outcome = release_directory(ReleaseDirectory {
+        path: Path::new("relative/credentials"),
+        data_root: std::os::fd::AsFd::as_fd(&data_root),
+        mount_point_required: false,
+        expect_items: true,
+    })
+    .err();
+    let unsupported = Some(CredentialError::Refused(refusal()));
+    match protected_store() {
+        Ok(ProtectedStore::ReleaseDirectory) => assert_eq!(
+            outcome,
+            Some(CredentialError::Root(RootRefusal {
+                rule: RootRule::Relative,
+                path: "relative/credentials".into(),
+            }))
+        ),
+        // The Keychain is the store: nothing falls back to a directory.
+        Ok(ProtectedStore::Keychain) => assert_eq!(outcome, unsupported),
+        Err(refused) => {
+            assert_eq!(refused, refusal());
+            assert_eq!(outcome, unsupported);
+        }
+    }
+    assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 0);
+}
+
+/// The one error that names a path: a refused release directory. It names the
+/// directory and the rule, on one line, and its `Debug` output of a location does not.
+#[test]
+fn a_root_refusal_is_the_one_error_with_a_path_and_it_names_the_directory_and_the_rule() {
+    let refused = CredentialError::Root(RootRefusal {
+        rule: RootRule::Filesystem {
+            class: FilesystemClass::Memory,
+            kind: 0x0102_1994,
+        },
+        path: "/run/secrets".into(),
+    });
+    let text = refused.to_string();
+    assert!(text.starts_with("/run/secrets: "), "{text}");
+    assert!(
+        text.contains("a memory filesystem") && text.contains("0x1021994"),
+        "{text}"
+    );
+    assert!(!text.contains('\n'), "{text}");
+    assert!(std::error::Error::source(&refused).is_some());
+    let missing = RootRefusal {
+        rule: RootRule::CredentialsMissing,
+        path: "/secrets".into(),
+    };
+    assert!(
+        missing
+            .to_string()
+            .starts_with("/secrets: credentials missing"),
+        "{missing}"
+    );
+    let fixture = tempfile::tempdir().unwrap();
+    let data_root = std::fs::File::open(fixture.path()).unwrap();
+    let location = ReleaseDirectory {
+        path: Path::new("/secret/place"),
+        data_root: std::os::fd::AsFd::as_fd(&data_root),
+        mount_point_required: false,
+        expect_items: true,
+    };
+    let printed = format!("{location:?}");
+    assert!(printed.starts_with("ReleaseDirectory"), "{printed}");
+    assert!(
+        !printed.contains("secret") && !printed.contains('/'),
+        "{printed}"
+    );
 }

@@ -223,6 +223,11 @@ impl From<CredentialError> for KeyStoreError {
                 io::ErrorKind::Unsupported,
                 "this system has no such key store",
             )),
+            // Only opening a release directory answers this; no item operation does. The path
+            // is reported where the store is opened, never here.
+            CredentialError::Root(_) => {
+                refused("the credential directory or a directory above it broke a rule")
+            }
             CredentialError::TooLarge => refused("the item is too large to be a key"),
             CredentialError::Unsafe => refused(
                 "the key folder or a file in it isn't this user's alone (folder mode 0700, file \

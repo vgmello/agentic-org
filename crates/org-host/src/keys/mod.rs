@@ -418,7 +418,7 @@ mod tests {
         // none to choose.
         let chosen = release_store(Some(GROUP), || Some(entitled));
         match org_platform_host::credentials::protected_store() {
-            Ok(()) => assert!(chosen.is_ok()),
+            Ok(_) => assert!(chosen.is_ok()),
             Err(_) => assert!(matches!(chosen, Err(StoreError::NoKeychainGroup))),
         }
     }

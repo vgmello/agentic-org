@@ -21,6 +21,7 @@
 #[cfg(not(unix))]
 compile_error!("org-platform-host builds only for Unix targets");
 
+mod account;
 pub mod admission;
 pub mod credentials;
 pub mod names;
