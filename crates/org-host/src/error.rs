@@ -9,8 +9,13 @@ use std::path::PathBuf;
 pub enum HostError {
     /// The office home isn't an absolute path.
     RelativeHome { path: PathBuf },
-    /// A socket in this office home would be longer than macOS allows.
-    SocketPathTooLong { path: PathBuf, len: usize },
+    /// A socket in this office home would be longer than this system allows.
+    SocketPathTooLong {
+        path: PathBuf,
+        len: usize,
+        /// The most bytes this system allows.
+        limit: usize,
+    },
     /// The office home or one of its folders isn't a real directory owned by this user.
     UnsafeHome { path: PathBuf },
     /// Another host holds this office home's `host.lock`.
@@ -50,12 +55,11 @@ impl fmt::Display for HostError {
                     path.display()
                 )
             }
-            HostError::SocketPathTooLong { path, len } => write!(
+            HostError::SocketPathTooLong { path, len, limit } => write!(
                 f,
-                "the office home is too long: the socket {} would be {len} bytes, and macOS \
-                 allows at most {}; use a shorter office home",
-                path.display(),
-                org_proto::location::MAX_SOCKET_PATH_BYTES
+                "the office home is too long: the socket {} would be {len} bytes, and this \
+                 system allows at most {limit}; use a shorter office home",
+                path.display()
             ),
             HostError::UnsafeHome { path } => write!(
                 f,

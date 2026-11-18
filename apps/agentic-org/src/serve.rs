@@ -88,7 +88,7 @@ fn config(_args: Args) -> Result<Config, String> {
 fn config(args: Args) -> Result<Config, String> {
     let home = match args.home {
         Some(home) => home,
-        None => org_proto::location::default_office_home()
+        None => org_host::default_office_home()
             .ok_or("no office home: neither ORG_OFFICE_HOME nor HOME is an absolute path")?,
     };
     let server_bin = match args.server_bin {
