@@ -100,37 +100,28 @@ pub struct OfficePorts {
 }
 
 /// The launch authority: the grant key that verifies the grants persons and the owner act with
-/// on host channels, retained and zeroed when `Shared` drops. Grants are the only person path.
-/// `None` only on the retired v2 start, which carries no grant key: no grant verifies there.
+/// on host channels, retained and zeroed when `Shared` drops. Grants are the only person path,
+/// and every launch carries a grant key in its handoff.
 pub(crate) struct LaunchAuth {
-    grant_key: Option<org_proto::GrantKey>,
+    grant_key: org_proto::GrantKey,
 }
 
 impl From<org_proto::GrantKey> for LaunchAuth {
-    fn from(key: org_proto::GrantKey) -> Self {
-        Self {
-            grant_key: Some(key),
-        }
+    fn from(grant_key: org_proto::GrantKey) -> Self {
+        Self { grant_key }
     }
 }
 
 impl LaunchAuth {
-    /// The retired v2 start: no grant key, so no grant verifies (launch step 3 removes it).
-    pub(crate) fn without_grants() -> Self {
-        Self { grant_key: None }
-    }
-
     /// The grant key, for tests of the launch normalization.
     #[cfg(test)]
-    pub(crate) fn grant_key(&self) -> Option<&org_proto::GrantKey> {
-        self.grant_key.as_ref()
+    pub(crate) fn grant_key(&self) -> &org_proto::GrantKey {
+        &self.grant_key
     }
 
-    /// Whether `grant` carries this launch's MAC; always false without a grant key.
+    /// Whether `grant` carries this launch's MAC.
     pub(crate) fn verifies(&self, grant: &org_proto::Grant) -> bool {
-        self.grant_key
-            .as_ref()
-            .is_some_and(|key| crate::grant::verify(key, grant))
+        crate::grant::verify(&self.grant_key, grant)
     }
 }
 
@@ -1413,7 +1404,7 @@ mod tests {
             ports,
             LaunchAuth::from(org_proto::GrantKey::from_bytes([7; 32])),
         );
-        assert!(shared.auth.grant_key() == Some(&org_proto::GrantKey::from_bytes([7; 32])));
+        assert!(shared.auth.grant_key() == &org_proto::GrantKey::from_bytes([7; 32]));
         for (params, expected) in [
             (
                 serde_json::json!({"app_token":"07".repeat(32)}),
