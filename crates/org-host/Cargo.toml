@@ -17,6 +17,7 @@ org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 org-platform = { path = "../org-platform" }
+org-platform-host = { path = "../org-platform-host" }
 org-release = { path = "../org-release" }
 serde.workspace = true
 serde_json.workspace = true
@@ -37,6 +38,8 @@ security-framework-sys.workspace = true
 core-foundation.workspace = true
 
 [dev-dependencies]
+# Test locations and the flush steps the platform counted (`dirs::testing`, `fs::testing`).
+org-platform = { path = "../org-platform", features = ["test-support"] }
 tempfile.workspace = true
 ring = "=0.17.14"
 syn = { version = "=2.0.119", features = ["full", "visit"] }

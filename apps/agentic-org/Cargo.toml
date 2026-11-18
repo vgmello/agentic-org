@@ -44,6 +44,8 @@ agentic-org = { path = ".", features = ["test-support"] }
 org-office-launch = { path = "../../crates/org-office-launch" }
 org-host-control = { path = "../../crates/org-host-control" }
 org-socket = { path = "../../crates/org-socket" }
+# This system's socket path limit, for the tests that fill a home up to it.
+org-platform = { path = "../../crates/org-platform" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

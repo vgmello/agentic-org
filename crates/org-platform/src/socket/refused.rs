@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use std::io;
 use std::marker::PhantomData;
 use std::os::fd::{OwnedFd, RawFd};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::Refused;
 
@@ -19,7 +19,7 @@ pub(super) fn peer_uid(_fd: RawFd) -> io::Result<u32> {
 /// Never constructed: [`descriptor_receive`] always refuses, so no receive begins.
 pub(super) struct DescriptorReceive<'fence> {
     never: Infallible,
-    _fence: PhantomData<&'fence Mutex<()>>,
+    _fence: PhantomData<MutexGuard<'fence, ()>>,
 }
 
 pub(super) fn descriptor_receive(_fence: &Mutex<()>) -> io::Result<DescriptorReceive<'_>> {
@@ -28,10 +28,6 @@ pub(super) fn descriptor_receive(_fence: &Mutex<()>) -> io::Result<DescriptorRec
 
 impl DescriptorReceive<'_> {
     pub(super) fn flags(&self) -> libc::c_int {
-        match self.never {}
-    }
-
-    pub(super) fn control_len(&self, _message: &libc::msghdr) -> usize {
         match self.never {}
     }
 

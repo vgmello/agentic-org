@@ -1,7 +1,8 @@
 //! The platform-conditional check (ADR-0017 LNX-5).
 //!
-//! Every operating-system difference lives in `crates/org-platform`. This test reads
-//! every other `.rs` file of the repository, requires that `syn` parses it, and
+//! Every operating-system difference lives in `crates/org-platform`, or, for what only
+//! the host links, in `crates/org-platform-host`. This test reads every other `.rs`
+//! file of the repository, requires that `syn` parses it, and
 //! counts in its tokens:
 //!
 //! - each `cfg` or `cfg_attr` attribute and each `cfg!` call that names `target_os`,
@@ -49,7 +50,11 @@ use std::path::{Path, PathBuf};
 use proc_macro2::{Delimiter, Ident, TokenStream, TokenTree};
 
 const ALLOWLIST: &str = ".github/platform-conditionals.allow";
-const EXEMPT: &str = "crates/org-platform";
+/// The two crates that hold platform code: what every executable links, and what only
+/// the host links (`crates/org-platform-host/src/lib.rs` says why there are two).
+const EXEMPT: [&str; 2] = ["crates/org-platform", "crates/org-platform-host"];
+/// How the messages name them.
+const HOME: &str = "crates/org-platform (or crates/org-platform-host for what only the host links)";
 const TARGET_KEYS: [&str; 4] = ["target_os", "target_vendor", "target_env", "target_family"];
 /// The attributes and macros whose arguments are configuration predicates.
 const CONDITIONALS: [&str; 2] = ["cfg", "cfg_attr"];
@@ -249,7 +254,7 @@ fn sources(root: &Path) -> Vec<String> {
             if entry.file_type().expect("a file type").is_dir() {
                 let skipped = name.starts_with('.')
                     || name == "node_modules"
-                    || relative == EXEMPT
+                    || EXEMPT.contains(&relative.as_str())
                     || path.join(BUILD_OUTPUT_MARKER).exists();
                 if !skipped {
                     pending.push(path);
@@ -274,12 +279,14 @@ fn tracked(root: &Path) -> Option<Vec<String>> {
         .output()
         .ok()
         .filter(|output| output.status.success())?;
-    let exempt = format!("{EXEMPT}/");
+    let exempt = EXEMPT.map(|crate_path| format!("{crate_path}/"));
     Some(
         String::from_utf8_lossy(&listed.stdout)
             .split('\0')
             // A file renamed or deleted without staging is still listed.
-            .filter(|path| !path.is_empty() && !path.starts_with(&exempt))
+            .filter(|path| {
+                !path.is_empty() && !exempt.iter().any(|prefix| path.starts_with(prefix))
+            })
             .filter(|path| root.join(path).is_file())
             .map(str::to_owned)
             .collect(),
@@ -351,14 +358,14 @@ fn compare(found: &BTreeMap<String, Findings>, listed: &BTreeMap<String, usize>)
             .join(", ");
         match listed.get(path) {
             None => problems.push(format!(
-                "{path} (line {lines_text}): a platform predicate outside {EXEMPT}, or one of \
+                "{path} (line {lines_text}): a platform predicate outside {HOME}, or one of \
                  the names target_os, target_vendor, target_env and target_family, which are \
                  reserved for it. Put the difference behind an org-platform contract \
                  (docs/design/linux-host.md, section 1)."
             )),
             Some(&allowed) if lines.len() > allowed => problems.push(format!(
                 "{path} (line {lines_text}): {} platform predicates, and its entry allows \
-                 {allowed}. A listed file gains none; new differences go into {EXEMPT}.",
+                 {allowed}. A listed file gains none; new differences go into {HOME}.",
                 lines.len()
             )),
             Some(&allowed) if lines.len() < allowed => problems.push(format!(
@@ -697,6 +704,7 @@ mod walk {
         write("apps/b/build.rs");
         write("apps/b/notes.md");
         write("crates/org-platform/src/lib.rs");
+        write("crates/org-platform-host/src/names/macos.rs");
         write("crates/org-platform-extra/src/lib.rs");
         write("target/debug/build/generated.rs");
         write("target/CACHEDIR.TAG");
@@ -762,9 +770,10 @@ mod coverage {
         let root = repository();
         if let Some(tracked) = tracked(&root) {
             assert!(!tracked.is_empty(), "git lists the workspace's sources");
-            assert!(tracked
-                .iter()
-                .all(|path| !path.starts_with("crates/org-platform/")));
+            assert!(tracked.iter().all(|path| {
+                !path.starts_with("crates/org-platform/")
+                    && !path.starts_with("crates/org-platform-host/")
+            }));
             assert_eq!(unread(&tracked, &sources(&root)), [] as [String; 0]);
         }
     }

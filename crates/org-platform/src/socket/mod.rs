@@ -83,12 +83,6 @@ impl DescriptorReceive<'_> {
         self.0.flags()
     }
 
-    /// `message.msg_controllen` as a byte count. `libc` declares the field as `size_t`
-    /// on Linux and as `socklen_t` on macOS.
-    pub fn control_len(&self, message: &libc::msghdr) -> usize {
-        self.0.control_len(message)
-    }
-
     /// Make `descriptors`, just received with [`Self::flags`], close-on-exec where
     /// the receive could not: `set` is called once per descriptor, in order, and the
     /// first error is returned without calling it again. The caller then closes every

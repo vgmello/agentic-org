@@ -41,12 +41,9 @@ pub(super) fn send_rights(socket: RawFd, payload: &[u8], descriptors: &[RawFd]) 
     }
 }
 
-// A receive closure has no platform receive in hand: read the message's control length
-// through one that holds a private, uncontended fence.
+// `libc` declares the field as `size_t` on Linux and as `socklen_t` on macOS.
 fn control_len(message: &libc::msghdr) -> usize {
-    let fence = Mutex::new(());
-    let receiving = descriptor_receive(&fence).unwrap();
-    receiving.control_len(message)
+    message.msg_controllen as _
 }
 
 fn assert_cloexec(descriptor: &OwnedFd) {
@@ -121,7 +118,7 @@ fn ancillary_classification_requires_both_socket_level_and_rights_type() {
             (*header).cmsg_type = kind;
             (*header).cmsg_len = libc::CMSG_LEN(mem::size_of::<RawFd>() as u32) as _;
             libc::CMSG_DATA(header).cast::<RawFd>().write_unaligned(raw);
-            take_rights(&message, space)
+            take_rights(&message)
         };
         let actual = parsed.len();
         if actual == 0 {

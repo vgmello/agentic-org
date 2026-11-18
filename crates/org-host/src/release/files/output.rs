@@ -28,17 +28,19 @@ impl Lock {
 }
 
 pub(in crate::release) fn flush(file: &File) -> Result<(), Error> {
-    file.sync_all()?;
     #[cfg(test)]
-    FLUSH_COUNTS.with(|v| v.borrow_mut()[0] += 1);
-    #[cfg(target_os = "macos")]
-    // SAFETY: full device flush of our retained regular-file descriptor.
-    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
-        return Err(io::Error::last_os_error().into());
-    }
-    #[cfg(all(test, target_os = "macos"))]
-    FLUSH_COUNTS.with(|v| v.borrow_mut()[1] += 1);
-    Ok(())
+    let before = org_platform::fs::testing::full_sync_counts();
+    // Full device flush of our retained regular-file descriptor.
+    let flushed = org_platform::fs::full_sync(file);
+    #[cfg(test)]
+    FLUSH_COUNTS.with(|v| {
+        // The platform counts each step that succeeded, also when a later one failed.
+        let after = org_platform::fs::testing::full_sync_counts();
+        let mut counts = v.borrow_mut();
+        counts[0] += (after.fsync - before.fsync) as usize;
+        counts[1] += (after.device_flush - before.device_flush) as usize;
+    });
+    Ok(flushed?)
 }
 
 impl Directory {
@@ -183,11 +185,8 @@ impl Directory {
         if self.0.metadata()?.dev() != target.0.metadata()?.dev() {
             return Err(Error::UnsafeInput);
         }
-        // SAFETY: retained same-device dirs, validated names; never replace a tree.
-        let rc = unsafe { rename_exclusive(self.0.as_raw_fd(), &from, target.0.as_raw_fd(), &to) };
-        if rc != 0 {
-            return Err(io::Error::last_os_error().into());
-        }
+        // Retained same-device dirs, validated names; never replace a tree.
+        org_platform::fs::rename_noreplace_at(&self.0, &from, &target.0, &to)?;
         target.sync_directory()?;
         self.sync_directory()?;
         Ok(())
@@ -243,7 +242,7 @@ impl Directory {
         }
         let _entries = Entries(dir);
         loop {
-            set_errno(0);
+            org_platform::fs::set_errno(0)?;
             // SAFETY: this is a live directory stream; entry remains valid until next call.
             let entry = unsafe { libc::readdir(dir) };
             if entry.is_null() {
@@ -263,22 +262,25 @@ impl Directory {
     }
 }
 
-#[cfg(target_os = "macos")]
-unsafe fn rename_exclusive(from: i32, name: &CStr, to: i32, target: &CStr) -> i32 {
-    // SAFETY: callers retain both dirfds and valid single-component C strings.
-    unsafe { libc::renameatx_np(from, name.as_ptr(), to, target.as_ptr(), libc::RENAME_EXCL) }
-}
-#[cfg(target_os = "linux")]
-unsafe fn rename_exclusive(from: i32, name: &CStr, to: i32, target: &CStr) -> i32 {
-    // SAFETY: same descriptor-relative constraints; RENAME_NOREPLACE is flag 1.
-    unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            from,
-            name.as_ptr(),
-            to,
-            target.as_ptr(),
-            1,
-        ) as i32
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_flush_counts_the_steps_the_platform_took() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = File::create(directory.path().join("file")).unwrap();
+        take_flush_counts();
+        let before = org_platform::fs::testing::full_sync_counts();
+        flush(&file).unwrap();
+        flush(&file).unwrap();
+        let after = org_platform::fs::testing::full_sync_counts();
+        let counts = take_flush_counts();
+        assert_eq!(counts[0], 2);
+        // A device flush for every file flush on a system that has one, none elsewhere.
+        assert_eq!(counts[1] as u64, after.device_flush - before.device_flush);
+        assert!(counts[1] == 0 || counts[1] == counts[0]);
+        assert_eq!(counts[2], 0);
+        assert_eq!(take_flush_counts(), [0; 3]);
     }
 }

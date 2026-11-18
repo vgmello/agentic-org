@@ -27,7 +27,6 @@ apps/agentic-org/tests/instances.rs 2
 apps/agentic-org/tests/keys.rs 8
 apps/agentic-org/tests/service.rs 4
 apps/agentic-org/tests/supervision.rs 17
-crates/org-client/src/agent.rs 3
 crates/org-host/src/app_auth.rs 8
 crates/org-host/src/bootstrap.rs 3
 crates/org-host/src/bootstrap/tests.rs 6
@@ -35,15 +34,11 @@ crates/org-host/src/code_signing.rs 17
 crates/org-host/src/host_secrets.rs 6
 crates/org-host/src/host_secrets/dev.rs 4
 crates/org-host/src/host_secrets/tests.rs 7
-crates/org-host/src/hostdb.rs 2
 crates/org-host/src/hostdb/tests.rs 2
-crates/org-host/src/human.rs 4
-crates/org-host/src/human/recovery.rs 1
-crates/org-host/src/instance/directory.rs 29
-crates/org-host/src/instance/mod.rs 8
-crates/org-host/src/instance/registry.rs 1
-crates/org-host/src/instance/temp.rs 4
-crates/org-host/src/instance/tests.rs 4
+crates/org-host/src/human.rs 2
+crates/org-host/src/instance/directory.rs 1
+crates/org-host/src/instance/temp.rs 1
+crates/org-host/src/instance/tests.rs 1
 crates/org-host/src/keys/mod.rs 15
 crates/org-host/src/lib.rs 1
 crates/org-host/src/offices.rs 2
@@ -52,8 +47,6 @@ crates/org-host/src/provisioning/tests.rs 1
 crates/org-host/src/recovery.rs 2
 crates/org-host/src/recovery/presence.rs 7
 crates/org-host/src/release.rs 2
-crates/org-host/src/release/files.rs 3
-crates/org-host/src/release/files/output.rs 4
 crates/org-host/src/release/platform.rs 4
 crates/org-host/src/release/runtime.rs 3
 crates/org-host/src/release/store/tests.rs 1
@@ -63,9 +56,7 @@ crates/org-host/src/supervisor/channels.rs 2
 crates/org-host/src/supervisor/child.rs 1
 crates/org-host/src/supervisor/mod.rs 9
 crates/org-host/src/web/tests.rs 26
-crates/org-host/src/writer.rs 3
 crates/org-host/tests/recovery_presence.rs 1
-crates/org-office/src/store/acceptance/durable.rs 2
 crates/org-office/src/store/acceptance/tests.rs 2
 crates/org-socket/src/image.rs 8
 crates/org-socket/src/rights/send/tests.rs 2
@@ -73,7 +64,6 @@ crates/org-socket/src/rights/stream/tests.rs 10
 crates/org-socket/src/rights/tests.rs 6
 crates/org-socket/src/rights/tests/bounded.rs 5
 crates/org-socket/tests/stream_adoption.rs 1
-crates/org-spool/src/safe_read.rs 5
 crates/org-supervise/src/spawn.rs 1
 crates/org-supervise/tests/lifecycle.rs 1
 crates/org-supervise/tests/recovery_native.rs 25

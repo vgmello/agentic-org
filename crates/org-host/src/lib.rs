@@ -260,18 +260,27 @@ fn instance_error(error: instance::Error) -> HostError {
     }
 }
 
-/// The office home a trusted (release) host serves: its account's own office home,
-/// `<pw_dir>/Library/Application Support/agentic.org`, and only when `org_proto::location`'s
-/// shared rule (`ORG_OFFICE_HOME`, else `$HOME/…`), the one the app and `agent-os` use to find
-/// `host.sock`, gives that same home in this environment ([`home::pinned_office_home`]).
-/// Otherwise the host doesn't start, saying why: its home can't be moved by its environment,
-/// and it never serves a home its clients don't look in.
+/// The office home the shared rule gives in this environment: `ORG_OFFICE_HOME` when it is an
+/// absolute path, else this system's application base for the home folder `HOME` names. The
+/// app and `agent-os` find `host.sock` by the same rule.
+pub fn default_office_home() -> Option<PathBuf> {
+    home::default_office_home()
+}
+
+/// The office home a trusted (release) host serves: its account's own office home, this
+/// system's application base for `<pw_dir>`, and only when the shared rule
+/// ([`default_office_home`]: `ORG_OFFICE_HOME`, else the base for `$HOME`), the one the app and
+/// `agent-os` use to find `host.sock`, gives that same home in this environment
+/// ([`home::pinned_office_home`]). Otherwise the host doesn't start, saying why: its home can't
+/// be moved by `ORG_OFFICE_HOME` or `HOME`, and it never serves a home its clients don't look
+/// in.
 fn trusted_office_home() -> Result<PathBuf, String> {
     let home_env = std::env::var_os("HOME").map(PathBuf::from);
     home::pinned_office_home(
-        org_proto::location::default_office_home().as_deref(),
+        home::default_office_home().as_deref(),
         home_env.as_deref(),
         home::account_dir().as_deref(),
+        home::office_home_in,
         home::same_path,
     )
 }

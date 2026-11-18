@@ -37,11 +37,6 @@ impl DescriptorReceive<'_> {
         libc::MSG_DONTWAIT
     }
 
-    // libc uses socklen_t (u32) on macOS.
-    pub(super) fn control_len(&self, message: &libc::msghdr) -> usize {
-        message.msg_controllen as usize
-    }
-
     pub(super) fn close_on_exec(
         &self,
         descriptors: &[OwnedFd],
