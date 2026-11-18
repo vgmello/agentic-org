@@ -7,7 +7,6 @@ export const sessionView = {
 	admin: false,
 	organizations: [],
 	server_time_ms: 100,
-	absolute_expires_at: 'later',
 	idle_expires_at: 'sooner'
 };
 /** Instance-specific cookie name, spelled as the gateway does (apps/agentic-org-web/src/sessions.rs `BrowserSessions::new`). */

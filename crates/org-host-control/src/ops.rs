@@ -43,11 +43,11 @@ pub struct AccountVerifyResult {
     pub orgs: Vec<LinkedOrg>,
 }
 
-/// An organization the account is linked to: the member it acts as there and its offices.
+/// An organization the account is linked to: the employee it acts as there and its offices.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedOrg {
     pub org_id: String,
-    pub member_id: String,
+    pub employee_id: String,
     pub office_ids: Vec<String>,
 }
 
@@ -73,7 +73,6 @@ pub struct SessionInspectResult {
     pub admin: bool,
     pub orgs: Vec<LinkedOrg>,
     pub server_time_ms: u64,
-    pub absolute_expires_at_ms: u64,
     pub idle_expires_at_ms: u64,
 }
 impl Call for SessionInspect {

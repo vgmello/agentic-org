@@ -9,7 +9,7 @@ const root = new URL('../../../../../../crates/org-proto/test-vectors/v2/', impo
 const counts = {
 	'gateway-envelopes': 17, 'gateway-idempotency': 4, 'gateway-lookup-query': 18, 'gateway-lookups': 26,
 	'gateway-mutation-results': 44, 'gateway-outcomes': 35, 'gateway-paths': 17, 'gateway-resource-errors': 3,
-	'gateway-session': 8, 'gateway-stream': 15, 'gateway-views': 17
+	'gateway-session': 10, 'gateway-stream': 15, 'gateway-views': 17
 } as const;
 type Name = keyof typeof counts;
 type Case = Record<string, unknown> & { name: string; expect: Record<string, unknown> };
@@ -45,8 +45,8 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 		throw new Error('Unsupported gateway fixture contract_revision');
 	}
 	const pinned = revision === 2
-		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 205 }
-		: { counts, total: 204 };
+		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 207 }
+		: { counts, total: 206 };
 	for (const name of Object.keys(counts) as Name[]) {
 		expect(data[name].schema_version, `${name} schema_version`).toBe(1);
 		expect(data[name].cases, `${name} main cases`).toHaveLength(pinned.counts[name]);

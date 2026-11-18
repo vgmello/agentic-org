@@ -14,7 +14,7 @@ export type SessionState =
 	| {
 			kind: 'signed-in';
 			session: SessionView;
-			reauth?: 'session_ended' | 'hq_restarted' | 'unknown';
+			reauth?: 'session_ended' | 'unknown';
 	  };
 type Options = {
 	store: SessionStore;
@@ -77,7 +77,7 @@ export function createSessionController({
 		record = undefined;
 		publish({ kind: 'signed-out', reason, ...(login === undefined ? {} : { login }) });
 	};
-	const reauth = (reason: 'session_ended' | 'hq_restarted' | 'unknown' = 'session_ended') => {
+	const reauth = (reason: 'session_ended' | 'unknown' = 'session_ended') => {
 		if (state.kind === 'signed-in') publish({ ...state, reauth: reason });
 	};
 	const viewOf = ({ proof: _proof, ...view }: EstablishedSession): SessionView => view;
@@ -342,7 +342,7 @@ export function createSessionController({
 				current();
 				if (response.status !== 401) return response;
 			}
-			let reason: 'session_ended' | 'hq_restarted' | 'unknown' | undefined;
+			let reason: 'session_ended' | 'unknown' | undefined;
 			try {
 				const body = readResponse(response.body, readJsonObject);
 				if ('error' in body) reason = body.error.session_reason;

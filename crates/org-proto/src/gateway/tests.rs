@@ -301,7 +301,7 @@ fn shared_views_are_typed_additive_and_do_not_expose_private_endpoints() {
 fn shared_session_shapes_keep_proof_out_of_reads_and_preserve_server_clock() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-session.json"),
-        8,
+        10,
     );
     assert_eq!(vectors["proof_header"], SESSION_PROOF_HEADER);
     for case in vectors["cases"].as_array().unwrap() {

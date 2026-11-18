@@ -530,8 +530,8 @@ returning 404 confirms that.
   (`team.add_member`, `team.remove_member`, `team.set_title`, `member.move`,
   `project.add_team`, `project.remove_team`) and the name `member`. They are replaced
   by the routes of §9 when the organization model is built (implementation plan B2).
-  The views spell `gateway_status` and `member_id`, which become `web_status` and
-  `employee_id`, and the 400 class still lists `not_a_member`.
+  The 400 class still lists `not_a_member`, which the older membership operations
+  still return.
 - Operation IDs are ULIDs (`crates/org-proto/src/ulid.rs`); they become UUIDv7
   under FC-142.
 - The task codec (`selected_tasks_v1`) exists in the office's acceptance store; no
