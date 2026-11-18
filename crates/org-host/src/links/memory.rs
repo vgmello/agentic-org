@@ -3,7 +3,8 @@
 use std::sync::Mutex;
 
 use super::{
-    redeem_rule, Error, LinkDigest, LinkKind, NewLink, OneTimeLinks, Pending, Refused, Subject,
+    redeem_rule, Error, LinkDigest, LinkKind, NewLink, OneTimeLinks, Pending, Refused, StoreFault,
+    Subject,
 };
 
 struct Row {
@@ -33,12 +34,15 @@ impl OneTimeLinks for MemoryLinks {
         &self.instance_id
     }
     fn replace_pending(&self, link: NewLink<'_>) -> Result<(), Error> {
-        let mut rows = self.rows.lock().map_err(|_| Error::Store)?;
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| Error::Store(StoreFault::Poisoned))?;
         if rows
             .iter()
             .any(|r| r.link_id == link.link_id || r.digest == link.digest)
         {
-            return Err(Error::Store);
+            return Err(Error::Store(StoreFault::Constraint));
         }
         for row in rows.iter_mut() {
             if row.kind == link.kind && row.subject == *link.subject && row.state == "pending" {
@@ -65,7 +69,10 @@ impl OneTimeLinks for MemoryLinks {
         digest: LinkDigest,
         now_ms: i64,
     ) -> Result<Result<String, Refused>, Error> {
-        let mut rows = self.rows.lock().map_err(|_| Error::Store)?;
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| Error::Store(StoreFault::Poisoned))?;
         let Some(row) = rows
             .iter_mut()
             .find(|r| r.kind == kind && r.digest == digest)
@@ -79,7 +86,10 @@ impl OneTimeLinks for MemoryLinks {
         Ok(Ok(row.link_id.clone()))
     }
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error> {
-        let rows = self.rows.lock().map_err(|_| Error::Store)?;
+        let rows = self
+            .rows
+            .lock()
+            .map_err(|_| Error::Store(StoreFault::Poisoned))?;
         Ok(rows
             .iter()
             .find(|r| r.kind == kind && r.subject == *subject && r.state == "pending")

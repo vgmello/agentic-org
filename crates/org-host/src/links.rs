@@ -1,8 +1,9 @@
 //! One-time links (standalone-server design section 6, decision D4).
 //!
 //! A link carries a 32-byte random secret, base64url without padding, after the
-//! URL's `#`. The host stores only `SHA-256("agentic-org/link/v1" ‖ instance_id ‖
-//! kind ‖ token)`, so a stored row cannot be replayed and is bound to this
+//! URL's `#`. The host stores only the digest defined on [`LinkDigest::of`]: a
+//! SHA-256 over the length-prefixed domain, instance ID and kind followed by the
+//! fixed 32-byte token, so a stored row cannot be replayed and is bound to this
 //! instance. Issuing cancels the previous pending link of the same kind and
 //! subject in the same transaction, so at most one is ever redeemable.
 //!
@@ -14,6 +15,7 @@ use std::fs::File;
 use std::io::{self, Read};
 
 use sha2::{Digest as _, Sha256};
+use zeroize::{Zeroize as _, Zeroizing};
 
 #[cfg(test)]
 mod contract_tests;
@@ -24,6 +26,8 @@ pub(crate) mod memory;
 pub(crate) const REGISTRATION_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 const DOMAIN: &[u8] = b"agentic-org/link/v1";
 const TOKEN_BYTES: usize = 32;
+/// Unpadded base64url length of `TOKEN_BYTES`.
+const TOKEN_TEXT_LEN: usize = 43;
 const SUBJECT_MAX: usize = 128;
 
 /// What a link authorizes. The kind is part of the digest, so a token of one
@@ -65,19 +69,28 @@ impl Subject {
 }
 
 /// The link secret. It is returned once, to the caller that issued it, and is
-/// never stored or logged.
+/// never stored or logged. Its bytes are zeroed when it is dropped.
 pub(crate) struct Token([u8; TOKEN_BYTES]);
+impl Drop for Token {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+impl zeroize::ZeroizeOnDrop for Token {}
 impl Token {
     fn generate() -> io::Result<Self> {
         let mut bytes = [0u8; TOKEN_BYTES];
         File::open("/dev/urandom")?.read_exact(&mut bytes)?;
         Ok(Self(bytes))
     }
-    /// Only exactly 32 bytes in canonical unpadded base64url parse.
+    /// Only exactly 32 bytes in canonical unpadded base64url parse. The length
+    /// is checked before decoding, so oversized input costs nothing.
     pub(crate) fn parse(text: &str) -> Option<Self> {
+        if text.len() != TOKEN_TEXT_LEN {
+            return None;
+        }
         let bytes = base64url_decode(text)?;
-        let bytes: [u8; TOKEN_BYTES] = bytes.try_into().ok()?;
-        let token = Self(bytes);
+        let token = Self(bytes.as_slice().try_into().ok()?);
         (token.encode() == text).then_some(token)
     }
     /// The text that goes after `#` in the link.
@@ -95,14 +108,24 @@ impl std::fmt::Debug for Token {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LinkDigest(pub(crate) [u8; 32]);
 impl LinkDigest {
+    /// `SHA-256(len(D) ‖ D ‖ len(I) ‖ I ‖ len(K) ‖ K ‖ T)` where `D` is
+    /// `agentic-org/link/v1`, `I` the instance ID, `K` the kind name, `T` the
+    /// 32 raw token bytes and every `len` a 4-byte big-endian byte count. The
+    /// length prefixes give every variable field an explicit boundary.
     pub(crate) fn of(instance_id: &str, kind: LinkKind, token: &Token) -> Self {
-        let mut hash = Sha256::new();
-        hash.update(DOMAIN);
-        hash.update(instance_id.as_bytes());
-        hash.update(kind.as_str().as_bytes());
-        hash.update(token.0);
-        Self(hash.finalize().into())
+        Self(digest(instance_id, kind.as_str(), &token.0))
     }
+}
+fn digest(instance_id: &str, kind: &str, token: &[u8; TOKEN_BYTES]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    for field in [DOMAIN, instance_id.as_bytes(), kind.as_bytes()] {
+        // Fields are bounded far below 4 GiB: the domain and kind are constants
+        // and instance IDs are validated identifiers.
+        hash.update((field.len() as u32).to_be_bytes());
+        hash.update(field);
+    }
+    hash.update(token);
+    hash.finalize().into()
 }
 
 /// A newly issued link. `token` is the secret; show it once.
@@ -134,7 +157,27 @@ pub(crate) enum Refused {
 pub(crate) enum Error {
     Invalid,
     Io(io::ErrorKind),
-    Store,
+    /// The storage engine failed; the fault says how.
+    Store(StoreFault),
+    /// The pending row changed between the read and the redeem write, so the
+    /// redeem was rolled back rather than reported as successful.
+    Conflict,
+}
+
+/// An engine-independent class of storage failure. Adapters map their own
+/// errors to it so callers can tell a busy store from corruption.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StoreFault {
+    /// A uniqueness or check constraint refused the write.
+    Constraint,
+    /// The store is locked by another writer.
+    Busy,
+    /// The store is not a valid database.
+    Corrupt,
+    /// A previous panic poisoned the adapter's lock.
+    Poisoned,
+    /// Any other engine failure, with the engine's own code if it has one.
+    Other(Option<i32>),
 }
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
@@ -243,11 +286,11 @@ fn base64url_encode(bytes: &[u8]) -> String {
     }
     out
 }
-fn base64url_decode(text: &str) -> Option<Vec<u8>> {
+fn base64url_decode(text: &str) -> Option<Zeroizing<Vec<u8>>> {
     if text.len() % 4 == 1 {
         return None;
     }
-    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let mut out = Zeroizing::new(Vec::with_capacity(text.len() * 3 / 4));
     for chunk in text.as_bytes().chunks(4) {
         let mut n = 0u32;
         for (i, c) in chunk.iter().enumerate() {
@@ -255,6 +298,7 @@ fn base64url_decode(text: &str) -> Option<Vec<u8>> {
             n |= v << (18 - 6 * i);
         }
         out.extend_from_slice(&n.to_be_bytes()[1..chunk.len()]);
+        n.zeroize();
     }
     Some(out)
 }

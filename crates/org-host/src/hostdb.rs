@@ -267,6 +267,11 @@ impl HostDb {
             db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
                 r.get(0)
             })?;
+        // Every digest is bound to this ID, so a tampered value is refused rather
+        // than used.
+        if !crate::instance::registry::valid_instance_id(&instance_id) {
+            return Err(Error::InvalidId);
+        }
         enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         Ok(Self {

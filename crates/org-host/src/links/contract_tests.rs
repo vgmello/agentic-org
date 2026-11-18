@@ -180,10 +180,17 @@ fn the_digest_is_bound_to_the_instance_and_kind() {
     let token = Token::parse(&"A".repeat(43)).unwrap();
     let here = LinkDigest::of(INSTANCE, REG, &token);
     assert_ne!(here, LinkDigest::of(OTHER_INSTANCE, REG, &token));
-    // Fixed vector: SHA-256("agentic-org/link/v1" || instance || kind || 32 zero bytes).
-    let mut input = b"agentic-org/link/v1".to_vec();
-    input.extend_from_slice(INSTANCE.as_bytes());
-    input.extend_from_slice(b"registration");
+    // Fixed vector: SHA-256 over length-prefixed domain, instance and kind, then
+    // the 32 zero token bytes.
+    let mut input = Vec::new();
+    for field in [
+        &b"agentic-org/link/v1"[..],
+        INSTANCE.as_bytes(),
+        b"registration",
+    ] {
+        input.extend_from_slice(&(field.len() as u32).to_be_bytes());
+        input.extend_from_slice(field);
+    }
     input.extend_from_slice(&[0u8; 32]);
     assert_eq!(here.0, <[u8; 32]>::from(Sha256::digest(&input)));
 
@@ -226,6 +233,36 @@ fn subjects_are_bounded_printable_identifiers() {
     for good in ["initial-administrator", "setup:0190a1b2", &"a".repeat(128)] {
         assert!(Subject::new(good).is_ok());
     }
+}
+
+#[test]
+fn token_parse_refuses_wrong_lengths_before_decoding() {
+    let good = Token::generate().unwrap().encode();
+    for bad in [
+        String::new(),
+        good[..42].to_owned(),
+        format!("{good}A"),
+        format!("{good}="),
+        "A".repeat(1 << 20),
+    ] {
+        assert!(Token::parse(&bad).is_none(), "{}", bad.len());
+    }
+    assert!(Token::parse(&good).is_some());
+}
+
+#[test]
+fn token_is_zeroized_on_drop() {
+    // Compile-time check that the secret keeps its zeroizing destructor.
+    fn zeroized_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    zeroized_on_drop::<Token>();
+}
+
+#[test]
+fn digest_fields_have_explicit_boundaries() {
+    let t = [9u8; TOKEN_BYTES];
+    // Moving bytes across the instance/kind boundary changes the digest.
+    assert_ne!(digest("ab", "c", &t), digest("a", "bc", &t));
+    assert_ne!(digest("", "abc", &t), digest("abc", "", &t));
 }
 
 #[test]
@@ -286,7 +323,7 @@ fn a_failed_replacement_keeps_the_previous_pending_link() {
             issued_at_ms: NOW + 1,
             expires_at_ms: NOW + 2,
         });
-        assert_eq!(conflict, Err(Error::Store));
+        assert_eq!(conflict, Err(Error::Store(StoreFault::Constraint)));
         assert_eq!(
             links.pending(REG, &s, NOW + 1).unwrap().unwrap().link_id,
             first.link_id

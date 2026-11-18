@@ -108,6 +108,24 @@ fn scalar(db: &Connection, pragma: &str) -> i64 {
 }
 
 #[test]
+fn open_refuses_a_stored_instance_id_that_is_not_valid() {
+    let (home, secrets, db) = fixture();
+    db.connection
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE meta SET value='not an id' WHERE key='instance_id'",
+            [],
+        )
+        .unwrap();
+    drop(db);
+    assert!(matches!(
+        HostDb::open(home.path(), &secrets),
+        Err(Error::InvalidId)
+    ));
+}
+
+#[test]
 fn plain_schema_metadata_and_pragmas_survive_reopen() {
     let (home, secrets, db) = fixture();
     let c = db.connection.lock().unwrap();
@@ -726,7 +744,9 @@ fn schema_checks_foreign_keys_update_delete_conflict_rollback_and_reopen() {
         assert!(c
             .execute("UPDATE tls_pair SET pair_fp=?1", [&[1u8; 31][..]])
             .is_err());
-        assert!(c.execute("UPDATE meta SET value=1.5", []).is_ok()); // STRICT TEXT accepts lossless text coercion.
+        assert!(c
+            .execute("UPDATE meta SET value=1.5 WHERE key='clock_high_ms'", [])
+            .is_ok()); // STRICT TEXT accepts lossless text coercion.
         assert!(c
             .execute("UPDATE op_journal SET expires_at_ms='not-an-integer'", [])
             .is_err());

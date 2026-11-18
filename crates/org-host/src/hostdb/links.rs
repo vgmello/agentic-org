@@ -1,9 +1,10 @@
 //! SQLite adapter for the one-time link contract (`crate::links`).
-use rusqlite::{OptionalExtension, TransactionBehavior};
+use rusqlite::{ErrorCode, OptionalExtension, TransactionBehavior};
 
 use super::HostDb;
 use crate::links::{
-    redeem_rule, Error, LinkDigest, LinkKind, NewLink, OneTimeLinks, Pending, Refused, Subject,
+    redeem_rule, Error, LinkDigest, LinkKind, NewLink, OneTimeLinks, Pending, Refused, StoreFault,
+    Subject,
 };
 
 pub(super) const DDL: &str = r#"
@@ -21,8 +22,21 @@ CREATE TABLE one_time_links (
 CREATE UNIQUE INDEX one_time_links_pending ON one_time_links(kind, subject) WHERE state = 'pending';
 "#;
 
-fn store(_: impl Sized) -> Error {
-    Error::Store
+/// Keeps the SQLite failure class instead of collapsing every error.
+fn store(e: rusqlite::Error) -> Error {
+    let fault = match e.sqlite_error_code() {
+        Some(ErrorCode::ConstraintViolation) => StoreFault::Constraint,
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => StoreFault::Busy,
+        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => StoreFault::Corrupt,
+        _ => StoreFault::Other(match &e {
+            rusqlite::Error::SqliteFailure(f, _) => Some(f.extended_code),
+            _ => None,
+        }),
+    };
+    Error::Store(fault)
+}
+fn poisoned<T>(_: T) -> Error {
+    Error::Store(StoreFault::Poisoned)
 }
 
 impl OneTimeLinks for HostDb {
@@ -30,7 +44,7 @@ impl OneTimeLinks for HostDb {
         &self.instance_id
     }
     fn replace_pending(&self, link: NewLink<'_>) -> Result<(), Error> {
-        let mut db = self.connection.lock().map_err(store)?;
+        let mut db = self.connection.lock().map_err(poisoned)?;
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store)?;
@@ -59,7 +73,7 @@ impl OneTimeLinks for HostDb {
         digest: LinkDigest,
         now_ms: i64,
     ) -> Result<Result<String, Refused>, Error> {
-        let mut db = self.connection.lock().map_err(store)?;
+        let mut db = self.connection.lock().map_err(poisoned)?;
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store)?;
@@ -77,16 +91,22 @@ impl OneTimeLinks for HostDb {
         if let Err(refused) = redeem_rule(&state, expires_at_ms, now_ms) {
             return Ok(Err(refused));
         }
-        tx.execute(
-            "UPDATE one_time_links SET state='used', ended_at_ms=?2 WHERE link_id=?1 AND state='pending'",
-            (&link_id, now_ms),
-        )
-        .map_err(store)?;
+        let changed = tx
+            .execute(
+                "UPDATE one_time_links SET state='used', ended_at_ms=?2 WHERE link_id=?1 AND state='pending'",
+                (&link_id, now_ms),
+            )
+            .map_err(store)?;
+        // Exactly the row just read must change; anything else is refused and the
+        // transaction rolls back when `tx` drops.
+        if changed != 1 {
+            return Err(Error::Conflict);
+        }
         tx.commit().map_err(store)?;
         Ok(Ok(link_id))
     }
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error> {
-        let db = self.connection.lock().map_err(store)?;
+        let db = self.connection.lock().map_err(poisoned)?;
         db.query_row(
             "SELECT link_id,issued_at_ms,expires_at_ms FROM one_time_links WHERE kind=?1 AND subject=?2 AND state='pending'",
             (kind.as_str(), subject.as_str()),
@@ -106,6 +126,62 @@ impl OneTimeLinks for HostDb {
 #[cfg(test)]
 mod tests {
     use crate::hostdb::tests::fixture;
+    use crate::links::{Error, LinkKind, OneTimeLinks, StoreFault, Subject};
+
+    const NOW: i64 = 1_800_000_000_000;
+
+    #[test]
+    fn a_redeem_that_changes_no_row_is_refused_and_rolled_back() {
+        let (_home, _secrets, db) = fixture();
+        let s = Subject::new("initial-administrator").unwrap();
+        let issued = db.issue(LinkKind::Registration, &s, NOW).unwrap();
+        // A trigger that silently skips the write models a store whose row changed
+        // between the read and the update.
+        db.connection
+            .lock()
+            .unwrap()
+            .execute_batch("CREATE TEMP TRIGGER skip BEFORE UPDATE ON one_time_links BEGIN SELECT RAISE(IGNORE); END;")
+            .unwrap();
+        let token = issued.token.encode();
+        assert_eq!(
+            db.consume(LinkKind::Registration, &token, NOW + 1),
+            Err(Error::Conflict)
+        );
+        db.connection
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER skip;")
+            .unwrap();
+        assert_eq!(
+            db.consume(LinkKind::Registration, &token, NOW + 2).unwrap(),
+            Ok(issued.link_id.clone())
+        );
+    }
+
+    #[test]
+    fn storage_failures_keep_their_sqlite_class() {
+        let (_home, _secrets, db) = fixture();
+        let s = Subject::new("initial-administrator").unwrap();
+        let first = db.issue(LinkKind::Registration, &s, NOW).unwrap();
+        let reused = db.replace_pending(crate::links::NewLink {
+            link_id: &first.link_id,
+            kind: LinkKind::Registration,
+            subject: &s,
+            digest: crate::links::LinkDigest([7; 32]),
+            issued_at_ms: NOW + 1,
+            expires_at_ms: NOW + 2,
+        });
+        assert_eq!(reused, Err(Error::Store(StoreFault::Constraint)));
+        db.connection
+            .lock()
+            .unwrap()
+            .execute_batch("DROP INDEX one_time_links_pending; DROP TABLE one_time_links;")
+            .unwrap();
+        assert!(matches!(
+            db.pending_row(LinkKind::Registration, &s),
+            Err(Error::Store(StoreFault::Other(Some(_))))
+        ));
+    }
 
     #[test]
     fn the_partial_index_allows_one_pending_link_per_kind_and_subject() {

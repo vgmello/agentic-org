@@ -664,6 +664,7 @@ dependencies = [
  "tar",
  "tempfile",
  "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
