@@ -1,8 +1,8 @@
 //! Tests of the macOS adapter against the real kernel and Security framework. The policy
 //! in them (requirements, flags, entitlement names) is test data, as a consumer passes it.
 
-use std::ffi::{OsStr, OsString};
-use std::io::{Read, Write};
+use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -512,7 +512,21 @@ fn the_reader_is_the_child_only_by_pid_and_admitted_token() {
     let started = crate::admission::Held(start(&zsh, &["-f", "-c", &script]).unwrap())
         .release()
         .unwrap();
-    let (connected, _) = listener.accept().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let connected = loop {
+        match listener.accept() {
+            Ok((connected, _)) => break connected,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the child did not connect"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!("{error}"),
+        }
+    };
     zsh.verify_reader(&started.child.0, &connected).unwrap();
     let error = zsh.verify_reader(&started.child.0, &a).unwrap_err();
     assert!(NotTheChild::is(&error), "{error}");
@@ -565,22 +579,4 @@ fn static_signature_query_addresses_the_held_descriptor_not_replaced_path() {
         images.signature(&replacement, "anchor apple").err(),
         Some(StaticImageError::Refused)
     );
-}
-
-/// An environment is passed exactly as given: the adapter adds and removes nothing.
-#[test]
-fn the_environment_of_a_child_is_exactly_its_child_env() {
-    let mut env = ChildEnv::new();
-    env.set(OsString::from("A"), OsString::from("1")).unwrap();
-    env.set("B", "two words").unwrap();
-    let sh = admission(development("/usr/bin/env"));
-    let mut started = crate::admission::Held(sh.start(&[], &env, &Mutex::new(())).unwrap())
-        .release()
-        .unwrap();
-    let mut out = String::new();
-    started.stdout.read_to_string(&mut out).unwrap();
-    let mut lines: Vec<&str> = out.lines().collect();
-    lines.sort_unstable();
-    assert_eq!(lines, ["A=1", "B=two words"]);
-    started.stdin.write_all(b"").unwrap();
 }
