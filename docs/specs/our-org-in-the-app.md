@@ -293,7 +293,7 @@ Task references are the same everywhere, for example T-A15. All task types use T
 - APPR-5 · Every approved hire records who requested and who approved it, on the new agent's profile and in Activity, and the owner sees it on Home.
 - APPR-6 · The owner can approve or reject any proposal at any time, and a proposal waiting on a lead for over a day is shown to the owner.
 - APPR-7 · Above the optional weekly or cost limit, a proposal goes to the owner and says why.
-- APPR-8 · `agent-os hr hire` works with the same words as the app and answers `gate_required` with the proposal and its approver; approving and rejecting are done by a person and need a reason. When the HR lead can't run, `hr hire` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire."
+- APPR-8 · `agent-os hr hire` works with the same words as the app and answers `gate_required` with the request and, once it is known, who approves; approving and rejecting are done by a person and need a reason. When the HR lead can't run, `hr hire` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire."
 - APPR-9 · A proposal waiting on a lead for over a day also shows to the owner, and the first answer decides. A proposal whose approver is deactivated moves to the next person up the lead chain, or to the owner, and says so.
 - APPR-10 · After approval a request shows Hiring…, then Hired. If hiring stops partway, it shows "Approved, not hired: <failed step>" with Try again, the owner gets a Needs you item, the steps already done are named, finishing needs no new approval, and the agent is shown in no chart, roster or picker until the hire completes.
 

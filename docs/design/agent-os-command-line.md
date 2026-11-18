@@ -71,14 +71,14 @@ Options every command takes:
 | Option | On | Meaning |
 | --- | --- | --- |
 | `--format json\|yaml\|compact` | all | How the answer is printed (2.3). Default `json` |
-| `--fields <a,b,c>` | all | Keep only these fields of each item in `data`; a dot reaches into a nested field |
+| `--fields <a,b,c>` | all | Keep only these fields of `data`, for one record or for each item of a list; a dot reaches into a nested field. The record's own field order is kept |
 | `--limit <n>`, `--cursor <token>` | lists | Page size (default 20) and where to continue; the next token is `meta.next_cursor` |
 | `--schema` | all | Print the command's input and output schema and stop (2.5) |
 | `--help` | all | Print the command's flags in plain text and stop |
 | `--json '<object>'` | commands with input | The whole input, as one JSON object |
 | `--input-file <path>`, `--stdin` | commands with a content field | The content, read as bytes (2.2) |
 | `--dry-run` | writes | Decide and report; change nothing (2.6) |
-| `--idempotency-key <id>` | writes | The operation ID (2.7) |
+| `--idempotency-key <key>` | writes | A key the caller chooses, for safe retries (2.7) |
 | `--if-match <revision>` | writes to a record with a revision | The revision the caller last saw (2.7) |
 | `--durable` | writes | Answer only after the drive has it ([ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 4) |
 
@@ -95,7 +95,8 @@ and they combine:
   task's description, a comment's body. The bytes are taken unchanged as UTF-8, so
   Markdown and YAML with quotes, backticks, dollar signs and new lines need no
   escaping. Short content can still be given by the field's own flag or in `--json`. A
-  command with no content field refuses both flags.
+  command with no content field refuses both flags. The two cannot be given together,
+  and bytes that are not valid UTF-8 are refused with `invalid_request`.
 
 `agent-os` reads the file itself, as the agent, inside the agent's isolation. The
 content travels in the request. **The office never opens a path that a caller names.**
@@ -105,7 +106,8 @@ prompts.
 ### 2.3 The answer
 
 Every command prints exactly one envelope on standard output and nothing else: no
-colour, no progress, no second line.
+colour, no progress, no second line. There are two stated exceptions: `--help` prints
+plain text, and `--format compact` prints `data` alone on success.
 
 ```json
 {"ok":true,"data":{"reference":"T-B37","status":"in_progress","revision":4},"meta":{"status":"completed","operation_id":"0193…","ack":"committed"},"error":null}
@@ -119,18 +121,18 @@ colour, no progress, no second line.
   waiting outcomes below. It is false when the command was refused or failed.
 - **`data`** is the result: one record, or a list. Field order is fixed and lists have
   a stated order, so the same state prints the same bytes.
-- **`meta`** carries what is about the call, not the record: `status`, `operation_id`
-  and `ack` (`committed` or `durable`) for a write, `revision` when the write produced
-  one, `next_cursor` for a list, `dry_run: true` for a dry run.
+- **`meta`** carries what is about the call, not the record: `status` on every
+  answer; `operation_id` and `ack` (`committed` or `durable`) for a write; `revision`
+  when the write produced one; `next_cursor` for a list; `dry_run: true` for a dry run.
 - **`meta.status`** is one of:
 
   | Status | Meaning | What the agent does |
   | --- | --- | --- |
-  | `completed` | Done | Continue |
+  | `completed` | Done. Every read answers this | Continue |
   | `timed_out` | An ask that is not required got no answer within its wait. `data.default` holds the ask's default when it has one | Continue with the default, or without the answer |
   | `withdrawn` | The ask was withdrawn or cancelled | Continue without it |
-  | `suspended` | A required answer is pending ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 5). `data` names what is awaited and from whom | Close out background work and end the turn. The office stops the agent and starts it again, in the same session, with the answer |
-  | `gate_required` | The change needs a person's approval before it takes effect. `data` names the approval and the approver | Continue with other work; the outcome arrives as a message |
+  | `suspended` | A required ask waited its time and no answer came: a required answer is pending ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 5). `data` names what is awaited and from whom | Close out background work and end the turn. The office stops the agent and starts it again, in the same session, with the answer |
+  | `gate_required` | The change needs a person's approval before it takes effect. `data` names the request and, once it is known, who approves | Continue with other work; the outcome arrives as a message |
 
   These are the requirement's `SUSPENDED` and `GATE_REQUIRED`, and the four results of
   an ask in ADR-0020.
@@ -140,7 +142,9 @@ colour, no progress, no second line.
   fields separated by tabs, or `name: value` lines for one record. A failure prints the
   JSON envelope in every format.
 - **Exit code.** 0 when `ok` is true, 1 when it is false, 2 when the command line
-  itself could not be read. The envelope is printed in all three cases.
+  itself could not be read. The envelope is printed in all three cases. The command
+  line is read first: a line that cannot be read exits 2 without contacting the office,
+  whether or not there is a binding.
 
 ### 2.4 Errors an agent can act on
 
@@ -162,7 +166,7 @@ There is one spelling of each code. The requirement's examples map as follows.
 | `POLICY_VIOLATION` | `policy_violation` (new), or the rule's own code where clients already branch on one, such as `checklist_incomplete` | Absent, or the flag the rule asks for. The hint names the rule |
 
 Three more that an agent meets often: `unavailable` and `not_ready` (repeat the call
-with the same `idempotency-key`), `operation_reused` (the key was used for a different
+with the same `--idempotency-key`, which `retry_with` carries), `operation_reused` (the key was used for a different
 change; use a new key), `invalid_request` (the hint lists the valid flags or values).
 
 ### 2.5 Finding out without loading everything
@@ -185,32 +189,37 @@ cannot drift.
 
 ### 2.6 `--dry-run`
 
-A dry run goes to the office like the real call. The office runs the same decision:
-is the caller allowed, is the input valid, does the stated revision still hold, does a
-rule that the code enforces refuse it. It then discards the decision and answers what
-the real call would have answered, with `meta.dry_run: true`. It changes nothing: no
-file, no journal entry, no receipt, no number used.
+A dry run goes to the office like the real call. The office does everything the real
+call does up to the point of commitment: is the caller allowed, is the input valid,
+does the stated revision still hold, does a rule that the code enforces refuse it, and
+does the change apply to the projection. It then undoes all of it and answers with
+`meta.dry_run: true`. It changes nothing: no file, no journal entry, no receipt.
 
-In the [office store](office-store.md) a change is decided before it is applied, under
-a mark the writer can undo to. A dry run is that decision followed by the undo. The
-store gains one entry point for it, added with the first writing command (B2). There is
-no second copy of any rule.
+In the [office store](office-store.md) the writer takes a mark, runs the decision and
+applies the entry to the projection, and a failure at either step undoes to the mark. A
+dry run is those two steps followed by the same undo, without framing or appending an
+entry. The store gains one entry point for it, added with the first writing command on
+the new store (B2). There is no second copy of any rule. Three things follow:
 
-`agent-os grant check --command "<resource> <verb>"` with the same input is the same
-dry run, answering only allowed or refused.
+- **Nothing is used up.** A number, a reference or a position the decision took is
+  returned by the undo. B2 proves it (CLI-4).
+- **The answer has the shape of the real one, without what only a real change mints:**
+  no new ID, no reference, no revision.
+- **A dry run takes no `--idempotency-key`.** The two together are `invalid_request`.
+
+This is the requirement's `grant check`. It is not a second command.
 
 ### 2.7 Safe retries and stale writes
 
-- **`--idempotency-key`** is the operation ID that every change carries
-  ([non-negotiable 5](../architecture-non-negotiables.md)). `agent-os` creates one for
-  a write that does not carry one and reports it in `meta.operation_id`, on success and
-  on failure. Repeating a call with the same key and the same input changes nothing
-  further and returns the first answer. The same key with different input is
-  `operation_reused`.
-- **`agent-os operation new`** prints a fresh key without calling the office, for an
-  agent that wants to hold the key before its first attempt.
-  **`agent-os operation inspect --id <key>`** answers what became of an operation, for
-  an agent that lost the answer.
+- **`--idempotency-key`** is a key the caller chooses: up to 64 letters, digits and
+  hyphens. Every change carries an operation ID
+  ([non-negotiable 5](../architecture-non-negotiables.md)), and the key is what a
+  caller holds of it. For the same caller, repeating a call with the same key and the
+  same input changes nothing further and returns the first answer; that is also how an
+  agent that lost an answer gets it back. The same key with different input is
+  `operation_reused`. A write that carries no key is given one by `agent-os`, reported
+  in `meta.operation_id` on success and on failure. How a key becomes the stored
+  operation ID is B2's decision.
 - **`--if-match`** is the record's revision as the caller last read it. Where the data
   contract requires an expected revision (assignment, for one), the flag is required. A
   stale revision is `conflict`, and `retry_with` carries the current one.
@@ -240,7 +249,7 @@ variable or from a flag. A command that leaves out `--project` gets the run's pr
 names another project is checked like any other call.
 
 `agent-os` refuses to run without a binding, except for `--help`, `--schema` and
-`operation new`, which make no call. There is no `--as`, no `--office`, and no
+`--version`, which make no call. There is no `--as`, no `--office`, and no
 variable that names the caller.
 
 ### 2.9 Several commands in one turn
@@ -251,12 +260,14 @@ variable that names the caller.
   envelope for each line:
 
   ```json
-  {"command":"thread list","input":{"limit":5},"options":{"fields":["id","from","subject"]}}
+  {"command":"thread list","input":{"limit":5},"options":{"fields":"id,from,subject"}}
   ```
 
-  It is the same table, parser and envelope. An agent that sends a batch through it
-  pays for one process start and one bind. It stops at the first `ok: false` unless
-  `--keep-going` is given.
+  It is the same table, parser and envelope, and an option is spelled as its flag. It
+  answers every line: a line that fails does not stop the next. An agent reaches it by
+  sending several commands in one shell call, and pays for one process start and one
+  bind. The target of ADR-0014 is measured through it. A single one-shot command is
+  bounded by the start of its process, as that decision says.
 
 ### 2.10 Where MCP is used
 
@@ -285,12 +296,10 @@ office accepts only from a person in the stated position; an agent that calls it
 | `session inspect` | The organization, office, employee, home team and the leads above it, the project and task of this run, the session and its state, and what it is waiting on | [Agent sessions](agent-sessions.md) | C3 |
 | `session attach` | The long-running mode (2.9) | ADR-0014 decision 5 | B6 |
 | `grant list` | What the office holds about this run's reach: the teams the employee leads, the project and task, the worktrees and other writable places, the isolation mode, the tools and connectors of its execution configuration | [Employees](organization-data/04-agent-structure.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [execution](organization-data/11-model-profiles-and-agent-execution.md) | C3 |
-| `grant check` | Whether a named command with a given input would be allowed (2.6) | The command's own contract | B2 |
-| `operation new`, `operation inspect` | A fresh key; what became of an operation (2.7) | [Office store](office-store.md), receipts | K1, B2 |
 
 `session suspend` and `session resume` are not commands. Suspension is the `suspended`
-outcome of a required ask or a gate, and the office performs both steps (ADR-0020
-decisions 6 and 8).
+outcome of a required ask, and the office performs both steps (ADR-0020 decisions 6 and
+8). `grant check` is `--dry-run` (2.6).
 
 ### 3.2 The organization and its people
 
@@ -304,7 +313,7 @@ decisions 6 and 8).
 | `team create`, `team update`, `person add` and the like | A person's commands: the owner changes structure. B2 names them under this grammar | [Who may change what](organization-data/04-agent-structure.md) | B2 |
 | `project create` | A person's command: the owner | [Who may change what](organization-data/04-agent-structure.md) | B3 |
 | `hr roles`, `hr inspect-role` | The organization's roles; one role's body and requirements | [Roles UX](../specs/roles-ux.md) | C2 |
-| `hr hire` | Asks for a new agent. Creates a hire proposal and returns `gate_required` with the proposal and its approver. Nothing is provisioned before a person approves | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
+| `hr hire` | Asks for a new agent, in words or with the fields filled in. Returns `gate_required` with the request and, when the caller named the home team, who approves; otherwise the approver is known once the HR lead has drafted the proposal. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields or ask the owner. Nothing is provisioned before a person approves | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
 
 ### 3.3 Messages, questions and approvals
 
@@ -317,16 +326,22 @@ recipient-state calls); the wire names belong to `org-proto`.
 | --- | --- | --- | --- |
 | `channel list`, `channel join`, `channel leave` | The channels the caller may see; joining and leaving a manual channel | [Chat UX](../specs/chat-ux.md) (CHAT-19) | B6 |
 | `channel post` | Posts in a conversation or to a person, with a kind: `handoff` or `announcement` with its reason | Chat UX section 5 | B6 |
-| `channel ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. To a person it holds for the answer; to a channel with nobody named it is a question that does not hold | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020 | B7 |
+| `channel ask` | Asks a question with the `ask_user` schema: `choice`, `yes_no` or `free_text`, an optional default, `--required`, `--wait`. To a person it holds for the answer, and returns `completed` with it, `timed_out`, or, when required, `suspended`. To a channel with nobody named it is a question that does not hold, and `--required` is refused | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020 | B7 |
 | `consult ask` | The same ask, addressed to an agent, or to a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team | Messaging; [employees](organization-data/04-agent-structure.md) | B7 |
 | `thread list`, `thread read` | Everything addressed to the caller, whatever its kind, unread first; one thread in full | ADR-0003 decisions 10 and 11 | B6 |
-| `thread reply` | Replies in a thread; answers an ask | Messaging; ADR-0020 | B6, B7 |
+| `thread reply` | Replies in a thread (B6); answers an ask (B7) | Messaging; ADR-0020 | B6, B7 |
+| `thread accept` | Accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
+| `thread withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
 | `thread done`, `thread defer` | The caller's own triage state | ADR-0003 decision 11 | B6 |
 | `thread wait` | Holds until something arrives or the wait ends | [Agent sessions](agent-sessions.md) (holds are capped) | B6 |
-| `gate open` | Asks for an approval: a required yes-or-no ask linked to a task, addressed to the named approver or, with none named, to the nearest person above the caller in its lead chain, else the owner. Returns `suspended` | ADR-0020; the approver rule of [the hire flow](../specs/our-org-in-the-app.md) section 7.1 | C6 |
-| `gate status` | Whether an approval is waiting, approved or rejected, by whom and why | The same | C6 |
 
-A gate is an ask. It adds no record. An agent never approves a gate.
+**Approvals in milestone one.** An approval here is a record with its own rules: who
+approves is derived from that person's position, never named by the requester, and a
+rejection needs a reason ([the hire flow](../specs/our-org-in-the-app.md), section
+7.1). Milestone one has one approval, the hire, and `hr hire` answers `gate_required`
+for it. For anything else an agent that needs a person's go-ahead asks a required
+yes-or-no question with `channel ask`; that is a question, not a recorded approval.
+`gate open` and `gate status` are in section 6.
 
 ### 3.4 Tasks
 
@@ -356,11 +371,15 @@ A gate is an ask. It adds no record. An agent never approves a gate.
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
 | `repo list` | The repositories of a project with their integration branches | [Git design](projects-git-github.md) | C7 |
-| `repo attach` | A person's command: links a registered repository to a project | The same; who may change what | C7 |
-| `worktree create` | Asks the office to create the caller's worktree for a task it is assigned, one for each repository the task targets. The office creates it under its own rules and answers the path. Repeating it answers the same path | Git design, "A worktree per task and repository" | C7 |
-| `worktree list` | The caller's worktrees with task, repository, branch and state | The same | C7 |
-| `worktree cleanup` | Asks the office to remove the worktree of a closed task. Refused while it holds work that is not pushed | The same | C7 |
+| `repo attach` | A person's command: links a registered repository to a project, with its integration branch | The same; [projects](organization-data/02-project-structure.md) | C7 |
+| `worktree list` | The caller's worktrees with task, repository, branch, path and state | The same, "A worktree per task and repository" | C7 |
 | `repo push` | Asks the office to push the task's branch (`git.push`). The agent holds no credential | The same | C7 |
+
+`worktree create` and `worktree cleanup` are not commands. The office creates a task's
+worktrees when its assignee starts the task, before the run that will write in them is
+launched, because a run's writable places are fixed at launch. It removes them after
+the task closes, under the Git design's own checks. `task transition` reports the state
+of each repository's worktree.
 
 ### 3.7 What today's commands become
 
@@ -385,21 +404,22 @@ the table.
 
 | Step | Increment | Delivers for the command line |
 | --- | --- | --- |
-| 1 | **K1** (new) | The shared library: the command table, the parser, the envelope and its three formats, `--help`, `--schema`, exit codes, `operation new`, and the contract tests of section 8 run against a test office. No command of today is converted |
-| 1 | A5 | `agentic-org` uses the library for a signed-in person |
-| 2 | B2, B3 | The first real commands: `org inspect`, `team roster`, `agent inspect`, `project list`, `project inspect`, `project create`. With the first write: `--dry-run`, `--idempotency-key`, `--if-match`, `grant check`, `operation inspect` |
+| 1 | **K1** (new) | The shared library: the command table, the parser, the three ways to give input, the envelope and its three formats, `--fields`, `--limit` and `--cursor`, `--help`, `--schema`, exit codes, and the contract tests of section 8, run against a test office that is a stub inside the test process. No command of today is converted |
+| 1 | A5 | `agentic-org` uses the library for a signed-in person, with the first two rows on the real path: `org inspect` and one of the owner's writes, served by today's office |
+| 2 | B2, B3 | On the new store: `org inspect`, `team roster`, `agent inspect`, the owner's commands for teams and people, `project list`, `project inspect`, `project create`. With the first write: `--dry-run`, `--idempotency-key`, `--if-match`, `--durable` |
 | 3 | C2 | `hr roles`, `hr inspect-role`, `hr hire` and the `gate_required` outcome |
 | 3 | C3 | The binding and the launch variables of 2.8; `agent-os` refuses to run without a binding; `session inspect`, `grant list`; the short catalogue in the agent's instructions; the empty MCP configuration |
 | 3 | C5 | `process catalog`, `process inspect`, `policy list`, `policy inspect`, `skill list`, `skill read` |
-| 4 | B6 | `channel list`, `join`, `leave`, `post`; `thread list`, `read`, `reply`, `done`, `defer`, `wait`; `agent status`; `session attach`. Today's `msg` commands, the file queue and the relay are deleted |
-| 4 | B7 | `channel ask`, `consult ask`, and the `timed_out` and `withdrawn` outcomes |
-| 4 | C6 | The `suspended` outcome; `gate open`, `gate status` |
+| 4 | B6 | `channel list`, `join`, `leave`, `post`; `thread list`, `read`, `reply`, `accept`, `done`, `defer`, `wait`; `agent status`; `session attach`. Today's `msg` commands, the file queue and the relay are deleted |
+| 4 | B7 | `channel ask`, `consult ask`, answering with `thread reply`, `thread withdraw`, and the `timed_out` and `withdrawn` outcomes |
+| 4 | C6 | The `suspended` outcome of a required ask |
 | 5 | B5 | `task` and `checklist` |
-| 5 | C7 | `repo` and `worktree` |
+| 5 | C7 | `repo list`, `repo attach`, `worktree list`, `repo push` |
 
 At the end of milestone one an agent can find out who and where it is, read what
-applies to its work, talk and ask, wait for an approval, work a task in a worktree and
-have its branch pushed, with every call in one grammar.
+applies to its work, talk and ask, be suspended on a required answer and resumed with
+it, work a task in a worktree and have its branch pushed, with every call in one
+grammar.
 
 ## 5. Milestone two: Linux
 
@@ -407,14 +427,16 @@ Milestone two adds no command and changes none. It proves the same table on Linu
 
 | Increment | Delivers for the command line |
 | --- | --- |
-| X1b | `agent-os` and the shared library reach the socket's location, the peer check and file reads only through `org-platform` (`dirs`, `socket`, `fs`). Neither contains a platform branch, and the platform check enforces it |
-| X2 | The binding on Linux: the token, and the caller's descent from the started process through the `process` capability. The contract tests that need an office pass on Linux for the commands that exist then |
+| X1b | `agent-os` and the shared library take default locations and file reads only from `org-platform` (`dirs`, `fs`). Neither contains a platform branch, and the platform check enforces it |
+| X2 | The contract tests that need an office pass on Linux for the commands that exist then |
 | X5 | `agent-os` is in the container image's release `bin/`, first on an agent's `PATH`, and the image has a shell. No wrapper |
-| X6 | The contract tests run in CI on both systems. The catalogue and every schema are byte-identical on macOS and Linux. One-shot and `session attach` timings are recorded on Linux; the target of ADR-0014 is held on the reference Mac |
+| X6 | The contract tests run in CI on both systems. The catalogue and every schema are byte-identical on macOS and Linux. One-shot timings are recorded on Linux, and `session attach` timings once B6 has landed; the target of ADR-0014 is held on the reference Mac |
 
 Linux and milestone one advance side by side, so "the commands that exist then" grows
 with each merge: a command added by milestone one must pass on Linux in the same
-change, or the Linux CI job of X6 fails.
+change, or the Linux CI job of X6 fails. The same holds for the binding, which C3
+builds: its check that the caller descends from the started process uses the `process`
+capability of `org-platform`, on both systems.
 
 ## 6. Not in milestone one or two
 
@@ -425,6 +447,10 @@ change, or the Linux CI job of X6 fails.
 | `process apply`, `block run`, role-bound skills | Process Packages. Processes here are documents that are read, and writing them from the command line is not in v1 (PROC-8) | After the owner's answer |
 | `artifact publish`, `artifact drift` | No record of typed artifact versions or derivation exists | After the owner's answer |
 | `event emit`, `event subscribe` | The office has one change stream, for its own readers. Agents publishing events and packages subscribing to them is new | After the owner's answer |
+| `gate open`, `gate status` | An approval is a record with its own rules (3.3), and what declares a gate is a Process Package | After the owner's answer. Until then: `hr hire` for a hire, a required yes-or-no ask for anything else |
+| `worktree create`, `worktree cleanup` | The office does both, at task start and after closure (3.6) | Not commands |
+| `grant check` | It is `--dry-run` (2.6) | Not a command |
+| `session suspend`, `session resume` | They are outcomes the office performs (3.1) | Not commands |
 | `policy check` | A written standard cannot be checked by a program. Rules the code enforces are checked by `--dry-run` | With machine-checked policies, if they are added |
 | `runner spawn` | Only the office starts a run ([non-negotiable 10](../architecture-non-negotiables.md)) | See the owner's question 2 in REQ-08 |
 | `logs inspect` | The session view is for people in the browser (C4). No rule says which agent may read which session | Later |
@@ -452,10 +478,10 @@ change, or the Linux CI job of X6 fails.
 | ID | Passing evidence |
 | --- | --- |
 | CLI-1 | For every row of the table: a positional argument, an unknown flag and a missing required flag are each refused with `invalid_request`, a hint and exit code 2, and nothing reaches the office |
-| CLI-2 | For every row and every format, standard output is exactly one envelope that validates against the envelope's schema; `json` is one line |
+| CLI-2 | For every row, standard output in `json` and `yaml` is exactly one envelope that validates against the envelope's schema, and `json` is one line; `compact` prints `data` alone on success and the JSON envelope on failure; `--help` prints text |
 | CLI-3 | Every `--schema` output is valid JSON Schema, and every row's example input and recorded output validate against it |
-| CLI-4 | `--dry-run` on every writing row leaves the store's position, files and receipts unchanged, and reports the refusal the real call reports |
-| CLI-5 | The same `--idempotency-key` twice makes one change and returns the same answer; the same key with other input is `operation_reused`; `operation inspect` returns the stored answer |
+| CLI-4 | `--dry-run` on every writing row leaves the store's positions, numbers, files and receipts unchanged; it reports the refusal the real call reports, including one raised while applying to the projection; with `--idempotency-key` it is refused |
+| CLI-5 | The same `--idempotency-key` twice makes one change and returns the same answer; the same key with other input is `operation_reused` |
 | CLI-6 | A stale `--if-match` is `conflict` with the current revision in `retry_with`, and the retry with it succeeds |
 | CLI-7 | Markdown with quotes, backticks, dollar signs, new lines and non-ASCII text arrives byte-identical through `--input-file`, `--stdin` and `--json` |
 | CLI-8 | With standard input closed and no terminal, every row completes; no row reads standard input without `--stdin` |
@@ -464,11 +490,11 @@ change, or the Linux CI job of X6 fails.
 | CLI-11 | The launch catalogue is generated from the table and is at most 4 KiB; a snapshot of the catalogue and of every schema fails the build when a row changes without it, and is identical on macOS and Linux |
 | CLI-12 | The MCP configuration written for a run is empty, and a start that reports any MCP server is refused |
 | CLI-13 | `session attach` answers each line with the envelope the one-shot command prints |
-| CLI-14 | A required ask and a gate return `suspended`; a hire request returns `gate_required`; neither blocks past its stated wait |
+| CLI-14 | A required ask returns `completed` with an answer that arrives within its wait, and `suspended` when the wait ends without one; an ask that is not required returns `timed_out` with its default; a hire request returns `gate_required` at once; none blocks past its stated wait |
 
 K1 makes CLI-1, 2, 3, 7, 8 and 11 pass against a test office. Each later increment
 makes them pass for its own rows, and the rest pass with the increment that builds
-what they test: CLI-4, 5, 6 and 10 with B2, CLI-9 and 12 with C3, CLI-13 with B6,
+what they test: CLI-4, 5 and 6 with B2, CLI-9, 10 and 12 with C3, CLI-13 with B6,
 CLI-14 with C2, B7 and C6.
 
 ## 9. What the code does today
