@@ -207,14 +207,11 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
-                    member_id: l.member_id().into(),
+                    employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })
                 .collect(),
             server_time_ms: wall,
-            absolute_expires_at_ms: wall
-                .checked_add(absolute.as_millis() as u64)
-                .ok_or_else(unavailable)?,
             idle_expires_at_ms: wall
                 .checked_add(idle.as_millis() as u64)
                 .ok_or_else(unavailable)?,
@@ -425,7 +422,7 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
-                    member_id: l.member_id().into(),
+                    employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })
                 .collect(),

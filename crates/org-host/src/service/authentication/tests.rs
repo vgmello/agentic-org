@@ -73,7 +73,6 @@ fn inspected_session_uses_current_protected_facts_and_monotonic_absolute_limit()
     assert_eq!(view.login, "Owner");
     assert!(view.admin);
     assert!(view.orgs.is_empty());
-    assert!(view.absolute_expires_at_ms - view.server_time_ms <= ABSOLUTE.as_millis() as u64);
     assert!(view.idle_expires_at_ms - view.server_time_ms <= IDLE.as_millis() as u64);
     assert!(auth
         .inspect(&Connection::for_test(), &signed_in.session)
@@ -86,8 +85,8 @@ fn inspected_session_uses_current_protected_facts_and_monotonic_absolute_limit()
         .unwrap()
         .created = Instant::now() - (ABSOLUTE - Duration::from_millis(200));
     let view = auth.inspect(&connection, &signed_in.session).unwrap();
-    assert!(view.absolute_expires_at_ms - view.server_time_ms <= 200);
-    assert!(view.idle_expires_at_ms <= view.absolute_expires_at_ms);
+    // The absolute limit still bounds the reported idle expiry; it is not on the wire.
+    assert!(view.idle_expires_at_ms - view.server_time_ms <= 200);
     let account = auth.authorize(&connection, &signed_in.session).unwrap();
     auth.db
         .establish_organization_owner(&account, "org", "01ARZ3NDEKTSV4RRFFQ69G5FAV")

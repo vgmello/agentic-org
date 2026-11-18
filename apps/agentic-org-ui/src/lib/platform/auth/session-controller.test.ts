@@ -19,14 +19,13 @@ const view = {
 	admin: false,
 	organizations: [],
 	server_time_ms: 100,
-	absolute_expires_at: 'later',
 	idle_expires_at: 'sooner'
 };
 const unauthorized = () =>
 	new SessionRequestError(401, {
 		code: 'not_authorized',
 		message: proof,
-		session_reason: 'hq_restarted'
+		session_reason: 'unknown'
 	});
 function deferred<T>() {
 	let resolve!: (value: T) => void, reject!: (error: unknown) => void;
@@ -275,7 +274,7 @@ describe('P6a session ownership', () => {
 		await s.controller.boot();
 		s.gateway.refresh.mockRejectedValue(unauthorized());
 		await expect(s.controller.refresh(100)).rejects.toMatchObject({ status: 401 });
-		expect(s.states.at(-1)).toEqual({ kind: 'signed-in', session: view, reauth: 'hq_restarted' });
+		expect(s.states.at(-1)).toEqual({ kind: 'signed-in', session: view, reauth: 'unknown' });
 		expect(s.stored()).toEqual(record);
 		expect(s.gateway.refresh).toHaveBeenCalledTimes(1);
 	});
@@ -485,11 +484,11 @@ describe('P6a session ownership', () => {
 		s.replace({ ...record, proof: rotated });
 		s.http.mockResolvedValue({
 			status: 401,
-			body: { error: { code: 'not_authorized', message: proof, session_reason: 'hq_restarted' } }
+			body: { error: { code: 'not_authorized', message: proof, session_reason: 'future_reason' } }
 		} as never);
 		await s.controller.read('/api/v1/capabilities');
 		expect(s.http).toHaveBeenCalledTimes(2);
-		expect(s.states.at(-1)).toHaveProperty('reauth', 'hq_restarted');
+		expect(s.states.at(-1)).toHaveProperty('reauth', 'unknown');
 	});
 	it('does not retry a 403 permission refusal', async () => {
 		const s = setup();
@@ -614,7 +613,7 @@ describe('P6a session ownership', () => {
 				expect(s.states.at(-1)).toEqual({
 					kind: 'signed-in',
 					session: view,
-					reauth: 'hq_restarted'
+					reauth: 'unknown'
 				});
 			else if (reason === 'offline')
 				expect(s.states.at(-1)).toEqual({ kind: 'signed-in', session: view });

@@ -153,7 +153,7 @@ pub struct AccountView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrganizationLink {
     pub org_id: String,
-    pub member_id: String,
+    pub employee_id: String,
     pub office_ids: Vec<String>,
 }
 
@@ -165,7 +165,6 @@ pub struct SessionView {
     pub admin: bool,
     pub organizations: Vec<OrganizationLink>,
     pub server_time_ms: Milliseconds,
-    pub absolute_expires_at: String,
     pub idle_expires_at: String,
 }
 
@@ -178,7 +177,6 @@ pub struct SessionEstablished {
     pub admin: bool,
     pub organizations: Vec<OrganizationLink>,
     pub server_time_ms: Milliseconds,
-    pub absolute_expires_at: String,
     pub idle_expires_at: String,
     pub proof: SessionProof,
 }
@@ -191,7 +189,6 @@ impl SessionEstablished {
             admin: view.admin,
             organizations: view.organizations,
             server_time_ms: view.server_time_ms,
-            absolute_expires_at: view.absolute_expires_at,
             idle_expires_at: view.idle_expires_at,
             proof,
         }
@@ -204,7 +201,6 @@ impl SessionEstablished {
             admin: self.admin,
             organizations: self.organizations.clone(),
             server_time_ms: self.server_time_ms,
-            absolute_expires_at: self.absolute_expires_at.clone(),
             idle_expires_at: self.idle_expires_at.clone(),
         }
     }

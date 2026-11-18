@@ -156,7 +156,7 @@ export function lookupScope(query: LookupQuery, kind: OperationKind, sessionInst
 export const validRawPathSegment = (segment: string): boolean => typeof segment === 'string' && segment.length > 0 &&
 	!/[\/\\]/.test(segment) && !/%(?:2f|5c)/i.test(segment) && !['.', '..'].includes(segment.replace(/%2e/ig, '.'));
 
-const sessionReason = word(['session_ended', 'hq_restarted'] as const);
+const sessionReason = word(['session_ended'] as const);
 const cancelState = word(['abandoned', 'linked', 'in_progress'] as const);
 const gatewayErrorReader = object({
 	code: text, message: text, retry_after_ms: optional(readSafeInteger), session_reason: optional(sessionReason),
@@ -281,7 +281,7 @@ export const readCancelResult = checked((value) => {
 });
 export const cancelStatus = (result: ReturnType<typeof readCancelResult>): number | undefined => ['abandoned', 'linked'].includes(result.state) ? 200 : undefined;
 export const readInstance = checked(object({
-	instance_id: text, name: text, server_version: text, gateway_status: word(['ok', 'degraded'] as const),
+	instance_id: text, name: text, server_version: text, web_status: word(['ok', 'degraded'] as const),
 	listen_scheme: word(['https', 'http_loopback'] as const), tls: word(['ok', 'missing', 'expiring'] as const), server_time_ms: readSafeInteger
 }));
 export const readOffice = checked(object({
@@ -300,10 +300,10 @@ export const capabilityAvailable = (capability: Capability, implementedNames: re
 export const GATEWAY_OPERATION_NAMES = ['version', 'session.sign_in', 'session.get', 'session.refresh', 'session.sign_out', 'capabilities', 'instance.get', 'organization.list', 'organization.create', 'organization.cancel', 'office.list', 'org.snapshot', 'office.restart', 'operation.get', 'events', 'events.poll'] as const;
 
 const accountReader = object({ id: text, login: text });
-const linkReader = object({ org_id: text, member_id: text, office_ids: array(text) });
+const linkReader = object({ org_id: text, employee_id: text, office_ids: array(text) });
 const sessionFields = {
 	instance_id: text, account: accountReader, admin: bool, organizations: array(linkReader), server_time_ms: readSafeInteger,
-	absolute_expires_at: text, idle_expires_at: text
+	idle_expires_at: text
 };
 export const readSignIn = checked(object({ login: text, password: nonempty }));
 export const readSession = checked(object(sessionFields));

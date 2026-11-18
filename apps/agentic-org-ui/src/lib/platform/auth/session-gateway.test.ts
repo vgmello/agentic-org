@@ -10,7 +10,6 @@ const view = {
 	admin: false,
 	organizations: [],
 	server_time_ms: 100,
-	absolute_expires_at: 'later',
 	idle_expires_at: 'sooner'
 };
 function setup(body: unknown, status = 200) {
@@ -85,7 +84,7 @@ describe('P6a fixed session operations', () => {
 					error: {
 						code: 'not_authorized',
 						message: proof,
-						session_reason: 'hq_restarted',
+						session_reason: 'future_reason',
 						retry_after_ms: 500
 					}
 				},
@@ -93,7 +92,7 @@ describe('P6a fixed session operations', () => {
 			);
 			const error = await gateway.get(proof).catch((error) => error);
 			expect(error).toBeInstanceOf(SessionRequestError);
-			expect(error).toMatchObject({ status, sessionReason: 'hq_restarted', retryAfterMs: 500 });
+			expect(error).toMatchObject({ status, sessionReason: 'unknown', retryAfterMs: 500 });
 			expect(JSON.stringify(error)).not.toContain(proof);
 			expect(String(error)).not.toContain(proof);
 		}

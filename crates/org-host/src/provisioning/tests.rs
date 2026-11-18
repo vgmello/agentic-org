@@ -592,7 +592,7 @@ fn actual_selected_hq_provisioning_native_route_and_exact_retry() {
         &org_host_control::ops::SessionParams { session: p.session },
     );
     assert_eq!(inspection.orgs.len(), 1);
-    assert!(!inspection.orgs[0].member_id.is_empty());
+    assert!(!inspection.orgs[0].employee_id.is_empty());
     // Exact public bytes and identities, no optional owner employee or credentials.
     assert_eq!(
         std::fs::read(state.join("organization.yaml")).unwrap(),

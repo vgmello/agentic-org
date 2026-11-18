@@ -188,11 +188,9 @@ Three things to know about the order:
     `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from
     the office worker's in `crates/org-office-launch/src/v3.rs`.
   - To delete with the stored sessions of ADR-0013: the absolute session lifetime
-    (`ABSOLUTE`, `absolute_expires_at_ms` in `crates/org-host/src/service/authentication.rs`
-    and `crates/org-host-control/src/ops.rs`), the `absolute_expires_at` field of the
-    wire session and its test vectors (`crates/org-proto/src/gateway/session.rs`), the
-    field the UI decoder requires (`apps/agentic-org-ui/src/lib/platform/http/wire.ts`),
-    and the per-account session cap.
+    (`ABSOLUTE` in `crates/org-host/src/service/authentication.rs`) and the per-account
+    session cap. The wire no longer carries it: A3 B2 removed `absolute_expires_at` from
+    the session view, `session.inspect` and the UI decoder.
 - **Done when:** registration from the link works once and only once; SES-1 to SES-7
   and the SIGN criteria for first access, sign-in, sign-out and expiry pass against a real instance, in a browser.
 - **Needs:** A2.

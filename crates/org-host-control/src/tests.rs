@@ -70,7 +70,7 @@ fn sign_in_has_its_wire_shape_and_hides_its_secrets() {
         "session": "an-opaque-handle",
         "account": "01M72N8MG00000000000000A01",
         "admin": true,
-        "orgs": [{"org_id": "01M72N8MG00000000000000G01", "member_id": "01M72N8MG00000000000000M01",
+        "orgs": [{"org_id": "01M72N8MG00000000000000G01", "employee_id": "01M72N8MG00000000000000M01",
                   "office_ids": ["01M72N8MG00000000000000F01"]}]
     });
     let result: AccountVerifyResult = serde_json::from_value(wire.clone()).unwrap();
