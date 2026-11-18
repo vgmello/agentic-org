@@ -68,7 +68,6 @@ crates/org-office/src/store/tests/sqlcipher_init.rs 4
 crates/org-socket/examples/gateway_confinement.rs 3
 crates/org-socket/src/confinement.rs 12
 crates/org-socket/src/image.rs 8
-crates/org-socket/src/peer.rs 2
 crates/org-socket/src/rights.rs 7
 crates/org-socket/src/rights/send.rs 2
 crates/org-socket/src/rights/send/tests.rs 2
