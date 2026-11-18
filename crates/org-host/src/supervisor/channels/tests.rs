@@ -1,4 +1,5 @@
 use super::*;
+use org_office_launch::ServerEvent;
 
 fn byte(receiver: &mut org_socket::rights::StreamReceiver, count: usize) -> (u8, Vec<OwnedFd>) {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -159,6 +160,136 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
     assert!(frame::read_line(&mut BufReader::new(worker))
         .unwrap()
         .is_none());
+}
+
+/// The worker's side of a discard: `ready_for_secrets`, then the header bytes, one at a time,
+/// with no descriptor on any of them.
+pub(crate) fn discard_worker_reads_handoff(worker: &mut UnixStream) -> v3::Handoff {
+    frame::write_message(worker, &v3::ReadyForSecrets).unwrap();
+    let mut receiver = org_socket::rights::StreamReceiver::new(worker.try_clone().unwrap());
+    let mut header = Vec::new();
+    loop {
+        let (b, fds) = byte(&mut receiver, 0);
+        assert!(fds.is_empty());
+        if b == b'\n' {
+            break;
+        }
+        header.push(b);
+    }
+    let handoff = v3::decode_handoff(&header).unwrap();
+    crate::secrets::zero(&mut header);
+    handoff
+}
+
+#[test]
+fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    worker
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let worker_thread = std::thread::spawn(move || {
+        let v3::Handoff::Discard { db_key, fds } = discard_worker_reads_handoff(&mut worker) else {
+            panic!("not a discard handoff");
+        };
+        assert!(fds.is_empty());
+        // A discard gets no secret: the header's key is `null`.
+        assert!(db_key.is_none(), "a discard handoff carried a key");
+        // No marker and no transfer socket follow: the next bytes are the host's EOF once
+        // the stream closes, never a descriptor. The worker reports on the stream.
+        v3::write_rendezvous_event(
+            &mut worker,
+            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+        )
+        .unwrap();
+    });
+    let (signals, events) = mpsc::channel();
+    Broker::discard_handoff(
+        host,
+        std::process::id(),
+        None,
+        &ServerCheck::Skip,
+        9,
+        signals,
+    )
+    .unwrap();
+    worker_thread.join().unwrap();
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Event {
+            generation: 9,
+            event: ServerEvent::Discarded
+        }
+    ));
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Closed { generation: 9 }
+    ));
+}
+
+#[test]
+fn a_discard_stream_ends_at_a_non_server_event() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    worker
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let worker_thread = std::thread::spawn(move || {
+        discard_worker_reads_handoff(&mut worker);
+        // A discard has no descriptor to acknowledge: a receipt is a protocol error.
+        v3::write_rendezvous_event(
+            &mut worker,
+            &v3::RendezvousEvent::FdsReceived {
+                of: "handoff".into(),
+            },
+        )
+        .unwrap();
+        v3::write_rendezvous_event(
+            &mut worker,
+            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+        )
+        .unwrap();
+        worker
+    });
+    let (signals, events) = mpsc::channel();
+    Broker::discard_handoff(
+        host,
+        std::process::id(),
+        None,
+        &ServerCheck::Skip,
+        3,
+        signals,
+    )
+    .unwrap();
+    let _worker = worker_thread.join().unwrap();
+    // Only the stream's end: the `discarded` after the receipt is never forwarded.
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Closed { generation: 3 }
+    ));
+    assert!(events.recv_timeout(Duration::from_millis(200)).is_err());
+}
+
+#[test]
+fn a_discard_reader_from_another_process_identity_gets_no_header() {
+    let (host, worker) = UnixStream::pair().unwrap();
+    worker
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let (signals, events) = mpsc::channel();
+    assert!(Broker::discard_handoff(
+        host,
+        std::process::id() + 1,
+        None,
+        &ServerCheck::Skip,
+        1,
+        signals,
+    )
+    .is_err());
+    assert!(frame::read_line(&mut BufReader::new(worker))
+        .unwrap()
+        .is_none());
+    assert!(events.try_recv().is_err());
 }
 
 #[test]

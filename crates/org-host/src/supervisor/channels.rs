@@ -149,6 +149,14 @@ impl Broker {
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<Arc<Endpoint>> {
+        let (stream, deadline) = Self::connect(rendezvous)?;
+        self.handoff(
+            stream, office, pid, admitted, check, db_key, recovery, generation, signals, deadline,
+        )
+    }
+    /// The one connection to a bound rendezvous, within [`DEADLINE`], with blocking I/O bounded
+    /// by what is left of it.
+    fn connect(rendezvous: Rendezvous) -> io::Result<(UnixStream, Instant)> {
         let deadline = Instant::now() + DEADLINE;
         let stream = loop {
             match rendezvous.listener.accept() {
@@ -168,24 +176,16 @@ impl Broker {
         stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(left))?;
         stream.set_write_timeout(Some(left))?;
-        self.handoff(
-            stream, office, pid, admitted, check, db_key, recovery, generation, signals, deadline,
-        )
+        Ok((stream, deadline))
     }
-    #[allow(clippy::too_many_arguments)]
-    fn handoff(
-        &self,
+    /// Authenticate the socket's reader, read its `ready_for_secrets` and check its image again:
+    /// the steps before any secret goes out, shared by every op.
+    fn ready(
         stream: UnixStream,
-        office: &str,
         pid: u32,
         admitted: Option<AuditToken>,
         check: &ServerCheck,
-        db_key: &DbKey,
-        recovery: Option<&org_proto::RecoveryCode>,
-        generation: u64,
-        signals: Sender<Signal>,
-        deadline: Instant,
-    ) -> io::Result<Arc<Endpoint>> {
+    ) -> io::Result<BufReader<UnixStream>> {
         // Authenticate the socket's actual reader, not merely a process that was
         // admitted before it ran. Release macOS requires the exact audit token.
         phase(
@@ -209,6 +209,69 @@ impl Broker {
             "handoff image identity",
             check.still(pid, admitted).map_err(launch),
         )?;
+        Ok(reader)
+    }
+    /// A `--discard` run over the rendezvous: the handoff carries no secret (its `db_key` is
+    /// always `null`; a plain office opens nothing that needs a key) and names no descriptors, so no transfer pair is made, no marker is sent and no `fds_received` is
+    /// awaited. The worker's `discarded`/`failed` arrive on the stream and go to `signals` as
+    /// [`Signal::Event`]; the stream's end (or any other event) is [`Signal::Closed`]. No
+    /// endpoint is registered: a discard serves no channels.
+    pub fn discard(
+        rendezvous: Rendezvous,
+        pid: u32,
+        admitted: Option<AuditToken>,
+        check: &ServerCheck,
+        generation: u64,
+        signals: Sender<Signal>,
+    ) -> io::Result<()> {
+        let (stream, _deadline) = Self::connect(rendezvous)?;
+        Self::discard_handoff(stream, pid, admitted, check, generation, signals)
+    }
+    fn discard_handoff(
+        stream: UnixStream,
+        pid: u32,
+        admitted: Option<AuditToken>,
+        check: &ServerCheck,
+        generation: u64,
+        signals: Sender<Signal>,
+    ) -> io::Result<()> {
+        let mut reader = Self::ready(stream, pid, admitted, check)?;
+        // Still sent only to the authenticated child reader, after `ready_for_secrets`, so a
+        // discard keeps the start/create handshake order; the header itself holds no key.
+        let header = v3::encode_discard_handoff(None).map_err(launch)?;
+        phase("handoff header send", reader.get_mut().write_all(&header))?;
+        // The report may take as long as the supervisor's discard timeout allows; it kills the
+        // worker at that deadline, which ends this stream.
+        reader.get_ref().set_read_timeout(None)?;
+        std::thread::Builder::new()
+            .name(format!("office-{pid}-v3-discard"))
+            .spawn(move || {
+                while let Ok(Some(v3::RendezvousEvent::Server(event))) =
+                    v3::read_server_event(&mut reader)
+                {
+                    if signals.send(Signal::Event { generation, event }).is_err() {
+                        return;
+                    }
+                }
+                let _ = signals.send(Signal::Closed { generation });
+            })?;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn handoff(
+        &self,
+        stream: UnixStream,
+        office: &str,
+        pid: u32,
+        admitted: Option<AuditToken>,
+        check: &ServerCheck,
+        db_key: &DbKey,
+        recovery: Option<&org_proto::RecoveryCode>,
+        generation: u64,
+        signals: Sender<Signal>,
+        deadline: Instant,
+    ) -> io::Result<Arc<Endpoint>> {
+        let mut reader = Self::ready(stream, pid, admitted, check)?;
         let (transfer, worker) = {
             let _fence = lock(&SPAWN_LOCK);
             UnixDatagram::pair()?

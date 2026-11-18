@@ -109,8 +109,9 @@ pub(crate) enum Mode<'a> {
     /// Serve the office with this id: its first line is a start with the office's app token for
     /// this host run and its database key from the key store.
     Office(&'a str, &'a AppToken, &'a DbKey),
-    /// Remove an unfinished office, then exit: its first line is a discard with the office's
-    /// database key, or `null` when the host has none.
+    /// Remove an unfinished office, then exit. A legacy v2 first line is a discard with the
+    /// office's database key, or `null` when the host has none; the v3 discard handoff never
+    /// carries the key.
     Discard(&'a str, Option<&'a DbKey>),
 }
 
@@ -212,7 +213,7 @@ impl Spawner {
             SpawnError::Untrusted(why)
         })?;
         let rendezvous = match (&self.broker, mode) {
-            (Some(broker), Mode::Office(..)) => Some(broker.bind()?),
+            (Some(broker), Mode::Office(..) | Mode::Discard(..)) => Some(broker.bind()?),
             (Some(broker), Mode::Create(line)) if line.1.is_some() => Some(broker.bind()?),
             (_, Mode::Create(line)) if line.1.is_some() => {
                 return Err(io::Error::other("registered HQ creation requires launch v3").into())
@@ -373,6 +374,41 @@ impl Spawner {
                     running.generation,
                     v3_signals,
                 )?);
+            }
+            // The discard handoff carries no secret: the key store's key (if any) stays here.
+            (Some(broker), Some(rendezvous), Mode::Discard(id, _)) => {
+                let first = org_office_launch::v3::HostFirstLine::Discard(
+                    org_office_launch::v3::OfficeLine {
+                        id_profile: org_office_launch::is_selected_entity_id(id)
+                            .then_some(org_office_launch::v3::IdProfile::SelectedV1),
+                        // As over v2: a discard never claims writer custody, so the worker
+                        // keeps refusing a folder marked `selected-writer.required`.
+                        selected_writer_required: false,
+                        instance_id: broker.instance.clone(),
+                        office_id: id.into(),
+                        rendezvous: rendezvous
+                            .path()
+                            .to_str()
+                            .ok_or_else(|| io::Error::other("invalid rendezvous path"))?
+                            .into(),
+                    },
+                );
+                org_office_launch::v3::write_first_line(
+                    running
+                        .stdin
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("missing worker stdin"))?,
+                    &first,
+                )
+                .map_err(|_| io::Error::other("worker discard line failed"))?;
+                super::channels::Broker::discard(
+                    rendezvous,
+                    running.process.id(),
+                    admitted,
+                    &self.check,
+                    running.generation,
+                    v3_signals,
+                )?;
             }
             _ => running.write_first_line(mode),
         }
