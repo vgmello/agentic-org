@@ -217,9 +217,9 @@ struct Wire {
 impl Wire {
     fn read(mut stream: TcpStream) -> Self {
         let mut response = String::new();
-        if let Err(error) = stream.read_to_string(&mut response) {
-            assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
-        }
+        // No reset is tolerated: the lingering close delivers every reply,
+        // including parser refusals that leave input unread.
+        stream.read_to_string(&mut response).unwrap();
         let (head, body) = response
             .split_once("\r\n\r\n")
             .expect("application response");
@@ -340,9 +340,8 @@ fn rowan_b105_next_keepalive_target_uses_the_same_effective_path() {
     let mut stream = connect(server.address);
     write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Length: 2\r\n\r\n{{}}POST /api/v1/test/read#fragment HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}", address = server.address).unwrap();
     let mut response = String::new();
-    if let Err(error) = stream.read_to_string(&mut response) {
-        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
-    }
+    // Both requests are fully read; the lingering close leaves no reset.
+    stream.read_to_string(&mut response).unwrap();
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert_eq!(response.matches("HTTP/1.1 200 OK\r\n").count(), 2);
     assert_eq!(response.matches("{\"result\":{}}").count(), 2);
