@@ -294,6 +294,11 @@ onto it and deletes the old store; B1c measures and guards it.
     top-level team, the creator as its lead, the HR lead; directory generation 1) and
     create a team.
   - `open_store`, the one seam, used by the office's tests with either engine.
+  - B1a is large, so it may land as two merges, with acceptance at the second. The
+    first merge is `org-store` (writer, journal, flusher, files, receipts, rebuild,
+    memory engine and harness) with the organization family running on the memory
+    engine. The second adds the SQLite engine and runs the suite and the harness on
+    both engines.
 - **Read:** [office store design](design/office-store.md) sections 1 to 7 and 9,
   [ADR-0021](adr/0021-office-store-architecture.md), the
   [data contract index](design/organization-data/README.md) (shared storage contract),
