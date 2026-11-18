@@ -18,3 +18,5 @@ dist/
 /.claude/skills/
 /.repowise/
 /.agent-kit/tools/
+# A lead session's local handover (AGENTS.md, "Session start").
+/.agent-kit/tasks/HANDOVER.md
