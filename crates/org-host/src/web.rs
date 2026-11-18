@@ -876,8 +876,17 @@ fn line(
                     return Err(timed_out());
                 }
             }
+            // The child's end of the control stream is gone. Linux reports that as a reset
+            // (`ECONNRESET`), once, when the child closed or died with bytes of the host's
+            // it had not read, and as the end of the stream otherwise; macOS reports the
+            // end of the stream in both cases. A reset comes only after everything the
+            // child had sent was read, and carries no bytes and no descriptors: it is the
+            // same event, and this start fails as for any child that went away.
             Err(org_socket::rights::ReceiveError::Fatal(e))
-                if e.kind() == io::ErrorKind::UnexpectedEof =>
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset
+                ) =>
             {
                 let cause = failed(&format!("control EOF before the {what}"));
                 return Err(io::Error::other(ControlEof(cause.to_string())));

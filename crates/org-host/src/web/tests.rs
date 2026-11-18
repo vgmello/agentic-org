@@ -1264,6 +1264,31 @@ fn a_control_line_that_does_not_arrive_before_the_deadline_is_refused() {
     drop(peer);
 }
 
+/// A child that closes its end, or dies, with bytes of the host's it has not read. Linux
+/// reports that to the host as a reset of the connection, macOS as its end. Either way it is
+/// a child that went away: the start is refused, and the host does not treat it as broken
+/// descriptor framing, which would end the host itself.
+#[test]
+fn a_peer_that_closes_with_unread_bytes_is_a_control_eof() {
+    let (ours, mut theirs) = UnixStream::pair().unwrap();
+    // The handoff the child never reads, and the start of an acknowledgement it sent.
+    (&ours)
+        .write_all(b"{\"v\":1,\"event\":\"handoff\"}\n")
+        .unwrap();
+    theirs.write_all(b"partial").unwrap();
+    drop(theirs);
+    let mut receiver = org_socket::rights::StreamReceiver::new(ours);
+    let until = Instant::now() + Duration::from_secs(5);
+    let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "web process start failed: control EOF before the handoff ACK"
+    );
+    assert!(error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<ControlEof>()));
+}
+
 #[test]
 fn control_eof_before_a_line_is_refused() {
     let (mut receiver, mut peer) = control_pair();
