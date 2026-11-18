@@ -67,8 +67,6 @@ crates/org-host/src/writer.rs 3
 crates/org-host/tests/recovery_presence.rs 1
 crates/org-office/src/store/acceptance/durable.rs 2
 crates/org-office/src/store/acceptance/tests.rs 2
-crates/org-socket/examples/gateway_confinement.rs 3
-crates/org-socket/src/confinement.rs 12
 crates/org-socket/src/image.rs 8
 crates/org-socket/src/rights/send/tests.rs 2
 crates/org-socket/src/rights/stream/tests.rs 10

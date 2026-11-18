@@ -469,7 +469,12 @@ impl Running {
         let ready: GatewayReadyForSecrets =
             serde_json::from_slice(&line(&mut receiver, until, "ready line")?)
                 .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
-        org_socket::confinement::verify_ready_report(ready.landlock.is_some())
+        // The ready line has no seccomp field.
+        let enforcement = org_platform::confinement::Enforcement {
+            landlock_abi: ready.landlock.map(|status| status.abi),
+            seccomp: false,
+        };
+        org_platform::confinement::verify_ready_report(&enforcement)
             .map_err(|error| failed(&error.to_string()))?;
         crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
             .map_err(|_| failed("the ready-line peer is not the admitted child"))?;
@@ -483,7 +488,7 @@ impl Running {
             ));
         }
         let paths: Vec<_> = config.critical_paths.iter().map(PathBuf::as_path).collect();
-        org_socket::confinement::verify_gateway(pid, &paths)
+        org_platform::confinement::verify_web(pid, &enforcement, &paths)
             .map_err(os_failed("verify the web process sandbox"))?;
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)
