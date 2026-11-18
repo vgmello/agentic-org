@@ -529,15 +529,21 @@ impl Provisioning {
             })
     }
 
-    /// Creation, outside the admission gate. The account's authority is read again here:
-    /// an administrator revoked after admission creates nothing more.
-    fn drive(&self, r: &Reservation, hq: &dyn Hq) -> Result<(), ApiError> {
-        let id = crate::accounts::identity::AccountId::parse(&r.account).map_err(storage)?;
-        let account = self
+    /// The account that reserved a create, while it is still an instance administrator.
+    fn administrator(&self, account: &str) -> Result<Option<Account>, ApiError> {
+        let id = crate::accounts::identity::AccountId::parse(account).map_err(storage)?;
+        Ok(self
             .db
             .account_authority(&id)
             .map_err(storage)?
-            .filter(|a| a.admin() && a.revoked_at_ms().is_none())
+            .filter(|a| a.admin() && a.revoked_at_ms().is_none()))
+    }
+
+    /// Creation, outside the admission gate. The account's authority is read again here:
+    /// an administrator revoked after admission creates nothing more.
+    fn drive(&self, r: &Reservation, hq: &dyn Hq) -> Result<(), ApiError> {
+        let account = self
+            .administrator(&r.account)?
             .ok_or_else(not_administrator)?;
         let account = &account;
         let handle = Name::parse(&r.recovery_handle).map_err(storage)?;
@@ -839,7 +845,13 @@ impl Provisioning {
                 )?,
             });
         }
-        self.ensure_driving(&current)?;
+        // A create whose account is no longer an administrator is never created from
+        // ([`Self::drive`] refuses it), so a lookup starts no thread for it: it answers the
+        // stored state. The name and slug stay reserved until `organization.cancel` exists
+        // (FC-188).
+        if self.administrator(&current.account)?.is_some() {
+            self.ensure_driving(&current)?;
+        }
         Ok(HostOpResult::Accepted)
     }
 
@@ -945,7 +957,11 @@ const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 fn retryable(error: &ApiError) -> bool {
     matches!(
         error.code,
-        ErrorCode::Unavailable | ErrorCode::StorageError | ErrorCode::Timeout
+        ErrorCode::Unavailable
+            | ErrorCode::StorageError
+            | ErrorCode::Timeout
+            // "host starting": the offices are still discarding unfinished folders.
+            | ErrorCode::NotReady
     )
 }
 

@@ -731,11 +731,6 @@ impl Host {
             ))),
             _ => None,
         };
-        // A create that reserved its identity before the host last stopped continues now,
-        // with no client asking; later ones start from the browser's request.
-        if let Some(provisioning) = &provisioning {
-            provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
-        }
         let creating = provisioning.clone();
         let service = Arc::new(
             Service::new(
@@ -749,6 +744,14 @@ impl Host {
             .with_gateway_state(Arc::clone(&gateway_state)),
         );
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
+        // A create that reserved its identity before the host last stopped continues now,
+        // with no client asking; later ones start from the browser's request. This follows
+        // the last step of the start that can fail: a start that is refused has started no
+        // creation thread, so none outlives the refusal. Until this line a create or a
+        // lookup that arrives on the new listener is answered `unavailable` and asked again.
+        if let Some(provisioning) = &creating {
+            provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
+        }
         let web = web_config.and_then(|web_config| {
             match web::Supervisor::start(
                 web_config,

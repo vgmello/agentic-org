@@ -100,4 +100,16 @@ fn an_organization_name_resolves_among_the_accounts_linked_organizations_only() 
     assert!(resolve_org(&[], "Acme")
         .unwrap_err()
         .ends_with("it can see: none"));
+    // The key is the host's: a name the host would refuse has none and selects nothing,
+    // even where a plain trim-and-lowercase comparison would call the two equal.
+    let odd = [linked(
+        "0193a5c0-0000-7000-8000-000000000004",
+        "Odd\u{200b}Name",
+    )];
+    assert!(resolve_org(&odd, "odd\u{200b}name").is_err());
+    let school = [linked("0193a5c0-0000-7000-8000-000000000005", "ÉCOLE")];
+    assert_eq!(
+        resolve_org(&school, " école ").as_deref(),
+        Ok("0193a5c0-0000-7000-8000-000000000005")
+    );
 }

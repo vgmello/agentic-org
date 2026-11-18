@@ -346,13 +346,17 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
 /// to. Names are unique on an instance whatever their letter case, so at most one
 /// matches. An unknown name is refused with the names the account can see.
 fn resolve_org(orgs: &[ops::LinkedOrg], name: &str) -> Result<String, String> {
-    // The instance's own rule for "the same name": surrounding space and letter case
-    // do not tell two names apart.
-    let key = |name: &str| name.trim().to_lowercase();
+    // The instance's own rule for "the same name" (`OrganizationName::key`), not a copy
+    // of it. What is not an organization name has no key and matches nothing.
+    let key = |name: &str| {
+        org_proto::OrganizationName::parse(name)
+            .ok()
+            .map(|name| name.key().to_owned())
+    };
     let wanted = key(name);
     let mut found = orgs
         .iter()
-        .filter(|o| !o.name.is_empty() && key(&o.name) == wanted);
+        .filter(|o| wanted.is_some() && key(&o.name) == wanted);
     if let (Some(org), None) = (found.next(), found.next()) {
         return Ok(org.org_id.clone());
     }

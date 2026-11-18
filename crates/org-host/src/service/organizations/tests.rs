@@ -27,6 +27,8 @@ enum Worker {
     Fails,
     /// Fails the first time it is asked and creates from then on.
     FailsOnce,
+    /// Answers "host starting" the first time it is asked and creates from then on.
+    NotReadyOnce,
     /// Refuses with a decision no later try changes.
     Refuses,
     /// The worker created the office and the host adopted it, then the host stopped
@@ -72,6 +74,10 @@ impl Hq for FakeHq {
         if *worker == Worker::FailsOnce {
             *worker = Worker::Creates;
             return Err(ApiError::new(ErrorCode::Unavailable, "worker failed once"));
+        }
+        if *worker == Worker::NotReadyOnce {
+            *worker = Worker::Creates;
+            return Err(ApiError::new(ErrorCode::NotReady, "host starting"));
         }
         if *worker == Worker::Refuses {
             return Err(ApiError::new(ErrorCode::NotAuthorized, "refused"));
@@ -924,6 +930,64 @@ fn an_administrator_revoked_after_admission_creates_nothing_more() {
     }
     assert_eq!(hq.calls.load(Ordering::Acquire), 0);
     assert_eq!(host.reserved(), 1);
+}
+
+/// A lookup of a create whose account lost its authority answers the stored state and
+/// starts no creation thread, however often it is asked. The reservation stays (FC-188).
+#[test]
+fn a_lookup_of_a_revoked_administrators_create_starts_no_thread() {
+    let host = host(Worker::Blocks);
+    let auth = host.sign_in("Owner", 1);
+    let id = op();
+    assert_eq!(
+        host.create(&auth, &id, &plan("Example", "example"))
+            .unwrap(),
+        HostOpResult::Accepted
+    );
+    host.hq.set(Worker::Fails);
+    host.idle();
+    let reserved = host.db.provisioning_reserved().unwrap().remove(0);
+    let account_id = crate::accounts::identity::AccountId::parse(&reserved.account).unwrap();
+    // The account as the host read it while it was an administrator: the session of a
+    // revoked account ends, so only the controller can be asked on its behalf here.
+    let account = host.db.account_authority(&account_id).unwrap().unwrap();
+    let started = host.provisioning.drives_started();
+    assert_eq!(
+        host.provisioning.lookup(&account, &id).unwrap(),
+        HostOpResult::Accepted
+    );
+    host.idle();
+    assert_eq!(
+        host.provisioning.drives_started(),
+        started + 1,
+        "an administrator's lookup continues its create"
+    );
+    host.db.change_authority_fixture(&account_id, true).unwrap();
+    let asked = host.hq.calls.load(Ordering::Acquire);
+    for _ in 0..5 {
+        assert_eq!(
+            host.provisioning.lookup(&account, &id).unwrap(),
+            HostOpResult::Accepted
+        );
+    }
+    host.idle();
+    assert_eq!(host.provisioning.drives_started(), started + 1);
+    assert_eq!(host.hq.calls.load(Ordering::Acquire), asked);
+    assert_eq!(host.reserved(), 1, "reserved until a cancel exists");
+}
+
+/// "Host starting" is a refusal a later try changes: the starting host tries again itself.
+#[test]
+fn a_starting_host_tries_again_after_the_offices_answer_host_starting() {
+    let (host, restarted, hq) = reserved_then_restarted(Worker::NotReadyOnce);
+    restarted.start(hq.clone());
+    wait_idle(&restarted);
+    assert_eq!(
+        hq.calls.load(Ordering::Acquire),
+        2,
+        "one refusal, one retry"
+    );
+    assert_eq!(host.reserved(), 0, "linked with no client asking");
 }
 
 /// A host with one reserved create whose first worker failed, and what a second host
