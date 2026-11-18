@@ -50,6 +50,22 @@ fn failure() -> io::Error {
 pub const REFUSAL_PREFIX: &str = "agentic-org-web: startup refused: confinement: ";
 /// The longest reason of a refusal line, in bytes.
 pub const REFUSAL_REASON_BYTES: usize = 240;
+/// What a web process that confined itself without Landlock, where its confinement
+/// adapter has that layer and the kernel or a profile did not let it be applied,
+/// writes to its standard error once, before its ready line:
+///
+/// ```text
+/// line   = "agentic-org-web: confinement: landlock not applied: " reason LF
+/// reason = 1*240 ( %x20-7E )
+/// ```
+///
+/// The process is then confined by its seccomp filter alone and serves as usual.
+/// The ready line says only that no Landlock domain is in force; it cannot carry
+/// why, so the reason travels here. It is the adapter's own text, as in a refusal
+/// line, and is for display only: the host logs it once per start. The same
+/// grammar is in `org-host`'s `web.rs`.
+pub const LANDLOCK_NOT_APPLIED_PREFIX: &str =
+    "agentic-org-web: confinement: landlock not applied: ";
 /// What every other failed start writes: one fixed line that says nothing more.
 const UNAVAILABLE: &str = "agentic-org-web: authenticated startup unavailable";
 
@@ -64,8 +80,9 @@ impl std::fmt::Display for ConfinementRefused {
 }
 impl std::error::Error for ConfinementRefused {}
 
-/// `text` as a refusal line's reason: printable ASCII only (anything else becomes
-/// `?`), at most [`REFUSAL_REASON_BYTES`] long, never empty.
+/// `text` as the reason of a line this process writes for its host: printable ASCII
+/// only (anything else becomes `?`), at most [`REFUSAL_REASON_BYTES`] long, never
+/// empty.
 fn refusal_reason(text: &str) -> String {
     let reason: String = text
         .chars()
@@ -96,6 +113,10 @@ pub fn startup_failure_line(error: &io::Error) -> String {
         Some(ConfinementRefused(reason)) => format!("{REFUSAL_PREFIX}{reason}"),
         None => UNAVAILABLE.to_owned(),
     }
+}
+/// The line for a Landlock layer that was not applied, without its line feed.
+pub fn landlock_not_applied_line(reason: &str) -> String {
+    format!("{LANDLOCK_NOT_APPLIED_PREFIX}{}", refusal_reason(reason))
 }
 fn fatal() -> ! {
     std::process::exit(1)
@@ -274,6 +295,12 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     let files = crate::release::load(assets, line.release.as_ref()).map_err(|_| failure())?;
     let confined =
         confinement::confine_web(Path::new(&line.rendezvous)).map_err(confinement_refused)?;
+    if let Some(reason) = &confined.landlock_not_applied {
+        // Before the ready line, in one write, so that the host has it when it has
+        // verified the report. A host that does not read it loses only the reason.
+        let line = format!("{}\n", landlock_not_applied_line(reason));
+        let _ = io::stderr().write_all(line.as_bytes());
+    }
     let (control, transfer, listener) = handoff(confined.stream, confined.enforcement)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
     let host =
@@ -397,6 +424,34 @@ mod tests {
             let error = root(Ok(sealed), started_as).unwrap_err();
             assert_eq!(error.to_string(), "missing release root", "{started_as:?}");
         }
+    }
+
+    #[test]
+    fn a_landlock_layer_that_was_not_applied_is_one_bounded_printable_line() {
+        assert_eq!(
+            landlock_not_applied_line(
+                "landlock_create_ruleset failed with EPERM: the Landlock version query was refused"
+            ),
+            "agentic-org-web: confinement: landlock not applied: landlock_create_ruleset \
+             failed with EPERM: the Landlock version query was refused"
+        );
+        // Whatever the reason is, the line is one line of printable ASCII, and its
+        // reason is at most as long as a refusal's and never empty.
+        let forged = landlock_not_applied_line(&format!(
+            "a\nagentic-org-web: startup refused: confinement: b\r\t\u{1b}[31m\u{202e}é{}",
+            "x".repeat(400)
+        ));
+        let reason = forged.strip_prefix(LANDLOCK_NOT_APPLIED_PREFIX).unwrap();
+        assert_eq!(reason.len(), REFUSAL_REASON_BYTES);
+        assert!(reason.starts_with("a?agentic-org-web: startup refused: confinement: b??"));
+        assert!(reason.bytes().all(|byte| (0x20..=0x7e).contains(&byte)));
+        assert_eq!(
+            landlock_not_applied_line(""),
+            format!("{LANDLOCK_NOT_APPLIED_PREFIX}no reason given")
+        );
+        // It is not a refusal line, and a refusal line is not one of these.
+        assert!(!LANDLOCK_NOT_APPLIED_PREFIX.starts_with(REFUSAL_PREFIX));
+        assert!(!REFUSAL_PREFIX.starts_with(LANDLOCK_NOT_APPLIED_PREFIX));
     }
 
     #[test]
