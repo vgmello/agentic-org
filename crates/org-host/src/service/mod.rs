@@ -39,6 +39,10 @@ pub(crate) struct Service {
     /// that an ingress refusal reaches no host op.
     #[cfg(test)]
     browser_ops: std::sync::atomic::AtomicUsize,
+    /// Organization calls answered on the admitted web connection; real-process tests
+    /// prove that a refused request reaches none.
+    #[cfg(test)]
+    organization_ops: std::sync::atomic::AtomicUsize,
 }
 
 impl Service {
@@ -58,6 +62,8 @@ impl Service {
             instance_name: std::sync::OnceLock::new(),
             #[cfg(test)]
             browser_ops: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            organization_ops: std::sync::atomic::AtomicUsize::new(0),
             gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
         }
     }
@@ -93,6 +99,16 @@ impl Service {
     #[cfg(test)]
     pub(crate) fn browser_ops(&self) -> usize {
         self.browser_ops.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// The creation state a create thread keeps alive until it ends.
+    #[cfg(test)]
+    pub(crate) fn provisioning_for_test(&self) -> Option<&Arc<crate::provisioning::Provisioning>> {
+        self.provisioning.as_ref()
+    }
+    #[cfg(test)]
+    pub(crate) fn organization_ops(&self) -> usize {
+        self.organization_ops
+            .load(std::sync::atomic::Ordering::Acquire)
     }
     /// The registered name `instance.view` reports. Installed at most once.
     pub(crate) fn install_instance_name(&self, name: &str) -> bool {
@@ -625,6 +641,11 @@ impl Handler for Service {
             self.provisioning.as_ref(),
             &mut |name, data| connection.send_event(name, data),
         ) {
+            #[cfg(test)]
+            if connection.gateway_listen().is_some() {
+                self.organization_ops
+                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            }
             connection.send_response(reply);
             return;
         }

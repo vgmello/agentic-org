@@ -17,10 +17,9 @@ use crate::{
 };
 use org_host_control::{
     ops::{AccountVerify, AccountVerifyParams},
-    provision::{OrganizationProvision, Params, Provisioned},
-    HostOpResult, Password, SessionHandle,
+    Password, SessionHandle,
 };
-use org_proto::{frame, selected_bootstrap::PlanV1, ApiError, Call, HelloParams, Request};
+use org_proto::{frame, ApiError, Call, HelloParams, Request};
 use std::{
     fs,
     io::{BufReader, Read, Write},
@@ -34,6 +33,7 @@ use std::{
 };
 
 mod browser_sessions;
+mod organizations;
 mod recovery_custody;
 
 const WAIT: Duration = Duration::from_secs(60);
@@ -393,36 +393,108 @@ pub(super) fn start_signed_in() -> Started {
     }
 }
 
-/// Provisions HQ over `wire` as `session`, polling until it completes, and
-/// returns the request and its result. `id` is the next request ID.
-pub(super) fn provision_hq(
-    wire: &mut BufReader<UnixStream>,
-    id: &mut u64,
-    session: SessionHandle,
-) -> (Params, Provisioned) {
-    let prepared = Params {
-        session,
-        operation_id: crate::ids::generate().unwrap(),
-        plan: PlanV1 {
-            version: 1,
-            name: "Example".into(),
-            slug: "example".into(),
-            repository_remote_url: "https://example.test/organization.git".into(),
-            state_branch: "org/state".into(),
+/// The body of `POST /api/v1/organizations` (web-api-v1 §3): one operation on `instance`.
+fn create_body(
+    instance: &str,
+    operation: &str,
+    name: &str,
+    slug: &str,
+    repository: serde_json::Value,
+) -> String {
+    serde_json::json!({
+        "operation_id": operation,
+        "scope": { "kind": "instance", "instance_id": instance },
+        "params": {
+            "name": name, "slug": slug,
+            "organization_repository": repository, "state_branch": "org/state",
         },
-    };
+    })
+    .to_string()
+}
+
+/// A remote repository registration for `slug`. Nothing contacts it.
+fn remote(slug: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "remote", "remote_url": format!("https://example.test/{slug}.git") })
+}
+
+/// `GET /api/v1/operations/host/{operation}` for this instance.
+fn lookup(address: SocketAddr, headers: &str, instance: &str, operation: &str) -> Reply {
+    http(
+        address,
+        "GET",
+        &format!("/api/v1/operations/host/{operation}?instance_id={instance}"),
+        headers,
+        "",
+    )
+}
+
+/// Polls the lookup route until the create completed and returns its organization view.
+fn wait_completed(
+    address: SocketAddr,
+    headers: &str,
+    instance: &str,
+    operation: &str,
+) -> serde_json::Value {
     let until = Instant::now() + WAIT;
     loop {
-        let result = answer::<OrganizationProvision>(wire, *id, &prepared).unwrap();
-        *id += 1;
-        match result {
-            HostOpResult::Completed { result } => return (prepared, result),
-            HostOpResult::Accepted => {
-                assert!(Instant::now() < until, "HQ provisioning deadline");
-                thread::sleep(Duration::from_millis(50));
+        let reply = lookup(address, headers, instance, operation);
+        assert_eq!(reply.status, 200, "lookup: {}", reply.body);
+        let result = &reply.body["result"];
+        assert_eq!(result["kind"], "host", "{result}");
+        assert_eq!(result["operation_id"], operation, "{result}");
+        match result["outcome"].as_str() {
+            Some("completed") => {
+                assert_eq!(result["state"], "linked", "{result}");
+                return result["result"].clone();
             }
-            _ => panic!("unexpected provisioning result"),
+            Some("accepted") => assert_eq!(result["state"], "reserved", "{result}"),
+            _ => panic!("unexpected create outcome: {result}"),
         }
+        assert!(Instant::now() < until, "organization create deadline");
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// An organization created through the browser API.
+pub(super) struct Created {
+    pub(super) operation_id: String,
+    pub(super) organization_id: String,
+    pub(super) office_id: String,
+}
+
+/// Creates the organization "Example" the way a browser does: signs in as the seeded
+/// administrator over HTTP, posts the create and polls the lookup route until it completes.
+pub(super) fn create_hq(host: &Host, address: SocketAddr) -> Created {
+    browser_sessions::wait_serving(host, address);
+    let signed_in = http(
+        address,
+        "POST",
+        "/api/v1/session/sign-in",
+        "",
+        &browser_sessions::credentials(),
+    );
+    let headers = browser_sessions::pair(&signed_in, "sign-in").headers();
+    let instance = host.instance.as_ref().unwrap().id().to_owned();
+    let operation_id = crate::ids::generate().unwrap();
+    let body = create_body(
+        &instance,
+        &operation_id,
+        "Example",
+        "example",
+        remote("example"),
+    );
+    let posted = http(address, "POST", "/api/v1/organizations", &headers, &body);
+    assert!(
+        matches!(posted.status, 200 | 202),
+        "create: {} {}",
+        posted.status,
+        posted.body
+    );
+    let view = wait_completed(address, &headers, &instance, &operation_id);
+    Created {
+        operation_id,
+        organization_id: view["id"].as_str().expect("organization id").to_owned(),
+        office_id: view["offices"][0]["id"].as_str().expect("HQ id").to_owned(),
     }
 }
 

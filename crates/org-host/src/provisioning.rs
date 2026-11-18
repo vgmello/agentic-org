@@ -183,7 +183,7 @@ impl Provisioning {
         match self.db.provisioning_reserved() {
             Ok(reserved) => {
                 for r in reserved {
-                    if self.ensure_driving(&r).is_err() {
+                    if self.drive_on_thread(&r, RESUME_ATTEMPTS).is_err() {
                         crate::host_log::log("a reserved organization create could not be resumed");
                     }
                 }
@@ -229,6 +229,13 @@ impl Provisioning {
     /// Starts the creation on its own thread unless one is already running for this
     /// operation. The check and the claim are one step under a short lock.
     fn ensure_driving(self: &Arc<Self>, r: &Reservation) -> Result<(), ApiError> {
+        self.drive_on_thread(r, 1)
+    }
+
+    /// [`Self::ensure_driving`] with up to `attempts` tries on the one thread. A client's
+    /// poll tries once, because the client asks again. The start of the host has no
+    /// client behind it, so it tries again by itself after a short wait.
+    fn drive_on_thread(self: &Arc<Self>, r: &Reservation, attempts: u32) -> Result<(), ApiError> {
         let hq = Arc::clone(self.hq.get().ok_or_else(unavailable)?);
         let Some(claim) = self.claim(&r.operation_id)? else {
             return Ok(());
@@ -239,24 +246,26 @@ impl Provisioning {
             .name("organization-create".into())
             .spawn(move || {
                 let _claim = claim;
-                // The caller read its row before this attempt held the claim; an earlier
-                // attempt may have linked the organization since. Only the row read under
-                // the claim decides, and only it is created from.
-                let fresh = match this.db.provisioning_lookup(&r.account, &r.operation_id) {
-                    Ok(Some(fresh)) => fresh,
-                    _ => {
-                        crate::host_log::log("an organization create could not be read");
+                for attempt in 1..=attempts {
+                    // The caller read its row before this attempt held the claim; an
+                    // earlier attempt may have linked the organization since. Only the
+                    // row read under the claim decides, and only it is created from.
+                    let fresh = match this.db.provisioning_lookup(&r.account, &r.operation_id) {
+                        Ok(Some(fresh)) => fresh,
+                        _ => {
+                            crate::host_log::log("an organization create could not be read");
+                            return;
+                        }
+                    };
+                    if fresh.linked || this.drive(&fresh, &*hq).is_ok() {
                         return;
                     }
-                };
-                if fresh.linked {
-                    return;
-                }
-                let outcome = this.drive(&fresh, &*hq);
-                if outcome.is_err() {
                     // The reservation, the key and the code stay; a poll or a restart
                     // continues the same operation.
                     crate::host_log::log("an organization create attempt did not complete");
+                    if attempt < attempts {
+                        std::thread::sleep(RESUME_WAIT * attempt);
+                    }
                 }
             })
             .map(drop)
@@ -820,6 +829,11 @@ impl Hq for Offices {
         self.organization_by_id(id)
     }
 }
+
+/// How often the starting host tries a reserved create before it leaves it to a poll.
+const RESUME_ATTEMPTS: u32 = 3;
+/// The wait after a failed try at the start of the host, times the number of the try.
+const RESUME_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// One running creation of one operation; dropping it lets the next attempt start.
 struct Claim {

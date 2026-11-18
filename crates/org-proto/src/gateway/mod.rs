@@ -273,8 +273,12 @@ impl TryFrom<LookupQueryFields> for LookupQuery {
             .chain(fields.org_id.iter())
             .chain(fields.office_id.iter())
         {
-            if !(1..=64).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
-                return Err("lookup IDs must be 1..64 ASCII letters or digits");
+            // Letters, digits and the hyphen of a canonical UUID: instance, organization
+            // and office ids are UUIDv7 (`0193a5c0-0000-7000-8000-000000000009`).
+            if !(1..=64).contains(&id.len())
+                || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            {
+                return Err("lookup IDs must be 1..64 ASCII letters, digits or hyphens");
             }
         }
         Ok(Self {

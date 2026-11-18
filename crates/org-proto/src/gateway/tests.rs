@@ -719,6 +719,24 @@ fn shared_create_and_restart_projections_match_lookup_bytes_and_reject_private_f
     }
 }
 
+/// Instance, organization and office ids are canonical UUIDv7 text: a lookup query names
+/// them as written. Anything outside letters, digits and the hyphen is still refused.
+#[test]
+fn a_lookup_query_names_canonical_uuid_ids() {
+    let instance = "0193a5c0-0000-7000-8000-000000000009";
+    let query = LookupQuery::from_fields([("instance_id", instance)]).unwrap();
+    assert!(query.scope(OperationKind::Host, instance).is_ok());
+    assert!(query
+        .scope(OperationKind::Host, "0193a5c0-0000-7000-8000-00000000000a")
+        .is_err());
+    for refused in ["../outside", "a/b", "a b", "a.b", "a_b", ""] {
+        assert!(
+            LookupQuery::from_fields([("instance_id", refused)]).is_err(),
+            "{refused}"
+        );
+    }
+}
+
 #[test]
 fn shared_lookup_query_fields_are_strict_and_bound_to_the_session_instance() {
     let vectors = fixture(

@@ -15,12 +15,12 @@ use std::{net::SocketAddr, process::Command};
 
 /// The browser's pair: the `name=value` cookie and the proof header value.
 #[derive(Clone)]
-struct Pair {
-    cookie: String,
-    proof: String,
+pub(super) struct Pair {
+    pub(super) cookie: String,
+    pub(super) proof: String,
 }
 impl Pair {
-    fn headers(&self) -> String {
+    pub(super) fn headers(&self) -> String {
         format!(
             "Cookie: {}\r\nX-Org-Session-Proof: {}\r\n",
             self.cookie, self.proof
@@ -28,7 +28,7 @@ impl Pair {
     }
 }
 
-fn set_cookie(reply: &Reply) -> Option<String> {
+pub(super) fn set_cookie(reply: &Reply) -> Option<String> {
     reply.headers.lines().find_map(|line| {
         let (name, value) = line.split_once(':')?;
         name.trim()
@@ -37,28 +37,38 @@ fn set_cookie(reply: &Reply) -> Option<String> {
     })
 }
 
-/// A successful sign-in or registration: one cookie set, the proof in the body,
-/// the account signed in as the administrator.
-fn established(reply: &Reply, what: &str) -> Pair {
+/// The pair a successful sign-in or registration reply carries: its one cookie and the
+/// proof in the body.
+pub(super) fn pair(reply: &Reply, what: &str) -> Pair {
     assert_eq!(
         reply.status, 200,
         "{what}: {} {}",
         reply.headers, reply.body
     );
-    let result = &reply.body["result"];
-    assert_eq!(result["account"]["login"], "Owner", "{what}");
-    assert_eq!(result["admin"], true, "{what}");
-    assert_eq!(result["organizations"], serde_json::json!([]), "{what}");
     let cookie = set_cookie(reply).expect("a session cookie");
     let cookie = cookie.split(';').next().unwrap().trim().to_owned();
     assert!(cookie.starts_with("org_session_"), "{cookie}");
     Pair {
         cookie,
-        proof: result["proof"].as_str().expect("proof").to_owned(),
+        proof: reply.body["result"]["proof"]
+            .as_str()
+            .expect("proof")
+            .to_owned(),
     }
 }
 
-fn credentials() -> String {
+/// A successful sign-in or registration before any organization: the pair, the account
+/// signed in as the administrator.
+pub(super) fn established(reply: &Reply, what: &str) -> Pair {
+    let pair = pair(reply, what);
+    let result = &reply.body["result"];
+    assert_eq!(result["account"]["login"], "Owner", "{what}");
+    assert_eq!(result["admin"], true, "{what}");
+    assert_eq!(result["organizations"], serde_json::json!([]), "{what}");
+    pair
+}
+
+pub(super) fn credentials() -> String {
     serde_json::json!({ "login": "Owner", "password": PASSWORD }).to_string()
 }
 
@@ -67,7 +77,7 @@ fn signed_out(reply: &Reply, what: &str) {
     assert_eq!(reply.body["error"]["code"], "not_authorized", "{what}");
 }
 
-fn wait_serving(host: &Host, address: SocketAddr) {
+pub(super) fn wait_serving(host: &Host, address: SocketAddr) {
     wait_until("web_ready", || web_ready(host));
     wait_until("HTTP readiness", || http_ready(address));
 }
