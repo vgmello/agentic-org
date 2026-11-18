@@ -93,7 +93,7 @@ pub(crate) enum KeyStoreError {
 impl KeyStoreError {
     /// Whether the office's key is to be treated as missing: only an item that isn't a key.
     /// Every other error, a refused platform included, is a store failure.
-    pub(crate) fn means_key_missing(&self) -> bool {
+    pub(crate) fn means_no_key(&self) -> bool {
         matches!(self, Self::Corrupt)
     }
 }
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn only_a_corrupt_item_means_the_key_is_missing() {
-        assert!(KeyStoreError::Corrupt.means_key_missing());
+        assert!(KeyStoreError::Corrupt.means_no_key());
         for error in [
             KeyStoreError::Exists,
             KeyStoreError::NotPlainId,
@@ -265,7 +265,7 @@ mod tests {
             KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
             KeyStoreError::Unsupported,
         ] {
-            assert!(!error.means_key_missing(), "{error:?}");
+            assert!(!error.means_no_key(), "{error:?}");
         }
     }
 

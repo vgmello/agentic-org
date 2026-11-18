@@ -1,7 +1,7 @@
 //! A fake `agentic-org-office` for `org-host`'s tests. **Never shipped:** it is built
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
-//! It follows the launch protocol (`org-office-launch`) without SQLCipher or a key store, and
+//! It follows the launch protocol (`org-office-launch`) without a database or a key store, and
 //! does what the test scripted. Like the real server it speaks only launch
 //! (`org_office_launch::read_first_line`): the first stdin line names the rendezvous socket. The fake connects
 //! to it, sends `ready_for_secrets`, receives the handoff header byte by byte (no descriptor on
@@ -60,7 +60,7 @@
 //! `start <key> <pid> <run> <unix ms>`, `launch <key> <pid> v1`, `instance <key> <pid> <id>`,
 //! `grant <key> <pid> <fingerprint>`, `recovery <key> <pid> present` (create),
 //! `transfer <key> <pid> received` (create and start),
-//! `dbkey <key> <pid> <fingerprint or null>` (`dbkey discard <pid> <fingerprint or null> <id>`
+//! `secrets-key <key> <pid> <fingerprint or null>` (`secrets-key discard <pid> <fingerprint or null> <id>`
 //! for `--discard`), `env <key> <pid> <its environment variables' names>`,
 //! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`,
 //! `eof-before-first-line <key> <pid>`, `eof-exit <key> <pid>`, `eof-ignored <key> <pid>`, and
@@ -572,7 +572,11 @@ fn note_office_secrets_key(
     let fingerprint = office_secrets_key.map_or_else(|| "null".to_owned(), fingerprint);
     record(
         home,
-        format!("dbkey {key} {} {fingerprint} {more}", std::process::id()).trim_end(),
+        format!(
+            "secrets-key {key} {} {fingerprint} {more}",
+            std::process::id()
+        )
+        .trim_end(),
     );
 }
 
