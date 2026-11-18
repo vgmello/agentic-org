@@ -88,6 +88,8 @@ pub mod setup_flow;
 pub mod signals;
 mod supervisor;
 mod sync;
+#[cfg(test)]
+mod test_programs;
 mod timings;
 mod writer;
 
@@ -205,6 +207,16 @@ impl Config {
         }
     }
 
+    /// The service account is an ordinary user on every system: the service refuses to run
+    /// as root (ADR-0017 decision 10). Every composition that runs the service calls this
+    /// first, before anything is opened or created. It is not part of [`Host::start`], so a
+    /// test can run a host as whatever user the tests run as. A command that only talks to a
+    /// running service (`admin reset` run by root for the service user) is not the service
+    /// and does not call it.
+    pub fn refuse_root() -> Result<(), String> {
+        root_refusal(home::euid())
+    }
+
     /// Debug builds only: another office server program.
     #[cfg(debug_assertions)]
     pub fn set_server_program(&mut self, program: impl Into<PathBuf>) {
@@ -250,6 +262,29 @@ impl Config {
         }
         Err(fail(release::Error::MissingBuildTrust))
     }
+}
+
+/// Why a process whose effective user is `euid` may not run the service, if it may not.
+fn root_refusal(euid: u32) -> Result<(), String> {
+    if euid == 0 {
+        return Err(
+            "the service does not run as root: start it as the service user, an ordinary \
+             account (a root-owned service could be read by nothing but root, and every \
+             office worker and agent it starts would be root too)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Closes this process to the other processes of its user before it reads a key: no core
+/// dump, and where the system has the attribute, not dumpable (`org_platform::process`).
+/// Every way a host starts goes through it first.
+fn harden() -> Result<(), HostError> {
+    org_platform::process::harden_self().map_err(|source| HostError::Io {
+        context: "closing this process to other processes before any key is read",
+        source,
+    })
 }
 
 /// Temporary test entry for the private bootstrap while setup's CLI is gated.
@@ -327,18 +362,17 @@ fn startup_server_check(config: &Config) -> Result<ServerCheck, HostError> {
     let server_check =
         ServerCheck::for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
             .map_err(|why| HostError::InvalidAppIdentity { why })?;
-    let server_check =
-        match &config.runtime_release {
-            Some(release) => {
-                server_check.pinned(release.cdhash(SERVER_PROGRAM_NAME).map_err(|e| {
-                    HostError::Io {
-                        context: "binding office image",
-                        source: io::Error::other(e),
-                    }
-                })?)
-            }
-            None => server_check,
-        };
+    let server_check = match &config.runtime_release {
+        Some(release) => {
+            server_check.pinned(release.image_pin(SERVER_PROGRAM_NAME).map_err(|e| {
+                HostError::Io {
+                    context: "binding office image",
+                    source: io::Error::other(e),
+                }
+            })?)
+        }
+        None => server_check,
+    };
     host_log::log(&server_check.describe());
     Ok(server_check)
 }
@@ -512,7 +546,7 @@ fn startup_web(
         config
             .runtime_release
             .as_ref()
-            .map(|release| (release.cdhash("agentic-org-web"), release.web_binding())),
+            .map(|release| (release.image_pin("agentic-org-web"), release.web_binding())),
     );
     let mut critical_paths = vec![layout.home.clone(), instance.root().to_owned()];
     if let Some(dir) = dev_key_dir {
@@ -612,6 +646,7 @@ impl Host {
         instance: Option<instance::registry::Instance>,
         prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
     ) -> Result<Self, HostError> {
+        harden()?;
         if instance.is_some() {
             config.admit_runtime()?;
         }
@@ -810,5 +845,68 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_root_is_refused_the_service() {
+        let refusal = root_refusal(0).unwrap_err();
+        assert!(refusal.contains("does not run as root"), "{refusal}");
+        assert!(refusal.contains("service user"), "{refusal}");
+        for user in [1, 501, 1000, 61000, u32::MAX] {
+            assert_eq!(root_refusal(user), Ok(()), "{user}");
+        }
+        // The composition's check is this rule for the process's own effective user.
+        assert_eq!(Config::refuse_root().is_err(), home::euid() == 0);
+    }
+
+    /// Set in the child of [`a_host_start_closes_the_process_before_it_reads_a_key`].
+    #[cfg(debug_assertions)]
+    const START_CHILD: &str = "ORG_HOST_TEST_START_CHILD";
+
+    /// A host start closes its process to the other processes of its user before it reaches
+    /// its key store: a start that is refused before any store is chosen (a relative home)
+    /// has already done it. A child of the test starts the host, so the test binary itself is
+    /// not changed for the other tests.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_host_start_closes_the_process_before_it_reads_a_key() {
+        use org_platform::process::testing::hardened;
+        if std::env::var_os(START_CHILD).is_some() {
+            assert!(
+                !hardened().unwrap(),
+                "the child was closed before the start"
+            );
+            // No development key folder is set: reaching the key store would say so.
+            let refused = Host::start(Config::new("relative/home", "/nonexistent/worker"));
+            assert!(
+                matches!(refused, Err(HostError::RelativeHome { .. })),
+                "{:?}",
+                refused.err().map(|e| e.to_string())
+            );
+            assert!(hardened().unwrap(), "the start did not close the process");
+            println!("closed before the key store");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::a_host_start_closes_the_process_before_it_reads_a_key",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(START_CHILD, "1")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && text.contains("closed before the key store"),
+            "{text}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

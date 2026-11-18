@@ -1325,10 +1325,18 @@ fn binding() -> org_host_control::gateway::WebRelease {
     }
 }
 
+/// The pin a selected release names for its web process: both of the manifest's identities.
+fn pin(cdhash: [u8; 20]) -> crate::server_check::Pin {
+    crate::server_check::Pin {
+        sha256: [9; 32],
+        macos_cdhash: Some(cdhash),
+    }
+}
+
 #[test]
 fn a_release_build_web_admission_pins_the_selected_image_and_binds_its_release() {
     const TEAM: &str = "AB12CD34EF";
-    let hash = [7u8; 20];
+    let hash = pin([7u8; 20]);
     let web = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
     assert!(matches!(web, ServerCheck::Gateway(_)));
     // A selected release pins its exact web process image and binds its identity.
@@ -1357,7 +1365,7 @@ fn a_release_build_web_admission_refuses_a_missing_image_hash_a_malformed_or_mis
     let (check, _) = admission(true, None, Some((Err(()), binding())));
     assert!(check.may_spawn().is_err(), "{check:?}");
     // A malformed team id refuses, with or without a release, never a weaker check.
-    for release in [None, Some((Ok([7u8; 20]), binding()))] {
+    for release in [None, Some((Ok(pin([7u8; 20])), binding()))] {
         let (check, _) = admission::<()>(false, Some("bad"), release);
         assert!(check.may_spawn().is_err(), "{check:?}");
         assert!(
@@ -1378,8 +1386,9 @@ fn a_debug_build_web_admission_skips_the_signature_check_but_still_pins_a_releas
     let (check, release) = admission::<()>(true, None, None);
     assert_eq!(check, ServerCheck::Skip);
     assert_eq!(release, None);
-    let (check, release) = admission::<()>(true, Some("bad"), Some((Ok([7u8; 20]), binding())));
-    assert_eq!(check, ServerCheck::Skip.pinned([7u8; 20]));
+    let (check, release) =
+        admission::<()>(true, Some("bad"), Some((Ok(pin([7u8; 20])), binding())));
+    assert_eq!(check, ServerCheck::Skip.pinned(pin([7u8; 20])));
     assert_eq!(release, Some(binding()));
     // A pinned debug check never admits an unchecked (token-less) child: the image it names
     // is a development image with a pin, and the platform never takes an unidentified child
@@ -1389,6 +1398,7 @@ fn a_debug_build_web_admission_skips_the_signature_check_but_still_pins_a_releas
         .unwrap();
     assert!(expected.development && expected.macos_requirement.is_none());
     assert_eq!(expected.macos_cdhash, Some([7u8; 20]));
+    assert_eq!(expected.sha256, Some([9; 32]));
     assert_eq!(
         check.why(&ImageRefusal::Unidentified),
         "selected release requires platform-audited image"

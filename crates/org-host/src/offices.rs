@@ -575,10 +575,8 @@ mod tests {
     use crate::keys::memory::MemoryKeys;
     use crate::supervisor::SupervisorConfig;
     use std::fs;
-    #[cfg(target_os = "macos")]
     use std::os::unix::fs::PermissionsExt;
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_stored_folder_is_never_handed_to_discard() {
         // Under /tmp, with `run/`: the launch rendezvous path must fit a socket address.
@@ -589,7 +587,8 @@ mod tests {
         let home = dir.path();
         fs::create_dir(home.join("run")).unwrap();
         // A server that never refuses: it records each run and exits. Only the host's own check
-        // can keep a stored folder from it.
+        // can keep a stored folder from it. It is a `#!` script, started by its path (the test
+        // admission): a system that executes verified bytes starts no script.
         let script = home.join("server");
         fs::write(
             &script,
@@ -606,7 +605,7 @@ mod tests {
                 log_max_bytes: 1024,
                 timings: Timings::default(),
                 keys: Arc::new(MemoryKeys::default()),
-                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+                server_check: Arc::new(crate::server_check::ServerCheck::ByPath),
                 sweep_orphans: false,
             },
             INSTANCE,

@@ -19,7 +19,9 @@ fn release_crash_child_entry() {
         boundary: String,
     }
     let input: Input = serde_json::from_reader(std::io::stdin().take(4096)).unwrap();
-    assert!(input.root.starts_with("/private/tmp"));
+    assert!(input
+        .root
+        .starts_with(org_platform::dirs::testing::disk_backed_temp().unwrap()));
     assert!(input
         .root
         .file_name()
@@ -73,7 +75,7 @@ fn killed_process_reopens_frozen_publication_without_new_decisions_or_source_rea
         // can make the helper operate on an unmarked directory.
         let child_root = tempfile::Builder::new()
             .prefix("org-release-crash-")
-            .tempdir_in("/private/tmp")
+            .tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())
             .unwrap();
         let old = std::mem::replace(&mut f.temp, child_root);
         fs::rename(&f.input, f.temp.path().join("input")).unwrap();

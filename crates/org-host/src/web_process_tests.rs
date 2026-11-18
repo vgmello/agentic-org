@@ -6,7 +6,8 @@
 //! The administrator is seeded directly (A2 D1: the reverse bootstrap is gone and
 //! A3 creates administrators through a one-time link); HQ is provisioned over
 //! `host.sock` exactly as before.
-//! Only disposable `/private/tmp` roots and debug development custody are used;
+//! Only disposable roots in the system's disk-backed temporary directory and debug
+//! development custody are used;
 //! debug `ServerCheck::Skip` establishes no release-signing evidence.
 use crate::{
     home::{HostLock, Layout},
@@ -223,13 +224,14 @@ pub(super) struct Started {
 }
 
 /// Starts [`Started`] from `ORG_TEST_OFFICE_BIN` and `ORG_TEST_WEB_BIN` under a
-/// disposable `/private/tmp` root. Uses request IDs 1 and 2.
+/// disposable root on disk. Uses request IDs 1 and 2.
 pub(super) fn start_signed_in() -> Started {
     let office = std::env::var_os("ORG_TEST_OFFICE_BIN")
         .expect("ORG_TEST_OFFICE_BIN must name the built agentic-org-office");
     let web = std::env::var_os("ORG_TEST_WEB_BIN")
         .expect("ORG_TEST_WEB_BIN must name the built agentic-org-web");
-    let temp = tempfile::tempdir_in("/private/tmp").unwrap();
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let base = temp.path().canonicalize().unwrap();
     for name in ["temp", "keys", "bin"] {
         fs::create_dir(base.join(name)).unwrap();
@@ -409,7 +411,8 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
 /// it creates a registry, a custody namespace or any credential.
 #[test]
 fn registered_host_without_release_or_development_custody_refuses_before_registry_or_credentials() {
-    let temp = tempfile::tempdir_in("/private/tmp").unwrap();
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let base = temp.path().canonicalize().unwrap();
     fs::create_dir(base.join("temp")).unwrap();
     fs::set_permissions(base.join("temp"), fs::Permissions::from_mode(0o700)).unwrap();

@@ -43,6 +43,15 @@
 //! compiled into release builds) may also allow an unsigned development app instead of steps 4
 //! and 5: a caller running as this user whose executable is exactly the configured path (the
 //! app's executable, `Contents/MacOS/<exe>`, as `proc_pidpath` reports it), every use logged.
+//!
+//! **Where the system has no code identity for a native client** (GNU/Linux; ADR-0017
+//! decision 11) the kernel names only the user that connected, and that never changes for a
+//! connection: there is no image to swap and no signature to check. A caller the kernel names
+//! as this host's own user is admitted, in every build, instead of steps 4 and 5; the other
+//! steps are made as everywhere. Admission is then no authority at all: authority comes only
+//! from the session a person approved. The platform says which kind of system this is with
+//! each identity it reports ([`Identity::uid`] is set only where the user is all there is), so
+//! this module has one path and asks nothing about the system.
 
 #[cfg(debug_assertions)]
 use std::path::{Path, PathBuf};
@@ -50,10 +59,17 @@ use std::path::{Path, PathBuf};
 /// The desktop app's bundle id.
 pub const APP_BUNDLE_ID: &str = "com.vgmello.agentic-org";
 
-pub(crate) use crate::peer::AuditToken;
+pub(crate) use crate::peer::Identity;
 
 use crate::code_signing;
 use crate::code_signing::developer_id_requirement;
+
+/// Whether `identity` is a peer the system names by its user alone, and that user is this
+/// process's own. `false` wherever the system identifies a peer's image instead: there the
+/// user is not what admits it.
+pub(crate) fn is_this_user(identity: &Identity) -> bool {
+    identity.uid == Some(crate::home::euid())
+}
 
 /// What the policy needs to know about a caller. The real one asks the kernel and the Security
 /// framework about a connection; tests use fakes.
@@ -64,13 +80,13 @@ pub(crate) trait Peer {
     /// Whether nothing has arrived after the request's line: nothing buffered past it, and
     /// nothing waiting on the socket.
     fn nothing_after_request(&self) -> bool;
-    /// The caller's audit token when its connection was accepted.
-    fn accepted_token(&self) -> Option<AuditToken>;
-    /// The caller's audit token now.
-    fn current_token(&self) -> Option<AuditToken>;
-    /// Whether the process `token` names satisfies the designated requirement `requirement`
+    /// The caller's identity when its connection was accepted (on macOS its audit token).
+    fn accepted_identity(&self) -> Option<Identity>;
+    /// The caller's identity now.
+    fn current_identity(&self) -> Option<Identity>;
+    /// Whether the process `identity` names satisfies the designated requirement `requirement`
     /// and runs hardened code (see [`code_signing::hardened_and_clean`]).
-    fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool;
+    fn satisfies(&self, identity: &Identity, requirement: &str) -> bool;
     /// The effective UID when the kernel confirms a matching peer, otherwise None (development fallback).
     #[cfg(debug_assertions)]
     fn uid(&self) -> Option<u32>;
@@ -84,6 +100,8 @@ pub(crate) trait Peer {
 enum Grant {
     /// The app's code signature.
     Signed,
+    /// This host's own user, on a system that has no code identity for a native client.
+    User,
     /// The unsigned development app (debug builds only).
     #[cfg(debug_assertions)]
     Development,
@@ -167,8 +185,8 @@ impl AppPolicy {
         // Nothing may have happened while it was decided either: nothing arrived after the
         // request, and the caller is still the process accepted.
         let still = peer.nothing_after_request()
-            && peer.accepted_token().is_some()
-            && peer.current_token() == peer.accepted_token();
+            && peer.accepted_identity().is_some()
+            && peer.current_identity() == peer.accepted_identity();
         still.then_some(grant)
     }
 
@@ -179,14 +197,18 @@ impl AppPolicy {
         if !peer.sent_after_accept() || !peer.nothing_after_request() {
             return None;
         }
-        let token = peer.accepted_token()?;
-        if peer.current_token() != Some(token) {
+        let identity = peer.accepted_identity()?;
+        if peer.current_identity() != Some(identity) {
             return None;
         }
         if let Some(requirement) = &self.requirement {
-            if peer.satisfies(&token, requirement) {
+            if peer.satisfies(&identity, requirement) {
                 return Some(Grant::Signed);
             }
+        }
+        // No code identity exists for it on this system: its user is the whole admission.
+        if is_this_user(&identity) {
+            return Some(Grant::User);
         }
         #[cfg(debug_assertions)]
         if let Some(dev_app) = &self.dev_app {
@@ -196,7 +218,7 @@ impl AppPolicy {
                     .and_then(|path| path.canonicalize().ok())
                     .is_some_and(|path| path == *dev_app)
                 // Still the same process after its executable was looked up by pid.
-                && peer.current_token() == Some(token);
+                && peer.current_identity() == Some(identity);
             return allowed.then_some(Grant::Development);
         }
         None
@@ -207,10 +229,21 @@ impl AppPolicy {
         let mut lines = Vec::new();
         lines
             .push("host.sock refuses retired office.app_token and office.restart calls".to_owned());
+        let by_user = names_peers_by_user();
+        if by_user {
+            lines.push(
+                "host.sock admits a native client run by this user: this system has no code \
+                 identity for a command, so admission grants nothing and authority comes only \
+                 from an approved session"
+                    .to_owned(),
+            );
+        }
         match &self.requirement {
             Some(requirement) => lines.push(format!(
                 "configured CLI peer requirement (inactive until sessions): {requirement}"
             )),
+            // Nothing is missing where no peer can be signed.
+            None if by_user => {}
             None => lines.push(
                 "WARNING: no app team id (a release build takes it from ORG_APP_TEAM_ID when it's \
                  built): no signed CLI peer is configured; session operations are inactive"
@@ -229,6 +262,14 @@ impl AppPolicy {
     }
 }
 
+/// Whether this system names the peer of a connection by its user alone: asked of a
+/// connection of this process to itself, as the host asks of every client.
+fn names_peers_by_user() -> bool {
+    std::os::unix::net::UnixStream::pair()
+        .and_then(|(one, _other)| crate::peer::identity(&one))
+        .is_ok_and(|identity| identity.uid.is_some())
+}
+
 /// Whether `path` is a regular file someone may execute (debug builds: the development app).
 #[cfg(debug_assertions)]
 fn is_executable_file(path: &Path) -> bool {
@@ -243,7 +284,7 @@ pub(crate) fn designated_requirement(bundle_id: &str, team_id: &str) -> Result<S
 }
 
 /// The caller on a `host.sock` connection, as the kernel and the Security framework see it.
-/// On a system that cannot identify a peer's image it has no token, then or now, so it is
+/// On a system that cannot identify a peer at all it has no identity, then or now, so it is
 /// refused every app-only call.
 pub(crate) struct SocketPeer<'a> {
     pub(crate) stream: &'a std::os::unix::net::UnixStream,
@@ -265,17 +306,17 @@ impl Peer for SocketPeer<'_> {
             && crate::peer::bytes_waiting(self.stream).is_ok_and(|n| n == 0)
     }
 
-    fn accepted_token(&self) -> Option<AuditToken> {
-        self.accepted.token
+    fn accepted_identity(&self) -> Option<Identity> {
+        self.accepted.identity
     }
 
-    fn current_token(&self) -> Option<AuditToken> {
-        crate::peer::audit_token(self.stream).ok()
+    fn current_identity(&self) -> Option<Identity> {
+        crate::peer::identity(self.stream).ok()
     }
 
-    fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool {
+    fn satisfies(&self, identity: &Identity, requirement: &str) -> bool {
         // The requirement and the hardening checked on the same code object.
-        code_signing::satisfies_hardened(token, requirement)
+        code_signing::satisfies_hardened(identity, requirement)
     }
 
     /// Returns the effective UID only when the peer matches it, otherwise None.
@@ -296,11 +337,21 @@ impl Peer for SocketPeer<'_> {
 mod tests {
     use super::*;
 
+    /// A caller identified by its image: the audit token `byte` repeated.
+    fn image(byte: u8) -> Identity {
+        Identity::from_macos_audit_token([byte; 32])
+    }
+
+    /// A caller the system names by its user alone: `uid`, and some PID.
+    fn user(uid: u32) -> Identity {
+        Identity::from_linux_credentials(uid, 4242)
+    }
+
     struct FakePeer {
         sent_after_accept: bool,
         nothing_after: bool,
-        accepted: Option<AuditToken>,
-        current: Option<AuditToken>,
+        accepted: Option<Identity>,
+        current: Option<Identity>,
         /// After this many reads of the current token, it changes (another process wrote).
         swap_after: Option<usize>,
         reads: std::cell::Cell<usize>,
@@ -318,18 +369,18 @@ mod tests {
         fn nothing_after_request(&self) -> bool {
             self.nothing_after
         }
-        fn accepted_token(&self) -> Option<AuditToken> {
+        fn accepted_identity(&self) -> Option<Identity> {
             self.accepted
         }
-        fn current_token(&self) -> Option<AuditToken> {
+        fn current_identity(&self) -> Option<Identity> {
             let reads = self.reads.get() + 1;
             self.reads.set(reads);
             match self.swap_after {
-                Some(after) if reads > after => Some([9; 32]),
+                Some(after) if reads > after => Some(image(9)),
                 _ => self.current,
             }
         }
-        fn satisfies(&self, _token: &AuditToken, _requirement: &str) -> bool {
+        fn satisfies(&self, _identity: &Identity, _requirement: &str) -> bool {
             self.signed
         }
         #[cfg(debug_assertions)]
@@ -348,8 +399,8 @@ mod tests {
         FakePeer {
             sent_after_accept: true,
             nothing_after: true,
-            accepted: Some([7; 32]),
-            current: Some([7; 32]),
+            accepted: Some(image(7)),
+            current: Some(image(7)),
             swap_after: None,
             reads: std::cell::Cell::new(0),
             signed,
@@ -404,7 +455,7 @@ mod tests {
     #[test]
     fn a_caller_whose_audit_token_changed_since_accept_is_refused() {
         let mut swapped = caller(true);
-        swapped.current = Some([8; 32]);
+        swapped.current = Some(image(8));
         let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
         assert!(!signed.allows(&swapped));
         #[cfg(debug_assertions)]
@@ -504,9 +555,68 @@ mod tests {
         }
     }
 
+    /// A caller the system names by its user alone (it has no code identity for a native
+    /// client) is admitted exactly when that user is this host's own, in every build, with or
+    /// without a team id; the checks of the request's place in the stream still apply.
+    #[test]
+    fn a_caller_named_by_its_user_alone_passes_only_as_this_hosts_user() {
+        let by_user = |uid: u32| {
+            let mut peer = caller(false);
+            peer.accepted = Some(user(uid));
+            peer.current = Some(user(uid));
+            peer
+        };
+        let me = crate::home::euid();
+        for policy in [
+            AppPolicy::new(APP_BUNDLE_ID, None).unwrap(),
+            AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap(),
+        ] {
+            assert_eq!(policy.grant(&by_user(me)), Some(Grant::User));
+            assert!(policy.allows(&by_user(me)));
+            // Another user is refused, root among them: nothing admits root here.
+            for other in [me.wrapping_add(1), 0] {
+                if other != me {
+                    assert!(!policy.allows(&by_user(other)), "{other}");
+                }
+            }
+            // The stream checks are the same as for a signed caller.
+            let mut early = by_user(me);
+            early.sent_after_accept = false;
+            assert!(!policy.allows(&early));
+            let mut followed = by_user(me);
+            followed.nothing_after = false;
+            assert!(!policy.allows(&followed));
+            // Not the connection that was accepted any more.
+            let mut other_process = by_user(me);
+            other_process.current = Some(Identity::from_linux_credentials(me, 4243));
+            assert!(!policy.allows(&other_process));
+            let mut unknown = by_user(me);
+            unknown.current = None;
+            assert!(!policy.allows(&unknown));
+        }
+        // A caller identified by its image is never admitted for its user.
+        assert!(!is_this_user(&image(7)));
+        assert!(is_this_user(&user(me)));
+    }
+
+    /// What the host logs: where a native client is named by its user alone it says so and
+    /// misses no team id; elsewhere a missing team id is a warning.
+    #[test]
+    fn the_description_says_how_this_system_admits_a_native_client() {
+        let lines = AppPolicy::new(APP_BUNDLE_ID, None).unwrap().describe();
+        let by_user = lines.iter().any(|line| line.contains("run by this user"));
+        let warned = lines.iter().any(|line| line.starts_with("WARNING"));
+        assert_eq!(by_user, names_peers_by_user(), "{lines:?}");
+        assert_ne!(by_user, warned, "{lines:?}");
+        let (one, _other) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert_eq!(
+            by_user,
+            crate::peer::identity(&one).is_ok_and(|identity| is_this_user(&identity))
+        );
+    }
+
     /// `nothing_after_request` on a real socket: true only while nothing waits past the
     /// request, in the reader's buffer or on the socket.
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_socket_peer_sees_bytes_after_the_request() {
         use std::io::Write;
@@ -514,7 +624,7 @@ mod tests {
         let peer = |stream, buffered_after| SocketPeer {
             stream,
             accepted: crate::peer::Accepted {
-                token: None,
+                identity: None,
                 buffered: 0,
             },
             received: crate::peer::Received {
@@ -528,14 +638,14 @@ mod tests {
         assert!(!peer(&a, 0).nothing_after_request());
     }
 
-    #[cfg(all(target_os = "macos", debug_assertions))]
+    #[cfg(debug_assertions)]
     #[test]
     fn a_socket_peer_reports_the_effective_uid_after_shared_admission() {
         let (stream, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
         let peer = SocketPeer {
             stream: &stream,
             accepted: crate::peer::Accepted {
-                token: None,
+                identity: None,
                 buffered: 0,
             },
             received: crate::peer::Received {
@@ -547,7 +657,7 @@ mod tests {
         assert_eq!(peer.uid(), Some(crate::home::euid()));
     }
 
-    #[cfg(all(target_os = "macos", debug_assertions))]
+    #[cfg(debug_assertions)]
     #[test]
     fn a_socket_peer_refuses_a_failed_credential_query() {
         let file = std::fs::File::open("/dev/null").unwrap();
@@ -555,7 +665,7 @@ mod tests {
         let peer = SocketPeer {
             stream: &stream,
             accepted: crate::peer::Accepted {
-                token: None,
+                identity: None,
                 buffered: 0,
             },
             received: crate::peer::Received {
@@ -629,21 +739,21 @@ mod tests {
         assert!(!dev.describe().iter().any(|line| line.contains("FALLBACK")));
     }
 
-    /// This test process's own audit token, through the policy, as the host takes it: refused
-    /// (not the app). The Security-framework path itself, both ways, is tested with the adapter
-    /// (`org_platform_host::admission`).
-    #[cfg(target_os = "macos")]
+    /// This test process's own identity, through the policy, as the host takes it. Its code
+    /// satisfies no requirement on any system (it is not the app). Where the system identifies
+    /// its image, it is refused; where the system names only its user, it is this host's own
+    /// user and is admitted for that. The Security-framework path itself, both ways, is tested
+    /// with the adapter (`org_platform_host::admission`).
     #[test]
-    fn the_policy_refuses_this_process_by_its_real_token() {
+    fn the_policy_judges_this_process_by_its_real_identity() {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
-        let token = crate::peer::audit_token(&a).unwrap();
+        let identity = crate::peer::identity(&a).unwrap();
         let requirement = designated_requirement(APP_BUNDLE_ID, "AB12CD34EF").unwrap();
-        assert!(!code_signing::satisfies_hardened(&token, &requirement));
-        // Through the policy, as the host takes it: refused (not the app).
+        assert!(!code_signing::satisfies_hardened(&identity, &requirement));
         let peer = SocketPeer {
             stream: &a,
             accepted: crate::peer::Accepted {
-                token: Some(token),
+                identity: Some(identity),
                 buffered: 0,
             },
             received: crate::peer::Received {
@@ -652,19 +762,22 @@ mod tests {
             },
         };
         let policy = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
-        assert!(!policy.allows(&peer));
+        assert_eq!(policy.allows(&peer), is_this_user(&identity));
+        assert_eq!(
+            policy.grant(&peer),
+            is_this_user(&identity).then_some(Grant::User)
+        );
     }
 
     /// A request counts as sent after the accept only if its line starts at or after the bytes
     /// buffered then (N0).
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_socket_peer_compares_the_request_offset_with_what_was_buffered() {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
         let peer = |sent_at| SocketPeer {
             stream: &a,
             accepted: crate::peer::Accepted {
-                token: None,
+                identity: None,
                 buffered: 10,
             },
             received: crate::peer::Received {

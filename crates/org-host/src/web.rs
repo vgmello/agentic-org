@@ -92,9 +92,12 @@ pub(crate) struct Configuration {
     pub critical_paths: Vec<PathBuf>,
     pub release: Option<org_host_control::gateway::WebRelease>,
 }
-/// The selected release's web process image hash (`Err`: the release has none) and the
+/// The selected release's web process image pin (`Err`: the release has none) and the
 /// release identity bound into the web process's first line.
-pub(crate) type SelectedRelease<E> = (Result<[u8; 20], E>, org_host_control::gateway::WebRelease);
+pub(crate) type SelectedRelease<E> = (
+    Result<crate::server_check::Pin, E>,
+    org_host_control::gateway::WebRelease,
+);
 
 /// The web process admission policy of a build (`debug`: `cfg!(debug_assertions)`) with app
 /// team id `team_id` and the selected `release`, if any: the check every start uses and
@@ -109,7 +112,7 @@ pub(crate) fn admission<E>(
         .unwrap_or(ServerCheck::WebRefused("malformed app team id"));
     match release {
         None => (check, None),
-        Some((Ok(hash), binding)) => (check.pinned(hash), Some(binding)),
+        Some((Ok(pin), binding)) => (check.pinned(pin), Some(binding)),
         Some((Err(_), binding)) => (
             ServerCheck::WebRefused("the selected release has no agentic-org-web image hash"),
             Some(binding),
@@ -416,6 +419,7 @@ impl Running {
         let checked = config
             .check
             .admission(&config.program)
+            .map_err(io::Error::from)
             .map_err(os_failed("spawn the web process suspended"))?;
         let held = checked
             .start(&[OsStr::new("--serve")], &ChildEnv::new(), &SPAWN_LOCK)

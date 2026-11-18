@@ -1,5 +1,13 @@
 //! Static payload checks precede publication. Loaded process identity remains a
-//! separate kernel/audit-token check before any secret handoff.
+//! separate check before any secret handoff (the platform's admission).
+//!
+//! What vouches for a release executable is decided by the platform of the verified manifest,
+//! which is the platform of this build (`release::policy`): a release for macOS is signed
+//! code, and each executable's signature is established here; a release for Linux has no code
+//! signature, so the publisher's whole statement about an executable is its SHA-256 in the
+//! signed manifest, which every copy and every reopening of the release checks byte for byte
+//! (`release::store`), and which the host's admission checks again on the bytes it executes
+//! (Linux host design, section 3.1).
 use super::{files, Error};
 use org_platform_host::admission::{StaticImageError, StaticSignature};
 use org_release::{Architecture, FileEntry, Platform, VerifiedManifest};
@@ -17,12 +25,13 @@ pub(super) fn verify(root: &files::Directory, manifest: &VerifiedManifest) -> Re
     {
         let mut file = root.payload(entry.path())?;
         let before = files::identity(&file)?;
-        header(
-            &mut file,
-            manifest.manifest().platform(),
-            manifest.manifest().architecture(),
-        )?;
-        platform_signature(&file, entry)?;
+        let platform = manifest.manifest().platform();
+        header(&mut file, platform, manifest.manifest().architecture())?;
+        match platform {
+            Platform::Macos => platform_signature(&file, entry)?,
+            // Its executable header was checked above; its bytes are the manifest's.
+            Platform::Linux => {}
+        }
         if before != files::identity(&file)? {
             return Err(Error::UnsafeInput);
         }
@@ -69,7 +78,6 @@ fn header(file: &mut File, platform: Platform, architecture: Architecture) -> Re
 /// signature of the held file; a build target without such a check is outside the release
 /// profile.
 fn platform_signature(file: &File, entry: &FileEntry) -> Result<(), Error> {
-    // Linux platform custody/confinement admission has not been established.
     let images = org_platform_host::admission::static_images()
         .map_err(|_refused| Error::UnsupportedTarget)?;
     let team = option_env!("ORG_APP_TEAM_ID").ok_or(Error::PlatformAdmission)?;

@@ -16,7 +16,8 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let temp = tempfile::tempdir_in("/private/tmp").unwrap();
+        let temp =
+            tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
         let input = temp.path().join("input");
         fs::create_dir(&input).unwrap();
         fs::create_dir(input.join("ui")).unwrap();
@@ -89,6 +90,7 @@ fn install(store: &mut ReleaseStore, bundle: &DirectoryBundle) -> ReleasePin {
 #[test]
 fn durable_pin_reopens_exact_retry_keeps_bytes_and_refuses_conflicts_downgrades() {
     super::super::files::take_flush_counts();
+    let flushed_before = org_platform::fs::testing::full_sync_counts();
     let f = Fixture::new();
     let first = f.bundle("first", 1);
     let mut store = f.open();
@@ -123,8 +125,12 @@ fn durable_pin_reopens_exact_retry_keeps_bytes_and_refuses_conflicts_downgrades(
     assert!(store.recover().is_err());
     let counts = super::super::files::take_flush_counts();
     assert!(counts[0] > 0 && counts[2] > 0);
-    #[cfg(target_os = "macos")]
-    assert_eq!(counts[0], counts[1]);
+    // A device flush for every file flush on a system that has one (the platform counted
+    // them on this thread), and none elsewhere.
+    let device_flushes =
+        org_platform::fs::testing::full_sync_counts().device_flush - flushed_before.device_flush;
+    assert_eq!(counts[1] as u64, device_flushes);
+    assert!(counts[1] == 0 || counts[1] == counts[0], "{counts:?}");
     println!("generated release store actual successful flush calls: file_fsync={}, macOS_F_FULLFSYNC={}, directory_fsync={}; process/reopen evidence, not physical power-loss proof",counts[0],counts[1],counts[2]);
 }
 

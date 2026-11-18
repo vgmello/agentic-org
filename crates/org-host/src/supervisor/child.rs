@@ -18,7 +18,7 @@ use org_proto::DbKey;
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
 use crate::logs::RotatingLog;
-use crate::server_check::ServerCheck;
+use crate::server_check::{NoAdmission, ServerCheck};
 use crate::sync::lock;
 
 /// How often a stop polls whether the child has exited.
@@ -72,16 +72,83 @@ fn server_env(
     env
 }
 
-/// How to start a server: the program and the office home it is given.
+/// The one admission of a host's office servers: built once, when the host builds its
+/// supervisor, and shared by every create, start and discard of that host's lifetime.
+///
+/// A system that executes verified bytes reads, checks and seals the server image when the
+/// admission is built (ADR-0017 decision 7): every server of this host then runs exactly the
+/// bytes read at that moment, whatever the program's path names later. Where the loaded image
+/// is checked instead, building reads nothing and this changes nothing.
+///
+/// A host whose admission cannot be built starts no server and still serves `host.sock`:
+/// the reason is logged, each start fails with it as a refused server does, and the next
+/// start asks again, so the host's give-up rule ends the retries. An admission, once built,
+/// is never built again.
+pub(crate) struct Images {
+    check: Arc<ServerCheck>,
+    program: PathBuf,
+    built: Mutex<Option<Arc<Admission>>>,
+}
+
+impl std::fmt::Debug for Images {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Images")
+            .field("program", &self.program)
+            .field("built", &lock(&self.built).is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Images {
+    /// Builds the admission of `check`'s servers started from `program` now, and says in the
+    /// host log why there is none. A check that may start no server has already said so
+    /// ([`ServerCheck::describe`]).
+    pub(crate) fn new(check: Arc<ServerCheck>, program: PathBuf) -> Self {
+        let images = Self {
+            check,
+            program,
+            built: Mutex::new(None),
+        };
+        if images.check.may_spawn().is_ok() {
+            if let Err(none) = images.admission() {
+                host_log::log(&format!(
+                    "no office server can be started: {none}; each start asks again"
+                ));
+            }
+        }
+        images
+    }
+
+    /// The host's admission, built now if no earlier attempt succeeded.
+    pub(crate) fn admission(&self) -> Result<Arc<Admission>, NoAdmission> {
+        let mut built = lock(&self.built);
+        if let Some(admission) = built.as_ref() {
+            return Ok(Arc::clone(admission));
+        }
+        let admission = Arc::new(self.check.admission(&self.program)?);
+        if let Some(line) = self.check.describe_admitted(&self.program, &admission) {
+            host_log::log(&line);
+        }
+        *built = Some(Arc::clone(&admission));
+        Ok(admission)
+    }
+}
+
+/// How to start a server: the admission of its program and the office home it is given.
 #[derive(Debug, Clone)]
 pub(crate) struct Spawner {
-    pub(crate) program: PathBuf,
     pub(crate) home: PathBuf,
     pub(crate) runtime_dir: Option<PathBuf>,
     /// Who may get a first line: every child is checked before it's written (`server_check`).
     pub(crate) check: Arc<ServerCheck>,
+    /// The admission every server of this host is started and checked through.
+    pub(crate) images: Arc<Images>,
     /// The instance's launch rendezvous: every create, start and discard goes through it.
     pub(super) broker: Arc<super::channels::Broker>,
+    /// Tests only: variables added to every server's environment after the host's own, so a
+    /// test can show what the platform refuses there.
+    #[cfg(test)]
+    pub(crate) extra_env: Vec<(OsString, OsString)>,
 }
 
 /// Why a server wasn't started.
@@ -198,11 +265,16 @@ impl Spawner {
     /// Starts a server. Its control lines go to `signals` tagged with `generation`; its stderr
     /// goes to `log`. Its first line (per [`Mode`]) is written at once, once it passed the check.
     ///
-    /// The platform's admission starts it (`ServerCheck::admission`): on macOS suspended, so
+    /// The host's admission starts it ([`Images`]): on macOS suspended, so
     /// not one instruction of its image
     /// runs before the check (`server_check`) unless another process resumes it (the residual
     /// risk in the admission adapter's docs): a child that fails is killed still suspended, having got
     /// nothing. One that passes is resumed, and its token checked again right before the line.
+    /// Where the verified bytes are executed, the image was checked when the admission was
+    /// built and the child runs those bytes from its first instruction.
+    ///
+    /// A check that may start no server, an image the platform refuses and a child it refuses
+    /// are all [`SpawnError::Untrusted`], in the check's words: nothing got a line.
     pub(crate) fn spawn(
         &self,
         mode: Mode<'_>,
@@ -214,19 +286,21 @@ impl Spawner {
             host_log::log(&format!("didn't start an office server: {why}"));
             SpawnError::Untrusted(why)
         })?;
+        // Before anything is made for the child: a host without an admission starts nothing.
+        let admission = self.images.admission().map_err(|none| match none {
+            NoAdmission::Refused(why) => {
+                host_log::log(&format!("didn't start an office server: {why}"));
+                SpawnError::Untrusted(why)
+            }
+            NoAdmission::Unavailable(error) => SpawnError::Io(error),
+        })?;
         let rendezvous = self.broker.bind()?;
         let args: Vec<&OsStr> = match mode {
             Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
             Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
             Mode::Discard(id) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
         };
-        let mut env = ChildEnv::new();
-        for (name, value) in server_env(&self.home, self.runtime_dir.as_deref(), |name| {
-            std::env::var_os(name)
-        }) {
-            env.set(name, value)?;
-        }
-        let admission = self.check.admission(&self.program)?;
+        let env = self.child_env()?;
         // See `cloexec`: no fd of ours may be half-made while a child is spawned. The
         // admission holds `SPAWN_LOCK` while it makes the pipes and the process, and no
         // longer. It checks the image before any of it has run, kills a child that fails
@@ -277,6 +351,26 @@ impl Spawner {
         self.attach_control(&mut running, mode, rendezvous, &admission, signals)?;
         Ok(running)
     }
+    /// A server's whole environment ([`server_env`]). A variable that changes how the loader
+    /// runs the image is refused by the platform on every system: nothing is started then.
+    fn child_env(&self) -> Result<ChildEnv, SpawnError> {
+        let variables = server_env(&self.home, self.runtime_dir.as_deref(), |name| {
+            std::env::var_os(name)
+        });
+        #[cfg(test)]
+        let variables = variables.into_iter().chain(self.extra_env.iter().cloned());
+        let mut env = ChildEnv::new();
+        for (name, value) in variables {
+            if let Err(error) = env.set(name.clone(), value) {
+                // The name only: a value is never logged.
+                let why = format!("{error} ({})", name.to_string_lossy());
+                host_log::log(&format!("didn't start an office server: {why}"));
+                return Err(SpawnError::Untrusted(why));
+            }
+        }
+        Ok(env)
+    }
+
     fn attach_control(
         &self,
         running: &mut RunningChild,
