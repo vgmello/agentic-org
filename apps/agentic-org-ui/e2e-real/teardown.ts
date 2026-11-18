@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Stops every process started from the disposable root, then removes the root. */
@@ -31,8 +31,7 @@ export function stopInstance(root: string) {
 
 /** Stops and removes one disposable instance; refuses any root that is not one of ours under /tmp. */
 export function removeInstance(root: string | undefined, prefix: string) {
-	// instance.ts resolves /tmp: /private/tmp on macOS, /tmp itself on Linux.
-	if (!root || !root.startsWith(`${realpathSync('/tmp')}/${prefix}.`)) return;
+	if (!root || !root.startsWith(`/private/tmp/${prefix}.`)) return;
 	stopInstance(root);
 	rmSync(root, { recursive: true, force: true });
 }

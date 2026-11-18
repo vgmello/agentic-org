@@ -540,11 +540,11 @@ pub(super) fn create_hq(host: &Host, address: SocketAddr) -> Created {
 /// [`create_hq`], asking the lookup route until `wait` has passed.
 fn create_hq_within(host: &Host, address: SocketAddr, wait: Duration) -> Created {
     browser_sessions::wait_serving(host, address);
-    let signed_in = http(
+    // The web process may answer 503 for a moment under load; the create's own bound
+    // comes after.
+    let signed_in = post_until_available(
         address,
-        "POST",
         "/api/v1/session/sign-in",
-        "",
         &browser_sessions::credentials(),
     );
     let headers = browser_sessions::pair(&signed_in, "sign-in").headers();

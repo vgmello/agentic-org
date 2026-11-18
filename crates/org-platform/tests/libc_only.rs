@@ -80,24 +80,55 @@ fn org_platform_links_the_c_library_only() {
     );
 }
 
+/// The workspace's members, as the root manifest's `members` list names them.
+fn workspace_members() -> Vec<String> {
+    let root = manifest("../../Cargo.toml");
+    let list = root
+        .split_once("\nmembers = [")
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(list, _)| list)
+        .expect("the root manifest has a members list");
+    list.lines()
+        .map(|line| line.trim().trim_end_matches(','))
+        .filter(|line| line.starts_with('"'))
+        .map(|line| line.trim_matches('"').to_owned())
+        .collect()
+}
+
+/// The host executable, the host library and the host-only platform crate: the only
+/// members that may link the host's own capabilities.
+const HOST_ONLY: [&str; 3] = [
+    "apps/agentic-org",
+    "crates/org-host",
+    "crates/org-platform-host",
+];
+
 #[test]
 fn only_the_host_links_org_platform_host() {
-    // The crates the web process, the office worker and agent-os are built from. A
-    // dependency on org-platform-host in any of them would put Apple frameworks into
-    // an executable that must not load them.
-    for crate_manifest in [
-        "../org-socket/Cargo.toml",
-        "../org-supervise/Cargo.toml",
-        "../org-proto/Cargo.toml",
-        "../org-client/Cargo.toml",
-        "../org-office/Cargo.toml",
-        "../org-office-launch/Cargo.toml",
-        "../org-host-control/Cargo.toml",
-        "../../apps/agentic-org-web/Cargo.toml",
-        "../../apps/agentic-org-office/Cargo.toml",
-        "../../apps/agent-os/Cargo.toml",
-    ] {
-        let linked = linked_dependencies(&manifest(crate_manifest));
+    // Every other member can be built into the web process, the office worker or
+    // agent-os. A dependency on org-platform-host in any of them would put Apple
+    // frameworks into an executable that must not load them. A new member is checked
+    // without being added here.
+    let members = workspace_members();
+    for host in HOST_ONLY {
+        assert!(
+            members.iter().any(|member| member == host),
+            "{host} is no longer a workspace member"
+        );
+    }
+    let checked: Vec<&String> = members
+        .iter()
+        .filter(|member| !HOST_ONLY.contains(&member.as_str()))
+        .collect();
+    assert!(
+        checked
+            .iter()
+            .any(|member| *member == "apps/agentic-org-office"),
+        "the worker is among the checked members"
+    );
+    for member in checked {
+        let crate_manifest = format!("../../{member}/Cargo.toml");
+        let linked = linked_dependencies(&manifest(&crate_manifest));
         for forbidden in [
             "org-platform-host",
             "org-host",
@@ -108,7 +139,7 @@ fn only_the_host_links_org_platform_host() {
         ] {
             assert!(
                 !linked.iter().any(|name| name == forbidden),
-                "{crate_manifest} depends on {forbidden}"
+                "{member} depends on {forbidden}"
             );
         }
     }

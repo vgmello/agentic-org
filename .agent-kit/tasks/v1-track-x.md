@@ -1275,3 +1275,35 @@ it: a runner that builds tests as root and runs each test binary as uid 1000 (CI
 unprivileged); a macOS cross-lint (`cargo clippy --target aarch64-apple-darwin` with C
 build steps stubbed); a catalog hash refresher (`kit_skills.py validate` reports what
 to refresh). Recreate them as needed.
+
+### Session of 2026-11-18 (evening): the merge into `v1`
+
+Lead: Claude Opus 5.5. Reviews on GPT 6.2 Sol (Codex, `codex exec -m gpt-6.2-sol`,
+read-only, effort xhigh) at the owner's request, after two Claude Opus 5.5 reviews.
+
+- **`v1` had moved** to `74865317` (62 commits: A4.5, B1a with the new crate
+  `org-store`, agent tooling). `c96b7cea` merges it: three conflicts and one semantic
+  conflict (`org-store`'s macOS `F_FULLFSYNC` branch, refused by the platform check;
+  moved onto `org_platform::fs`), as its message says.
+- **Linux checks** (Docker Desktop on an arm64 Mac, native `linux/arm64`, a clean export
+  of the exact commit, built and run as uid 1000, `/var/tmp` on an ext4 volume, `cargo
+  fetch` first as CI does) on `6fe50d34`: Clippy of the workspace clean; the whole
+  workspace 99 binaries, 3,923 passed, none failed, 24 ignored; `lnx_3_*` five times,
+  4/4 each (41–47 s). This is the first arm64 run: earlier runs were x86-64. An
+  overlayfs `/var/tmp` fails the credential tests by design (the rule refuses it);
+  CI's is ext4.
+- **Reviews.** Merge review (Opus, `c96b7cea`): ACCEPT_WITH_FOLLOW_UPS; three findings
+  repaired in `6fe50d34` (CI list base is `v1`; the LNX-3 serving path waits
+  `HQ_WAIT`; e2e-real teardown), whose review (Opus) accepted. GPT 6.2 Sol on
+  `6fe50d34`: REJECT, five findings. Repaired in the next commit: the first merge had
+  dropped `crates/org-platform` and `crates/org-platform-host` from the catalog's
+  `host-and-storage` paths; the LNX-3 sign-in retries a 503; `libc_only` checks every
+  workspace member outside the host chain (it missed `org-store`). The teardown change
+  is reverted, leaving v1's file as it was, because of the two findings below.
+- **Left for Track A (their fixture, not in CI):** the real-instance browser suite
+  (`apps/agentic-org-ui/e2e-real`) cannot start on GNU/Linux: `instance.ts` calls BSD
+  `script` arguments, util-linux `script` needs `-c`; and its teardown matches roots
+  by string prefix (`/private/tmp/<prefix>.`, macOS only), stops processes from PID
+  files that may be reused, and falls back to `pkill -f <root>`. Running that suite on
+  Linux needs a portable PTY launcher and a teardown bound to the run's own directory
+  and processes.

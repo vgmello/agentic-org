@@ -300,7 +300,9 @@
         "apps/agentic-org-web",
         "crates/org-pki",
         "crates/org-socket",
-        "crates/org-release"
+        "crates/org-release",
+        "crates/org-platform",
+        "crates/org-platform-host"
       ],
       "risks": [],
       "implementation": [
