@@ -5,7 +5,6 @@ use crate::{
     home,
     server_check::ServerCheck,
     service::listener::{Handler, WebConnection},
-    spawn::{self, Process},
     sync::lock,
 };
 use org_host_control::{
@@ -15,6 +14,7 @@ use org_host_control::{
     listen::{ListenConfig, ListenMode},
     GatewayState,
 };
+use org_platform_host::admission::{Child, ChildEnv, ImageRefusal, SpawnRefused};
 use std::{
     ffi::OsStr,
     fs,
@@ -312,7 +312,7 @@ impl Rendezvous {
         bound.listener.set_nonblocking(true)?;
         Ok(bound)
     }
-    fn accept(&self, process: &mut Process, until: Instant) -> io::Result<UnixStream> {
+    fn accept(&self, process: &mut Child, until: Instant) -> io::Result<UnixStream> {
         loop {
             match self.listener.accept() {
                 Ok((stream, _)) => {
@@ -342,7 +342,7 @@ impl Rendezvous {
     }
 }
 /// How the reaped child ended, for a log line.
-fn exited(process: &Process) -> String {
+fn exited(process: &Child) -> String {
     process
         .ended()
         .unwrap_or_else(|| "status unknown".to_owned())
@@ -356,7 +356,7 @@ impl Drop for Rendezvous {
 struct Running {
     // Drop order: close control/revoke first, then kill/reap the child.
     control: WebConnection,
-    process: Process,
+    process: Child,
     _stdin: fs::File,
 }
 impl Serving for Running {
@@ -405,20 +405,26 @@ impl Running {
         }
         let rendezvous =
             Rendezvous::bind(&config.runtime).map_err(os_failed("bind the rendezvous"))?;
-        let mut spawned = {
-            let _fence = lock(&SPAWN_LOCK);
-            spawn::spawn_suspended(&config.program, &[OsStr::new("--serve")], &[])
-                .map_err(os_failed("spawn the web process suspended"))?
-        };
-        let pid = spawned.process.id();
-        let admitted = config.check.admit(pid).map_err(refused("admission"))?;
-        config
+        // The platform's admission starts the child with only its three pipes (holding
+        // `SPAWN_LOCK` while it makes them and the process), checks its image before any
+        // of it has run, and holds it until it is released. A system without an admission
+        // adapter starts nothing.
+        let checked = config
             .check
-            .still(pid, admitted)
-            .map_err(refused("the pre-resume re-check"))?;
-        spawned
-            .process
-            .resume()
+            .admission(&config.program)
+            .map_err(os_failed("spawn the web process suspended"))?;
+        let held = checked
+            .start(&[OsStr::new("--serve")], &ChildEnv::new(), &SPAWN_LOCK)
+            .map_err(|error| match SpawnRefused::of(&error) {
+                Some(refusal) => refused("admission")(config.check.why(&refusal.refusal)),
+                None => os_failed("spawn the web process suspended")(error),
+            })?;
+        let pid = held.child().id();
+        checked
+            .recheck(held.child())
+            .map_err(|refusal| refused("the pre-resume re-check")(config.check.why(&refusal)))?;
+        let mut spawned = held
+            .release()
             .map_err(os_failed("resume the web process"))?;
         let first = GatewayFirstLine {
             rendezvous: rendezvous
@@ -455,8 +461,8 @@ impl Running {
             })
             .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + WAIT;
-        let mut stream = rendezvous.accept(&mut spawned.process, until)?;
-        crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
+        let mut stream = rendezvous.accept(&mut spawned.child, until)?;
+        crate::supervisor::channels::reader_is_child(&checked, &spawned.child, &stream)
             .map_err(|_| failed("the rendezvous peer is not the admitted child"))?;
         let mut receiver = org_socket::rights::StreamReceiver::new(
             stream
@@ -468,17 +474,20 @@ impl Running {
                 .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
         org_socket::confinement::verify_ready_report(ready.landlock.is_some())
             .map_err(|error| failed(&error.to_string()))?;
-        crate::supervisor::channels::reader_is_child(&stream, pid, admitted)
+        crate::supervisor::channels::reader_is_child(&checked, &spawned.child, &stream)
             .map_err(|_| failed("the ready-line peer is not the admitted child"))?;
-        config
-            .check
-            .still(pid, admitted)
-            .map_err(refused("the post-ready re-check"))?;
-        if config.check.admit(pid).map_err(refused("re-admission"))? != admitted {
-            return Err(io::Error::other(
-                "web process admission refused at re-admission: the identity changed",
-            ));
-        }
+        checked
+            .recheck(&spawned.child)
+            .map_err(|refusal| refused("the post-ready re-check")(config.check.why(&refusal)))?;
+        // Admitted once more from the start: it must be the identity admitted before.
+        checked
+            .readmit(&spawned.child)
+            .map_err(|refusal| match refusal {
+                ImageRefusal::Readmitted => io::Error::other(
+                    "web process admission refused at re-admission: the identity changed",
+                ),
+                refusal => refused("re-admission")(config.check.why(&refusal)),
+            })?;
         let paths: Vec<_> = config.critical_paths.iter().map(PathBuf::as_path).collect();
         org_socket::confinement::verify_gateway(pid, &paths)
             .map_err(os_failed("verify the web process sandbox"))?;
@@ -497,7 +506,7 @@ impl Running {
             .map_err(os_failed("start the control connection"))?;
         Ok(Self {
             control,
-            process: spawned.process,
+            process: spawned.child,
             _stdin: spawned.stdin,
         })
     }

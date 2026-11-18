@@ -7,8 +7,11 @@ struct Fixture {
     state: Arc<BootstrapService>,
 }
 impl Fixture {
-    fn new(https: bool) -> Self {
-        let temp = tempfile::tempdir_in("/private/tmp").unwrap();
+    /// The fixture, or why protected setup prepared nothing. Its folder is on disk
+    /// (`/private/tmp` on macOS).
+    fn prepare(https: bool) -> Result<Self, HostError> {
+        let temp =
+            tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
         let base = temp.path().canonicalize().unwrap();
         for name in ["temp", "keys"] {
             fs::create_dir(base.join(name)).unwrap();
@@ -33,9 +36,8 @@ impl Fixture {
             None,
             &base.join("instance"),
             listen,
-        )
-        .unwrap();
-        Self { _temp: temp, state }
+        )?;
+        Ok(Self { _temp: temp, state })
     }
     fn db(&self) -> Arc<HostDb> {
         let state = self.state.state.lock().unwrap();
@@ -52,10 +54,51 @@ fn params() -> BootstrapParams {
     }
 }
 
+/// Protected setup admits its peer only by the image the system identifies. Where the system
+/// cannot identify a peer's image, it prepares nothing and says so; where it can, the prepared
+/// state serves its listener's origin and stores a first administrator.
+#[test]
+fn protected_setup_prepares_only_where_the_system_identifies_its_peer() {
+    let prepared = Fixture::prepare(false);
+    if org_platform_host::admission::native_peers().is_err() {
+        let Err(error) = prepared else {
+            panic!("protected setup prepared without peer admission")
+        };
+        assert!(
+            matches!(
+                &error,
+                HostError::Io { context: "protected bootstrap", source }
+                    if source.to_string()
+                        == "protected setup peer admission is unavailable on this platform"
+            ),
+            "{error:?}"
+        );
+        return;
+    }
+    let fixture = prepared.unwrap();
+    assert_eq!(
+        fixture.state.listen.origin(),
+        &ListenOrigin::parse("http://127.0.0.1:8123").unwrap()
+    );
+    let mut short = params();
+    short.password = Password::new("short".into()).unwrap();
+    assert_eq!(
+        fixture.state.initialize(&short).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert!(!fixture.state.home.join("host-registry.db").exists());
+    let p = params();
+    assert!(fixture.state.initialize(&p).unwrap().is_none());
+    assert_eq!(
+        fixture.db().bootstrap_record().unwrap().operation_id,
+        p.operation_id
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn real_bootstrap_registry_has_a_protected_admin_without_an_employee_and_refusals_are_unstored() {
-    let fixture = Fixture::new(false);
+    let fixture = Fixture::prepare(false).unwrap();
     let p = params();
     let mut short = params();
     short.password = Password::new("short".into()).unwrap();
@@ -161,7 +204,7 @@ fn real_bootstrap_registry_has_a_protected_admin_without_an_employee_and_refusal
 #[test]
 #[cfg(target_os = "macos")]
 fn first_bootstrap_tls_refusals_publish_neither_registry_nor_secret() {
-    let fixture = Fixture::new(true);
+    let fixture = Fixture::prepare(true).unwrap();
     let mut p = params();
     assert!(matches!(
         fixture.state.initialize(&p).unwrap(),

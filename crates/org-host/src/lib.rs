@@ -59,7 +59,6 @@ mod ids;
 pub mod release;
 mod web;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[cfg_attr(not(test), expect(dead_code, reason = "B2-01.2 wires the host"))]
 mod instance;
 mod keys;
@@ -72,7 +71,6 @@ mod secrets;
 mod server_check;
 mod service;
 pub mod signals;
-mod spawn;
 mod supervisor;
 mod sync;
 mod timings;

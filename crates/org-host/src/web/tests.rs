@@ -27,6 +27,18 @@ fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
+/// A child of `program` that a debug build's check admitted and that has not been let run:
+/// it stays alive (on macOS suspended) without running anything, until it is dropped.
+fn held_child(program: &str, args: &[&str]) -> org_platform_host::admission::Started {
+    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    let held = ServerCheck::Skip
+        .admission(Path::new(program))
+        .unwrap()
+        .start(&args, &ChildEnv::new(), &SPAWN_LOCK)
+        .unwrap();
+    org_platform_host::testing::admission::unreleased(held)
+}
+
 #[test]
 fn refused_web_start_never_becomes_ready() {
     let dir = tempfile::tempdir().unwrap();
@@ -699,8 +711,8 @@ fn start_refusing(
         if !tokens {
             return Ok(None);
         }
-        crate::spawn::audit_token_of_child(pid)
-            .map(Some)
+        org_platform_host::testing::admission::child_peer(pid)
+            .map(|peer| Some(peer.macos_audit_token))
             .map_err(|e| e.to_string())
     })
 }
@@ -712,8 +724,8 @@ fn a_changed_identity_at_re_admission_names_that_cause() {
     // Admitted with no token; re-admission after the ready line returns one.
     let error = start_scripted(&connecting_script(READY), |step, n, pid| {
         if step == Step::Admit && n == 2 {
-            crate::spawn::audit_token_of_child(pid)
-                .map(Some)
+            org_platform_host::testing::admission::child_peer(pid)
+                .map(|peer| Some(peer.macos_audit_token))
                 .map_err(|e| e.to_string())
         } else {
             Ok(None)
@@ -1125,11 +1137,10 @@ fn a_rendezvous_folder_that_is_a_symlink_is_refused_before_binding() {
 fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let rendezvous = Rendezvous::bind(dir.path()).unwrap();
-    let mut spawned =
-        spawn::spawn_suspended(Path::new("/bin/sleep"), &[OsStr::new("30")], &[]).unwrap();
+    let mut spawned = held_child("/bin/sleep", &["30"]);
     // The deadline has passed: no connection is accepted, and the child still runs.
     let error = rendezvous
-        .accept(&mut spawned.process, Instant::now())
+        .accept(&mut spawned.child, Instant::now())
         .unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -1167,8 +1178,8 @@ fn an_unconfined_child_fails_the_sandbox_verification() {
     // non-empty critical path, so the refusal is the child's missing confinement,
     // not the empty path list.
     let (dir, mut config) = scripted_config(&connecting_script(READY), |_, _, pid| {
-        crate::spawn::audit_token_of_child(pid)
-            .map(Some)
+        org_platform_host::testing::admission::child_peer(pid)
+            .map(|peer| Some(peer.macos_audit_token))
             .map_err(|e| e.to_string())
     });
     config.critical_paths = vec![fs::canonicalize(dir.path()).unwrap()];
@@ -1253,13 +1264,18 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
             .unwrap();
         let (transfer, _child) = UnixDatagram::pair().unwrap();
         let control = WebConnection::start(host, transfer, loopback(), handler.clone()).unwrap();
-        let spawned = spawn::spawn_suspended(Path::new(program), &[], &[]).unwrap();
-        if resume {
-            spawned.process.resume().unwrap();
-        }
+        let spawned = if resume {
+            ServerCheck::Skip
+                .admission(Path::new(program))
+                .unwrap()
+                .spawn(&[], &ChildEnv::new(), &SPAWN_LOCK)
+                .unwrap()
+        } else {
+            held_child(program, &[])
+        };
         let running = Running {
             control,
-            process: spawned.process,
+            process: spawned.child,
             _stdin: spawned.stdin,
         };
         (running, io::BufReader::new(peer))
@@ -1365,8 +1381,18 @@ fn a_debug_build_web_admission_skips_the_signature_check_but_still_pins_a_releas
     let (check, release) = admission::<()>(true, Some("bad"), Some((Ok([7u8; 20]), binding())));
     assert_eq!(check, ServerCheck::Skip.pinned([7u8; 20]));
     assert_eq!(release, Some(binding()));
-    // A pinned debug check never admits an unchecked (token-less) child.
-    assert!(check.admit(std::process::id()).is_err());
+    // A pinned debug check never admits an unchecked (token-less) child: the image it names
+    // is a development image with a pin, and the platform never takes an unidentified child
+    // for a pinned image (`org_platform_host::admission`, the pin decision).
+    let expected = check
+        .expected(Path::new("/nonexistent/agentic-org-web"))
+        .unwrap();
+    assert!(expected.development && expected.macos_requirement.is_none());
+    assert_eq!(expected.macos_cdhash, Some([7u8; 20]));
+    assert_eq!(
+        check.why(&ImageRefusal::Unidentified),
+        "selected release requires platform-audited image"
+    );
 }
 
 /// A child confined by `sandbox-exec` with a profile that denies reading and writing
@@ -1485,7 +1511,11 @@ fn a_child_that_exec_ed_after_connecting_is_refused_at_the_ready_line() {
     let error = start_scripted(&script, move |step, n, pid| {
         let mut admitted = lock(&admitted);
         if step == crate::server_check::Step::Admit && n == 1 {
-            *admitted = Some(crate::spawn::audit_token_of_child(pid).map_err(|e| e.to_string())?);
+            *admitted = Some(
+                org_platform_host::testing::admission::child_peer(pid)
+                    .map_err(|e| e.to_string())?
+                    .macos_audit_token,
+            );
         }
         Ok(*admitted)
     });
