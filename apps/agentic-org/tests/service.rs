@@ -16,9 +16,8 @@ use std::os::unix::fs::PermissionsExt;
 use org_host::Host;
 use org_proto::{
     ErrorCode, Hello, HelloParams, HelloResult, OfficeInfo, OfficeList, OfficeStatus,
-    OfficeStatusChanged, OrganizationCreate, OrganizationCreateParams, OrganizationCreated,
-    OrganizationList, Outcome, ServerMessage, Subscribe, SubscribeParams, API_VERSION,
-    UNREADABLE_REQUEST_ID,
+    OfficeStatusChanged, OrganizationList, Outcome, ServerMessage, Subscribe, SubscribeParams,
+    API_VERSION, UNREADABLE_REQUEST_ID,
 };
 use support::{Client, TestHome};
 
@@ -176,30 +175,32 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
     assert_eq!(fs::read(blocked.path().join("host.sock")).unwrap(), b"mine");
 }
 
-/// Shutdown with clients connected (idle, subscribed, and one with a create in flight) ends
-/// promptly. It would hang if waking the accept thread or ending a connection's writer broke,
-/// so a watchdog turns that into a failure instead of a stuck test run.
+/// Shutdown with clients connected (idle and subscribed) and an office whose start never
+/// answers ends promptly. It would hang if waking the accept thread, ending a connection's writer
+/// or stopping a worker mid-start broke, so a watchdog turns that into a failure instead of a
+/// stuck test run.
 #[cfg(target_os = "macos")]
 #[test]
 fn shutdown_with_clients_connected_finishes_promptly() {
+    const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
     let home = TestHome::registered();
-    home.script(serde_json::json!({"create": {"do": "hang"}}));
+    home.write_office(&support::hq(
+        A,
+        "01ORGA",
+        "Acme",
+        "2026-11-08T00:00:00.000Z",
+    ));
+    home.script(serde_json::json!({A: {"do": "hang"}}));
     let host = home.start(home.config()).unwrap();
     let _idle = std::os::unix::net::UnixStream::connect(host.socket_path()).unwrap();
     let mut subscribed = Client::for_host(&host);
     subscribed
         .call::<Subscribe>(&SubscribeParams::default())
         .unwrap();
-    let mut creating = Client::for_host(&host);
-    let creator = std::thread::spawn(move || {
-        creating.call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Acme".into(),
-        })
-    });
     support::eventually(
         std::time::Duration::from_secs(10),
-        "the create to start",
-        || home.runs("create") == 1,
+        "the office's start to begin",
+        || home.runs(A) == 1,
     );
 
     let (done, finished) = std::sync::mpsc::channel();
@@ -210,37 +211,40 @@ fn shutdown_with_clients_connected_finishes_promptly() {
     finished
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("shutdown hung");
-    // The create in flight got an error or its connection closed: never a success.
-    assert!(creator.join().unwrap().is_err());
     assert!(!home.runtime().join("host.sock").exists());
-    // Nothing was stored. The interrupted create's folder can't be discarded while stopping,
-    // so the next start discards it.
-    for folder in home.office_folders() {
-        assert!(!home.office_dir(&folder).join("office.json").exists());
+    for pid in home.pids(A) {
+        assert!(!support::alive(pid), "the hanging worker outlived shutdown");
     }
-    home.script(serde_json::json!({}));
-    let host = support::restart_host(&home, &home.config());
-    support::eventually(
-        std::time::Duration::from_secs(10),
-        "the interrupted create's folder to be discarded",
-        || home.office_folders().is_empty(),
-    );
-    host.shutdown();
 }
 
-/// An event published after a list snapshot never reaches a client before that snapshot: every
-/// organization a subscriber has heard of is in every list answer that comes after the event.
-/// List calls stream in on one subscribed connection (handled up to 16 at a time) while
-/// organizations are created on another.
+/// An event published after a list snapshot never reaches a client before that snapshot: no
+/// message on a subscribed connection shows an office in an earlier state than one before it.
+/// List calls stream in on one subscribed connection (handled up to 16 at a time) while the
+/// host's offices go from `starting` to `active`, each after its own delay.
 #[cfg(target_os = "macos")]
 #[test]
 fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
 
-    const CREATES: usize = 40;
+    const OFFICES: usize = 12;
     let home = TestHome::registered();
+    let ids: Vec<String> = (0..OFFICES).map(|i| format!("01{:024}", i + 1)).collect();
+    let mut script = serde_json::Map::new();
+    for (i, id) in ids.iter().enumerate() {
+        home.write_office(&support::hq(
+            id,
+            &format!("01{:024}", i + 101),
+            &format!("Org {i}"),
+            "2026-11-08T00:00:00.000Z",
+        ));
+        script.insert(
+            id.clone(),
+            serde_json::json!({"do": "ready", "delay_ms": 200 + 100 * i as u64}),
+        );
+    }
+    home.script(serde_json::Value::Object(script));
     let host = home.start(home.config()).unwrap();
     let fixture = org_host::test_support::Fixture::new(&host);
     fixture.submit(org_proto::Request::new::<Subscribe>(0, &SubscribeParams::default()).unwrap());
@@ -248,25 +252,25 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
         matches!(fixture.recv(std::time::Duration::from_secs(30)),Some(ServerMessage::Response(r)) if r.id==0)
     );
 
-    let (creating, sent) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
+    let (starting, sent) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
     let answered = Arc::new(AtomicU64::new(0));
     let writer = {
         let out = Arc::clone(&fixture);
-        let (creating, sent, answered) = (
-            Arc::clone(&creating),
+        let (starting, sent, answered) = (
+            Arc::clone(&starting),
             Arc::clone(&sent),
             Arc::clone(&answered),
         );
         std::thread::spawn(move || {
             let mut id = 0u64;
-            // Lists keep coming until the creates are done, then one more. At most 64 are
+            // Lists keep coming until every office is active, then one more. At most 64 are
             // unanswered, so the answers never fill the connection's queue (a client that lets
             // it fill is disconnected).
             loop {
                 while id - answered.load(Ordering::SeqCst) >= 64 {
                     std::thread::yield_now();
                 }
-                let last = !creating.load(Ordering::SeqCst);
+                let last = !starting.load(Ordering::SeqCst);
                 id += 1;
                 // Both lists, in turn.
                 let method = if id % 2 == 1 {
@@ -281,20 +285,6 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
                     return;
                 }
             }
-        })
-    };
-    let creator = {
-        let creating = Arc::clone(&creating);
-        let mut client = Client::for_host(&host);
-        std::thread::spawn(move || {
-            for i in 0..CREATES {
-                client
-                    .call::<OrganizationCreate>(&OrganizationCreateParams {
-                        name: format!("Org {i}"),
-                    })
-                    .unwrap();
-            }
-            creating.store(false, Ordering::SeqCst);
         })
     };
 
@@ -317,126 +307,66 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
             seen
         );
         *seen = office.status;
+        seen_active(&furthest)
     };
-    let (mut heard, mut answers) = (HashSet::new(), 0u64);
+    fn seen_active(furthest: &HashMap<String, OfficeStatus>) -> usize {
+        furthest
+            .values()
+            .filter(|s| **s == OfficeStatus::Active)
+            .count()
+    }
+    let (mut events, mut answers) = (0usize, 0u64);
+    // A writer that panicked ends the run instead of leaving it waiting.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the run took over 60 s"
+        );
         let done = writer.is_finished() && answers == sent.load(Ordering::SeqCst);
-        if done && heard.len() == CREATES {
+        if done {
             break;
         }
-        match fixture
+        let message = fixture
             .recv(std::time::Duration::from_secs(30))
-            .expect("native event or response")
-        {
+            .expect("native event or response");
+        let active = match message {
             ServerMessage::Event(event) => match event.event.as_str() {
-                "organization.created" => {
-                    let org = event.data::<OrganizationCreated>().unwrap().unwrap();
-                    for office in &org.offices {
-                        see(office, "organization.created");
-                    }
-                    heard.insert(org.id);
-                }
                 "office.status_changed" => {
+                    events += 1;
                     let office = event.data::<OfficeStatusChanged>().unwrap().unwrap().office;
-                    // Never before its organization was announced.
-                    assert!(
-                        heard.contains(&office.organization_id),
-                        "office.status_changed for {} came before its organization.created",
-                        office.id
-                    );
-                    see(&office, "office.status_changed");
+                    see(&office, "office.status_changed")
                 }
                 other => panic!("unexpected event {other}"),
             },
             ServerMessage::Response(response) => {
-                // The organizations each list answer shows.
-                let listed: HashSet<String> = if response.id % 2 == 1 {
-                    let orgs = response
+                let offices: Vec<OfficeInfo> = if response.id % 2 == 1 {
+                    response
                         .into_result::<OrganizationList>()
                         .unwrap()
-                        .organizations;
-                    for office in orgs.iter().flat_map(|o| &o.offices) {
-                        see(office, "organization.list");
-                    }
-                    orgs.into_iter().map(|o| o.id).collect()
+                        .organizations
+                        .into_iter()
+                        .flat_map(|o| o.offices)
+                        .collect()
                 } else {
-                    let offices = response.into_result::<OfficeList>().unwrap().offices;
-                    for office in &offices {
-                        see(office, "office.list");
-                    }
-                    offices.into_iter().map(|o| o.organization_id).collect()
+                    response.into_result::<OfficeList>().unwrap().offices
                 };
-                let missing: Vec<_> = heard.difference(&listed).collect();
-                assert!(
-                    missing.is_empty(),
-                    "a list answer came after the event for {missing:?} without it"
-                );
+                assert_eq!(offices.len(), OFFICES, "a list missed an office");
+                let mut active = 0;
+                for office in &offices {
+                    active = see(office, "a list answer");
+                }
                 answers += 1;
                 answered.store(answers, Ordering::SeqCst);
+                active
             }
             ServerMessage::Unknown(v) => panic!("unexpected {v}"),
+        };
+        if active == OFFICES {
+            starting.store(false, Ordering::SeqCst);
         }
     }
     writer.join().unwrap();
-    creator.join().unwrap();
-    host.shutdown();
-}
-
-/// A subscriber that creates organizations on its own connection gets each answer before any
-/// event about that organization: the answer, `organization.created` and the office's status
-/// changes go out in that order.
-#[cfg(target_os = "macos")]
-#[test]
-fn a_subscribed_creator_gets_its_answer_before_any_event_about_it() {
-    use std::collections::HashSet;
-
-    let home = TestHome::registered();
-    let host = home.start(home.config()).unwrap();
-    let fixture = org_host::test_support::Fixture::new(&host);
-    let next = || {
-        fixture
-            .recv(std::time::Duration::from_secs(30))
-            .expect("native response or event")
-    };
-    fixture.submit(org_proto::Request::new::<Subscribe>(0, &SubscribeParams::default()).unwrap());
-    assert!(matches!(next(), ServerMessage::Response(r) if r.id == 0));
-
-    let mut answered: HashSet<String> = HashSet::new();
-    let mut announced: HashSet<String> = HashSet::new();
-    for id in 1..=15u64 {
-        let line = format!(
-            "{{\"id\":{id},\"method\":\"organization.create\",\"params\":{{\"name\":\"Org {id}\"}}}}\n"
-        );
-        fixture.submit(serde_json::from_str(&line).unwrap());
-        // Read until this create's answer; every event before it must be about organizations
-        // already answered (and, for a status change, already announced).
-        loop {
-            match next() {
-                ServerMessage::Response(response) => {
-                    assert_eq!(response.id, id);
-                    let org = response.into_result::<OrganizationCreate>().unwrap();
-                    answered.insert(org.id);
-                    break;
-                }
-                ServerMessage::Event(event) => match event.event.as_str() {
-                    "organization.created" => {
-                        let org = event.data::<OrganizationCreated>().unwrap().unwrap();
-                        assert!(answered.contains(&org.id), "announced before its answer");
-                        announced.insert(org.id);
-                    }
-                    "office.status_changed" => {
-                        let office = event.data::<OfficeStatusChanged>().unwrap().unwrap().office;
-                        assert!(
-                            answered.contains(&office.organization_id)
-                                && announced.contains(&office.organization_id),
-                            "a status change came before its organization's answer or event"
-                        );
-                    }
-                    other => panic!("unexpected event {other}"),
-                },
-                ServerMessage::Unknown(v) => panic!("unexpected {v}"),
-            }
-        }
-    }
+    assert!(events > 0, "no status change was published while listing");
     host.shutdown();
 }

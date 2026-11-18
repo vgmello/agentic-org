@@ -20,13 +20,6 @@ required-features = ["test-support"]
 test = false
 doc = false
 
-[[bin]]
-name = "fixture-office-host"
-path = "testing/fixture_host.rs"
-required-features = ["test-support"]
-test = false
-doc = false
-
 [[test]]
 name = "shutdown_signals"
 harness = false

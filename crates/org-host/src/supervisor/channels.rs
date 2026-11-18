@@ -148,21 +148,50 @@ impl Broker {
         recovery: Option<&org_proto::RecoveryCode>,
         generation: u64,
         signals: Sender<Signal>,
+        exited: &mut dyn FnMut() -> bool,
     ) -> io::Result<Arc<Endpoint>> {
-        let (stream, deadline) = Self::connect(rendezvous)?;
+        let (stream, deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, exited)?;
         self.handoff(
             stream, office, pid, admitted, check, db_key, recovery, generation, signals, deadline,
         )
     }
-    /// The one connection to a bound rendezvous, within [`DEADLINE`], with blocking I/O bounded
-    /// by what is left of it.
-    fn connect(rendezvous: Rendezvous) -> io::Result<(UnixStream, Instant)> {
-        let deadline = Instant::now() + DEADLINE;
+    /// The one connection to a bound rendezvous, by `deadline`, with blocking I/O bounded by
+    /// what is left of it. The wait ends early when `exited` says the worker is gone: a worker
+    /// that refuses its first line (or crashes) before connecting never will, and its refusal
+    /// went to stdout, which the host does not read. That is a crash, not a fatal code.
+    fn connect(
+        rendezvous: Rendezvous,
+        deadline: Instant,
+        exited: &mut dyn FnMut() -> bool,
+    ) -> io::Result<(UnixStream, Instant)> {
+        let mut gone = false;
         let stream = loop {
             match rendezvous.listener.accept() {
                 Ok((stream, _)) => break stream,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(10))
+                // One more accept after the exit was seen: a worker may connect and then exit.
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock && gone => {
+                    return phase(
+                        "rendezvous accept",
+                        Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "the worker exited without connecting",
+                        )),
+                    );
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() >= deadline => {
+                    return phase(
+                        "rendezvous accept",
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "no worker connected in time",
+                        )),
+                    );
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    gone = exited();
+                    if !gone {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
                 Err(e) => return phase("rendezvous accept", Err(e)),
             }
@@ -223,8 +252,9 @@ impl Broker {
         check: &ServerCheck,
         generation: u64,
         signals: Sender<Signal>,
+        exited: &mut dyn FnMut() -> bool,
     ) -> io::Result<()> {
-        let (stream, _deadline) = Self::connect(rendezvous)?;
+        let (stream, _deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, exited)?;
         Self::discard_handoff(stream, pid, admitted, check, generation, signals)
     }
     fn discard_handoff(

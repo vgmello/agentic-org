@@ -47,18 +47,20 @@ fn offices(
     for name in ["offices", "logs", "run"] {
         private(&root.join(name)).unwrap();
     }
-    let supervisor = Supervisor::new(SupervisorConfig {
-        program,
-        home: root.into(),
-        runtime_dir: Some(root.join("run")),
-        logs_dir: root.join("logs"),
-        log_max_bytes: 1024 * 1024,
-        timings: Timings::default(),
-        keys,
-        server_check: Arc::new(check),
-        sweep_orphans: false,
-    })
-    .with_v3(instance)
+    let supervisor = Supervisor::new(
+        SupervisorConfig {
+            program,
+            home: root.into(),
+            runtime_dir: Some(root.join("run")),
+            logs_dir: root.join("logs"),
+            log_max_bytes: 1024 * 1024,
+            timings: Timings::default(),
+            keys,
+            server_check: Arc::new(check),
+            sweep_orphans: false,
+        },
+        instance,
+    )
     .with_writers(writers);
     Offices::start(
         root,

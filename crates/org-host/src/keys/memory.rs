@@ -45,20 +45,12 @@ pub(crate) struct MemoryKeys {
     keys: Mutex<HashMap<String, DbKey>>,
     faults: Mutex<HashMap<Op, Fault>>,
     calls: Mutex<Vec<(Op, String)>>,
-    /// How long `list` takes (it's recorded once done).
-    list_delay: Mutex<Option<std::time::Duration>>,
 }
 
 impl MemoryKeys {
     /// From now on, every `op` fails with `fault` (until [`MemoryKeys::clear_fault`]).
     pub(crate) fn fail(&self, op: Op, fault: Fault) {
         lock(&self.faults).insert(op, fault);
-    }
-
-    /// From now on, `list` takes `delay` (and is recorded in [`MemoryKeys::calls`] only once
-    /// it's done).
-    pub(crate) fn delay_list(&self, delay: std::time::Duration) {
-        *lock(&self.list_delay) = Some(delay);
     }
 
     pub(crate) fn clear_fault(&self, op: Op) {
@@ -122,10 +114,6 @@ impl KeyStore for MemoryKeys {
     }
 
     fn list(&self) -> Result<Vec<String>, KeyStoreError> {
-        let delay = *lock(&self.list_delay);
-        if let Some(delay) = delay {
-            std::thread::sleep(delay);
-        }
         lock(&self.calls).push((Op::List, String::new()));
         if let Some(fault) = lock(&self.faults).get(&Op::List) {
             return Err(fault.error());

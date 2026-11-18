@@ -350,11 +350,64 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             None,
             1,
             signals,
+            &mut || false,
         )
         .unwrap();
     assert!(endpoint.live.load(Ordering::SeqCst));
     endpoint.fail();
     worker.join().unwrap();
+}
+
+#[test]
+fn a_worker_that_exits_without_connecting_ends_the_wait_at_once_as_a_crash() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let broker = Broker::new("instance".into(), root.path().to_owned());
+    let rendezvous = broker.bind().unwrap();
+    let started = Instant::now();
+    let mut asked = 0;
+    let error = Broker::connect(rendezvous, started + Duration::from_secs(30), &mut || {
+        asked += 1;
+        true
+    })
+    .unwrap_err();
+    // A crash (restart with backoff), not the listener's WouldBlock and not a 30 s stall.
+    assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    assert_eq!(asked, 1);
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn a_worker_that_connects_and_then_exits_is_still_accepted() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let broker = Broker::new("instance".into(), root.path().to_owned());
+    let rendezvous = broker.bind().unwrap();
+    let path = rendezvous.path().to_owned();
+    let mut client = None;
+    // The worker connects between the host's first accept and its exit check.
+    let result = Broker::connect(
+        rendezvous,
+        Instant::now() + Duration::from_secs(30),
+        &mut || {
+            client = Some(UnixStream::connect(&path).unwrap());
+            true
+        },
+    );
+    assert!(result.is_ok());
+    assert!(client.is_some());
+}
+
+#[test]
+fn no_connection_by_the_deadline_is_a_timeout_not_would_block() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let broker = Broker::new("instance".into(), root.path().to_owned());
+    let rendezvous = broker.bind().unwrap();
+    let error = Broker::connect(
+        rendezvous,
+        Instant::now() + Duration::from_millis(50),
+        &mut || false,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
 }
 
 /// Real host handoff/SCM_RIGHTS/event receiver with a bounded synthetic worker.

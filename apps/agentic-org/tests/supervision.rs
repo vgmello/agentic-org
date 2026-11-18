@@ -17,8 +17,7 @@ use std::time::{Duration, Instant};
 use org_host::{Host, HostError};
 use org_office_launch::OfficeFile;
 use org_proto::{
-    Empty, ErrorCode, Hello, HelloParams, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
-    OrganizationCreateParams, OrganizationList,
+    Empty, Hello, HelloParams, OfficeList, OfficeRole, OfficeStatus, OrganizationList,
 };
 use serde_json::json;
 use support::{alive, eventually, hq, Client, TestHome};
@@ -480,7 +479,7 @@ fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() 
 
 #[cfg(target_os = "macos")]
 #[test]
-fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for_it() {
+fn the_host_answers_at_once_during_a_slow_startup_discard_which_then_finishes() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     let unfinished = home.office_dir("01UNFINISHEDUNFINISHEDUNFI");
@@ -499,38 +498,153 @@ fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for
         "the host waited for the discard before answering"
     );
     assert!(unfinished.exists());
-    // A create waits for the discard, then goes ahead.
-    client
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Beta".into(),
-        })
-        .unwrap();
-    assert!(
-        !unfinished.exists(),
-        "the create didn't wait for the discard"
-    );
+    // The discard still finishes: the unfinished folder goes once the slow discard reports.
+    eventually(Duration::from_secs(10), "the startup discard", || {
+        !unfinished.exists()
+    });
     assert!(started.elapsed() >= Duration::from_secs(2));
     host.shutdown();
 }
 
+/// No host descriptor reaches a server: every start, crash and restart while clients keep
+/// connecting to `host.sock` (so the host keeps accepting while it spawns) reports `-` for the
+/// descriptors it inherited above 2. Once the runs are over, the host keeps no office log open
+/// that nothing writes.
 #[cfg(target_os = "macos")]
 #[test]
-fn a_create_during_a_too_slow_startup_gets_not_ready() {
+fn servers_inherit_no_host_fds_while_clients_connect() {
+    use std::os::unix::net::UnixStream;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    const CRASHES: u64 = 12;
     let home = TestHome::registered();
-    fs::create_dir_all(home.office_dir("01UNFINISHEDUNFINISHEDUNFI")).unwrap();
-    home.script(json!({"discard": {"do": "ready", "delay_ms": 2000}}));
+    let offices = [A, B, C];
+    let mut script = serde_json::Map::new();
+    for (i, id) in offices.iter().enumerate() {
+        home.write_office(&hq(
+            id,
+            &format!("01ORG{i}"),
+            &format!("Org {i}"),
+            "2026-11-08T00:00:00.000Z",
+        ));
+        let mut steps = vec![json!({"do": "crash"}); CRASHES as usize];
+        steps.push(json!({"do": "ready"}));
+        script.insert((*id).to_owned(), json!(steps));
+    }
+    home.script(serde_json::Value::Object(script));
     let mut config = home.config();
-    config.timings.create_wait = Duration::from_millis(500);
+    config.timings.backoff_initial = Duration::from_millis(10);
+    config.timings.backoff_max = Duration::from_millis(20);
+    config.timings.give_up_after = 1000;
     let host = home.start(config).unwrap();
-    let started = Instant::now();
-    let err = Client::for_host(&host)
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Acme".into(),
+
+    // Clients connecting and leaving all the while.
+    let socket = host.socket_path().to_path_buf();
+    let stop = Arc::new(AtomicBool::new(false));
+    let churn: Vec<_> = (0..4)
+        .map(|_| {
+            let (socket, stop) = (socket.clone(), Arc::clone(&stop));
+            thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    drop(UnixStream::connect(&socket));
+                    // Paced so the listen backlog never fills and refuses the status calls.
+                    thread::sleep(Duration::from_millis(1));
+                }
+            })
         })
-        .unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotReady);
-    assert_eq!(err.message, "host starting");
-    assert!(started.elapsed() >= Duration::from_millis(500));
-    assert_eq!(home.runs("create"), 0);
+        .collect();
+    for id in offices {
+        wait_for(&host, id, OfficeStatus::Active);
+    }
+    stop.store(true, Ordering::Relaxed);
+    for thread in churn {
+        thread.join().unwrap();
+    }
+    for id in offices {
+        assert_eq!(home.runs(id), CRASHES + 1, "{id}");
+    }
+
+    // The host runs in this process: count the office logs of this home it holds open. Three
+    // active offices may each keep theirs; 39 finished runs must not leave 39 open.
+    let base = home.fixture_base();
+    let pid = std::process::id().to_string();
+    let out = Command::new("/usr/sbin/lsof")
+        .args(["-n", "-P", "-Fn", "-p", &pid])
+        .output()
+        .expect("lsof runs");
+    assert!(out.status.success(), "lsof failed: {out:?}");
+    let listing = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        listing.lines().any(|l| l == format!("p{pid}")),
+        "lsof didn't list this process"
+    );
+    let open_logs = listing
+        .lines()
+        .filter(|l| {
+            l.starts_with('n') && l.contains(base.to_str().unwrap()) && l.contains("/logs/")
+        })
+        .count();
+    assert!(
+        open_logs <= offices.len(),
+        "the host holds {open_logs} office logs open"
+    );
     host.shutdown();
+
+    let log = fs::read_to_string(home.path().join("fake.log")).unwrap();
+    let reports: Vec<&str> = log.lines().filter(|l| l.starts_with("fds ")).collect();
+    assert_eq!(
+        reports.len(),
+        offices.len() * (CRASHES as usize + 1),
+        "every server reports its fds"
+    );
+    let leaked: Vec<&&str> = reports.iter().filter(|l| !l.ends_with(" -")).collect();
+    assert!(leaked.is_empty(), "servers inherited host fds: {leaked:?}");
+}
+
+/// A server's environment holds only the allowlisted names of this (host) process's own,
+/// plus its office home and runtime folder. The test process has names outside the allowlist
+/// (cargo's `CARGO_*` at least), so the check is not vacuous. The exact filter, with a canary
+/// and the development key folder, is `org-host`'s `a_server_gets_only_the_allowed_environment`.
+#[cfg(target_os = "macos")]
+#[test]
+fn servers_get_only_the_allowed_environment() {
+    let allowed = [
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "PATH",
+        "TMPDIR",
+        "LANG",
+        "ORG_OFFICE_HOME",
+        "ORG_OFFICE_RUNTIME_DIR",
+    ];
+    let outside: Vec<String> = std::env::vars_os()
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .filter(|name| !allowed.contains(&name.as_str()))
+        .collect();
+    assert!(
+        !outside.is_empty(),
+        "the test environment has nothing to keep out"
+    );
+
+    let home = TestHome::registered();
+    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.script(json!({ A: [{"do": "crash"}, {"do": "ready"}] }));
+    let host = home.start(home.config()).unwrap();
+    wait_for(&host, A, OfficeStatus::Active);
+    host.shutdown();
+
+    let runs = home.env_names(A);
+    assert_eq!(runs.len(), 2, "a start and a restart: {runs:?}");
+    for names in runs {
+        assert!(names.iter().any(|n| n == "ORG_OFFICE_HOME"), "{names:?}");
+        for name in names.iter().filter(|n| !n.is_empty()) {
+            assert!(allowed.contains(&name.as_str()), "{name} was passed on");
+        }
+        for name in &outside {
+            assert!(!names.contains(name), "{name} was passed on");
+        }
+    }
 }
