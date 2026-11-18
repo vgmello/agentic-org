@@ -342,3 +342,98 @@ fn a_replacement_is_refused_while_the_writer_holds_a_transaction() {
         Some(cursor(9))
     );
 }
+
+/// `count` commits from `from`, each of forty sources: enough to add pages to the file.
+fn commit_many(engine: &SqliteEngine, from: u64, count: u64) {
+    for ordinal in from..from + count {
+        let mut tx = engine.begin().unwrap();
+        for n in 0..40u64 {
+            let name = format!("state/many/{ordinal}-{n}");
+            tx.set_source(&path(&name), Some(Sha256::of(name.as_bytes())))
+                .unwrap();
+        }
+        engine.commit(tx, &cursor(ordinal)).unwrap();
+    }
+}
+
+#[test]
+fn a_checkpoint_during_a_replacement_never_keeps_a_connection_to_the_old_file() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (engine, dir) = open();
+    let file = dir.path().join("office.db");
+    commit(&engine, 1);
+    let replacing = AtomicBool::new(true);
+    std::thread::scope(|scope| {
+        // Checkpoints as fast as they go, through every moment of every replacement.
+        let checkpoints = scope.spawn(|| {
+            while replacing.load(Ordering::Acquire) {
+                engine.checkpoint().expect("a checkpoint beside a replace");
+            }
+        });
+        for round in 0..12 {
+            engine.replace(&mut |_| Ok(cursor(10 + round))).unwrap();
+        }
+        replacing.store(false, Ordering::Release);
+        checkpoints.join().unwrap();
+    });
+
+    // The next checkpoint folds the NEW file's log: the file under the name grows, and
+    // the log is then written from its start again instead of growing.
+    let before = fs::metadata(&file).unwrap().len();
+    commit_many(&engine, 100, 8);
+    assert_eq!(fs::metadata(&file).unwrap().len(), before);
+    let log = fs::metadata(beside(&file, "-wal")).unwrap().len();
+    engine.checkpoint().unwrap();
+    assert!(fs::metadata(&file).unwrap().len() > before);
+    // Fewer writes than the log already has room for: it is written over, not added to.
+    commit_many(&engine, 200, 3);
+    let after = fs::metadata(beside(&file, "-wal")).unwrap().len();
+    assert_eq!(after, log);
+}
+
+#[test]
+fn another_adapter_format_is_another_schema_and_the_projection_is_made_anew() {
+    let other = || Schema::current().encoded_as(u32::MAX);
+    assert_ne!(other().digest(), Schema::current().digest());
+    let (path, _dir) = place();
+    let engine = SqliteEngine::open(&path).unwrap();
+    commit(&engine, 1);
+    drop(engine);
+    // The same DDL, written another way: not read, made anew for a rebuild.
+    let engine = SqliteEngine::open_as(&path, other()).unwrap();
+    assert_eq!(engine.snapshot().unwrap().cursor().unwrap(), None);
+    assert_eq!(sources(&engine), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_projection_that_cannot_be_opened_is_an_error_and_is_not_deleted() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (path, _dir) = place();
+    let engine = SqliteEngine::open(&path).unwrap();
+    commit(&engine, 1);
+    engine.checkpoint().unwrap();
+    drop(engine);
+    let whole = fs::read(&path).unwrap();
+    let allow = |mode| fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+
+    // No permission to open it: not "no database", so nothing is deleted.
+    allow(0o000);
+    if fs::read(&path).is_ok() {
+        // This user reads any file (root): the refusal cannot be staged here.
+        allow(0o600);
+        return;
+    }
+    let refused = SqliteEngine::open(&path).err().expect("refused");
+    assert!(!refused.message.is_empty());
+    allow(0o600);
+    assert_eq!(fs::read(&path).unwrap(), whole);
+    let engine = SqliteEngine::open(&path).unwrap();
+    assert_eq!(
+        engine.snapshot().unwrap().cursor().unwrap(),
+        Some(cursor(1))
+    );
+    assert_eq!(sources(&engine), 1);
+}

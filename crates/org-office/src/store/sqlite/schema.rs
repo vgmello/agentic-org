@@ -3,7 +3,7 @@
 //! recognized and replaced (there is no migration code: a projection is rebuilt).
 
 use org_store::{EngineError, Sha256};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, ErrorCode, OptionalExtension};
 
 use super::failed;
 
@@ -46,10 +46,19 @@ CREATE TABLE store_receipts (
 ) STRICT, WITHOUT ROWID;
 ";
 
-/// All the DDL a projection is made from, in the order it is loaded.
+/// How the adapter writes values into its own tables: the cursor's text, a receipt's
+/// columns and its reply's bytes, a source's path. The DDL does not show any of that, so
+/// this number is the third part of the digest. Add one on ANY change to what the adapter
+/// encodes into a column or how (`receipts.rs`, `organization.rs`): a projection written
+/// the old way is then recognized and rebuilt instead of being misread.
+const ADAPTER_FORMAT: u32 = 1;
+
+/// All the DDL a projection is made from, in the order it is loaded, and the format of
+/// what the adapter writes into it.
 #[derive(Clone, Debug)]
 pub(super) struct Schema {
     parts: Vec<&'static str>,
+    format: u32,
 }
 
 impl Schema {
@@ -57,7 +66,15 @@ impl Schema {
     pub(super) fn current() -> Self {
         Self {
             parts: vec![CONTRACT, ADAPTER],
+            format: ADAPTER_FORMAT,
         }
+    }
+
+    /// This schema as a build with another adapter format would have it, for tests.
+    #[cfg(test)]
+    pub(super) fn encoded_as(mut self, format: u32) -> Self {
+        self.format = format;
+        self
     }
 
     /// This schema with more DDL after it: another build's schema, for tests.
@@ -67,14 +84,16 @@ impl Schema {
         self
     }
 
-    /// SHA-256 of every part, each preceded by its length, in lowercase hex.
+    /// SHA-256 of the adapter format, then every DDL part preceded by its length, in
+    /// lowercase hex.
     pub(super) fn digest(&self) -> String {
+        let format = self.format.to_be_bytes();
         let lengths: Vec<[u8; 8]> = self
             .parts
             .iter()
             .map(|p| (p.len() as u64).to_be_bytes())
             .collect();
-        let mut framed: Vec<&[u8]> = Vec::new();
+        let mut framed: Vec<&[u8]> = vec![b"adapter-format", &format];
         for (part, length) in self.parts.iter().zip(&lengths) {
             framed.push(length);
             framed.push(part.as_bytes());
@@ -99,13 +118,39 @@ impl Schema {
         create().map_err(|error| failed(db, "creating the schema", &error))
     }
 
-    /// Whether `db` was made from exactly this schema. Anything unreadable is "no".
-    pub(super) fn made(&self, db: &Connection) -> bool {
-        let stored = db
-            .query_row("SELECT digest FROM store_schema WHERE id = 1", [], |row| {
-                row.get::<_, String>(0)
-            })
-            .optional();
-        matches!(stored, Ok(Some(digest)) if digest == self.digest())
+    /// Whether `db` was made from exactly this schema. A database without the digest's
+    /// table or row, with another digest, or that SQLite finds damaged is "no". A database
+    /// that could not be read (busy, an input/output error) is an error: it may be whole.
+    pub(super) fn made(&self, db: &Connection) -> Result<bool, EngineError> {
+        let read = || -> rusqlite::Result<bool> {
+            let table = "SELECT count(*) FROM sqlite_schema \
+                         WHERE type = 'table' AND name = 'store_schema'";
+            if db.query_row(table, [], |row| row.get::<_, i64>(0))? == 0 {
+                return Ok(false);
+            }
+            // A table of that name from other DDL may lack the column or hold another
+            // type: SQLite's plain error and a value of the wrong type are both "no".
+            let stored = db
+                .query_row("SELECT digest FROM store_schema WHERE id = 1", [], |row| {
+                    Ok(row.get::<_, String>(0).ok())
+                })
+                .optional();
+            match stored {
+                Ok(digest) => Ok(digest.flatten().is_some_and(|d| d == self.digest())),
+                Err(error) if error.sqlite_error_code() == Some(ErrorCode::Unknown) => Ok(false),
+                Err(error) => Err(error),
+            }
+        };
+        match read() {
+            Err(error)
+                if matches!(
+                    error.sqlite_error_code(),
+                    Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt)
+                ) =>
+            {
+                Ok(false)
+            }
+            other => other.map_err(|error| failed(db, "reading the projection's schema", &error)),
+        }
     }
 }

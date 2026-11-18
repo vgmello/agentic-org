@@ -10,7 +10,8 @@
 //! - No connection checkpoints on its own or when it closes: dropping the engine does no
 //!   durable work. [`SqliteEngine::checkpoint`] is the one place the log is folded in.
 //!
-//! This module and its children are the only office code that names `rusqlite`.
+//! This module and its children are the only code of the new office store that names
+//! `rusqlite`.
 
 #[cfg(any(test, feature = "testkit"))]
 mod dump;
@@ -90,32 +91,69 @@ fn remove_database(path: &Path) -> Result<(), EngineError> {
 
 /// Opens a connection that never checkpoints when it closes (plan revision 2, F2).
 fn connect(path: &Path, flags: OpenFlags) -> Result<Connection, EngineError> {
-    let open = || -> rusqlite::Result<Connection> {
-        let db = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
-        db.busy_timeout(BUSY_WAIT)?;
-        db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
-        Ok(db)
-    };
-    open().map_err(|error| refused("opening the projection", error))
+    open_connection(path, flags).map_err(|error| refused("opening the projection", error))
+}
+
+fn open_connection(path: &Path, flags: OpenFlags) -> rusqlite::Result<Connection> {
+    let db = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    db.busy_timeout(BUSY_WAIT)?;
+    db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
+    Ok(db)
+}
+
+/// Why a write connection could not be opened. SQLite's own error is kept, so the caller
+/// can tell a file that is no database from one that could not be reached.
+enum WriterRefused {
+    Sqlite(&'static str, rusqlite::Error),
+    Engine(EngineError),
+}
+
+impl WriterRefused {
+    /// Whether SQLite read the file and found it is not a database, or a damaged one. A
+    /// busy file, a failed read or a refused permission is neither: the file may be whole.
+    fn says_no_database(&self) -> bool {
+        let Self::Sqlite(_, error) = self else {
+            return false;
+        };
+        matches!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt)
+        )
+    }
+}
+
+impl From<WriterRefused> for EngineError {
+    fn from(refused_as: WriterRefused) -> Self {
+        match refused_as {
+            WriterRefused::Sqlite(doing, error) => refused(doing, error),
+            WriterRefused::Engine(error) => error,
+        }
+    }
 }
 
 /// The write connection: write-ahead log, no automatic checkpoint, references enforced.
 fn connect_writer(path: &Path) -> Result<Connection, EngineError> {
+    Ok(open_writer(path)?)
+}
+
+fn open_writer(path: &Path) -> Result<Connection, WriterRefused> {
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
-    let db = connect(path, flags)?;
+    let db = open_connection(path, flags)
+        .map_err(|error| WriterRefused::Sqlite("opening the projection", error))?;
     let mode = db
         .query_row("PRAGMA journal_mode = WAL", [], |row| {
             row.get::<_, String>(0)
         })
-        .map_err(|error| refused("setting the journal mode", error))?;
+        .map_err(|error| WriterRefused::Sqlite("setting the journal mode", error))?;
     if !mode.eq_ignore_ascii_case("wal") {
-        return Err(refused("setting the journal mode", format!("it is {mode}")));
+        let error = refused("setting the journal mode", format!("it is {mode}"));
+        return Err(WriterRefused::Engine(error));
     }
     db.execute_batch(
         "PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; \
          PRAGMA recursive_triggers = ON; PRAGMA wal_autocheckpoint = 0;",
     )
-    .map_err(|error| refused("configuring the write connection", error))?;
+    .map_err(|error| WriterRefused::Sqlite("configuring the write connection", error))?;
     Ok(db)
 }
 
@@ -224,8 +262,10 @@ pub struct SqliteSnapshot {
 
 impl SqliteEngine {
     /// Opens the projection at `path`, creating it when it is missing. A file that was
-    /// made from other DDL, or was never finished, is deleted and made anew, empty: the
-    /// store then rebuilds it from the files and the journal.
+    /// made from other DDL, was never finished, or is not a database is deleted and made
+    /// anew, empty: the store then rebuilds it from the files and the journal. A file that
+    /// could not be opened or read (busy, an input/output error, a refused permission) is
+    /// left where it is and the error returned.
     pub fn open(path: &Path) -> Result<Self, EngineError> {
         Self::open_as(path, Schema::current())
     }
@@ -268,11 +308,13 @@ impl SqliteEngine {
         if !present.map_err(|error| refused("finding the projection", error))? {
             return Ok(None);
         }
-        // Not a database, or one this build cannot use: both are "make it anew".
-        let Ok(writer) = connect_writer(path) else {
-            return Ok(None);
+        let writer = match open_writer(path) {
+            Ok(writer) => writer,
+            Err(error) if error.says_no_database() => return Ok(None),
+            Err(error) => return Err(error.into()),
         };
-        Ok(schema.made(&writer).then_some(writer))
+        // Another build's projection, or one never finished: "make it anew".
+        Ok(schema.made(&writer)?.then_some(writer))
     }
 
     /// Folds as much of the write-ahead log into the database file as readers allow,
@@ -338,14 +380,20 @@ impl SqliteEngine {
 
     /// Puts the file at `new_path` in the projection's place. Called with no snapshot open
     /// and the pool held, so nothing reads the old file's log while it goes.
+    ///
+    /// Locks are taken in one order, pool, writer, checkpointer, and `checkpoint` takes
+    /// only its own. The checkpointer's is held until the new writer is connected: a
+    /// checkpoint that arrives meanwhile waits, then opens the file that has the name. Let
+    /// in earlier, it would open the old file and keep checkpointing that one, unlinked.
     fn install(&self, new_path: &Path) -> Result<(), EngineError> {
         let mut writer = lock(&self.writer);
+        let mut checkpointer = lock(&self.checkpointer);
         let Some(old) = writer.take() else {
             return Err(EngineError::new(
                 "the projection cannot be replaced while a transaction is open",
             ));
         };
-        *lock(&self.checkpointer) = None;
+        *checkpointer = None;
         // Empty the old log first: a log left beside the new file would be replayed into
         // it. With the log empty, a crash before the rename leaves the old projection whole.
         let emptied = old.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
@@ -361,18 +409,23 @@ impl SqliteEngine {
             *writer = Some(old);
             return Err(refused("closing the old projection", error));
         }
+        let sync_folder = || match self.path.parent() {
+            Some(folder) => fs::File::open(folder)?.sync_all(),
+            None => Ok(()),
+        };
         let swap = || -> std::io::Result<()> {
             remove_if_present(&beside(&self.path, "-wal"))?;
             remove_if_present(&beside(&self.path, "-shm"))?;
+            // The old log is durably gone before the new file can have the name: a power
+            // cut that kept the rename but not the unlinks would replay the old log into it.
+            sync_folder()?;
             fs::rename(new_path, &self.path)?;
-            match self.path.parent() {
-                Some(folder) => fs::File::open(folder)?.sync_all(),
-                None => Ok(()),
-            }
+            sync_folder()
         };
         let swapped = swap().map_err(|error| refused("installing the replacement", error));
         // Whichever file now has the name, the writer goes on from it.
         *writer = Some(connect_writer(&self.path)?);
+        drop(checkpointer);
         swapped
     }
 }
