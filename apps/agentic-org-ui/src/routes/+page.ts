@@ -1,8 +1,8 @@
 import { redirect } from '@sveltejs/kit';
-import { loadConnections } from '$lib/office/load';
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 
-// First launch goes to the welcome screen; after that, straight into the shell.
+// The instance URL: signed in opens what §4a.5 says (the organization list until A4), otherwise sign in (SIGN-1).
 export async function load() {
-	const connections = await loadConnections();
-	redirect(307, connections.length > 0 ? '/agents' : '/welcome');
+	await appSession.boot();
+	redirect(307, appSession.state.kind === 'signed-in' ? '/welcome' : '/sign-in');
 }
