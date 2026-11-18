@@ -8,8 +8,9 @@
 //! supervisor restarts it to `active` again; after the office's key file is deleted
 //! from the development store a restart still reaches `active` with no status reason
 //! (the start proceeds with no key) and the data is plain SQLite that reads with no
-//! key; the office secrets key never appears outside the key store and the wrapped CA
-//! record never reaches anything the host writes.
+//! key; the office secrets key, as raw bytes or as lowercase/uppercase hex (its stored
+//! and handoff form), appears in no file but its own dev key file, and the wrapped CA
+//! record, in any of those forms, never leaves the office's folder.
 use crate::web_process_tests::{provision_hq, start_signed_in, Started};
 use org_proto::{OfficeInfo, OfficeStatus};
 use std::{
@@ -89,6 +90,14 @@ fn files(root: &Path, out: &mut Vec<PathBuf>) {
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// The forms a secret can take in a file: raw bytes and lowercase/uppercase hex. Keys
+/// travel as hex (handoff JSON, `keys/dev.rs`); no key or CA channel uses base64.
+fn encodings(bytes: &[u8]) -> [Vec<u8>; 3] {
+    let lower: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let upper = lower.to_ascii_uppercase();
+    [bytes.to_vec(), lower.into_bytes(), upper.into_bytes()]
 }
 
 fn unhex(text: &str) -> Vec<u8> {
@@ -175,10 +184,13 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
     // The office answers the host's status checks on the same data with no key.
     wait_active(&host, &office_id, "serving without a key");
 
-    // ENC-5: the office secrets key appears in no file but its (now deleted) dev key
-    // file, so neither the office nor the host stored it; the wrapped CA record appears
-    // only in the office's own folder, so no rendezvous event or handoff carried it to
-    // anything the host wrote (registry, logs, runtime files).
+    // ENC-5: the office secrets key, raw or hex, appears in no file but its (now
+    // deleted) dev key file, so neither the office nor the host stored it; the wrapped
+    // CA record, raw or hex, appears only in the office's own folder, so no rendezvous
+    // event or handoff carried it to anything the host wrote (registry, logs, runtime
+    // files).
+    let key_forms = encodings(&key);
+    let wrapped_forms = encodings(&wrapped);
     let mut scanned = 0;
     for path in &all {
         if path.starts_with(base.join("bin")) {
@@ -186,9 +198,15 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
         }
         let Ok(bytes) = fs::read(path) else { continue };
         scanned += 1;
-        assert!(!contains(&bytes, &key), "office secrets key in {path:?}");
+        if *path != key_files[0] {
+            for form in &key_forms {
+                assert!(!contains(&bytes, form), "office secrets key in {path:?}");
+            }
+        }
         if !path.starts_with(&folder) {
-            assert!(!contains(&bytes, &wrapped), "wrapped CA record in {path:?}");
+            for form in &wrapped_forms {
+                assert!(!contains(&bytes, form), "wrapped CA record in {path:?}");
+            }
         }
     }
     assert!(scanned > 4, "{scanned}");

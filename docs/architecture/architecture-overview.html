@@ -477,7 +477,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
       <tr><td>The office database</td><td>Organization Git plus the operational sources. Rebind credentials, reconcile processes.</td><td>Nothing, if the sources are intact.</td></tr>
       <tr><td>The operational sources</td><td>A valid backup with verified identity, epoch and digests.</td><td>Anything after the backup. Gaps must be disclosed.</td></tr>
       <tr><td>Sources and backups</td><td>Organization Git restores published definitions, open work, published task history, and every number allocated up to the last publish.</td><td>Chat, receipts, usage history, budgets, and numbers allocated since the last publish.</td></tr>
-      <tr><td>Host custody (keys)</td><td>Not supported. Startup never recreates a missing key.</td><td>The encrypted databases it protected. This is a direct cost of encrypting; see below.</td></tr>
+      <tr><td>Host custody (keys)</td><td>Not supported. Startup never recreates a missing key.</td><td>Only the private keys it wraps (the CA key); the databases still open, since ADR-0016 removed their encryption. See below.</td></tr>
     </tbody>
   </table></div>
   <p>Git publication is hourly and asynchronous. It is a publication target and never the point at which a change is acknowledged. A machine restore needs the unpublished journals too.</p>
@@ -512,10 +512,10 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <tbody>
       <tr><td>Disk encryption (FileVault on a Mac)</td><td>Scrambles the whole disk. It unlocks when the machine is on and someone is logged in.</td><td>Every program running on the machine. It only protects a machine that is stolen or switched off.</td></tr>
       <tr><td>File permissions</td><td>The operating system refuses other user accounts access to the files.</td><td>Any program running under the <em>same</em> user account.</td></tr>
-      <tr><td>Application-level encryption (SQLCipher)</td><td>The contents of the database file itself are scrambled. A program needs the key to read it, even if it can open the file.</td><td>Only a program that holds the key. Here that is the office worker, which gets it from the host.</td></tr>
+      <tr><td>Application-level encryption (SQLCipher, used here until ADR-0016 removed it)</td><td>The contents of the database file itself are scrambled. A program needs the key to read it, even if it can open the file.</td><td>Only a program that holds the key. Here that was the office worker, which got it from the host.</td></tr>
     </tbody>
   </table></div>
-  <p>The third one exists here for one main reason: <strong>today agents run under the same user account as the server.</strong> File permissions therefore do not stop an agent. An agent can run shell commands, and if one got past its tool restrictions it could open the database file directly. With application-level encryption that file is useless to it, because the key is held where an agent cannot reach it. A second, smaller benefit is that a copied or backed-up data folder cannot be read elsewhere.</p>
+  <p>The third one existed here for one main reason: <strong>today agents run under the same user account as the server.</strong> File permissions therefore do not stop an agent. An agent can run shell commands, and if one got past its tool restrictions it could open the database file directly. With application-level encryption that file is useless to it, because the key is held where an agent cannot reach it. A second, smaller benefit is that a copied or backed-up data folder cannot be read elsewhere.</p>
   <p>The costs are real: the host must be a signed program with special permission to reach the key or it refuses to start; Linux had no agreed place to keep the key; and a lost key means lost data with no way back.</p>
   <p>This is why your suggestion matters. <strong>If agents run as a different user account, plain file permissions do the job, and application-level encryption loses its main reason to exist.</strong></p>
 
@@ -590,7 +590,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     </tbody>
   </table></div>
   <p>What "extensible to PostgreSQL" still needs, when the time comes: the store's own entry points become selectable at start-up (today the office uses one concrete store type), and each area gets a second implementation behind the same interfaces. Nothing in the domain rules, the wire contract or the UI changes.</p>
-  <p>With PostgreSQL the single connection would no longer be needed; the ordering guarantee would come from transactions. Three things would make a move harder than it should be: two files outside the store module use SQL directly, the contracts name SQLite mechanisms such as <code>BEGIN IMMEDIATE</code>, and encryption is tied to SQLCipher. Nothing needs to be built for PostgreSQL now.</p>
+  <p>With PostgreSQL the single connection would no longer be needed; the ordering guarantee would come from transactions. Two things would make a move harder than it should be: two files outside the store module use SQL directly, and the contracts name SQLite mechanisms such as <code>BEGIN IMMEDIATE</code>. Encryption no longer ties the store to SQLCipher (ADR-0016). Nothing needs to be built for PostgreSQL now.</p>
   <p><strong>Decided 2026-11-17 (ADR-0018).</strong> PostgreSQL must be possible later, so the rule is written down now: only the storage adapters know which database is in use; the guarantees are stated without naming a database; the store is chosen at one place at start-up; and every storage contract gets a test suite that any database must pass, as replication already has. The contract wording no longer names a database statement. The code work is to move the two stray files behind the store, add the selection point and write three suites; messaging and replication already have one. It is best done together with the storage rebuild, which touches the same code.</p>
 
   <h3>Task numbers come from the office that creates the task</h3>

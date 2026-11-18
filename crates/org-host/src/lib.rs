@@ -60,12 +60,14 @@ mod hostdb;
 pub mod human;
 mod ids;
 // Composed into `admin.link.initial` and `admin.reset` by A2 B3.
-#[cfg(all(test, debug_assertions))]
-mod enc1_process_tests;
 #[cfg_attr(not(test), allow(dead_code))]
 mod links;
 pub mod release;
 mod web;
+
+// Real-process tests (debug builds only).
+#[cfg(all(test, debug_assertions))]
+mod enc1_process_tests;
 #[cfg(all(test, debug_assertions))]
 mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.

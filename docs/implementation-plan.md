@@ -350,7 +350,7 @@ onto it and deletes the old store; B1c measures and guards it.
   the batching rules and their tests; `crates/org-docs` the front-matter parser and
   source-preserving editor; `organization/bootstrap.rs` and `organization/admission.rs`
   today's creation path; `org_mailbox::mailbox_conformance_tests!` the suite pattern.
-  The workspace `rusqlite` is built with SQLCipher until A1; the new engine never sets a
+  Since A1 the workspace `rusqlite` is plain bundled SQLite; the new engine never sets a
   key.
 - **Done when:** the organization suite passes against SQLite and memory (ENG-3 for
   organization records); the rebuild-equivalence harness passes for the organization
