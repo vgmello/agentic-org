@@ -29,9 +29,6 @@ fn op_methods() {
         (SessionRenew::METHOD, "session.renew"),
         (SessionEnd::METHOD, "session.end"),
         (SessionGrant::METHOD, "session.grant"),
-        (OrganizationCreate::METHOD, "organization.create"),
-        (OrganizationCancel::METHOD, "organization.cancel"),
-        (OrganizationList::METHOD, "organization.list"),
         (OfficeList::METHOD, "office.list"),
         (OfficeRestart::METHOD, "office.restart"),
         (OfficeOpenChannel::METHOD, "office.open_channel"),
@@ -146,15 +143,7 @@ fn host_op_results_have_three_states() {
 }
 
 #[test]
-fn organization_list_carries_the_recovery_state() {
-    let wire = json!({"organizations": [{
-        "id": "01M72N8MG00000000000000G01", "name": "Acme",
-        "created_at": "2026-11-10T12:00:00.000Z", "offices": [], "recovery": "delivered"
-    }]});
-    let list: OrganizationListResult = serde_json::from_value(wire.clone()).unwrap();
-    assert_eq!(list.organizations[0].recovery, RecoveryState::Delivered);
-    assert_eq!(list.organizations[0].organization.name, "Acme");
-    assert_eq!(serde_json::to_value(&list).unwrap(), wire);
+fn recovery_states_have_their_wire_names() {
     for (state, name) in [
         (RecoveryState::Pending, "pending"),
         (RecoveryState::Delivered, "delivered"),
@@ -286,7 +275,6 @@ fn fingerprint_hashes_match_independently_pinned_vectors() {
         serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
     for case in vectors["cases"].as_array().unwrap() {
         match case["method"].as_str().unwrap() {
-            "organization.create" => check::<OrganizationCreateParams>(case),
             "office.restart" => check::<OfficeRestartParams>(case),
             "account.create" => check::<AccountCreateParams>(case),
             _ => panic!("unhandled vector method"),
@@ -323,7 +311,6 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
         let name = case["name"].as_str().unwrap();
         let method = case["method"].as_str().unwrap();
         let fingerprint = |side: &Value| match method {
-            "organization.create" => journaled::<OrganizationCreateParams>(method, side),
             "office.restart" => journaled::<OfficeRestartParams>(method, side),
             "account.create" => journaled::<AccountCreateParams>(method, side),
             other => panic!("{other}"),

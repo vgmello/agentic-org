@@ -8,7 +8,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 
 pub(super) const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
-const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const OWNER: &str = "01900000-0000-7000-8000-0000000000ee";
 
 fn create_line(path: &Path) -> HostFirstLine {
     HostFirstLine::Create(CreateLine {
@@ -823,13 +823,13 @@ fn selected_plan() -> org_proto::selected_bootstrap::PreparedV1 {
             slug: "acme".into(),
             repository_remote_url: "https://example.test/org.git".into(),
             state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
         },
         organization_id: id(1),
         office_id: id(2),
         repository_id: id(3),
         home_team_id: id(4),
         hr_employee_id: id(5),
+        creator: org_proto::selected_bootstrap::CreatorV1::from_login(OWNER.into(), "Ana"),
     }
 }
 fn selected_handshake(world: &World, start: bool) -> Session {

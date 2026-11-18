@@ -74,6 +74,12 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
+      # agentic-org-web's dependency-closure test reads the locked graph for every platform with
+      # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest
+      # are fetched here; without this step the test fails on a runner with a cold cache.
+      - name: cargo fetch (every platform's locked packages)
+        run: cargo fetch --locked
+
       # --no-fail-fast: a failing test binary must not hide the result of every crate after it.
       - name: cargo test
         run: cargo test --locked --workspace --no-fail-fast

@@ -596,7 +596,7 @@ class DraftSchemaTests(unittest.TestCase):
         self.seed_execution()
         assert_refused(self, self.db, "execution config requires an agent employee",
                        "UPDATE agent_execution_configs SET employee_id='reporter'")
-        assert_refused(self, self.db, "configured employee must remain an agent",
+        assert_refused(self, self.db, "an employee's kind never changes",
                        "UPDATE employees SET kind='person' WHERE id='ana'")
         assert_refused(self, self.db, "only an agent is placed in an office", lambda: insert(
             self.db, "agent_placements", organization_id="org", employee_id="reporter", office_id="hq"))
@@ -609,8 +609,11 @@ class DraftSchemaTests(unittest.TestCase):
                name="Placed", home_team_id="payments", schema_version=1, revision=1)
         insert(self.db, "agent_placements", organization_id="org", employee_id="placed", office_id="hq")
         self.db.commit()
-        assert_refused(self, self.db, "placed employee must remain an agent",
+        assert_refused(self, self.db, "an employee's kind never changes",
                        "UPDATE employees SET kind='person' WHERE id='placed'")
+        assert_refused(self, self.db, "an employee's kind never changes",
+                       "UPDATE employees SET kind='agent' WHERE id='reporter'")
+        self.db.execute("UPDATE employees SET name='Placed again', kind='agent' WHERE id='placed'")
         self.assertEqual(self.db.execute("SELECT max_members FROM teams WHERE id='payments'").fetchone()[0], 6)
         self.db.execute("UPDATE teams SET max_members=12 WHERE id='payments'")
         assert_refused(self, self.db, "CHECK constraint failed",
@@ -621,8 +624,9 @@ class DraftSchemaTests(unittest.TestCase):
         insert(self.db, "agent_placements", organization_id="org", employee_id="bo", office_id="east")
         insert(self.db, "employees", organization_id="org", id="cy", handle="cy", schema_version=1,
                revision=1, kind="agent", name="Cy", home_team_id="payments")
-        self.db.execute("UPDATE employees SET kind='person' WHERE id='cy'")  # unconfigured: may change
         self.db.commit()
+        assert_refused(self, self.db, "an employee's kind never changes",
+                       "UPDATE employees SET kind='person' WHERE id='cy'")  # unconfigured, unplaced
 
     def test_a_cleanup_record_is_in_its_process_office(self):
         self.seed_execution()

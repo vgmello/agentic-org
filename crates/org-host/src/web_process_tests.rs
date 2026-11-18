@@ -27,8 +27,7 @@ use crate::{
 };
 use org_host_control::{
     ops::{AccountVerify, AccountVerifyParams},
-    provision::{OrganizationProvision, Params, Provisioned},
-    HostOpResult, Password, SessionHandle,
+    Password, SessionHandle,
 };
 use org_host_control::{GatewayState, InstanceStatus, InstanceStatusParams};
 use org_platform::confinement::testing::{refuse_call, RefusedCall};
@@ -46,11 +45,12 @@ use std::{
 };
 
 mod browser_sessions;
+mod organizations;
 mod recovery_custody;
 
 const WAIT: Duration = Duration::from_secs(60);
 /// How long the real-host tests keep asking for the HQ whose worker must start within the
-/// host's launch deadline ([`provision_hq_retrying`]).
+/// host's launch deadline ([`create_hq_beside`]).
 const HQ_WAIT: Duration = Duration::from_secs(300);
 const PASSWORD: &str = "synthetic first password";
 
@@ -67,6 +67,26 @@ fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str
             body.len()
         ),
     )
+}
+/// A sign-in or registration `POST`, tried again while the answer is 503. Cause, as far as it
+/// was diagnosed: the hash-permit pool is per host, so tests do not contend for it; a debug
+/// build's unoptimized Argon2 took seconds per hash on a loaded machine (one sign-in-bearing
+/// unit test ran 9.8 s at load 9), past the web process's 5 s host-call deadline, which
+/// answers `unavailable`. The workspace now optimizes the hash crates in debug builds
+/// (root `Cargo.toml`), so this should no longer trigger; the bound stays as a guard. The
+/// tests that use this prove what follows a successful call, not its first-try timing. This is a bound on tries (20, 250 ms apart), not a wait for another event; the
+/// last reply is returned whatever it is, so a persistent 503 still fails the caller.
+fn post_until_available(address: SocketAddr, path: &str, body: &str) -> Reply {
+    const TRIES: usize = 20;
+    let mut reply = http(address, "POST", path, "", body);
+    for _ in 1..TRIES {
+        if reply.status != 503 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(250));
+        reply = http(address, "POST", path, "", body);
+    }
+    reply
 }
 /// Sends `request` exactly as written and reads the whole reply.
 fn send(address: SocketAddr, request: &str) -> Reply {
@@ -427,37 +447,120 @@ pub(super) fn start_signed_in() -> Started {
     }
 }
 
-/// Provisions HQ over `wire` as `session`, polling until it completes, and
-/// returns the request and its result. `id` is the next request ID.
-pub(super) fn provision_hq(
-    wire: &mut BufReader<UnixStream>,
-    id: &mut u64,
-    session: SessionHandle,
-) -> (Params, Provisioned) {
-    let prepared = Params {
-        session,
-        operation_id: crate::ids::generate().unwrap(),
-        plan: PlanV1 {
-            version: 1,
-            name: "Example".into(),
-            slug: "example".into(),
-            repository_remote_url: "https://example.test/organization.git".into(),
-            state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
+/// The body of `POST /api/v1/organizations` (web-api-v1 §3): one operation on `instance`.
+fn create_body(
+    instance: &str,
+    operation: &str,
+    name: &str,
+    slug: &str,
+    repository: serde_json::Value,
+) -> String {
+    serde_json::json!({
+        "operation_id": operation,
+        "scope": { "kind": "instance", "instance_id": instance },
+        "params": {
+            "name": name, "slug": slug,
+            "organization_repository": repository, "state_branch": "org/state",
         },
-    };
+    })
+    .to_string()
+}
+
+/// A remote repository registration for `slug`. Nothing contacts it.
+fn remote(slug: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "remote", "remote_url": format!("https://example.test/{slug}.git") })
+}
+
+/// `GET /api/v1/operations/host/{operation}` for this instance.
+fn lookup(address: SocketAddr, headers: &str, instance: &str, operation: &str) -> Reply {
+    http(
+        address,
+        "GET",
+        &format!("/api/v1/operations/host/{operation}?instance_id={instance}"),
+        headers,
+        "",
+    )
+}
+
+/// Polls the lookup route until the create completed and returns its organization view.
+fn wait_completed(
+    address: SocketAddr,
+    headers: &str,
+    instance: &str,
+    operation: &str,
+) -> serde_json::Value {
+    wait_completed_seen(address, headers, instance, operation, &mut |_| {})
+}
+
+/// [`wait_completed`], showing `seen` every poll reply, the ones before completion too.
+fn wait_completed_seen(
+    address: SocketAddr,
+    headers: &str,
+    instance: &str,
+    operation: &str,
+    seen: &mut dyn FnMut(&Reply),
+) -> serde_json::Value {
     let until = Instant::now() + WAIT;
     loop {
-        let result = answer::<OrganizationProvision>(wire, *id, &prepared).unwrap();
-        *id += 1;
-        match result {
-            HostOpResult::Completed { result } => return (prepared, result),
-            HostOpResult::Accepted => {
-                assert!(Instant::now() < until, "HQ provisioning deadline");
-                thread::sleep(Duration::from_millis(50));
+        let reply = lookup(address, headers, instance, operation);
+        seen(&reply);
+        assert_eq!(reply.status, 200, "lookup: {}", reply.body);
+        let result = &reply.body["result"];
+        assert_eq!(result["kind"], "host", "{result}");
+        assert_eq!(result["operation_id"], operation, "{result}");
+        match result["outcome"].as_str() {
+            Some("completed") => {
+                assert_eq!(result["state"], "linked", "{result}");
+                return result["result"].clone();
             }
-            _ => panic!("unexpected provisioning result"),
+            Some("accepted") => assert_eq!(result["state"], "reserved", "{result}"),
+            _ => panic!("unexpected create outcome: {result}"),
         }
+        assert!(Instant::now() < until, "organization create deadline");
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// An organization created through the browser API.
+pub(super) struct Created {
+    pub(super) operation_id: String,
+    pub(super) organization_id: String,
+    pub(super) office_id: String,
+}
+
+/// Creates the organization "Example" the way a browser does: signs in as the seeded
+/// administrator over HTTP, posts the create and polls the lookup route until it completes.
+pub(super) fn create_hq(host: &Host, address: SocketAddr) -> Created {
+    browser_sessions::wait_serving(host, address);
+    let signed_in = http(
+        address,
+        "POST",
+        "/api/v1/session/sign-in",
+        "",
+        &browser_sessions::credentials(),
+    );
+    let headers = browser_sessions::pair(&signed_in, "sign-in").headers();
+    let instance = host.instance.as_ref().unwrap().id().to_owned();
+    let operation_id = crate::ids::generate().unwrap();
+    let body = create_body(
+        &instance,
+        &operation_id,
+        "Example",
+        "example",
+        remote("example"),
+    );
+    let posted = http(address, "POST", "/api/v1/organizations", &headers, &body);
+    assert!(
+        matches!(posted.status, 200 | 202),
+        "create: {} {}",
+        posted.status,
+        posted.body
+    );
+    let view = wait_completed(address, &headers, &instance, &operation_id);
+    Created {
+        operation_id,
+        organization_id: view["id"].as_str().expect("organization id").to_owned(),
+        office_id: view["offices"][0]["id"].as_str().expect("HQ id").to_owned(),
     }
 }
 
@@ -605,39 +708,50 @@ fn kernel_status(pid: &str, name: &str) -> String {
         .unwrap_or_else(|| panic!("no {name} in the status of {pid}"))
 }
 
-/// Provisions HQ as [`provision_hq`] does, and asks again with the same operation when
-/// the host answers that the creation is unresolved. A worker that misses the launch
-/// deadline on a busy machine gives that answer, and it says to retry the operation. These
-/// tests are about the web process, which needs no HQ to start: HQ puts a real worker
-/// beside it.
-fn provision_hq_retrying(wire: &mut BufReader<UnixStream>, id: &mut u64, session: SessionHandle) {
-    let prepared = Params {
-        session,
-        operation_id: crate::ids::generate().unwrap(),
-        plan: PlanV1 {
-            version: 1,
-            name: "Example".into(),
-            slug: "example".into(),
-            repository_remote_url: "https://example.test/organization.git".into(),
-            state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
-        },
+/// Creates HQ for a `lnx_3_*` host: through the browser API, as [`create_hq`] does, when
+/// the web process serves; otherwise in the host's process with the seeded administrator's
+/// account, the call the web connection would make, since no browser can reach a host
+/// whose web process never starts. These tests are about the web process, which needs no
+/// HQ to start: HQ puts a real worker beside it. The in-process create asks again with the
+/// same operation while the host answers that the creation is unresolved: a worker that
+/// misses the launch deadline on a busy machine gives that answer, and it says to retry.
+fn create_hq_beside(host: &Host, address: SocketAddr, serving: bool) {
+    if serving {
+        create_hq(host, address);
+        return;
+    }
+    let creating = host
+        .creating
+        .as_ref()
+        .expect("a registered host creates organizations");
+    let account = creating.account_for_test("Owner");
+    let operation_id = crate::ids::generate().unwrap();
+    let plan = PlanV1 {
+        version: 1,
+        name: "Example".into(),
+        slug: "example".into(),
+        repository_remote_url: "https://example.test/organization.git".into(),
+        state_branch: "org/state".into(),
     };
+    let fingerprint: [u8; 32] =
+        <sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&plan).unwrap()).into();
     // Its own, long bound: each retry needs only one launch that fits the host's deadline,
     // and on a machine busy with other test binaries several in a row can miss it.
     let until = Instant::now() + HQ_WAIT;
     loop {
-        let result = answer::<OrganizationProvision>(wire, *id, &prepared);
-        *id += 1;
-        match result {
-            Ok(HostOpResult::Completed { .. }) => return,
-            Ok(HostOpResult::Accepted) => {}
+        match creating.create(&account, &operation_id, &plan, fingerprint) {
+            Ok(org_host_control::HostOpResult::Completed { .. }) => return,
+            Ok(org_host_control::HostOpResult::Accepted) => {}
             Err(error) if error.code == org_proto::ErrorCode::Unavailable => {
                 println!("HQ: {}", error.message);
             }
-            other => panic!("unexpected provisioning result: {:?}", other.map(drop)),
+            Err(error) => panic!("unexpected create error: {error:?}"),
+            Ok(org_host_control::HostOpResult::Rejected { refusal }) => {
+                panic!("the create was refused: {refusal:?}")
+            }
+            Ok(_) => panic!("an unknown create result"),
         }
-        assert!(Instant::now() < until, "HQ provisioning deadline");
+        assert!(Instant::now() < until, "HQ creation deadline");
         thread::sleep(Duration::from_millis(50));
     }
 }
@@ -665,7 +779,7 @@ fn lnx_3_host(outcome: &str) {
         host,
         socket: _,
         mut wire,
-        session,
+        session: _,
     } = start_signed_in();
     println!("\nhost.sock: hello and account.verify answered");
     let mut id = 3;
@@ -684,7 +798,7 @@ fn lnx_3_host(outcome: &str) {
         !matches!(before, GatewayState::NotConfigured | GatewayState::Starting)
     });
     println!("state before HQ: {before:?}");
-    provision_hq_retrying(&mut wire, &mut id, session);
+    create_hq_beside(&host, address, matches!(before, GatewayState::Running));
     println!("HQ: provisioned");
     let serving = |host: &Host| {
         wait_until("web_ready", || web_ready(host));

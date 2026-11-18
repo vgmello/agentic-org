@@ -9,7 +9,7 @@
 //! cancelled by its connection's EOF; release, redelivery, acknowledgement and
 //! the package follow the persisted ledger; and acknowledgement deletes the
 //! custody copy.
-use super::{answer, provision_hq, start_signed_in, Started, PASSWORD};
+use super::{answer, create_hq, start_signed_in, Started, PASSWORD};
 use crate::{hostdb::HostDb, recovery::TestPresence, service::listener::Connection};
 use org_host_control::{ops, recovery as dto, SessionHandle};
 use org_proto::{ApiError, Call, ErrorCode};
@@ -86,6 +86,7 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
     // `_temp` is bound first so it drops last, after the host and its children.
     let Started {
         temp: _temp,
+        address,
         host,
         socket,
         mut wire,
@@ -95,7 +96,7 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
     let wire = &mut wire;
     let mut next = 3;
     let id = &mut next;
-    let (p, org) = provision_hq(wire, id, session);
+    let org = create_hq(&host, address);
     let recovery = host.service.recovery_for_test();
     let (db, custody) = host
         .service
@@ -113,16 +114,16 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
         cancelled_seen: AtomicBool::new(false),
     });
     let show = |redeliver| ops::RecoveryReleaseParams {
-        session: copy(&p.session),
+        session: copy(&session),
         org_id: org.organization_id.clone(),
         redeliver,
     };
     let ack = || ops::RecoveryAcknowledgeParams {
-        session: copy(&p.session),
+        session: copy(&session),
         org_id: org.organization_id.clone(),
     };
     let status = || dto::StatusParams {
-        session: copy(&p.session),
+        session: copy(&session),
         org_id: org.organization_id.clone(),
         after_ordinal: None,
     };
@@ -279,15 +280,15 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
         let third = call::<ops::RecoveryRelease>(wire, id, &show(true)).unwrap();
         assert!(first.code.expose() == third.code.expose());
         let package_params = || dto::PackageParams {
-            session: copy(&p.session),
+            session: copy(&session),
             org_id: org.organization_id.clone(),
         };
         let package = call::<dto::Package>(wire, id, &package_params()).unwrap();
         assert_eq!(package.instance_id, instance_id);
-        assert_eq!(package.operation_id, p.operation_id);
+        assert_eq!(package.operation_id, org.operation_id);
         assert_eq!(package.office_id, org.office_id);
         assert!(package.package_hex.starts_with("41474f5247434131"));
-        let before = db.recovery_observed(&p.operation_id).unwrap();
+        let before = db.recovery_observed(&org.operation_id).unwrap();
         assert_eq!(before.ordinal, 3);
         // Acknowledged: idempotent, final, and the custody copy is gone.
         let _: org_proto::Empty = call::<ops::RecoveryAcknowledge>(wire, id, &ack()).unwrap();

@@ -5,7 +5,7 @@ use crate::{
 };
 use org_proto::selected_bootstrap::{PlanV1, PreparedV1};
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
-const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const OWNER: &str = "01900000-0000-7000-8000-0000000000ee";
 const OP: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 fn prepared() -> PreparedV1 {
     let id = |n| format!("01900000-0000-7000-8000-{n:012x}");
@@ -16,13 +16,13 @@ fn prepared() -> PreparedV1 {
             slug: "example".into(),
             repository_remote_url: "https://example.test/org.git".into(),
             state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
         },
         organization_id: id(1),
         office_id: id(2),
         repository_id: id(3),
         home_team_id: id(4),
         hr_employee_id: id(5),
+        creator: org_proto::selected_bootstrap::CreatorV1::from_login(OWNER.into(), "Ana"),
     }
 }
 struct Owner;
@@ -100,9 +100,62 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     for (path, bytes) in files {
         assert_eq!(std::fs::read(public.join(path)).unwrap(), bytes);
     }
-    assert!(!public
-        .join(format!("teams/{}/people", p.home_team_id))
-        .exists());
+    // Independent assertions on the creator: a person in the top-level team, its lead,
+    // and the employee every bootstrap record is attributed to.
+    let person = std::fs::read_to_string(public.join(format!(
+        "teams/{}/people/{OWNER}/profile.md",
+        p.home_team_id
+    )))
+    .unwrap();
+    let person = org_docs::SourceDoc::parse(&person).unwrap();
+    let front = person.front_matter();
+    assert_eq!(front["id"], OWNER);
+    assert_eq!(front["kind"], "person");
+    assert_eq!(front["name"], "Ana");
+    assert_eq!(front["handle"], "ana");
+    assert_eq!(front["home_team_id"], p.home_team_id);
+    assert_eq!(front["status"], "active");
+    assert!(front.get("is_owner").is_none() && front.get("agent_status").is_none());
+    let top = yaml_value(
+        &std::fs::read(public.join(format!("teams/{}/team.yaml", p.home_team_id))).unwrap(),
+    );
+    assert_eq!(
+        top["name"], p.plan.name,
+        "the team is named after the organization"
+    );
+    assert_eq!(top["lead_employee_id"], OWNER);
+    for path in [
+        "organization.yaml".to_string(),
+        format!("offices/{}.yaml", p.office_id),
+        format!("teams/{}/team.yaml", p.home_team_id),
+    ] {
+        let record = yaml_value(&std::fs::read(public.join(&path)).unwrap());
+        for field in ["created_by", "updated_by"] {
+            assert_eq!(record[format!("{field}_kind")], "employee", "{path}");
+            assert_eq!(record[format!("{field}_id")], OWNER, "{path}");
+        }
+    }
+    assert_eq!(front["created_by_kind"], "employee");
+    assert_eq!(front["created_by_id"], OWNER);
+    let directory: String = office
+        .local_store()
+        .selected_read(|db, _| {
+            db.query_row("SELECT data FROM selected_directory", [], |r| r.get(0))
+                .map_err(storage)
+        })
+        .unwrap();
+    let directory: Value = serde_json::from_str(&directory).unwrap();
+    assert_eq!(directory["employees"][OWNER]["kind"], "person");
+    assert_eq!(directory["employees"][&p.hr_employee_id]["handle"], "hr");
+    assert_eq!(
+        directory["teams"][&p.home_team_id]["lead_employee_id"],
+        OWNER
+    );
+    Facts::validate(
+        &codec::parse(directory.to_string().as_bytes()).unwrap(),
+        &p.organization_id,
+    )
+    .unwrap();
     assert!(!public
         .join(format!(
             "teams/{}/agents/{}/execution.md",
@@ -267,7 +320,13 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     .unwrap();
     let doc = org_docs::SourceDoc::parse(&profile).unwrap();
     assert_eq!(doc.front_matter()["home_team_id"], p.home_team_id);
-    assert_eq!(doc.front_matter()["is_owner"], false);
+    assert!(doc.front_matter().get("is_owner").is_none());
+    // The data contract's bytes: an agent's profile has `status` and no `agent_status`.
+    assert_eq!(doc.front_matter()["status"], "active");
+    assert!(doc.front_matter().get("agent_status").is_none());
+    assert!(!profile.contains("agent_status"), "{profile}");
+    assert_eq!(doc.front_matter()["created_by_kind"], "employee");
+    assert_eq!(doc.front_matter()["created_by_id"], OWNER);
 }
 
 #[test]
@@ -366,4 +425,22 @@ fn selected_bootstrap_open_and_admission_reject_lost_or_incoherent_prepared_stat
             "{damage}"
         );
     }
+}
+
+#[test]
+fn a_creator_that_is_not_the_bound_owner_or_holds_the_hr_handle_materializes_nothing() {
+    let mut p = prepared();
+    p.creator.handle = "hr".into();
+    assert!(materialize(&p, "HQ", "2026-01-01T00:00:00Z").is_err());
+    let mut p = prepared();
+    p.creator.employee_id = p.hr_employee_id.clone();
+    assert!(materialize(&p, "HQ", "2026-01-01T00:00:00Z").is_err());
+    let p = prepared();
+    let binding = Binding {
+        operation_id: OP.into(),
+        owner_member_id: "01900000-0000-7000-8000-0000000000ef".into(),
+        public_root: "/state".into(),
+        bootstrap: Some(p),
+    };
+    assert!(binding.validate().is_err());
 }

@@ -226,14 +226,16 @@ Three things to know about the order:
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-2). Rows FC-016,
   FC-018, FC-029, FC-031.
 - **Code today:**
-  - Two host commands create an organization. `organization.create` takes a name only.
-    `organization.provision.v1` already carries the selected payload (name, slug,
-    repository address, state branch, home team name: `crates/org-proto/src/selected_bootstrap.rs`)
-    and is implemented by `crates/org-host/src/provisioning.rs` with the office's
-    `hq_creation`. One command remains, named `organization.create` as the web API
-    design has it, with the second one's payload and implementation; the name-only
-    handler and the versioned name are deleted.
-  - The UI flow runs against fakes (`apps/agentic-org-ui/src/lib/create-flow.ts`).
+  - One command creates an organization: the host's `organization.create`, served on
+    the admitted web connection only, with the selected payload (name, slug,
+    repository address, state branch; `crates/org-proto/src/selected_bootstrap.rs`,
+    `crates/org-host/src/provisioning.rs`, the office's `hq_creation`). The name-only
+    declarations and `organization.provision.v1` are deleted. The web process serves
+    `POST` and `GET /api/v1/organizations` and the host operation lookup over it
+    ([web API](design/web-api-v1.md#selected-create-organization-payload)).
+  - The UI's create flow still runs against fakes
+    (`apps/agentic-org-ui/src/lib/create-flow.ts`) until A4.5 moves the create page
+    and the welcome list onto the real API.
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once; ENC-2 passes.
@@ -407,6 +409,8 @@ onto it and deletes the old store; B1c measures and guards it.
   office's tests pass on the memory engine through `open_store` (ENG-2); STORE-6 passes.
 - **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
   it moves).
+- **Paths:** the data-root contract paths (`<data-root>/<org-id>/durable/state/…`) are
+  B1b's. A4 writes `<instance-root>/durable/state/<org-id>/`.
 
 ### B1c · The store measured and guarded
 

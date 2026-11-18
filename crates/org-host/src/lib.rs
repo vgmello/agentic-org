@@ -374,6 +374,8 @@ pub struct Host {
     authentication_lifecycle: Option<service::authentication::Lifecycle>,
     web: Option<web::Supervisor>,
     service: Arc<Service>,
+    /// Organization creation, kept to end its threads when the host stops.
+    creating: Option<Arc<provisioning::Provisioning>>,
 }
 
 fn startup_server_check(config: &Config) -> Result<ServerCheck, HostError> {
@@ -611,6 +613,7 @@ fn startup_protected_services(
     supervisor: Supervisor,
     keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
+    timings: &Timings,
 ) -> Result<ProtectedServices, HostError> {
     let io = |context| move |source| HostError::Io { context, source };
     let writers = match (instance, authentication) {
@@ -628,15 +631,18 @@ fn startup_protected_services(
     let provisioning = match (instance, authentication, &writers) {
         (Some(instance), Some(authentication), Some(writers)) => {
             let (db, custody) = authentication.provisioning_storage();
-            Some(Arc::new(provisioning::Provisioning::new(
-                db,
-                custody,
-                Arc::clone(keys),
-                Arc::clone(writers),
-                instance.id(),
-                instance.root(),
-                &layout.home,
-            )))
+            Some(Arc::new(
+                provisioning::Provisioning::new(
+                    db,
+                    custody,
+                    Arc::clone(keys),
+                    Arc::clone(writers),
+                    instance.id(),
+                    instance.root(),
+                    &layout.home,
+                )
+                .with_shutdown_grace(timings.shutdown_grace),
+            ))
         }
         _ => None,
     };
@@ -786,7 +792,14 @@ impl Host {
             writers: _writers,
             supervisor,
             provisioning,
-        } = startup_protected_services(&instance, &authentication, supervisor, &keys, &layout)?;
+        } = startup_protected_services(
+            &instance,
+            &authentication,
+            supervisor,
+            &keys,
+            &layout,
+            &config.timings,
+        )?;
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             &layout.home,
@@ -811,6 +824,7 @@ impl Host {
             ))),
             _ => None,
         };
+        let creating = provisioning.clone();
         let service = Arc::new(
             Service::new(
                 Arc::clone(&offices),
@@ -823,6 +837,14 @@ impl Host {
             .with_gateway_state(Arc::clone(&gateway_state)),
         );
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
+        // A create that reserved its identity before the host last stopped continues now,
+        // with no client asking; later ones start from the browser's request. This follows
+        // the last step of the start that can fail: a start that is refused has started no
+        // creation thread, so none outlives the refusal. Until this line a create or a
+        // lookup that arrives on the new listener is answered `unavailable` and asked again.
+        if let Some(provisioning) = &creating {
+            provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
+        }
         let web = web_config.and_then(|web_config| {
             match web::Supervisor::start(
                 web_config,
@@ -851,6 +873,7 @@ impl Host {
             authentication_lifecycle,
             web,
             service,
+            creating,
         })
     }
 
@@ -883,10 +906,18 @@ impl Host {
         listener.close();
         // Ends the web process control connection (and its sessions), then kills/reaps it.
         self.web.take();
+        // No creation attempt starts from here on, and none records a link.
+        if let Some(creating) = &self.creating {
+            creating.halt();
+        }
         // Before joining the listener: a create still running answers as soon as the
         // supervisor stops its server.
         self.offices.shutdown();
         listener.join();
+        // Nothing of a create writes custody or the registry after this.
+        if let Some(creating) = self.creating.take() {
+            creating.stop();
+        }
         self.authentication_lifecycle.take();
         if let Ok(meta) = fs::symlink_metadata(&self.layout.host_socket) {
             if meta.file_type().is_socket() {

@@ -50,6 +50,9 @@ mod tests;
 
 /// The port of the `default` instance; named instances take the first free one after it.
 pub const DEFAULT_PORT: u16 = 7420;
+/// Where the search for a named instance's port starts. Production composition always
+/// passes this; only a test-support build may pass another base ([`Request::named_port_base`]).
+pub const NAMED_PORT_BASE: u16 = DEFAULT_PORT + 1;
 const READY_WITHIN: Duration = Duration::from_secs(60);
 
 /// The platform adapters setup composes.
@@ -141,6 +144,10 @@ pub struct Request<'a> {
     /// `--port`; without it the default is offered to `prompt` (if any) and then used.
     pub port: Option<u16>,
     pub prompt: Option<PortPrompt<'a>>,
+    /// The first port tried for a named instance without `--port`: [`NAMED_PORT_BASE`],
+    /// except in a test-support build whose tests keep away from the ports of other
+    /// programs on the machine.
+    pub named_port_base: u16,
     /// The service program (`agentic-org` itself) and its explicit environment.
     pub program: PathBuf,
     pub env: Vec<(OsString, OsString)>,
@@ -229,10 +236,12 @@ fn port_held_elsewhere(port: u16, name: Option<&str>) -> String {
 }
 
 /// The first run's port: the requested one if free, otherwise the instance's default.
+/// A named instance's default is the first free port from `named_base`.
 /// `saved` holds the ports other instances saved, by name; none of them is chosen.
 pub(crate) fn choose_port(
     name: Option<&str>,
     requested: Option<u16>,
+    named_base: u16,
     free: impl Fn(u16) -> bool,
     saved: &[(String, u16)],
 ) -> Result<u16, String> {
@@ -271,9 +280,11 @@ pub(crate) fn choose_port(
                 ))
             }
         }
-        Some(_) => (DEFAULT_PORT + 1..=u16::MAX)
+        Some(_) => (named_base..=u16::MAX)
             .find(|p| owner(*p).is_none() && free(*p))
-            .ok_or_else(|| "no free port on 127.0.0.1 from 7421; nothing was saved".into()),
+            .ok_or_else(|| {
+                format!("no free port on 127.0.0.1 from {named_base}; nothing was saved")
+            }),
     }
 }
 
@@ -401,11 +412,23 @@ pub(crate) fn run_at(
         }
         None => {
             let saved = saved_ports(paths, name);
-            let mut port = choose_port(name, request.port, port_free, &saved)?;
+            let mut port = choose_port(
+                name,
+                request.port,
+                request.named_port_base,
+                port_free,
+                &saved,
+            )?;
             if request.port.is_none() {
                 if let Some(prompt) = request.prompt.as_mut() {
                     if let Some(chosen) = prompt(&format!("http://127.0.0.1:{port}"))? {
-                        port = choose_port(name, Some(chosen), port_free, &saved)?;
+                        port = choose_port(
+                            name,
+                            Some(chosen),
+                            request.named_port_base,
+                            port_free,
+                            &saved,
+                        )?;
                     }
                 }
             }

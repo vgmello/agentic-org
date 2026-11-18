@@ -2,19 +2,45 @@ use super::*;
 
 #[test]
 fn ports_default_to_7420_and_named_instances_take_the_first_free_from_7421() {
-    assert_eq!(choose_port(None, None, |_| true, &[]).unwrap(), 7420);
     assert_eq!(
-        choose_port(Some("default"), None, |_| true, &[]).unwrap(),
+        choose_port(None, None, NAMED_PORT_BASE, |_| true, &[]).unwrap(),
         7420
     );
     assert_eq!(
-        choose_port(Some("lab"), None, |p| p != 7421, &[]).unwrap(),
+        choose_port(Some("default"), None, NAMED_PORT_BASE, |_| true, &[]).unwrap(),
+        7420
+    );
+    assert_eq!(
+        choose_port(Some("lab"), None, NAMED_PORT_BASE, |p| p != 7421, &[]).unwrap(),
         7422
     );
     assert_eq!(
-        choose_port(Some("lab"), Some(9000), |_| true, &[]).unwrap(),
+        choose_port(Some("lab"), Some(9000), NAMED_PORT_BASE, |_| true, &[]).unwrap(),
         9000
     );
+}
+
+/// The production search base is 7421, the port after `default`'s; another base moves the
+/// whole search and is named in the refusal.
+#[test]
+fn the_named_port_search_starts_at_7421_and_at_no_other_base_unless_given() {
+    assert_eq!(NAMED_PORT_BASE, 7421);
+    assert_eq!(
+        choose_port(Some("lab"), None, NAMED_PORT_BASE, |_| true, &[]).unwrap(),
+        7421
+    );
+    assert_eq!(
+        choose_port(Some("lab"), None, 31000, |p| p != 31000, &[]).unwrap(),
+        31001
+    );
+    // The base does not move `default`, nor an explicit port.
+    assert_eq!(choose_port(None, None, 31000, |_| true, &[]).unwrap(), 7420);
+    assert_eq!(
+        choose_port(Some("lab"), Some(9000), 31000, |_| true, &[]).unwrap(),
+        9000
+    );
+    let why = choose_port(Some("lab"), None, 65535, |_| false, &[]).unwrap_err();
+    assert!(why.contains("from 65535"), "{why}");
 }
 
 #[test]
@@ -22,16 +48,16 @@ fn ports_other_instances_saved_are_never_chosen() {
     // A stopped instance's saved port is free to bind, but it is still that instance's.
     let saved = [("a".to_owned(), 7421), ("b".to_owned(), 7423)];
     assert_eq!(
-        choose_port(Some("lab"), None, |p| p != 7422, &saved).unwrap(),
+        choose_port(Some("lab"), None, NAMED_PORT_BASE, |p| p != 7422, &saved).unwrap(),
         7424
     );
-    let why = choose_port(Some("lab"), Some(7423), |_| true, &saved).unwrap_err();
+    let why = choose_port(Some("lab"), Some(7423), NAMED_PORT_BASE, |_| true, &saved).unwrap_err();
     assert!(
         why.contains("saved address of instance \"b\"") && why.contains("--port"),
         "{why}"
     );
     let taken = [("lab".to_owned(), DEFAULT_PORT)];
-    let why = choose_port(None, None, |_| true, &taken).unwrap_err();
+    let why = choose_port(None, None, NAMED_PORT_BASE, |_| true, &taken).unwrap_err();
     assert!(
         why.contains("instance \"lab\"") && why.contains("nothing was saved"),
         "{why}"
@@ -52,11 +78,11 @@ fn a_held_saved_port_names_the_port_and_the_way_out() {
 #[test]
 fn an_occupied_port_is_an_actionable_error() {
     for (name, requested) in [(None, None), (None, Some(9000)), (Some("lab"), Some(9000))] {
-        let why = choose_port(name, requested, |_| false, &[]).unwrap_err();
+        let why = choose_port(name, requested, NAMED_PORT_BASE, |_| false, &[]).unwrap_err();
         assert!(why.contains("in use") && why.contains("--port"), "{why}");
         assert!(why.contains("nothing was saved"), "{why}");
     }
-    assert!(choose_port(None, Some(0), |_| true, &[]).is_err());
+    assert!(choose_port(None, Some(0), NAMED_PORT_BASE, |_| true, &[]).is_err());
 }
 
 #[test]
@@ -287,6 +313,7 @@ mod credentials {
             name: None,
             port: Some(port),
             prompt: None,
+            named_port_base: NAMED_PORT_BASE,
             program: PathBuf::from("/no-such-program"),
             env: Vec::new(),
             terminal: false,

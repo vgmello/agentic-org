@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -46,8 +47,22 @@ fn listen(port: u16) -> std::io::Result<std::net::TcpListener> {
     std::net::TcpListener::bind(("127.0.0.1", port))
 }
 
+/// Where this account's named instances start their port search. Production starts at
+/// 7421, which real instances and other test runs on the machine also use; the
+/// test-support build reads `ORG_DEV_NAMED_PORT_BASE` instead. The base is derived from
+/// this process's id, and each account in the process takes its own ten ports, so no two
+/// tests and (except for an id collision modulo 150) no two test processes search the
+/// same range.
+fn named_port_base() -> u16 {
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    let process = u16::try_from(std::process::id() % 150).unwrap();
+    20_000 + process * 100 + (NEXT.fetch_add(1, Ordering::SeqCst) % 10) * 10
+}
+
 struct Account {
     base: PathBuf,
+    /// The first port a named instance of this account tries without `--port`.
+    port_base: u16,
     _temp: tempfile::TempDir,
 }
 
@@ -66,7 +81,11 @@ impl Account {
             std::fs::set_permissions(base.join(dir), std::fs::Permissions::from_mode(0o700))
                 .unwrap();
         }
-        Self { base, _temp: temp }
+        Self {
+            base,
+            port_base: named_port_base(),
+            _temp: temp,
+        }
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -79,7 +98,8 @@ impl Account {
             .env("ORG_DEV_ACCOUNT_BASE", self.base.join("app"))
             .env("ORG_OFFICE_DEV_KEY_DIR", self.base.join("keys"))
             .env("ORG_DEV_SERVICE_DIR", self.base.join("svc"))
-            .env("ORG_DEV_DISK_ENCRYPTION", "on");
+            .env("ORG_DEV_DISK_ENCRYPTION", "on")
+            .env("ORG_DEV_NAMED_PORT_BASE", self.port_base.to_string());
         command
     }
 
@@ -370,29 +390,30 @@ fn a_named_instance_skips_ports_other_instances_saved() {
     );
 }
 
-/// A named instance without `--port` takes the first free port from 7421 (7420 is
-/// `default`'s). The test holds 7421 when it can; if it cannot, another program (or a
-/// parallel test) holds it. Either way the named instance skips it, so the test asserts
-/// only a lower bound, never a fixed port. Residual: a holder that releases 7421 between
-/// this test's bind attempt and setup's choice would let setup take 7421.
+/// A named instance without `--port` takes the first free port from the search base
+/// (7421 in production, asserted by `setup_flow::tests`; this account's own base here, so
+/// nothing else on the machine competes for it). The test holds the base, so setup must
+/// skip it and take the next port. If the base cannot be held, another program has it and
+/// only the lower bound is asserted.
 #[test]
-fn a_named_instance_takes_the_first_free_port_from_7421() {
+fn a_named_instance_takes_the_first_free_port_from_the_base() {
     let account = Account::new();
-    let held = listen(7421).ok();
+    let base = account.port_base;
+    let held = listen(base).ok();
     let output = account.run(&["setup", "--name", "lab"]);
     let (out, err) = text(&output);
     assert!(output.status.success(), "stdout:\n{out}\nstderr:\n{err}");
     assert!(out.contains("Setting up instance \"lab\"."), "{out}");
     let port = Account::address(&out);
     if held.is_some() {
-        assert!(port >= 7422, "7421 is held by the test: {port}");
+        assert_eq!(port, base + 1, "{base} is held by the test");
     } else {
-        assert!(port >= 7421, "{port}");
+        assert!(port > base, "{base} is held by another program: {port}");
     }
     assert_ne!(port, 7420);
     drop(held);
     // The unit serves the named instance, and a rerun keeps the frozen port even though
-    // 7421 may be free now.
+    // the base is free now.
     let pids = account.service_pids();
     assert_eq!(pids.len(), 1);
     let unit = account.file(&pids[0].0, "unit");
