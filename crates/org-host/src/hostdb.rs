@@ -12,6 +12,7 @@ pub(crate) mod lockout;
 pub(crate) mod provisioning;
 pub(crate) mod recovery;
 mod schema;
+pub(crate) mod sessions;
 #[cfg(test)]
 mod tests;
 mod verifier;
@@ -41,6 +42,8 @@ pub(crate) enum Error {
     Exists,
     Empty,
     Version,
+    /// The registry predates a table this build needs and holds a different one.
+    Outdated,
     Io(io::ErrorKind),
     Sql(rusqlite::ErrorCode),
     Secret(crate::host_secrets::Error),
@@ -209,6 +212,7 @@ impl HostDb {
         tx.execute_batch(provisioning::DDL)?;
         tx.execute_batch(recovery::DDL)?;
         tx.execute_batch(links::DDL)?;
+        sessions::create_schema(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         for (name, value) in [
             ("instance_id", init.instance_id.clone()),
@@ -257,7 +261,7 @@ impl HostDb {
             }
         }
         checkpoint(8)?; // Test the SQLite no-follow fence after validation.
-        let db = connect(&path)?;
+        let mut db = connect(&path)?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version != SCHEMA_VERSION {
             return Err(Error::Version);
@@ -275,6 +279,7 @@ impl HostDb {
         if !crate::instance::registry::valid_instance_id(&instance_id) {
             return Err(Error::InvalidId);
         }
+        sessions::ensure_schema(&mut db)?;
         enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         Ok(Self {

@@ -285,7 +285,12 @@ impl Authentication {
         custody: Arc<dyn HostSecrets>,
         instance: &str,
     ) -> Result<Self, ApiError> {
-        let db = Arc::new(HostDb::open(home, &*custody).map_err(storage)?);
+        let db = Arc::new(HostDb::open(home, &*custody).map_err(|e| match e {
+            crate::hostdb::Error::Outdated => {
+                ApiError::new(ErrorCode::Unavailable, crate::hostdb::sessions::OUTDATED)
+            }
+            e => storage(e),
+        })?);
         Self::new(db, custody, instance)
     }
     fn new(
