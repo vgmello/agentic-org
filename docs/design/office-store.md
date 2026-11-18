@@ -675,7 +675,7 @@ and the client reads again (getting a fresh position) and subscribes from there.
 
 Families turn paths into their events. The work family emits `work.changed` to the web
 process over its office connection (the web process has no database). The messaging
-family wakes the waiters of `agent-os thread wait` and of an ask when a message or a
+family wakes the waiters of `agent-os msg wait` and of an ask when a message or a
 participant file for that recipient commits. Nothing polls the database.
 
 ## 8. Speed
