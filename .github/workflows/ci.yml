@@ -85,7 +85,7 @@ jobs:
         run: cargo test --locked --workspace --no-fail-fast
 
   # ADR-0017 LNX-5: a change never adds a file to .github/platform-conditionals.allow or raises a
-  # count in it. A branch is compared with where it left v1-integration; a push to v1-integration
+  # count in it. A branch is compared with where it left v1, the integration branch; a push to v1
   # with the commit it replaced.
   platform-list:
     name: Platform conditionals list only shrinks
@@ -100,11 +100,11 @@ jobs:
         env:
           BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$GITHUB_REF" = "refs/heads/v1-integration" ]; then
+          if [ "$GITHUB_REF" = "refs/heads/v1" ]; then
             base="$BEFORE"
           else
-            base="$(git merge-base HEAD origin/v1-integration)" || {
-              echo "This branch shares no history with v1-integration."; exit 1; }
+            base="$(git merge-base HEAD origin/v1)" || {
+              echo "This branch shares no history with v1."; exit 1; }
           fi
           case "$base" in
             ""|0000000000000000000000000000000000000000)

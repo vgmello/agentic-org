@@ -482,17 +482,8 @@ fn lookup(address: SocketAddr, headers: &str, instance: &str, operation: &str) -
     )
 }
 
-/// Polls the lookup route until the create completed and returns its organization view.
-fn wait_completed(
-    address: SocketAddr,
-    headers: &str,
-    instance: &str,
-    operation: &str,
-) -> serde_json::Value {
-    wait_completed_seen(address, headers, instance, operation, &mut |_| {})
-}
-
-/// [`wait_completed`], showing `seen` every poll reply, the ones before completion too.
+/// Polls the lookup route until the create completed and returns its organization view,
+/// showing `seen` every poll reply, the ones before completion too.
 fn wait_completed_seen(
     address: SocketAddr,
     headers: &str,
@@ -500,7 +491,19 @@ fn wait_completed_seen(
     operation: &str,
     seen: &mut dyn FnMut(&Reply),
 ) -> serde_json::Value {
-    let until = Instant::now() + WAIT;
+    wait_completed_within(address, headers, instance, operation, WAIT, seen)
+}
+
+/// [`wait_completed_seen`], asking until `wait` has passed.
+fn wait_completed_within(
+    address: SocketAddr,
+    headers: &str,
+    instance: &str,
+    operation: &str,
+    wait: Duration,
+    seen: &mut dyn FnMut(&Reply),
+) -> serde_json::Value {
+    let until = Instant::now() + wait;
     loop {
         let reply = lookup(address, headers, instance, operation);
         seen(&reply);
@@ -531,6 +534,11 @@ pub(super) struct Created {
 /// Creates the organization "Example" the way a browser does: signs in as the seeded
 /// administrator over HTTP, posts the create and polls the lookup route until it completes.
 pub(super) fn create_hq(host: &Host, address: SocketAddr) -> Created {
+    create_hq_within(host, address, WAIT)
+}
+
+/// [`create_hq`], asking the lookup route until `wait` has passed.
+fn create_hq_within(host: &Host, address: SocketAddr, wait: Duration) -> Created {
     browser_sessions::wait_serving(host, address);
     let signed_in = http(
         address,
@@ -556,7 +564,14 @@ pub(super) fn create_hq(host: &Host, address: SocketAddr) -> Created {
         posted.status,
         posted.body
     );
-    let view = wait_completed(address, &headers, &instance, &operation_id);
+    let view = wait_completed_within(
+        address,
+        &headers,
+        &instance,
+        &operation_id,
+        wait,
+        &mut |_| {},
+    );
     Created {
         operation_id,
         organization_id: view["id"].as_str().expect("organization id").to_owned(),
@@ -717,7 +732,8 @@ fn kernel_status(pid: &str, name: &str) -> String {
 /// misses the launch deadline on a busy machine gives that answer, and it says to retry.
 fn create_hq_beside(host: &Host, address: SocketAddr, serving: bool) {
     if serving {
-        create_hq(host, address);
+        // The lookup drives the create again while it is unresolved; the bound is HQ_WAIT's.
+        create_hq_within(host, address, HQ_WAIT);
         return;
     }
     let creating = host
