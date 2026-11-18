@@ -18,8 +18,8 @@
 //! real-instance browser tests.
 use super::{
     browser_sessions::{credentials, established, pair, wait_serving, Pair},
-    create_body, fixture_config, host_at, http, launch, lookup, remote, send, wait_until, web_pids,
-    Launched, Reply, Seed, PASSWORD,
+    create_body, fixture_config, host_at, http, launch, lookup, post_until_available, remote, send,
+    wait_until, web_pids, Launched, Reply, Seed, PASSWORD,
 };
 use crate::{
     enc1_process_tests::{contains, encodings, files, unhex},
@@ -59,13 +59,7 @@ impl Browser {
     }
     /// Signs in as the seeded administrator.
     fn sign_in(host: &Host, address: SocketAddr) -> Self {
-        let reply = http(
-            address,
-            "POST",
-            "/api/v1/session/sign-in",
-            "",
-            &credentials(),
-        );
+        let reply = post_until_available(address, "/api/v1/session/sign-in", &credentials());
         let browser = Self::new(host, address, pair(&reply, "sign-in"));
         browser
             .keep(reply)
@@ -320,13 +314,8 @@ fn actual_browser_creates_an_organization_that_survives_a_lost_response_and_a_ho
     wait_serving(&host, address);
     // The link registers the administrator and signs the browser in.
     let registration = json!({ "link": link.expect("a registration link"), "login": "Owner", "password": PASSWORD });
-    let registered = http(
-        address,
-        "POST",
-        "/api/v1/links/register",
-        "",
-        &registration.to_string(),
-    );
+    let registered =
+        post_until_available(address, "/api/v1/links/register", &registration.to_string());
     let browser = Browser::new(&host, address, established(&registered, "register"));
     assert_eq!(
         browser.list(),

@@ -53,6 +53,23 @@ fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str
         ),
     )
 }
+/// A sign-in or registration `POST`, tried again while the answer is 503. Under machine
+/// load the product may answer `unavailable` (correctly) to a call that needs an Argon2
+/// hash; the tests that use this prove what follows a successful call, not its first-try
+/// timing. This is a bound on tries (20, 250 ms apart), not a wait for another event; the
+/// last reply is returned whatever it is, so a persistent 503 still fails the caller.
+fn post_until_available(address: SocketAddr, path: &str, body: &str) -> Reply {
+    const TRIES: usize = 20;
+    let mut reply = http(address, "POST", path, "", body);
+    for _ in 1..TRIES {
+        if reply.status != 503 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(250));
+        reply = http(address, "POST", path, "", body);
+    }
+    reply
+}
 /// Sends `request` exactly as written and reads the whole reply.
 fn send(address: SocketAddr, request: &str) -> Reply {
     let mut stream = TcpStream::connect(address).expect("web process listener");

@@ -7,8 +7,8 @@
 //! and is then served from memory (SES-5). Every ingress refusal is answered
 //! before any host op.
 use super::{
-    fixture_config, host_at, http, http_ready, launch, send, wait_until, web_pid, web_ready,
-    Launched, Reply, Seed, PASSWORD,
+    fixture_config, host_at, http, http_ready, launch, post_until_available, send, wait_until,
+    web_pid, web_ready, Launched, Reply, Seed, PASSWORD,
 };
 use crate::Host;
 use std::{net::SocketAddr, process::Command};
@@ -110,13 +110,7 @@ fn actual_browser_registers_from_a_link_and_its_session_survives_web_and_host_re
     // Registration from the link over real TCP signs the browser in.
     let register = |link: &str| {
         let body = serde_json::json!({ "link": link, "login": "Owner", "password": PASSWORD });
-        http(
-            address,
-            "POST",
-            "/api/v1/links/register",
-            "",
-            &body.to_string(),
-        )
+        post_until_available(address, "/api/v1/links/register", &body.to_string())
     };
     let pair = established(&register(&link), "register");
     // The link works once only, and a refusal sets no cookie.
@@ -188,13 +182,7 @@ fn actual_browser_registers_from_a_link_and_its_session_survives_web_and_host_re
 
     // Sign-in with the registered credentials yields a second, independent pair.
     let signed_in = established(
-        &http(
-            address,
-            "POST",
-            "/api/v1/session/sign-in",
-            "",
-            &credentials(),
-        ),
+        &post_until_available(address, "/api/v1/session/sign-in", &credentials()),
         "sign-in",
     );
     assert_ne!(signed_in.cookie, pair.cookie);
