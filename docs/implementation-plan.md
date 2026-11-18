@@ -353,7 +353,17 @@ onto it and deletes the old store; B1c measures and guards it.
   source-preserving editor; `organization/bootstrap.rs` and `organization/admission.rs`
   today's creation path; `org_mailbox::mailbox_conformance_tests!` the suite pattern.
   Since A1 the workspace `rusqlite` is plain bundled SQLite; the new engine never sets a
-  key.
+  key. Built by B1a, beside the store above and not yet in its place: `crates/org-store`
+  (the writer, the journal, the flusher, the files, receipts, rebuild, the engine
+  contracts and, under its `testkit` feature, the memory engine, the fault disk and the
+  engine and rebuild suites); `crates/org-office/src/store/sqlite/` (the SQLite engine:
+  one plain `office.db` per office under the runtime root, made from the contract's
+  `schema.sql` and four tables of its own, never migrated); the organization family on
+  the new contracts (`organization/records.rs`, `ports.rs`, `projector.rs`, `features/`
+  with creating an organization and a team, and `testkit.rs` with its conformance
+  suite); and `store/open.rs`, whose `open_store` is the one place that names an engine.
+  Nothing in production calls `open_store` yet: the office still opens today's store
+  until B1b.
 - **Done when:** the organization suite passes against SQLite and memory (ENG-3 for
   organization records); the rebuild-equivalence harness passes for the organization
   family on both engines; a crash injected at each point of the design's crash table

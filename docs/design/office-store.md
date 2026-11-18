@@ -253,6 +253,9 @@ pub trait Engine: Send + Sync + 'static {
     /// Builds a new projection with `build` and installs it atomically in place of this one.
     fn replace(&self, build: &mut dyn FnMut(&mut Self::Tx) -> Result<Cursor, StoreError>)
         -> Result<(), EngineError>;
+    /// The engine's own upkeep (SQLite: fold its log into the file). Called by the flusher
+    /// after each round that wrote files, never on the writer thread. Does nothing by default.
+    fn after_round(&self) {}
 }
 
 /// The store's own rows: the applied cursor, the hash of every source file, the receipts.
@@ -281,8 +284,14 @@ pub trait Projector<E: Engine>: Send + Sync {
 
 Receipts are the core's own family: a receipt is the file
 `recovery/commands/<operation-id>.json` with its result inline or under `results/`
-(document 16), projected into `mutation_receipts` by a core projector through
-`CorePort`.
+(document 16), projected by a core projector through `CorePort`. The store's receipt
+source is the adapter's own table `store_receipts`: the receipt whole, with its
+acknowledgement class, its journal ordinal and its original reply. The store must hold
+receipts before an organization exists, and every row of the contract's
+`mutation_receipts` refers to an organization. B1a does not write `mutation_receipts`;
+the increment that first reads it (B1b or B2) projects into it. This is a deviation from
+this design's earlier text, which had the core projector fill `mutation_receipts`
+directly (decided in B1a's review, finding F2).
 
 **The journal and the files are concrete types**, not traits: there is one way to
 write them.
@@ -561,9 +570,16 @@ bytes, is not `.` or `..` and does not begin with the store's temporary-file pre
 file system folds, normalizes or refuses any of that set, so two accepted paths never
 name one file and every accepted path can be written. An ID is checked by the store as
 one such component and no more; its family validates its form. A path names a file or a
-directory, never both: a change whose path is a directory, or lies below a file, among
-the paths on the drive or accepted and not yet written, is refused before its entry is
-accepted. Every source path has exactly one owning family; `state/repositories.yaml` is
+directory, never both, and a change that would break that is refused before its entry is
+accepted (`placeable` in `writer.rs`). A path that lies below a file is refused: the
+files are the sources of the projection at head, which holds everything accepted,
+written or not, and the other files of the same operation. A path that is a directory is
+refused: a source or a file of the same operation lies below it, or a path that an entry
+accepted and not yet written puts or removes does, or a directory stands there on the
+drive.
+Publication creates the directories above every path it writes or removes and never
+removes one, so a path that ever had a file below it stays a directory and never becomes
+a file. Every source path has exactly one owning family; `state/repositories.yaml` is
 the organization family's, and B3 writes it through that family's port.
 
 **From record to file.** The family's codec turns a record into the exact bytes the data
@@ -665,11 +681,18 @@ and rebuild call the same projector on the same bytes, a difference means a proj
 kept state or read something other than its file.
 
 **A projection schema change before v1 ships** is a new digest. The SQLite projection's
-digest is the SHA-256 of the DDL it loads: the contract's `schema.sql`, the adapter's
-own tables (`store_schema`, `store_cursor`, `store_sources`, and `store_receipts`, the
-reply table: each receipt whole with its original reply, so a retry is answered without
-a file read) and its extra indexes. Opening with a
-different digest deletes the projection and rebuilds it. There is no migration code. A
+digest is the SHA-256 of three parts: the contract's `schema.sql`; the DDL of the
+adapter's own four tables (`store_schema`, the digest itself; `store_cursor`, how far
+the journal is applied; `store_sources`, the hash of every source file; and
+`store_receipts`, the store's receipt source: each receipt whole, with its
+acknowledgement class, ordinal and original reply, so a retry is answered without a file
+read); and the adapter's format number, which is added to on any change in how the
+adapter encodes a value into a column. The adapter has no extra indexes yet. The
+contract's `mutation_receipts` is not written by B1a (section 3; a deviation from this
+design's earlier text). Opening with a different digest deletes the projection and
+rebuilds it. A file that is not a database, or was never finished, is treated the same;
+one that could not be opened or read (busy, an input/output error, a refused
+permission) is left where it is and the opening fails. There is no migration code. A
 change to a file format before v1 is a change to its codec; files in a format the code
 no longer reads are refused by path, because nothing has shipped to keep.
 
@@ -731,7 +754,12 @@ projection commit flushes the drive; only the journal is flushed.
 checkpoint runs on the committing connection and flushes the database file, which would
 put a drive flush on the writer thread. So automatic checkpoints are off
 (`wal_autocheckpoint=0`), and the flusher runs a passive checkpoint on its own
-connection after each materialization round. The log is bounded at 64 MiB; when a
+connection after each materialization round (`Engine::after_round`, built in B1a: the
+SQLite engine checkpoints there, the memory engine does nothing). Once the log is folded
+in and no read is on it, the writer's next transaction starts it from its beginning, so
+the log of a store that stays open does not grow with what is written; a read that
+stays open only delays that. The bound below and its back-pressure are B1c. The log is
+bounded at 64 MiB; when a
 passive checkpoint cannot bring it under that (a long-lived reader holds it), the
 writer's back-pressure of section 4 applies until it can. `foreign_keys` and
 `recursive_triggers` are on for every write connection, as the data contract requires.
@@ -909,8 +937,12 @@ Each needs a decision during B1; the recommendation is what this design assumes.
    and `Memory` under `testkit`). An operation is a `StoreOp`, a read is a `ReadOp`; each
    is generic over the engine and compiled once per arm. `OfficeEngine` is a blanket
    supertrait that grows by one bound per family. Nothing above `open_store` is generic,
-   there are no boxed ports and no forwarding impls, and adding an operation changes no
-   shared file. Its costs, accepted: an operation or a read is a named type, because a
+   there are no boxed ports and no forwarding impls, and adding an operation changes
+   neither `open.rs` nor any engine: it adds one `StoreOp` to
+   `store/open/operations.rs`, the composition's list of the family operations the
+   office runs. That file is shared by a family's operations. They are there, not in the
+   family's feature files, because a family that named `StoreOp` would depend on the
+   store's seam, which depends on the family: a module cycle. Its costs, accepted: an operation or a read is a named type, because a
    closure cannot be generic over the engine; each is compiled once per engine, so code
    size and build time grow with operations times engines; a new engine adds an arm to
    the enum and to each of its methods; and the operations of a family that the office
