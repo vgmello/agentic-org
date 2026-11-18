@@ -38,8 +38,7 @@ Task acceptance ([ADR-0006](../../adr/0006-selected-task-acceptance.md)) checks 
 authority of the signed-in account live, at the host, and keeps the stable account
 binding in protected receipts. The actor recorded is the account's person record
 (`actor_kind: employee`). Instance-administrator authority for provisioning is a
-separate check. Assignment grants neither authority nor capabilities. Agents need an explicit selected mutation
-capability; a session binding alone does not establish it. Resolve task, desired active
+separate check. Assignment grants neither authority nor capabilities. Any active employee of the organization, person or agent, may create, edit, assign and move tasks ([ADR-0031](../../adr/0031-any-employee-changes-tasks.md)); an agent's call is authorized by its run's binding as that employee, and a paused, offboarded or deactivated employee is refused. Resolve task, desired active
 targets and authorization against one writer-ordered directory generation.
 
 `task.set_assignment` replaces the code's `task.assign`. Its command contains

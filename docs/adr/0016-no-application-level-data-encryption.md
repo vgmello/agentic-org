@@ -88,7 +88,7 @@ and WAL stand, and its durability rule stands as amended by
    protection of `same-user` mode for data; private keys stay wrapped in both modes.
 6. **Backups.** A copy of the data folder is readable. Backup guidance must say to
    encrypt backups at their destination.
-7. **Private notes.** Author-only access is enforced by the service, as before. A
+7. **Private notes.** Who may read a note (its author and people, never another agent, [ADR-0031](0031-any-employee-changes-tasks.md)) is enforced by the service, as before. A
    person with file access to the machine can read the file; this was also true of
    anyone able to obtain the database key.
 8. **Linux.** A Linux host needs a credential provider for one small key per office

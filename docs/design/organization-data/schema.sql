@@ -80,6 +80,7 @@ name TEXT NOT NULL,
   parent_team_id TEXT,
   lead_employee_id TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  max_members INTEGER NOT NULL DEFAULT 6 CHECK (max_members >= 1),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -377,7 +378,7 @@ project_id TEXT NOT NULL,
   owner_employee_id TEXT,
   work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('planned', 'in_progress', 'live', 'retired')),
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
@@ -486,7 +487,7 @@ CREATE TABLE checklist_steps (
   checked_by_employee_id TEXT,
   checked_at TEXT,
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
-  FOREIGN KEY (organization_id,linked_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,target_kind,linked_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,checked_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   UNIQUE (organization_id, target_kind, target_id, position),
@@ -575,6 +576,7 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   title_in_team TEXT,
   offboarded_at TEXT,
   may_hire INTEGER NOT NULL DEFAULT 0 CHECK (may_hire IN (0, 1)),
+  builtin_key TEXT CHECK (builtin_key IS NULL OR (builtin_key = 'hr' AND kind = 'agent' AND may_hire = 0)),
   CHECK (kind = 'agent' OR status <> 'paused'),
   CHECK (offboarded_at IS NULL OR status = 'inactive'),
   PRIMARY KEY (organization_id, id),
@@ -621,33 +623,27 @@ CREATE TABLE hire_requests (
   id TEXT NOT NULL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
-  state TEXT NOT NULL CHECK (state IN ('drafting', 'waiting', 'approved', 'hiring', 'hired', 'rejected', 'withdrawn')),
+  state TEXT NOT NULL CHECK (state IN ('drafting', 'hiring', 'hired', 'withdrawn', 'failed')),
   requested_by_employee_id TEXT NOT NULL,
   home_team_id TEXT NOT NULL,
   role_id TEXT,
   proposal_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(proposal_json) AND json_type(proposal_json) = 'object'),
   reason TEXT NOT NULL DEFAULT '',
-  approver_employee_id TEXT,
-  escalations_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(escalations_json) AND json_type(escalations_json) = 'array'),
-  decided_by_employee_id TEXT,
-  decided_at TEXT,
-  decision_reason TEXT,
+  confirmed_at TEXT,
+  closed_reason TEXT,
   employee_id TEXT,
   failed_step TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, employee_id),
-  CHECK ((state IN ('approved', 'hiring', 'hired', 'rejected')) = (decided_by_employee_id IS NOT NULL)),
-  CHECK ((decided_by_employee_id IS NULL) = (decided_at IS NULL)),
-  CHECK (state <> 'rejected' OR (decision_reason IS NOT NULL AND length(decision_reason) > 0)),
+  CHECK ((state IN ('hiring', 'hired', 'failed')) = (confirmed_at IS NOT NULL)),
   CHECK ((state = 'hired') = (employee_id IS NOT NULL)),
-  CHECK (state IN ('approved', 'hiring') OR failed_step IS NULL),
+  CHECK (state IN ('hiring', 'failed') OR failed_step IS NULL),
+  CHECK (state NOT IN ('withdrawn', 'failed') OR (closed_reason IS NOT NULL AND length(closed_reason) > 0)),
   FOREIGN KEY (organization_id, requested_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, home_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, role_id) REFERENCES roles(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, approver_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, decided_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -1184,6 +1180,7 @@ CREATE INDEX deployments_by_release ON deployments(organization_id, release_id, 
 CREATE INDEX deployments_by_target ON deployments(organization_id, project_id, environment, target, started_at);
 CREATE INDEX tasks_by_team_status ON tasks(organization_id, team_id, status);
 CREATE UNIQUE INDEX one_hq_per_org ON offices(organization_id) WHERE role = 'hq';
+CREATE UNIQUE INDEX one_hr_lead_per_org ON employees(organization_id) WHERE builtin_key = 'hr';
 CREATE INDEX teams_by_parent ON teams(organization_id, parent_team_id);
 CREATE INDEX employees_by_team ON employees(organization_id, home_team_id);
 CREATE INDEX projects_by_owner ON projects(organization_id, owner_team_id);
@@ -1661,7 +1658,7 @@ organization_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   ended_at TEXT,
   error_code TEXT,
-  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','recovery')),
+  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','resume','recovery')),
   started_by_employee_id TEXT,
   started_by_ref TEXT,
   CHECK (started_by_kind<>'recovery' OR started_by_employee_id IS NULL),
@@ -1809,6 +1806,7 @@ CREATE TABLE task_details (
   routed_by_employee_id TEXT,
   request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
   merged_into_task_id TEXT,
+  related_task_kind TEXT NOT NULL DEFAULT 'task' CHECK (related_task_kind='task'),
   decline_reason TEXT,
   suggested_triager_id TEXT,
   suggested_verifier_id TEXT,
@@ -1816,8 +1814,8 @@ CREATE TABLE task_details (
   CHECK (duplicate_of_task_id IS NULL OR duplicate_of_task_id<>task_id),
   CHECK (merged_into_task_id IS NULL OR merged_into_task_id<>task_id),
   FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,duplicate_of_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,merged_into_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,related_task_kind,duplicate_of_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,related_task_kind,merged_into_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,affects_feature_id) REFERENCES features(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,routed_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,suggested_triager_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
@@ -1989,7 +1987,7 @@ CREATE TABLE mutation_receipts (
 CREATE TABLE office_origin_streams (
   organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
-  stream_kind TEXT NOT NULL CHECK (stream_kind IN ('organization','work','message_content','message_state')),
+  stream_kind TEXT NOT NULL CHECK (stream_kind IN ('organization','work','message')),
   incarnation TEXT NOT NULL,
   high_water_sequence INTEGER NOT NULL CHECK (high_water_sequence>=0),
   journal_ref TEXT NOT NULL,
@@ -2190,6 +2188,7 @@ CREATE TABLE budget_notices (
   UNIQUE (organization_id,budget_id,period_id,policy_revision,stage,threshold),
   CHECK ((recipient_kind='employee')=(recipient_id IS NOT NULL)),
   CHECK (threshold=100 OR kind='neutral'),
+  CHECK (threshold=100 OR stage='base'),
   FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,recipient_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
@@ -2559,3 +2558,37 @@ LEFT JOIN task_document_versions r
   ON r.organization_id = v.organization_id AND r.document_id = v.document_id AND r.version = v.version
 LEFT JOIN tasks t ON t.organization_id = r.organization_id AND t.id = r.task_id
 GROUP BY v.organization_id, v.document_id, v.version;
+
+-- Review of 2026-11-18: rules the documents state that no constraint held.
+CREATE TRIGGER task_affects_feature_same_project_insert BEFORE INSERT ON task_details
+WHEN NEW.affects_feature_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
+CREATE TRIGGER task_affects_feature_same_project_update BEFORE UPDATE OF affects_feature_id ON task_details
+WHEN NEW.affects_feature_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
+CREATE TRIGGER cleanup_record_same_office_insert BEFORE INSERT ON process_cleanup_records
+WHEN NEW.execution_process_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT,'cleanup record and its process are in different offices') WHERE EXISTS (
+ SELECT 1 FROM agent_process_instances p WHERE p.organization_id=NEW.organization_id AND p.id=NEW.execution_process_id AND p.office_id<>NEW.office_id); END;
+CREATE TRIGGER cleanup_record_same_office_update BEFORE UPDATE OF office_id,execution_process_id ON process_cleanup_records
+WHEN NEW.execution_process_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT,'cleanup record and its process are in different offices') WHERE EXISTS (
+ SELECT 1 FROM agent_process_instances p WHERE p.organization_id=NEW.organization_id AND p.id=NEW.execution_process_id AND p.office_id<>NEW.office_id); END;
+CREATE TRIGGER placement_requires_agent_insert BEFORE INSERT ON agent_placements
+BEGIN SELECT RAISE(ABORT,'only an agent is placed in an office') WHERE EXISTS (
+ SELECT 1 FROM employees e WHERE e.organization_id=NEW.organization_id AND e.id=NEW.employee_id AND e.kind<>'agent'); END;
+CREATE TRIGGER placement_requires_agent_update BEFORE UPDATE OF employee_id,organization_id ON agent_placements
+BEGIN SELECT RAISE(ABORT,'only an agent is placed in an office') WHERE EXISTS (
+ SELECT 1 FROM employees e WHERE e.organization_id=NEW.organization_id AND e.id=NEW.employee_id AND e.kind<>'agent'); END;
+CREATE TRIGGER task_project_keeps_affected_feature BEFORE UPDATE OF project_id ON tasks
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
+ WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;
+CREATE TRIGGER placed_employee_stays_agent BEFORE UPDATE OF kind ON employees
+WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM agent_placements p WHERE p.organization_id=OLD.organization_id AND p.employee_id=OLD.id)
+ AND NOT EXISTS (SELECT 1 FROM agent_execution_configs c WHERE c.organization_id=OLD.organization_id AND c.employee_id=OLD.id)
+BEGIN SELECT RAISE(ABORT,'placed employee must remain an agent'); END;

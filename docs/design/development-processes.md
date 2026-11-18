@@ -70,13 +70,13 @@ team marked not overridable is always followed.
    Choosing it shows them; a person fills each by a hire or with an employee who
    already has the role. Everyone else is hired when a skill says the work calls for
    it.
-8. **Hiring stays the product's.** An agent asks for a hire; HR drafts it; a lead
-   approves it; product code provisions it
-   ([document 04](organization-data/04-agent-structure.md#who-approves-a-hire),
-   [ADR-0027](../adr/0027-a-lead-approves-a-hire.md)). A lead approves only with the
-   Allow hiring permission, and a request goes up the lead chain until it reaches
-   someone who has it. A development process decides when a lead asks and for which
-   role; it gives no one the right to approve.
+8. **Hiring stays the product's.** Someone who may hire starts a hire; HR drafts it;
+   the hirer confirms it; product code provisions it
+   ([document 04](organization-data/04-agent-structure.md#who-may-hire),
+   [ADR-0029](../adr/0029-only-who-may-hire-hires.md)). A lead hires only with the
+   Allow hiring permission, into the teams it leads and the teams under them. Anyone
+   else is refused and asks its lead. There is no approval. A development process
+   decides when a lead hires and for which role; it gives no one the right to hire.
 9. **Releases, milestones and features are primitives a process chooses to use.**
    They exist in the system for every project. Whether and how a project uses them
    is its development process's choice; nothing forces a change into a release, and
@@ -182,14 +182,14 @@ choice itself.
  ───────────────────────────────────────────────────────────────────────────────────
  Seed team
  Product Owner / Principal Designer        Open                    [Hire]  [Assign…]
- System Architect / Senior Staff Engineer  Hire requested · waiting for you
+ System Architect / Senior Staff Engineer  Hire drafted · waiting for you to confirm
 ```
 
 - A seed role is **filled** when an active employee whose home team is the project's
   owning team, or a team beneath it, has that role. The roster is derived; nothing
   stores it.
 - **Hire** opens the [hire flow](../specs/our-org-in-the-app.md) with the role and the
-  project's team preset. Approval and provisioning are unchanged.
+  project's team preset. Who may hire, confirming and provisioning are unchanged.
 - **Assign…** lists active employees who have the role, or lets a person give the role
   to one; either way the employee is moved to the project's team by the ordinary move.
   Creating the project with an existing team as its owner fills at once every seed
@@ -320,27 +320,29 @@ sections in its instructions:
 ## 7. Hiring when the development process says so
 
 A skill tells a lead when to staff the project and how to decide which roles it needs.
-The lead then uses the product's hiring, as any agent may:
+The lead then uses the product's hiring, as any employee that may hire does:
 
 1. **Inspect the role.** `agent-os role list` and `agent-os role inspect --role <key>` print the
    role's definition and what a hire proposal needs: the required home team, the
    optional title, focus and reporting line, and the execution profiles available, with
    which are ready on which office.
-2. **Ask.** `agent-os hr hire --role <key> --team <project team> --focus … --why …`
-   sends the request to HR. HR drafts the proposal; when HR cannot run, the command
-   says so and a person fills the form
+2. **Hire.** A lead with the Allow hiring permission for the project's team runs
+   `agent-os hr hire --role <key> --team <project team> --focus … --why …`. With
+   every required field given, the call is its own confirmation. With words only,
+   HR drafts the proposal and the lead confirms it; when HR cannot run, the command
+   says so and asks for the fields
    ([hire flow](../specs/our-org-in-the-app.md), APPR-8).
-3. **Approval.** A lead with hiring power approves. The request goes up the lead
-   chain, from the project's team, until it reaches a lead whose Allow hiring
-   permission is on; at the top it reaches the owner. Each lead it passes, and the
-   requester, are told where it went. When the requesting lead has the permission,
-   its request is its approval.
-4. **Onboarding.** On approval the office provisions the agent in the project's team,
-   so it is under that team's lead. The proposal suggests the requesting lead as the
-   new agent's reporting line, which the approver confirms or changes. From its first
+3. **Who may hire.** There is no approval
+   ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). A lead whose Allow hiring
+   permission is off for the project's team is refused with "You don't have access
+   to hire. Ask your team lead." It asks its own lead in a message, and that lead
+   hires if it may. The owner may always hire.
+4. **Onboarding.** Once the hirer confirms, the office provisions the agent in the
+   project's team, so it is under that team's lead. The proposal suggests the hiring
+   lead as the new agent's reporting line, which the hirer confirms or changes. From its first
    start the agent receives the process's skills for its role.
 
-A lead may ask for a role the process does not define; HR drafts it like any hire.
+A lead may hire for a role the process does not define; HR drafts it like any hire.
 
 ## 8. The project documentation tree
 
@@ -444,11 +446,11 @@ office.
 | PKG-3 | A built-in development process cannot be edited; its copy can, has a new ID and records its origin. |
 | PKG-4 | The project form lists every current development process and "None". A draft or deprecated one cannot be chosen. |
 | PKG-5 | Choosing one creates the missing roles and adds the declared sections in the same accepted change, and starts no agent. |
-| PKG-6 | The seed roster shows each seed role as open, hire requested or filled, derived from the project team's members; an existing owner team fills the roles its members hold. |
+| PKG-6 | The seed roster shows each seed role as open, hire under way (drafting or hiring) or filled, derived from the project team's members; an existing owner team fills the roles its members hold. |
 | PKG-7 | An agent's instructions carry the development process as its own section, separate from organization processes: the skills for its role and the ones for everyone, with retrievable bodies; another role's skills are not in it. |
 | PKG-8 | No skill appears in `process list`, `process inspect --why` or the Processes page, and no organization, team or project process document replaces or is replaced by a skill. |
 | PKG-9 | With a skill and a non-overridable organization standard that disagree, the standard is delivered in full as must-follow and the development process section says it is always followed. A skill that adjusts overridable organization guidance is delivered as written. |
-| PKG-10 | A lead agent's `hr hire` for a role of the process produces a proposal for the project's team; nothing is provisioned before a lead with Allow hiring approves, the request going up the chain until it reaches one (HIRE-1 to HIRE-3); the new agent's first instructions carry its role's skills. |
+| PKG-10 | A lead agent's `hr hire` for a role of the process hires into the project's team when the lead has Allow hiring for that team, and is refused with `not_authorized` when it does not ([ADR-0029](../adr/0029-only-who-may-hire-hires.md) HIRE-1 to HIRE-4); the new agent's first instructions carry its role's skills. |
 | PKG-11 | `doc index` returns the whole index in one call while it is at most 256 KiB, and the section list with each section readable by path beyond that. After any accepted write it lists exactly what the tree holds. |
 | PKG-12 | An agent of another project is refused `doc index`, `doc ls`, `doc inspect` and every write, with `other_project` and the lead to ask; a person is not. |
 | PKG-13 | Changing a project's development process removes no file, section, document or role; the tabs follow the new process at once; the next start of each agent delivers its skills. |

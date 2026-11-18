@@ -15,7 +15,7 @@ builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-it
 
 [Messaging data](../design/organization-data/15-messaging-and-chat.md) owns conversations, protected sources and per-recipient lifecycle; [recovery](../design/organization-data/16-recovery-and-office-continuity.md) owns retained receipts and checkpoints; [ADR-0003](../adr/0003-agent-messaging-office-first.md) owns who commits, routes and owns a message; [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) owns how an ask waits. The questions an agent asks a person follow the owner's [REQ-04](req-04-channel-messaging-and-question-components.md). This spec owns what people see.
 
-Chat is conversation, not session or tool output, and not a knowledge store. Shared task comments stay shared; author-only private task notes live in a separate durable database with no owner or administrator exception and never appear in Chat. There is one chat, the product's own; no external chat product is bridged.
+Chat is conversation, not session or tool output, and not a knowledge store. Shared task comments stay shared; private task notes live in a separate durable database, are read only by their author and by people who can read the task, never by another agent, and never appear in Chat. There is one chat, the product's own; no external chat product is bridged.
 
 ## The request (the user, 2026-11-08)
 

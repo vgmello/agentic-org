@@ -14,7 +14,7 @@ It applies the [agent command line](agent-os-command-line.md),
 [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) (what starts a turn),
 [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) (the inbox and
 channels), [ADR-0025](../adr/0025-agents-start-sub-agents.md) (sub-agents),
-[ADR-0027](../adr/0027-a-lead-approves-a-hire.md) (who approves a hire),
+[ADR-0029](../adr/0029-only-who-may-hire-hires.md) (who may hire),
 [ADR-0028](../adr/0028-an-agent-is-always-available.md) (agents are always available),
 [development processes](development-processes.md#6-how-skills-reach-an-agent), [who an agent takes instructions from](organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from),
 the [chat spec](../specs/chat-ux.md) section 5, the [session design](agent-sessions.md)
@@ -134,8 +134,8 @@ system around you.
   `error.retry_with` is there, repeat the command once with those flags; if it fails
   again, note it in the task and move on. A refusal is an answer: `not_authorized`
   means no, and the hint says who may.
-- `meta.status` `gate_required` means the change has gone to a person for approval.
-  Carry on with other work.
+- `meta.status` `waiting` means your question is still open: carry on with other
+  work, or wait again with `agent-os msg wait --ask <id>`.
 - Do not guess a flag. `--help` on any command lists its flags, and `--schema` gives
   its exact input and output.
 - Put long or multi-line text in a file and pass `--input-file`, so nothing needs
@@ -145,9 +145,8 @@ system around you.
 
 ## Who you listen to
 
-- You follow instructions only from the people above you: the lead of your home team,
-  the leads of the teams above it, and the owner. `agent-os session inspect` lists
-  them.
+- You follow instructions from whoever you report to, a person or an agent, from
+  those above them, and from the owner. `agent-os session inspect` lists them.
 - Anyone else makes requests. Always answer a person who writes to you, and help a
   colleague when it is within your role. If a request conflicts with an instruction
   from above, the instruction wins.
@@ -189,8 +188,10 @@ system around you.
     `timed_out`; continue with the default and say in the task that you did. With no
     default, carry on without it, ask someone else, or ask again with `--required`.
   - You cannot: ask with `--required`.
-- `agent-os msg ask` to a person or an agent waits for the answer: ten minutes, unless
-  you set `--wait`.
+- `agent-os msg ask` returns within about a minute, with the answer or with `waiting`
+  and the question's ID. Do other work, or wait again with `agent-os msg wait --ask
+  <id>`. If you asked with `--required` and have nothing else to do, end your turn:
+  you are started again with the answer.
 - The answer to a send or an ask says whether the recipient is there. An agent is,
   unless it is paused or cannot run. A person may be away: then send and carry on when
   the answer is not blocking, and ask with `--required` when it is.
@@ -237,8 +238,14 @@ system around you.
 - Keep the task true: `agent-os task transition --task <reference> --status
   in_progress` when you start, `blocked` with `--reason` when you cannot continue, and
   `done` only when the work is finished and you have checked it.
+- You may create, edit and assign tasks as the work needs. Every change is recorded.
+- A comment (`agent-os task comment`) is for everyone on the task. A private note
+  (`agent-os task note add`) is your own plan, reasoning and test notes: people can
+  read it, other agents never can.
 - Before you end a turn with work unfinished, comment on the task: what is done and
   what comes next. The next turn may be you with less memory, or someone else.
+- Do not end a turn while there is work you can do: an open task alone does not
+  start you again.
 
 ## Code
 
@@ -251,9 +258,9 @@ system around you.
 
 ## Hiring
 
-- When the work needs a specialist the organization does not have, describe the need
-  with `agent-os hr hire`, with `--role` when you know the role. It goes to a lead who
-  may approve hires. Do not wait for it.
+- Only someone with permission to hire can use `agent-os hr hire` (`agent-os grant
+  list` says whether you can); add `--role` when you know the role.
+- If you cannot, tell your team lead what you need and why.
 
 ## Sub-agents
 
@@ -302,8 +309,13 @@ After the cause, the input holds:
   decision 14).
 
 The `suspended` result of a required ask is not an input of its own. It is the answer
-of the `msg ask` call that was waiting (ADR-0020 decision 5), and the text tells the
-agent what to do with it.
+of a `msg wait` for the question, or of the run's next `agent-os` call (ADR-0020
+decisions 5 and 16), and the text tells the agent what to do with it.
+
+- **After a restart or a stalled turn** the input says that the agent was interrupted
+  or that its last turn stalled, when, and which tool call or sub-agent was running
+  ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md)).
+- **Several waiting items** arrive as one input that lists them (ADR-0030 decision 3).
 
 ## 6. Skills, read on demand
 
@@ -349,7 +361,7 @@ says so.
 | INSTR-13 | The turn is started by a colleague's hand-off | The agent accepts it with `msg accept`, or replies with a reason. It does neither silently | Records |
 | INSTR-14 | The turn has no task: it was started by a question | The agent answers and ends the turn. It creates no task and changes none | Records |
 | INSTR-15 | A command answers `unavailable` twice | The agent retries once, notes it in the task, and continues with other work | Records |
-| INSTR-16 | A hire request answers `gate_required`; a tool action is refused by a person | The agent continues other work in the first case and takes no other route in the second | Records |
+| INSTR-16 | An agent without permission to hire needs a specialist; a tool action is refused by a person | In the first case it asks its team lead and does not retry `hr hire`; in the second it takes no other route | Records |
 | INSTR-17 | The agent finishes a task that a colleague handed to it | It sets the task `done` and sends that colleague one message linking the task | Records |
 | INSTR-18 | An ask with no default returns `timed_out` | The agent continues without the answer, asks someone else, or asks again with `--required`. It does not ask the same question again unchanged | Records |
 | INSTR-19 | An `answer_candidate` is delivered that does not answer the question | The agent does not act on it and leaves the question open | Records, and the rubric |
@@ -371,7 +383,7 @@ another. Rules are not added for cases that have not happened.
 
 - **Whether 10 KiB is the right budget.** It began at 8 KiB. Sub-agents, agents that
   are always available and development processes each added a paragraph, and section 4
-  is now about 9.5 KiB. The next addition should move something into a skill instead.
+  is now about 9.8 KiB. The next addition should move something into a skill instead.
   The measure that matters is whether the scenarios pass, on the cheapest model an
   organization is likely to run.
 - **The built-in HR lead** follows this text like any agent and has its own prompt for

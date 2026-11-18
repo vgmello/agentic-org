@@ -1,6 +1,6 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.19 (2026-11-18). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.21 (2026-11-18). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **data relationships, fields and canonical sources**. Where the code or another design differs, the code or that design changes. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes implementation status and deferred scope.
 
@@ -70,8 +70,8 @@ The organization repository must be remote. Its tracked content is mirrored as o
 │   ├── recovery/                    # Receipts, each office's acceptance journal (the commit
 │   │                                #   point), checkpoints, snapshots (16)
 │   ├── budgets/                     # Protected policies, periods, events, holds (17)
-│   ├── private/task-notes.db        # HQ only: author-private task notes (05)
-│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11);
+│   ├── private/task-notes.db        # HQ only: private task notes (05)
+│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and execution records (11);
 │   │                                #   agents/<employee-id>/home/, each agent's private home (ADR-0015)
 │   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
 └── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
@@ -94,7 +94,7 @@ Shared SQLite is the indexed projection for domain records, task activity and ac
 
 Structural validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
 
-Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. Offices submit their stable IDs and scopes to the shared organization authority for final number allocation and feature-slug registration; they never increment replicated counters independently. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
+Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. An office numbers its own tasks at creation (document 06). For a feature it submits the stable ID and scope to HQ for the number and the slug; no office increments a replicated counter. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
 
 ## No compatibility obligations before v1 ships
 
@@ -121,7 +121,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Accounts and people | An account is held by the host and, in each organization it can open, tied to exactly one person record; a person needs no account; an account is never tied to an agent. Whoever acts is recorded as an employee (person or agent) or the system, never as "the owner" ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)) |
 | Organization owner | The person whose account holds ownership: the creator, until handed over; ownership is a permission of that account at the host. Records that address `owner` mean that person at the time they are read |
 | Creating an organization | The signed-in administrator creates it; one transaction makes the organization, HQ office, top-level team named after it, the creator's person record as its lead and the HR lead ([document 01](01-organization-structure.md#creating-an-organization)) |
-| Agents | Built-in HR lead, an agent that runs only when called; agents are onboarded only through the HR hire flow after approval; an agent follows instructions from its lead chain up to the owner ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)) |
+| Agents | Built-in HR lead, an agent that runs only when called; agents are onboarded only through the HR hire flow, started by someone who may hire; an agent follows whoever it reports to, up to the owner ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)) |
 | Project teams | Creating a project creates its owning team under the top-level team by default, or names an existing team ([document 02](02-project-structure.md#creating-a-project)) |
 | Tasks | One entity with required team, optional project and extensible type |
 | Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |

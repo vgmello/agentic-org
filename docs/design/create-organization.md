@@ -28,7 +28,7 @@ Every employee has exactly one home team, so creation makes one top-level team,
 named after the organization, without asking. The creator's person is its lead. The
 built-in HR lead is created as an agent employee in the same team; it is part of the
 product, is not kept running, and runs only when called. It is the only agent that
-is not hired: every other agent comes from an approved hire
+is not hired: every other agent comes from a hire by someone who may hire
 ([our organization in the app](../specs/our-org-in-the-app.md) §7). No team name,
 lead appointment or reporting line is inferred from the word HR, and further teams
 come later, a project's by default with the project.

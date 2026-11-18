@@ -147,7 +147,9 @@ As of 2026-11-18 none of the 91 tables or 12 views is implemented as drafted. 16
 | --- | --- |
 | Organization scope, stable identities, task/project/team ownership | Composite keys/FKs and checks; shared source records and tombstones keep identities that past records refer to |
 | Task owner versus assigned team/person | Independent references; project/task accountable team still matches; active membership and authorization are command-service checks |
-| Team tree, employee reporting and task dependency cycles | SQL insertion/update guards; reporting chain is separate from team hierarchy |
+| Team tree, employee reporting and task dependency cycles | SQL insertion/update guards, each with a regression case on insert (including a parent written later in the same transaction) and on update; reporting chain is separate from team hierarchy |
+| Affected feature, cleanup record and placement consistency | Guards keep a task's affected feature in the task's project (on either side's change, once both rows exist), a cleanup record in its process's office, and placements and execution configs on agents |
+| One-of identities | Partial unique indexes: one HQ office, one built-in HR lead, one open turn and one live main process per agent, one automatic channel per organization/team/project, one changelog per release or deployment, one budget per task/release and per agent period, one watcher entry per employee and one owner entry per task |
 | Release/deployment repository history | Stable repository FK; capture validates project eligibility, while later project detachment leaves history valid |
 | Flag types and used identity | Both setting-side and definition-side validation, including deferred projection order; used identity deletion/replacement guarded |
 | Immutable task/usage events and historical prices | Revision/stream identity and mutation guards; corrections append new facts; recursive triggers required on every write connection |
@@ -170,7 +172,7 @@ Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, the
 
 ## Verification and limits
 
-`python3 -B docs/design/organization-data/test_schema.py` checks structural document/SQL equality, document 11's execution definitions in the consolidated schema, every diagram field against its owning database, this inventory's coverage, FK integrity and regression cases for the relationships above. Private tests use in-memory SQLite to check structure; they do not implement authenticated privacy.
+`python3 -B docs/design/organization-data/test_schema.py` checks structural document/SQL equality, document 11's execution definitions in the consolidated schema, every diagram field against its owning database, this inventory's coverage, FK integrity and regression cases for the relationships above. Every trigger and every unique index in `schema.sql` has at least one case that the rule refuses, asserting that rule's own message (or the unique-constraint failure), and a case that it allows; as of 2026-11-18 removing any one of them (71 triggers, 15 unique indexes) from a copy of the schema makes the suite fail. CHECK constraints are covered by sample cases, not exhaustively, and the private schema's triggers were not part of that removal run. Private tests use in-memory SQLite to check structure; they do not implement authenticated privacy.
 
 Required service behavior still includes actor binding/access control, active-record validation, atomic revisioned mutations and idempotency, projection validation, allocation arbitration, generated-profile membership rules, permit capacity/freshness, durable journals and authorized backup recovery. These are specified contracts rather than facts established by passing DDL tests. The application is not implementation-complete.
 

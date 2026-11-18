@@ -118,11 +118,11 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "0d42d32783b63202ed7d76c058a6b8df95705d479fbb190338df57c20adc62bf"
+      "sha256": "0e88c3c9ddb2f83fde694c10733392cfcd1d863df7dc754fc83b64f5c7c391a2"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "64361db9e0ea9bfb759ccef729c4fddf4345f499872caa403933bba8a140e6ad"
+      "sha256": "dfb7c758a7df84027fa34454c8268296e6cd7d847610d415a3b78c8e349a2511"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "a6fee2bebca81bfde123b2808c28829078e54ead6d7e9dfba4edc11ba4046496"
+      "sha256": "379ca93190007a8da2ef54a6a7645850b82c10e3a908739016211ec2fc37f8a0"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "e0a1415777a012f123ae5ff33719955ef3a847af1a0303fc88a8cc3332c5abdf"
+      "sha256": "10a6fbe4af84b6bbe7dcf1681795e8436fddced0e7d91d24d18410af7a119cdf"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "047f6e1e59da9d044363ac651b0d5bd0f696cd1ef90fe3934599f2ce74e5464c"
+      "sha256": "99237f8b2683c1f515eeed2fe72f7d4333ed2e6dbbb5dfa8c61e867bac769745"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,11 +182,11 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "e8ff2b2a058a832b211e924bb15e9cd4f7d4d2cb2565f447cd7e9328dc21328f"
+      "sha256": "bf075c7126b9097253b19fd4bb43183d3c15de6663f862bdbc7379b5bdc242f9"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "f8ad1e3d04d08b16f8ea6225eb76ccad2655c04329d222f1bfb956ffad0e0309"
+      "sha256": "149365ade0686c43df89cd1dcae4b5a5598d63235ceb699a86da9ee91ea213e5"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",

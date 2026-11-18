@@ -39,7 +39,7 @@ interface files.
 | Capability | Rules it owns | Implementation home |
 | --- | --- | --- |
 | Organization | One home team per employee, recursive teams and leads, roles, accountable project ownership, repository registrations | Organization module in `org-office` |
-| Work | Typed tasks, office-minted references, independent assignment, immutable reporter and history, conflicts; private notes in a separate author-only store | `org-work`, with office-owned implementations of its ports |
+| Work | Typed tasks, office-minted references, independent assignment, immutable reporter and history, conflicts; private task notes in a separate store, never read by another agent | `org-work`, with office-owned implementations of its ports |
 | Messaging | Conversations, channels, membership, delivery, asks and authorization | `org-mailbox`, with office storage and session implementations |
 | Employees | Execution configuration, model profiles and connections, permits, turns and attempts, fenced placement, process cleanup, suspension on a required ask | Employee policy and state in `org-office`; runtime adapters behind `org-runtime` |
 | Organization processes | Process and standard documents, scope, override lock and one-chain resolution | `org-process`, called by the office ([processes design](processes.md#7-where-the-code-lives)) |

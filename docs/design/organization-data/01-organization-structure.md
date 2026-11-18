@@ -4,7 +4,7 @@ Status: **selected** data contract, revision 2.8. See the [shared identity/stora
 
 ## Relationships
 
-An organization contains independent offices, a team forest, projects, roles and repository registrations. HQ creates teams; replicas in other offices do not become independent team-creation authorities. Teams own child teams. Projects name their owning team. Offices locate execution; they do not own the team hierarchy.
+An organization contains independent offices, a team forest, projects, roles and repository registrations. HQ creates teams; other offices never do. Teams own child teams. Projects name their owning team. Offices locate execution; they do not own the team hierarchy.
 
 ```mermaid
 erDiagram
@@ -74,6 +74,7 @@ erDiagram
         TEXT parent_team_id FK "optional"
         TEXT lead_employee_id FK "optional"
         TEXT status "required"
+        INTEGER max_members "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
         TEXT created_by_id FK "optional"
@@ -127,7 +128,7 @@ Creation is one accepted transaction, the first of the organization's acceptance
 
 1. the organization;
 2. its HQ office;
-3. one top-level team (null `parent_team_id`) named after the organization;
+3. one team with no parent, named after the organization;
 4. the creator's person record in that team, appointed its lead, and tied by the host to the creator's account;
 5. the built-in HR lead in that team ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)).
 
@@ -348,6 +349,7 @@ name TEXT NOT NULL,
   parent_team_id TEXT,
   lead_employee_id TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  max_members INTEGER NOT NULL DEFAULT 6 CHECK (max_members >= 1),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,

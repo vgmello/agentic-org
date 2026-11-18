@@ -516,7 +516,7 @@ on the offers of design section 10.
     only decides whose instructions an agent follows
     ([supervision design](design/employee-supervision.md), decision 6). The few rights
     that are not everyone's (changing the structure, inviting and removing access,
-    the two hand-overs, approving a hire, creating organizations) and who holds each
+    the two hand-overs, hiring, creating organizations) and who holds each
     are one table in the [agent structure contract](design/organization-data/04-agent-structure.md#accounts-people-and-the-organization-owner).
 - **Read:** [installation and access UX](specs/server-installation-and-access-ux.md)
   (accounts), [agent structure](design/organization-data/04-agent-structure.md),
@@ -585,28 +585,35 @@ on the offers of design section 10.
 
 ### C2 · Hire an agent through HR
 
-- **Outcome:** the owner asks for a new agent, reviews the proposal, approves it, and
-  the agent exists in the organization with its team, its home and how it runs. This is
-  the only way an agent comes to exist.
+- **Outcome:** someone who may hire asks for a new agent, reviews the proposal,
+  confirms it, and the agent exists in the organization with its team, its home and
+  how it runs. This is the only way an agent comes to exist. There is no approval:
+  whoever may not hire is refused and told to ask their team lead
+  ([ADR-0029](adr/0029-only-who-may-hire-hires.md)).
 - **Build:**
   - The hire flow: describe what is needed, or fill in the details yourself; review;
-    approve. Nothing is provisioned before approval.
+    confirm. Nothing is provisioned before the hirer confirms.
+  - The check of who may hire into a team (the owner, or an employee with Allow
+    hiring for the teams it leads and those under them), on the command, in the app
+    and on a message to the HR lead.
   - Provisioning, as product code: the employee record, its private home, and its
     execution configuration (model profile and connection).
   - The built-in HR lead drafts the proposal once agents can run (C3). Until then, and
     whenever HR cannot run, the same flow works with the form.
   - Edit, move, pause, resume and offboard an agent.
-- **Commands:** `role list`, `role inspect` and `hr hire`, which answers
-  `gate_required` with the request and, once it is known, who approves ([command line design](design/agent-os-command-line.md), section 3.2;
+- **Commands:** `role list`, `role inspect` and `hr hire`, which is refused with
+  `not_authorized` for a caller who may not hire ([command line design](design/agent-os-command-line.md), section 3.2;
   CLI-14).
 - **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
-  hire flow; who approves; STAFF and HRL criteria), [roles UX](specs/roles-ux.md),
+  hire flow; who may hire; STAFF, HRL and APPR criteria), [roles UX](specs/roles-ux.md),
   [agent structure](design/organization-data/04-agent-structure.md),
   [model profiles and agent execution](design/organization-data/11-model-profiles-and-agent-execution.md),
   [providers and connection pools](design/organization-data/14-model-providers-and-connection-pools.md).
   Rows FC-031, FC-033, FC-034, FC-096, FC-097.
-- **Done when:** the STAFF and HRL criteria for a hire pass with the form, and no
-  employee, home or binding exists before approval.
+- **Done when:** the STAFF and HRL criteria for a hire pass with the form, HIRE-1
+  and HIRE-3 to HIRE-6 and HIRE-8 of ADR-0029 pass, and no employee, home or binding
+  exists before the hirer confirms. HIRE-2 and HIRE-7 need agents that run and are
+  finished with C10.
 - **Needs:** B2, U1.
 
 ### C3 · Start an agent
@@ -629,6 +636,11 @@ on the offers of design section 10.
   sub-agent's commands and cost are the employee's; nothing outlives the turn
   ([ADR-0025](adr/0025-agents-start-sub-agents.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
   the sub-agent's conversation in the session view, is finished with C4. Row FC-172.
+- **Staying alive:** after an office restart an interrupted turn continues by itself
+  in the same session once the run's processes are proved gone; a turn with no
+  activity for the stall time is stopped with its sub-agents, recorded as stalled,
+  and the agent goes idle ([ADR-0030](adr/0030-an-agent-works-while-it-has-work.md)
+  decisions 8 to 12; LIVE-9 to LIVE-13).
 - **Instructions:** the built-in agent instructions are the first part of what an
   agent receives, with the sections for what this build has, and their scenarios run
   ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
@@ -644,8 +656,8 @@ on the offers of design section 10.
   uses its types, and nothing launches an agent.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
   recover processes the office owned before a restart, not to launch an agent.
-- **Done when:** a hired agent completes an instruction given from its page, and the HR
-  lead drafts a hire proposal when asked.
+- **Done when:** a hired agent completes an instruction given from its page, the HR
+  lead drafts a hire proposal when asked, and LIVE-9 to LIVE-13 pass.
 - **Needs:** C1, C2.
 
 ### C4 · See what an agent did
@@ -727,6 +739,10 @@ on the offers of design section 10.
     single choice, multiple choice, yes/no, free text. A default is preselected.
   - A required ask that is not answered in time returns "required answer pending". The
     suspension that follows is increment C6.
+  - No command holds its caller for the whole wait: `msg ask` returns within the short
+    hold (90 seconds unless changed) with the answer or with `waiting` and the
+    question's ID, and `msg wait --ask` continues the wait (ADR-0020 decision 15;
+    non-negotiable 18). The `waiting` status is already in `org-command`.
 - **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel, with
   one question in flags or several in a file (`--input-format yaml`); answering with
   `msg reply --answer`; `msg withdraw`; and the `timed_out` and `withdrawn`
@@ -735,7 +751,7 @@ on the offers of design section 10.
   [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
   (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
 - **Done when:** each question type is asked from a terminal and answered in the
-  browser; ASK-1 and ASK-2 pass.
+  browser; ASK-1, ASK-2 and ASK-10 pass.
 - **Needs:** B6.
 
 ### C6 · A required ask suspends and resumes the agent
@@ -746,8 +762,8 @@ on the offers of design section 10.
   sections 2.3 and 3.3; CLI-14).
 - **Read:** [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 5 to 13.
   Row FC-166.
-- **Done when:** ASK-3, ASK-5, ASK-6, ASK-7 and ASK-9 pass, and the presence part of
-  ASK-4. The rest of ASK-4 (no turn permit and no subscription slot while suspended) is
+- **Done when:** ASK-3, ASK-5, ASK-6, ASK-7, ASK-9, ASK-11 and ASK-12 pass, and the
+  presence part of ASK-4. The rest of ASK-4 (no turn permit and no subscription slot while suspended) is
   finished with L4, and ASK-8 (a budget hold keeps the agent suspended) with L3.
 - **Needs:** B7, C3.
 
@@ -759,11 +775,18 @@ on the offers of design section 10.
   agent sends it an ask, a hand-off or a mention by name, and when an answer to its own
   question arrives; the same admission as a person's Run; the hourly
   limit (a system setting, 12 unless changed); the record of what started the turn. No
-  new command: the answer's `meta` says whether a turn was started.
+  new command: the answer's `meta` says whether a turn was started. A start that
+  cannot happen at once (the recipient is busy, admission refuses, the limit holds
+  it) is kept as a pending start and tried again when the turn ends, a permit or a
+  connection is freed, a hold or a pause is lifted, the hour has passed or the
+  office starts; two agents waiting on each other's required answer start each other
+  ([ADR-0030](adr/0030-an-agent-works-while-it-has-work.md) decisions 1 to 7).
 - **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-7),
   [how agents run](specs/agent-run-modes-ux.md) (RUN-3),
   [command line design](design/agent-os-command-line.md) section 3.3. Row FC-169.
-- **Done when:** WAKE-1 to WAKE-7 pass.
+- **Done when:** WAKE-1 to WAKE-7 and LIVE-1 and LIVE-4 to LIVE-7 pass, and the
+  hourly-limit part of LIVE-3. LIVE-8 is finished with C6, LIVE-2 with L4 (it needs
+  turn permits) and the budget part of LIVE-3 with L3.
 - **Needs:** B7, C3.
 
 ### C9 · A channel's watcher feeds responses back to the agents who asked
@@ -772,7 +795,7 @@ on the offers of design section 10.
   without replying in the thread, and the agent receives that response in its inbox.
   It never reads the rest of the channel. An agent that needs something from a channel
   asks for a summary instead of loading it.
-- **Build:** first the measurement of ADR-0024 decision 17, on labelled channel
+- **Build:** first the measurement of ADR-0024 decision 19, on labelled channel
   excerpts with the chosen watching model. Then: the watch a channel question
   opens; the pass, one tool-less model run for all the open questions of a channel,
   through the copilot's runtime port and a registry entry of its own; the
@@ -805,8 +828,9 @@ on the offers of design section 10.
 - **Read:** ADR-0028 (AVAIL-1 to AVAIL-6), [how agents run](specs/agent-run-modes-ux.md)
   (RUN-3), [agent sessions](design/agent-sessions.md). Row FC-186.
 - **Code today:** nothing starts an agent.
-- **Done when:** AVAIL-1 to AVAIL-6 pass.
-- **Needs:** C8 and, for assignments, B4.
+- **Done when:** AVAIL-1 to AVAIL-6 pass, and HIRE-2 and HIRE-7 of
+  [ADR-0029](adr/0029-only-who-may-hire-hires.md).
+- **Needs:** C8, C2 and, for assignments, B4.
 
 ---
 
@@ -816,7 +840,8 @@ on the offers of design section 10.
 
 - **Outcome:** a person or agent creates a task, bug or request, assigns it, changes its
   status, priority and effort, comments on it and ticks its checklist; every change is in
-  its history.
+  its history. Any active employee may do this; there is no task capability to grant
+  ([ADR-0031](adr/0031-any-employee-changes-tasks.md); TASKAUTH-1 to TASKAUTH-3).
 - **Build:**
   - One task record with a type. The separate bug and request families and the area
     calls and tables are deleted.
@@ -841,7 +866,8 @@ on the offers of design section 10.
 - **Done when:** every rule the data documents state for tasks is enforced by the office
   and covered by the engine-independent work suite; a task created with the office
   unable to reach HQ has its final reference at once; the code's tables match the draft
-  schema for tasks. The screen criteria (TSK, BUG, CHK, WORK) are finished in B5.
+  schema for tasks; TASKAUTH-2 and TASKAUTH-3 pass. The screen criteria (TSK, BUG,
+  CHK, WORK) and TASKAUTH-1, which needs an agent, are finished in B5.
 - **Needs:** B3.
 
 ### B5 · Tasks in `agent-os` and in the browser
@@ -860,7 +886,23 @@ on the offers of design section 10.
 - **Done when:** the TSK, BUG, CHK and WORK criteria that need no agent runtime pass in
   browser tests against a real instance; a task created in the browser is updated from
   a terminal and the browser shows the change without a reload.
-- **Needs:** B4, A3, A5. The agent part needs C3.
+- **Needs:** B4, A3, A5. The agent part needs C3. TASKAUTH-1 passes once an agent runs.
+
+### L8 · Private task notes
+
+- **Outcome:** an agent keeps its own plan, reasoning and test notes on a task, and a
+  person reads them; another agent never sees them. Public comments stay the place
+  for what everyone on the task should know.
+- **Build:** the private-note store, apart from the shared task history and Git; the
+  reading rule (the author and people, never another agent) on every read, search,
+  feed, summary, export and turn input; the notes pane on the task in the browser.
+- **Commands:** `task note add`, `list`, `update` and `remove`
+  ([command line design](design/agent-os-command-line.md), section 3.4).
+- **Read:** [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks)
+  (PN-01 to PN-06), [ADR-0031](adr/0031-any-employee-changes-tasks.md). Row FC-053.
+- **Done when:** PN-01 to PN-06 and TASKAUTH-4 to TASKAUTH-7 pass.
+- **Needs:** B5 and, for TASKAUTH-5, C3. It is built straight after B5 (owner,
+  2026-11-18): agents use notes for their plans from the first tasks they work on.
 
 ### C7 · Repositories and worktrees
 
@@ -1202,8 +1244,7 @@ product without it.
 | L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
 | L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
 | L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
-| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8 and L7's feature records |
-| L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
+| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8, C10 and L7's feature records |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |
 

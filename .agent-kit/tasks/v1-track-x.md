@@ -982,6 +982,42 @@ the host files Track X moved behind the platform crates. Resolved by the lead:
   the rows (In progress 64, Planned 53; AREA-02 16 and 3). Track A's summary was one
   behind its own rows (FC-159 had moved to In progress).
 
+**`f7e60098` and `1b260dee`, 2026-11-18.** Track A had 82 more commits (and 12 more,
+documents and one command file, while the merge was made). A trial merge conflicted
+in 21 files. It was made in its own worktree (`x/merge-a`, `e28aee39`) by a worker
+with a written analysis of Track A's changes (the merge guide in the lead's
+scratchpad), then brought onto this branch (`5bcbfbfb`) with the 12 newer commits
+merged on top. How it was resolved:
+
+- Track X's structure in every host file; Track A's renames (`OfficeSecretsKey`,
+  `OfficeSecretsKeys`, `means_no_key`, the launch contract's module path) through all
+  of them, including Track X-only files git did not report.
+- Track A's three behaviour changes carried over: a start without a usable key still
+  spawns the server (`Mode::Office(id, Option<..>)`, `HandoffSecrets`; `key_missing`
+  is gone); `web::Running::start` takes a wait; the web process starts without an
+  Active HQ, so on Linux it goes through the admission and the filter from host start
+  (two LNX-3 assertions follow: the state before an HQ is `Running`, or `Failed`).
+- The 13 platform predicates Track A had added in the key store are gone with its
+  four files (`keys/{dev,keychain,platform,unsupported}.rs`); the store asks
+  `credentials::protected_store()`.
+- The one difference in intent, decided by the lead for Track A's behaviour: on a
+  system with no protected key store the host starts and each call that needs an
+  office key is refused (`KeyStoreError::Unsupported`), chosen before any Keychain
+  check; the host-secrets store still refuses the start there, as Track A's did.
+- All 102 tests Track A added are in the tree by name. Its script-worker test runs
+  through the by-path test admission. Its five ignored real-process tests were run
+  once on Linux and pass, its session routes under the seccomp filter.
+- A key file that is a FIFO, a symbolic link or has a wrong mode is a storage error
+  in Track X's store, not a null-key start as in Track A's old development store.
+- The list of platform predicates: 16 files, 78 predicates.
+- Feature tables recounted from the rows: 187 rows; Done 9, In progress 66, Planned
+  68, Blocked 1, Deferred 43; AREA-02 22 rows.
+
+The worker's checks on `e28aee39`: lint for the three targets, guard tests, the whole
+workspace unprivileged (71 binaries, 3,639 passed; failing only the two IPv6 tests),
+the app and host loops five times. The lead's checks on the combined tree are in the
+commit that merges `1b260dee`.
+
 ## macOS results from CI
 
 The macOS job (`macos-15`) runs the workspace's tests on every push. Run 44232051595

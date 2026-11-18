@@ -137,8 +137,8 @@ prefix is not a verified sandbox.
 
 Protected chat/attachments, usage archives, budget policy/history/extensions/holds,
 command receipts, authority and execution/process evidence must survive office
-projection loss. Private notes use a separate durable author-only DB, with no
-administrator exception. Git alone does not restore these sources. Bindings contain
+projection loss. Private task notes use a separate durable DB; a note is read by its author
+and by people, never by another agent. Git alone does not restore these sources. Bindings contain
 private local references, never credential bytes in Git. Rebuild verifies trusted
 identity/epochs/digests and retained high-waters, restores legitimate credentials,
 and reconciles owned processes before launch. A copied/restored PID or missing
@@ -1049,7 +1049,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-27 · Eight HQ tabs share at most one authenticated streaming fetch per browser origin, including across login/session changes, and commands still complete under HTTP/1.1. Leader loss reconnects by cursor; unsupported coordination uses bounded short polling and no per-tab long-lived stream.
 - SRV-28 · HQ durably accepts Pause for a disconnected satellite as paused status with stop pending. Reconnect/restart reconciles the latest version before new work; a later Resume is not overwritten by stale stop delivery. An uncertain forwarded outcome stays Pending confirmation and resolves by the same operation ID.
 - SRV-29 · Every home or path input on create or update, including absolute paths and traversal, is rejected before filesystem access. The launch working directory derives from managed IDs and the selected office, employee, task and repository workspace; response paths stay read-only under PROF-4.
-- SRV-30 · A hire follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision an employee, home or messaging binding before approval. The only agent created without a hire is the built-in HR lead, made with the organization in its top-level team; its execution readiness is separate and it is never teamless.
+- SRV-30 · A hire follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision an employee, home or messaging binding for a caller who may not hire into the team, or before the hirer confirms the proposal. The only agent created without a hire is the built-in HR lead, made with the organization in its top-level team; its execution readiness is separate and it is never teamless.
 - SRV-31 · Person-started CLI context selects explicit immutable instance and office identities; a managed binding never falls back to another office.
 - SRV-32 · The local API is version 1, changes in place until v1 ships and rejects unsupported peers before dispatch. HTTP, launch and sync contracts are independent. Cargo package agentic-org at apps/agentic-org owns the CLI, including setup dispatch; no separate setup package exists.
 
@@ -1059,7 +1059,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-36 · Creating an organization asks for no team. It makes one top-level team named after the organization, with the creator's person as its lead and the built-in HR lead as its other member, so every employee it creates has one valid home team. Account, administrator and owner rights stay independent from employee fields.
 - SRV-37 · Agent identity is independent from execution profile/model, connection order, credentials and placement. Missing config, stale entitlement/auth, absent shared permit or unverified prior cleanup produces explicit not-ready/recovery-required state. Restart does not launch a duplicate process or allocate replacement placement authority from a cache.
 - SRV-38 · A disposable projection rebuild reproduces acknowledged domain/receipt/stream/allocation state from verified Git plus protected sources. Missing/corrupt source, wrong identity/hash/epoch or old high-water fails explicitly; unknown commands are reconciled before retry. Legitimate keys remain necessary; no fabricated usage, receipt, budget capacity or authority.
-- SRV-39 · Restore preserves protected chat visibility. Message bodies, counts, previews, attachments and search do not leak to anyone outside a message's audience; shared projection access never grants author-private note access or reveals note existence in shared receipts.
+- SRV-39 · Restore preserves protected chat visibility. Message bodies, counts, previews, attachments and search do not leak to anyone outside a message's audience; shared projection access never grants an agent another author's private task note or reveals note existence in shared receipts.
 - SRV-40 · Budget policy revisions, one-time extensions, notices and independent manual/security/budget holds survive restart/rebuild. Stop pending remains distinct from acknowledged held; releasing one reason never releases another. Release caps warn only; incomplete usage and cost/amount access scopes (including only the own-agent CLI exception) remain explicit. Runtime evaluation/pausing is unavailable until implemented.
 - SRV-41 · The target runtime path layout proves sandbox denies, one office/repository cache, association-specific integration branch and retained worktrees/checkpoints across handoff/placement change. Deletion cannot erase sole acknowledged protected sources, private stores or local-only/unpushed code recovery.
 

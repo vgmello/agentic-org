@@ -50,7 +50,7 @@ The owning relationships and field contracts are in organization-data documents
    holds explicitly transient state; it is not the only durable source of tasks,
    messages, accounting or authority. Protected messaging sources, the usage
    archive, budget decisions, receipts and execution evidence survive cache
-   deletion outside Git. Author-private task notes use a separate durable database
+   deletion outside Git. Private task notes use a separate durable database
    and never enter shared task history. [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)
    owns the writer and flush guarantees.
 3. **Clients use authorized capabilities, never SQL files.** The browser uses
