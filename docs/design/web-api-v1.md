@@ -150,6 +150,10 @@ Read responses are `{result: ...}`; no native grant enters browser JSON. The nat
 read is `task.selected.read`, an object query tagged by `kind` (`status`, `list`,
 `detail`, `history`, `targets`, `chunk`).
 
+- **Who may change a task.** Any active employee of the organization, person or
+  agent, bound as itself; there is no separate task capability
+  ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). A paused, offboarded or
+  deactivated employee is refused.
 - **Assignment.** The envelope is `{operation_id,scope,params}` with `scope` exactly
   `{kind:"office",instance_id,org_id,office_id}`. `params` holds exactly
   `expected_revision`, `assigned_team_id` and `assignee_id`; both IDs are required
@@ -187,8 +191,10 @@ codec or configuration does not enable it.
 ### Protected views
 
 Read only authorized projections of protected chat, usage, budget and recovery
-sources. Private task notes stay author-only, with no owner or administrator
-exception and no shared receipt that reveals they exist. No generic SQL or lookup
+sources. A private task note is read by its author and by any person who can read
+the task, never by another agent, and only its author edits or deletes it
+([ADR-0031](../adr/0031-any-employee-changes-tasks.md)); no shared receipt reveals
+that it exists. No generic SQL or lookup
 endpoint exposes raw paths, source envelopes, amounts or private result blobs.
 Cost views keep complete, partial and unavailable usage distinct and follow the
 [cost access rules](../specs/costs-and-insights-ux.md); `stop_pending` is not a

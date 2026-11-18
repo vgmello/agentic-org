@@ -86,9 +86,10 @@ protected authentication metadata linked to the receipt. A managed employee keep
 its injected employee identity. An employee is never manufactured from an owner
 name, a profile field or a browser body.
 
-The initial mutation policy is the live authenticated organization owner. Other
-principals need an explicit task-mutation capability; receiving assignment, owning
-a team, leading a subtree or contributing to a project grants none implicitly.
+Any active employee of the organization, person or agent, may change tasks
+([ADR-0031](0031-any-employee-changes-tasks.md), owner, 2026-11-18); there is no
+separate task capability, and being assigned a task, leading a team or belonging to
+a project is not required.
 Each request checks channel binding, grant scope and expiry, session revocation and
 live authorization. Reads and receipt lookup have matching actor and scope checks.
 Authentication failures do not disclose whether a task exists or another actor's

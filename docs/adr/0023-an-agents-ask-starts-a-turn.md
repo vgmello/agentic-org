@@ -6,8 +6,10 @@ Decisions 2 to 9 are its design. The
 [session design](../design/agent-sessions.md) and the
 [agent command line](../design/agent-os-command-line.md) follow it. The increment is C8
 in the [implementation plan](../implementation-plan.md).
-[ADR-0028](0028-an-agent-is-always-available.md) extends it: a person's direct message or
+[ADR-0028](0028-an-agent-is-always-available.md) extends it: a direct message, a
 mention and a task assignment also start an idle agent, under the same rules.
+[ADR-0030](0030-an-agent-works-while-it-has-work.md) adds what happens to a start that
+cannot happen at once: it is kept and tried again, never dropped.
 
 ## Context
 
@@ -37,23 +39,28 @@ when the turn ends.
      ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md) decision 12). The turn
      continues the asker's session.
 
-   Nothing else does: not an announcement, not `@here`, not an ordinary post or an
-   undirected question in a channel, not a task assignment by itself.
+   Under this record nothing else does: not an announcement, not `@here`, not an
+   ordinary post or an undirected question in a channel. A task assignment and a
+   direct message start a turn under ADR-0028. An answer starts the asker only while
+   its question is open (ADR-0030 decision 6).
 3. **When.** The recipient has no open turn and is not paused, suspended or
    offboarded.
-   - A busy recipient gets the message at its next turn boundary, as before. A message
-     never interrupts a turn.
+   - A busy recipient gets the message at its next turn boundary. A message never
+     interrupts a turn. When the turn ends with the message still waiting, the office
+     starts the next turn for it (ADR-0030 decisions 2 and 3).
    - A paused agent is never started.
-   - An agent suspended on a required answer is started only by that answer. Other
-     messages wait for it.
+   - An agent suspended on a required answer is started by that answer, and by a
+     question or a hand-off from the employee it is waiting for (ADR-0030 decision
+     7). Other messages wait for it.
 4. **The turn is an ordinary turn.** Its instruction is the message. It passes the
    same admission as a turn a person starts: one open turn for each agent, the turn
    permit, the placement checks and, once budgets exist, the budget hold. If admission
-   refuses it, no turn starts and the message waits.
+   refuses it, no turn starts, the message waits, and the office tries the start
+   again when the reason has gone (ADR-0030).
 5. **A limit.** At most a set number of turns in an hour start for one agent under this
    record: one system setting, 12 unless changed. Past it, the message is delivered
-   and waits for the recipient's next turn, and the office records that the limit held
-   it. A turn a person starts with Run is never counted or limited.
+   and waits, the office records that the limit held it, and the start happens when
+   the hour has passed (ADR-0030 decision 5). A turn a person starts with Run is never counted or limited.
 6. **A reply to a waiting asker starts nothing new.** A reply that satisfies a waiting
    ask goes to the asker's open turn. A reply to an asker that is suspended resumes it
    under ADR-0020, which is not counted against the limit. Only an answer that arrives
@@ -81,7 +88,7 @@ agent, as the [run modes spec](../specs/agent-run-modes-ux.md) says.
 | WAKE-1 | An ask from one agent to an idle agent starts exactly one turn for the recipient, whose instruction is the ask; the answer returns to the asker within its wait |
 | WAKE-2 | A hand-off, and a mention by name, from one agent to an idle agent each start one turn; an announcement, `@here` and an ordinary channel post start none. A message or a mention from a person is tested by ADR-0028 (AVAIL-1) |
 | WAKE-3 | A busy recipient is not interrupted and receives the message at its next turn boundary; a paused, suspended or offboarded recipient is not started |
-| WAKE-4 | Past the hourly limit no turn starts, the message is delivered and waits, and the held start is recorded; a person's Run is unaffected |
+| WAKE-4 | Past the hourly limit no turn starts, the message is delivered and waits, and the held start is recorded; it starts when the hour has passed; a person's Run is unaffected |
 | WAKE-5 | Two agents that ask each other in a loop start no more turns for either than the limit allows |
 | WAKE-6 | The started turn passes the same admission as a person's Run, and its history names the sending agent and the message |
 | WAKE-7 | While an agent is idle and holds no wait, a reply in the thread of its own question from anyone, and a confident watcher match on a person's message, each start one turn that continues its session; a watcher match on another agent's message starts none |

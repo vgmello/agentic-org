@@ -166,7 +166,11 @@ plain text, and `--format compact` prints `data` on success, without the envelop
   | `timed_out` | An ask that is not required got no answer within its wait. `data.default` holds the ask's default when it has one | Continue with the default, or without the answer |
   | `withdrawn` | The ask was withdrawn or cancelled | Continue without it |
   | `suspended` | A required ask waited its time and no answer came: a required answer is pending ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 5). `data` names what is awaited and from whom | Close out background work and end the turn. The office stops the agent and starts it again, in the same session, with the answer |
-  | `gate_required` | The change needs an approval before it takes effect. `data` names the request and, once it is known, who approves | Continue with other work; the outcome arrives as a message |
+  | `waiting` | A question is still open and the short hold of this command has ended ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 15). `data` names the question and the time left of its wait | Continue with other work, or call `msg wait --ask <id>` |
+  | `gate_required` | The change needs an approval before it takes effect. No command returns it in milestones one and two: a hire has no approval ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). It stays in the contract for a later approval | Continue with other work; the outcome arrives as a message |
+
+  `waiting` is added to the status list of `org-command` when `msg ask` is built
+  (B7); the library merged with K1 has the other five.
 
   These are the requirement's `SUSPENDED` and `GATE_REQUIRED`, and the four results of
   an ask in ADR-0020.
@@ -366,8 +370,11 @@ Owner, 2026-11-18: the common commands are fast; not every command has to be.
   median of 1 ms and a 95th percentile of 2 ms on the reference Mac (ADR-0014
   decision 1).
 - **Everything else has no latency target:** a write that waits for the drive (a status
-  change, an assignment), a command that waits for a person (`msg ask`), one that
+  change, an assignment), a command that waits for a person (`msg ask`, `msg wait`), one that
   reaches the network (`repo push`), and rare ones (`hr hire`, `repo attach`).
+- **No command holds its caller longer than the short hold,** 90 seconds unless
+  changed ([non-negotiable 18](../architecture-non-negotiables.md)). A longer wait
+  returns `waiting` and is continued by another call.
 - **What keeps the common path short.** Before its call, `agent-os` does nothing the
   call does not need: it loads no schema and no catalogue, reads no file except one
   named with `--input-file`, and makes no extra round trip to the office. A change that
@@ -385,7 +392,7 @@ office accepts only from a person in the stated position; an agent that calls it
 | --- | --- | --- | --- |
 | `session inspect` | The organization, office, employee, home team and the leads above it, the project and task of this run, the session and its state, and what it is waiting on | [Agent sessions](agent-sessions.md) | C3 |
 | `session attach` | The long-running mode (2.9) | ADR-0014 decision 5 | B6 |
-| `grant list` | What the office holds about this run's reach: the teams the employee leads and whether it may approve hires, the project and task, the worktrees and other writable places, the isolation mode, the tools and connectors of its execution configuration | [Employees](organization-data/04-agent-structure.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [execution](organization-data/11-model-profiles-and-agent-execution.md) | C3 |
+| `grant list` | What the office holds about this run's reach: the teams the employee leads and whether it may hire into them, the project and task, the worktrees and other writable places, the isolation mode, the tools and connectors of its execution configuration | [Employees](organization-data/04-agent-structure.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [execution](organization-data/11-model-profiles-and-agent-execution.md) | C3 |
 
 `session suspend` and `session resume` are not commands. Suspension is the `suspended`
 outcome of a required ask, and the office performs both steps (ADR-0020 decisions 6 and
@@ -403,7 +410,7 @@ outcome of a required ask, and the office performs both steps (ADR-0020 decision
 | `team create`, `team update`, `person add` and the like | A person's commands: the owner changes structure. B2 names them under this grammar | [Who may change what](organization-data/04-agent-structure.md) | B2 |
 | `project create` | A person's command: the owner | [Who may change what](organization-data/04-agent-structure.md) | B3 |
 | `role list`, `role inspect` | The organization's roles; one role's body and requirements. Reading only: no command writes a role in v1 | [Roles UX](../specs/roles-ux.md) | C2 |
-| `hr hire` | Asks for a new agent, in words or with the fields filled in. Returns `gate_required` with the request and, when the caller named the home team, who approves; otherwise the approver is known once the HR lead has drafted the proposal. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields or ask the owner. The request goes up the lead chain to the first lead with hiring power, a person or an agent ([ADR-0027](../adr/0027-a-lead-approves-a-hire.md)); a lead who has it and hires into its own team is approved by the request itself. Nothing is provisioned before that approval | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
+| `hr hire` | Hires a new agent. Only a caller who may hire into the team can use it: the owner, or an employee with Allow hiring, into the teams it leads and the teams under them ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). Anyone else gets `not_authorized` with the hint "You don't have access to hire. Ask your team lead.", and nothing is recorded. With every required field given (`--team`, `--role` or the fields of the proposal, `--reason`) the call is its own confirmation and the office provisions the agent. With words only, the HR lead drafts a proposal and the call returns the request in `drafting`; the draft arrives as a message, and `hr hire --id <request>` confirms it. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields. There is no approval and nothing waits for anyone | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
 
 ### 3.3 Messages, questions and approvals
 
@@ -416,24 +423,22 @@ command is used. The names are the ones the office's calls already have (`msg.se
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
 | `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `--kind handoff`, or `--kind announcement --reason <reason>`. Writing `@handle` in the text mentions that person or agent; the answer lists the mentions the office recorded, and any `@handle` that did not reach its employee. A hand-off or a mention sent to an idle agent starts a turn for it (C8) | [Chat UX](../specs/chat-ux.md) section 5; [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) | B6 |
-| `msg ask` | Asks one question, or up to eight at once, with the `ask_user` schema: `choice` (single or multiple), `yes_no` or `free_text`, each with an optional default; `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for the answer and returns `completed` with it, `timed_out`, or, when required, `suspended`. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there: it returns the question's ID at once and opens a watch on the responses, which the channel's watcher feeds back to the asker's inbox; `meta` says whether the question is watched, and why not when it is not (C9). An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
+| `msg ask` | Asks one question, or up to eight at once, with the `ask_user` schema: `choice` (single or multiple), `yes_no` or `free_text`, each with an optional default; `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for at most the short hold (90 seconds unless changed) and returns `completed` with the answer, `waiting` with the question's ID when the answer has not come yet, `timed_out` when the wait of the ask has ended, or, when required, `suspended` (ADR-0020 decisions 15 to 17). The ID is in every answer, so a repeated call with the same idempotency key never asks twice. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there: it returns the question's ID at once and opens a watch on the responses, which the channel's watcher feeds back to the asker's inbox; `meta` says whether the question is watched, and why not when it is not (C9). An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
 | `msg reply` | Replies in a thread (B6); answers an ask, naming each question and option by its ID (B7). A person and an agent answer the same way | Messaging; ADR-0020 | B6, B7 |
 | `msg accept` | `--id <message>`: accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
 | `msg withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
 | `msg inbox`, `msg read` | Everything addressed to the caller, unread first, each entry with the reason it is there (`addressed`, `mention`, `thread_reply`, `answer_candidate`) and, for an answer, the question it answers; `--because <reason>` and `--thread <id>` narrow it. One message with its thread. Nothing else from a channel is in the inbox | ADR-0003 decisions 10 and 11; [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) | B6 |
 | `msg list` | The messages of one channel, conversation or thread, when the agent chooses to read it | Messaging (`msg.list`) | B6 |
 | `msg done`, `msg defer` | `--id <message>`: the caller's own triage state. `msg done` on the caller's own channel question closes it and ends its watch | ADR-0003 decision 11; ADR-0024 | B6 |
-| `msg wait` | Holds until something arrives or the wait ends; `--thread <id>` waits for an answer to one question | [Agent sessions](agent-sessions.md) (holds are capped) | B6 |
+| `msg wait` | Holds for at most the short hold until something arrives; `--ask <id>` (or `--thread <id>`) waits for the answer to one question and returns `completed`, `waiting`, `timed_out` or `suspended` as `msg ask` does | [Agent sessions](agent-sessions.md) (holds are capped); ADR-0020 decision 15 | B6 |
 | `channel list`, `channel join`, `channel leave` | The channels the caller may see; joining and leaving a manual channel | Chat UX (CHAT-19) | B6 |
-| `channel summarize` | `--channel <channel> --about "<what is needed>"`: answers a question about a channel's recent messages with a short text and the IDs of the messages it rests on, so that the agent does not load the channel into its context. It reads exactly what `msg list` would return to the caller, at most the latest 200 messages, and its answer is marked as derived from channel content | [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) decision 16 | C9 |
+| `channel summarize` | `--channel <channel> --about "<what is needed>"`: answers a question about a channel's recent messages with a short text and the IDs of the messages it rests on, so that the agent does not load the channel into its context. It reads exactly what `msg list` would return to the caller, at most the latest 200 messages, and its answer is marked as derived from channel content | [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) decision 18 | C9 |
 
-**Approvals in milestone one.** An approval here is a record with its own rules.
-Milestone one has one, the hire: who approves is derived from the lead chain and the
-permission to hire, never named by the requester
-([ADR-0027](../adr/0027-a-lead-approves-a-hire.md)), and `hr hire` answers
-`gate_required` for it. For anything else an agent that needs a go-ahead asks a
-required yes-or-no question with `msg ask`; that is a question, not a recorded
-approval. `gate open` and `gate status` are in section 6.
+**Approvals in milestone one.** There are none. A hire is made by someone who may
+hire and is refused for everyone else
+([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). An agent that needs a go-ahead
+for anything asks a required yes-or-no question with `msg ask`; that is a question,
+not a recorded approval. `gate open` and `gate status` are in section 6.
 
 **How an agent gets the answer to a channel question.** It does not read the channel.
 It asks with `msg ask --to <channel>` and keeps the ID. A reply in the question's thread
@@ -532,7 +537,8 @@ The rules:
 | `task update` | Title, description, priority, effort | The same | B5 |
 | `task transition` | `--task <reference> --status <status>`, with `--reason` for `blocked`: changes the status, from the closed list | The same; [work items UX](../specs/work-items-ux.md) | B5 |
 | `task assign` | Changes the assigned team and assignee together, at a stated revision | [Assignment and history](organization-data/12-task-assignment-and-history.md) | B5 |
-| `task comment`, `task watch` | Adds a comment; starts or stops watching | Operational data | B5 |
+| `task comment`, `task watch` | Adds a public comment, read by everyone on the task; starts or stops watching | Operational data | B5 |
+| `task note add`, `task note list`, `task note update`, `task note remove` | The caller's private notes on a task (`--task`, `--text`, `--id`): its plan, reasoning and test notes. Read by the author and by people, never by another agent ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)) | [Operational data](organization-data/05-operational-data.md#private-notes-attached-to-tasks) | L8 |
 | `checklist add`, `checklist check`, `checklist update`, `checklist remove` | A task's checklist | Work items UX (CHK) | B5 |
 
 ### 3.5 Processes, standards and guidance
@@ -626,7 +632,7 @@ the table.
 | 1 | **K1** (new) | The shared library: the command table, the parser, the three ways to give input, the envelope and its three formats, `--fields`, `--limit` and `--cursor`, `--help`, `--schema`, exit codes, and the contract tests of section 8, run against a test office that is a stub inside the test process. No command of today is converted |
 | 1 | A5 | `agentic-org` uses the library for a signed-in person, with the first two rows on the real path: `org inspect` and one of the owner's writes, served by today's office |
 | 2 | B2, B3 | On the new store: `org inspect`, `team list`, `team inspect`, `agent inspect`, `person inspect`, the owner's commands for teams and people, `project list`, `project inspect`, `project create`. With the first write: `--dry-run`, `--idempotency-key`, `--if-match`, `--durable` |
-| 3 | C2 | `role list`, `role inspect`, `hr hire` and the `gate_required` outcome |
+| 3 | C2 | `role list`, `role inspect`, `hr hire` and its refusal for a caller who may not hire |
 | 3 | C3 | The binding and the launch variables of 2.8; `agent-os` refuses to run without a binding; `session inspect`, `grant list`; the short catalogue in the agent's instructions; the empty MCP configuration |
 | 3 | C5 | `process list`, `process inspect`, for processes and standards alike; `skill list`, `skill read` |
 | 4 | B6 | `msg send` with mentions read from `@handle`, `reply`, `accept`, `inbox` with its reasons, `read`, `list`, `done`, `defer`, `wait`; `channel list`, `join`, `leave`; `status set`, `clear`; `session attach`. Every `msg` command goes to the office; the file queue and the relay are deleted |
@@ -669,7 +675,7 @@ capability of `org-platform`, on both systems.
 | `process apply`, `block run` | A development process is content that agents read, with no engine: nothing applies a process or runs a block ([ADR-0026](../adr/0026-development-processes-are-content.md)). Its role-bound skills are read with `skill list` and `skill read` (3.5) | Not commands |
 | `artifact publish`, `artifact drift` | They are `doc issue` and `doc status`: an issued version of a document, and whether the tasks that realize it are finished (3.5a) | L13 |
 | `event emit`, `event subscribe` | A development process is content with no engine: nothing in the product acts on a stage or on an event ([ADR-0026](../adr/0026-development-processes-are-content.md) decision 2). An agent acts because it was addressed or assigned a task | Not commands |
-| `gate open`, `gate status` | An approval is a record with its own rules (3.3). A development process names no approver and grants nothing (ADR-0026 decision 1), so nothing declares a gate | Not commands. `hr hire` for a hire, a required yes-or-no ask for anything else |
+| `gate open`, `gate status` | An approval is a record with its own rules (3.3). A development process names no approver and grants nothing (ADR-0026 decision 1), so nothing declares a gate | Not commands. A hire has no approval; a required yes-or-no ask for anything else |
 | `worktree create`, `worktree cleanup` | The office does both, at task start and after closure (3.6) | Not commands |
 | `grant check` | It is `--dry-run` (2.6) | Not a command |
 | `session suspend`, `session resume` | They are outcomes the office performs (3.1) | Not commands |
@@ -725,7 +731,7 @@ capability of `org-platform`, on both systems.
 | CLI-11 | The launch catalogue is generated from the table and is at most 4 KiB; a snapshot of the catalogue and of every schema fails the build when a row changes without it, and is identical on macOS and Linux |
 | CLI-12 | The MCP configuration written for a run is empty, and a start that reports any MCP server is refused |
 | CLI-13 | `session attach` answers each line with the envelope the one-shot command prints |
-| CLI-14 | A required ask returns `completed` with an answer that arrives within its wait, and `suspended` when the wait ends without one; an ask that is not required returns `timed_out` with its default; a hire request returns `gate_required` at once; none blocks past its stated wait |
+| CLI-14 | A required ask returns `completed` with an answer that arrives within its wait, and `suspended` when the wait ends without one; an ask that is not required returns `timed_out` with its default; no single command holds its caller longer than the short hold, and returns `waiting` instead; `hr hire` by a caller who may not hire returns `not_authorized` at once |
 | CLI-15 | Each common command of 2.11 is measured by itself and inside `session attach`, on the reference Mac and on Linux, with the method recorded; a guard fails the build when one slows past its recorded bound |
 
 K1 makes CLI-1, 2, 3, 7, 8 and 11 pass against a test office. Each later increment

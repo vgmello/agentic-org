@@ -98,7 +98,7 @@ The employee's home team and identity are separate from the execution pool and
 model and from the office's local binding and readiness. A new employee without
 `execution.md` is not runnable; the first runtime or model is never chosen
 silently. The built-in HR lead is created with the organization in its top-level
-team; every other agent is created only by an approved hire. A failed HR execution
+team; every other agent is created only by a hire that someone who may hire has confirmed. A failed HR execution
 does not block hiring with the manual form. Creating configuration does not start a
 model turn.
 

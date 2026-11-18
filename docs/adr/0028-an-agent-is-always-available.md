@@ -6,6 +6,9 @@ fact that they go idle is an internal system thing. They should be always active
 whoever is calling them." Implementation pending. It extends
 [ADR-0023](0023-an-agents-ask-starts-a-turn.md), which lets one agent start another,
 and changes nothing else in it.
+[ADR-0030](0030-an-agent-works-while-it-has-work.md) adds that a start which cannot
+happen at once is kept and tried again, that an interrupted turn continues after a
+restart, and that a stalled turn is stopped.
 
 ## Context
 

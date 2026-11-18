@@ -371,7 +371,7 @@ completed snapshot bytes and actor-bound command outcomes. `outcome_unknown` is
 reconciled before any side effect repeats. A copied checkpoint cannot promote an office.
 
 Before launching an agent the office restores HQ's placement generation and its
-execution journals, binds credentials again and verifies old-process cleanup or an
+execution records from the acceptance journal, binds credentials again and verifies old-process cleanup or an
 explicit machine fence. A restored PID is never signalled without a matching ownership
 mark, generation and machine, boot and start identity. Deleting a cache does not prove
 the old process stopped; missing evidence means recovery is required. The host keeps

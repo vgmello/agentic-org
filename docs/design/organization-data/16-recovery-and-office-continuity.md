@@ -1,6 +1,6 @@
 # Recovery and office continuity data
 
-Status: **selected** data contract, revision 4. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
+Status: **selected** data contract, revision 4. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them. Those documents own their records; none owns a journal: the acceptance journal below is the only one in an office.
 
 ## What recovery means
 
@@ -129,7 +129,7 @@ account-bound receipts never enter public Git.
 
 Receipts cover shared domain commands only. Credentials, passwords, login/reset outcomes, private notes and their existence never enter these shared records: retain those in the host/private stores. `result_ref` resolves through the original command's actor/scope checks, never an unrestricted file path or public URL. `actor_id` is an employee ID, a person or an agent; a person who signs in, the organization owner included, is their own person record. A `system` actor has no employee ID. Accounts are bound by the host's authentication, never guessed from a display name. One command ID with another fingerprint or actor conflicts. Completed/rejected outcomes remain stable. An `outcome_unknown` command is reconciled before any side effect is repeated.
 
-The office message substrate currently shares an incarnation/sequence allocator between content and state operations; the selected stores must keep one allocator and one global high-water across the two stream categories, not create independent overlapping counters. Work uses its independent source stream. New incarnation after restore never resets/reuses an old incarnation's identity. Archive old high-water records even when payload retention expires. Persist command retention/expiry deliberately; do not delete a receipt while retries may still be valid. SQL blocks deletion/replacement of retained receipts and watermarks; an eventual reviewed expiry/archive procedure must preserve equivalent retry/tombstone evidence.
+The office message substrate currently shares an incarnation/sequence allocator between content and state operations; the selected stores keep one allocator and one high-water for messaging: content and state changes take their sequence from the single stream kind `message`, never from two counters that could give the same sequence twice. Work uses its independent source stream. New incarnation after restore never resets/reuses an old incarnation's identity. Archive old high-water records even when payload retention expires. Persist command retention/expiry deliberately; do not delete a receipt while retries may still be valid. SQL blocks deletion/replacement of retained receipts and watermarks; an eventual reviewed expiry/archive procedure must preserve equivalent retry/tombstone evidence.
 
 For selected task commands, protected receipt metadata also binds the stable
 account and issuing instance, command schema/method, checked organization/task/office
@@ -306,7 +306,7 @@ CREATE TABLE mutation_receipts (
 CREATE TABLE office_origin_streams (
   organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
-  stream_kind TEXT NOT NULL CHECK (stream_kind IN ('organization','work','message_content','message_state')),
+  stream_kind TEXT NOT NULL CHECK (stream_kind IN ('organization','work','message')),
   incarnation TEXT NOT NULL,
   high_water_sequence INTEGER NOT NULL CHECK (high_water_sequence>=0),
   journal_ref TEXT NOT NULL,

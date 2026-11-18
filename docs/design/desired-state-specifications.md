@@ -171,12 +171,12 @@ development process ([development process design](development-processes.md#5-two
    there is none, and may group them in milestones of that release. A task says which code links it is
    expected to touch.
 10. They decide which roles the tasks need. For each, the technical lead reads the role
-    (`agent-os role inspect`) and asks HR for the hire with a reason
+    (`agent-os role inspect`) and hires through HR with a reason
     ([development process design](development-processes.md#7-hiring-when-the-development-process-says-so)).
-    A lead with hiring power approves: the request goes up the lead chain until it
-    reaches one, and the technical lead's own request is enough when it leads the
-    project's team and has the Allow hiring permission
-    ([ADR-0027](../adr/0027-a-lead-approves-a-hire.md)). Tasks are assigned as the
+    It can do this when it leads the project's team, or a team above it, and has the
+    Allow hiring permission. Otherwise the hire is refused, and the technical lead
+    asks its own lead, who hires if it may. There is no approval
+    ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). Tasks are assigned as the
     hires complete.
 
 ### 3.4 Build
@@ -237,8 +237,8 @@ next time the same question comes up.
   tasks that realize each version, and the code links with any that are stale.
 - **A task:** the versions it realizes, each a link to that text.
 - **Needs you:** a confirmation before a version is issued, a technical decision the
-  lead cannot take from the standards, and a hire to approve when the project's lead
-  has no hiring power and the request reaches you. Nothing else asks for the person.
+  lead cannot take from the standards, and a message asking you to hire when the
+  project's lead may not hire and you may. Nothing else asks for the person.
 
 ## 6. The contract
 
@@ -278,7 +278,7 @@ These calls are general and belong to the documentation tree
 | DSS-7 | A task shows the versions it realizes; a version shows its tasks and is converged only when all are finished. |
 | DSS-8 | Issuing a new version of a document that has code links lists those links, with stale ones marked, to the lead planning the change. |
 | DSS-9 | An engineer's question to the technical lead is answered in the lead's existing session, and an answer that changes the specification results in a new issued version. |
-| DSS-10 | No specialist is hired before both layers have an issued version; each hire has the approval of a lead who may approve. |
+| DSS-10 | No specialist is hired before both layers have an issued version; each hire is made by someone who may hire into the project's team. |
 | DSS-11 | The whole flow runs with no code in the product that names DSS, a DSS role or a DSS kind (PKG-1). |
 | DSS-12 | The tasks that realize an issued version are all in a release of the project, with or without a milestone, and the version's page names the release; a realizing task in no release is marked. |
 

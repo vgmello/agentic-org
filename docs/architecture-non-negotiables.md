@@ -7,7 +7,7 @@ and recorded. It is short on purpose: everything not listed here is yours to dec
 ## What we are aiming for
 
 - **Fast.** What an agent does all day (reading its inbox, sending a message, creating
-  or updating a task) answers in single-digit milliseconds, with a target median of
+  a task or commenting on one) answers in single-digit milliseconds, with a target median of
   1 ms and 95th percentile of 2 ms for an office-local call in the long-running mode.
 - **Works alone.** An office keeps working when HQ or the network is unreachable.
 - **Reliable and light.** Nothing acknowledged is lost. Memory and disk use stay small.
@@ -58,7 +58,10 @@ These hold across every increment. Each names the document that owns its detail.
    place in the organization. Two records carry it, a team's lead appointment and a
    lead's permission to hire, and each is given only by someone already above
    the holder. No other field on a record grants authority, and nobody grants any to
-   themselves. ([ADR-0027](adr/0027-a-lead-approves-a-hire.md))
+   themselves. Only someone who may hire can hire; there is no approval step. Any
+   active employee changes tasks.
+   ([ADR-0029](adr/0029-only-who-may-hire-hires.md),
+   [ADR-0031](adr/0031-any-employee-changes-tasks.md))
 10. **Agents run headless, apart from the data.** The office starts each agent as a
     supervised child process with a private home. An agent never holds the
     organization's secrets, a credential that can push, or another agent's sign-in.
@@ -88,6 +91,21 @@ These hold across every increment. Each names the document that owns its detail.
 16. **The UI** is a static SvelteKit application built with shadcn-svelte and Bits UI.
     Licensed Tailwind Plus components never leave `apps/agentic-org-ui`.
 17. **Tests never touch a real organization's data.**
+
+### Speed
+
+18. **The commands an agent uses all day are fast** (owner, 2026-11-18). Reading the
+    inbox, sending a message, replying, and reading a task, creating one or commenting
+    on one (the list is in section 2.11 of the command design) answer in single-digit
+    milliseconds from one office-local store, with the targets
+    stated above. Nothing may be added to the path of these commands that makes them
+    wait: no second journal or commit point, no call to HQ, no model call, no wait
+    for the drive beyond their declared class. A command that is slow by nature
+    (a model call, the network, a full flush) is named as slow in the command
+    design. No command holds its caller for longer than one short hold, 90 seconds
+    unless changed: a longer wait returns and is continued by another call.
+    ([ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md),
+    [agent command line](design/agent-os-command-line.md) section 2.11)
 
 ## Who decides what
 

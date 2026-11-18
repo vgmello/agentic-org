@@ -42,6 +42,7 @@ erDiagram
         TEXT title_in_team "optional"
         TEXT offboarded_at "optional"
         INTEGER may_hire "required"
+        TEXT builtin_key "optional"
     }
     agent_placements {
         TEXT organization_id PK, FK "required"
@@ -60,11 +61,8 @@ erDiagram
         TEXT role_id FK "optional"
         TEXT proposal_json "required"
         TEXT reason "required"
-        TEXT approver_employee_id FK "optional"
-        TEXT escalations_json "required"
-        TEXT decided_by_employee_id FK "optional"
-        TEXT decided_at "optional"
-        TEXT decision_reason "optional"
+        TEXT confirmed_at "optional"
+        TEXT closed_reason "optional"
         TEXT employee_id FK "optional"
         TEXT failed_step "optional"
         TEXT created_at "required"
@@ -106,50 +104,49 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 | Change the organization's structure: create, rename, move or archive a team; add, place, move or deactivate a person; appoint a lead; create a project (and with it its team) | The organization's owner |
 | Invite a person to sign in, issue a new link, remove access | The owner or the administrator |
 | Hand over ownership | The owner |
-| Approve a hire | The nearest lead, going up the lead chain of the team the agent joins, whose `may_hire` is on; and always the owner ([below](#who-approves-a-hire)) |
+| Hire an agent into a team | The owner, or the administrator acting in the organization, into any team; an employee whose `may_hire` is on, into the teams it leads and the teams under them ([below](#who-may-hire)) |
 | Turn an employee's `may_hire` on or off | The owner, or a person above that employee in the hierarchy |
 | Pause or resume an agent, or give it an instruction it must follow | The owner, or a person above the agent in the hierarchy |
 | See a project's costs; set or change a task budget in it | The owner, or the project's manager: the lead of the project's accountable team. "Project manager" in the cost and budget documents means that position, not an access role |
 
 ## The HR lead and how agents are onboarded
 
-Every organization has a built-in **HR lead**, created with the organization ([document 01](01-organization-structure.md#creating-an-organization)) as an employee of kind `agent` in the organization's top-level team. It appears and is addressed as an agent: it has a handle, it can be messaged and assigned work, and its turns are recorded like any agent's. It is part of the product: its instructions and the code it calls ship with the product. It is not kept running; the office starts it only when it is called, as for any agent turn (document 11).
+Every organization has exactly one built-in **HR lead** (the employee whose `builtin_key` is `hr`; the schema allows one for an organization and never with `may_hire`), created with the organization ([document 01](01-organization-structure.md#creating-an-organization)) as an employee of kind `agent` in the organization's top-level team. It appears and is addressed as an agent: it has a handle, it can be messaged and assigned work, and its turns are recorded like any agent's. It is part of the product: its instructions and the code it calls ship with the product. It is not kept running; the office starts it only when it is called, as for any agent turn (document 11).
 
-An agent comes to exist in an organization only through the HR hire flow. HR drafts a hire proposal; a lead with the authority to approve it approves it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before approval no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal, its approval and who may approve are specified in [our organization in the app](../../specs/our-org-in-the-app.md). A request is a record of its own, `hire_requests` ([below](#hire-requests)), so that it survives a restart while it waits, shows who it is waiting for, and says afterwards who asked and who approved.
+An agent comes to exist in an organization only through the HR hire flow, started by someone who may hire ([below](#who-may-hire)). HR drafts a hire proposal, or the hirer fills in the fields; the hirer sees exactly what will be created and confirms it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before the hirer confirms, no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal and the hire flow are specified in [our organization in the app](../../specs/our-org-in-the-app.md). A hire is a record of its own, `hire_requests` ([below](#hire-requests)), so that it survives a restart while it is drafted or provisioned, and says afterwards who hired.
 
-### Who approves a hire
+### Who may hire
 
-A lead with hiring power approves a hire (owner, 2026-11-18). Hiring power is the `may_hire` permission, shown as **Allow hiring**.
+There is no approval of a hire (owner, 2026-11-18, [ADR-0029](../../adr/0029-only-who-may-hire-hires.md)). Only someone who may hire into a team can start a hire into it:
 
-- A hire request goes up the lead chain from the team the new agent joins: that team's lead, then the lead of the team above, and so on. It stops at the first lead whose `may_hire` is on, and that lead approves or rejects it.
-- A lead whose `may_hire` is off does not decide: the request passes on. That lead and the requester are told who it went to.
-- The organization's owner always has hiring power, and so does the server's administrator acting in the organization; neither needs the permission. A request that no lead can decide reaches the owner.
-- A lead who has the permission hires into its own team, and the teams under it, without a second approval: its request is recorded as requested and approved by it.
+- The organization's owner, and the server's administrator acting in the organization, into any team. Neither needs the permission.
+- An employee, person or agent, whose `may_hire` is on, into the teams it leads and the teams under them. `may_hire` is shown as **Allow hiring**.
 
-The permission is given lead by lead, not by position. In a director team with engineering teams under it, the lead of an engineering team can have it off while the lead of the director team has it on: a hire into the engineering team then goes up to the director team's lead. Hiring is into a team and needs no project.
+Everyone else is refused. `agent-os hr hire`, the app's Hire, and any direct message or `@hr` mention to the HR lead from a caller who may hire nowhere, all answer `not_authorized` with the hint "You don't have access to hire. Ask your team lead." Nothing is recorded, and no turn starts for the HR lead. An employee that needs a colleague asks its lead, as it asks for anything else; a lead that may not hire asks its own lead. No record travels up the chain.
 
-`may_hire` is a field of an employee's profile, for a person or an agent. A person's record is created with it on and an agent's with it off. Only the owner, or a person above the employee in the hierarchy, changes it; the change is attributed and kept in history like any profile change, and nobody sets their own. It has no effect on an employee who leads no team, and the built-in HR lead never has it. HR still drafts the proposal, product code still provisions, and the hiring limits a person sets in Settings apply to every lead.
+The permission is given lead by lead, not by position. In a director team with engineering teams under it, the lead of an engineering team can have it off while the lead of the director team has it on: the engineering lead then asks the director team's lead, who hires into the engineering team. Hiring is into a team and needs no project.
+
+`may_hire` is a field of an employee's profile, for a person or an agent. A person's record is created with it on and an agent's with it off. Only the owner, or a person above the employee in the hierarchy, changes it; the change is attributed and kept in history like any profile change, and nobody sets their own. It has no effect on an employee who leads no team, and the built-in HR lead never has it. An agent that has it hires without a person. HR still drafts the proposal and product code still provisions. Where a person sets a hiring limit in Settings, a hire above it is refused with the limit named, and only the owner can make it.
 
 With the team lead appointment, this is one of the two records that carry authority. Both are given only by someone already above the holder, and the office checks them on every call ([non-negotiables](../../architecture-non-negotiables.md), rule 9).
 
 ### Hire requests
 
-A hire request is written at HQ as `teams/<team-id>/.../hires/<request-id>.yaml`, under the team the new agent would join, and stays there after it is decided.
+A hire request is written at HQ as `teams/<team-id>/.../hires/<request-id>.yaml`, under the team the new agent would join, and stays there after it is finished. It is written only for a caller who may hire into that team; a refused call writes nothing.
 
 | Field | Meaning |
 | --- | --- |
-| `state` | `drafting` (HR is writing the proposal), `waiting` (for the approver), `approved`, `hiring` (provisioning), `hired`, `rejected`, `withdrawn` |
-| `requested_by_employee_id` | Who asked: a person or an agent |
-| `home_team_id`, `role_id` | The team the agent joins, and the role when the request names one |
+| `state` | `drafting` (HR or the hirer is writing the proposal), `hiring` (confirmed, product code is provisioning), `hired`, `withdrawn` (closed before it was hired), `failed` (provisioning stopped and the hire was given up) |
+| `requested_by_employee_id` | Who hired: a person or an agent |
+| `home_team_id`, `role_id` | The team the agent joins, and the role when the hire names one |
 | `proposal` | Name, handle, title, focus, reporting line, execution profile, model and office, as drafted |
-| `reason` | Why the hire is needed, in the requester's words |
-| `approver_employee_id` | The lead it is waiting for; null means the owner |
-| `escalations[]` | Each lead it passed, with the time and why it went on (no hiring power, deactivated, above a hiring limit) |
-| `decided_by_employee_id`, `decided_at`, `decision_reason` | Who approved or rejected it, when and why; a rejection needs a reason |
+| `reason` | Why the hire is needed, in the hirer's words |
+| `confirmed_at` | When the hirer confirmed the proposal; set in `hiring`, `hired` and `failed` |
+| `closed_reason` | Why it was withdrawn or failed; required in those two states |
 | `employee_id` | The agent it produced, set when the state is `hired` |
-| `failed_step` | The provisioning step that stopped, while approved and not yet hired |
+| `failed_step` | The provisioning step that stopped, while `hiring` or `failed` |
 
-"Requested by" and "approved by" on an agent's profile are read from its hire request. A lead with hiring power who asks for its own team is both. The built-in HR lead has no request.
+"Hired by" on an agent's profile is read from its hire request. The built-in HR lead has no request.
 
 ## Who an agent takes instructions from
 
@@ -206,7 +203,7 @@ The runtime team tree is the local office's projection of the organization-wide 
 | `agent_placements` | Current placement projection, rebuilt from HQ's durable execution placement/generation journal. Only agents are eligible. No office_id is silently added to an employee profile. |
 | `agent_execution_configs` | execution.md front matter/body; full table and routing contract are owned by document 11. |
 | `task_workspaces` | Current workspace-controller state; runtime-only office/employee/task/repository IDs and `worktree_path`. |
-| `hire_requests` | `hires/<request-id>.yaml` under the team the agent joins: same-named scalars; `proposal` as `proposal_json`, `escalations[]` as `escalations_json`. |
+| `hire_requests` | `hires/<request-id>.yaml` under the team the agent joins: same-named scalars; `proposal` as `proposal_json`. |
 
 ### Execution and remaining boundaries
 
@@ -241,6 +238,7 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   title_in_team TEXT,
   offboarded_at TEXT,
   may_hire INTEGER NOT NULL DEFAULT 0 CHECK (may_hire IN (0, 1)),
+  builtin_key TEXT CHECK (builtin_key IS NULL OR (builtin_key = 'hr' AND kind = 'agent' AND may_hire = 0)),
   CHECK (kind = 'agent' OR status <> 'paused'),
   CHECK (offboarded_at IS NULL OR status = 'inactive'),
   PRIMARY KEY (organization_id, id),
@@ -287,33 +285,27 @@ CREATE TABLE hire_requests (
   id TEXT NOT NULL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
-  state TEXT NOT NULL CHECK (state IN ('drafting', 'waiting', 'approved', 'hiring', 'hired', 'rejected', 'withdrawn')),
+  state TEXT NOT NULL CHECK (state IN ('drafting', 'hiring', 'hired', 'withdrawn', 'failed')),
   requested_by_employee_id TEXT NOT NULL,
   home_team_id TEXT NOT NULL,
   role_id TEXT,
   proposal_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(proposal_json) AND json_type(proposal_json) = 'object'),
   reason TEXT NOT NULL DEFAULT '',
-  approver_employee_id TEXT,
-  escalations_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(escalations_json) AND json_type(escalations_json) = 'array'),
-  decided_by_employee_id TEXT,
-  decided_at TEXT,
-  decision_reason TEXT,
+  confirmed_at TEXT,
+  closed_reason TEXT,
   employee_id TEXT,
   failed_step TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, employee_id),
-  CHECK ((state IN ('approved', 'hiring', 'hired', 'rejected')) = (decided_by_employee_id IS NOT NULL)),
-  CHECK ((decided_by_employee_id IS NULL) = (decided_at IS NULL)),
-  CHECK (state <> 'rejected' OR (decision_reason IS NOT NULL AND length(decision_reason) > 0)),
+  CHECK ((state IN ('hiring', 'hired', 'failed')) = (confirmed_at IS NOT NULL)),
   CHECK ((state = 'hired') = (employee_id IS NOT NULL)),
-  CHECK (state IN ('approved', 'hiring') OR failed_step IS NULL),
+  CHECK (state IN ('hiring', 'failed') OR failed_step IS NULL),
+  CHECK (state NOT IN ('withdrawn', 'failed') OR (closed_reason IS NOT NULL AND length(closed_reason) > 0)),
   FOREIGN KEY (organization_id, requested_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, home_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, role_id) REFERENCES roles(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, approver_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, decided_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 ```
@@ -322,7 +314,7 @@ Direct reporting must be acyclic within an organization, independently of the te
 
 ## Profile fields and employee state
 
-The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `offboarded_at`, and `may_hire` ([above](#who-approves-a-hire); a person's record is written with it true, an agent's with it false). Nullable text remains NULL if not known.
+The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `offboarded_at`, and `may_hire` ([above](#who-may-hire); a person's record is written with it true, an agent's with it false). Nullable text remains NULL if not known.
 
 **Employee state is one field.** `status` is a closed list: `active`, `paused`, `inactive`. `paused` applies to agents only: the agent keeps its employment, handle and history and is not started. `inactive` is a person who has left or an agent that has been offboarded; `offboarded_at` may be set only then, and the profile keeps its handle. There is no second state field. Whether an agent may run is one rule: its status is `active`, it has an enabled execution configuration ([document 11](11-model-profiles-and-agent-execution.md)), and no unreleased budget hold applies ([document 17](17-budgets-and-controls.md)). Holds stay separate records because they belong to a budget and a period, not to the employee.
 

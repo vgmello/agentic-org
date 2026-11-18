@@ -193,6 +193,7 @@ CREATE TABLE budget_notices (
   UNIQUE (organization_id,budget_id,period_id,policy_revision,stage,threshold),
   CHECK ((recipient_kind='employee')=(recipient_id IS NOT NULL)),
   CHECK (threshold=100 OR kind='neutral'),
+  CHECK (threshold=100 OR stage='base'),
   FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,recipient_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
