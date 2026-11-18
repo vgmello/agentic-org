@@ -126,10 +126,17 @@ pub fn rebuild_equivalence<E, S, G>(
     E: Engine + Dump,
     S: FamilyScript<E>,
 {
+    let (mut runs, mut fired) = (0, 0);
     for seed in seeds {
         without_a_crash(open_engine, script, seed);
-        with_a_crash(open_engine, script, seed);
+        fired += usize::from(with_a_crash(open_engine, script, seed));
+        runs += 1;
     }
+    // A point armed past the end of a run never acts; most must.
+    assert!(
+        fired * 2 >= runs,
+        "only {fired} of {runs} armed crash points acted"
+    );
 }
 
 fn without_a_crash<E, S, G>(open_engine: &dyn Fn() -> (Arc<E>, G), script: &S, seed: u64)
@@ -207,7 +214,7 @@ where
     );
 }
 
-fn with_a_crash<E, S, G>(open_engine: &dyn Fn() -> (Arc<E>, G), script: &S, seed: u64)
+fn with_a_crash<E, S, G>(open_engine: &dyn Fn() -> (Arc<E>, G), script: &S, seed: u64) -> bool
 where
     E: Engine + Dump,
     S: FamilyScript<E>,
@@ -230,7 +237,7 @@ where
     let fresh_projection = rng.chance(3);
     let context =
         format!("seed {seed}: {point:?}, power cut {power_cut}, fresh {fresh_projection}");
-    run.faults.arm(point, rng.between(1, 7) as usize);
+    run.faults.arm(point, rng.between(1, 4) as usize);
 
     // (spec, reply, asked durable): what was acknowledged before the crash.
     let mut acknowledged: Vec<(S::Spec, Reply, bool)> = Vec::new();
@@ -246,6 +253,7 @@ where
             }
         }
     }
+    let fired = run.faults.fired();
     // The process dies here at the latest. Both threads are joined before the next one.
     run.faults.kill();
     drop(store);
@@ -281,4 +289,5 @@ where
         reopened,
         "{context}: rebuild differs after the crash"
     );
+    fired
 }

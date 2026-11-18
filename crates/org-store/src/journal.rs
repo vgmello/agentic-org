@@ -728,8 +728,8 @@ impl Journal {
         let mut segments = VecDeque::new();
         let mut truncated = None;
         let mut active = None;
-        let count = firsts.len();
-        for (index, first) in firsts.iter().copied().enumerate() {
+        let mut kept: Vec<(PathBuf, Arc<dyn DiskFile>)> = Vec::new();
+        for first in firsts.iter().copied() {
             let path = segments_dir.join(segment_name(first));
             if truncated.is_some() {
                 // Everything after a torn entry was never acknowledged durable.
@@ -758,17 +758,17 @@ impl Journal {
                         Ok(offset)
                     }
                 })?;
-            let last = index + 1 == count || truncated.is_some();
-            if last {
-                let file = disk
-                    .open_append(&path)
-                    .map_err(|e| io_error(&path, "open", &e))?;
-                if (good as u64) < bytes.len() as u64 {
-                    file.truncate(good as u64)
-                        .map_err(|e| io_error(&path, "truncate", &e))?;
-                }
-                active = Some(file);
+            // A rolled segment's tail may never have been flushed by the process that
+            // wrote it: every kept segment is opened here and flushed below.
+            let file = disk
+                .open_append(&path)
+                .map_err(|e| io_error(&path, "open", &e))?;
+            if good < bytes.len() {
+                file.truncate(good as u64)
+                    .map_err(|e| io_error(&path, "truncate", &e))?;
             }
+            kept.push((path.clone(), Arc::clone(&file)));
+            active = Some(file);
             segments.push_back(Segment {
                 first,
                 path,
@@ -800,9 +800,8 @@ impl Journal {
         // Make what was kept durable before anything is built on it.
         disk.sync_dir(&segments_dir)
             .map_err(|e| flush_error(&segments_dir, &e))?;
-        if let (Some(file), Some(segment)) = (&active, segments.back()) {
-            file.flush_full()
-                .map_err(|e| flush_error(&segment.path, &e))?;
+        for (path, file) in &kept {
+            file.flush_full().map_err(|e| flush_error(path, &e))?;
         }
         let materialized = materialized.min(point.ordinal);
         let retained = entries

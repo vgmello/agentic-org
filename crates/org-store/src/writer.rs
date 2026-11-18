@@ -108,9 +108,17 @@ pub(crate) fn run<E: Engine>(core: Arc<Core<E>>, jobs: Receiver<Job<E>>, sequenc
         sequences,
         overlay: Overlay::new(),
     };
+    // Set on every exit, a panic outside a decision included, so closing never waits for
+    // a writer that is gone.
+    struct Done<E: Engine>(Arc<Core<E>>);
+    impl<E: Engine> Drop for Done<E> {
+        fn drop(&mut self) {
+            self.0.flow().writer_done = true;
+            self.0.wake.notify_all();
+        }
+    }
+    let _done = Done(Arc::clone(&writer.core));
     writer.serve();
-    writer.core.flow().writer_done = true;
-    writer.core.wake.notify_all();
 }
 
 impl<E: Engine> Writer<E> {
@@ -228,7 +236,7 @@ impl<E: Engine> Writer<E> {
             return ControlFlow::Continue(());
         }
         // The commit point. One write for the whole batch.
-        if let Err(error) = core.journal.append(&attempt.entries) {
+        if let Err(error) = core.append(&attempt.entries) {
             drop(tx);
             let failure = StoreError::Append(error.to_string());
             if matches!(error, JournalError::Broken { .. }) {
@@ -239,7 +247,6 @@ impl<E: Engine> Writer<E> {
             return ControlFlow::Continue(());
         }
         self.sequences = attempt.sequences;
-        core.appended(&attempt.entries);
         if core.hooks.crash_at(Site::AfterAppend) {
             return ControlFlow::Break(());
         }

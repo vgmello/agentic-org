@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::{
-    change::{DurablePath, Sha256, Tree},
+    change::{DurablePath, Id, Sha256, Tree},
     engine::{CorePort, Cursor, Engine, Projector},
     error::{ProjectionError, StoreError},
     files::{FileVersion, Files},
@@ -15,15 +15,26 @@ use crate::{
 /// The families of one store, with the core's receipt family in front.
 pub(crate) struct Projectors<E: Engine> {
     families: Vec<Arc<dyn Projector<E>>>,
+    /// The prefixes a rebuild walks. A file outside them would never be projected again.
+    prefixes: Vec<DurablePath>,
 }
 
 impl<E: Engine> Projectors<E> {
-    pub(crate) fn new(families: Vec<Arc<dyn Projector<E>>>) -> Self {
-        Self { families }
+    pub(crate) fn new(families: Vec<Arc<dyn Projector<E>>>, office: &Id) -> Self {
+        Self {
+            families,
+            prefixes: projected(office.as_str()),
+        }
     }
 
     /// Whether exactly one projector owns `path`.
     pub(crate) fn owned(&self, path: &DurablePath) -> Result<(), ProjectionError> {
+        if !self.prefixes.iter().any(|prefix| path.is_under(prefix)) {
+            return Err(ProjectionError::new(
+                path,
+                "outside the trees a rebuild projects",
+            ));
+        }
         let receipts = usize::from(ReceiptProjector::owns_path(path));
         match receipts + self.families.iter().filter(|f| f.owns(path)).count() {
             1 => Ok(()),
@@ -118,7 +129,7 @@ pub fn rebuild<E: Engine>(
     engine: &E,
     families: &[Arc<dyn Projector<E>>],
 ) -> Result<RebuildReport, StoreError> {
-    let projectors = Projectors::new(families.to_vec());
+    let projectors = Projectors::new(families.to_vec(), &journal.identity().office_id);
     rebuild_with(files, journal, engine, &projectors, &NoHooks)
 }
 
@@ -138,7 +149,7 @@ pub(crate) fn rebuild_with<E: Engine>(
             "a rebuild needs every journal entry flushed and materialized".into(),
         ));
     }
-    let prefixes = projected(journal.identity().office_id.as_str());
+    let prefixes = &projectors.prefixes;
     let mut report = RebuildReport {
         files: 0,
         skipped: Vec::new(),
@@ -147,7 +158,7 @@ pub(crate) fn rebuild_with<E: Engine>(
     engine.replace(&mut |tx| {
         report.files = 0;
         report.skipped.clear();
-        for prefix in &prefixes {
+        for prefix in prefixes {
             for path in files.walk(prefix)? {
                 let Some(bytes) = files.read(&path)? else {
                     return Err(ProjectionError::new(

@@ -249,15 +249,21 @@ impl<E: Engine> Core<E> {
         self.wake.notify_all();
     }
 
-    /// Accounts for a batch that is now in the journal.
-    pub(crate) fn appended(&self, entries: &[Arc<Entry>]) {
+    /// Appends a batch and accounts for it under one lock, so the flusher never sees the
+    /// journal ahead of the accounting: a flush that covers these entries moves them on.
+    pub(crate) fn append(
+        &self,
+        entries: &[Arc<Entry>],
+    ) -> Result<(), crate::journal::JournalError> {
         let mut flow = self.flow();
+        self.journal.append(entries)?;
         for entry in entries {
             let bytes = entry.stored().len() as u64;
             flow.unflushed.push_back((entry.ordinal(), bytes));
             flow.unflushed_bytes += bytes;
         }
         self.wake.notify_all();
+        Ok(())
     }
 
     /// Applies appended entries to the projection in a transaction of their own.
@@ -327,7 +333,7 @@ impl<E: Engine> Store<E> {
             Opening::Existing => Journal::open_on(disk, &durable, &identity, custody.as_ref())?,
         };
         journal.set_segment_bytes(limits.segment_bytes);
-        let projectors = Projectors::new(projectors);
+        let projectors = Projectors::new(projectors, &identity.office_id);
         if let Some(through) = materialize(&files, &journal)? {
             journal.set_materialized(through)?;
         }

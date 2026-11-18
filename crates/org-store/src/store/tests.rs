@@ -805,3 +805,53 @@ fn a_second_creation_a_relative_root_and_a_failed_commit_check_are_refused() {
     office.put(&store, "x", Ack::Committed).unwrap();
     assert_eq!(cursor(&store).ordinal, 1);
 }
+
+/// A segment rolled just before a kill was never flushed by the process that wrote it.
+/// Opening flushes every segment it keeps before it confirms the head to the host.
+#[test]
+fn opening_makes_every_kept_segment_durable_before_it_confirms_the_head() {
+    let mut office = Office::new();
+    office.limits.segment_bytes = 1;
+    let store = office.create();
+    office.put_as(&store, 1, "a", Ack::Committed).unwrap();
+    office.put_as(&store, 2, "b", Ack::Committed).unwrap();
+    office.faults.kill();
+    drop(store);
+
+    let store = office.reopen();
+    assert_eq!(office.custody.head().unwrap().ordinal, 2);
+    drop(store);
+    office.faults.power_cut().unwrap();
+    let store = office.reopen();
+    assert_eq!(cursor(&store).ordinal, 2);
+    assert!(office.hash(&store, "a").is_some() && office.hash(&store, "b").is_some());
+    // A path no rebuild walks is refused before it is accepted.
+    let elsewhere = store.submit(None, false, |_| {
+        let path = DurablePath::parse("local/offices/another-office/probe/x").unwrap();
+        Ok(Change::new(Ack::Committed).put(path, b"x".to_vec()))
+    });
+    assert!(matches!(elsewhere, Err(StoreError::Projection(_))));
+}
+
+/// The flusher may flush a batch the moment it is appended; the accounting must still
+/// drain, or closing would never return.
+#[test]
+fn closing_returns_after_many_small_batches_raced_against_the_flusher() {
+    let office = Office::new();
+    let store = office.create();
+    for n in 0..200u64 {
+        let ack = if n.is_multiple_of(3) {
+            Ack::Durable
+        } else {
+            Ack::Committed
+        };
+        office.put(&store, "x", ack).unwrap();
+        if n.is_multiple_of(7) {
+            store.sync().unwrap();
+        }
+    }
+    store.sync().unwrap();
+    let status = store.status();
+    assert_eq!((status.flushed, status.materialized), (200, 200));
+    Arc::try_unwrap(store).ok().unwrap().close().unwrap();
+}
