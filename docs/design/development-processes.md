@@ -299,7 +299,7 @@ sections in its instructions:
 2. **The project's development process:** its name and summary, its stages, the
    agent's role in it, and for each of the agent's skills the title and the
    when-to-use line. The body of a skill is retrieved with
-   `agent-os skill read <key>`. The section says that a non-overridable organization
+   `agent-os skill read --name <key>`. The section says that a non-overridable organization
    process or standard is always followed, and that the skills may adjust the
    organization's other guidance for this project.
 
@@ -322,7 +322,7 @@ sections in its instructions:
 A skill tells a lead when to staff the project and how to decide which roles it needs.
 The lead then uses the product's hiring, as any agent may:
 
-1. **Inspect the role.** `agent-os role list` and `agent-os role inspect <key>` print the
+1. **Inspect the role.** `agent-os role list` and `agent-os role inspect --role <key>` print the
    role's definition and what a hire proposal needs: the required home team, the
    optional title, focus and reporting line, and the execution profiles available, with
    which are ready on which office.
