@@ -60,13 +60,7 @@ fn selected_pin_checks_actual_child_kernel_hash_and_never_accepts_debug_skip() {
         .unwrap_err();
     assert!(changed.why(&refusal).contains("changed"), "{refusal:?}");
     // The same child as a handle that outlives it: once it is gone, nothing about it passes.
-    let gone = unowned_child(
-        pid,
-        Some(Peer {
-            macos_audit_token: token,
-        }),
-    )
-    .unwrap();
+    let gone = unowned_child(pid, Some(Peer::from_macos_audit_token(token))).unwrap();
     drop(child); // kill and reap this generated suspended test image
     assert!(admission(&pinned).readmit(&gone).is_err());
     assert!(admission(&pinned).recheck(&gone).is_err());

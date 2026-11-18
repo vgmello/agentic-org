@@ -11,8 +11,8 @@ use org_platform::Refused;
 
 use super::{
     admission, is_loader_variable, native_peers, own_image, own_signing, peer, static_images,
-    ChildEnv, ExpectedImage, ImageRefusal, NotTheChild, OwnImageError, Peer, Signing, SigningRule,
-    SpawnRefused,
+    AdmissionError, ChildEnv, ExpectedImage, ImageRefusal, NotTheChild, OwnImageError, Peer,
+    Signing, SigningRule, SpawnRefused,
 };
 
 /// Plain test data: one required flag bit and three rejected entitlements.
@@ -187,6 +187,21 @@ fn a_refused_spawn_and_a_wrong_reader_are_classified_by_type() {
 }
 
 #[test]
+fn a_peer_is_built_from_one_systems_facts_and_holds_no_other() {
+    let mac = Peer::from_macos_audit_token([7; 32]);
+    assert_eq!(mac.macos_audit_token, [7; 32]);
+    assert_eq!((mac.uid, mac.pid), (None, None));
+    let linux = Peer::from_linux_credentials(1000, 42);
+    assert_eq!((linux.uid, linux.pid), (Some(1000), Some(42)));
+    // No audit token is invented for it.
+    assert_eq!(linux.macos_audit_token, [0; 32]);
+    assert_ne!(mac, linux);
+    assert_eq!(linux, Peer::from_linux_credentials(1000, 42));
+    assert_ne!(linux, Peer::from_linux_credentials(1000, 43));
+    assert_ne!(linux, Peer::from_linux_credentials(1001, 42));
+}
+
+#[test]
 fn a_scripted_refusal_reads_as_the_tests_own_words() {
     assert_eq!(
         ImageRefusal::Scripted("refused by the test".into()).to_string(),
@@ -196,12 +211,10 @@ fn a_scripted_refusal_reads_as_the_tests_own_words() {
 
 #[test]
 fn the_own_image_is_never_admitted_without_a_pin_that_matches() {
-    // No pin: a mismatch where the system can read the loaded image, its refusal where
-    // it cannot. Never a pass.
+    // No pin: a mismatch where the system can read its own image (only a system with
+    // an adapter can), its refusal where it cannot. Never a pass.
     match own_image(&development()) {
-        Err(OwnImageError::Mismatch) => {
-            assert!(org_platform::image::own_loaded_cdhash().is_ok());
-        }
+        Err(OwnImageError::Mismatch) => native_peers().unwrap(),
         Err(OwnImageError::Unsupported(refused)) => {
             let Refused::Unsupported { capability, .. } = refused;
             assert_eq!(capability, "image identity");
@@ -226,15 +239,65 @@ fn the_own_image_is_never_admitted_without_a_pin_that_matches() {
     }
 }
 
+/// The refusal inside `error`, if the system refused for want of an adapter.
+fn refused_by(error: &io::Error) -> Option<&Refused> {
+    error.get_ref().and_then(|source| source.downcast_ref())
+}
+
+#[test]
+fn a_failed_admission_keeps_its_kind_as_an_io_error() {
+    let unsupported = io::Error::from(AdmissionError::from(super::refusal()));
+    assert_eq!(unsupported.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(refused_by(&unsupported), Some(&super::refusal()));
+    let image = io::Error::from(AdmissionError::from(ImageRefusal::DigestMismatch));
+    assert_eq!(
+        image
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<ImageRefusal>()),
+        Some(&ImageRefusal::DigestMismatch)
+    );
+    assert!(refused_by(&image).is_none());
+    let system = io::Error::from(AdmissionError::from(io::Error::from_raw_os_error(
+        libc::EACCES,
+    )));
+    assert_eq!(system.raw_os_error(), Some(libc::EACCES));
+    // Each reads as its cause, and the refusals of an image name no path.
+    assert_eq!(
+        AdmissionError::from(ImageRefusal::Unpinned).to_string(),
+        "the image was refused: a release image needs a SHA-256 digest"
+    );
+    assert_eq!(
+        ImageRefusal::UnsafeFile("is writable by its group or by others").to_string(),
+        "the pinned image file is writable by its group or by others"
+    );
+    assert_eq!(
+        AdmissionError::from(super::refusal()).to_string(),
+        super::refusal().to_string()
+    );
+}
+
 /// A refusing build is one whose adapter makes no admission. There every public entry
 /// must refuse or answer "no", before it does anything.
 #[test]
 fn on_a_refusing_build_every_public_entry_refuses_first() {
-    let Some(refused) = admission(development()).err() else {
-        // A real adapter: the least demanding image gets an admission, and the system
-        // identifies peers and checks static images.
+    let Some(refused) = admission(development())
+        .err()
+        .and_then(|error| match error {
+            AdmissionError::Unsupported(refused) => Some(refused),
+            _ => None,
+        })
+    else {
+        // A real adapter: whether or not it admits this image, it never answers with
+        // the refusal of a missing adapter, and it identifies peers. Static images
+        // are checked exactly where a release's publisher is read from a code
+        // signature.
         native_peers().unwrap();
-        assert!(static_images().is_ok());
+        let signed_releases = org_platform::image::release_target()
+            .is_ok_and(|target| target.platform == org_platform::image::ReleasePlatform::Macos);
+        assert_eq!(static_images().is_ok(), signed_releases);
+        if !signed_releases {
+            assert_eq!(static_images().err(), Some(super::refusal()));
+        }
         return;
     };
     assert_eq!(refused, super::refusal());
@@ -254,21 +317,20 @@ fn on_a_refusing_build_every_public_entry_refuses_first() {
         super::peer_executable(&a).unwrap_err().kind(),
         io::ErrorKind::Unsupported
     );
-    let any = Peer {
-        macos_audit_token: [7; 32],
-    };
+    let any = Peer::from_macos_audit_token([7; 32]);
     assert!(!any.satisfies("anchor apple", &RULE));
     assert!(own_signing().is_none());
-    // The test hooks refuse too: no scripted admission, no stand-in child.
-    use super::test_support::{child_peer, scripted_admission, unowned_child};
-    assert_eq!(
-        scripted_admission(development(), std::sync::Arc::new(|_, _| Ok(None))).err(),
-        Some(super::refusal())
-    );
-    assert_eq!(
-        unowned_child(std::process::id(), None).err(),
-        Some(super::refusal())
-    );
+    // The test hooks refuse too: no scripted admission, none by path, no stand-in child.
+    use super::test_support::{child_peer, path_admission, scripted_admission, unowned_child};
+    let refuses = |error: Option<io::Error>| {
+        let error = error.expect("a test hook made an admission or a child");
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(refused_by(&error), Some(&super::refusal()));
+    };
+    let scripted = scripted_admission(development(), std::sync::Arc::new(|_, _| Ok(None)));
+    refuses(scripted.err().map(io::Error::from));
+    refuses(path_admission(development()).err().map(io::Error::from));
+    refuses(unowned_child(std::process::id(), None).err());
     assert_eq!(
         child_peer(std::process::id()).unwrap_err().kind(),
         io::ErrorKind::Unsupported

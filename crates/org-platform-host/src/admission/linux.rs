@@ -7,5 +7,5 @@ pub(super) use super::refused::child_peer;
 #[cfg(debug_assertions)]
 pub(super) use super::refused::peer_executable;
 pub(super) use super::refused::{
-    native_peers, own_signing, peer, peer_satisfies, Admission, Child, StaticImages,
+    native_peers, own_image, own_signing, peer, peer_satisfies, Admission, Child, StaticImages,
 };

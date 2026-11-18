@@ -257,8 +257,7 @@ impl ServerCheck {
             return Ok(org_platform_host::testing::admission::scripted_admission(
                 expected,
                 std::sync::Arc::new(move |step, pid| {
-                    script(step, pid)
-                        .map(|token| token.map(|macos_audit_token| Peer { macos_audit_token }))
+                    script(step, pid).map(|token| token.map(Peer::from_macos_audit_token))
                 }),
             )?);
         }

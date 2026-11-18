@@ -300,13 +300,7 @@ fn a_real_child_that_isnt_the_expected_image_is_refused() {
     let token = spawn::audit_token_of_child(running.id()).unwrap();
     let met =
         code::code_for_audit_token(&token).is_some_and(|code| code::meets(&code, "anchor apple"));
-    let admitted = Child::unowned(
-        running.id(),
-        Some(Peer {
-            macos_audit_token: token,
-        }),
-    )
-    .unwrap();
+    let admitted = Child::unowned(running.id(), Some(Peer::from_macos_audit_token(token))).unwrap();
     let still = check.recheck(&admitted);
     running.kill().unwrap();
     running.wait().unwrap();
@@ -359,27 +353,21 @@ fn a_pin_checks_the_actual_child_kernel_hash_and_never_accepts_an_unidentified_c
     let mut other = token;
     other[0] ^= 1;
     let changed = scripted(pin(expected), move |step, _| {
-        Ok(Some(Peer {
-            macos_audit_token: if step == Step::Still { other } else { token },
-        }))
+        Ok(Some(Peer::from_macos_audit_token(if step == Step::Still {
+            other
+        } else {
+            token
+        })))
     });
     assert_eq!(changed.recheck(&held.child.0), Err(ImageRefusal::Changed));
     assert_eq!(changed.readmit(&held.child.0), Ok(()));
     // A second admission that names another image than the first is refused.
     let renamed = scripted(pin(expected), move |_, _| {
-        Ok(Some(Peer {
-            macos_audit_token: other,
-        }))
+        Ok(Some(Peer::from_macos_audit_token(other)))
     });
     assert!(renamed.readmit(&held.child.0).is_err());
     // Once the child is gone, nothing about it passes.
-    let gone = Child::unowned(
-        held.child.id(),
-        Some(Peer {
-            macos_audit_token: token,
-        }),
-    )
-    .unwrap();
+    let gone = Child::unowned(held.child.id(), Some(Peer::from_macos_audit_token(token))).unwrap();
     drop(held); // kill and reap this generated suspended test image
     assert!(pinned.readmit(&gone).is_err());
     assert!(pinned.recheck(&gone).is_err());
@@ -422,13 +410,8 @@ fn a_scripted_check_is_asked_at_each_step_and_its_refusals_are_kept() {
     unidentified.recheck(&held.child.0).unwrap();
     // Identified: a re-check without a token, with another token, or refused.
     let token = spawn::audit_token_of_child(held.child.id()).unwrap();
-    let identified = Child::unowned(
-        held.child.id(),
-        Some(Peer {
-            macos_audit_token: token,
-        }),
-    )
-    .unwrap();
+    let identified =
+        Child::unowned(held.child.id(), Some(Peer::from_macos_audit_token(token))).unwrap();
     let answering = |answer: Result<Option<Peer>, String>| {
         scripted(development("/bin/sleep"), move |_, _| answer.clone())
     };
@@ -441,25 +424,16 @@ fn a_scripted_check_is_asked_at_each_step_and_its_refusals_are_kept() {
         Err(ImageRefusal::Identity("gone".into()))
     );
     assert_eq!(
-        answering(Ok(Some(Peer {
-            macos_audit_token: [9; 32]
-        })))
-        .recheck(&identified),
+        answering(Ok(Some(Peer::from_macos_audit_token([9; 32])))).recheck(&identified),
         Err(ImageRefusal::Changed)
     );
     assert_eq!(
-        answering(Ok(Some(Peer {
-            macos_audit_token: token
-        })))
-        .recheck(&identified),
+        answering(Ok(Some(Peer::from_macos_audit_token(token)))).recheck(&identified),
         Ok(())
     );
     // A re-admission that now identifies a child admitted without an identity is refused.
     assert_eq!(
-        answering(Ok(Some(Peer {
-            macos_audit_token: token
-        })))
-        .readmit(&held.child.0),
+        answering(Ok(Some(Peer::from_macos_audit_token(token)))).readmit(&held.child.0),
         Err(ImageRefusal::Readmitted)
     );
 }
@@ -473,11 +447,7 @@ fn the_reader_is_the_child_only_by_pid_and_admitted_token() {
     let token = audit_token(&a).unwrap();
     let any = admission(development("/bin/sh"));
     let child = |pid: u32, admitted: Option<AuditToken>| {
-        Child::unowned(
-            pid,
-            admitted.map(|macos_audit_token| Peer { macos_audit_token }),
-        )
-        .unwrap()
+        Child::unowned(pid, admitted.map(Peer::from_macos_audit_token)).unwrap()
     };
     // This process holds both ends: it is the peer of its own connection.
     any.verify_reader(&child(me, None), &a).unwrap();

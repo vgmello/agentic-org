@@ -182,6 +182,12 @@ pub enum ImageRefusal {
     Changed,
     /// A second admission of the same child gave another identity than the first.
     Readmitted,
+    /// The image names no digest to check its bytes against, and it is not a
+    /// development image (a system that executes verified bytes).
+    Unpinned,
+    /// The pinned file is not one whose bytes may be executed: the fixed reason (its
+    /// kind, its owner or its mode). Never a path.
+    UnsafeFile(&'static str),
     /// A scripted check refused, in the test's own words (`test-support`).
     #[cfg(any(test, feature = "test-support"))]
     Scripted(String),
@@ -201,6 +207,8 @@ impl fmt::Display for ImageRefusal {
             Self::DigestMismatch => f.write_str("the loaded image is not the pinned image"),
             Self::Changed => f.write_str("the child replaced its image after it was checked"),
             Self::Readmitted => f.write_str("the child's identity changed between two admissions"),
+            Self::Unpinned => f.write_str("a release image needs a SHA-256 digest"),
+            Self::UnsafeFile(why) => write!(f, "the pinned image file {why}"),
             #[cfg(any(test, feature = "test-support"))]
             Self::Scripted(why) => f.write_str(why),
         }
@@ -360,13 +368,91 @@ impl Held {
 /// Starts and checks the children that must be one [`ExpectedImage`].
 pub struct Admission(native::Admission);
 
-/// The admission for `expected`, or the `process admission` refusal on a system
-/// without an adapter. Nothing is started and nothing is read.
-pub fn admission(expected: ExpectedImage) -> Result<Admission, Refused> {
-    native::Admission::new(expected).map(Admission)
+/// Why no admission was made ([`admission`]). Nothing was started.
+#[derive(Debug)]
+pub enum AdmissionError {
+    /// This system has no admission adapter.
+    Unsupported(Refused),
+    /// A system that executes verified bytes read the image and will not start it.
+    Image(ImageRefusal),
+    /// A step of preparing the image failed. The error names the system call.
+    System(io::Error),
+}
+
+impl fmt::Display for AdmissionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported(refused) => refused.fmt(f),
+            Self::Image(refusal) => write!(f, "the image was refused: {refusal}"),
+            Self::System(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for AdmissionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unsupported(refused) => Some(refused),
+            Self::Image(refusal) => Some(refusal),
+            Self::System(error) => Some(error),
+        }
+    }
+}
+
+impl From<Refused> for AdmissionError {
+    fn from(refused: Refused) -> Self {
+        Self::Unsupported(refused)
+    }
+}
+
+impl From<ImageRefusal> for AdmissionError {
+    fn from(refusal: ImageRefusal) -> Self {
+        Self::Image(refusal)
+    }
+}
+
+impl From<io::Error> for AdmissionError {
+    fn from(error: io::Error) -> Self {
+        Self::System(error)
+    }
+}
+
+/// For a caller whose own errors are `io::Error`s: a missing adapter stays an
+/// [`io::ErrorKind::Unsupported`] error whose source is the [`Refused`], a refused image
+/// is an error whose source is the [`ImageRefusal`], and the system's error is itself.
+impl From<AdmissionError> for io::Error {
+    fn from(error: AdmissionError) -> Self {
+        match error {
+            AdmissionError::Unsupported(refused) => refused.into(),
+            AdmissionError::Image(refusal) => io::Error::other(refusal),
+            AdmissionError::System(error) => error,
+        }
+    }
+}
+
+/// The admission for `expected`, or why there is none. Nothing is started.
+///
+/// macOS reads nothing here: a child's image is checked when the child is started. A
+/// system that executes verified bytes (GNU/Linux) reads and checks the image here,
+/// once: every child of the admission then runs exactly the bytes read now.
+pub fn admission(expected: ExpectedImage) -> Result<Admission, AdmissionError> {
+    native::Admission::new(expected)
+        .map(Admission)
+        .map_err(AdmissionError::from)
 }
 
 impl Admission {
+    /// The SHA-256 of the bytes every child of this admission executes, on a system
+    /// that executes verified bytes: the adapter read exactly these bytes when the
+    /// admission was built and starts nothing else. When the expected image named a
+    /// digest, this is that digest. When it named none (a development image), this is
+    /// the digest the adapter recorded, and no publisher vouches for it. `None` where
+    /// the system admits a child by other means (a code signature checked on the
+    /// loaded image).
+    pub fn image_sha256(&self) -> Option<[u8; 32]> {
+        self.0.image_sha256()
+    }
+
     /// Start the expected program with `args`, exactly the environment `env` and `/`
     /// as its working directory, with its standard input, output and error on new
     /// pipes and no other descriptor of this process; check its image; let it run.
@@ -411,15 +497,47 @@ impl Admission {
 
 /// The process at the other end of a connected socket, as the system reports it at
 /// one moment. Plain facts: compare two of them, or ask what code one names.
+///
+/// Each system fills the facts it has. Build one with the constructor of the system
+/// the facts come from, never field by field, so that a new fact does not change every
+/// place that builds one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Peer {
     /// macOS: the audit token (`audit_token_t`) of the process that last touched the
     /// socket. It names one process image for its whole life and is never reused; an
-    /// `exec` changes it.
+    /// `exec` changes it. All zero on a system without audit tokens, where it names no
+    /// process.
     pub macos_audit_token: [u8; 32],
+    /// Linux: the effective user ID the peer had when it connected (`SO_PEERCRED`).
+    /// `None` on a system that identifies a peer by its audit token.
+    pub uid: Option<u32>,
+    /// Linux: the process ID the peer had when it connected (`SO_PEERCRED`). A PID
+    /// names a process only while that process is not reaped, and says nothing about
+    /// the image it runs. `None` on a system that identifies a peer by its audit token.
+    pub pid: Option<u32>,
 }
 
 impl Peer {
+    /// The peer a macOS audit token names.
+    pub fn from_macos_audit_token(token: [u8; 32]) -> Self {
+        Self {
+            macos_audit_token: token,
+            uid: None,
+            pid: None,
+        }
+    }
+
+    /// The peer Linux socket credentials (`SO_PEERCRED`) name: its effective user ID
+    /// and its process ID.
+    pub fn from_linux_credentials(uid: u32, pid: u32) -> Self {
+        Self {
+            macos_audit_token: [0; 32],
+            uid: Some(uid),
+            pid: Some(pid),
+        }
+    }
+
     /// Whether the process this names satisfies the code requirement `requirement`
     /// and the flags and rejected entitlements of `rule`, all checked on one code
     /// object. Fails closed: any error, an exited process and a system without code
@@ -484,22 +602,10 @@ impl std::error::Error for OwnImageError {
 }
 
 /// Whether this running process is the image `expected` pins. macOS compares the
-/// kernel's CodeDirectory hash of the loaded image with `macos_cdhash`; an image
-/// with no pin is a mismatch, never a pass.
+/// kernel's CodeDirectory hash of the loaded image with `macos_cdhash`. An image
+/// with no pin is a mismatch on every system, never a pass.
 pub fn own_image(expected: &ExpectedImage) -> Result<(), OwnImageError> {
-    let loaded = org_platform::image::own_loaded_cdhash().map_err(|error| {
-        match error
-            .get_ref()
-            .and_then(|source| source.downcast_ref::<Refused>())
-        {
-            Some(refused) => OwnImageError::Unsupported(refused.clone()),
-            None => OwnImageError::Unavailable(error),
-        }
-    })?;
-    if expected.macos_cdhash != Some(loaded) {
-        return Err(OwnImageError::Mismatch);
-    }
-    Ok(())
+    native::own_image(expected)
 }
 
 /// This process's own signing information: its flags and its entitlements. `None`
@@ -559,6 +665,15 @@ fn refusal() -> Refused {
     }
 }
 
+/// What the refusing entry of the own-image check answers: the refusal of
+/// `org_platform::image`'s loaded-image queries.
+fn image_refusal() -> Refused {
+    Refused::Unsupported {
+        capability: "image identity",
+        os: std::env::consts::OS,
+    }
+}
+
 /// What every refusing entry of peer identification answers.
 fn peer_refusal() -> Refused {
     Refused::Unsupported {
@@ -570,8 +685,7 @@ fn peer_refusal() -> Refused {
 /// Hooks for the host's tests (`test-support`), re-exported from `crate::testing`.
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod test_support {
-    use super::{native, Admission, Child, ExpectedImage, Held, Peer, Started};
-    use org_platform::Refused;
+    use super::{native, Admission, AdmissionError, Child, ExpectedImage, Held, Peer, Started};
     use std::io;
     use std::sync::Arc;
 
@@ -596,8 +710,31 @@ pub(crate) mod test_support {
     pub fn scripted_admission(
         expected: ExpectedImage,
         script: Script,
-    ) -> Result<Admission, Refused> {
-        native::Admission::scripted(expected, script).map(Admission)
+    ) -> Result<Admission, AdmissionError> {
+        native::Admission::scripted(expected, script)
+            .map(Admission)
+            .map_err(AdmissionError::from)
+    }
+
+    /// An admission that starts `expected.program` by its path and checks nothing of
+    /// its image, so that a test can start a program the production adapter of its
+    /// system would not admit (on Linux, a `#!` script).
+    ///
+    /// - macOS: the production adapter, which already starts by path. The child is
+    ///   started suspended and checked as `expected` says; a development image is not
+    ///   checked.
+    /// - GNU/Linux: `posix_spawn` of the path. No bytes are verified, nothing is
+    ///   sealed and the pinned file's owner and mode are not checked: `sha256` is not
+    ///   read and [`Admission::image_sha256`] is `None`. The child still gets exactly
+    ///   its three pipes, the given environment and `/` as its working directory, is
+    ///   held by a pidfd, and [`Admission::verify_reader`] makes the production
+    ///   adapter's check of the connection (the child's PID, this user, still alive).
+    ///
+    /// Never part of a production composition: it exists only with `test-support`.
+    pub fn path_admission(expected: ExpectedImage) -> Result<Admission, AdmissionError> {
+        native::Admission::by_path(expected)
+            .map(Admission)
+            .map_err(AdmissionError::from)
     }
 
     /// The system's identity of this process's own unreaped child `pid`.
@@ -609,8 +746,10 @@ pub(crate) mod test_support {
     /// never signalled and never waited for, and dropping it does nothing. For
     /// [`Admission::verify_reader`] and [`Admission::recheck`] against a process the
     /// test chose (itself, usually).
-    pub fn unowned_child(pid: u32, admitted: Option<Peer>) -> Result<Child, Refused> {
-        native::Child::unowned(pid, admitted).map(Child)
+    pub fn unowned_child(pid: u32, admitted: Option<Peer>) -> io::Result<Child> {
+        native::Child::unowned(pid, admitted)
+            .map(Child)
+            .map_err(io::Error::from)
     }
 
     /// The child of `held`, still not let run, with its pipes: for a test that needs

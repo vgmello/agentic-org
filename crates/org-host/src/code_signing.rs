@@ -90,10 +90,7 @@ pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {
 /// Whether the process `token` names satisfies `requirement` and runs hardened code without the
 /// [`REJECTED_ENTITLEMENTS`], all checked on one code object. Fails closed.
 pub(crate) fn satisfies_hardened(token: &AuditToken, requirement: &str) -> bool {
-    Peer {
-        macos_audit_token: *token,
-    }
-    .satisfies(requirement, &HARDENED)
+    Peer::from_macos_audit_token(*token).satisfies(requirement, &HARDENED)
 }
 
 /// This process's own signing information (through `SecCodeCopySelf`): its flags (the
