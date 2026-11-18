@@ -8,6 +8,12 @@ agent to enable it to hire someone else." And: "Allow hiring should be a flag, b
 team lead of an engineering team may not, but a team lead of a director team could."
 Implementation pending.
 
+**Replaced in part on 2026-11-18 by [ADR-0029](0029-only-who-may-hire-hires.md):** there
+is no approval and no escalation. Only someone who may hire can start a hire, and
+everyone else is refused. Decisions 1, 2, 5 and 6 below, and criteria HIRE-1 to
+HIRE-7, are history. Decisions 3, 4 and 7 stand: the `may_hire` permission, how it is
+given, and the two records that carry authority.
+
 ## Context
 
 Until now a person approved every hire: the owner, or a person in the lead chain of

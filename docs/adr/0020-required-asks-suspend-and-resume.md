@@ -2,7 +2,8 @@
 
 Status: **accepted by the owner**. Implementation pending. Decisions 1 to 8 are the
 owner's rule for [REQ-04](../specs/req-04-channel-messaging-and-question-components.md);
-decisions 9 to 14 are its design. [ADR-0003](0003-agent-messaging-office-first.md)
+decisions 9 to 14 are its design, and decisions 15 to 17 were added on 2026-11-18
+after the design review. [ADR-0003](0003-agent-messaging-office-first.md)
 decision 9, [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 9,
 the [session design](../design/agent-sessions.md) and the [chat spec](../specs/chat-ux.md)
 follow it.
@@ -86,6 +87,23 @@ The lead's design for the rule:
     ([messaging](../design/organization-data/15-messaging-and-chat.md)); each question
     has its own default, and the timeout result carries the default of each question
     that has one.
+15. **One call never holds the agent for the whole wait.** A vendor's shell tool stops
+    a command that runs too long, often after two minutes, so a call held for ten
+    would be killed and its answer lost. `agent-os msg ask` holds its caller for at
+    most one short hold (a system setting, 90 seconds unless changed). If the answer
+    has not come, it returns `meta.status` `waiting` with the question's ID and the
+    time left of the wait. The agent continues other work, or calls
+    `agent-os msg wait --ask <id>`, which holds for one more short hold and returns
+    the same way. The office keeps the one timer of decision 1 across those calls.
+16. **How the agent learns the wait has ended.** The next `msg wait` for the
+    question, or failing that the next `agent-os` call of the run, carries the
+    result: the timeout of decision 4, or the notice of decision 5. The notice of
+    decision 5 is also given when the agent ends its turn.
+17. **An agent that ends its turn with a required question open is suspended at
+    once.** It does not have to wait out the timer: by ending the turn it has said it
+    has nothing else to do. The answer resumes it (decision 8). The resume input
+    always carries the question with its answer, so a main session is never given an
+    answer without the question, including when a sub-agent asked it.
 
 ## Rules that follow
 
@@ -94,9 +112,9 @@ The lead's design for the rule:
   message.
 - The ask itself is acknowledged like a send (ADR-0014 decision 9); only waiting for
   the reply is slow, and the wait is bounded by decision 1.
-- One held call on an agent's connection is capped at 60 seconds. The wait spans as
-  many held calls as it needs; `agent-os` renews the hold and the office keeps one
-  timer for the whole wait.
+- One held call on an agent's connection is capped at 60 seconds, and one command
+  holds its caller for at most the short hold of decision 15. The wait spans as many
+  commands as it needs, and the office keeps one timer for the whole wait.
 - An ask addressed to an agent starts it, as anything addressed to it does ([ADR-0028](0028-an-agent-is-always-available.md)), and the answer to a required ask is one of the things that may start a turn (session
   design).
 
@@ -113,6 +131,9 @@ The lead's design for the rule:
 | ASK-7 | A background process still running after the grace period is stopped, and the resume input names it. |
 | ASK-8 | With a budget hold in force when the answer arrives, the agent stays suspended with that reason, and resumes when the hold clears. |
 | ASK-9 | The same behaviour holds when the recipient is another agent. |
+| ASK-10 | With the short hold at 90 seconds and the wait at 10 minutes, no `agent-os` command of the asker runs longer than 90 seconds; the first returns `waiting` with the question's ID, and a `msg wait --ask` after the answer arrives returns it. |
+| ASK-11 | An agent that ends its turn with a required question open is suspended without waiting for the timer, and the answer resumes it with the question and the answer in its input. |
+| ASK-12 | A required question asked by a sub-agent resumes the main session with the question and the answer together. |
 
 ## Open points
 
@@ -124,7 +145,8 @@ The lead's design for the rule:
 ## Consequences
 
 - An agent holds a model turn and a subscription slot for at most the wait, 10 minutes
-  by default, and nothing while it is suspended.
+  by default, and nothing while it is suspended. It can release them sooner by ending
+  its turn (decision 17).
 - The office gains a durable "suspended on an ask" state and one more reason to start
   a turn. Stopping and resuming a session becomes a routine path, so the resume of
   each vendor tool must be reliable; that is already required for restarts.

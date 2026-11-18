@@ -1,0 +1,91 @@
+# ADR-0029 · Only someone who may hire can hire; there is no approval
+
+Status: **decided by the owner 2026-11-18**. Implementation pending. It replaces the
+approval and escalation of [ADR-0027](0027-a-lead-approves-a-hire.md) (its decisions
+1, 2, 5 and 6); the permission that record introduced, `may_hire`, stays. The
+[employee contract](../design/organization-data/04-agent-structure.md#who-may-hire),
+the [hire flow](../specs/our-org-in-the-app.md) and the
+[agent command line](../design/agent-os-command-line.md) follow it.
+
+The owner's words: "There's no approval of a hire, because the hire command is only
+allowed for who can make the hire themselves. If a staff engineer that cannot hire
+tries to run the command, it won't have access. It will say: you don't have access,
+talk to your team lead. Only people who can hire can run the hire command and talk to
+HR. Even if they send a message to it, it won't work, because they don't have that
+permission."
+
+## Context
+
+ADR-0027 let anyone ask for a hire and routed the request up the lead chain to the
+first lead with hiring power, who approved or rejected it. That needed a waiting
+state, an escalation list, a fallback to the owner after a day and a way for an agent
+lead to approve. The last one was never designed: an agent lead could be named the
+approver and had no command to approve with.
+
+## Decision
+
+1. **There is no approval.** A hire is made by someone who may hire. Nobody else can
+   start one, so nothing waits for anybody.
+2. **Who may hire into a team.**
+   - The organization's owner, and the server's administrator acting in the
+     organization, into any team.
+   - An employee, person or agent, whose `may_hire` is on, into the teams it leads
+     and the teams under them. `may_hire` is shown as **Allow hiring**.
+
+   The permission does nothing for an employee who leads no team.
+3. **Everyone else is refused.** `agent-os hr hire`, the app's Hire, and a message or
+   mention to the HR lead are refused for a caller who may not hire into the team
+   named, or who may hire nowhere. The answer is `permission_denied` with the hint
+   "You don't have access to hire. Ask your team lead." Nothing is recorded as a
+   request, and no turn starts for the HR lead.
+4. **Asking goes by conversation.** An employee that needs a colleague asks its lead,
+   as it asks for anything else. A lead that may not hire asks its own lead. There is
+   no record that travels up the chain.
+5. **The hirer confirms what is created.** The HR lead drafts the proposal, or the
+   hirer fills in the fields. The hirer sees exactly what will be created and
+   confirms it; product code then provisions the agent. A call that gives every
+   required field is its own confirmation.
+6. **The hire is recorded.** A hire request records who hired, the proposal, the
+   reason, when it was confirmed and the agent it produced. Its states are
+   `drafting`, `hiring`, `hired`, `withdrawn` and `failed`. "Hired by" on an agent's
+   profile is read from it.
+7. **How the permission is given is unchanged** (ADR-0027 decisions 3 and 4). A
+   person's record is created with it on and an agent's with it off. Only the owner,
+   or a person above the employee, turns it on or off. Nobody sets their own, and the
+   built-in HR lead never has it.
+8. **Hiring limits refuse.** Where a limit is set in Settings, a hire above it is
+   refused with the limit named, and only the owner can make it.
+9. **An agent that may hire hires without a person.** That is what turning Allow
+   hiring on for an agent means. It is off until a person turns it on.
+
+## Rejected
+
+- **Keeping the approval for requests from employees who may not hire.** It keeps
+  every state and route this record removes, for a case a conversation with the lead
+  already covers.
+- **Letting the HR lead decide.** The HR lead drafts. It holds no authority.
+
+## Acceptance criteria
+
+APPR-1 to APPR-7 in the [hire flow](../specs/our-org-in-the-app.md), and:
+
+| ID | Passing evidence |
+| --- | --- |
+| HIRE-1 | An agent without `may_hire` that runs `agent-os hr hire` gets `permission_denied` with the hint to ask its team lead; no request exists afterwards and the HR lead ran no turn. |
+| HIRE-2 | The same agent's direct message or `@hr` mention asking for a hire gets the same refusal as a reply, and starts no turn for the HR lead. |
+| HIRE-3 | A lead holding `may_hire`, person or agent, hires into its own team and into a team under it; no other employee is asked. The hire records that lead. |
+| HIRE-4 | That lead's hire into a team it does not lead, directly or through a parent team, is refused. The owner's is not. |
+| HIRE-5 | An employee's call to set its own `may_hire` is refused, and so is an agent's call to set anyone's. A new person record has it on and a new agent has it off. |
+| HIRE-6 | With a weekly limit set and reached, a lead's hire is refused with the limit named, and the owner's succeeds. |
+| HIRE-7 | With agents leading both an engineering team (`may_hire` off) and the director team above it (`may_hire` on), the engineering lead's hire is refused, and after it asks the director team's lead, that lead hires into the engineering team. No person acts and no project exists during the test. |
+| HIRE-8 | A drafted proposal creates nothing until the hirer confirms it; a hire that stops partway shows the step that failed and finishes with Try again. |
+
+## Consequences
+
+- The states `waiting`, `approved` and `rejected`, the approver, the escalation list
+  and the one-day fallback to the owner are removed from the data and the app.
+- `gate_required` has no command that returns it in milestones one and two. It stays
+  in the answer contract for a later approval.
+- An agent lead with the permission adds employees, and so cost, with no person
+  seeing each hire first. The permission is off for agents by default, every hire
+  shows on the owner's Home, and budgets and hiring limits are the bounds.
