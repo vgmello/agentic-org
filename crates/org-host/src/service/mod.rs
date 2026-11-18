@@ -1,5 +1,6 @@
 //! host.sock's private control boundary: registered-instance hello and count-only status.
-//! Registered hosts additionally dispatch live account sign-in, renewal and logout.
+//! Registered hosts additionally dispatch live account sign-in, renewal and logout, and the
+//! administrator link calls (`admin.link.initial`, `admin.reset`; see `crate::admin`).
 
 pub(crate) mod authentication;
 pub(crate) mod listener;
@@ -9,7 +10,7 @@ mod request;
 use std::sync::Arc;
 
 use org_host_control::{
-    GatewayState, GatewayStatus, Hello, HelloResult, InstanceMode, InstanceStatus,
+    Administrator, GatewayState, GatewayStatus, Hello, HelloResult, InstanceMode, InstanceStatus,
     InstanceStatusResult, OfficeCounts,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
@@ -27,6 +28,9 @@ pub(crate) struct Service {
     gateway: Arc<std::sync::Mutex<GatewayState>>,
     provisioning: Option<Arc<crate::provisioning::Provisioning>>,
     recovery: Option<Arc<crate::recovery::Recovery>>,
+    /// Installed once by the registered start after composition; until then the admin calls
+    /// answer `unavailable`.
+    admin: std::sync::OnceLock<Arc<crate::admin::Admin>>,
 }
 
 impl Service {
@@ -42,6 +46,7 @@ impl Service {
             authentication: None,
             provisioning: None,
             recovery: None,
+            admin: std::sync::OnceLock::new(),
             gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
         }
     }
@@ -65,6 +70,80 @@ impl Service {
     ) -> Self {
         self.recovery = recovery;
         self
+    }
+    /// The registered host's administrator link calls. Installed at most once.
+    #[cfg(test)]
+    pub(crate) fn admin(&self) -> Option<&Arc<crate::admin::Admin>> {
+        self.admin.get()
+    }
+    pub(crate) fn install_admin(&self, admin: Arc<crate::admin::Admin>) -> bool {
+        self.admin.set(admin).is_ok()
+    }
+    fn administer(
+        &self,
+        request: &Request,
+        connection: &Arc<Connection>,
+        received: Received,
+    ) -> bool {
+        use org_host_control::admin::{AdminLinkInitial, AdminReset};
+        let initial = request.is::<AdminLinkInitial>();
+        if !initial && !request.is::<AdminReset>() {
+            return false;
+        }
+        let Some(admin) = self.admin.get() else {
+            connection.send_response(Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "administrator links are unavailable on this host",
+                ),
+            ));
+            return true;
+        };
+        let result = if initial {
+            request
+                .params::<AdminLinkInitial>()
+                .map_err(|_| {
+                    ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "the params don't fit this method",
+                    )
+                })
+                .and_then(|params| admin.initial(connection, received, params))
+        } else {
+            request
+                .params::<AdminReset>()
+                .map_err(|_| {
+                    ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "the params don't fit this method",
+                    )
+                })
+                .and_then(|_| admin.reset(connection, received))
+        };
+        match result {
+            Ok(result) => secret_response(connection, request.id, &result),
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+        true
+    }
+    /// Whether the registry holds an administrator; a host without a registry has none.
+    fn administrator(&self) -> Result<Administrator, ApiError> {
+        let Some(authentication) = &self.authentication else {
+            return Ok(Administrator::None);
+        };
+        match authentication
+            .provisioning_storage()
+            .0
+            .administrator_exists()
+        {
+            Ok(true) => Ok(Administrator::Present),
+            Ok(false) => Ok(Administrator::None),
+            Err(_) => Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "the host registry is unavailable",
+            )),
+        }
     }
     fn recover(&self, request: &Request, connection: &Arc<Connection>, received: Received) -> bool {
         use org_host_control::{
@@ -373,6 +452,8 @@ impl Handler for Service {
             || request.is::<Hello>()
             || request.is::<org_host_control::ops::FdsReceived>()
             || crate::recovery::handles(request)
+            // Waits for the presence dialog; it must see EOF without consuming a later request.
+            || request.is::<org_host_control::admin::AdminReset>()
     }
 
     fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
@@ -434,6 +515,9 @@ impl Handler for Service {
             );
             return;
         }
+        if self.administer(&request, connection, received) {
+            return;
+        }
         if self.recover(&request, connection, received) {
             return;
         }
@@ -469,6 +553,7 @@ impl Handler for Service {
             OpenOperation::InstanceStatus => {
                 self.broadcast.snapshot(|| {
                     connection.send_response(answer::<InstanceStatus>(&request, |_| {
+                        let administrator = self.administrator()?;
                         let offices = self.offices.offices();
                         Ok(InstanceStatusResult {
                             instance_id: instance_id.to_owned(),
@@ -487,6 +572,7 @@ impl Handler for Service {
                                     .filter(|o| o.status.requires_operator_action())
                                     .count() as u64,
                             },
+                            administrator,
                         })
                     }))
                 });
@@ -711,6 +797,19 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn status_reports_whether_an_administrator_exists() {
+        let home = tempfile::tempdir().unwrap();
+        let unregistered = service(home.path());
+        assert_eq!(unregistered.administrator().unwrap(), Administrator::None);
+        unregistered.offices.shutdown();
+        let (_root, auth, _connection) = authentication::tests::fixture();
+        let registered = service(home.path()).with_authentication(Some(Arc::new(auth)));
+        // The fixture seeds an administrator account.
+        assert_eq!(registered.administrator().unwrap(), Administrator::Present);
+        registered.offices.shutdown();
+    }
+
     pub(crate) fn service(home: &Path) -> Service {
         let supervisor = Supervisor::new(
             SupervisorConfig {
@@ -770,7 +869,18 @@ pub(crate) mod tests {
         std::io::BufReader<std::os::unix::net::UnixStream>,
         Arc<Offices>,
     ) {
-        let mut service = service(home);
+        web_peer_for(service(home), listen)
+    }
+
+    /// [`web_peer_on`] over a service the caller prepared.
+    fn web_peer_for(
+        mut service: Service,
+        listen: &str,
+    ) -> (
+        listener::WebConnection,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+        Arc<Offices>,
+    ) {
         service.instance_id = Some(crate::ids::generate().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -938,6 +1048,85 @@ pub(crate) mod tests {
         ));
         assert!(local.live());
         drop(local);
+        offices.shutdown();
+    }
+
+    /// Before the registered start installs the administrator service, both admin calls
+    /// answer `unavailable` on the local channel rather than reaching any registry.
+    #[test]
+    fn admin_calls_are_unavailable_before_install_admin() {
+        use org_host_control::admin::{AdminLinkInitial, AdminLinkInitialParams, AdminReset};
+        let home = tempfile::tempdir().unwrap();
+        let mut service = service(home.path());
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        assert!(service.admin().is_none());
+        let offices = service.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let params = AdminLinkInitialParams {
+            setup_operation: crate::admin::tests::OPERATION.into(),
+        };
+        assert!(refused(
+            exchange::<AdminLinkInitial>(&mut peer, 2, &params),
+            ErrorCode::Unavailable
+        ));
+        assert!(refused(
+            exchange::<AdminReset>(&mut peer, 3, &Default::default()),
+            ErrorCode::Unavailable
+        ));
+        assert!(local.live());
+        drop(local);
+        offices.shutdown();
+    }
+
+    /// An installed administrator service refuses both calls off a non-local channel (here
+    /// the web process's) before any registry read, and issues no link.
+    #[test]
+    fn admin_calls_off_a_non_local_channel_are_refused_and_issue_nothing() {
+        use crate::links::{LinkKind, OneTimeLinks, Subject};
+        use org_host_control::admin::{AdminLinkInitial, AdminLinkInitialParams, AdminReset};
+        let home = tempfile::tempdir().unwrap();
+        let (_registry, admin) = crate::admin::tests::admin();
+        let admin = Arc::new(admin);
+        let service = service(home.path());
+        assert!(service.install_admin(admin.clone()));
+        assert!(!service.install_admin(admin.clone()), "installed once");
+        let (web, mut peer, offices) = web_peer_for(
+            service,
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let params = AdminLinkInitialParams {
+            setup_operation: crate::admin::tests::OPERATION.into(),
+        };
+        assert!(refused(
+            exchange::<AdminLinkInitial>(&mut peer, 2, &params),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(refused(
+            exchange::<AdminReset>(&mut peer, 3, &Default::default()),
+            ErrorCode::NotAuthorized
+        ));
+        // Nothing was issued: the first link for the registration subject is still available.
+        assert!(crate::admin::tests::registry(&admin)
+            .pending(
+                LinkKind::Registration,
+                &Subject::new("administrator").unwrap(),
+                1
+            )
+            .unwrap()
+            .is_none());
+        drop(web);
         offices.shutdown();
     }
 

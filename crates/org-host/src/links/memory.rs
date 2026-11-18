@@ -38,10 +38,7 @@ impl OneTimeLinks for MemoryLinks {
             .rows
             .lock()
             .map_err(|_| Error::Store(StoreFault::Poisoned))?;
-        if rows
-            .iter()
-            .any(|r| r.link_id == link.link_id || r.digest == link.digest)
-        {
+        if conflicts(&rows, &link) {
             return Err(Error::Store(StoreFault::Constraint));
         }
         for row in rows.iter_mut() {
@@ -49,19 +46,22 @@ impl OneTimeLinks for MemoryLinks {
                 row.state = "cancelled";
             }
         }
-        rows.push(Row {
-            link_id: link.link_id.to_owned(),
-            kind: link.kind,
-            subject: link.subject.clone(),
-            digest: link.digest,
-            pending: Pending {
-                link_id: link.link_id.to_owned(),
-                issued_at_ms: link.issued_at_ms,
-                expires_at_ms: link.expires_at_ms,
-            },
-            state: "pending",
-        });
+        push(&mut rows, link)?;
         Ok(())
+    }
+    fn insert_first(&self, link: NewLink<'_>) -> Result<bool, Error> {
+        let mut rows = self
+            .rows
+            .lock()
+            .map_err(|_| Error::Store(StoreFault::Poisoned))?;
+        if rows
+            .iter()
+            .any(|r| r.kind == link.kind && r.subject == *link.subject)
+        {
+            return Ok(false);
+        }
+        push(&mut rows, link)?;
+        Ok(true)
     }
     fn redeem(
         &self,
@@ -95,4 +95,30 @@ impl OneTimeLinks for MemoryLinks {
             .find(|r| r.kind == kind && r.subject == *subject && r.state == "pending")
             .map(|r| r.pending.clone()))
     }
+}
+
+fn conflicts(rows: &[Row], link: &NewLink<'_>) -> bool {
+    rows.iter()
+        .any(|r| r.link_id == link.link_id || r.digest == link.digest)
+}
+
+/// Appends a pending row, refusing a duplicate link ID or digest as the
+/// SQLite constraints do.
+fn push(rows: &mut Vec<Row>, link: NewLink<'_>) -> Result<(), Error> {
+    if conflicts(rows, &link) {
+        return Err(Error::Store(StoreFault::Constraint));
+    }
+    rows.push(Row {
+        link_id: link.link_id.to_owned(),
+        kind: link.kind,
+        subject: link.subject.clone(),
+        digest: link.digest,
+        pending: Pending {
+            link_id: link.link_id.to_owned(),
+            issued_at_ms: link.issued_at_ms,
+            expires_at_ms: link.expires_at_ms,
+        },
+        state: "pending",
+    });
+    Ok(())
 }

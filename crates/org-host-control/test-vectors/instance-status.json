@@ -6,7 +6,8 @@
       "instance_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       "mode": "service",
       "gateway": {"state": "not_configured"},
-      "offices": {"total": 3, "active": 1, "failed": 1}
+      "offices": {"total": 3, "active": 1, "failed": 1},
+      "administrator": "none"
     }
   }
 }

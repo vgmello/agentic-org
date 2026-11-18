@@ -59,5 +59,16 @@ between two processes that launchd does not coordinate.
   record alone, guarantees at most one initial link.
 - Noninteractive setup does not call `admin.link.initial`; the status reports
   `administrator: none` until `agentic-org admin reset`.
+- The registry is created once per instance. After the first successful creation the
+  host durably records `host-registry.created` (holding the instance ID) in the instance
+  root, under the instance and host locks. A later start that finds the marker but no
+  `host-registry.db` refuses, naming the recovery (restore `host-registry.db` from a backup of this
+  instance) and issues no link: recreating it empty would reopen
+  `admin.link.initial` without presence, lose accounts and sweep the host custody bound
+  to it. A registry without its marker (a start that stopped between the two writes) is
+  reopened and the marker written. Removing an instance (FC-022 uninstall) must clear
+  the marker together with the registry while keeping the custody rules of doc 16;
+  until it exists, an instance whose registry is lost without a backup cannot start
+  again, which is the intended fail-closed outcome.
 - The release-gate and recovery-custody tests of the old bootstrap module move to the
   setup-flow tests (A2 B4).

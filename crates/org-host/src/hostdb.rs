@@ -1,9 +1,10 @@
 //! Private registry persistence. Callers must hold host.lock and the instance lock.
 //! The registry is the host's own database (decision D1) and holds no account
-//! until setup registers the first administrator. Nothing creates it at service
-//! start yet: A2 B3 composes it into start and setup; today only tests open it.
+//! until setup registers the first administrator. The registered start
+//! (`crate::registered`) creates it once per instance and refuses to recreate it.
 
 pub(crate) mod accounts;
+mod administrator;
 mod clock;
 pub(crate) mod journal;
 pub(crate) mod links;

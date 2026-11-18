@@ -82,6 +82,43 @@ fn issued_link_redeems_once_then_is_used() {
 }
 
 #[test]
+fn issue_first_issues_once_per_subject_ever_and_a_replay_has_no_secret() {
+    each(|links| {
+        let s = subject("administrator");
+        let first = links.issue_first(REG, &s, NOW).unwrap().unwrap();
+        assert!(links.issue_first(REG, &s, NOW + 1).unwrap().is_none());
+        // Still refused after the first link is used, cancelled or expired.
+        assert_eq!(
+            links.consume(REG, &first.token.encode(), NOW + 2).unwrap(),
+            Ok(first.link_id.clone())
+        );
+        assert!(links.issue_first(REG, &s, NOW + 3).unwrap().is_none());
+        let other = subject("other");
+        links.issue(REG, &other, NOW).unwrap();
+        assert!(links.issue_first(REG, &other, NOW + 1).unwrap().is_none());
+        // A first link for a fresh subject is pending and redeemable.
+        let fresh = subject("fresh");
+        let issued = links.issue_first(REG, &fresh, NOW).unwrap().unwrap();
+        assert_eq!(
+            links.pending(REG, &fresh, NOW).unwrap().unwrap().link_id,
+            issued.link_id
+        );
+        // `issue` after `issue_first` still replaces it.
+        let replaced = links.issue(REG, &fresh, NOW + 1).unwrap();
+        assert_eq!(
+            links.consume(REG, &issued.token.encode(), NOW + 2).unwrap(),
+            Err(Refused::Cancelled)
+        );
+        assert_eq!(
+            links
+                .consume(REG, &replaced.token.encode(), NOW + 2)
+                .unwrap(),
+            Ok(replaced.link_id)
+        );
+    });
+}
+
+#[test]
 fn issuing_again_cancels_the_pending_link_of_the_same_subject_only() {
     each(|links| {
         let s = subject("initial-administrator");

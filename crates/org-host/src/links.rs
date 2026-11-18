@@ -197,6 +197,34 @@ pub(crate) struct NewLink<'a> {
     pub(crate) expires_at_ms: i64,
 }
 
+/// Generates a link for `instance_id` and hands its hashed row to `store`, which writes it
+/// (`true`) or declines (`false`, nothing issued). Adapters with a storage precondition of
+/// their own build on this so the token rules stay here.
+pub(crate) fn issue_with(
+    instance_id: &str,
+    kind: LinkKind,
+    subject: &Subject,
+    now_ms: i64,
+    store: impl FnOnce(NewLink<'_>) -> Result<bool, Error>,
+) -> Result<Option<Issued>, Error> {
+    let token = Token::generate()?;
+    let link_id = crate::ids::uuid_v7()?;
+    let expires_at_ms = now_ms.checked_add(kind.ttl_ms()).ok_or(Error::Invalid)?;
+    let stored = store(NewLink {
+        link_id: &link_id,
+        kind,
+        subject,
+        digest: LinkDigest::of(instance_id, kind, &token),
+        issued_at_ms: now_ms,
+        expires_at_ms,
+    })?;
+    Ok(stored.then_some(Issued {
+        link_id,
+        token,
+        expires_at_ms,
+    }))
+}
+
 /// The host-storage contract for one-time links. Adapters implement the
 /// storage primitives; the shared rules live in the provided methods.
 pub(crate) trait OneTimeLinks {
@@ -212,25 +240,29 @@ pub(crate) trait OneTimeLinks {
         digest: LinkDigest,
         now_ms: i64,
     ) -> Result<Result<String, Refused>, Error>;
+    /// Insert `link` only if no link of the same kind and subject was ever
+    /// stored, in any state, checked and inserted in one transaction. Returns
+    /// whether it was inserted.
+    fn insert_first(&self, link: NewLink<'_>) -> Result<bool, Error>;
     /// The pending link of this kind and subject, expired or not.
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error>;
 
     fn issue(&self, kind: LinkKind, subject: &Subject, now_ms: i64) -> Result<Issued, Error> {
-        let token = Token::generate()?;
-        let link_id = crate::ids::uuid_v7()?;
-        let expires_at_ms = now_ms.checked_add(kind.ttl_ms()).ok_or(Error::Invalid)?;
-        self.replace_pending(NewLink {
-            link_id: &link_id,
-            kind,
-            subject,
-            digest: LinkDigest::of(self.instance_id(), kind, &token),
-            issued_at_ms: now_ms,
-            expires_at_ms,
-        })?;
-        Ok(Issued {
-            link_id,
-            token,
-            expires_at_ms,
+        issue_with(self.instance_id(), kind, subject, now_ms, |link| {
+            self.replace_pending(link).map(|()| true)
+        })?
+        .ok_or(Error::Invalid)
+    }
+    /// Issues the first link ever for this kind and subject, or nothing if one
+    /// was already issued (whatever its state). A replay never yields a secret.
+    fn issue_first(
+        &self,
+        kind: LinkKind,
+        subject: &Subject,
+        now_ms: i64,
+    ) -> Result<Option<Issued>, Error> {
+        issue_with(self.instance_id(), kind, subject, now_ms, |link| {
+            self.insert_first(link)
         })
     }
     /// Redeems a token once. A malformed token is `Unknown`.

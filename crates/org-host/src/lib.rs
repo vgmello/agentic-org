@@ -38,6 +38,7 @@ compile_error!(
 );
 
 mod accounts;
+mod admin;
 mod app_auth;
 mod broadcast;
 mod catalog;
@@ -75,6 +76,7 @@ mod offices;
 mod peer;
 mod provisioning;
 mod recovery;
+mod registered;
 mod secrets;
 mod server_check;
 mod service;

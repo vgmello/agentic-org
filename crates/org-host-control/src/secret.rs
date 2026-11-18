@@ -55,3 +55,9 @@ secret_text!(
     /// in its credential provider, never on disk in the clear.
     TlsPrivateKey
 );
+
+secret_text!(
+    /// A one-time link's full URL (`<origin>/register#<token>`), in `admin.link.initial`'s and
+    /// `admin.reset`'s results. The part after `#` is the secret; the host keeps only its digest.
+    OneTimeLinkUrl
+);
