@@ -35,6 +35,12 @@ export type Phase =
 	| { kind: 'created'; organization: OrganizationView };
 
 /** True while the fields are read-only and Create sends nothing. */
+/**
+ * Why a phase is reported. `outcome` follows Create, Try again, Check again or HQ's answer;
+ * `typed` follows a keystroke, which must never move focus away from the field being typed in.
+ */
+export type ReportCause = 'outcome' | 'typed';
+
 export const isWorking = (phase: Phase): boolean =>
 	phase.kind === 'creating' || phase.kind === 'checking';
 
@@ -109,7 +115,7 @@ export function createOrganizationFlow({
 	now = () => new Date()
 }: {
 	api: OrganizationsApi;
-	report: (phase: Phase) => void;
+	report: (phase: Phase, cause: ReportCause) => void;
 	sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 	now?: () => Date;
 }) {
@@ -118,9 +124,9 @@ export function createOrganizationFlow({
 	let running = false;
 	let phase: Phase = { kind: 'editing', errors: {} };
 	const stopper = new AbortController();
-	const show = (next: Phase) => {
+	const show = (next: Phase, cause: ReportCause = 'outcome') => {
 		phase = next;
-		if (!stopper.signal.aborted) report(next);
+		if (!stopper.signal.aborted) report(next, cause);
 	};
 	const fail = (code: string, message: string, action: FailureAction) => {
 		const { id, params } = attempt!;
@@ -294,7 +300,7 @@ export function createOrganizationFlow({
 		edited(field: CreateField) {
 			if (phase.kind !== 'editing' || !phase.errors[field]) return;
 			const { [field]: _cleared, ...errors } = phase.errors;
-			show({ kind: 'editing', errors });
+			show({ kind: 'editing', errors }, 'typed');
 		},
 		/** The page is going away. The create itself continues at HQ (OFC-23). */
 		stop: () => stopper.abort()

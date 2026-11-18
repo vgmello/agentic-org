@@ -17,7 +17,8 @@
 		failureDetails,
 		isWorking,
 		NOT_ADMINISTRATOR,
-		type Phase
+		type Phase,
+		type ReportCause
 	} from '$lib/platform/organizations/create-flow';
 	import type { CreateField, InstanceName } from '$lib/platform/organizations/readers';
 	import { selection } from '$lib/platform/organizations/selection';
@@ -63,7 +64,7 @@
 		},
 		newId: () => clock.newId()
 	});
-	const flow = createOrganizationFlow({ api, sleep, report: (next) => void show(next) });
+	const flow = createOrganizationFlow({ api, sleep, report: (next, cause) => void show(next, cause) });
 
 	const working = $derived(isWorking(phase));
 	const errors = $derived(phase.kind === 'editing' ? phase.errors : {});
@@ -82,9 +83,11 @@
 				: ''
 	);
 
-	async function show(next: Phase) {
+	async function show(next: Phase, cause: ReportCause) {
 		phase = next;
 		copied = undefined;
+		// Typing only clears that field's message: focus stays where the person is typing.
+		if (cause === 'typed') return;
 		await tick();
 		if (next.kind === 'failed') alert?.focus();
 		else if (next.kind === 'created') {

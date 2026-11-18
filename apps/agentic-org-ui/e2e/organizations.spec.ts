@@ -130,6 +130,45 @@ test('an invalid name or an empty field shows its message, sends nothing, and cl
 	await expect(create(page)).toBeEnabled();
 });
 
+test('typing in a field while other fields still show errors keeps focus and every character in that field', async ({
+	page
+}) => {
+	const server = await open(page);
+	const name = page.getByLabel('Name', { exact: true });
+	const slug = page.getByLabel('Slug', { exact: true });
+	const repository = page.getByLabel('Org Git URL');
+	const branch = page.getByLabel('State branch');
+
+	// Only Name filled, then Create: the repository and the branch are both missing.
+	await name.fill('Side Project');
+	await create(page).click();
+	await expect(page.getByText("Enter the remote repository's address.")).toBeVisible();
+	await expect(page.getByText('Enter the state branch.')).toBeVisible();
+	await expect(repository).toBeFocused();
+	await repository.pressSequentially(REPOSITORY);
+	await expect(repository).toBeFocused();
+	await expect(repository).toHaveValue(REPOSITORY);
+	await expect(branch).toHaveValue('');
+	await expect(page.getByText("Enter the remote repository's address.")).toHaveCount(0);
+	await expect(page.getByText('Enter the state branch.')).toBeVisible();
+
+	// An empty form, then typing in Name: three other fields still show their errors.
+	await visit(page, '/create');
+	await expect(page.getByText('HQ instance default')).toBeVisible();
+	await create(page).click();
+	await expect(page.getByText('Give the organization a name.')).toBeVisible();
+	await expect(name).toBeFocused();
+	await name.pressSequentially('Side Project');
+	await expect(name).toBeFocused();
+	await expect(name).toHaveValue('Side Project');
+	await expect(slug).toHaveValue('side-project');
+	await expect(repository).toHaveValue('');
+	await expect(branch).toHaveValue('');
+	await expect(page.getByText("Enter the remote repository's address.")).toBeVisible();
+	await expect(page.getByText('Enter the state branch.')).toBeVisible();
+	expect((await server.stats()).creates).toEqual([]);
+});
+
 test('a double click sends one request; Creating… is disabled; the created page shows the quoted recovery command and selects the organization (OFC-18)', async ({
 	page
 }) => {

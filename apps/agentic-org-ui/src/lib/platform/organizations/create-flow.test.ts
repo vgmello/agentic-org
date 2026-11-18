@@ -330,6 +330,27 @@ describe('refusals', () => {
 		s.flow.edited('name');
 		expect(s.phases).toHaveLength(reports);
 	});
+	it('says which reports follow a keystroke, so the page moves focus only after a submit or a refusal', async () => {
+		const s = scripted();
+		const causes: string[] = [];
+		const flow = createOrganizationFlow({
+			api: s.api,
+			report: (phase, cause) => causes.push(`${phase.kind}:${cause}`),
+			sleep: async () => {}
+		});
+		await flow.submit({ ...fields, name: '', slug: '' });
+		flow.edited('name');
+		s.submit.mockResolvedValueOnce(rejected(409, { code: 'already_exists', field: 'slug' }));
+		await flow.submit(fields);
+		flow.edited('slug');
+		expect(causes).toEqual([
+			'editing:outcome',
+			'editing:typed',
+			'creating:outcome',
+			'editing:outcome',
+			'editing:typed'
+		]);
+	});
 	it('not the administrator: the OFC-22 copy and no Try again', async () => {
 		const s = setup();
 		s.submit.mockResolvedValueOnce(rejected(403, { code: 'not_authorized' }));
