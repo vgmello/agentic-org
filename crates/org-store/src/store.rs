@@ -40,6 +40,8 @@ pub struct Limits {
     pub unmaterialized_bytes: u64,
     /// Entries the change stream keeps for late subscribers.
     pub change_ring: usize,
+    /// A journal segment is rolled before an append would take it past this.
+    pub segment_bytes: u64,
 }
 
 impl Default for Limits {
@@ -49,6 +51,7 @@ impl Default for Limits {
             unflushed_bytes: 8 * 1024 * 1024,
             unmaterialized_bytes: 64 * 1024 * 1024,
             change_ring: 8_192,
+            segment_bytes: crate::journal::SEGMENT_BYTES,
         }
     }
 }
@@ -323,6 +326,7 @@ impl<E: Engine> Store<E> {
             }
             Opening::Existing => Journal::open_on(disk, &durable, &identity, custody.as_ref())?,
         };
+        journal.set_segment_bytes(limits.segment_bytes);
         let projectors = Projectors::new(projectors);
         if let Some(through) = materialize(&files, &journal)? {
             journal.set_materialized(through)?;

@@ -179,3 +179,6 @@ pub(crate) fn rebuild_with<E: Engine>(
     })?;
     Ok(report)
 }
+
+#[cfg(test)]
+mod tests;

@@ -10,9 +10,14 @@ use std::sync::{
 
 use crate::{
     change::{Ack, Actor, Change, DurablePath, Id, Operation, Refusal, Sha256},
+    custody::OfficeIdentity,
     engine::{CoreRead, Engine, Projector},
     error::ProjectionError,
     sequences::Stream,
+    testkit::{
+        harness::{Command, FamilyScript},
+        id, Rng,
+    },
     writer::UnitOfWork,
 };
 
@@ -144,5 +149,67 @@ impl<E: Engine> Projector<E> for Probe {
             ));
         }
         Ok(())
+    }
+}
+
+/// One generated probe command.
+#[derive(Clone, Debug)]
+pub struct ProbeSpec {
+    kind: ProbeKind,
+    name: String,
+    bytes: Vec<u8>,
+    /// The operation ID, when the command has one.
+    id: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ProbeKind {
+    Put(Ack),
+    Create,
+    Remove,
+    Append,
+}
+
+/// Few names, so creations collide, removals miss and puts replace; some bytes the
+/// projector refuses; some commands without an operation ID.
+impl<E: Engine> FamilyScript<E> for Probe {
+    type Spec = ProbeSpec;
+
+    fn projectors(&self, _identity: &OfficeIdentity) -> Vec<Arc<dyn Projector<E>>> {
+        vec![self.projector()]
+    }
+
+    fn generate(&self, rng: &mut Rng, step: u64) -> ProbeSpec {
+        let kind = match rng.below(8) {
+            0 | 1 => ProbeKind::Put(Ack::Committed),
+            2 => ProbeKind::Put(Ack::Durable),
+            3 | 4 => ProbeKind::Create,
+            5 => ProbeKind::Remove,
+            _ => ProbeKind::Append,
+        };
+        let bytes = if rng.chance(9) {
+            REFUSED.to_vec()
+        } else {
+            format!("bytes {step} {}", rng.below(1_000)).into_bytes()
+        };
+        ProbeSpec {
+            kind,
+            name: format!("n{}", rng.below(6)),
+            bytes,
+            id: (!rng.chance(4)).then_some(step + 1),
+        }
+    }
+
+    fn command(&self, spec: &ProbeSpec) -> Command<E> {
+        let (kind, decide) = match spec.kind {
+            ProbeKind::Put(ack) => ("probe.put", self.put(&spec.name, &spec.bytes, ack)),
+            ProbeKind::Create => ("probe.create", self.create(&spec.name, &spec.bytes)),
+            ProbeKind::Remove => ("probe.remove", self.remove(&spec.name)),
+            ProbeKind::Append => ("probe.append", self.append(&spec.name, &spec.bytes)),
+        };
+        let op = spec
+            .id
+            .map(|n| self.operation(id(n), kind, &spec.name, &spec.bytes));
+        Command { op, decide }
     }
 }
