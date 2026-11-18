@@ -1,7 +1,8 @@
 //! The verified image: a sealed, execute-only copy of the pinned executable's bytes in
 //! a memory file, and its SHA-256 (design section 3.1, steps 1 and 2).
 //!
-//! A child is started from this copy and from nothing else, so what was hashed is what
+//! A child is started from this copy and from nothing else, and the digest that is
+//! judged is read back from the copy after it was sealed, so what was hashed is what
 //! runs. The pinned path is read once, through one descriptor; replacing the file
 //! afterwards changes nothing, and nobody can change the copy:
 //!
@@ -87,13 +88,15 @@ impl SealedImage {
             // Nothing to check the bytes against: nothing is read.
             return Err(ImageRefusal::Unpinned.into());
         }
+        // Before the memory file exists: until it is sealed, another process of this
+        // user could otherwise open it through `/proc/<pid>/fd/<n>` and write to it.
+        sys::close_to_other_processes()?;
         let source = open_pinned(&expected.program)?;
         let stat = sys::status(source.as_fd())?;
         fit(stat.st_mode, stat.st_uid, sys::effective_uid())?;
         let file =
             sys::above_the_childs_descriptors(sys::memory_file(&name_of(&expected.program))?)?;
-        let sha256 = copy(source, file.as_fd())?;
-        judge(expected, &sha256)?;
+        let (read, length) = copy(source, file.as_fd())?;
         // SAFETY: a valid descriptor of a memory file made with `MFD_ALLOW_SEALING`.
         if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, SEALS) } != 0 {
             return Err(last("fcntl(F_ADD_SEALS)").into());
@@ -103,6 +106,19 @@ impl SealedImage {
             return Err(last("fchmod").into());
         }
         let sealed = sys::status(file.as_fd())?;
+        // What is judged is the digest of the sealed object, read back through the
+        // descriptor that a child executes: no write before the seals can have put
+        // other bytes there than the ones judged. (This descriptor was opened for
+        // reading and writing; the mode `0111` governs later opens only, and the
+        // seals refuse the writes.)
+        let sha256 = sealed_digest(file.as_fd())?;
+        if sha256 != read || u64::try_from(sealed.st_size).ok() != Some(length) {
+            return Err(io::Error::other(
+                "the sealed image is not the bytes that were read from the pinned file",
+            )
+            .into());
+        }
+        judge(expected, &sha256)?;
         Ok(Self {
             file,
             sha256,
@@ -168,19 +184,54 @@ fn name_of(program: &Path) -> CString {
 }
 
 /// Copies everything `source` holds into the memory file `target`, and returns the
-/// SHA-256 of exactly the bytes written.
-fn copy(mut source: File, target: BorrowedFd<'_>) -> io::Result<[u8; 32]> {
+/// SHA-256 and the number of exactly the bytes read and written.
+fn copy(mut source: File, target: BorrowedFd<'_>) -> io::Result<([u8; 32], u64)> {
     let mut hash = Sha256::new();
+    let mut length = 0u64;
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
         let count = match source.read(&mut buffer) {
-            Ok(0) => return Ok(hash.finalize().into()),
+            Ok(0) => return Ok((hash.finalize().into(), length)),
             Ok(count) => count,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(named("read", error)),
         };
         hash.update(&buffer[..count]);
         write_all(target, &buffer[..count])?;
+        length += count as u64;
+    }
+}
+
+/// The SHA-256 of everything the memory file `sealed` holds, read from its start
+/// through this descriptor without moving its position.
+fn sealed_digest(sealed: BorrowedFd<'_>) -> io::Result<[u8; 32]> {
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut offset: libc::off_t = 0;
+    loop {
+        // SAFETY: a valid descriptor, and a buffer of exactly the length passed.
+        let count = unsafe {
+            libc::pread(
+                sealed.as_raw_fd(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                offset,
+            )
+        };
+        match usize::try_from(count) {
+            Ok(0) => return Ok(hash.finalize().into()),
+            Ok(count) => {
+                let count = count.min(buffer.len());
+                hash.update(&buffer[..count]);
+                offset += count as libc::off_t;
+            }
+            Err(_) => {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(named("pread", error));
+                }
+            }
+        }
     }
 }
 

@@ -239,34 +239,54 @@ runtime pin adds the manifest CDHash; `org-host/src/lib.rs`, `startup_server_che
 
 **Linux adapter.** The worker runs from bytes the host verified, not from a path.
 
-1. When the host builds the `Admission`, once per host lifetime, it opens the pinned
-   path with `O_RDONLY | O_NOFOLLOW | O_CLOEXEC`, requires a regular file owned by the
-   service user or root and not writable by group or others, and copies it into
-   `memfd_create(name, MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_EXEC)` while computing
-   SHA-256. On `EINVAL` (a kernel before 6.3, which has no `MFD_EXEC` and makes every
-   memory file executable) it retries once without `MFD_EXEC`. It seals the copy with
-   `F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL` and sets its mode to
-   `0111` with `fchmod`.
-2. A release build compares the digest and size with the manifest entry
-   (`FileEntry::sha256`, already signed and verified by `org-release`). A development
+1. When the host builds the `Admission`, once per host lifetime, the adapter first
+   makes the process non-dumpable (`PR_SET_DUMPABLE` 0, and refuses if that does not
+   hold), so that no other process of the user can open the host's descriptors through
+   `/proc/<pid>/fd`. It opens the pinned path with
+   `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK` (a FIFO at the path must not block
+   the host), requires a regular file owned by the service user or root and not
+   writable by group or others, and copies it into
+   `memfd_create(name, MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_EXEC)`. On `EINVAL` (a
+   kernel before 6.3, which has no `MFD_EXEC` and makes every memory file executable)
+   it retries once without `MFD_EXEC`. It seals the copy with
+   `F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL`, sets its mode to `0111`
+   with `fchmod`, and then computes SHA-256 by reading the sealed object back through
+   the descriptor it holds. That digest must equal the digest of the bytes it read
+   from the pinned path, and it is the one judged: nothing written before the seals
+   can differ from what was judged.
+2. A release build compares the digest with the manifest entry
+   (`FileEntry::sha256`, already signed and verified by `org-release`; the digest
+   covers every byte, so the size is not compared separately). A development
    build records the digest of its own build output at that moment and logs that the
    image has no publisher check, as macOS logs today for an unsigned build. A release
    build without a runtime release pin refuses: on Linux there is no other publisher
    identity.
-3. `spawn` uses `clone(CLONE_PIDFD | SIGCHLD)` without a shared address space. The
-   child runs only raw system calls: reset the signal mask and `SIGPIPE`, `dup2` the
-   three pipes to 0 to 2, `chdir("/")`, duplicate the sealed image to descriptor 3
-   with close-on-exec set, `close_range(4, ~0)`, then
-   `execveat(3, "", argv, envp, AT_EMPTY_PATH)`; on failure it exits with 127. The
-   kernel opens the image before it closes descriptor 3, so the worker starts with
-   exactly descriptors 0 to 2. An interpreter script (`#!`) cannot start this way: the
+3. `spawn` makes the process non-dumpable again (the child is a copy of the host's
+   memory until it executes the image), blocks signals, and uses the raw `clone`
+   system call with `CLONE_PIDFD | SIGCHLD` and no shared address space (`clone3` is
+   not needed; the argument order of `clone` differs by architecture, so x86-64 and
+   aarch64 are built and every other architecture refuses). The child runs only raw
+   system calls: reset `SIGPIPE`, `dup3` the three pipes to 0 to 2, `chdir("/")`,
+   duplicate the sealed image to descriptor 3 and a report pipe to descriptor 4, both
+   close-on-exec, `close_range(5, ~0)`, unblock signals, then
+   `execveat(3, "", argv, envp, AT_EMPTY_PATH)`. A step that fails writes the step and
+   the error to the report pipe and the child exits with 127; `spawn` returns only
+   when the pipe has closed without a report, which is the `exec`, so a refused start
+   names the call that failed. The kernel opens the image before it closes
+   descriptors 3 and 4, so the worker starts with exactly descriptors 0 to 2. An interpreter script (`#!`) cannot start this way: the
    kernel fails with `ENOENT`, because the interpreter would open the descriptor
    after it is closed. Only compiled executables are admitted.
 4. `Child` holds the pidfd. Exit is observed by polling it, signals use
    `pidfd_send_signal`, and the child is never reaped elsewhere, so its PID is not
    reused while the host holds it.
 5. `verify_reader` reads `SO_PEERCRED` on the accepted rendezvous: the PID must equal
-   the child's and the UID the host's, and `pidfd_send_signal(pidfd, 0)` must succeed.
+   the child's and the UID the host's, the pidfd must not be readable (a zombie
+   answers `pidfd_send_signal(pidfd, 0)` with success, so the signal alone would not
+   notice an exited child), and `pidfd_send_signal(pidfd, 0)` must succeed.
+   `SO_PEERCRED` names who connected and does not change afterwards, unlike the macOS
+   audit token: the check proves that the child connected and still lives. The worker
+   therefore never passes its rendezvous connection to a process it starts, the same
+   rule as never calling `exec` on itself.
 
 There is no start-suspended step, and none is needed. macOS checks the image after
 `exec`, so it must stop the child until the check is done. Linux checks the bytes
@@ -277,7 +297,9 @@ can `ptrace` it, read or write `/proc/<pid>/mem`, or follow `/proc/<pid>/exe`. (
 can; for a root-owned process the property does not hold, which is one reason the
 service refuses root.) The worker never calls `exec` on itself, so the PID that
 connects is still the verified image. The host also sets `PR_SET_DUMPABLE` to 0 at
-startup, so its own memory is equally closed. `/proc/<pid>/cmdline` and
+startup, before it reads a key, so its own memory is equally closed; the admission
+adapter does not rely on that call and sets it itself before it makes the memory file
+and before every start. `/proc/<pid>/cmdline` and
 `/proc/<pid>/status` stay readable to the same user, so no secret is ever in an
 argument, as the launch contract already requires.
 

@@ -223,6 +223,9 @@ pub(super) fn spawn_sealed(
             "the sealed image is numbered below the child's own descriptors",
         ));
     }
+    // The child is a copy of this process's memory until it executes the image:
+    // closed to other processes of this user, as it was when the image was sealed.
+    sys::close_to_other_processes()?;
     let (pipes, report, report_child, started) = {
         // No descriptor of the caller's may be half-made while a child is created.
         let _one_at_a_time = fence

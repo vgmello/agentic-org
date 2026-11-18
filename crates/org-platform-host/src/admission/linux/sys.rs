@@ -220,6 +220,32 @@ pub(super) fn peer_credentials(socket: BorrowedFd<'_>) -> io::Result<libc::ucred
     Ok(credentials)
 }
 
+/// Closes this process's memory, and the descriptors it holds, to other processes of
+/// the same user (`PR_SET_DUMPABLE` 0): they can no longer trace it, read or write
+/// `/proc/<pid>/mem`, or open `/proc/<pid>/fd/<n>`. The setting is inherited by a
+/// child made with `clone`, until that child executes an image.
+///
+/// The adapter depends on it twice. While the image is copied, the memory file is not
+/// yet sealed, and an open by `/proc/<pid>/fd/<n>` could write to it. Between `clone`
+/// and `execveat` a child is a copy of this process's memory, secrets included. So it
+/// is set before the memory file is made and again before every start, and a process
+/// that cannot set it gets no admission.
+pub(super) fn close_to_other_processes() -> io::Result<()> {
+    // SAFETY: `prctl` with scalar arguments only; it changes one attribute of this
+    // process and keeps nothing.
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+        return Err(last("prctl(PR_SET_DUMPABLE)"));
+    }
+    // SAFETY: as above; the call only reads the attribute.
+    match unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) } {
+        0 => Ok(()),
+        value if value < 0 => Err(last("prctl(PR_GET_DUMPABLE)")),
+        _ => Err(io::Error::other(
+            "prctl(PR_SET_DUMPABLE): this process is still open to other processes",
+        )),
+    }
+}
+
 /// This process's effective user ID.
 pub(super) fn effective_uid() -> libc::uid_t {
     // SAFETY: no arguments and no side effects; it cannot fail.

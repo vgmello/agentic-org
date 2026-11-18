@@ -278,12 +278,16 @@ impl fmt::Display for NotTheChild {
 
 impl std::error::Error for NotTheChild {}
 
-/// Whether `name` is a variable that changes how the loader runs an image: any name
-/// beginning `LD_` or `DYLD_`, and `GLIBC_TUNABLES`. The same on every system, so that
-/// no caller depends on which loader the child gets.
+/// Whether `name` is a variable that makes a child load code its image does not name:
+/// any name beginning `LD_` or `DYLD_` (the loaders), `GLIBC_TUNABLES`, and
+/// `GCONV_PATH` (glibc loads character-set converters, shared objects, from there).
+/// The same on every system, so that no caller depends on which loader the child gets.
 pub fn is_loader_variable(name: &OsStr) -> bool {
     let name = name.as_bytes();
-    name.starts_with(b"LD_") || name.starts_with(b"DYLD_") || name == b"GLIBC_TUNABLES"
+    name.starts_with(b"LD_")
+        || name.starts_with(b"DYLD_")
+        || name == b"GLIBC_TUNABLES"
+        || name == b"GCONV_PATH"
 }
 
 /// The whole environment of a child: exactly these variables, nothing of the host's.

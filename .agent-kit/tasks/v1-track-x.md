@@ -44,7 +44,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
 | X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
-| X2 first worker on Linux (LNX-1) | The Linux admission adapter is integrated (`00b4b61c`) and under fresh review; the host composition is briefed, not started | See below |
+| X2 first worker on Linux (LNX-1) | The Linux admission adapter is integrated, reviewed (ACCEPT) and repaired; the host composition is in work | See below |
 | X3 host secrets on Linux (LNX-4) | Not started | |
 | X4 web process confined on Linux (LNX-3) | Brief written; no code yet | See below |
 | X5 service and container (LNX-2) | Not started | |
@@ -505,16 +505,47 @@ not compose the adapter yet); the refusing target's tests. One host test now acc
 `NotFound` as well as `Unsupported` for an admission that cannot be built, because
 the Linux adapter reads the image when the admission is built.
 
-**Review of slice 1:** a fresh read-only reviewer is reading `a83c4fad..00b4b61c` and
-attacking it on this kernel (result recorded here when it reports). Held for the same
-repair pass, from the X1c admission review, because they are in the same files: the
-pin-after-admit composition as a pure function tested on every system; the error
-class of an unreachable guard; two nits (`Peer::satisfies` documentation; the
-presence adapter reading the peer token through the contract's `peer` instead of
-`pub(crate) mod macos`).
+**Review of slice 1: ACCEPT** (fresh read-only reviewer, same model as the lead, on
+`a83c4fad..00b4b61c`; it attacked the adapter on this kernel as uid 1000 and ran its
+tests ten times). Verified by probe: after `exec` a same-user process is denied the
+child's `mem`, `exe`, `environ`, `maps`, `fd` and `PTRACE_ATTACH`. Verified by
+reading: no host descriptor can reach the worker whatever other threads do
+(`close_range(5, ~0)` after the `dup3`s); the child between `clone` and `execveat` is
+async-signal-safe and can only `_exit`; the report pipe cannot be forged by the
+worker; the child is reaped once and its PID is not reused while the pidfd is held;
+`test-support` is enabled by no production composition.
 
-**Slice 2, the host composition:** briefed (worktree `x/x2-host`), dispatched after
-the adapter's repairs so that at most two writers work at once (the other is X4's).
+| Finding | Severity | What was done |
+| --- | --- | --- |
+| L1 Both guarantees depended on the host being non-dumpable, which nothing set: before `exec` the child is a dumpable copy of the host's memory, and before the seals a same-user process could write to the memory file through `/proc/<pid>/fd` (probe: 8 bytes written) | MAJOR, carried to the host slice | Closed in the adapter instead (L2, L3). The host slice still sets it at start, before a key is read. |
+| L2 The digest was of the bytes written, not of the sealed object | MINOR | The adapter seals, then reads the object back through its descriptor and judges that digest; it must equal the digest of the bytes read. |
+| L3 Nothing enforced non-dumpability | MINOR | `admission()` sets `PR_SET_DUMPABLE` 0 before the memory file is made and refuses if it does not hold; every start sets it again. Test `building_an_admission_closes_this_process_to_other_processes`. |
+| L4 `GCONV_PATH` loads shared objects and was not refused | NIT | Refused with the loader variables (ADR decision 7 updated). |
+| L5 The design said digest and size are compared | NIT | Design 3.1 says the digest covers every byte. |
+
+Also recorded in design 3.1 from the review: `SO_PEERCRED` names who connected and
+never changes, so the worker must never pass its rendezvous connection to a process
+it starts. Not verified: kernels before 6.3 and containers that refuse one of the
+calls (the decisions are unit-tested, the kernels were not available).
+
+The repairs were made by the lead (the slice's author session ended with the usage
+limit, so there is no original-author validation for this slice; the repair diff is
+read by X2's fresh final review). Checks after the repairs: the adapter's tests ten
+times unprivileged (82 tests, no failure) and once as root; lint for Linux, macOS and
+the refusing target; the refusing target's tests. From the X1c admission review, also
+done: the readmission comparison is `decision::readmitted`, tested on every target;
+the presence adapter reads the peer through `admission::peer` and the admission
+adapter module is private again. The error class of a check that may not start a
+server moves with the host slice (it is host code).
+
+**Slice 2, the host composition:** in work in worktree `x/x2-host` (one worker; the
+other writer is X4's). Baseline on Linux at its base, whole workspace unprivileged:
+3,263 tests pass and 43 fail, none because of this track's merge: 28 of them make
+their temporary directory under the macOS path `/private/tmp` or build an admission
+for a file that does not exist (Track A's tests never ran on Linux, where CI excludes
+the host), 8 need service registration on Linux (X5), 2 need Linux confinement (X4),
+and the rest are the sandbox's (no IPv6, no network) and the pre-existing release
+store tests.
 
 ## X4 · The web process confined on Linux (not started)
 

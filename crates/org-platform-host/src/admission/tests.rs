@@ -123,6 +123,7 @@ fn loader_variables_are_named_the_same_on_every_system() {
         "DYLD_LIBRARY_PATH",
         "DYLD_",
         "GLIBC_TUNABLES",
+        "GCONV_PATH",
     ] {
         assert!(is_loader_variable(OsStr::new(name)), "{name}");
     }
@@ -137,6 +138,8 @@ fn loader_variables_are_named_the_same_on_every_system() {
         "XLD_PRELOAD",
         "GLIBC_TUNABLES2",
         "GLIBC",
+        "GCONV_PATH2",
+        "gconv_path",
         "",
     ] {
         assert!(!is_loader_variable(OsStr::new(name)), "{name}");
@@ -147,7 +150,12 @@ fn loader_variables_are_named_the_same_on_every_system() {
 fn a_child_environment_refuses_loader_variables_and_keeps_the_rest_in_order() {
     let mut env = ChildEnv::new();
     env.set("HOME", "/home/x").unwrap();
-    for name in ["LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "GLIBC_TUNABLES"] {
+    for name in [
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+        "GLIBC_TUNABLES",
+        "GCONV_PATH",
+    ] {
         let error = env.set(name, "/secret/value").unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{name}");
         // The refusal names the rule, never the value.

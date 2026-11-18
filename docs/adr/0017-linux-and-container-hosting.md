@@ -96,7 +96,7 @@ These settle what the decisions above left open. The detail is in the
    without it before), compares its SHA-256 with the signed release manifest (in a
    development build, with the bytes read at host start), and starts the child from
    that file with `execveat`, holding a pidfd. Loader variables (`LD_*`, `DYLD_*`,
-   `GLIBC_TUNABLES`) are refused in every child's environment. The rendezvous peer
+   `GLIBC_TUNABLES`, `GCONV_PATH`) are refused in every child's environment. The rendezvous peer
    must match by `SO_PEERCRED`. There is no start-suspended step: the bytes are fixed
    before `exec`, and the execute-only image starts a non-root child non-dumpable. The
    executable is hashed; the loader and shared libraries are trusted because root owns

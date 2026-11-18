@@ -748,6 +748,25 @@ fn a_child_gets_its_pipes_its_environment_and_nothing_else() {
 /// The adapter runs here in a fixture process (`admit`), unchanged. As root that
 /// process is started as user 65534, so the test checks the same thing whoever runs
 /// it; as any other user it runs as that user, and the test also looks itself.
+/// Sealing an image and starting a child both need a process that others of its user
+/// cannot open: the copy is writable until it is sealed, and a child is a copy of this
+/// process until it executes the image. The admission makes it so itself.
+#[test]
+fn building_an_admission_closes_this_process_to_other_processes() {
+    let work = Workspace::new();
+    // SAFETY: `prctl` with scalar arguments; it sets and reads one attribute.
+    let dumpable = || unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) };
+    let _sealed = image::SealedImage::of(&development(&work.fixture)).unwrap();
+    assert_eq!(dumpable(), 0, "after an image was sealed");
+    // Even when something opened it again in between, a start closes it first.
+    let admission = work.admission();
+    // SAFETY: as above.
+    assert_eq!(unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0) }, 0);
+    let mut started = start(&admission, &["exit", "0"]);
+    assert_eq!(dumpable(), 0, "after a child was started");
+    wait_exit(&mut started.child);
+}
+
 #[test]
 fn the_child_of_an_unprivileged_user_is_not_dumpable() {
     use std::os::unix::process::CommandExt;
