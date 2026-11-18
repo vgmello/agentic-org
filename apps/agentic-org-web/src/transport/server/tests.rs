@@ -261,6 +261,8 @@ fn a3_b1_parser_refusals_with_trailing_input_reach_the_client_without_a_reset() 
         (b"NOT A REQUEST\r\n\r\n", b"HTTP/1.1 400"),
         (&oversize, b"HTTP/1.1 431"),
     ];
+    // Every case runs before anything is asserted, so a failure reports each case's count.
+    let mut counts = Vec::new();
     for (head, status) in cases {
         let mut resets = 0;
         for _ in 0..ROUNDS {
@@ -276,13 +278,16 @@ fn a3_b1_parser_refusals_with_trailing_input_reach_the_client_without_a_reset() 
             );
             assert!(body(&response).is_empty());
         }
-        assert_eq!(
-            resets,
-            0,
+        counts.push(format!(
             "{resets} of {ROUNDS} {} refusals were reset",
             String::from_utf8_lossy(status)
-        );
+        ));
     }
+    assert!(
+        counts.iter().all(|c| c.starts_with("0 ")),
+        "{}",
+        counts.join("; ")
+    );
     assert_eq!(server.calls.load(Ordering::Acquire), 0);
 }
 
