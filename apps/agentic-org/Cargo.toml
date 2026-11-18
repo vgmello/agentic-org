@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-test-support = ["org-host/test-support", "dep:org-office-launch", "dep:org-socket", "dep:serde", "dep:serde_json"]
+test-support = ["org-host/test-support", "dep:org-platform", "org-platform/test-support", "dep:org-office-launch", "dep:org-socket", "dep:serde", "dep:serde_json"]
 
 [[bin]]
 name = "agentic-org"
@@ -20,6 +20,11 @@ required-features = ["test-support"]
 test = false
 doc = false
 
+# A2's real-process setup tests (kept out of tests/, which another increment owns).
+[[test]]
+name = "setup"
+path = "setup-tests/setup.rs"
+
 [[test]]
 name = "shutdown_signals"
 harness = false
@@ -30,6 +35,7 @@ org-socket = { path = "../../crates/org-socket", optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 org-host = { path = "../../crates/org-host" }
+org-platform = { path = "../../crates/org-platform", optional = true }
 org-proto = { path = "../../crates/org-proto" }
 libc.workspace = true
 
