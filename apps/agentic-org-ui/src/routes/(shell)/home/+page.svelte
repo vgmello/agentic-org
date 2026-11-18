@@ -1,5 +1,13 @@
 <script lang="ts">
-	import NotBuilt from '$lib/components/NotBuilt.svelte';
+	import HomeView from '$lib/modules/home/features/view/HomeView.svelte';
+	import { pageTitle } from '$lib/nav';
+
+	let { data } = $props();
 </script>
 
-<NotBuilt title="Home" area="Home" />
+<svelte:head><title>{pageTitle('Home')}</title></svelte:head>
+
+<HomeView
+	organizationId={data.connection.organization.id}
+	organizationName={data.connection.organization.name}
+/>
