@@ -871,7 +871,7 @@ half of LNX-6 run).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.1 and 4,
   [host boundary design](design/office-host-boundary.md) (admission and the verified
   rendezvous). LNX-1.
-- **Code today:** `crates/org-host/src/spawn.rs` returns "office servers run only on
+- **Code today:** the admission contract's Linux adapter (`crates/org-platform-host/src/admission/linux.rs`) refuses, where `crates/org-host/src/spawn.rs` returned "office servers run only on
   macOS"; six tests in `supervisor/channels/tests.rs` fail on Linux.
 - **Done when:** LNX-1 passes in a test that starts the real host composition on Linux
   and uses `agent-os` through the same authenticated route the macOS tests use when X2

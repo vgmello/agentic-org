@@ -15,7 +15,7 @@ reference for what each executable does now.
 | `agentic-org setup` | Refuses and changes nothing. Increment A2 makes it work. |
 | `agentic-org-web` | Refuses to open a listener. Increment A3 makes it work. |
 | Create an organization, sign in, open the browser application against a server | Not possible yet (increments A3 and A4). |
-| The host starting an office worker | macOS only today (`crates/org-host/src/spawn.rs`); increment X2 adds Linux. |
+| The host starting an office worker | macOS only today (the Linux adapter of `crates/org-platform-host/src/admission/` refuses); increment X2 adds Linux. |
 | The browser application on its own | `bun run dev` in `apps/agentic-org-ui`; areas without a server adapter show as unavailable. |
 
 ## 1. A disposable home

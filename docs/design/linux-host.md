@@ -198,6 +198,20 @@ pub fn peer(stream: &UnixStream) -> io::Result<Peer>;   // native clients on hos
 pub fn own_image(expected: &ExpectedImage) -> Result<(), Refused>; // the host's own image
 ```
 
+Built in X1c in `org_platform_host::admission` (the contract's documentation there is
+the full text). It is the shape above with what today's macOS order needs:
+`spawn(args, env, fence)` takes the host's spawn lock, so that it covers only pipe and
+process creation and never the image check; `start` returns a `Held` child and
+`Held::release` resumes it, for the web path, which re-checks before resuming;
+`recheck` and `readmit` are the two later checks (`ServerCheck::still`, and the web
+path's re-admission that must equal the first); refusals are typed (`ImageRefusal`,
+`SpawnRefused`, `NotTheChild`), so the host keeps its log texts and its error
+classes; `ExpectedImage::macos_signing` (a `SigningRule`: required flags, rejected
+and absent entitlements) carries the rest of the host's signing policy as data; and
+`native_peers`, `static_images`, `own_signing` and, in a debug build,
+`peer_executable` replace the remaining macOS-only calls of the host. `verify_reader`
+and `own_image` return errors the host can tell apart, not only `Refused`.
+
 `spawn` returns only a child that has passed the platform's check; `verify_reader`
 is called on the accepted rendezvous before and after `ReadyForSecrets`, exactly where
 `reader_is_child` and `ServerCheck::still` are called today. The same `Admission`

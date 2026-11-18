@@ -39,9 +39,9 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | --- | --- | --- |
 | X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
-| X1c `admission`, `confinement`, `presence` | `confinement` and `presence` integrated and reviewed; `admission` in work | See below |
-| X1d `credentials` | Not started | |
-| X2 first worker on Linux (LNX-1) | Not started | |
+| X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
+| X1d `credentials` | In work: one worker | |
+| X2 first worker on Linux (LNX-1) | In work: the Linux admission adapter first, then the host composition | |
 | X3 host secrets on Linux (LNX-4) | Not started | |
 | X4 web process confined on Linux (LNX-3) | Not started | |
 | X5 service and container (LNX-2) | Not started | |
@@ -299,7 +299,7 @@ check go through the platform crates on macOS, with refusing adapters elsewhere.
 | Slice | Owner | Files | State |
 | --- | --- | --- | --- |
 | `confinement` and `presence` | Worker in `x/x1c-confine` | `crates/org-platform/src/confinement/`, `crates/org-platform-host/src/presence/` and `build.rs`; out of `crates/org-socket/src/confinement*`, `crates/org-host/src/recovery/presence.rs`, `crates/org-host/build.rs`; the call sites in `org-host/src/web.rs` and `apps/agentic-org-web/src/process.rs` | Integrated at `27125f6c` |
-| `admission` | Worker in `x/x1c-admission` | `crates/org-platform-host/src/admission/`, `crates/org-platform/src/image/`; out of `crates/org-host/src/{spawn, server_check, code_signing, peer, app_auth, bootstrap, release*, supervisor/**, offices, lib, web}.rs` and `crates/org-socket/src/image.rs` | In work |
+| `admission` | Worker in `x/x1c-admission` | `crates/org-platform-host/src/admission/`, `crates/org-platform/src/image/`; out of `crates/org-host/src/{spawn, server_check, code_signing, peer, app_auth, bootstrap, release*, supervisor/**, offices, lib, web}.rs` and `crates/org-socket/src/image.rs` | Integrated at `61acd21a` |
 
 **Decisions.**
 
@@ -318,10 +318,27 @@ check go through the platform crates on macOS, with refusing adapters elsewhere.
    refused when the line is read (`web::reported`), and where a system has seccomp
    the host observes it on the process itself, as the design says.
 
+6. `admission` keeps the design's contract and adds what today's macOS order needs:
+   the spawn lock passed as `fence` so it never covers the image check; `start` and
+   `Held::release` for the web path's re-check before resume; `recheck` and
+   `readmit`; typed refusals so the host keeps its log texts and error classes; the
+   host's signing policy as data (`SigningRule`). Policy stays in `org-host`:
+   `ServerCheck` decides whether to spawn and builds the `ExpectedImage`; the
+   platform crates name no signing identifier, team or entitlement of this product.
+7. The running image's identity (`csops`) and the release target are
+   `org_platform::image`, libc-only, because the web process needs them too. On
+   Linux with another C library the release target now refuses, where a `cfg!` used
+   to answer Linux: that target gets only refusing adapters.
+8. Two orderings changed, both judged harmless by the review: the child's start
+   time is stamped after the resume instead of just before, and on a failed resume
+   the child is killed before its standard input closes.
+
 **Review.**
 
 | Slice | Phase | Result |
 | --- | --- | --- |
+| `admission` | Fresh read-only review, on `61acd21a` | Accept. Both step sequences (worker, web process) read line by line against the old code: no path resumes a child before its check, every re-check is made at the same point on the same bytes, the spawn code is byte-identical, nothing is admitted that was refused. 4 minor, 6 nit |
+| `admission` | Repairs by the lead | Records and stale citations now; two small code repairs (the pin-after-admit composition as a pure function tested on every system; an unreachable guard's error class) after the X2 adapter slice, which edits the same files, is integrated |
 | `confinement` and `presence` | Fresh read-only review, on `27125f6c` | Changes required, in test evidence only: the example's "a threaded process is refused" check could no longer fail, because `confine_web` also connects. Production code preserved by reading: the Seatbelt profile and the bridge are byte-identical, and the order in the web process and the host is unchanged. 2 minor, 5 nit |
 | `confinement` and `presence` | Repairs by the lead | The example asserts the refusal is the entry check's and that nothing was confined; the report mapping is a pure function with tests; stale statements in ADR-0008, ADR-0011, the checklist and the design |
 
@@ -329,8 +346,20 @@ check go through the platform crates on macOS, with refusing adapters elsewhere.
 workspace's tests with the same 22 known failures and no other; after the repairs,
 `org-host` again with the same failing set. `cargo fmt --check`, the two CI lint
 commands, the macOS-target lint of the whole workspace and of the example, and the
-refusing-target lint and tests of both platform crates pass. The list is at 54 files
-and 330 predicates.
+refusing-target lint and tests of both platform crates pass. After the admission
+integration: the whole workspace's tests again, 22 known failures and no other; the
+plain Linux lint of the whole workspace with no excluded crate passes with dead code
+allowed and fails without it on three test helpers of `org-host` whose only callers
+are tests that are macOS-only until X2 (`recovery_db_unlocked_for_test`,
+`with_test_presence`, `recovery_for_test`). The list is at 41 files and 249
+predicates.
+
+**Not met from the plan's "Done when", and carried to X2.** "None of the moved files
+has a platform predicate" holds for source; `server_check.rs`, `app_auth.rs`,
+`supervisor/mod.rs`, `offices.rs`, `web/tests.rs` and `bootstrap/tests.rs` keep
+predicates on macOS-only tests, which leave the list in X2 with the `testing` module.
+"The Linux lint passes with no allowed lint and no excluded crate" waits for those
+same tests to run on Linux.
 
 **Owed from a Mac, by the Track A engineer, before this is relied on** (nothing of
 this slice could be run; it was type-checked and linted for macOS, and the bridge was
@@ -347,6 +376,26 @@ not compiled):
 5. A signed build: the host starts the web process, the Seatbelt probes pass, the
    handoff completes; `agentic-org recovery release` at the console shows the dialog,
    cancel denies, approve releases, and over SSH it is not local.
+6. Admission, on a signed, hardened Developer ID build with `ORG_APP_TEAM_ID`: the
+   host starts an office worker and logs no refusal; an unsigned or ad-hoc worker is
+   refused ("it isn't the signed office server …; it was stopped before it ran and
+   got nothing") and receives no key; a web image with `keychain-access-groups` or
+   `get-task-allow` is refused at admission; with a selected release, an image with
+   another CDHash is refused ("selected release kernel image mismatch"); a debug
+   build with a pin is refused ("selected release requires platform-audited image");
+   a signed CLI is admitted on `host.sock` and one signed by someone else is refused;
+   `check_self` passes for the installed host; the release install's static check
+   accepts the four executables and refuses a re-signed one; the key store selection
+   still picks the Keychain.
+7. First run ever of the macOS-only tests that moved: `cargo test --locked
+   -p org-platform -p org-platform-host -p org-host --no-fail-fast` (CI does this).
+
+**Release builds.** `org-platform-host`'s `test-support` feature (the scripted and
+by-path test admissions) is enabled only by `org-host`'s dev-dependency. A command
+that builds test targets together with the binaries (`cargo build --workspace
+--all-targets --release`) would unify it into the host binary's platform crate;
+nothing calls it there, but release binaries are built without test targets
+(`cargo build --release -p <executable>`). The release procedure (L9) states that.
 
 **For the Track A lead.** Commit `2d560d7c` (A1.3b, the SQLCipher removal) deleted
 `crates/org-office/src/store/tests/sqlcipher_init.rs`, the only file that declared

@@ -644,7 +644,7 @@ Linux, including a container, and confirms no production mock fallback.
   under ADR-0016, and the files move to the storage tree above (implementation plan
   A1, B1b).
 - Host secrets use the macOS Keychain (`crates/org-host/src/host_secrets`), and the
-  host starts workers only on macOS (`crates/org-host/src/spawn.rs`).
+  host starts workers only on macOS (the admission contract's Linux adapter, `crates/org-platform-host/src/admission/linux.rs`, refuses until X2).
 - The launch code has two forms, the older first line and the rendezvous in
   `crates/org-office-launch/src/v3.rs`; only the rendezvous stays (A1).
 - Provisioning operation IDs are ULIDs; they become UUIDv7 under FC-142.

@@ -14,7 +14,8 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
 
 - The host can start office workers only on macOS today. On any other platform the
   spawn returns "office servers run only on macOS"
-  (`crates/org-host/src/spawn.rs`).
+  (`crates/org-host/src/spawn.rs` when this was written; since X1c the admission
+  contract's Linux adapter, `crates/org-platform-host/src/admission/linux.rs`).
 - Worker admission on macOS checks the child's code signature through its audit token.
   Linux has no equivalent in the code.
 - The web process confines itself with a macOS Seatbelt profile. On every other system
