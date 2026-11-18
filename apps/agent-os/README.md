@@ -4,7 +4,10 @@ The agents' command line, and the only way an agent reaches the product
 ([architecture non-negotiables](../../docs/architecture-non-negotiables.md), rule 7).
 An agent talks only to its own office ([ADR-0003](../../docs/adr/0003-agent-messaging-office-first.md)).
 
-What it is to become is set by the requirement documents and the
+What it is to become is set by the
+[agent command line design](../../docs/design/agent-os-command-line.md) (one grammar,
+`agent-os <resource> <verb>` with named flags, one answer envelope, one table of
+commands) and the
 [implementation plan](../../docs/implementation-plan.md): every call goes to the office,
 with a long-running mode for single-digit-millisecond calls (B6), task commands (B5),
 and the binding of an agent's run when the office starts it (C3). This page describes

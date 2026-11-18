@@ -3,7 +3,7 @@
 //! service and account strings are the host's two views' (office keys and host secrets), so
 //! that what each of them sent before it moved here is what is checked here.
 use super::*;
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+const A: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0";
 const GROUP: &str = "TEAMID1234.org.agentic.host";
 /// The office keys' service (the host's `keys::SERVICE`).
 const OFFICE_KEYS: &str = "org.agentic.office-key";
@@ -43,7 +43,7 @@ fn string(value: CFType) -> String {
 #[test]
 fn exact_instance_service_accounts_group_and_data_protection() {
     let a = keychain(GROUP, &host_secrets(A));
-    let b = keychain(GROUP, &host_secrets("01BBBBBBBBBBBBBBBBBBBBBBBB"));
+    let b = keychain(GROUP, &host_secrets("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e1"));
     for raw in ["registry", "recovery.A", "recovery.a"] {
         let n = name(raw);
         let q = a.query(Some(&n));
@@ -440,7 +440,7 @@ fn four_call_adapter_insert_replace_delete_reopen_and_scope_conformance() {
     assert_eq!(loaded(&store(&fake, GROUP, A), &n), b"replacement");
     for isolated in [
         store(&fake, "OTHER.group", A),
-        store(&fake, GROUP, "01BBBBBBBBBBBBBBBBBBBBBBBB"),
+        store(&fake, GROUP, "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e1"),
     ] {
         assert!(isolated.load(&n).unwrap().is_none());
         assert!(names(&isolated).is_empty());

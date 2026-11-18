@@ -19,8 +19,12 @@ serde_json.workspace = true
 
 [dev-dependencies]
 # Test-only: the real office server for tests/office.rs. Never a dependency of the binary.
-agentic-org-office = { path = "../agentic-org-office" }
+# test-support: the grant signer and host-channel caller (persons act only through grants).
+agentic-org-office = { path = "../agentic-org-office", features = ["test-support"] }
+org-office = { path = "../../crates/org-office" }
 org-office-launch = { path = "../../crates/org-office-launch" }
+# Sends the transfer socket and channels over the rendezvous, as the host does.
+org-socket = { path = "../../crates/org-socket" }
 tempfile.workspace = true
 
 [[test]]

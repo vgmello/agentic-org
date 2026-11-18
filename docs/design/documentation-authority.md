@@ -26,6 +26,8 @@ in the "What the code does today" section of each design.
 | Chat data, visibility and who writes what | [Messaging](organization-data/15-messaging-and-chat.md), [ADR-0003](../adr/0003-agent-messaging-office-first.md) |
 | How fast an operation answers, and when it is acknowledged | [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) |
 | How an ask waits; required asks | [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) |
+| What starts an agent's turn | [Run modes](../specs/agent-run-modes-ux.md): a person's Run, the answer to a required ask (ADR-0020), or another agent's ask or hand-off ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)) |
+| The agents' command line: grammar, answer format, errors and the list of commands | [Agent command line](agent-os-command-line.md), from [REQ-08](../specs/req-08-agent-os-cli-and-kernel-primitives.md). What a command means stays with the contract its row names |
 | Durable sources versus rebuildable caches | [Storage contract](organization-data/README.md#shared-storage-contract), [recovery](organization-data/16-recovery-and-office-continuity.md) |
 | How the office stores, acknowledges and rebuilds data | [Office store design](office-store.md), [ADR-0021](../adr/0021-office-store-architecture.md) |
 | Replaceable storage engine | [ADR-0018](../adr/0018-storage-engine-independence.md) |
@@ -35,7 +37,7 @@ in the "What the code does today" section of each design.
 | How agents run, isolation, private homes | [ADR-0004](../adr/0004-headless-agent-sessions.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [agent sessions](agent-sessions.md) |
 | Browser sessions | [ADR-0013](../adr/0013-stored-browser-sessions.md), [web API](web-api-v1.md) |
 | Platforms and containers | [ADR-0017](../adr/0017-linux-and-container-hosting.md) |
-| Installation, service and privilege boundaries | [Standalone design](standalone-server.md), [host boundary](office-host-boundary.md), [installation UX](../specs/server-installation-and-access-ux.md) |
+| Installation, service and privilege boundaries | [Standalone design](standalone-server.md), [host boundary](office-host-boundary.md), [installation UX](../specs/server-installation-and-access-ux.md), [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md) |
 | Executable names and which entry points work | [Executables and entry points](executable-migration.md) |
 | Code layout and dependency direction | [Architecture rules](../architecture-rules.md), [project structure](project-structure.md) |
 | What must be preserved from before | Nothing: [no compatibility obligations before v1 ships](organization-data/README.md#no-compatibility-obligations-before-v1-ships) |

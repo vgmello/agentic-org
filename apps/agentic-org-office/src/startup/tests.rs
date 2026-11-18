@@ -4,8 +4,7 @@ use crate::test_teardown::teardown_failed;
 
 use super::*;
 use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
-use org_office_launch::{CreateOffice, DiscardOffice, StartOffice};
-use org_proto::{AppToken, DbKey, GrantKey, OfficeRole, RecoveryCode};
+use org_proto::{DbKey, GrantKey, OfficeRole, RecoveryCode};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, Write};
@@ -15,13 +14,14 @@ use std::path::Path;
 use std::time::Duration;
 
 const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const WAIT: Duration = Duration::from_secs(10);
 
 fn first(path: &Path, op: FirstLine) -> HostFirstLine {
     let office = OfficeLine {
         id_profile: None,
         selected_writer_required: false,
-        instance_id: ID.into(),
+        instance_id: INSTANCE.into(),
         office_id: ID.into(),
         rendezvous: path.to_str().unwrap().into(),
     };
@@ -313,47 +313,45 @@ fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
 }
 
 #[test]
-fn v2_and_empty_first_lines_keep_the_legacy_transport() {
+fn a_v2_first_line_is_refused_and_nothing_reaches_stdout() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for message in [
-        HostMessage::Create(CreateOffice {
-            org_id: ID.into(),
-            org_name: "Acme".into(),
-            office_id: ID.into(),
-            office_name: "HQ".into(),
-            role: OfficeRole::Hq,
-            app_token: AppToken::from_bytes([7; 32]),
-            db_key: DbKey::from_bytes([0xb3; 32]),
-        }),
-        HostMessage::Start(StartOffice {
-            app_token: AppToken::from_bytes([7; 32]),
-            db_key: DbKey::from_bytes([0xb3; 32]),
-        }),
-        HostMessage::Discard(DiscardOffice { db_key: None }),
+    let token = "a7".repeat(32);
+    let key = "b3".repeat(32);
+    for (op, line) in [
+        (
+            FirstLine::Create,
+            json!({"v": 2, "op": "create", "org_id": "org-2", "org_name": "Acme",
+                   "office_id": "office-1", "office_name": "HQ", "role": "hq",
+                   "app_token": token, "db_key": key}),
+        ),
+        (
+            FirstLine::Start,
+            json!({"v": 2, "op": "start", "app_token": token, "db_key": key}),
+        ),
+        (
+            FirstLine::Discard,
+            json!({"v": 2, "op": "discard", "db_key": null}),
+        ),
     ] {
-        let op = match &message {
-            HostMessage::Create(_) => FirstLine::Create,
-            HostMessage::Start(_) => FirstLine::Start,
-            _ => FirstLine::Discard,
-        };
-        let mut bytes = vec![];
-        org_office_launch::write_host_message(&mut bytes, &message).unwrap();
-        bytes.extend_from_slice(b"garbage\n");
-        let (mut control, mut output) = control(&bytes);
-        assert!(
-            matches!(control.read(op).unwrap(), Some(Request::V2(actual)) if actual == message)
-        );
-        assert!(crate::zeroed::take_secret_wipes().is_empty());
+        let mut bytes = serde_json::to_vec(&line).unwrap();
+        bytes.push(b'\n');
+        let (mut control, output) = control(&bytes);
+        assert!(matches!(
+            control.read(op),
+            Err(LaunchError::UnsupportedVersion { found: 2, .. })
+        ));
         assert!(control.rendezvous.is_none());
         assert!(control.transfer.is_none());
         assert!(!control.failed_rights());
-        control.emit(&ServerEvent::Discarded).unwrap();
-        output.rewind().unwrap();
-        let mut output = BufReader::new(output);
-        assert_eq!(
-            org_office_launch::read_server_event(&mut output).unwrap(),
-            Some(ServerEvent::Discarded)
-        );
+        assert!(control.lifetime().is_err());
+        // Before a rendezvous there is no trusted channel: the failure is not written to stdout.
+        control
+            .emit(&ServerEvent::Failed {
+                code: org_office_launch::FailCode::UnsupportedVersion,
+                message: "launch version 2 isn't supported".into(),
+            })
+            .unwrap();
+        stdout_is_empty(output);
     }
     let (mut empty, _) = control(b"");
     assert!(empty.read(FirstLine::Start).unwrap().is_none());
@@ -669,21 +667,15 @@ fn receive_waits_after_would_block_and_fatal_diagnostics_are_fixed() {
 }
 
 #[test]
-fn event_writer_errors_are_propagated_on_both_transports() {
+fn rendezvous_event_writer_errors_are_propagated() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    let input = tempfile::tempfile().unwrap();
-    let output = tempfile::NamedTempFile::new().unwrap();
     let mut control = Control::new(
         ControlPipe {
-            from_host: input,
-            to_host: File::open(output.path()).unwrap(),
+            from_host: tempfile::tempfile().unwrap(),
+            to_host: tempfile::tempfile().unwrap(),
         },
         Arc::new(Mutex::new(())),
     );
-    assert!(matches!(
-        control.emit(&ServerEvent::Discarded),
-        Err(LaunchError::Frame(FrameError::Io(_)))
-    ));
     let (stream, peer) = UnixStream::pair().unwrap();
     // A concurrent fork may briefly retain peer despite CLOEXEC. Shutdown is shared
     // by inherited copies and deterministically forces this writer's error path.
@@ -869,18 +861,7 @@ fn lifetime_probe_child() {
 }
 
 #[test]
-fn lifetime_empty_reads_preserve_bytes_and_control_drop_wakes_the_reader() {
-    {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        let mut file = tempfile::tempfile().unwrap();
-        file.write_all(b"X").unwrap();
-        file.rewind().unwrap();
-        let mut pipe = Lifetime::Pipe(file);
-        assert_eq!(pipe.read(&mut []).unwrap(), 0);
-        let mut byte = [0];
-        assert_eq!(pipe.read(&mut byte).unwrap(), 1);
-        assert_eq!(byte, [b'X']);
-    }
+fn lifetime_empty_reads_and_control_drop_wake_the_reader() {
     for case in [
         ("empty", 0),
         ("drop", 0),

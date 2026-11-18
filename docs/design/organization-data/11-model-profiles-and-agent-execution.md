@@ -347,7 +347,7 @@ The installed-version driver probes, authenticated production composition, compl
 5. Implement native adapters and, when its backend ships, the HTTP worker/agent loop behind the same port; gate each production backend on AE-09/14. Unsupported drivers can remain explicitly unavailable while supported backends ship.
 6. Connect durable usage capture/routing evidence and restoration (AE-12), then report the performance gate (AE-13).
 
-The first release accepts explicit turn commands only. Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service. Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
+The first release accepts explicit turn commands only. Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service; the office's messaging is one such caller when another agent's ask or hand-off starts a turn ([ADR-0023](../../adr/0023-an-agents-ask-starts-a-turn.md)). Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
 
 ## 12. SQL tables, relationships and file mapping
 

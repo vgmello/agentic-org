@@ -1,5 +1,6 @@
 use super::*;
-use crate::hostdb::tests::first_account::PHC;
+/// A valid pinned-profile PHC (the same fixture as the host registry tests).
+const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 use argon2::password_hash::{Output, SaltString};
 
 thread_local! { static CLEARED: std::cell::RefCell<Vec<Vec<u8>>> = const { std::cell::RefCell::new(Vec::new()) }; }
@@ -52,7 +53,7 @@ fn only_the_pinned_argon2_profile_salt_and_tag_are_accepted() {
     let rejected = invalid.len();
     CLEARED.with(|slot| slot.borrow_mut().clear());
     for phc in invalid {
-        assert!(matches!(Verifier::new(phc), Err(Error::Unsafe)));
+        assert!(matches!(Verifier::new(phc), Err(InvalidVerifier)));
     }
     CLEARED.with(|slot| {
         let values = slot.borrow();
@@ -71,10 +72,9 @@ fn success_parse_profile_and_identity_rejections_zero_owned_inputs_before_freein
     drop(input);
     assert!(Verifier::new("sensitive invalid PHC".into()).is_err());
     assert!(Verifier::new(changed(1, "argon2i")).is_err());
-    let value = Verifier::new(PHC.into()).unwrap();
-    assert!(crate::hostdb::FirstAccount::new("invalid", "Sage", value).is_err());
-    let value = Verifier::new(PHC.into()).unwrap();
-    assert!(crate::hostdb::FirstAccount::new("01J00000000000000000000003", "", value).is_err());
+    // A verifier is cleared when dropped, including after a refused use.
+    drop(Verifier::new(PHC.into()).unwrap());
+    drop(Verifier::new(PHC.into()).unwrap());
     CLEARED.with(|slot| {
         let bytes = slot.borrow();
         assert_eq!(bytes.len(), 5);

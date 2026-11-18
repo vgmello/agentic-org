@@ -166,13 +166,6 @@ fn default_office_home_from(
     location::office_home_from(override_home, base)
 }
 
-/// The office home of this process's user account: [`office_home_in`] its `pw_dir`, from the
-/// account database (`getpwuid_r`), never from `HOME`. `None` if the account has no absolute
-/// home folder.
-pub(crate) fn account_office_home() -> Option<PathBuf> {
-    account_dir().and_then(|dir| office_home_in(&dir))
-}
-
 /// This process's account home folder (`pw_dir`), if it is absolute.
 pub(crate) fn account_dir() -> Option<PathBuf> {
     account_home(euid())
@@ -430,7 +423,7 @@ mod tests {
 
     #[test]
     fn the_account_office_home_comes_from_the_account_database() {
-        let Some(home) = account_office_home() else {
+        let Some(home) = account_dir().and_then(|dir| office_home_in(&dir)) else {
             // A uid with no account entry (some CI containers): nothing to compare.
             assert!(account_home(euid()).is_none());
             eprintln!("skipped: this uid has no account home folder");

@@ -1,28 +1,39 @@
-//! Actual host/worker orchestration with a private cfg(test) presence adapter.
-//! This deliberately proves no physical authentication or production signature.
-use crate::{
-    bootstrap::{BootstrapHost, BootstrapService},
-    hostdb::HostDb,
-    recovery::TestPresence,
-    service::listener::Connection,
-};
+//! Recovery-custody release through the actual registered host, ported from the
+//! deleted reverse-bootstrap proof (`bootstrap/recovery_tests.rs`). A private
+//! cfg(test) presence adapter stands in for the OS prompt; this proves no
+//! physical authentication or production signature.
+//!
+//! It proves: presence runs with the registry connection unlocked and other
+//! connections still served; no confirmation without a local foreground
+//! context; concurrent prompts are refused, not queued; a waiting prompt is
+//! cancelled by its connection's EOF; release, redelivery, acknowledgement and
+//! the package follow the persisted ledger; and acknowledgement deletes the
+//! custody copy.
+use super::{answer, provision_hq, start_signed_in, Started, PASSWORD};
+use crate::{hostdb::HostDb, recovery::TestPresence, service::listener::Connection};
 use org_host_control::{ops, recovery as dto, SessionHandle};
-use org_proto::{frame, ApiError, Call, ErrorCode, Request, Response};
+use org_proto::{ApiError, Call, ErrorCode};
 use std::{
     io::BufReader,
     os::unix::net::UnixStream,
     sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc, Arc, Mutex,
     },
+    time::{Duration, Instant},
 };
+
+/// Presence modes: 0 not local, 1 local but refused, 2 confirmed,
+/// 3 wait until `finish` or cancellation.
 struct Scripted {
-    state: Arc<BootstrapService>,
     db: Arc<HostDb>,
     mode: AtomicUsize,
     calls: AtomicUsize,
-    ready: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
-    finish: std::sync::atomic::AtomicBool,
+    ready: Mutex<Option<mpsc::Sender<()>>>,
+    finish: AtomicBool,
+    /// Set when a mode-3 prompt observed `cancelled()`, so a test can tell a
+    /// real cancellation from the 5 s deadline (both refuse the release).
+    cancelled_seen: AtomicBool,
 }
 impl TestPresence for Scripted {
     fn local(&self, _: &Connection) -> bool {
@@ -31,23 +42,20 @@ impl TestPresence for Scripted {
     fn confirm(&self, cancelled: &dyn Fn() -> bool) -> Result<(), ()> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert!(
-            self.state.state.try_lock().is_ok(),
-            "global bootstrap controller held during presence"
-        );
-        assert!(
             self.db.recovery_db_unlocked_for_test(),
-            "DB held during presence"
+            "registry connection held during presence"
         );
         if self.mode.load(Ordering::SeqCst) == 3 {
             if let Some(ready) = self.ready.lock().unwrap().take() {
                 ready.send(()).unwrap();
             }
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while !self.finish.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !self.finish.load(Ordering::SeqCst) && Instant::now() < deadline {
                 if cancelled() {
+                    self.cancelled_seen.store(true, Ordering::SeqCst);
                     return Err(());
                 }
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                std::thread::sleep(Duration::from_millis(5));
             }
             return Err(());
         }
@@ -58,6 +66,7 @@ impl TestPresence for Scripted {
         }
     }
 }
+
 fn call<C: Call>(
     wire: &mut BufReader<UnixStream>,
     id: &mut u64,
@@ -65,56 +74,60 @@ fn call<C: Call>(
 ) -> Result<C::Result, ApiError> {
     let current = *id;
     *id += 1;
-    frame::write_message(wire.get_mut(), &Request::new::<C>(current, p).unwrap()).unwrap();
-    let response: Response = frame::read_message(wire).unwrap().unwrap();
-    assert_eq!(response.id, current);
-    response.into_result::<C>().map_err(|e| match e {
-        org_proto::CallError::Api(e) => e,
-        _ => panic!("typed recovery response invalid"),
-    })
+    answer::<C>(wire, current, p)
 }
-fn session(s: &SessionHandle) -> SessionHandle {
+fn copy(s: &SessionHandle) -> SessionHandle {
     SessionHandle::new(s.expose().into()).unwrap()
 }
-pub(super) fn exercise(
-    host: &BootstrapHost,
-    wire: &mut BufReader<UnixStream>,
-    p: &org_host_control::provision::Params,
-    org: &org_host_control::provision::Provisioned,
-    id: &mut u64,
-    password: &str,
-) {
-    let (recovery, db) = {
-        let state = host.state.state.lock().unwrap();
-        (
-            state.host.as_ref().unwrap().service.recovery_for_test(),
-            host.state.database(&state).unwrap().unwrap(),
-        )
-    };
+
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual worker listeners require permitted local bind"]
+fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence() {
+    // `_temp` is bound first so it drops last, after the host and its children.
+    let Started {
+        temp: _temp,
+        host,
+        socket,
+        mut wire,
+        session,
+        ..
+    } = start_signed_in();
+    let wire = &mut wire;
+    let mut next = 3;
+    let id = &mut next;
+    let (p, org) = provision_hq(wire, id, session);
+    let recovery = host.service.recovery_for_test();
+    let (db, custody) = host
+        .service
+        .authentication
+        .as_ref()
+        .expect("registered host authentication")
+        .provisioning_storage();
+    let instance_id = host.instance.as_ref().unwrap().id().to_owned();
     let adapter = Arc::new(Scripted {
-        state: Arc::clone(&host.state),
         db: Arc::clone(&db),
         mode: AtomicUsize::new(0),
         calls: AtomicUsize::new(0),
-        ready: std::sync::Mutex::new(None),
-        finish: std::sync::atomic::AtomicBool::new(false),
+        ready: Mutex::new(None),
+        finish: AtomicBool::new(false),
+        cancelled_seen: AtomicBool::new(false),
     });
     let show = |redeliver| ops::RecoveryReleaseParams {
-        session: session(&p.session),
+        session: copy(&p.session),
         org_id: org.organization_id.clone(),
         redeliver,
     };
     let ack = || ops::RecoveryAcknowledgeParams {
-        session: session(&p.session),
+        session: copy(&p.session),
         org_id: org.organization_id.clone(),
     };
     let status = || dto::StatusParams {
-        session: session(&p.session),
+        session: copy(&p.session),
         org_id: org.organization_id.clone(),
         after_ordinal: None,
     };
     recovery.with_test_presence(adapter.clone(), || {
-        // No foreground context: refuse before even invoking the test presence callback.
+        // No foreground context: refuse before even invoking the presence callback.
         assert_eq!(
             call::<ops::RecoveryRelease>(wire, id, &show(false))
                 .unwrap_err()
@@ -129,16 +142,13 @@ pub(super) fn exercise(
                 .code,
             ErrorCode::NotAuthorized
         );
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
         let waiting = call::<dto::Status>(wire, id, &status()).unwrap();
         assert_eq!(waiting.delivery_ordinal, "0");
         assert!(waiting.audit.is_empty());
-        // A second actual native sign-in remains usable while the first OS
-        // adapter is waiting; concurrent prompts are refused, never queued.
-        let native_path = {
-            let state = host.state.state.lock().unwrap();
-            state.host.as_ref().unwrap().socket_path().to_owned()
-        };
-        let mut other = BufReader::new(UnixStream::connect(native_path).unwrap());
+        // A second actual native sign-in remains usable while the first presence
+        // prompt is waiting; concurrent prompts are refused, never queued.
+        let mut other = BufReader::new(UnixStream::connect(&socket).unwrap());
         let mut other_id = 1;
         call::<org_proto::Hello>(
             &mut other,
@@ -151,21 +161,19 @@ pub(super) fn exercise(
             &mut other_id,
             &ops::AccountVerifyParams {
                 login: "Owner".into(),
-                password: org_host_control::Password::new(password.into()).unwrap(),
+                password: org_host_control::Password::new(PASSWORD.into()).unwrap(),
             },
         )
         .unwrap();
         adapter.mode.store(3, Ordering::SeqCst);
-        let (ready, started) = std::sync::mpsc::channel();
+        let (ready, started) = mpsc::channel();
         *adapter.ready.lock().unwrap() = Some(ready);
         let params = show(false);
         std::thread::scope(|scope| {
             let waiting = scope.spawn(|| call::<ops::RecoveryRelease>(wire, id, &params));
-            started
-                .recv_timeout(std::time::Duration::from_secs(3))
-                .unwrap();
+            started.recv_timeout(Duration::from_secs(3)).unwrap();
             let other_params = ops::RecoveryReleaseParams {
-                session: session(&signed.session),
+                session: copy(&signed.session),
                 org_id: org.organization_id.clone(),
                 redeliver: false,
             };
@@ -175,11 +183,12 @@ pub(super) fn exercise(
                     .code,
                 ErrorCode::Unavailable
             );
+            // The registry is readable from another connection mid-prompt.
             let status = call::<dto::Status>(
                 &mut other,
                 &mut other_id,
                 &dto::StatusParams {
-                    session: session(&signed.session),
+                    session: copy(&signed.session),
                     org_id: org.organization_id.clone(),
                     after_ordinal: None,
                 },
@@ -192,27 +201,33 @@ pub(super) fn exercise(
                 ErrorCode::NotAuthorized
             );
         });
+        // The waiting connection's EOF cancels its prompt.
         adapter.finish.store(false, Ordering::SeqCst);
-        let (ready, started) = std::sync::mpsc::channel();
+        adapter.cancelled_seen.store(false, Ordering::SeqCst);
+        let eof_started = Instant::now();
+        let (ready, started) = mpsc::channel();
         *adapter.ready.lock().unwrap() = Some(ready);
         let eof = other.get_ref().try_clone().unwrap();
         let params = ops::RecoveryReleaseParams {
-            session: session(&signed.session),
+            session: copy(&signed.session),
             org_id: org.organization_id.clone(),
             redeliver: false,
         };
         std::thread::scope(|scope| {
             let waiting =
                 scope.spawn(|| call::<ops::RecoveryRelease>(&mut other, &mut other_id, &params));
-            started
-                .recv_timeout(std::time::Duration::from_secs(3))
-                .unwrap();
+            started.recv_timeout(Duration::from_secs(3)).unwrap();
             eof.shutdown(std::net::Shutdown::Write).unwrap();
             assert_eq!(
                 waiting.join().unwrap().unwrap_err().code,
                 ErrorCode::NotAuthorized
             );
         });
+        assert!(
+            adapter.cancelled_seen.load(Ordering::SeqCst),
+            "the prompt ended by its deadline, not by the connection's EOF"
+        );
+        assert!(eof_started.elapsed() < Duration::from_secs(4));
         drop(other);
         drop(eof);
         assert_eq!(
@@ -221,6 +236,7 @@ pub(super) fn exercise(
                 .delivery_ordinal,
             "0"
         );
+        // Confirmed: released once, then only by explicit redelivery.
         adapter.mode.store(2, Ordering::SeqCst);
         let first = call::<ops::RecoveryRelease>(wire, id, &show(false)).unwrap();
         let shown = call::<dto::Status>(wire, id, &status()).unwrap();
@@ -262,21 +278,18 @@ pub(super) fn exercise(
         );
         let third = call::<ops::RecoveryRelease>(wire, id, &show(true)).unwrap();
         assert!(first.code.expose() == third.code.expose());
-        let package = call::<dto::Package>(
-            wire,
-            id,
-            &dto::PackageParams {
-                session: session(&p.session),
-                org_id: org.organization_id.clone(),
-            },
-        )
-        .unwrap();
-        assert_eq!(package.instance_id, host.state.id);
+        let package_params = || dto::PackageParams {
+            session: copy(&p.session),
+            org_id: org.organization_id.clone(),
+        };
+        let package = call::<dto::Package>(wire, id, &package_params()).unwrap();
+        assert_eq!(package.instance_id, instance_id);
         assert_eq!(package.operation_id, p.operation_id);
         assert_eq!(package.office_id, org.office_id);
         assert!(package.package_hex.starts_with("41474f5247434131"));
         let before = db.recovery_observed(&p.operation_id).unwrap();
         assert_eq!(before.ordinal, 3);
+        // Acknowledged: idempotent, final, and the custody copy is gone.
         let _: org_proto::Empty = call::<ops::RecoveryAcknowledge>(wire, id, &ack()).unwrap();
         let done = call::<dto::Status>(wire, id, &status()).unwrap();
         assert_eq!(done.state, dto::DeliveryState::Acknowledged);
@@ -292,29 +305,9 @@ pub(super) fn exercise(
             ErrorCode::Conflict
         );
         assert_eq!(adapter.calls.load(Ordering::SeqCst), calls);
-        let after = call::<dto::Package>(
-            wire,
-            id,
-            &dto::PackageParams {
-                session: session(&p.session),
-                org_id: org.organization_id.clone(),
-            },
-        )
-        .unwrap();
+        let after = call::<dto::Package>(wire, id, &package_params()).unwrap();
         assert_eq!(after, package);
         let source = db.recovery_source(&org.organization_id).unwrap();
-        let (_, custody) = {
-            let state = host.state.state.lock().unwrap();
-            state
-                .host
-                .as_ref()
-                .unwrap()
-                .service
-                .authentication
-                .as_ref()
-                .unwrap()
-                .provisioning_storage()
-        };
         assert!(custody
             .load(&crate::host_secrets::Name::parse(&source.recovery_handle).unwrap())
             .unwrap()

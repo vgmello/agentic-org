@@ -117,7 +117,7 @@ With one cache per repository, keeping the network credential away from agents c
 - **SSH:** the office sets the SSH command for that invocation through its environment. The command ignores user SSH configuration, runs in batch mode, uses only the office's identity, and verifies the host key strictly against a known-hosts file the office owns. The key is reached through a key file or an agent socket that only the service account can open.
 - **Local repositories** need no credential.
 
-**What an agent's session receives.** Nothing that can authenticate to a remote. Its environment has no credential variable, no SSH agent socket and no askpass program. Git prompting is off (`GIT_TERMINAL_PROMPT=0`). System and global Git configuration are disabled, and `credential.helper` is set to empty through the environment-supplied configuration that [agent sessions](agent-sessions.md) already defines. The cache has no remote, so `git push` in a worktree has no destination and no credential. An agent publishes its work only by asking the office (`agent-os push`).
+**What an agent's session receives.** Nothing that can authenticate to a remote. Its environment has no credential variable, no SSH agent socket and no askpass program. Git prompting is off (`GIT_TERMINAL_PROMPT=0`). System and global Git configuration are disabled, and `credential.helper` is set to empty through the environment-supplied configuration that [agent sessions](agent-sessions.md) already defines. The cache has no remote, so `git push` in a worktree has no destination and no credential. An agent publishes its work only by asking the office (`agent-os repo push`).
 
 **What each isolation mode guarantees.**
 
@@ -146,7 +146,7 @@ With one cache per repository, keeping the network credential away from agents c
 
   A failure removes the partial worktree and records nothing. A task with several repositories gets one such operation per repository. If some succeed and others fail, the task start reports each repository's state; the office never picks one repository silently.
 - **Committing.** Agents commit in their worktrees with ordinary `git`. Their Git settings come only from the session environment: no system or global configuration, the commit identity, an empty credential helper, hooks off (`core.hooksPath=/dev/null`), `core.fsmonitor=false` and automatic maintenance off. Agents have no writable Git configuration file.
-- **Pushing.** Agents publish with **`agent-os push`**, a call to their office's local socket. In `dedicated-user` mode the socket admits the agent account, and the session binding is still required. The office:
+- **Pushing.** Agents publish with **`agent-os repo push`**, a call to their office's local socket. In `dedicated-user` mode the socket admits the agent account, and the session binding is still required. The office:
   1. Checks that the caller's session belongs to the employee who holds the task's workspace for that repository in this office, that the task is open and that its branch record is open. A branch the agent made by hand, or one already merged, is refused.
   2. Takes the branch name from the task's record, never from the caller. It must be under `task/`. It must not be the remote's default branch or the `integration_branch` of any project's link to that repository.
   3. Under the repository lock, reads `refs/heads/task/<name>` and checks that it is a commit that descends from the recorded base commit.
@@ -242,7 +242,7 @@ Follow the [architecture rules](../architecture-rules.md) and the [v1 project st
 - **`org-git`** (planned, no code): runs the host's `git` through the hardened runner. It owns cache creation and fetch, worktree add, move and remove, push, tagging, the compare-and-swap deletes and the per-repository lock. It knows paths, URLs and commit IDs. It does not know projects, tasks, the office database or the office's domain types.
 - **The office's domain** defines the small contracts it needs from Git (prepare a cache, create a workspace, push a task branch, clean up) and owns the records and admission rules. It does not depend on `org-git`.
 - **`agentic-org-office`** composes the two: it implements the domain's contracts by calling `org-git`, supplies the credential, and derives the session's writable roots and deny rules.
-- **`agent-os`** gains `push`. It is a socket call only and does not depend on `org-git`.
+- **`agent-os`** gains the `repo` and `worktree` commands of the [agent command line](agent-os-command-line.md) (section 3.6), among them `repo push`. Each is a socket call only and does not depend on `org-git`.
 - **`org-github`** is v2 and absent.
 
 ## Implementation plan
@@ -254,7 +254,7 @@ Every step is planned; none has started. Each step is a separate acceptance and 
 | G1 | The wire contract below in `org-proto`, checked against what `org-proto` actually supports | Internal foundation | Open questions 2 and 4 answered |
 | G2 | `org-git`: the hardened runner, cache creation and fetch, worktree add, move and remove, push, tags and compare-and-swap deletes, the per-repository lock. Prove the smallest real path first: create a cache from a temporary remote, add a worktree, commit, push | Internal foundation | G1 |
 | G3 | Office composition in `agentic-org-office`: registration and link checks, cache status, workspace and branch records, the push handler, credential supply, permissions for each isolation mode, and deny rules derived and verified for the selected paths | Internal foundation | G1, G2, open questions 1, 3 and 5 to 9 answered, the isolation launcher of ADR-0015 for `dedicated-user` |
-| G4 | `agent-os push` | Usable outcome: an agent's committed work reaches the remote through its office | G3 |
+| G4 | `agent-os repo push` | Usable outcome: an agent's committed work reaches the remote through its office | G3 |
 | G5 | Web UI: register a repository, link it to a project with its integration branch, cache status per office | Usable outcome | G1, then G3 |
 | G6 | End-to-end acceptance: register a remote repository, link it, start a task with two repositories, commit, push through the office, merge as a person, close, clean up; then the same for a handoff and for a local-only repository | Acceptance | All |
 
@@ -292,7 +292,7 @@ These are gaps or tensions between this design and the selected contracts. They 
 5. **The owner's commit identity.** No selected field holds the owner's commit name and email, or an agent's co-author address.
 6. **Projectless tasks.** A team task can target a repository but has no project link, so nothing selects its base branch or the branch that proves it merged.
 7. **Organization publication.** Which office pushes `state_branch`, and how `durable/state/` becomes a commit, is not defined. This document assumes only the transport.
-8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os push` would otherwise do for a local repository.
+8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os repo push` would otherwise do for a local repository.
 9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
 10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
 11. **Branch names for unnumbered tasks.** Not open. There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.

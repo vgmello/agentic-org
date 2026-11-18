@@ -10,7 +10,7 @@ fn assert_transfer_fatal(run: &mut Run, case: &str) {
         "{case}"
     );
 }
-fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[RawFd]) {
+pub(super) fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[RawFd]) {
     send_until(
         socket,
         payload,
@@ -421,7 +421,7 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     let handoff = Handoff::Create {
         db_key: db_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
-        recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+        recovery_code: recovery_code(),
         fds: vec![HandoffFd::Transfer],
     };
     let mut header = v3::encode_handoff(&handoff).unwrap();
@@ -449,9 +449,12 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     drop(child);
     assert_eq!(line(&mut reader)["event"], "created");
     assert_eq!(line(&mut reader)["event"], "ready");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
+    // Darwin answers EINVAL to a timeout change once the worker has exited and closed its end;
+    // the read below then ends at EOF without blocking, so the timeout is not needed.
+    match stream.set_read_timeout(Some(Duration::from_secs(2))) {
+        Err(error) if error.raw_os_error() == Some(libc::EINVAL) => {}
+        other => other.unwrap(),
+    }
     assert!(
         frame::read_line(&mut reader).unwrap().is_none(),
         "concatenated records received an ACK"

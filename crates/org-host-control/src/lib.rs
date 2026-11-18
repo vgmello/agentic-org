@@ -24,8 +24,8 @@
 //! raw-JSON exception**, on both sides of each connection: `org-proto`'s envelope carries a
 //! request's `params` and `principal` and a response's result (`Outcome::Result`) as raw
 //! `serde_json::Value`, and a response's result is built through `serde_json::to_value` before
-//! it is written. So every secret here (passwords, the session handles from `account.verify` and
-//! `bootstrap`, the TLS key in `tls.fetch` and `tls.set`, the recovery code from
+//! it is written. So every secret here (passwords, the session handles from `account.verify`,
+//! the TLS key in `tls.fetch` and `tls.set`, the recovery code from
 //! `recovery.release`, grants and their MACs) sits briefly in unzeroed JSON before the typed
 //! decode, or after the typed encode. That JSON is never logged: the envelope's `Debug` elides
 //! it.
@@ -36,7 +36,7 @@
 //! `tls.set`'s use of them.
 //!
 //! **The PEM reader** ([`pem`], X-02 §6.2): the one implementation that frames a TLS pair's
-//! certificate and key blocks, for the pair fingerprint ([`ops::TlsPair::fingerprint`]) and for
+//! certificate and key blocks, for the pair fingerprint ([`ops::TlsPairFingerprint`]) and for
 //! the host's own parse of the pair ([`pem::all_blocks`] for the chain). A pair it refuses is
 //! `tls_invalid`, unstored, on every path.
 //!
@@ -45,13 +45,15 @@
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
 //! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde,
-//! `serde_json` and `sha2` (X-02 §5.2, §11; `sha2` for the pair fingerprint of `tls.set` and
-//! `bootstrap`, [`ops::TlsPairFingerprint`]): the gateway imports it from `org-office-launch`.
+//! `serde_json` and `sha2` (X-02 §5.2, §11; `sha2` for the pair fingerprint of `tls.set`,
+//! [`ops::TlsPairFingerprint`]): the gateway imports it from `org-office-launch`.
 
 #![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
 
+pub mod admin;
+pub mod browser;
 pub mod gateway;
 pub mod journal;
 pub mod listen;
@@ -62,7 +64,7 @@ pub mod recovery;
 mod secret;
 mod status;
 pub use status::{
-    GatewayState, GatewayStatus, InstanceMode, InstanceStatus, InstanceStatusParams,
+    Administrator, GatewayState, GatewayStatus, InstanceMode, InstanceStatus, InstanceStatusParams,
     InstanceStatusResult, OfficeCounts,
 };
 
@@ -71,7 +73,7 @@ pub use status::{
 /// with `org-office-launch`'s v3 create handoff.
 pub use org_proto::RecoveryCode;
 pub use org_proto::{ApiRange, Call, Empty, Hello, HelloParams, HelloResult};
-pub use secret::{Password, SessionHandle, TlsPrivateKey};
+pub use secret::{LinkToken, OneTimeLinkUrl, Password, SessionHandle, TlsPrivateKey};
 
 /// This contract's version. Separate from `org_proto::API_VERSION`.
 pub const API_VERSION: u32 = 1;

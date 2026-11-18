@@ -20,6 +20,7 @@ org-platform = { path = "../org-platform" }
 org-platform-host = { path = "../org-platform-host" }
 org-release = { path = "../org-release" }
 serde.workspace = true
+zeroize = "=1.9.1"
 serde_json.workspace = true
 sha2.workspace = true
 hmac.workspace = true

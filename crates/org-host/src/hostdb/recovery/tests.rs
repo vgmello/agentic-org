@@ -15,7 +15,7 @@ struct Fixture {
     public: PublicRecord,
 }
 fn fixture() -> Fixture {
-    let instance = crate::ids::generate().unwrap();
+    let instance = crate::ids::uuid_v7().unwrap();
     let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
     let (db, custody) = auth.provisioning_storage();
     let credentials = db

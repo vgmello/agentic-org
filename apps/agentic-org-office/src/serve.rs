@@ -40,8 +40,8 @@ use org_proto::org::{CommandAccepted, TeamCreate};
 use org_proto::work::{TaskCreate, WorkAccepted};
 use org_proto::{AgentStatus, MemberKind};
 use org_proto::{
-    ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole,
-    OfficeStatus, OrgSnapshot, OrgSnapshotCall, Request, Response,
+    ApiError, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole, OfficeStatus,
+    OrgSnapshot, OrgSnapshotCall, Request, Response,
 };
 use org_work::{Caller, WorkCall};
 
@@ -99,21 +99,29 @@ pub struct OfficePorts {
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
 
-/// Launch v3 retains its grant key; grant verification is enabled separately in 2a.5.
-pub(super) enum LaunchAuth {
-    Legacy(AppToken),
-    Grants { _key: org_proto::GrantKey },
+/// The launch authority: the grant key that verifies the grants persons and the owner act with
+/// on host channels, retained and zeroed when `Shared` drops. Grants are the only person path,
+/// and every launch carries a grant key in its handoff.
+pub(crate) struct LaunchAuth {
+    grant_key: org_proto::GrantKey,
 }
 
-impl From<AppToken> for LaunchAuth {
-    fn from(token: AppToken) -> Self {
-        Self::Legacy(token)
+impl From<org_proto::GrantKey> for LaunchAuth {
+    fn from(grant_key: org_proto::GrantKey) -> Self {
+        Self { grant_key }
     }
 }
 
 impl LaunchAuth {
-    fn accepts(&self, token: &AppToken) -> bool {
-        matches!(self, Self::Legacy(expected) if token == expected)
+    /// The grant key, for tests of the launch normalization.
+    #[cfg(test)]
+    pub(crate) fn grant_key(&self) -> &org_proto::GrantKey {
+        &self.grant_key
+    }
+
+    /// Whether `grant` carries this launch's MAC.
+    pub(crate) fn verifies(&self, grant: &org_proto::Grant) -> bool {
+        crate::grant::verify(&self.grant_key, grant)
     }
 }
 
@@ -122,24 +130,22 @@ impl LaunchAuth {
 pub(crate) enum Binding {
     /// Not bound, or the last bind failed.
     Anonymous,
-    /// Bound app-wide with the office's `app_token`, as no member.
-    App,
-    /// Bound as a member: `id` is the member's canonical id; `with_app_token` when a person or
-    /// the owner bound with the `app_token` (an agent binds without one).
-    Member { id: String, with_app_token: bool },
+    /// Bound as a member: `id` is the member's canonical id. `via_grant` when a person or the
+    /// owner acts through a verified grant on a host channel, for that one call; an agent binds on
+    /// the office socket without one.
+    Member { id: String, via_grant: bool },
 }
 
 impl Binding {
-    /// Whether the connection is bound with the `app_token` (the app, or a person or the owner
-    /// bound with it): the only kind that may send organization commands.
-    fn is_app_bound(&self) -> bool {
+    /// Whether the call is made through a verified grant (a person or the owner): the only kind
+    /// that may send organization commands.
+    fn via_grant(&self) -> bool {
         matches!(
             self,
-            Binding::App
-                | Binding::Member {
-                    with_app_token: true,
-                    ..
-                }
+            Binding::Member {
+                via_grant: true,
+                ..
+            }
         )
     }
 
@@ -664,6 +670,30 @@ fn serve_connection_with_poll(
     tick: Duration,
     poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
 ) {
+    serve_connection_as(
+        stream,
+        shared,
+        conn,
+        stopping,
+        tick,
+        poll,
+        Binding::Anonymous,
+    );
+}
+
+/// Serves an office-socket connection that starts as `initial`. The product always starts
+/// [`Binding::Anonymous`]; the tests of the follow engine start a grant-bound subscriber here,
+/// because no frame on the office socket binds one (the grant-bound `subscribe` on a host channel
+/// arrives with A3's `/events`).
+fn serve_connection_as(
+    stream: UnixStream,
+    shared: &Shared,
+    conn: u64,
+    stopping: &std::sync::atomic::AtomicBool,
+    tick: Duration,
+    poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
+    initial: Binding,
+) {
     let Ok(out) = stream.try_clone() else {
         return;
     };
@@ -680,6 +710,8 @@ fn serve_connection_with_poll(
         control: Arc::clone(&control),
         member: None,
     };
+    // A connection that starts bound is watched from its first frame, as one bound by a call is.
+    registration.sync(initial.member());
     // The events sent on this connection, whichever subscription sent them.
     let sent = AtomicU64::new(0);
     // The subscription's thread is joined when the connection ends: it reads the office, which
@@ -692,7 +724,7 @@ fn serve_connection_with_poll(
             || stopping.load(Ordering::SeqCst) || control.revoked.load(Ordering::SeqCst),
             poll,
         );
-        let mut binding = Binding::Anonymous;
+        let mut binding = initial;
         let mut subscribed = false;
         // The last subscription's thread: a new one waits for it, so a client that binds and
         // subscribes in a loop never has more than two.
@@ -817,7 +849,7 @@ fn serve_connection_with_poll(
                 match follow::begin(
                     &request,
                     &*shared.ports.feed,
-                    binding.is_app_bound(),
+                    binding.via_grant(),
                     subscribed,
                 ) {
                     Ok(position) => {
@@ -994,9 +1026,9 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
                 ),
             );
         }
-        // Retained owner and NULL-principal rows are private to app/owner bindings.
+        // Retained owner and NULL-principal rows are private to grant-bound callers.
         // Member-specific lookup is a later slice; never query this owner port for agents.
-        if !binding.is_app_bound() {
+        if !binding.via_grant() {
             return Response::error(
                 request.id,
                 ApiError::new(ErrorCode::NotFound, "operation not found"),
@@ -1049,29 +1081,23 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     match WorkCall::parse(request) {
         Ok(None) => {}
         parsed => {
-            let Binding::Member { id, with_app_token } = binding else {
+            let Binding::Member { id, via_grant } = binding else {
                 return bind_error(
                     request.id,
                     ErrorCode::NotBound,
                     "bind as a member to change work",
                 );
             };
-            if WorkCall::is_app_only(request) && !*with_app_token {
-                return Response::error(
-                    request.id,
-                    ApiError::new(
-                        ErrorCode::NotAuthorized,
-                        format!("`{}` is for the app", request.method),
-                    ),
-                );
+            if WorkCall::is_grant_only(request) && !*via_grant {
+                return Response::error(request.id, WorkCall::grant_only_refusal(&request.method));
             }
             let call = match parsed {
                 Err(refusal) => return Response::error(request.id, refusal),
                 Ok(Some(call)) => call,
                 Ok(None) => unreachable!("unknown work method fell through"),
             };
-            let caller = if *with_app_token {
-                Caller::app(id.as_str())
+            let caller = if *via_grant {
+                Caller::grant_bound(id.as_str())
             } else {
                 Caller::agent(id.as_str())
             };
@@ -1087,7 +1113,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     // BEFORE anything else is said about it (a bad param is not told to an anonymous client).
     match OrgCommand::parse(request) {
         Ok(None) => {}
-        Ok(Some(_)) | Err(_) if !binding.is_app_bound() => {
+        Ok(Some(_)) | Err(_) if !binding.via_grant() => {
             return Response::error(
                 request.id,
                 ApiError::new(
@@ -1143,13 +1169,13 @@ fn who(request: &Request, shared: &Shared, binding: &Binding) -> Response {
 }
 
 /// `status.set`: an agent-bound connection's own status line. The member is the binding's, never
-/// the call's. Unbound or app-wide is `not_bound`; a person or the owner (bound with the app
-/// token) is `not_authorized`. The binding is checked before the params are read.
+/// the call's. Unbound is `not_bound`; a person or the owner (acting through a grant) is
+/// `not_authorized`. The binding is checked before the params are read.
 fn status_set(request: &Request, shared: &Shared, binding: &Binding) -> Response {
     let member = match binding {
         Binding::Member {
             id,
-            with_app_token: false,
+            via_grant: false,
         } => id,
         Binding::Member { .. } => {
             return bind_error(
@@ -1158,7 +1184,7 @@ fn status_set(request: &Request, shared: &Shared, binding: &Binding) -> Response
                 "only an agent sets its status",
             )
         }
-        Binding::Anonymous | Binding::App => {
+        Binding::Anonymous => {
             return bind_error(
                 request.id,
                 ErrorCode::NotBound,
@@ -1192,10 +1218,11 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         Err(_) => return bind_error(request.id, ErrorCode::InvalidRequest, "bad msg.bind params"),
     };
     let MsgBindParams { member, app_token } = params;
-    let bound = match member {
-        Some(member) => bind_member(request.id, shared, &member, app_token),
-        None => bind_app(request.id, shared, app_token),
+    // An app-wide bind is gone: persons and the owner act through grants on host channels.
+    let Some(member) = member else {
+        return bind_error(request.id, ErrorCode::InvalidRequest, "bind as a member");
     };
+    let bound = bind_member(request.id, shared, &member, app_token.is_some());
     match bound {
         Ok((now, member_id)) => {
             *binding = now;
@@ -1209,33 +1236,14 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
     }
 }
 
-/// App-wide: the `app_token` and no member.
-fn bind_app(
-    id: u64,
-    shared: &Shared,
-    app_token: Option<AppToken>,
-) -> Result<(Binding, Option<String>), Response> {
-    let Some(token) = app_token else {
-        return Err(bind_error(
-            id,
-            ErrorCode::InvalidRequest,
-            "bind with an app_token",
-        ));
-    };
-    if !shared.auth.accepts(&token) {
-        return Err(bind_error(id, ErrorCode::NotAuthorized, "wrong app token"));
-    }
-    Ok((Binding::App, None))
-}
-
-/// As a member: an agent of this office that may message (no token), or a person or the owner
-/// (with the `app_token`). An office-run agent needs a session token, which this office does not
-/// issue yet: it cannot be bound.
+/// As a member: an agent of this office that may message, with no credential. A person or the
+/// owner never binds here: they act through a grant on a host channel. An office-run agent needs
+/// a session token, which this office does not issue yet: it cannot be bound.
 fn bind_member(
     id: u64,
     shared: &Shared,
     member: &str,
-    app_token: Option<AppToken>,
+    with_credential: bool,
 ) -> Result<(Binding, Option<String>), Response> {
     // Step 1, which needs no lookup.
     if json_string_len(member) > MAX_HANDLE_BYTES {
@@ -1265,14 +1273,12 @@ fn bind_member(
     let Some(found) = bindable(shared, handle) else {
         return Err(refused());
     };
-    let is_person = found.kind == MemberKind::Person;
-    // Step 3: the credentials.
-    if is_person {
-        match app_token {
-            Some(token) if shared.auth.accepts(&token) => {}
-            _ => return Err(refused()),
-        }
-    } else if app_token.is_some() {
+    // Step 3: the credentials. A person binds only through a grant, never on this socket, and
+    // is refused as an unknown member would be.
+    if found.kind == MemberKind::Person {
+        return Err(refused());
+    }
+    if with_credential {
         return Err(bind_error(
             id,
             ErrorCode::InvalidRequest,
@@ -1283,7 +1289,7 @@ fn bind_member(
     Ok((
         Binding::Member {
             id: member_id.clone(),
-            with_app_token: is_person,
+            via_grant: false,
         },
         Some(member_id),
     ))
@@ -1370,22 +1376,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn launch_auth_accepts_only_the_matching_legacy_app_token() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        let matching = AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]);
-        let wrong = AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
-        let grants = LaunchAuth::Grants {
-            _key: org_proto::GrantKey::from_bytes([7; 32]),
-        };
-        assert!(!grants.accepts(&matching));
-        assert!(!grants.accepts(&wrong));
-
-        let legacy = LaunchAuth::Legacy(AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]));
-        assert!(legacy.accepts(&matching));
-        assert!(!legacy.accepts(&wrong));
-    }
-
-    #[test]
     fn grants_invalid_binds_clear_each_prior_binding_without_directory_lookup() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         struct ForbiddenDirectory;
@@ -1406,21 +1396,17 @@ mod tests {
             &test_info(),
             Path::new("/unused"),
             ports,
-            LaunchAuth::Grants {
-                _key: org_proto::GrantKey::from_bytes([7; 32]),
-            },
+            LaunchAuth::from(org_proto::GrantKey::from_bytes([7; 32])),
         );
-        assert!(
-            matches!(&shared.auth, LaunchAuth::Grants { _key } if _key == &org_proto::GrantKey::from_bytes([7;32]))
-        );
+        assert!(shared.auth.grant_key() == &org_proto::GrantKey::from_bytes([7; 32]));
         for (params, expected) in [
             (
                 serde_json::json!({"app_token":"07".repeat(32)}),
-                ErrorCode::NotAuthorized,
+                ErrorCode::InvalidRequest,
             ),
             (
                 serde_json::json!({"app_token":"11".repeat(32)}),
-                ErrorCode::NotAuthorized,
+                ErrorCode::InvalidRequest,
             ),
             (serde_json::json!({}), ErrorCode::InvalidRequest),
             (
@@ -1435,10 +1421,9 @@ mod tests {
         ] {
             for mut binding in [
                 Binding::Anonymous,
-                Binding::App,
                 Binding::Member {
                     id: "ada".into(),
-                    with_app_token: false,
+                    via_grant: false,
                 },
             ] {
                 let request = Request {
@@ -1476,9 +1461,7 @@ mod tests {
             &test_info(),
             Path::new("/unused"),
             ports(Box::new(|| Err(SnapshotFailure::Storage))),
-            LaunchAuth::Grants {
-                _key: org_proto::GrantKey::from_bytes([7; 32]),
-            },
+            LaunchAuth::from(org_proto::GrantKey::from_bytes([7; 32])),
         );
         let mut binding = Binding::Anonymous;
         let response = answer(&request, &grants, &mut binding);
@@ -1494,7 +1477,7 @@ mod tests {
             binding,
             Binding::Member {
                 id: org_mailbox::testkit::fixture::ADA_ID.into(),
-                with_app_token: false
+                via_grant: false
             }
         );
         assert_eq!(
@@ -1512,9 +1495,7 @@ mod tests {
             &test_info(),
             &path,
             ports(Box::new(|| Err(SnapshotFailure::Storage))),
-            LaunchAuth::Grants {
-                _key: org_proto::GrantKey::from_bytes([7; 32]),
-            },
+            LaunchAuth::from(org_proto::GrantKey::from_bytes([7; 32])),
         ));
         let (stop, server) = start(&path, &shared);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1526,11 +1507,11 @@ mod tests {
             for (params, expected) in [
                 (
                     serde_json::json!({"app_token":"07".repeat(32)}),
-                    ErrorCode::NotAuthorized,
+                    ErrorCode::InvalidRequest,
                 ),
                 (
                     serde_json::json!({"app_token":"11".repeat(32)}),
-                    ErrorCode::NotAuthorized,
+                    ErrorCode::InvalidRequest,
                 ),
                 (serde_json::json!({}), ErrorCode::InvalidRequest),
                 (
@@ -1806,7 +1787,7 @@ mod tests {
             &test_info(),
             Path::new("/unused-test-socket"),
             ports,
-            token(),
+            launch_key(),
         );
         let (stream, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
@@ -1879,7 +1860,7 @@ mod tests {
             &test_info(),
             Path::new("/unused-test-socket"),
             ports,
-            token(),
+            launch_key(),
         );
         let (stream, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
@@ -1957,29 +1938,20 @@ mod tests {
             &test_info(),
             Path::new("/unused-test-socket"),
             ports,
-            token(),
+            launch_key(),
         );
         let (stream, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-        frame::write_message(
-            &mut peer,
-            &Request::new::<MsgBind>(
-                1,
-                &MsgBindParams {
-                    member: Some("pat".into()),
-                    app_token: Some(token()),
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        // The connection starts as pat through a grant: no frame on the office socket binds a
+        // person, and only a grant-bound connection subscribes.
+        let pat = grant_bound(&shared, "pat");
         let stopping = AtomicBool::new(false);
         let mut polls = 0;
         let mut control = None;
         let mut before = 0;
         let mut ready = false;
         let mut observed = None;
-        serve_connection_with_poll(
+        serve_connection_as(
             stream,
             &shared,
             1,
@@ -2051,6 +2023,7 @@ mod tests {
                 }
                 org_socket::poll_readable(fd, Duration::from_millis(1))
             },
+            pat,
         );
         let mut reader = BufReader::new(peer);
         let mut responses = Vec::new();
@@ -2058,11 +2031,13 @@ mod tests {
             responses.push(response);
         }
         responses.sort_by_key(|response| response.id);
-        assert_eq!(responses.len(), 5);
-        for id in [1, 2, 4] {
-            assert_eq!(responses[id - 1].id, id as u64);
+        assert_eq!(
+            responses.iter().map(|r| r.id).collect::<Vec<_>>(),
+            [2, 3, 4, 5]
+        );
+        for at in [0, 2] {
             assert!(matches!(
-                responses[id - 1].outcome,
+                responses[at].outcome,
                 org_proto::Outcome::Result(_)
             ));
         }
@@ -2075,9 +2050,8 @@ mod tests {
             Some((before + 1, true, true)),
             "hello must reset the generation, registration and held calls before the next request"
         );
-        assert_eq!(code_of(responses[2].outcome.clone()), ErrorCode::NotBound);
-        assert_eq!(responses[4].id, 5);
-        assert_eq!(code_of(responses[4].outcome.clone()), ErrorCode::NotBound);
+        assert_eq!(code_of(responses[1].outcome.clone()), ErrorCode::NotBound);
+        assert_eq!(code_of(responses[3].outcome.clone()), ErrorCode::NotBound);
         assert_eq!(mailbox.held_waits(), 0);
     }
 
@@ -2086,7 +2060,7 @@ mod tests {
             &test_info(),
             path,
             ports(Box::new(|| Err(SnapshotFailure::Storage))),
-            token(),
+            launch_key(),
         ))
     }
 
@@ -2119,7 +2093,12 @@ mod tests {
             observed.fetch_add(1, Ordering::SeqCst);
             Err("SECRET SQL /private/organization".into())
         });
-        let shared = Shared::new(&test_info(), &dir.path().join("s.sock"), ports, token());
+        let shared = Shared::new(
+            &test_info(),
+            &dir.path().join("s.sock"),
+            ports,
+            launch_key(),
+        );
         for params in [
             json!({"kind":"unknown","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
             json!({"kind":"org","id":"bad"}),
@@ -2167,14 +2146,66 @@ mod tests {
             },
         )
         .unwrap();
-        let response = answer(&request, &shared, &mut Binding::App);
+        let mut owner = Binding::Member {
+            id: "owner".into(),
+            via_grant: true,
+        };
+        let response = answer(&request, &shared, &mut owner);
         assert_eq!(code_of(response.outcome.clone()), ErrorCode::StorageError);
         assert!(!serde_json::to_string(&response).unwrap().contains("SECRET"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    fn token() -> AppToken {
-        AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])
+    /// The grant key the test offices launch with.
+    fn launch_key() -> org_proto::GrantKey {
+        crate::test_support::grant_key()
+    }
+
+    /// Binds a socket at `path` that serves one connection, which starts bound as `member`
+    /// through a grant ([`grant_bound`]). The connection ends when its client closes it.
+    pub(super) fn grant_socket(shared: &Arc<Shared>, path: &Path, member: &str) {
+        let listener = bind(path).unwrap();
+        // The office listener polls; this one-connection socket waits for its client instead.
+        listener.set_nonblocking(false).unwrap();
+        let shared = Arc::clone(shared);
+        let initial = grant_bound(&shared, member);
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let stopping = AtomicBool::new(false);
+            serve_connection_as(
+                stream,
+                &shared,
+                u64::MAX - u64::from(std::process::id()),
+                &stopping,
+                org_socket::READ_TICK,
+                org_socket::poll_readable,
+                initial,
+            );
+        });
+    }
+
+    /// An app token, which the office socket no longer accepts from anyone.
+    fn any_app_token() -> org_proto::AppToken {
+        org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])
+    }
+
+    /// The binding a host channel gives `member` for one call through a grant signed with the
+    /// test key: what a grant-bound subscriber is. Checked against `shared`'s launch authority.
+    fn grant_bound(shared: &Shared, member: &str) -> Binding {
+        // A grant names the canonical member id; tests may name a handle ("pat", "owner").
+        let member = match shared.ports.directory.resolve_member(member) {
+            Ok(Some((found, _))) => found.id,
+            _ => member.to_owned(),
+        };
+        let grant: org_proto::Grant = serde_json::from_value(crate::test_support::signed_grant(
+            &member, "ORG1", "office", "channel", "session",
+        ))
+        .unwrap();
+        assert!(shared.auth.verifies(&grant), "the test grant must verify");
+        Binding::Member {
+            id: grant.claims.member,
+            via_grant: true,
+        }
     }
 
     pub(super) fn test_info() -> org_office::OfficeInfo {
@@ -2226,7 +2257,12 @@ mod tests {
             let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
             let stored = outcome.clone();
             ports.operation_get = Box::new(move |_| Ok(Ok(stored.clone())));
-            let shared = Shared::new(&test_info(), &dir.path().join("s.sock"), ports, token());
+            let shared = Shared::new(
+                &test_info(),
+                &dir.path().join("s.sock"),
+                ports,
+                launch_key(),
+            );
             let request = Request::new::<org_proto::OperationGet>(
                 1,
                 &org_proto::OperationGetParams {
@@ -2237,18 +2273,17 @@ mod tests {
             .unwrap();
             for mut binding in [
                 Binding::Anonymous,
-                Binding::App,
                 Binding::Member {
                     id: "agent".into(),
-                    with_app_token: false,
+                    via_grant: false,
                 },
                 Binding::Member {
                     id: "owner".into(),
-                    with_app_token: true,
+                    via_grant: true,
                 },
             ] {
                 let response = answer(&request, &shared, &mut binding);
-                if !binding.is_app_bound() {
+                if !binding.via_grant() {
                     assert_eq!(code_of(response.outcome), ErrorCode::NotFound);
                 } else if matches!(outcome, org_proto::OperationOutcome::Unknown) {
                     assert_eq!(code_of(response.outcome), ErrorCode::StorageError);
@@ -2447,10 +2482,24 @@ mod tests {
     }
 
     fn shared_with(path: &Path, snapshot: SnapshotFn) -> Arc<Shared> {
-        Arc::new(Shared::new(&test_info(), path, ports(snapshot), token()))
+        Arc::new(Shared::new(
+            &test_info(),
+            path,
+            ports(snapshot),
+            launch_key(),
+        ))
     }
 
+    /// The office each test server serves, by socket path, so a test can open a grant-bound
+    /// connection on it ([`Client::grant_bound`]).
+    static SERVED: Mutex<Vec<(std::path::PathBuf, std::sync::Weak<Shared>)>> =
+        Mutex::new(Vec::new());
+
     fn start(path: &Path, shared: &Arc<Shared>) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        SERVED
+            .lock()
+            .unwrap()
+            .push((path.to_owned(), Arc::downgrade(shared)));
         let listener = bind(path).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let server = {
@@ -2460,15 +2509,15 @@ mod tests {
         (stop, server)
     }
 
-    /// A connection bound as the app (it reads the organization), with nothing left unread.
+    /// A connection bound as the agent ada (it reads the organization), with nothing left unread.
     fn connect_bound(path: &Path) -> UnixStream {
         let mut stream = UnixStream::connect(path).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
         let params = org_proto::msg::MsgBindParams {
-            member: None,
-            app_token: Some(token()),
+            member: Some("ada".into()),
+            app_token: None,
         };
         let bind = Request::new::<org_proto::msg::MsgBind>(100, &params).unwrap();
         frame::write_message(&mut stream, &bind).unwrap();
@@ -2646,7 +2695,7 @@ mod tests {
                 mailbox,
                 directory,
             },
-            token(),
+            launch_key(),
         ));
         let (stop, server) = start(path, &shared);
         (submitted, stop, server)
@@ -2668,6 +2717,38 @@ mod tests {
     impl Client {
         fn connect(path: &Path) -> Self {
             Self::from_stream(UnixStream::connect(path).unwrap())
+        }
+
+        /// A connection to the office [`start`]ed on `path` that starts bound as `member`
+        /// through a grant ([`grant_bound`]), as a host channel binds a person or the owner for
+        /// one call. No frame on the office socket binds one; the connection ends when the
+        /// client drops.
+        fn grant_bound(path: &Path, member: &str) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(1 << 40);
+            let shared = SERVED
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|(served, _)| served == path)
+                .and_then(|(_, shared)| shared.upgrade())
+                .expect("a test server on this path");
+            let (stream, peer) = UnixStream::pair().unwrap();
+            let conn = NEXT.fetch_add(1, Ordering::SeqCst);
+            let initial = grant_bound(&shared, member);
+            std::thread::spawn(move || {
+                let stopping = AtomicBool::new(false);
+                serve_connection_as(
+                    stream,
+                    &shared,
+                    conn,
+                    &stopping,
+                    org_socket::READ_TICK,
+                    org_socket::poll_readable,
+                    initial,
+                );
+            });
+            Self::from_stream(peer)
         }
 
         fn from_stream(stream: UnixStream) -> Self {
@@ -2712,7 +2793,7 @@ mod tests {
         fn bind(
             &mut self,
             member: Option<&str>,
-            app_token: Option<AppToken>,
+            app_token: Option<org_proto::AppToken>,
         ) -> org_proto::Outcome {
             let params = MsgBindParams {
                 member: member.map(str::to_owned),
@@ -2828,41 +2909,6 @@ mod tests {
     }
 
     #[test]
-    fn a_connection_bound_with_the_app_token_runs_commands_and_a_wrong_token_binds_nothing() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
-        let path = dir.path().join("s.sock");
-        let (submitted, stop, server) = serving(&path, committed);
-        let mut client = Client::connect(&path);
-
-        let wrong = AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
-        assert_eq!(
-            code_of(client.bind(None, Some(wrong))),
-            ErrorCode::NotAuthorized
-        );
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
-
-        let bound = client.bind(None, Some(token()));
-        let org_proto::Outcome::Result(value) = bound else {
-            panic!("{bound:?}")
-        };
-        assert_eq!(value["office_id"], org_mailbox::testkit::fixture::OFFICE_ID);
-        assert!(value.get("member_id").is_none());
-        let org_proto::Outcome::Result(accepted) = client.team_create() else {
-            panic!("the bound app's command was refused")
-        };
-        assert_eq!(accepted["status"], "committed");
-        assert_eq!(accepted["position"]["seq"], 2);
-        assert_eq!(submitted.load(Ordering::SeqCst), 1);
-
-        // Another connection is not bound by it.
-        let mut other = Client::connect(&path);
-        assert_eq!(code_of(other.team_create()), ErrorCode::NotAuthorized);
-        stop.store(true, Ordering::SeqCst);
-        server.join().unwrap();
-    }
-
-    #[test]
     fn a_failed_bind_unbinds_the_connection() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
@@ -2870,17 +2916,27 @@ mod tests {
         let (submitted, stop, server) = serving(&path, committed);
         let mut client = Client::connect(&path);
         assert!(matches!(
-            client.bind(None, Some(token())),
+            client.bind(Some("ada"), None),
             org_proto::Outcome::Result(_)
         ));
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::StorageError
+        );
 
         // Each bind replaces the last, and a failed one leaves the connection unbound.
-        let wrong = AppToken::from_bytes([9; org_proto::APP_TOKEN_BYTES]);
         assert_eq!(
-            code_of(client.bind(None, Some(wrong))),
+            code_of(client.bind(Some("nobody"), None)),
             ErrorCode::NotAuthorized
         );
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
         assert_eq!(submitted.load(Ordering::SeqCst), 0);
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
@@ -2894,8 +2950,8 @@ mod tests {
         let (_submitted, stop, server) = serving(&path, committed);
         let mut client = Client::connect(&path);
 
-        // Neither a member nor a token; a member (messaging's, later); garbled params. Each one
-        // is tried from an app-bound connection too, and leaves it unbound.
+        // Neither a member nor a token; an unknown member; garbled params. Each one is tried from
+        // an agent-bound connection too, and leaves it unbound (it can no longer read).
         let garbled = |id| Request {
             id,
             method: "msg.bind".to_owned(),
@@ -2903,35 +2959,47 @@ mod tests {
             principal: None,
         };
         assert_eq!(code_of(client.bind(None, None)), ErrorCode::InvalidRequest);
-        client.bind(None, Some(token()));
+        client.bind(Some("ada"), None);
         assert_eq!(code_of(client.bind(None, None)), ErrorCode::InvalidRequest);
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
-        client.bind(None, Some(token()));
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
+        client.bind(Some("ada"), None);
         assert_eq!(
             code_of(client.bind(Some("ana"), None)),
             ErrorCode::NotAuthorized
         );
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
-        client.bind(None, Some(token()));
         assert_eq!(
-            code_of(client.bind(Some("nobody"), Some(token()))),
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
+        client.bind(Some("ada"), None);
+        assert_eq!(
+            code_of(client.bind(Some("nobody"), None)),
             ErrorCode::NotAuthorized
         );
         // The input-only checks come first: the office is never a member, and a member over
         // the limit is too large, whatever else the call sends.
         for office in ["office", "OFFICE", "Office", " office ", "\toffice\n"] {
-            client.bind(None, Some(token()));
+            client.bind(Some("ada"), None);
             assert_eq!(
-                code_of(client.bind(Some(office), Some(token()))),
+                code_of(client.bind(Some(office), Some(any_app_token()))),
                 ErrorCode::InvalidRequest,
                 "{office}"
             );
-            assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+            assert_eq!(
+                code_of(client.ask(snapshot_request)),
+                ErrorCode::NotAuthorized
+            );
         }
-        client.bind(None, Some(token()));
+        client.bind(Some("ada"), None);
         let long = "x".repeat(MAX_HANDLE_BYTES + 1);
         assert_eq!(code_of(client.bind(Some(&long), None)), ErrorCode::TooLarge);
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
         // The limit is on the JSON-encoded string, its quotes included.
         let barely_too_long = "x".repeat(MAX_HANDLE_BYTES - 1);
         assert_eq!(
@@ -2943,71 +3011,16 @@ mod tests {
             code_of(client.bind(Some(&longest), None)),
             ErrorCode::NotAuthorized
         );
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
-        client.bind(None, Some(token()));
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
+        client.bind(Some("ada"), None);
         assert_eq!(code_of(client.ask(garbled)), ErrorCode::InvalidRequest);
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
-        stop.store(true, Ordering::SeqCst);
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn what_the_office_answers_is_what_the_app_gets() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
-        let path = dir.path().join("s.sock");
-        let calls = Arc::new(AtomicUsize::new(0));
-        let answers = Arc::clone(&calls);
-        let (_submitted, stop, server) = serving(&path, move || {
-            match answers.fetch_add(1, Ordering::SeqCst) {
-                0 => Ok(Err(ApiError::new(ErrorCode::AlreadyExists, "taken"))),
-                _ => Err("disk on fire at /secret/path".to_owned()),
-            }
-        });
-        let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
-
-        // A refusal keeps its code; a storage failure is a fixed text, not the cause.
-        assert_eq!(code_of(client.team_create()), ErrorCode::AlreadyExists);
-        let failed = client.team_create();
-        let org_proto::Outcome::Error(error) = failed else {
-            panic!("{failed:?}")
-        };
-        assert_eq!(error.code, ErrorCode::StorageError);
-        assert!(!error.message.contains("secret"), "{}", error.message);
-        stop.store(true, Ordering::SeqCst);
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn the_bound_app_is_told_a_garbled_command_and_an_unknown_method_apart() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
-        let path = dir.path().join("s.sock");
-        let (submitted, stop, server) = serving(&path, committed);
-        let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
-
-        let garbled = |id| Request {
-            id,
-            method: "team.create".to_owned(),
-            params: serde_json::json!({"nope": 1}),
-            principal: None,
-        };
-        let unknown = |id| Request {
-            id,
-            method: "team.fly".to_owned(),
-            params: serde_json::json!({}),
-            principal: None,
-        };
-        assert_eq!(code_of(client.ask(garbled)), ErrorCode::InvalidRequest);
-        assert_eq!(code_of(client.ask(unknown)), ErrorCode::UnknownMethod);
-        // Neither reached the office, and the app is still bound.
-        assert_eq!(submitted.load(Ordering::SeqCst), 0);
-        assert!(matches!(
-            client.team_create(),
-            org_proto::Outcome::Result(_)
-        ));
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
@@ -3075,7 +3088,7 @@ mod tests {
             code_of(client.ask(snapshot_request)),
             ErrorCode::NotAuthorized
         );
-        client.bind(None, Some(token()));
+        client.bind(Some("ada"), None);
         assert_eq!(
             code_of(client.ask(snapshot_request)),
             ErrorCode::Unavailable
@@ -3100,7 +3113,7 @@ mod tests {
             client.ask(|id| Request::new::<Hello>(id, &org_proto::HelloParams::default()).unwrap()),
             org_proto::Outcome::Result(_)
         ));
-        client.bind(None, Some(token()));
+        client.bind(Some("ada"), None);
         assert_eq!(code_of(client.ask(snapshot)), ErrorCode::StorageError);
         // A failed bind takes the right to read away too.
         client.bind(None, None);
@@ -3142,12 +3155,62 @@ mod tests {
                     mailbox,
                     directory,
                 },
-                token(),
+                launch_key(),
             )
             .with_timing(timing),
         );
-        let (stop, server) = start(path, &shared);
+        let (stop, server) = start_grant_bound(path, &shared, OWNER_ID);
         (feed, stop, server)
+    }
+
+    /// Serves `path` like [`run`], except that every connection starts bound as `member`
+    /// through a grant ([`grant_bound`]): the follow engine's only subscriber. On stop it closes
+    /// the open connections and joins them.
+    fn start_grant_bound(
+        path: &Path,
+        shared: &Arc<Shared>,
+        member: &str,
+    ) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let listener = bind(path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = {
+            let (shared, stop, member) = (Arc::clone(shared), Arc::clone(&stop), member.to_owned());
+            std::thread::spawn(move || {
+                let mut open = Vec::new();
+                let mut threads = Vec::new();
+                let mut conn = 0;
+                while !stop.load(Ordering::SeqCst) {
+                    let Ok((stream, _)) = listener.accept() else {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    open.push(stream.try_clone().unwrap());
+                    conn += 1;
+                    let (shared, stop) = (Arc::clone(&shared), Arc::clone(&stop));
+                    let initial = grant_bound(&shared, &member);
+                    threads.push(std::thread::spawn(move || {
+                        serve_connection_as(
+                            stream,
+                            &shared,
+                            conn,
+                            &stop,
+                            org_socket::READ_TICK,
+                            org_socket::poll_readable,
+                            initial,
+                        );
+                    }));
+                }
+                for stream in &open {
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                }
+                for thread in threads {
+                    thread.join().unwrap();
+                }
+            })
+        };
+        (stop, server)
     }
 
     /// The event's `(seq, position.seq, command_id)`.
@@ -3161,13 +3224,20 @@ mod tests {
     }
 
     #[test]
-    fn subscribing_needs_a_binding_and_says_nothing_else_to_a_connection_without_one() {
+    fn subscribing_needs_a_grant_binding_and_says_nothing_else_to_a_connection_without_one() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
+        // The connection starts grant-bound; a failed bind leaves it unbound, and an agent's
+        // binding does not subscribe either.
         let mut client = Client::connect(&path);
-
+        assert_eq!(code_of(client.bind(None, None)), ErrorCode::InvalidRequest);
+        assert_eq!(code_of(client.subscribe(None)), ErrorCode::NotAuthorized);
+        assert!(matches!(
+            client.bind(Some("ada"), None),
+            org_proto::Outcome::Result(_)
+        ));
         assert_eq!(code_of(client.subscribe(None)), ErrorCode::NotAuthorized);
         // Params that do not decode are not told apart either.
         let garbled = |id| Request {
@@ -3191,7 +3261,6 @@ mod tests {
         let (feed, stop, server) = following(&path);
         feed.push(2); // before the subscription: not sent
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
 
         assert!(matches!(
             client.subscribe(None),
@@ -3223,7 +3292,6 @@ mod tests {
             feed.push(seq);
         }
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
 
         // The answer comes first, then every missed event, then live ones.
         let answer = client.subscribe(Some(2));
@@ -3253,7 +3321,6 @@ mod tests {
         let (feed, stop, server) = following(&path);
         feed.push(2);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
 
         assert_eq!(
             code_of(client.subscribe(Some(9))),
@@ -3293,7 +3360,6 @@ mod tests {
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         assert!(matches!(
             client.subscribe(None),
             org_proto::Outcome::Result(_)
@@ -3311,13 +3377,12 @@ mod tests {
     }
 
     #[test]
-    fn a_bind_ends_the_subscription_and_the_client_subscribes_again() {
+    fn a_bind_ends_the_subscription_and_a_new_grant_connection_resumes() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         assert!(matches!(
             client.subscribe(None),
             org_proto::Outcome::Result(_)
@@ -3329,18 +3394,20 @@ mod tests {
         client.bind(None, None);
         feed.push(3);
         assert!(client.nothing_within(Duration::from_millis(400)));
-        // Bound again, it subscribes again and resumes from what it last had.
-        client.bind(None, Some(token()));
+        // A new grant-bound connection resumes from what the client last had.
+        let mut again = Client::connect(&path);
         assert!(matches!(
-            client.subscribe(Some(2)),
+            again.subscribe(Some(2)),
             org_proto::Outcome::Result(_)
         ));
-        // `seq` counts on the connection, not per subscription.
-        assert_eq!(event_of(&client.next_message()), (2, 3, "cmd-3".into()));
-        // A successful re-bind ends it too.
-        client.bind(None, Some(token()));
+        assert_eq!(event_of(&again.next_message()), (1, 3, "cmd-3".into()));
+        // A successful bind (as an agent) ends it too.
+        assert!(matches!(
+            again.bind(Some("ada"), None),
+            org_proto::Outcome::Result(_)
+        ));
         feed.push(4);
-        assert!(client.nothing_within(Duration::from_millis(400)));
+        assert!(again.nothing_within(Duration::from_millis(400)));
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
@@ -3352,7 +3419,6 @@ mod tests {
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         // Subscribing reads the log too, so the failure is switched on after it.
         assert!(matches!(
             client.subscribe(None),
@@ -3373,7 +3439,6 @@ mod tests {
         let path = dir.path().join("s.sock");
         let (_feed, stop, server) = following(&path);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         assert!(matches!(
             client.subscribe(None),
             org_proto::Outcome::Result(_)
@@ -3400,7 +3465,6 @@ mod tests {
         };
         let (feed, stop, server) = following_with(&path, timing);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         assert!(matches!(
             client.subscribe(None),
             org_proto::Outcome::Result(_)
@@ -3428,7 +3492,6 @@ mod tests {
         };
         let (feed, stop, server) = following_with(&path, timing);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         assert!(matches!(
             client.subscribe(None),
             org_proto::Outcome::Result(_)
@@ -3470,7 +3533,6 @@ mod tests {
         };
         let (feed, stop, server) = following_with(&path, timing);
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         assert!(matches!(
             client.subscribe(None),
             org_proto::Outcome::Result(_)
@@ -3500,34 +3562,7 @@ mod tests {
     }
 
     #[test]
-    fn binding_and_subscribing_in_a_loop_never_leaves_more_than_two_followers_on_a_connection() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
-        let path = dir.path().join("s.sock");
-        let timing = Timing {
-            idle: Duration::from_millis(300),
-            ..Timing::default()
-        };
-        let (feed, stop, server) = following_with(&path, timing);
-        let mut client = Client::connect(&path);
-
-        for _ in 0..8 {
-            client.bind(None, Some(token()));
-            assert!(matches!(
-                client.subscribe(None),
-                org_proto::Outcome::Result(_)
-            ));
-        }
-
-        // The one being replaced, and the new one: a new subscription waits for the old to end.
-        let peak = feed.peak_waiting.load(Ordering::SeqCst);
-        assert!(peak <= 2, "{peak} followers at once");
-        stop.store(true, Ordering::SeqCst);
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn a_rebind_in_the_middle_of_a_replay_leaves_no_gap_in_the_numbers() {
+    fn a_rebind_in_the_middle_of_a_replay_ends_it_after_the_events_already_sent() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -3536,7 +3571,6 @@ mod tests {
             feed.push(seq);
         }
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
         assert!(matches!(
             client.subscribe(Some(1)),
             org_proto::Outcome::Result(_)
@@ -3551,8 +3585,8 @@ mod tests {
         let rebind = Request::new::<MsgBind>(
             900,
             &MsgBindParams {
-                member: None,
-                app_token: Some(token()),
+                member: Some("ada".into()),
+                app_token: None,
             },
         )
         .unwrap();
@@ -3567,14 +3601,16 @@ mod tests {
             assert_eq!(n, last.0 + 1, "a number was skipped");
             last = (n, position);
         }
-        // Subscribing again from the last position continues the numbers, with no gap.
-        client.next = 900;
+        // Nothing follows the bind's answer, and a new grant-bound connection resumes from the
+        // last position without a gap in the positions.
+        assert!(client.nothing_within(Duration::from_millis(400)));
+        let mut again = Client::connect(&path);
         assert!(matches!(
-            client.subscribe(Some(last.1)),
+            again.subscribe(Some(last.1)),
             org_proto::Outcome::Result(_)
         ));
-        let (n, position, _) = event_of(&client.next_message());
-        assert_eq!((n, position), (last.0 + 1, last.1 + 1));
+        let (n, position, _) = event_of(&again.next_message());
+        assert_eq!((n, position), (1, last.1 + 1));
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
@@ -3619,7 +3655,7 @@ mod tests {
                 mailbox,
                 directory,
             },
-            token(),
+            launch_key(),
         ));
         let (stop, server) = start(path, &shared);
         (asked, stop, server)
@@ -3652,7 +3688,7 @@ mod tests {
         );
         assert_eq!(asked.load(Ordering::SeqCst), 0);
 
-        client.bind(None, Some(token()));
+        client.bind(Some("ada"), None);
         let org_proto::Outcome::Result(value) = who_ask(&mut client, serde_json::json!({})) else {
             panic!("a bound connection was refused")
         };
@@ -3691,7 +3727,7 @@ mod tests {
             }
         });
         let mut client = Client::connect(&path);
-        client.bind(None, Some(token()));
+        client.bind(Some("ada"), None);
 
         // A refusal keeps its code; a storage failure is a fixed text, not the cause.
         assert_eq!(
@@ -3744,7 +3780,7 @@ mod tests {
         ports.submit = Box::new(|_| committed());
         ports.mailbox = Arc::clone(&mailbox);
         ports.directory = directory.clone();
-        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()));
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, launch_key()));
         let (stop, server) = start(path, &shared);
         (mailbox, directory, stop, server)
     }
@@ -3805,11 +3841,13 @@ mod tests {
         }
 
         fn bound_as(path: &Path, member: &str) -> Self {
+            if member == "pat" || member == "owner" {
+                return Self::grant_bound(path, member);
+            }
             let mut client = Client::connect(path);
-            let token = (member == "pat" || member == "owner").then(token);
             assert!(
                 matches!(
-                    client.bind(Some(member), token),
+                    client.bind(Some(member), None),
                     org_proto::Outcome::Result(_)
                 ),
                 "{member} binds"
@@ -3849,7 +3887,7 @@ mod tests {
 
         // An agent with a token is a mistake in the call, not a refusal of the member.
         assert_eq!(
-            code_of(client.bind(Some("ada"), Some(token()))),
+            code_of(client.bind(Some("ada"), Some(any_app_token()))),
             ErrorCode::InvalidRequest
         );
         assert!(unbound(&mut client));
@@ -3863,16 +3901,23 @@ mod tests {
             text_of(client.bind(Some("pat"), None)),
             text_of(client.bind(Some("nobody"), None))
         );
-        // A person or the owner needs the token: none, or a wrong one.
+        // A person or the owner never binds on the office socket: they act only through a
+        // host channel's grant. No token, a wrong one, or the one that formerly matched: all
+        // refused the same way.
         for who in ["pat", "owner"] {
             assert_eq!(
                 code_of(client.bind(Some(who), None)),
                 ErrorCode::NotAuthorized,
                 "{who}"
             );
-            let wrong = AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
+            let wrong = org_proto::AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
             assert_eq!(
                 code_of(client.bind(Some(who), Some(wrong))),
+                ErrorCode::NotAuthorized,
+                "{who}"
+            );
+            assert_eq!(
+                code_of(client.bind(Some(who), Some(any_app_token()))),
                 ErrorCode::NotAuthorized,
                 "{who}"
             );
@@ -4012,28 +4057,6 @@ mod tests {
     }
 
     #[test]
-    fn a_person_bound_with_the_token_acts_as_that_person_and_may_send_organization_commands() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
-        let path = dir.path().join("s.sock");
-        let (_mailbox, stop, server) = messaging_server(&path);
-        let mut client = Client::connect(&path);
-        let org_proto::Outcome::Result(value) = client.bind(Some("owner"), Some(token())) else {
-            panic!("the owner binds with the token")
-        };
-        assert_eq!(value["member_id"], OWNER_ID);
-        assert!(matches!(
-            client.team_create(),
-            org_proto::Outcome::Result(_)
-        ));
-        // An agent is not app-bound.
-        client.bind(Some("ada"), None);
-        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
-        stop.store(true, Ordering::SeqCst);
-        server.join().unwrap();
-    }
-
-    #[test]
     fn a_message_goes_from_the_bound_member_to_the_other_and_reads_once() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
@@ -4131,8 +4154,6 @@ mod tests {
                 code_of(client.call::<org_proto::msg::MsgWait>(&wait)),
             ]
         };
-        assert_eq!(calls(&mut client), [ErrorCode::NotBound; 4]);
-        client.bind(None, Some(token()));
         assert_eq!(calls(&mut client), [ErrorCode::NotBound; 4]);
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
@@ -4373,7 +4394,7 @@ mod tests {
                 })),
             }
         });
-        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()));
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, launch_key()));
         let (stop, server) = start(path, &shared);
         (log, stop, server)
     }
@@ -4441,20 +4462,18 @@ mod tests {
             }))
         };
         let mut client = Client::connect(&path);
-        // Unbound and app-wide: not_bound, whatever the params.
-        assert_eq!(garbage(&mut client), ErrorCode::NotBound);
-        client.bind(None, Some(token()));
+        // Unbound: not_bound, whatever the params.
         assert_eq!(garbage(&mut client), ErrorCode::NotBound);
         assert_eq!(
             code_of(client.call::<StatusSet>(&status_params("x"))),
             ErrorCode::NotBound
         );
-        // A person or the owner bound with the token: not_authorized.
+        // A person or the owner, bound through a grant: not_authorized.
         for who in ["pat", "owner"] {
-            client.bind(Some(who), Some(token()));
-            assert_eq!(garbage(&mut client), ErrorCode::NotAuthorized, "{who}");
+            let mut person = Client::grant_bound(&path, who);
+            assert_eq!(garbage(&mut person), ErrorCode::NotAuthorized, "{who}");
             assert_eq!(
-                code_of(client.call::<StatusSet>(&status_params("x"))),
+                code_of(person.call::<StatusSet>(&status_params("x"))),
                 ErrorCode::NotAuthorized,
                 "{who}"
             );
@@ -4492,7 +4511,8 @@ mod tests {
             idle: Duration::from_millis(20),
             ..Timing::default()
         };
-        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()).with_timing(timing));
+        let shared =
+            Arc::new(Shared::new(&test_info(), path, ports, launch_key()).with_timing(timing));
         let (stop, server) = start(path, &shared);
         (mailbox, stop, server)
     }
@@ -4518,8 +4538,7 @@ mod tests {
         // Sent BEFORE the app subscribed: never told.
         ada.call::<MsgSend>(&send_params(60, "remy", "earlier"));
 
-        let mut app = Client::connect(&path);
-        app.bind(None, Some(token()));
+        let mut app = Client::grant_bound(&path, OWNER_ID);
         assert!(matches!(app.subscribe(None), org_proto::Outcome::Result(_)));
         ada.call::<MsgSend>(&send_params(61, "remy", "now"));
         let (name, data) = next_event(&mut app);
@@ -4556,13 +4575,13 @@ mod tests {
         let live = Arc::new(LiveEvents::new(Box::new(|| {})));
         let (_mailbox, stop, server) = events_server(&path, &live);
         let mut ada = Client::bound_as(&path, "ada");
-        let mut app = Client::connect(&path);
-        app.bind(None, Some(token()));
+        let mut app = Client::grant_bound(&path, OWNER_ID);
         app.subscribe(None);
-        // A bind ends the subscription: nothing more arrives until it subscribes again.
-        app.bind(None, Some(token()));
+        // A bind ends the subscription: nothing more arrives on that connection.
+        app.bind(Some("remy"), None);
         ada.call::<MsgSend>(&send_params(62, "remy", "missed"));
         assert!(app.nothing_within(Duration::from_millis(300)));
+        let mut app = Client::grant_bound(&path, OWNER_ID);
         assert!(matches!(app.subscribe(None), org_proto::Outcome::Result(_)));
         assert!(
             app.nothing_within(Duration::from_millis(300)),
@@ -4592,7 +4611,8 @@ mod tests {
         ports.directory = directory;
         ports.live = Arc::clone(live);
         ports.feed = Box::new(Arc::clone(feed));
-        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()).with_timing(timing));
+        let shared =
+            Arc::new(Shared::new(&test_info(), path, ports, launch_key()).with_timing(timing));
         start(path, &shared)
     }
 
@@ -4612,8 +4632,7 @@ mod tests {
         };
         let (stop, server) = waking_server(&path, &live, &feed, timing);
         let mut ada = Client::bound_as(&path, "ada");
-        let mut app = Client::connect(&path);
-        app.bind(None, Some(token()));
+        let mut app = Client::grant_bound(&path, OWNER_ID);
         app.subscribe(None);
         // Let the follower go to sleep on its 5 s idle, then publish.
         std::thread::sleep(Duration::from_millis(300));
@@ -4659,8 +4678,7 @@ mod tests {
             ..Timing::default()
         };
         let (stop, server) = waking_server(&path, &live, &feed, timing);
-        let mut app = Client::connect(&path);
-        app.bind(None, Some(token()));
+        let mut app = Client::grant_bound(&path, OWNER_ID);
         app.subscribe(None);
 
         let started = std::time::Instant::now();
@@ -4787,7 +4805,8 @@ mod tests {
             idle: Duration::from_secs(3),
             ..Timing::default()
         };
-        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()).with_timing(timing));
+        let shared =
+            Arc::new(Shared::new(&test_info(), path, ports, launch_key()).with_timing(timing));
         let (stop, server) = start(path, &shared);
         (mailbox, directory, feed, live, stop, server)
     }
@@ -4888,11 +4907,7 @@ mod tests {
         let (_mailbox, directory, feed, live, stop, server) = unbind_server(&path);
         let mut ada = Client::bound_as(&path, "ada");
         // pat, bound with the token, follows.
-        let mut pat = Client::connect(&path);
-        assert!(matches!(
-            pat.bind(Some("pat"), Some(token())),
-            org_proto::Outcome::Result(_)
-        ));
+        let mut pat = Client::grant_bound(&path, "pat");
         assert!(matches!(pat.subscribe(None), org_proto::Outcome::Result(_)));
         ada.call::<MsgSend>(&send_params(70, "remy", "seen"));
         assert_eq!(next_event(&mut pat).0, "message.received");
@@ -4963,13 +4978,13 @@ mod tests {
             idle: Duration::from_secs(3),
             ..Timing::default()
         };
-        let shared =
-            Arc::new(Shared::new(&test_info(), path.as_path(), ports, token()).with_timing(timing));
+        let shared = Arc::new(
+            Shared::new(&test_info(), path.as_path(), ports, launch_key()).with_timing(timing),
+        );
         let (stop, server) = start(&path, &shared);
 
         // The directory is down for a moment: nothing is ended.
-        let mut pat = Client::connect(&path);
-        pat.bind(Some("pat"), Some(token()));
+        let mut pat = Client::grant_bound(&path, "pat");
         pat.subscribe(None);
         let mut ada = Client::bound_as(&path, "ada");
         let mut lookup_failure = Client::bound_as(&path, "remy");
@@ -5060,8 +5075,9 @@ mod tests {
             idle: Duration::from_millis(100),
             ..Timing::default()
         };
-        let shared =
-            Arc::new(Shared::new(&test_info(), path.as_path(), ports, token()).with_timing(timing));
+        let shared = Arc::new(
+            Shared::new(&test_info(), path.as_path(), ports, launch_key()).with_timing(timing),
+        );
         let (stop, server) = start(&path, &shared);
 
         let mut ada = Client::bound_as(&path, "ada");

@@ -143,17 +143,22 @@ embed and validate them at build time and never read them at run time. A develop
 build without them embeds no publisher trust and cannot activate a production
 release; a malformed input fails the build.
 
-Setup talks to the host over a typed reverse connection: `agentic-org serve` in
-bootstrap mode connects to setup's private listener, and `bootstrap` and `exit` are
-never ordinary `host.sock` methods. Both sides are the same executable, with the
-retained signing identifier `com.vgmello.agentic-org.org-office-host` and the
-compiled team and hardened-runtime checks on macOS. A debug executable allowance is
-debug-only. Before creating the registry, the bootstrap host holds the instance,
-root and host locks and hands those same locks and custody to the normal runtime
-without an unlocked restart. A replay compares the nonsecret fingerprint and never
-issues a second registration link. The setup
-adapter admits loopback HTTP without a TLS pair; a supplied TLS pair is refused until
-the host certificate verifier exists.
+There is no reverse bootstrap connection
+([ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md)). Setup
+registers and starts the service; the service host (`agentic-org serve --name <name>`)
+creates its own registry at first start, holding the instance and host locks it keeps
+for its whole run, so no unlocked window exists between creation and service. The
+registry starts with no account and no organization. Setup then asks the running host
+for the initial registration link over `host.sock` with `admin.link.initial`, bound to
+the frozen setup operation ID. The host issues it only if no link was ever issued for
+that operation and no administrator exists; a replay answers `already_issued` with no
+secret, so setup never issues a second link. The caller is admitted like every
+`host.sock` client: hello, the registered instance, a peer effective UID equal to the
+host's and the signing check (retained identifier
+`com.vgmello.agentic-org.org-office-host`, compiled team and hardened-runtime checks on
+macOS; the debug executable allowance is debug-only). The secret travels only in the
+reply. The setup adapter admits loopback HTTP without a TLS pair; a supplied TLS pair
+is refused until the host certificate verifier exists.
 
 ## 3. Instance selection and storage
 
@@ -282,12 +287,14 @@ absolute directory of the Linux credential store, required on Linux;
 prompt. Noninteractive setup prints no link; its status reports
 `administrator: none` until `agentic-org admin reset` is run in a terminal. A
 container can run setup this way, without a terminal and offline. Unsupported
-listener or TLS profiles fail before bootstrap.
+listener or TLS profiles fail before any change.
 
 Under the account-owned application base, `setup/<name>/setup.v1.json` freezes the
-validated nonsecret request, offline policy, the bootstrap operation ID and the
-exact release pin before protected creation. Later fields record the instance, the
-bootstrap exit and the service registration.
+validated nonsecret request (`version`, `root`, `listen`), offline policy, the setup
+operation ID and the exact release pin before protected creation. Later fields record
+the instance ID, that the registry was created, that the service was registered and
+that the initial link was issued; the record never holds a login, password,
+organization or link secret.
 `setup.lock` serializes this workflow separately from the instance writer and release
 store. Reopening repeats the original protected operations or verifies their result;
 it never mints new operation IDs, changes a configured listener or activates a newer
@@ -429,13 +436,39 @@ track its outcome.
 
 ## 6. Authentication, keys and platform gates
 
-Bootstrap is a one-time link: setup prints a registration link bound to the
-instance, single-use, expiring after 24 hours and kept at the host only as a digest,
-with its secret after `#` so it never reaches a request line or log. Until it is
+The first administrator registers through a one-time link: setup prints a
+registration link bound to the instance, single-use, expiring after 24 hours and kept
+at the host only as a digest, with its secret after `#` so it never reaches a request
+line or log. The host builds the URL from its own configured origin. Until it is
 redeemed no administration is possible, and `agentic-org admin reset` on the server
 machine replaces it. No password is typed in a terminal: terminal sign-in prints a
 10-minute approval link that a signed-in browser approves. There is no unclaimed
 reusable administration page and no reusable owner token in a URL.
+
+One-time links are a host-storage contract (`OneTimeLinks`,
+`crates/org-host/src/links.rs`) with a SQLite registry adapter and an in-memory
+adapter that pass one engine-independent suite
+([ADR-0018](../adr/0018-storage-engine-independence.md)):
+
+- **Token.** 32 random bytes from the OS, written as unpadded base64url (exactly 43
+  characters) after the link's `#`. Only canonical 43-character text parses; anything
+  else is refused as unknown before decoding. Token bytes are zeroed when dropped.
+- **Digest.** The host stores only
+  `SHA-256(len(D) ‖ D ‖ len(I) ‖ I ‖ len(K) ‖ K ‖ T)`, where `D` is the domain
+  `agentic-org/link/v1`, `I` the instance ID, `K` the kind name (`registration`),
+  `T` the 32 raw token bytes and each `len` a 4-byte big-endian byte count. The length
+  prefixes give every variable field an explicit boundary, and the instance ID binds
+  a digest to one instance.
+- **Table.** `one_time_links(link_id, kind, subject, digest, issued_at_ms,
+  expires_at_ms, state, ended_at_ms)`, `STRICT` and `WITHOUT ROWID`. `link_id` is a
+  UUIDv7, `digest` is 32 bytes and unique, `state` is `pending`, `used` or
+  `cancelled`, and `ended_at_ms` is set exactly when the state is not `pending`. A
+  partial unique index on `(kind, subject) WHERE state = 'pending'` allows one
+  redeemable link per kind and subject.
+- **Rules.** Issuing cancels the pending link of the same kind and subject and
+  inserts the new one in one transaction. Redeeming marks a pending, unexpired link
+  `used` exactly once; a used, cancelled, expired or unknown token is refused with
+  that reason. A registration link lives 24 hours.
 
 **A cookie alone never authenticates a browser operation.** Cookies are scoped by
 host, not port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)),
@@ -630,9 +663,15 @@ Linux, including a container, and confirms no production mock fallback.
 
 ## What the code does today
 
-- `agentic-org` implements `serve`, help and version; `setup` refuses without
-  changing state. There is no bootstrap, download, installer, updater or service
-  registration; the executables are built from source and started by hand.
+- On macOS, `agentic-org setup [--name N]` creates the instance, registers and
+  starts its launchd user service, and prints one registration link to a terminal;
+  `admin reset` issues a new registration link after local presence (its
+  set-new-password branch waits for A3), and `service start|stop|status` wrap the
+  service adapter. `serve --name N` runs the registered instance and creates its
+  registry at first start (ADR-0022). Other systems refuse setup before any change.
+  There is no download, installer, updater or release staging: the executables are
+  built from source, and a release build of setup refuses until it carries a pinned
+  runtime release (SRV-1).
 - Release verification exists as the `org-release` library, linked into `org-host`,
   and no command calls it.
 - Protected HQ creation (`crates/org-host/src/provisioning.rs`, the office's

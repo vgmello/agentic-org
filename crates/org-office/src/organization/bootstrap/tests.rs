@@ -4,7 +4,8 @@ use crate::{
     AcceptanceConfig, AcceptanceIdentity, Key, NewOffice, OfficeRole, OwnerAccount,
 };
 use org_proto::selected_bootstrap::{PlanV1, PreparedV1};
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
+const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const OP: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 fn prepared() -> PreparedV1 {
     let id = |n| format!("01900000-0000-7000-8000-{n:012x}");
@@ -29,7 +30,7 @@ impl OwnerAuthority for Owner {
     fn verify_live(&self, _: &AcceptanceIdentity) -> Result<OwnerAccount, OfficeError> {
         Ok(OwnerAccount {
             account_id: "account".into(),
-            member_id: INSTANCE.into(),
+            member_id: OWNER.into(),
         })
     }
 }
@@ -47,7 +48,7 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     let p = prepared();
     let binding = Binding {
         operation_id: OP.into(),
-        owner_member_id: INSTANCE.into(),
+        owner_member_id: OWNER.into(),
         public_root: public.clone(),
         bootstrap: Some(p.clone()),
     };
@@ -278,7 +279,7 @@ fn selected_bootstrap_open_and_admission_reject_lost_or_incoherent_prepared_stat
         let p = prepared();
         let bound = Binding {
             operation_id: OP.into(),
-            owner_member_id: INSTANCE.into(),
+            owner_member_id: OWNER.into(),
             public_root: public.clone(),
             bootstrap: Some(p.clone()),
         };

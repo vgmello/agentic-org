@@ -29,12 +29,9 @@ jobs:
         os: [macos-15, ubuntu-26.04]
         include:
           - os: ubuntu-26.04
-            # The host cannot start a worker on Linux until the Linux admission adapter exists
-            # (implementation plan X2), so its tests stay excluded here, and three of its test
-            # helpers are used only by tests that are macOS-only until then: it is linted by the
-            # `clippy (Linux host)` step with dead code allowed and nothing else. Since X1c the
-            # host's macOS-only code is in the platform crates, so no other lint needs allowing.
-            clippy-flags: --exclude org-host --exclude agentic-org
+            # The host does not compose the Linux admission adapter yet (implementation plan X2,
+            # host slice), so the tests that start a worker stay excluded here. The whole
+            # workspace is linted on both systems.
             test-flags: --exclude org-host --exclude agentic-org
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,11 +78,7 @@ jobs:
           cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
 
       - name: cargo clippy
-        run: cargo clippy --locked --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
-
-      - name: clippy (Linux host)
-        if: runner.os == 'Linux'
-        run: cargo clippy --locked -p org-host -p agentic-org --all-targets -- -D warnings -A dead_code
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: CLI migration checks (Linux)
         if: runner.os == 'Linux'

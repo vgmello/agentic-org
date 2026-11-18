@@ -217,9 +217,9 @@ struct Wire {
 impl Wire {
     fn read(mut stream: TcpStream) -> Self {
         let mut response = String::new();
-        if let Err(error) = stream.read_to_string(&mut response) {
-            assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
-        }
+        // No reset is tolerated: the lingering close delivers every reply,
+        // including parser refusals that leave input unread.
+        stream.read_to_string(&mut response).unwrap();
         let (head, body) = response
             .split_once("\r\n\r\n")
             .expect("application response");
@@ -340,9 +340,8 @@ fn rowan_b105_next_keepalive_target_uses_the_same_effective_path() {
     let mut stream = connect(server.address);
     write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Length: 2\r\n\r\n{{}}POST /api/v1/test/read#fragment HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}", address = server.address).unwrap();
     let mut response = String::new();
-    if let Err(error) = stream.read_to_string(&mut response) {
-        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
-    }
+    // Both requests are fully read; the lingering close leaves no reset.
+    stream.read_to_string(&mut response).unwrap();
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert_eq!(response.matches("HTTP/1.1 200 OK\r\n").count(), 2);
     assert_eq!(response.matches("{\"result\":{}}").count(), 2);
@@ -640,4 +639,66 @@ fn b106_host_target_and_origin_guards_cover_static_and_other_api_versions_on_the
     assert_eq!(server.routed.load(Ordering::Acquire), 1);
     assert_eq!(server.prepared.load(Ordering::Acquire), 0);
     assert_eq!(server.executed.load(Ordering::Acquire), 0);
+}
+
+/// One early reply to a request whose body arrives in a second write: the head
+/// is enough to answer 404, so the reply can precede the body bytes. Returns
+/// whether the read saw a reset, and the response bytes read before it.
+fn split_early_reply(address: SocketAddr) -> (bool, Vec<u8>) {
+    split_early_reply_to(address, "/api/v1/no-such-route", &[b'x'; 2048])
+}
+
+fn split_early_reply_to(address: SocketAddr, path: &str, body: &[u8]) -> (bool, Vec<u8>) {
+    let mut stream = connect(address);
+    write!(stream, "POST {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
+    // The body write may itself fail once the server has closed; only the
+    // response read decides the outcome.
+    let _ = stream.write_all(body);
+    let mut response = Vec::new();
+    match stream.read_to_end(&mut response) {
+        Ok(_) => (false, response),
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => (true, response),
+        Err(error) => panic!("{error}"),
+    }
+}
+
+#[test]
+fn a3_b1_early_replies_to_unread_bodies_reach_the_client_without_a_reset() {
+    let server = Running::start(ApiLimits::default());
+    let mut resets = 0;
+    for _ in 0..2000 {
+        let (reset, response) = split_early_reply(server.address);
+        if reset {
+            resets += 1;
+            continue;
+        }
+        let text = String::from_utf8(response).unwrap();
+        assert!(text.starts_with("HTTP/1.1 404 "), "{text}");
+        let (_, body) = text.split_once("\r\n\r\n").unwrap();
+        let body: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(body["error"]["code"], "not_found", "{body}");
+    }
+    assert_eq!(resets, 0, "{resets} of 2000 early replies were reset");
+    assert_eq!(server.executed.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn a3_b1_an_oversize_upload_refusal_reaches_the_client_without_a_reset() {
+    // A 16 KiB limit makes the 256 KiB declared body oversize from the head
+    // alone: the 413 is sent while the body is still unread.
+    let server = Running::start(ApiLimits {
+        body_bytes: 16 * 1024,
+        ..ApiLimits::default()
+    });
+    let upload = vec![b'x'; 256 * 1024];
+    for _ in 0..50 {
+        let (reset, response) = split_early_reply_to(server.address, "/api/v1/test/read", &upload);
+        assert!(!reset, "an oversize-body refusal was reset");
+        let text = String::from_utf8(response).unwrap();
+        assert!(text.starts_with("HTTP/1.1 413 "), "{text}");
+        let (_, body) = text.split_once("\r\n\r\n").unwrap();
+        let body: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(body["error"]["code"], "too_large", "{body}");
+    }
+    assert_eq!(server.prepared.load(Ordering::Acquire), 0);
 }

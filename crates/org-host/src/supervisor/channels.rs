@@ -143,18 +143,56 @@ impl Broker {
         rendezvous: Rendezvous,
         office: &str,
         admission: &Admission,
-        child: &Child,
+        child: &mut Child,
         db_key: &DbKey,
         recovery: Option<&org_proto::RecoveryCode>,
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<Arc<Endpoint>> {
-        let deadline = Instant::now() + DEADLINE;
+        let (stream, deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, &mut || {
+            child.try_wait().unwrap_or(false)
+        })?;
+        self.handoff(
+            stream, office, admission, child, db_key, recovery, generation, signals, deadline,
+        )
+    }
+    /// The one connection to a bound rendezvous, by `deadline`, with blocking I/O bounded by
+    /// what is left of it. The wait ends early when `exited` says the worker is gone: a worker
+    /// that refuses its first line (or crashes) before connecting never will, and its refusal
+    /// went to stdout, which the host does not read. That is a crash, not a fatal code.
+    fn connect(
+        rendezvous: Rendezvous,
+        deadline: Instant,
+        exited: &mut dyn FnMut() -> bool,
+    ) -> io::Result<(UnixStream, Instant)> {
+        let mut gone = false;
         let stream = loop {
             match rendezvous.listener.accept() {
                 Ok((stream, _)) => break stream,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(10))
+                // One more accept after the exit was seen: a worker may connect and then exit.
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock && gone => {
+                    return phase(
+                        "rendezvous accept",
+                        Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "the worker exited without connecting",
+                        )),
+                    );
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() >= deadline => {
+                    return phase(
+                        "rendezvous accept",
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "no worker connected in time",
+                        )),
+                    );
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    gone = exited();
+                    if !gone {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
                 Err(e) => return phase("rendezvous accept", Err(e)),
             }
@@ -168,23 +206,15 @@ impl Broker {
         stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(left))?;
         stream.set_write_timeout(Some(left))?;
-        self.handoff(
-            stream, office, admission, child, db_key, recovery, generation, signals, deadline,
-        )
+        Ok((stream, deadline))
     }
-    #[allow(clippy::too_many_arguments)]
-    fn handoff(
-        &self,
+    /// Authenticate the socket's reader, read its `ready_for_secrets` and check its image again:
+    /// the steps before any secret goes out, shared by every op.
+    fn ready(
         stream: UnixStream,
-        office: &str,
         admission: &Admission,
         child: &Child,
-        db_key: &DbKey,
-        recovery: Option<&org_proto::RecoveryCode>,
-        generation: u64,
-        signals: Sender<Signal>,
-        deadline: Instant,
-    ) -> io::Result<Arc<Endpoint>> {
+    ) -> io::Result<BufReader<UnixStream>> {
         // Authenticate the socket's actual reader, not merely a process that was
         // admitted before it ran. Release macOS requires the exact audit token.
         phase(
@@ -208,6 +238,69 @@ impl Broker {
             "handoff image identity",
             admission.recheck(child).map_err(launch),
         )?;
+        Ok(reader)
+    }
+    /// A `--discard` run over the rendezvous: the handoff carries no secret (its `db_key` is
+    /// always `null`; a plain office opens nothing that needs a key) and names no descriptors, so no transfer pair is made, no marker is sent and no `fds_received` is
+    /// awaited. The worker's `discarded`/`failed` arrive on the stream and go to `signals` as
+    /// [`Signal::Event`]; the stream's end (or any other event) is [`Signal::Closed`]. No
+    /// endpoint is registered: a discard serves no channels.
+    pub fn discard(
+        rendezvous: Rendezvous,
+        admission: &Admission,
+        child: &mut Child,
+        generation: u64,
+        signals: Sender<Signal>,
+    ) -> io::Result<()> {
+        let (stream, _deadline) =
+            Self::connect(rendezvous, Instant::now() + DEADLINE, &mut || {
+                child.try_wait().unwrap_or(false)
+            })?;
+        Self::discard_handoff(stream, admission, child, generation, signals)
+    }
+    fn discard_handoff(
+        stream: UnixStream,
+        admission: &Admission,
+        child: &Child,
+        generation: u64,
+        signals: Sender<Signal>,
+    ) -> io::Result<()> {
+        let mut reader = Self::ready(stream, admission, child)?;
+        // Still sent only to the authenticated child reader, after `ready_for_secrets`, so a
+        // discard keeps the start/create handshake order; the header itself holds no key.
+        let header = v3::encode_discard_handoff(None).map_err(launch)?;
+        phase("handoff header send", reader.get_mut().write_all(&header))?;
+        // The report may take as long as the supervisor's discard timeout allows; it kills the
+        // worker at that deadline, which ends this stream.
+        set_timeout_unless_peer_closed(reader.get_ref(), None)?;
+        std::thread::Builder::new()
+            .name(format!("office-{}-v3-discard", child.id()))
+            .spawn(move || {
+                while let Ok(Some(v3::RendezvousEvent::Server(event))) =
+                    v3::read_server_event(&mut reader)
+                {
+                    if signals.send(Signal::Event { generation, event }).is_err() {
+                        return;
+                    }
+                }
+                let _ = signals.send(Signal::Closed { generation });
+            })?;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn handoff(
+        &self,
+        stream: UnixStream,
+        office: &str,
+        admission: &Admission,
+        child: &Child,
+        db_key: &DbKey,
+        recovery: Option<&org_proto::RecoveryCode>,
+        generation: u64,
+        signals: Sender<Signal>,
+        deadline: Instant,
+    ) -> io::Result<Arc<Endpoint>> {
+        let mut reader = Self::ready(stream, admission, child)?;
         let (transfer, worker) = {
             let _fence = lock(&SPAWN_LOCK);
             UnixDatagram::pair()?
@@ -234,11 +327,14 @@ impl Broker {
             )
             .map_err(launch),
         )?;
-        reader.get_ref().set_read_timeout(Some(
-            deadline
-                .checked_duration_since(Instant::now())
-                .ok_or_else(invalid)?,
-        ))?;
+        set_timeout_unless_peer_closed(
+            reader.get_ref(),
+            Some(
+                deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or_else(invalid)?,
+            ),
+        )?;
         match phase(
             "handoff receipt decode",
             v3::read_server_event(&mut reader).map_err(launch),
@@ -247,7 +343,7 @@ impl Broker {
             _ => return Err(invalid()),
         }
         drop(worker); // Receiver ownership proved before sender drops its copy.
-        reader.get_ref().set_read_timeout(None)?;
+        set_timeout_unless_peer_closed(reader.get_ref(), None)?;
         let endpoint = Arc::new(Endpoint {
             office: office.into(),
             key,
@@ -528,6 +624,24 @@ impl Endpoint {
 impl Drop for Endpoint {
     fn drop(&mut self) {
         self.fail();
+    }
+}
+
+/// Sets `stream`'s read timeout, except where the worker has already closed its end.
+///
+/// Darwin's `setsockopt` answers `EINVAL` on a socket whose both directions are shut down,
+/// which is what a unix stream becomes once its peer has closed. A worker may report a fatal
+/// `failed` right after `fds_received` (or after a discard header) and exit before the host
+/// changes the timeout. Its buffered events stay readable and the read then ends at EOF without
+/// blocking, so the timeout no longer matters: treating that as an error would lose the
+/// worker's failure report and turn it into a crash. Any other error is still an error.
+pub(crate) fn set_timeout_unless_peer_closed(
+    stream: &UnixStream,
+    timeout: Option<Duration>,
+) -> io::Result<()> {
+    match stream.set_read_timeout(timeout) {
+        Err(error) if error.raw_os_error() == Some(libc::EINVAL) => Ok(()),
+        other => other,
     }
 }
 

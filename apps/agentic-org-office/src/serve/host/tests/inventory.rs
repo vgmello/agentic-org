@@ -323,7 +323,7 @@ fn inventory() -> (BTreeSet<String>, BTreeSet<String>) {
             &shared,
             &mut Binding::Member {
                 id: OWNER_ID.into(),
-                with_app_token: true,
+                via_grant: true,
             },
         );
         if !matches!(response.outcome, org_proto::Outcome::Error(error) if error.code == ErrorCode::UnknownMethod)

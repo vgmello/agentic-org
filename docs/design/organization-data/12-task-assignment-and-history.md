@@ -2,7 +2,7 @@
 
 Status: **selected** data contract, revision 6. This document owns task activity history and separate team and individual assignment. Private task notes are owned by [document 05](05-operational-data.md#private-notes-attached-to-tasks). It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
 
-Code today: tasks have individual assignment only. The acceptance journal that this contract's writes go through exists as an internal foundation ([executable migration](../executable-migration.md#where-the-entry-points-stand-2026-11-17)); no command reaches it yet. The selected model replaces the code's task model.
+Code today: tasks have individual assignment only. The acceptance journal that this contract's writes go through exists as an internal foundation ([executable migration](../executable-migration.md#where-the-entry-points-stand-2026-11-18)); no command reaches it yet. The selected model replaces the code's task model.
 
 ## Ownership and current responsibility
 

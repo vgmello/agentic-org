@@ -1,6 +1,6 @@
 use super::*;
 use crate::host_secrets::{Name, Value};
-use crate::hostdb::{BootstrapRecord, FirstAccount, HostDbInit};
+use crate::hostdb::HostDbInit;
 use std::os::unix::fs::PermissionsExt;
 
 // These behavioral tests use production Argon2 parameters in a parallel debug
@@ -35,9 +35,20 @@ impl HostSecrets for TestCustody {
     }
 }
 pub(crate) fn fixture() -> (tempfile::TempDir, Authentication, Arc<Connection>) {
-    fixture_for(&crate::ids::generate().unwrap())
+    fixture_for(&crate::ids::uuid_v7().unwrap())
 }
 pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication, Arc<Connection>) {
+    fixture_seeded(instance, true)
+}
+/// A host database with no account at all: a setup link can still register the administrator.
+pub(crate) fn fixture_without_accounts() -> (tempfile::TempDir, Authentication) {
+    let (root, auth, _) = fixture_seeded(&crate::ids::uuid_v7().unwrap(), false);
+    (root, auth)
+}
+fn fixture_seeded(
+    instance: &str,
+    seed: bool,
+) -> (tempfile::TempDir, Authentication, Arc<Connection>) {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let custody: Arc<dyn HostSecrets> = Arc::new(TestCustody::default());
@@ -45,22 +56,15 @@ pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication,
     let init = HostDbInit {
         instance_id: instance.into(),
         clock_high_ms: wall_ms().unwrap() as i64,
-        bootstrap: BootstrapRecord {
-            operation_id: crate::ids::generate().unwrap(),
-            hq_operation_id: crate::ids::generate().unwrap(),
-            fingerprint: "fixture".into(),
-            account: account.clone(),
-            finished: false,
-        },
-        first_account: FirstAccount::new(
-            &account,
-            "Owner",
-            hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap(),
-        )
-        .unwrap(),
-        tls_pair: None,
     };
-    drop(HostDb::create(root.path(), &*custody, &init).unwrap());
+    let db = HostDb::create(root.path(), &*custody, &init).unwrap();
+    let verifier =
+        hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
+    if seed {
+        db.seed_account(&account, "Owner", &verifier, true, init.clock_high_ms)
+            .unwrap();
+    }
+    drop(db);
     let auth = Authentication::open(root.path(), custody, instance).unwrap();
     (root, auth, Connection::for_test())
 }
@@ -82,7 +86,6 @@ fn inspected_session_uses_current_protected_facts_and_monotonic_absolute_limit()
     assert_eq!(view.login, "Owner");
     assert!(view.admin);
     assert!(view.orgs.is_empty());
-    assert!(view.absolute_expires_at_ms - view.server_time_ms <= ABSOLUTE.as_millis() as u64);
     assert!(view.idle_expires_at_ms - view.server_time_ms <= IDLE.as_millis() as u64);
     assert!(auth
         .inspect(&Connection::for_test(), &signed_in.session)
@@ -95,8 +98,8 @@ fn inspected_session_uses_current_protected_facts_and_monotonic_absolute_limit()
         .unwrap()
         .created = Instant::now() - (ABSOLUTE - Duration::from_millis(200));
     let view = auth.inspect(&connection, &signed_in.session).unwrap();
-    assert!(view.absolute_expires_at_ms - view.server_time_ms <= 200);
-    assert!(view.idle_expires_at_ms <= view.absolute_expires_at_ms);
+    // The absolute limit still bounds the reported idle expiry; it is not on the wire.
+    assert!(view.idle_expires_at_ms - view.server_time_ms <= 200);
     let account = auth.authorize(&connection, &signed_in.session).unwrap();
     auth.db
         .establish_organization_owner(&account, "org", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
@@ -353,6 +356,43 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
     assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
 }
 
+/// A locked native login is refused before it takes a hash permit: with every
+/// permit held, a locked call answers `not_authorized`, not `unavailable`, and
+/// leaves the permit count unchanged.
+#[test]
+fn a_locked_native_verify_takes_no_hash_permit() {
+    let (_root, auth, connection) = fixture();
+    let key = LoginKey::new("Owner").unwrap();
+    // Failures recorded an hour ahead move the host clock there, so the lock
+    // holds however long the test runs.
+    let ahead = wall_ms().unwrap() + 3_600_000;
+    for socket in [Socket::Local, Socket::Control] {
+        for _ in 0..6 {
+            auth.db
+                .record_login(socket, key.as_str(), ahead, Outcome::Failure)
+                .unwrap();
+        }
+        assert!(auth
+            .db
+            .login_lockout(socket, key.as_str(), ahead)
+            .unwrap()
+            .is_locked());
+    }
+    auth.hashing.store(MAX_HASHES, Ordering::SeqCst);
+    let right = Password::new("synthetic test password".into()).unwrap();
+    assert_eq!(
+        auth.verify(&connection, "Owner", &right).unwrap_err().code,
+        ErrorCode::NotAuthorized
+    );
+    assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
+    // An unlocked login with the pool full still answers `unavailable`.
+    assert_eq!(
+        auth.verify(&connection, "Other", &right).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(auth.hashing.load(Ordering::SeqCst), MAX_HASHES);
+}
+
 #[test]
 fn session_absolute_and_idle_expiry_remain_independent_of_wall_clock() {
     let (_root, auth, connection) = fixture();
@@ -391,7 +431,7 @@ fn real_host_listener_negotiates_signin_renewal_and_logout() {
         .unwrap();
     let socket = sockets.path().join("h.sock");
     let mut service = super::super::tests::service(_root.path());
-    service.instance_id = Some(crate::ids::generate().unwrap());
+    service.instance_id = Some(crate::ids::uuid_v7().unwrap());
     service.authentication = Some(Arc::new(auth));
     let offices = service.offices.clone();
     let mut listener = Listener::start(
@@ -457,7 +497,7 @@ fn actual_host_connection_pair_signs_in_and_eof_invalidates_registry_session() {
     let (root, auth, _) = fixture();
     let auth = Arc::new(auth);
     let mut service = super::super::tests::service(root.path());
-    service.instance_id = Some(crate::ids::generate().unwrap());
+    service.instance_id = Some(crate::ids::uuid_v7().unwrap());
     service.authentication = Some(auth.clone());
     let offices = service.offices.clone();
     let (host, peer) = UnixStream::pair().unwrap();

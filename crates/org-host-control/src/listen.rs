@@ -11,7 +11,7 @@
 //! an `origin` that fails [`ListenOrigin::parse`] or [`ListenOrigin::check`], or a missing or
 //! malformed `address`, `port` or `scheme` it can't be checked against, is `origin_invalid`; an
 //! `hsts` value outside `off`/`on`/`clear` is `hsts_invalid`. The host's pre-spawn check
-//! reports it as a [`ListenFailure`]; `bootstrap` and `tls.set` refuse with `ops::TlsRefusal`
+//! reports it as a [`ListenFailure`]; `tls.set` refuses with `ops::TlsRefusal`
 //! (`ops` depends on this module, not the other way round). Certificate coverage is the host's
 //! check, not this module's.
 
@@ -795,7 +795,7 @@ impl ListenField {
 }
 
 /// Why a stored listen configuration is invalid. The host's pre-spawn check reports it as
-/// [`InvalidListenConfig::listen_failure`]; `bootstrap` and `tls.set` refuse with the
+/// [`InvalidListenConfig::listen_failure`]; `tls.set` refuses with the
 /// `TlsRefusal` it converts into (`From`) and store nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidListenConfig {

@@ -58,14 +58,23 @@ fn each_question_to_the_owner_has_its_own_span_closed_by_its_first_answer() {
     let q2_id = q2.comment_id.clone();
     w.ok(&agent(), WorkCall::Comment(q2));
     assert_eq!(w.last_event(&id).change, started(&q2_id));
-    w.ok(&app(), WorkCall::Comment(answer(&w, &id, &q1_id)));
+    w.ok(
+        &owner_by_grant(),
+        WorkCall::Comment(answer(&w, &id, &q1_id)),
+    );
     assert_eq!(w.last_event(&id).change, ended(&q1_id));
     assert_eq!(w.item(&id).waiting.len(), 1);
     // A second answer to an answered question records only the comment.
     let n = w.events(&id).len();
-    w.ok(&app(), WorkCall::Comment(answer(&w, &id, &q1_id)));
+    w.ok(
+        &owner_by_grant(),
+        WorkCall::Comment(answer(&w, &id, &q1_id)),
+    );
     assert_eq!(w.events(&id).len(), n + 1);
-    w.ok(&app(), WorkCall::Comment(answer(&w, &id, &q2_id)));
+    w.ok(
+        &owner_by_grant(),
+        WorkCall::Comment(answer(&w, &id, &q2_id)),
+    );
     assert_eq!(w.last_event(&id).change, ended(&q2_id));
     assert!(w.item(&id).waiting.is_empty());
 }
@@ -94,7 +103,10 @@ fn a_rounds_end_closes_every_open_span_and_a_reopen_opens_the_ones_that_still_ho
         .all(|e| e.cause.as_ref().map(|c| c.version) == Some(v + 1)));
     assert!(w.item(&id).waiting.is_empty());
     // Answered while done: nothing to end. Reopened: only the open question waits again.
-    w.ok(&app(), WorkCall::Comment(answer(&w, &id, &q1_id)));
+    w.ok(
+        &owner_by_grant(),
+        WorkCall::Comment(answer(&w, &id, &q1_id)),
+    );
     assert!(matches!(
         w.last_event(&id).change,
         WorkEventKind::Comment { .. }
@@ -228,8 +240,11 @@ fn comment_with_watch_and_work_watch() {
             watching: false
         }
     );
-    // The creator (the app's owner here) always watches.
-    assert_eq!(w.code(&app(), watch(false)), ErrorCode::InvalidRequest);
+    // The creator (the grant-bound owner here) always watches.
+    assert_eq!(
+        w.code(&owner_by_grant(), watch(false)),
+        ErrorCode::InvalidRequest
+    );
 }
 
 fn link(w: &World, from: &str, kind: LinkKind, to: LinkTarget) -> (String, WorkCall) {
@@ -358,12 +373,15 @@ fn delete_makes_a_tombstone_that_links_read_as_deleted() {
     let b = w.task();
     let (_, call) = link(&w, &a, LinkKind::RelatesTo, to_item(&b));
     w.ok(&agent(), call);
-    w.ok(&app(), w.delete(&b));
+    w.ok(&owner_by_grant(), w.delete(&b));
     let item = w.item(&b);
     assert!(item.deleted);
     assert_eq!(item.number, Some(2), "the number stays");
     assert_eq!(w.last_event(&b).change, WorkEventKind::Deleted);
-    assert_eq!(w.code(&app(), w.delete(&b)), ErrorCode::InvalidRequest);
+    assert_eq!(
+        w.code(&owner_by_grant(), w.delete(&b)),
+        ErrorCode::InvalidRequest
+    );
     // Linking to it now is refused; a's link reads "deleted".
     let (_, call) = link(&w, &w.task(), LinkKind::RelatesTo, to_item(&b));
     assert_eq!(w.code(&agent(), call), ErrorCode::InvalidRequest);
@@ -388,7 +406,7 @@ fn recipients() {
     ] {
         let mut p = w.create_params(PROJECT);
         p.assignee_id = Some(who.into());
-        let out = w.call(&app(), WorkCall::TaskCreate(p));
+        let out = w.call(&owner_by_grant(), WorkCall::TaskCreate(p));
         match (ok, out.answer()) {
             (true, Ok(_)) => {}
             (false, Err(e)) => assert_eq!(e.code, ErrorCode::UnknownRecipient, "{who}"),
@@ -404,7 +422,7 @@ fn recipients() {
         expected_version: 1,
         assignee_id: Some("pat".into()),
     });
-    assert_eq!(w.code(&app(), call), ErrorCode::UnknownRecipient);
+    assert_eq!(w.code(&owner_by_grant(), call), ErrorCode::UnknownRecipient);
     // Unassigning needs no recipient.
     let call = WorkCall::TaskAssign(TaskAssignParams {
         change_id: w.id(),
@@ -412,7 +430,7 @@ fn recipients() {
         expected_version: 1,
         assignee_id: None,
     });
-    w.ok(&app(), call);
+    w.ok(&owner_by_grant(), call);
 }
 
 #[test]
@@ -495,14 +513,18 @@ fn create_refusals() {
     for (i, (f, code)) in cases.into_iter().enumerate() {
         let mut p = w.create_params(PROJECT);
         f(&mut p);
-        assert_eq!(w.code(&app(), WorkCall::TaskCreate(p)), code, "case {i}");
+        assert_eq!(
+            w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
+            code,
+            "case {i}"
+        );
     }
     // A taken id, and a step id given twice.
     let id = w.task();
     let mut p = w.create_params(PROJECT);
     p.item_id = id;
     assert_eq!(
-        w.code(&app(), WorkCall::TaskCreate(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
         ErrorCode::AlreadyExists
     );
     let mut p = w.create_params(PROJECT);
@@ -520,7 +542,7 @@ fn create_refusals() {
         },
     ];
     assert_eq!(
-        w.code(&app(), WorkCall::TaskCreate(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
         ErrorCode::InvalidRequest
     );
 }
@@ -543,7 +565,7 @@ fn deleting_an_item_ends_its_waiting_spans() {
     let q = question(&w, &id, OWNER);
     let q_id = q.comment_id.clone();
     w.ok(&agent(), WorkCall::Comment(q));
-    w.ok(&app(), w.delete(&id));
+    w.ok(&owner_by_grant(), w.delete(&id));
     let events = w.events(&id);
     let n = events.len();
     assert_eq!(events[n - 2].change, WorkEventKind::Deleted);
@@ -559,8 +581,8 @@ fn a_connection_that_isnt_the_apps_acts_only_as_an_agent() {
         Caller::agent("pat"),
         Caller::agent("nobody"),
         Caller::agent("off"),
-        Caller::app("ada"),
-        Caller::app("nobody"),
+        Caller::grant_bound("ada"),
+        Caller::grant_bound("nobody"),
     ] {
         let p = w.create_params(PROJECT);
         assert_eq!(
@@ -574,9 +596,9 @@ fn a_connection_that_isnt_the_apps_acts_only_as_an_agent() {
         &Caller::agent("pau"),
         WorkCall::TaskCreate(w.create_params(PROJECT)),
     );
-    // The app may act as the owner or a person.
+    // A grant-bound connection may act as the owner or a person.
     w.ok(
-        &Caller::app("pat"),
+        &Caller::grant_bound("pat"),
         WorkCall::TaskCreate(w.create_params(PROJECT)),
     );
 }
@@ -629,12 +651,15 @@ fn bookkeeping_never_makes_a_delete_stale_and_an_unknown_event_makes_anything_st
         item_id: id.clone(),
         expected_version: 1,
     });
-    w.ok(&app(), stale_by_bookkeeping);
+    w.ok(&owner_by_grant(), stale_by_bookkeeping);
 
     let id = w.task();
     inject(&w, &id, WorkEventKind::Unknown);
     let mut p = w.update(&id);
     p.expected_version = 1;
     p.title = Some("x".into());
-    assert_eq!(w.code(&app(), WorkCall::TaskUpdate(p)), ErrorCode::Conflict);
+    assert_eq!(
+        w.code(&owner_by_grant(), WorkCall::TaskUpdate(p)),
+        ErrorCode::Conflict
+    );
 }

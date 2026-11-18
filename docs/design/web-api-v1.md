@@ -40,8 +40,8 @@ HTML. Unknown operations are never forwarded to a local socket.
 | Method/path | Body/result | Access and source |
 | --- | --- | --- |
 | GET `/api/v1/version` | `{api_version:1, contract_revision}` | Public. Constant protocol metadata only; nothing about the instance, organization or accounts |
-| POST `/api/v1/session/sign-in` | `{login,password}` → session view plus proof | Host `account.verify`; configured-origin validation, bounded limits |
-| POST `/api/v1/links/register` | `{link,login,password}` → session view plus proof | Public; redeems a registration link once (§4) |
+| POST `/api/v1/session/sign-in` | `{login,password}` → session view plus proof | Host `session.sign_in`; configured-origin validation, per-login and per-address limits (429) |
+| POST `/api/v1/links/register` | `{link,login,password}` → session view plus proof | Public; host `link.register`; redeems a registration link once (§4); per-address limit (429) |
 | POST `/api/v1/links/set-password` | `{link,password}` → `{}` | Public; redeems a set-new-password link once and ends every session of that account |
 | POST `/api/v1/links/approve` | `{link,decision:"approve"\|"decline"}` → `{}` | Pair; signs a terminal in as this account, or declines (§4) |
 | POST `/api/v1/session/password` | `{current_password,new_password}` → `{}` | Pair; ends every other session of the account |
@@ -64,6 +64,32 @@ HTML. Unknown operations are never forwarded to a local socket.
 | POST `/api/v1/events/poll` | Same body → bounded frame batch | Pair; short-poll alternative with no held connection |
 
 Domain routes for tasks and organization changes are in [Tasks](#tasks) and §9.
+
+**Request shape.** Every POST needs `Content-Type: application/json` (an optional
+`charset=utf-8` and nothing else); anything else is HTTP 415 `invalid_request`,
+also on the public routes, which have no proof. `OPTIONS` on `/api/v1` is HTTP 405
+`invalid_request` with `Allow: GET, HEAD, POST`; no response carries an
+`Access-Control-*` header.
+
+**Host operations behind the session routes.** The web process reaches the host
+only over its own admitted control connection; `host.sock` and every other
+connection get `not_authorized` for these calls and nothing is stored. The web
+process sends SHA-256 digests of the cookie and proof, never the values, and the
+configured origin as `{scheme,host,port}`. Each result is the session record
+`{session_id, account:{id,login}, admin, orgs:[{org_id,employee_id,office_ids}],
+server_time_ms, idle_expires_at_ms}`.
+
+| Host method | Params | Result and refusals |
+| --- | --- | --- |
+| `link.register` | `{link, login, password, client_address, cookie_digest, proof_digest, origin}` | Session record. Rule failure: `invalid_request` with `{field, rule}`. Unknown, used, cancelled or expired link: `not_found`, checked before any password hashing, and counted on the client address. Locked address: `rate_limited` with `retry_after_ms` |
+| `session.sign_in` | `{login, password, client_address, cookie_digest, proof_digest, origin}` | Session record. An unknown login, a wrong password and a revoked account get one identical `not_authorized`. A locked login or address (IPv6 by /64): `rate_limited` with `retry_after_ms`, before any password check. Host full: `unavailable` |
+| `session.validate` | `{cookie_digest, proof_digest, origin}` | Session record, touched. No match, another origin or an idle session: `not_authorized`. Removed access ends every session of the account |
+| `session.end` | `{session_id}` | `{}`. Deletes the record, then pushes `session.ended {session_id}` before the reply on the same ordered connection; an unknown ID is not an error |
+
+Every session the host ends, also one reaped as idle or ended by a refusal, is
+pushed as `session.ended`. Browser sessions have no absolute lifetime and no
+per-connection or per-account cap: only the 30-day idle rule and a host-wide bound
+of 4096 live sessions.
 
 **Lookup query.** `instance_id` is always required. `kind=host` forbids `org_id`
 and `office_id`; `kind=org` requires `org_id` and forbids `office_id`;
@@ -359,16 +385,25 @@ authoritative; the HTTP status is a classification:
 | 202 | accepted |
 | 400 | invalid_request, invalid_name, cycle, not_empty, owner_protected, checklist_incomplete, unknown_method, clock_skew, unknown_recipient |
 | 401 / 403 | No valid session / signed in but not allowed: not_authorized |
+| 405 | invalid_request: a method the API does not serve, such as `OPTIONS`, with `Allow` |
 | 404 | not_found, unsupported route; never the SPA fallback |
 | 409 | conflict, already_exists, operation_reused, snapshot_required |
 | 410 | expired |
 | 413 | too_large, refused before forwarding |
+| 415 | invalid_request: a POST whose `Content-Type` is not `application/json` |
 | 426 | unsupported_version: refresh or update; never mock data |
-| 429 | rate_limited, with `retry_after_ms`; refused before dispatch, safe to retry after the delay |
+| 429 | rate_limited, with `retry_after_ms`; refused before any password check or dispatch, safe to retry after the delay |
 | 503 | not_ready, unavailable, storage_error, or a timeout confirmed before dispatch |
 | 504 | Outcome unknown after a possible dispatch, including a timeout; never rejected or accepted |
 
-`rate_limited` is a web-process code. An unexpected office error is logged as an
+`rate_limited` comes from the web process's own limits or from the host's sign-in
+and registration throttle.
+
+**Error body.** `{error:{code, message, field?, rule?, retry_after_ms?}}`. The
+optional fields appear only when set: `field` and `rule` name the input and the
+rule it failed on a 400 `invalid_request` (`login`: `format`, `taken`;
+`password`: `too_short`, `too_long`), and `retry_after_ms` is the wait in
+milliseconds on a 429. An unexpected office error is logged as an
 internal invariant failure and returned as rejected `unavailable` (503) only when
 nothing ran; anything that may have committed is unknown (504). Retries of
 `not_ready` are bounded and safe only when non-admission is confirmed.
@@ -530,11 +565,16 @@ returning 404 confirms that.
   (`team.add_member`, `team.remove_member`, `team.set_title`, `member.move`,
   `project.add_team`, `project.remove_team`) and the name `member`. They are replaced
   by the routes of §9 when the organization model is built (implementation plan B2).
-  The views spell `gateway_status` and `member_id`, which become `web_status` and
-  `employee_id`, and the 400 class still lists `not_a_member`.
+  The 400 class still lists `not_a_member`, which the older membership operations
+  still return.
 - Operation IDs are ULIDs (`crates/org-proto/src/ulid.rs`); they become UUIDv7
   under FC-142.
 - The task codec (`selected_tasks_v1`) exists in the office's acceptance store; no
   route reaches it.
-- Browser sessions live in memory in the host (`crates/org-host/src/service/authentication.rs`);
-  ADR-0013 moves them to the host database.
+- The host stores browser sessions in its registry behind the `BrowserSessions`
+  contract (`crates/org-host/src/sessions.rs`) and answers `link.register`,
+  `session.sign_in`, `session.validate` and `session.end` on the web process's
+  control connection only (`crates/org-host/src/service/authentication/browser.rs`).
+  The web process does not call them yet: its session routes, the 415/405 request
+  rules and the cache are A3 B5. Native command-line sessions stay in memory and end
+  with their connection.

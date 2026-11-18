@@ -95,8 +95,10 @@ agentic-org-office --discard <id>    # remove an unfinished office, then exit (t
 ```
 
 - Nothing but the office ID goes on the command line.
-- **stdin is the control pipe.** Its EOF means the host is gone: the worker stops
-  accepting, finishes in-flight writes, removes its socket, releases the lock and exits.
+- **stdin carries only the first line.** The worker drains stdin after it and never
+  treats stdin as a lifetime signal. **The rendezvous connection is the host's
+  lifetime:** when it ends, the host is gone and the worker stops accepting, finishes
+  in-flight writes, removes its socket, releases the lock and exits.
 - **stdout is untrusted** and carries nothing the host acts on; logs go to stderr, which
   the host writes to the office's log (`0600`, rotated at 10 MiB, one old file kept).
 - **No child can read or write the control channel.** First thing at startup, before
@@ -299,7 +301,8 @@ restarted.
   moment, intermediate states may be skipped and duplicates are possible, so clients
   replace their record idempotently.
 - **Shutdown** (the service manager's stop signal, or the host exiting): close every
-  child's stdin, wait up to 10 s, then SIGKILL what is left, and reap.
+  child's stdin and its rendezvous connection (the worker stops on the rendezvous
+  closing), wait up to 10 s, then SIGKILL what is left, and reap.
 - **Create:** under the catalog mutex only, check the name and its uniqueness among the
   instance's organizations (ignoring case, counting creates in flight), make the IDs,
   reserve the name and release the mutex. Outside it: create the office secrets key and

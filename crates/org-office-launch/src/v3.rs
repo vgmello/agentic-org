@@ -1,6 +1,5 @@
-//! Launch contract v3 (X-02 §5.1, §5.2, §5.4): the types only. Version 2 (the crate root) is
-//! unchanged and stays what the host and the server speak until the migration's moves 2a and 2b
-//! switch to these.
+//! Launch contract v3 (X-02 §5.1, §5.2, §5.4), the only launch version: version 2 was removed
+//! in A1.5.
 //!
 //! What changes from v2:
 //! - **The first line is non-secret** ([`HostFirstLine`]): the instance, the office and the path
@@ -31,8 +30,7 @@
 //!
 //! The "first line only, then drain unparsed" rule of v2 stays for the pipe. A v3 line is
 //! `{"v": 3, ...}`; a v2 build refuses it as another version, and [`read_first_line`] refuses a
-//! v2 line the same way. Move 2a's server reads both with [`read_first_line_any`] until move 2b's
-//! host lands.
+//! v2 line the same way, by its version, without decoding it.
 
 use std::io::{BufRead, Write};
 
@@ -42,8 +40,7 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    is_plain_id, read_secret_line, zero, ByteCounter, DbKey, FirstLine, HostMessage, LaunchError,
-    ServerEvent,
+    is_plain_id, read_secret_line, zero, ByteCounter, DbKey, FirstLine, LaunchError, ServerEvent,
 };
 
 /// An organization's recovery code (X-02 §6.4): staged by the host at `reserved` and sent on
@@ -97,8 +94,9 @@ pub struct OfficeLine {
     pub id_profile: Option<IdProfile>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub selected_writer_required: bool,
-    /// The instance the office belongs to (a ULID). The server stores it at create and refuses a
-    /// `start` naming another; an office created before v3 adopts it on its first v3 `start`.
+    /// The instance the office belongs to: canonical lowercase UUIDv7 text (a ULID is refused).
+    /// The server stores it at create and refuses a `start` naming another; an office created
+    /// before v3 adopts it on its first v3 `start`.
     pub instance_id: String,
     pub office_id: String,
     /// The absolute path of the per-spawn rendezvous socket: `<runtime>/r/<16 hex>`.
@@ -150,7 +148,10 @@ impl OfficeLine {
             None => is_plain_id(&self.office_id),
             Some(IdProfile::SelectedV1) => crate::is_selected_entity_id(&self.office_id),
         };
-        if !is_plain_id(&self.instance_id) || !office_valid {
+        if !org_proto::is_uuid_v7(&self.instance_id) {
+            return Err("the first line's instance id isn't a canonical lowercase UUIDv7");
+        }
+        if !office_valid {
             return Err("the first line holds an id that isn't plain");
         }
         if !self.rendezvous.starts_with('/') || self.rendezvous.contains('\0') {
@@ -369,8 +370,8 @@ pub fn write_first_line(w: &mut impl Write, line: &HostFirstLine) -> Result<(), 
 
 /// Read a server's v3 first line and check it matches the flag. `Ok(None)` means EOF before it
 /// (the host is gone). Another `v` is [`LaunchError::UnsupportedVersion`]; an unknown op, or
-/// another flag's op, is [`LaunchError::Invalid`]. The line is read like v2's secret lines and
-/// zeroed afterwards, since a v2 host's line carries keys.
+/// another flag's op, is [`LaunchError::Invalid`]. The line is read through a buffer reserved
+/// up front and zeroed afterwards, since a stray v2 host line carries keys.
 pub fn read_first_line(
     r: &mut impl BufRead,
     expected: FirstLine,
@@ -394,70 +395,6 @@ pub fn read_first_line(
     }
 }
 
-/// A first line of either version, for the rollout (X-02 §5.4): move 2a's server accepts v2 and
-/// v3 first lines until move 2b's host lands, and move 3 drops v2.
-#[derive(Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AnyFirstLine {
-    /// A v2 line, with its app token and keys.
-    V2(HostMessage),
-    /// A v3 line, non-secret.
-    V3(HostFirstLine),
-}
-
-/// Read a server's first line, v2 or v3, and check it matches the flag. One read of one line,
-/// through a buffer reserved up front and zeroed on every path, as v2's reader does. Another `v`
-/// is [`LaunchError::UnsupportedVersion`]; an unknown op, or another flag's op, is
-/// [`LaunchError::Invalid`]. `Ok(None)` means EOF before it.
-pub fn read_first_line_any(
-    r: &mut impl BufRead,
-    expected: FirstLine,
-) -> Result<Option<AnyFirstLine>, LaunchError> {
-    let Some(mut line) = read_secret_line(r)? else {
-        return Ok(None);
-    };
-    let decoded = decode_any(&line);
-    zero(&mut line);
-    let message = decoded?;
-    let matches = match &message {
-        AnyFirstLine::V2(m) => matches!(
-            (m, expected),
-            (HostMessage::Create(_), FirstLine::Create)
-                | (HostMessage::Start(_), FirstLine::Start)
-                | (HostMessage::Discard(_), FirstLine::Discard)
-        ),
-        AnyFirstLine::V3(m) => matches!(
-            (m, expected),
-            (HostFirstLine::Create(_), FirstLine::Create)
-                | (HostFirstLine::Start(_), FirstLine::Start)
-                | (HostFirstLine::Discard(_), FirstLine::Discard)
-        ),
-    };
-    if matches {
-        Ok(Some(message))
-    } else {
-        Err(LaunchError::Invalid(
-            "the first line isn't the op this server's flag expects",
-        ))
-    }
-}
-
-fn decode_any(line: &[u8]) -> Result<AnyFirstLine, LaunchError> {
-    let version: Versioned = serde_json::from_slice(line).map_err(LaunchError::Json)?;
-    match version.v {
-        crate::LAUNCH_VERSION => serde_json::from_slice::<HostMessage>(line)
-            .map(AnyFirstLine::V2)
-            .map_err(LaunchError::Json),
-        LAUNCH_VERSION => serde_json::from_slice::<HostFirstLine>(line)
-            .map(AnyFirstLine::V3)
-            .map_err(LaunchError::Json),
-        other => Err(LaunchError::UnsupportedVersion {
-            found: other,
-            supported: &[crate::LAUNCH_VERSION, LAUNCH_VERSION],
-        }),
-    }
-}
-
 /// Write a worker event on the rendezvous connection, as a v3 line (`{"v": 3, "event": ...}`).
 /// [`ServerEvent::Unknown`] and a created office that [`crate::OfficeFile::to_vec`] would refuse
 /// are refused, and nothing is written. In v3 the host acts on `created` and `discarded` only
@@ -476,7 +413,7 @@ pub fn write_server_event(w: &mut impl Write, event: &ServerEvent) -> Result<(),
 }
 
 /// Events authenticated by the v3 rendezvous, including descriptor receipts (X-02 rev15 §5.2).
-/// The v2 stdout [`ServerEvent`] and its reader deliberately have no receipt variant.
+/// [`ServerEvent`] (a worker's own event) deliberately has no receipt variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -540,7 +477,7 @@ pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<RendezvousEvent>
 }
 
 /// A v3 worker event as it arrives: [`ServerEvent`]'s variants plus `v`, refusing any field the
-/// event doesn't define, like every other v3 line. (v2's stdout events keep their lenient reader.)
+/// event doesn't define, like every other v3 line.
 /// The `office` in `created` is an `office.json` body and keeps that file's own rule: fields this
 /// build doesn't know are kept, not refused. An event name this build doesn't know is
 /// [`ServerEvent::Unknown`], whatever its fields.
@@ -833,6 +770,23 @@ pub fn encode_create_handoff(
         grant_key,
         recovery_code,
         fds: [HandoffFd::Transfer],
+    })
+}
+
+/// Borrow the host-held key (or `None` when the key store has none) for a discard. The key is
+/// present either way, as `null` when absent; `fds` is `[]`: no transfer socket and no marker
+/// follow. No owned secret copy; the caller zeroes the line on every path.
+pub fn encode_discard_handoff(db_key: Option<&DbKey>) -> Result<Vec<u8>, LaunchError> {
+    #[derive(Serialize)]
+    struct Discard<'a> {
+        op: &'static str,
+        db_key: Option<&'a DbKey>,
+        fds: [HandoffFd; 0],
+    }
+    encode_secret(&Discard {
+        op: "discard",
+        db_key,
+        fds: [],
     })
 }
 

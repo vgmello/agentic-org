@@ -310,10 +310,10 @@ impl TestHome {
             .collect()
     }
 
-    /// The fingerprints of the app tokens the fake's runs for `key` got, in order (one per run
-    /// that accepted its first line).
-    pub fn token_fingerprints(&self, key: &str) -> Vec<String> {
-        self.log_fields("token", key)
+    /// The fingerprints of the grant keys the fake's v3 runs for `key` got over the rendezvous,
+    /// in order (one per run whose handoff carried one).
+    pub fn grant_fingerprints(&self, key: &str) -> Vec<String> {
+        self.log_fields("grant", key)
             .iter()
             .map(|f| f[3].clone())
             .collect()
@@ -325,15 +325,6 @@ impl TestHome {
         self.log_fields("dbkey", key)
             .iter()
             .map(|f| f[3].clone())
-            .collect()
-    }
-
-    /// The `--discard` runs that read their first line, in order: the office id and the
-    /// fingerprint of the key the line carried (`null` for none).
-    pub fn discard_keys(&self) -> Vec<(String, String)> {
-        self.log_fields("dbkey", "discard")
-            .iter()
-            .map(|f| (f[4].clone(), f[3].clone()))
             .collect()
     }
 
@@ -589,7 +580,20 @@ pub struct Client {
 
 impl Client {
     pub fn connect(path: &Path) -> Self {
-        let stream = UnixStream::connect(path).unwrap();
+        // Under parallel test load a full listen backlog answers ECONNREFUSED on macOS; that
+        // is a busy host, not a missing one, so retry for a bounded time.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let stream = loop {
+            match UnixStream::connect(path) {
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::ConnectionRefused
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                other => break other.unwrap(),
+            }
+        };
         stream
             .set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();

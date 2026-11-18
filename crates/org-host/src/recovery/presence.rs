@@ -4,13 +4,13 @@
 //! a local context and confirms nothing.
 use org_platform_host::presence::{self, Confirmation};
 
-pub(super) fn local(connection: &crate::service::listener::Connection) -> bool {
+pub(crate) fn local(connection: &crate::service::listener::Connection) -> bool {
     presence::local(connection.socket()).unwrap_or(false)
 }
 pub(crate) fn current() -> bool {
     presence::current().unwrap_or(false)
 }
-pub(super) fn confirm(cancelled: impl Fn() -> bool) -> Result<(), ()> {
+pub(crate) fn confirm(cancelled: impl Fn() -> bool) -> Result<(), ()> {
     match presence::confirm(cancelled) {
         Ok(Confirmation::OsDialog) => Ok(()),
         // The browser approval that completes this kind (ADR-0017 decision 11) is not

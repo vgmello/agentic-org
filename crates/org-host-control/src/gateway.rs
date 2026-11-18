@@ -110,11 +110,13 @@ impl<'de> Deserialize<'de> for GatewayFirstLine {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = FirstLineWire::<String>::deserialize(d)?;
         check_version::<D>(wire.v)?;
+        // Instance IDs are canonical lowercase UUIDv7 text. The plain form (1 to 64 ASCII
+        // letters and digits) is still read until the web gateway's own tests move to UUIDv7.
         let plain = (1..=64).contains(&wire.instance_id.len())
             && wire.instance_id.bytes().all(|b| b.is_ascii_alphanumeric());
-        if !plain {
+        if !org_proto::is_uuid_v7(&wire.instance_id) && !plain {
             return Err(serde::de::Error::custom(
-                "the instance id must be 1 to 64 ASCII letters and digits",
+                "the instance id must be canonical lowercase UUIDv7 text",
             ));
         }
         if !wire.rendezvous.starts_with('/') || wire.rendezvous.contains('\0') {

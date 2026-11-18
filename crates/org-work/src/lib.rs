@@ -23,7 +23,7 @@
 //!   step ticks only when its task is Done · Completed and unticks on a reopen (automatic,
 //!   undoable for an hour).
 //! - `work.comment` (questions to the owner open a waiting span), `work.watch`, `work.link` /
-//!   `work.unlink` (`relates_to`), `work.undo`, `work.delete` (a tombstone, app-only).
+//!   `work.unlink` (`relates_to`), `work.undo`, `work.delete` (a tombstone, grant-only).
 //! - Per-project `T-n` numbers, allocated in the create's transaction.
 //! - `change_id` idempotency (answers stored and replayed, refusals included, matched by a
 //!   params hash) and `expected_version` with per-field conflicts.

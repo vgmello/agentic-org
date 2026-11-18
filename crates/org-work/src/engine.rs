@@ -1,4 +1,4 @@
-//! One work write, start to finish, inside one [`crate::WorkStore::transact`]: the app-only
+//! One work write, start to finish, inside one [`crate::WorkStore::transact`]: the grant-only
 //! check, the change-id lookup, the age checks, then **decide** (read, check every rule and
 //! compute the whole outcome, automatic changes included) and only then **write** (§3.2). A
 //! refusal has nothing to undo: it writes only its change-result row. Running it again on the
@@ -80,18 +80,17 @@ pub fn lookup_existing(
     call: &WorkCall,
     lookup: impl FnOnce(&str) -> Result<Option<StoredResult>, StoreError>,
 ) -> Result<Option<TxnOutput>, StoreError> {
-    if call.app_only() && !caller.via_app {
-        return Ok(Some(TxnOutput::Refused(ApiError::new(
-            ErrorCode::NotAuthorized,
-            format!("`{}` can only be made from the app", call.method()),
+    if call.grant_only() && !caller.via_grant {
+        return Ok(Some(TxnOutput::Refused(WorkCall::grant_only_refusal(
+            call.method(),
         ))));
     }
-    // An agent's connection acts as an agent that isn't offboarded, and only the app's acts as
-    // the owner or a person (§2.2). The office binds connections; this keeps the rule true
+    // An agent's connection acts as an agent that isn't offboarded, and only a grant-bound
+    // caller acts as the owner or a person (§2.2). The office binds connections; this keeps the rule true
     // inside the library too.
     let member = org.member(&caller.member_id)?;
     let may_act = match &member {
-        Some(m) if caller.via_app => m.owner || m.kind == MemberKind::Person,
+        Some(m) if caller.via_grant => m.owner || m.kind == MemberKind::Person,
         Some(m) => {
             !m.owner
                 && m.kind == MemberKind::Agent
@@ -125,9 +124,9 @@ pub fn lookup_existing(
 /// Runs one work write as the body of [`crate::WorkStore::transact`]: decide, then write.
 /// `office_id` is the office running it (the owner of what it creates, phase 1).
 ///
-/// The order (§2.3): `not_authorized` (app-only calls on another connection); the change-id
-/// lookup (the same id and params hash get the stored answer without re-validating; the same id
-/// with other params is `invalid_request`); `expired`; `clock_skew`; then the call's own rules
+/// The order (§2.3): `not_authorized` (grant-only calls on a connection that isn't grant-bound);
+/// the change-id lookup (the same id and params hash get the stored answer without
+/// re-validating; the same id with other params is `invalid_request`); `expired`; `clock_skew`; then the call's own rules
 /// in the design's error order, with `too_large` right after `not_found`.
 pub fn execute(
     org: &dyn OrgView,

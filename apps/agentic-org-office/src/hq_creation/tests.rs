@@ -1,6 +1,6 @@
 use super::*;
 use std::path::Path;
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 fn binding(root: &Path) -> Binding {
     let public_root = root.join("state");
     std::fs::create_dir_all(&public_root).unwrap();

@@ -29,17 +29,17 @@ pub const AREA_UI: &str = "ar-ui";
 /// `PROJECT`'s General area: its team has no lead, so the owner triages its bugs.
 pub const GENERAL: &str = "p-chk-general";
 
-pub fn app() -> Caller {
-    Caller::app(OWNER)
+pub fn owner_by_grant() -> Caller {
+    Caller::grant_bound(OWNER)
 }
 
 pub fn agent() -> Caller {
     Caller::agent("ada")
 }
 
-/// A person who reports bugs through the app.
+/// A person who reports bugs through their grant.
 pub fn pat() -> Caller {
-    Caller::app("pat")
+    Caller::grant_bound("pat")
 }
 
 pub fn org() -> MemOrg {
@@ -153,7 +153,7 @@ impl World {
         }
     }
 
-    /// Creates a task in `PROJECT` as the app; returns its id.
+    /// Creates a task in `PROJECT` as the owner, through a grant; returns its id.
     pub fn task(&self) -> String {
         self.task_with(|_| {})
     }
@@ -162,7 +162,7 @@ impl World {
         let mut p = self.create_params(PROJECT);
         f(&mut p);
         let id = p.item_id.clone();
-        self.ok(&app(), WorkCall::TaskCreate(p));
+        self.ok(&owner_by_grant(), WorkCall::TaskCreate(p));
         id
     }
 
@@ -193,10 +193,10 @@ impl World {
         }
     }
 
-    /// Moves a task to `status` as the app (with a reason if blocked).
+    /// Moves a task to `status` as the owner, through a grant (with a reason if blocked).
     pub fn set(&self, id: &str, status: ItemStatus) -> WorkAccepted {
         let p = self.status(id, status);
-        self.ok(&app(), WorkCall::TaskSetStatus(p))
+        self.ok(&owner_by_grant(), WorkCall::TaskSetStatus(p))
     }
 
     pub fn update(&self, id: &str) -> TaskUpdateParams {
@@ -321,7 +321,7 @@ impl World {
     pub fn triage(&self, id: &str) -> WorkAccepted {
         let area = self.item(id).bug.area_id.expect("a bug has an area");
         let p = self.triage_params(id, &area);
-        self.ok(&app(), WorkCall::BugTriage(p))
+        self.ok(&owner_by_grant(), WorkCall::BugTriage(p))
     }
 
     /// A triaged bug in the area led by riley.
@@ -438,11 +438,11 @@ impl World {
             }
             ItemStatus::Fixed => {
                 let p = self.fixed_params(&id);
-                self.ok(&app(), WorkCall::BugMarkFixed(p));
+                self.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
             }
             ItemStatus::Closed => {
                 let p = self.wont_fix_params(&id);
-                self.ok(&app(), WorkCall::BugClose(p));
+                self.ok(&owner_by_grant(), WorkCall::BugClose(p));
             }
             other => panic!("not a bug status: {other:?}"),
         }

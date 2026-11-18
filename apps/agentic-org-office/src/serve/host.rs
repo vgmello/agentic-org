@@ -92,7 +92,7 @@ fn dispatch(
         shared,
         &mut Binding::Member {
             id: owner,
-            with_app_token: true,
+            via_grant: true,
         },
     );
     // Inbox may recheck live ownership after authorization; keep that refusal opaque too.

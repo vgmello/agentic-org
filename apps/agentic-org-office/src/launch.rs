@@ -1,9 +1,9 @@
-//! Normalize launch versions at the process boundary; office workflows use one input shape.
+//! Turn the v3 launch request into the office workflow's input at the process boundary.
 use crate::{serve::LaunchAuth, startup::Request};
 use org_office::{Key, NewOffice};
 use org_office_launch::{
     v3::{Handoff, HostFirstLine},
-    HostMessage, LaunchError,
+    LaunchError,
 };
 use org_proto::{OfficeRole, RecoveryCode};
 
@@ -12,17 +12,12 @@ pub(super) struct Create {
     pub role: OfficeRole,
     pub key: Key,
     pub auth: LaunchAuth,
-    pub instance: Option<String>,
-    pub owner_member_id: Option<String>,
-    // Legacy v3 retains its old wrapper behavior; explicit creation-v1 drops it
-    // after preparation, before serving.
-    pub _recovery: CreationRecovery,
+    pub instance: String,
+    pub owner_member_id: String,
+    /// Consumed by HQ creation-v1 during preparation, before serving.
+    pub recovery: RecoveryCode,
+    /// A create without it is refused: HQ creation-v1 is the only create (G2).
     pub hq_creation: Option<org_office_launch::v3::HqCreationV1>,
-}
-
-pub(super) enum CreationRecovery {
-    Legacy,
-    V3 { _code: RecoveryCode },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -36,40 +31,18 @@ pub(super) enum Launch {
     Start {
         key: Key,
         auth: LaunchAuth,
-        office: Option<OfficeIdentity>,
+        office: OfficeIdentity,
     },
-    /// Discard needs no key: the databases are plain SQLite (ADR-0016). A key the host still
-    /// sends on the old launch form is ignored.
+    /// Discard needs no key: the databases are plain SQLite (ADR-0016). A key the handoff
+    /// carries is ignored.
     Discard {
-        office: Option<OfficeIdentity>,
+        office: OfficeIdentity,
     },
 }
 
 impl Launch {
     pub fn from_request(request: Request) -> Result<Self, LaunchError> {
         Ok(match request {
-            Request::V2(HostMessage::Create(c)) => Self::Create(Create {
-                office: NewOffice {
-                    office_id: c.office_id,
-                    office_name: c.office_name,
-                    role: org_office::OfficeRole::Hq,
-                    org_id: c.org_id,
-                    org_name: c.org_name,
-                },
-                role: c.role,
-                key: Key::from_db_key(c.db_key),
-                auth: c.app_token.into(),
-                instance: None,
-                owner_member_id: None,
-                _recovery: CreationRecovery::Legacy,
-                hq_creation: None,
-            }),
-            Request::V2(HostMessage::Start(s)) => Self::Start {
-                key: Key::from_db_key(s.db_key),
-                auth: s.app_token.into(),
-                office: None,
-            },
-            Request::V2(HostMessage::Discard(_)) => Self::Discard { office: None },
             Request::V3 {
                 line: HostFirstLine::Create(c),
                 handoff:
@@ -89,13 +62,11 @@ impl Launch {
                 },
                 role: c.role,
                 key: Key::from_db_key(db_key),
-                auth: LaunchAuth::Grants { _key: grant_key },
-                instance: Some(c.office.instance_id),
-                owner_member_id: Some(c.owner_member_id),
+                auth: grant_key.into(),
+                instance: c.office.instance_id,
+                owner_member_id: c.owner_member_id,
                 hq_creation: c.hq_creation,
-                _recovery: CreationRecovery::V3 {
-                    _code: recovery_code,
-                },
+                recovery: recovery_code,
             }),
             Request::V3 {
                 line: HostFirstLine::Start(s),
@@ -105,20 +76,20 @@ impl Launch {
                     },
             } => Self::Start {
                 key: Key::from_db_key(db_key),
-                auth: LaunchAuth::Grants { _key: grant_key },
-                office: Some(OfficeIdentity {
+                auth: grant_key.into(),
+                office: OfficeIdentity {
                     office_id: s.office_id,
                     instance_id: s.instance_id,
-                }),
+                },
             },
             Request::V3 {
                 line: HostFirstLine::Discard(d),
                 handoff: Handoff::Discard { .. },
             } => Self::Discard {
-                office: Some(OfficeIdentity {
+                office: OfficeIdentity {
                     office_id: d.office_id,
                     instance_id: d.instance_id,
-                }),
+                },
             },
             _ => return Err(LaunchError::Invalid("unknown launch request")),
         })

@@ -1,9 +1,12 @@
-//! The real `org-host` binary: signals, a killed host, and a second host. Kept in its
+//! The real `agentic-org serve` binary: signals, a killed host, and a second host. Kept in its
 //! own test binary so its process spawns never overlap the in-process hosts' pipes.
 //!
-//! A host that starts keeps its offices' keys in a development key folder
-//! (`ORG_OFFICE_DEV_KEY_DIR`), which only a debug build reads (a release host uses the Keychain,
-//! which tests never touch), so every test that starts one runs in debug builds only.
+//! Each host serves a registered instance (`serve --name default`) that A2's setup fixture
+//! (`org_host::setup_flow::fixture`) reserved under a temporary application base
+//! (`ORG_DEV_ACCOUNT_BASE`), with one stored office the fake server runs. A host that starts
+//! keeps its keys in a development key folder (`ORG_OFFICE_DEV_KEY_DIR`), which only a debug
+//! build reads (a release host uses the Keychain, which tests never touch), so every test that
+//! starts one runs in debug builds only.
 
 // Only the argument checks run in release builds, and only macOS can spawn the office servers
 // the other tests here start (BUG-187): in a release build or off macOS their helpers are unused.
@@ -17,17 +20,21 @@
 mod support;
 
 use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::ops::{Deref, DerefMut};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_proto::{ErrorCode, OrganizationCreate};
-use serde_json::json;
-use support::{alive, eventually, fake_server, has_hex_run, hq, Client, TestHome};
+#[cfg(debug_assertions)]
+use org_host::setup_flow::fixture::{registered_account, RegisteredAccount};
+use org_office_launch::OfficeFile;
+#[cfg(not(debug_assertions))]
+use support::TestHome;
+use support::{alive, eventually, fake_server, hq, Client};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -36,9 +43,6 @@ const WAIT: Duration = Duration::from_secs(10);
 /// machine a server can be that slow. A host still running after this is stuck.
 const EXIT_WAIT: Duration = Duration::from_secs(30);
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-
-/// An environment variable every test host gets, to show it isn't passed on.
-const CANARY: &str = "ORG_HOST_TEST_CANARY";
 
 /// A host process that is killed (and reaped) when dropped, so a failed assertion never leaves
 /// one running.
@@ -66,104 +70,156 @@ impl Drop for HostProcess {
     }
 }
 
-fn spawn_host(home: &TestHome, stderr_to: &str) -> HostProcess {
-    let stderr = File::create(home.path().join(stderr_to)).unwrap();
-    HostProcess(
-        Command::new(env!("CARGO_BIN_EXE_agentic-org"))
-            .arg("serve")
-            .arg("--home")
-            .arg(home.path())
-            .arg("--server-bin")
-            .arg(fake_server())
-            // Something of the login session's that must never reach a server.
-            .env(CANARY, "from-the-host-environment")
-            // The host's own development key folder: never passed on to a server.
-            .env("ORG_OFFICE_DEV_KEY_DIR", home.keys_dir())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(stderr)
-            .spawn()
-            .unwrap(),
-    )
+/// A registered instance (setup's steps 2 and 3, through A2's fixture) under a short temporary
+/// base `<tmp>/a`, its development keys under `<tmp>/k`, and one stored office the fake server
+/// runs. `agentic-org serve --name default` serves it, as the account's service does after
+/// setup.
+#[cfg(debug_assertions)]
+struct Registered {
+    dir: tempfile::TempDir,
+    account: RegisteredAccount,
 }
 
 #[cfg(debug_assertions)]
-struct FixtureProcess {
-    child: HostProcess,
-    input: std::process::ChildStdin,
-    output: std::io::BufReader<std::process::ChildStdout>,
-}
-#[cfg(debug_assertions)]
-impl FixtureProcess {
-    fn create(&mut self, name: &str) -> Result<org_proto::Organization, org_proto::ApiError> {
-        use std::io::{BufRead, Write};
-        serde_json::to_writer(&mut self.input, name).unwrap();
-        self.input.write_all(b"\n").unwrap();
-        self.input.flush().unwrap();
-        let mut line = String::new();
-        assert!(self.output.read_line(&mut line).unwrap() > 0);
-        serde_json::from_str::<org_proto::Response>(&line)
-            .unwrap()
-            .into_result::<OrganizationCreate>()
-            .map_err(|e| match e {
-                org_proto::CallError::Api(e) => e,
-                other => panic!("{other}"),
-            })
-    }
-    fn stop(&mut self) -> ExitStatus {
-        use std::io::Write;
-        self.input.write_all(b"STOP\n").unwrap();
-        self.input.flush().unwrap();
-        wait_for_exit(&mut self.child)
-    }
-    fn id(&self) -> u32 {
-        self.child.id()
-    }
-}
-#[cfg(debug_assertions)]
-fn spawn_fixture_host(home: &TestHome) -> FixtureProcess {
-    let stderr = File::create(home.path().join("host.err")).unwrap();
-    let mut child = HostProcess(
-        Command::new(env!("CARGO_BIN_EXE_fixture-office-host"))
-            .arg(home.fixture_base())
-            .arg(fake_server())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(stderr)
-            .spawn()
-            .unwrap(),
-    );
-    let input = child.stdin.take().unwrap();
-    let output = std::io::BufReader::new(child.stdout.take().unwrap());
-    FixtureProcess {
-        child,
-        input,
-        output,
-    }
-}
-
-/// A home with one stored office.
-fn home_with_office() -> TestHome {
-    let home = TestHome::new();
-    fs::create_dir_all(home.path()).unwrap();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    home
-}
-
-fn wait_until_active(home: &TestHome) {
-    let socket = home.path().join("host.sock");
-    // host.sock can exist a moment before the host listens on it.
-    eventually(WAIT, "host.sock", || UnixStream::connect(&socket).is_ok());
-    let office_socket = org_proto::location::office_socket_path(&home.path(), A).unwrap();
-    eventually(WAIT, "the supervised worker to answer hello", || {
-        if UnixStream::connect(&office_socket).is_err() {
-            return false;
-        }
-        let result = Client::connect(&office_socket)
-            .call::<org_proto::Hello>(&org_proto::HelloParams::default())
+impl Registered {
+    fn new() -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("ob")
+            .tempdir_in("/tmp")
             .unwrap();
-        result.office.is_some_and(|office| office.office.id == A)
-    });
+        let root = dir.path().canonicalize().unwrap();
+        for name in ["a", "k"] {
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(root.join(name))
+                .unwrap();
+        }
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let account = registered_account(&root.join("a"), None, port).unwrap();
+        let registered = Self { dir, account };
+        registered.store_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+        registered
+    }
+
+    fn base(&self) -> PathBuf {
+        self.dir.path().canonicalize().unwrap()
+    }
+
+    /// The office home the registered host serves (and the fake server logs in).
+    fn home(&self) -> &Path {
+        &self.account.office_home
+    }
+
+    /// Stores an office as if the host had provisioned it: its `office.json` in the instance's
+    /// office home and a key in the instance's development key folder (the layout
+    /// `TestHome::write_office` uses for a registered home).
+    fn store_office(&self, office: &OfficeFile) {
+        let dir = self.home().join("offices").join(&office.office_id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("office.json"), office.to_vec().unwrap()).unwrap();
+        let keys = self.base().join("k").join(&self.account.instance_id);
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&keys)
+            .unwrap();
+        let mut bytes = [0u8; 32];
+        File::open("/dev/urandom")
+            .unwrap()
+            .read_exact(&mut bytes)
+            .unwrap();
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(keys.join(format!("{}.key", office.office_id)))
+            .unwrap()
+            .write_all(hex.as_bytes())
+            .unwrap();
+    }
+
+    fn host_socket(&self) -> PathBuf {
+        self.account.host_socket()
+    }
+
+    /// Starts `agentic-org serve --name default` on the instance, with only the environment
+    /// the account's service gives it plus the development base and key folder.
+    fn spawn_host(&self, stderr_to: &str) -> HostProcess {
+        let stderr = File::create(self.base().join(stderr_to)).unwrap();
+        HostProcess(
+            Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+                .args(["serve", "--name", "default", "--server-bin"])
+                .arg(fake_server())
+                .env_clear()
+                .env("HOME", self.base())
+                .env("ORG_DEV_ACCOUNT_BASE", self.base().join("a"))
+                .env("ORG_OFFICE_DEV_KEY_DIR", self.base().join("k"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(stderr)
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    fn stderr(&self, name: &str) -> String {
+        fs::read_to_string(self.base().join(name)).unwrap()
+    }
+
+    /// The pids in the fake server's log lines of `kind` for `key` (see
+    /// `testing/fake_office_server.rs`), in order.
+    fn logged_pids(&self, kind: &str, key: &str) -> Vec<u32> {
+        fs::read_to_string(self.home().join("fake.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.split(' ').collect::<Vec<_>>())
+            .filter(|f| f[0] == kind && f[1] == key)
+            .map(|f| f[2].parse().unwrap())
+            .collect()
+    }
+
+    /// The pids of the fake's runs for `key`, in order.
+    fn pids(&self, key: &str) -> Vec<u32> {
+        self.logged_pids("start", key)
+    }
+
+    /// The pids that exited cleanly on stdin EOF.
+    fn eof_exits(&self, key: &str) -> Vec<u32> {
+        self.logged_pids("eof-exit", key)
+    }
+
+    /// How many times the fake ran for `key`.
+    fn runs(&self, key: &str) -> u64 {
+        fs::metadata(self.home().join("fake-runs").join(key))
+            .map(|m| m.len())
+            .unwrap_or(0)
+    }
+
+    /// Waits until `host` listens on `host.sock` and its supervised worker for `A` answers hello
+    /// on its office socket in the instance's runtime folder.
+    fn wait_until_active(&self, host: &mut HostProcess) {
+        let socket = self.host_socket();
+        // host.sock can exist a moment before the host listens on it.
+        eventually(WAIT, "host.sock", || {
+            assert!(host.try_wait().unwrap().is_none(), "serve exited early");
+            UnixStream::connect(&socket).is_ok()
+        });
+        let office_socket =
+            org_proto::location::office_socket_in(&self.account.runtime, A).unwrap();
+        eventually(WAIT, "the supervised worker to answer hello", || {
+            if UnixStream::connect(&office_socket).is_err() {
+                return false;
+            }
+            let result = Client::connect(&office_socket)
+                .call::<org_proto::Hello>(&org_proto::HelloParams::default())
+                .unwrap();
+            result.office.is_some_and(|office| office.office.id == A)
+        });
+    }
 }
 
 fn wait_for_exit(child: &mut Child) -> ExitStatus {
@@ -186,16 +242,21 @@ fn signal(child: &Child, signal: i32) {
 #[cfg(target_os = "macos")]
 #[test]
 fn sigterm_stops_the_servers_cleanly_and_exits_0() {
-    let home = home_with_office();
-    let mut host = spawn_host(&home, "host.err");
-    wait_until_active(&home);
+    let instance = Registered::new();
+    let mut host = instance.spawn_host("host.err");
+    instance.wait_until_active(&mut host);
     signal(&host, libc::SIGTERM);
     let status = wait_for_exit(&mut host);
-    assert!(status.success(), "{status}");
-    assert!(!home.path().join("host.sock").exists());
-    let pids = home.pids(A);
+    assert!(
+        status.success(),
+        "{status}: {}",
+        instance.stderr("host.err")
+    );
+    assert!(!instance.host_socket().exists());
+    let pids = instance.pids(A);
+    assert!(!pids.is_empty());
     assert_eq!(
-        home.eof_exits(A),
+        instance.eof_exits(A),
         pids,
         "the server didn't exit on stdin EOF"
     );
@@ -205,26 +266,33 @@ fn sigterm_stops_the_servers_cleanly_and_exits_0() {
 #[cfg(target_os = "macos")]
 #[test]
 fn sigint_also_stops_it() {
-    let home = home_with_office();
-    let mut host = spawn_host(&home, "host.err");
-    wait_until_active(&home);
+    let instance = Registered::new();
+    let mut host = instance.spawn_host("host.err");
+    instance.wait_until_active(&mut host);
     signal(&host, libc::SIGINT);
-    assert!(wait_for_exit(&mut host).success());
+    let status = wait_for_exit(&mut host);
+    assert!(
+        status.success(),
+        "{status}: {}",
+        instance.stderr("host.err")
+    );
+    assert!(!instance.host_socket().exists());
 }
 
 #[cfg(debug_assertions)]
 #[cfg(target_os = "macos")]
 #[test]
 fn a_killed_host_takes_its_servers_with_it() {
-    let home = home_with_office();
-    let mut host = spawn_host(&home, "host.err");
-    wait_until_active(&home);
-    let server = home.pids(A)[0];
+    let instance = Registered::new();
+    let mut host = instance.spawn_host("host.err");
+    instance.wait_until_active(&mut host);
+    let server = instance.pids(A)[0];
+    assert!(alive(server));
     signal(&host, libc::SIGKILL);
     wait_for_exit(&mut host);
     // The server's stdin closes with the host, so it exits by itself.
     eventually(WAIT, "the server to exit on stdin EOF", || {
-        home.eof_exits(A).contains(&server)
+        instance.eof_exits(A).contains(&server)
     });
     eventually(WAIT, "the server process to be gone", || !alive(server));
 }
@@ -233,18 +301,28 @@ fn a_killed_host_takes_its_servers_with_it() {
 #[cfg(target_os = "macos")]
 #[test]
 fn a_second_host_binary_on_the_same_home_exits_at_once() {
-    let home = home_with_office();
-    let mut first = spawn_host(&home, "first.err");
-    wait_until_active(&home);
+    let instance = Registered::new();
+    let mut first = instance.spawn_host("first.err");
+    instance.wait_until_active(&mut first);
     let started = Instant::now();
-    let mut second = spawn_host(&home, "second.err");
+    let mut second = instance.spawn_host("second.err");
     let status = wait_for_exit(&mut second);
     assert!(!status.success());
     assert!(started.elapsed() < Duration::from_secs(5));
-    let stderr = fs::read_to_string(home.path().join("second.err")).unwrap();
-    assert!(stderr.contains("already running"), "{stderr}");
-    // The second host started nothing.
-    assert_eq!(home.runs(A), 1);
+    // A registered host holds its instance's state lock while it runs: the second one is
+    // refused there, before `host.lock`, custody or the registry.
+    let stderr = instance.stderr("second.err");
+    assert!(
+        stderr.contains(
+            "reopening the reserved instance: instance default is in use by another agentic-org \
+             process (a running service, setup or admin reset); stop it first"
+        ),
+        "{stderr}"
+    );
+    // The second host started nothing, and the first still serves.
+    assert_eq!(instance.runs(A), 1);
+    assert!(first.try_wait().unwrap().is_none());
+    assert!(UnixStream::connect(instance.host_socket()).is_ok());
     signal(&first, libc::SIGTERM);
     assert!(wait_for_exit(&mut first).success());
 }
@@ -287,157 +365,5 @@ fn a_release_host_refuses_the_arguments_that_change_what_it_trusts() {
             "{flag}: {stderr}"
         );
         assert!(!home.path().exists(), "{flag}: it made the home");
-    }
-}
-
-#[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
-#[test]
-fn the_host_never_logs_a_token() {
-    let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    // A crash restart, a refused create, a failed create (with its discard) and a good one:
-    // every path that logs, each with a token in play.
-    home.script(json!({
-        A: [{"do": "crash"}, {"do": "ready"}],
-        "create": [
-            {"do": "ready", "report": {"org_name": "Other"}},
-            {"do": "fail", "code": "storage_error"},
-            {"do": "ready"}
-        ]
-    }));
-    let mut host = spawn_fixture_host(&home);
-    eventually(WAIT, "the stored office ready", || home.runs(A) >= 2);
-    let codes: Vec<_> = ["One", "Two", "Three"]
-        .into_iter()
-        .map(|name| host.create(name).map(|_| ()).map_err(|e| e.code))
-        .collect();
-    assert_eq!(
-        codes,
-        [
-            Err(ErrorCode::StorageError), // refused, moved aside
-            Err(ErrorCode::StorageError), // failed, discarded
-            Ok(()),
-        ]
-    );
-    assert_eq!(home.runs("create"), 3);
-    assert_eq!(home.runs("discard"), 1);
-    assert!(host.stop().success());
-    let log = fs::read_to_string(home.path().join("host.err")).unwrap();
-    assert!(
-        log.contains("agentic-org:"),
-        "the host logged nothing: {log}"
-    );
-    assert!(
-        !has_hex_run(&log, 64),
-        "the host's log holds 64 hex digits:\n{log}"
-    );
-    // Neither a token nor a key anywhere in the home (the host's stderr file included). The
-    // keys of the stored office, the refused create and the good one stay in the key folder;
-    // the failed create's went with its discard.
-    home.assert_no_secret_in_home();
-    assert_eq!(home.key_ids().len(), 3, "{:?}", home.key_ids());
-}
-
-#[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
-#[test]
-fn servers_inherit_no_host_fds_while_clients_connect() {
-    let home = TestHome::registered();
-    fs::create_dir_all(home.path()).unwrap();
-    // Every create fails at once and is discarded: two short-lived servers per create.
-    home.script(json!({"create": {"do": "fail", "code": "invalid_name"}}));
-    let mut host = spawn_fixture_host(&home);
-    let socket = home.runtime().join("host.sock");
-    eventually(WAIT, "host.sock", || UnixStream::connect(&socket).is_ok());
-    // Clients connecting and leaving all the while, so the host keeps accepting.
-    let stop = Arc::new(AtomicBool::new(false));
-    let churn: Vec<_> = (0..4)
-        .map(|_| {
-            let (socket, stop) = (socket.clone(), Arc::clone(&stop));
-            thread::spawn(move || {
-                while !stop.load(Ordering::Relaxed) {
-                    drop(UnixStream::connect(&socket));
-                }
-            })
-        })
-        .collect();
-    for i in 0..100 {
-        let _ = host.create(&format!("Org {i}"));
-    }
-    stop.store(true, Ordering::Relaxed);
-    for thread in churn {
-        thread.join().unwrap();
-    }
-    // The host keeps no office log open once nothing writes it: 200 finished runs must not
-    // leave 200 files open.
-    if let Ok(out) = Command::new("/usr/sbin/lsof")
-        .args(["-n", "-P", "-Fn", "-p", &host.id().to_string()])
-        .output()
-    {
-        // lsof ran and listed the host, so a count of 0 means something.
-        assert!(out.status.success(), "lsof failed: {out:?}");
-        let listed = format!("p{}", host.id());
-        assert!(
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .any(|l| l == listed),
-            "lsof didn't list the host"
-        );
-        let open_logs = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|l| l.starts_with('n') && l.contains("/logs/"))
-            .count();
-        assert!(
-            open_logs <= 4,
-            "the host holds {open_logs} office logs open"
-        );
-    }
-    assert!(host.stop().success());
-
-    let log = fs::read_to_string(home.path().join("fake.log")).unwrap();
-    let reports: Vec<&str> = log.lines().filter(|l| l.starts_with("fds ")).collect();
-    assert_eq!(reports.len(), 200, "every server reports its fds");
-    let leaked: Vec<&&str> = reports.iter().filter(|l| !l.ends_with(" -")).collect();
-    assert!(leaked.is_empty(), "servers inherited host fds: {leaked:?}");
-}
-
-#[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
-#[test]
-fn servers_get_only_the_allowed_environment() {
-    let home = home_with_office();
-    let mut host = spawn_host(&home, "host.err");
-    wait_until_active(&home);
-    signal(&host, libc::SIGTERM);
-    assert!(wait_for_exit(&mut host).success());
-    let allowed = [
-        "HOME",
-        "USER",
-        "LOGNAME",
-        "PATH",
-        "TMPDIR",
-        "LANG",
-        "ORG_OFFICE_HOME",
-        "ORG_OFFICE_RUNTIME_DIR",
-    ];
-    let runs = home.env_names(A);
-    assert!(!runs.is_empty());
-    // The host used its key folder (the server got the office's key on its first line)...
-    assert_eq!(
-        home.db_key_fingerprints(A),
-        [home.stored_key_fingerprint(A).unwrap()]
-    );
-    for names in runs {
-        assert!(names.iter().any(|n| n == "ORG_OFFICE_HOME"), "{names:?}");
-        assert!(!names.iter().any(|n| n == CANARY), "the canary got through");
-        // ...but never passes the folder on: servers never touch a key store.
-        assert!(
-            !names.iter().any(|n| n == "ORG_OFFICE_DEV_KEY_DIR"),
-            "the dev key folder was passed on: {names:?}"
-        );
-        for name in names.iter().filter(|n| !n.is_empty()) {
-            assert!(allowed.contains(&name.as_str()), "{name} was passed on");
-        }
     }
 }

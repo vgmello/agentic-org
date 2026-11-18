@@ -172,7 +172,7 @@ impl Custody {
         use std::path::Component;
         if !base.is_absolute()
             || base.components().any(|c| matches!(c, Component::ParentDir))
-            || org_proto::ulid_time_ms(instance).is_none()
+            || !org_proto::is_uuid_v7(instance)
         {
             return Err(Error::Unsafe);
         }
@@ -197,7 +197,7 @@ impl Custody {
         expect(dead_code, reason = "release selection")
     )]
     fn keychain(group: &str, instance: &str) -> Result<Self, SelectionError> {
-        if org_proto::ulid_time_ms(instance).is_none() {
+        if !org_proto::is_uuid_v7(instance) {
             return Err(SelectionError::InvalidInstance);
         }
         match credentials(CredentialLocation::Keychain(KeychainItems {
@@ -279,7 +279,7 @@ pub(crate) fn store_for(
     instance: &str,
     own_signing: impl FnOnce() -> Option<crate::code_signing::Signing>,
 ) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
-    if org_proto::ulid_time_ms(instance).is_none() {
+    if !org_proto::is_uuid_v7(instance) {
         return Err(SelectionError::InvalidInstance);
     }
     #[cfg(debug_assertions)]
@@ -309,7 +309,7 @@ fn release_store(
     instance: &str,
     own_signing: impl FnOnce() -> Option<crate::code_signing::Signing>,
 ) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
-    if org_proto::ulid_time_ms(instance).is_none() {
+    if !org_proto::is_uuid_v7(instance) {
         return Err(SelectionError::InvalidInstance);
     }
     let group = group

@@ -128,7 +128,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             mailbox,
             directory,
         },
-        org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]),
+        crate::test_support::grant_key(),
     ))
 }
 fn office_fixture() -> (tempfile::TempDir, Arc<org_office::Office>) {
@@ -381,7 +381,7 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
     .unwrap();
     let hello: Value = frame::read_message(&mut office_peer).unwrap().unwrap();
     assert_eq!(hello["result"]["api_version"], 1);
-    frame::write_message(office_peer.get_mut(), &json!({"id":2,"method":"msg.bind","params":{"app_token":org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])}})).unwrap();
+    frame::write_message(office_peer.get_mut(), &json!({"id":2,"method":"msg.bind","params":{"member":org_mailbox::testkit::fixture::ADA_HANDLE}})).unwrap();
     let bound: Value = frame::read_message(&mut office_peer).unwrap().unwrap();
     assert!(bound.get("result").is_some(), "{bound}");
     frame::write_message(

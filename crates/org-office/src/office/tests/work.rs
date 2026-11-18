@@ -9,7 +9,7 @@ use std::rc::Rc;
 const AGENT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const ITEM: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607185";
 
 fn request(method: &str, params: Value) -> Request {
     Request {
@@ -140,7 +140,7 @@ fn c1_work_commit_replay_reopen_conflict_and_owner_delete_use_real_stores() {
         );
         let deleted = call(
             &office,
-            Caller::app(owner),
+            Caller::grant_bound(owner),
             "work.delete",
             json!({"change_id":crate::ulid::generate().unwrap(),"item_id":ITEM,"expected_version":2}),
         );
@@ -194,7 +194,12 @@ fn c1_work_shared_constructor_builds_once_and_instance_mismatch_refuses_first() 
     let office = Office::open_for_instance(&folder, key.clone(), INSTANCE).unwrap();
     assert_eq!(STORES_BUILT.with(Cell::get), before + 2);
     drop(office);
-    assert!(Office::open_for_instance(&folder, key.clone(), "01ARZ3NDEKTSV4RRFFQ69G5FA2").is_err());
+    assert!(Office::open_for_instance(
+        &folder,
+        key.clone(),
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f607186"
+    )
+    .is_err());
     assert_eq!(STORES_BUILT.with(Cell::get), before + 2);
     let office = Office::open(&folder, key).unwrap();
     assert_eq!(STORES_BUILT.with(Cell::get), before + 3);

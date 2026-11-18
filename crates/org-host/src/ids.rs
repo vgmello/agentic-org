@@ -28,7 +28,8 @@ pub(crate) fn generate() -> io::Result<String> {
     Ok(encode(now_ms, random))
 }
 
-/// Canonical selected entity identity. Legacy ULID generation remains unchanged.
+/// Canonical lowercase UUIDv7 text: selected entity, setup operation, link and instance IDs.
+/// [`generate`] still mints ULIDs for the IDs not yet moved to UUIDv7.
 pub(crate) fn uuid_v7() -> io::Result<String> {
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)

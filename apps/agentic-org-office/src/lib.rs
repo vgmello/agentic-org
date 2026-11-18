@@ -6,9 +6,9 @@
 //! agentic-org-office --office <id>   # first stdin line: the start message; serves the office
 //! agentic-org-office --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
-//! V2 events travel on stdout and stdin EOF ends the worker. V3 events travel on the
-//! authenticated rendezvous; its EOF closes the databases and exits 0. V3 stdin is drained
-//! unparsed and is not a lifetime signal. Logs go to stderr.
+//! Launch v3 only: events travel on the authenticated rendezvous; its EOF closes the databases
+//! and exits 0. stdin is drained unparsed after the first line and is not a lifetime signal;
+//! stdout carries nothing. Logs go to stderr.
 //! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
 //! process around it: launch control, typed authority and the socket. The server never touches
 //! a Keychain.
@@ -29,6 +29,8 @@ mod revocations;
 mod serve;
 mod signals;
 mod startup;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod transfer;
 mod zeroed;
 
@@ -108,8 +110,8 @@ pub fn run(args: &[String], control: ControlPipe) -> i32 {
     }
 }
 
-/// `--discard`: needs no key, because the databases are plain SQLite (ADR-0016); a key the old
-/// launch form still sends is dropped when the first line is parsed.
+/// `--discard`: needs no key, because the databases are plain SQLite (ADR-0016); a key the
+/// handoff carries is dropped when the request is parsed.
 fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
     let (message, _from_host) = match first_line(&mut control, FirstLine::Discard, Some(id)) {
         Ok(first) => first,
@@ -188,50 +190,28 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             return fail(&mut control, FailCode::InvalidName, "a name is not trimmed");
         }
     }
-    // Explicit creation-v1 consumes/drops its code before the serve lifetime.
-    // Legacy v2/v3 keeps its existing behavior and never claims selected setup.
-    let (created, _legacy_recovery) = if let Some(context) = create.hq_creation {
-        let (Some(instance), Some(owner)) = (create.instance.as_deref(), create.owner_member_id)
-        else {
-            return fail(
-                &mut control,
-                FailCode::InvalidRequest,
-                "missing HQ creation binding",
-            );
-        };
-        let launch::CreationRecovery::V3 { _code } = create._recovery else {
-            return fail(
-                &mut control,
-                FailCode::InvalidRequest,
-                "missing HQ recovery code",
-            );
-        };
-        let binding = org_office::hq_creation::Binding {
-            operation_id: context.operation_id,
-            owner_member_id: owner,
-            public_root: context.public_root.into(),
-            bootstrap: context.bootstrap.map(|b| *b),
-        };
-        (
-            hq_creation::prepare(
-                &folder,
-                &create.office,
-                Some(create.key),
-                instance,
-                &binding,
-                _code,
-            ),
-            None,
-        )
-    } else {
-        let created = match create.instance.as_deref() {
-            Some(instance) => {
-                Office::create_for_instance(folder, &create.office, create.key, instance)
-            }
-            None => Office::create(folder, &create.office, create.key),
-        };
-        (created, Some(create._recovery))
+    // HQ creation-v1 is the only create: it consumes the recovery code before serving.
+    let Some(context) = create.hq_creation else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "missing HQ creation binding",
+        );
     };
+    let binding = org_office::hq_creation::Binding {
+        operation_id: context.operation_id,
+        owner_member_id: create.owner_member_id,
+        public_root: context.public_root.into(),
+        bootstrap: context.bootstrap.map(|b| *b),
+    };
+    let created = hq_creation::prepare(
+        &folder,
+        &create.office,
+        Some(create.key),
+        &create.instance,
+        &binding,
+        create.recovery,
+    );
     let office = match created {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
@@ -273,7 +253,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         runtime,
         office,
         create.auth,
-        create.instance,
+        Some(create.instance),
     )
 }
 
@@ -308,14 +288,8 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
             "selected writer custody is required",
         );
     }
-    let instance = office.map(|identity| {
-        let _office_id = identity.office_id;
-        identity.instance_id
-    });
-    let opened = match instance.as_deref() {
-        Some(instance) => Office::open_for_instance(folder, key.clone(), instance),
-        None => Office::open(folder, key.clone()),
-    };
+    let instance = office.instance_id;
+    let opened = Office::open_for_instance(folder, key.clone(), &instance);
     let office = match opened {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
@@ -331,11 +305,11 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(hq_creation::CaStatus::NotHq | hq_creation::CaStatus::Available) => {}
         Err(error) => return fail_with(&mut control, &error),
     }
-    serve_office(control, from_host, runtime, office, auth, instance)
+    serve_office(control, from_host, runtime, office, auth, Some(instance))
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
-/// is gone, otherwise a `failed` line has been written.
+/// is gone; otherwise the failure is logged and reported on the rendezvous if one exists.
 fn first_line(
     control: &mut Control,
     expected: FirstLine,
@@ -513,7 +487,7 @@ fn serve_office(
         auth,
     );
     shared.register_inbox(inbox, office.is_replication_hq());
-    // The launch transport selects stdin for v2, authenticated rendezvous for v3.
+    // The host's lifetime is the authenticated rendezvous (stdin is drained elsewhere).
     // The fixed-buffer watcher never parses later input.
     let host_gone = Arc::new(AtomicBool::new(false));
     let watcher = {
@@ -707,7 +681,7 @@ fn office_home(
     office_home_from(override_home, base)
 }
 
-/// Launch-v2 runtime comes from the host's clean environment. No invalid override falls back.
+/// The runtime directory comes from the host's clean environment. No invalid override falls back.
 fn runtime_dir_from(
     home: &Path,
     value: Option<std::ffi::OsString>,

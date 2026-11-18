@@ -21,9 +21,12 @@ the checklist row is FC-164. Every handoff and review of this track also carries
   directly and their results are recorded per increment below.
 - **Where the work is.** Branch `claude/hopeful-noether-lsmbac`, started from
   `origin/v1-integration` at `032ea63` and merged with it at `d408bfb9` (A1 part 1 and
-  A2 part 1, which created `crates/org-platform`) and at `831f10ca` (the store
-  architecture, A1's SQLCipher removal). The session that runs this lead may push only
-  that branch; the merge into `v1-integration` is made by a session that may.
+  A2 part 1, which created `crates/org-platform`), at `831f10ca` (the store
+  architecture, A1's SQLCipher removal) and at `42dd1322` (A1.5's single launch
+  contract, A2's setup and service on macOS, A3's stored browser sessions, instance
+  IDs as UUIDv7; see "Merges with v1-integration" below). The session that runs this
+  lead may push only that branch; the merge into `v1-integration` is made by a
+  session that may.
 - **Systems.** Development and the full Linux checks run on Linux x86-64 (kernel
   6.18, as root in a container). macOS code is type-checked locally with
   `cargo check --target aarch64-apple-darwin` where the crate has no C build, and
@@ -41,7 +44,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
 | X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
-| X2 first worker on Linux (LNX-1) | The Linux admission adapter is written on `x/x2-linux-admission` (`17c9ae02`), not yet verified by the lead, reviewed or integrated; the host composition is not started | See below |
+| X2 first worker on Linux (LNX-1) | The Linux admission adapter is integrated (`00b4b61c`) and under fresh review; the host composition is briefed, not started | See below |
 | X3 host secrets on Linux (LNX-4) | Not started | |
 | X4 web process confined on Linux (LNX-3) | Brief written; no code yet | See below |
 | X5 service and container (LNX-2) | Not started | |
@@ -467,21 +470,51 @@ host with the same key, and that items written before this change are still foun
 (`crates/org-platform-host/src/admission/linux*`, `testing.rs`,
 `crates/org-platform/src/image/linux.rs`), then the host composition (the admission
 built once per host lifetime with the manifest digest, native clients by UID, the
-host's own image, the Linux release rule, the root refusal, the script-worker tests
-on the by-path test admission, the host's tests on Linux, the LNX-1 test with
-`agent-os`).
+host's own image, the Linux release rule, the root refusal and the non-dumpable host,
+the script-worker tests on the by-path test admission, the host's tests on Linux, the
+LNX-1 test with `agent-os`).
 
-**State.** The adapter slice is on branch `x/x2-linux-admission`, three commits on
-`61acd21a` ending at `17c9ae02` (the contract's surface for an adapter that executes
-verified bytes; the adapter; a test fix). Its worker was stopped by a usage limit
-during its final verification and returned no receipt. Before it is integrated: the
-lead runs its checks (the adapter's tests 20 times, the host's failing set against
-the baseline, the three lint targets), reads its diff, and a fresh reviewer reads
-it. Two small code repairs from the X1c admission review are held until then,
-because they are in the same files (the pin-after-admit composition as a pure
-function tested on every system; the error class of an unreachable guard), with two
-nits (`Peer::satisfies` documentation; the presence adapter reading the peer token
-through the contract's `peer` instead of `pub(crate) mod macos`).
+**Slice 1, the adapter: integrated at `00b4b61c`** (branch `x/x2-linux-admission`,
+four commits ending at `643c22da`). On GNU/Linux `admission()` opens the pinned path
+(`O_NOFOLLOW`, regular file, owned by the service user or root, not writable by group
+or others), copies it into a sealed execute-only memory file while hashing it, and
+compares the digest (a development build records it; a release without a digest
+refuses with `ImageRefusal::Unpinned`). `spawn` starts the child from that file with
+`clone(CLONE_PIDFD | SIGCHLD)` and `execveat(AT_EMPTY_PATH)`; `verify_reader` checks
+`SO_PEERCRED` and the pidfd. `Peer` carries the Linux credentials.
+`testing::admission::path_admission` starts a program by path for the script-worker
+tests, under `test-support` only.
+
+What the kernel taught the worker, different from the design text (the design is
+updated when the slice's review is closed):
+
+- `pidfd_send_signal(pidfd, 0)` succeeds on a zombie, so "still alive" also polls the
+  pidfd for readability.
+- `clone` (the raw system call), not `clone3`: x86-64 and aarch64 only, every other
+  architecture refuses.
+- A close-on-exec report pipe on descriptor 4 tells the parent which call failed in
+  the child, so `spawn` returns only after `exec` succeeded (end of file on the pipe)
+  and a failure names the call and the error; `close_range(5, ~0)` follows from it.
+- There is nothing to hold: `Held::release` does nothing on Linux, the child already
+  runs the verified bytes.
+
+Lead's checks at integration: the three lint targets; `platform_conditionals` and
+`libc_only`; unprivileged tests of `org-platform`, `org-platform-host` and `org-host`
+(644 passed in `org-host`, the failing set identical to the baseline: the host does
+not compose the adapter yet); the refusing target's tests. One host test now accepts
+`NotFound` as well as `Unsupported` for an admission that cannot be built, because
+the Linux adapter reads the image when the admission is built.
+
+**Review of slice 1:** a fresh read-only reviewer is reading `a83c4fad..00b4b61c` and
+attacking it on this kernel (result recorded here when it reports). Held for the same
+repair pass, from the X1c admission review, because they are in the same files: the
+pin-after-admit composition as a pure function tested on every system; the error
+class of an unreachable guard; two nits (`Peer::satisfies` documentation; the
+presence adapter reading the peer token through the contract's `peer` instead of
+`pub(crate) mod macos`).
+
+**Slice 2, the host composition:** briefed (worktree `x/x2-host`), dispatched after
+the adapter's repairs so that at most two writers work at once (the other is X4's).
 
 ## X4 · The web process confined on Linux (not started)
 
@@ -492,3 +525,63 @@ stopped by the same limit before writing code. Decision already taken for it: th
 ready line carries the Landlock status only, so on Linux the host observes seccomp
 on the process (`/proc/<pid>/status`) in `verify_web`, and `verify_ready_report`
 requires a Landlock ABI of 3 or higher.
+
+## Merges with v1-integration
+
+**`42dd1322`, 2026-11-18.** Track A had changed 230 files since `831f10ca`, among them
+the host files Track X moved behind the platform crates. Resolved by the lead:
+
+- `supervisor/child.rs`, `supervisor/channels.rs`: A1.5 made the rendezvous the only
+  launch form and added a discard handoff (`Broker::ready`, `discard`,
+  `discard_handoff`). They now take the admission and the child of the admission
+  contract instead of a pid, an audit token and the server check. `Broker::accept` and
+  `Broker::discard` take `&mut Child` and ask it themselves whether the worker has
+  exited while they wait for its connection (Track A passed a closure over the same
+  child, which the contract's `try_wait(&mut self)` does not allow next to a shared
+  borrow).
+- `host_secrets.rs`: the two instance checks of the credential views accept a
+  canonical UUIDv7, as Track A's stores do (`org_proto::is_uuid_v7`); the Keychain
+  adapter in `org-platform-host` keeps no instance rule (the view owns it).
+- `human.rs` `paths()`: Track A's `ORG_DEV_ACCOUNT_BASE` development setting is kept,
+  and the system gate after it is `credentials::protected_store()`, not a predicate.
+- `bootstrap.rs` and `host_secrets/dev.rs` are gone on both sides.
+- Three predicates Track A had added outside the platform crates are removed without
+  a new one: `admin.rs` `admit` (the peer check is already system-neutral: a system
+  that cannot identify a peer refuses), `lib.rs` (`setup_flow` builds everywhere; its
+  refusals come from the service adapter), and a test-only import in `offices.rs`.
+- The list of platform predicates fell to 35 files and 182 predicates.
+  `apps/agentic-org/tests/supervision.rs` is at 18, one more than before: Track A
+  added a macOS-only test of the worker's environment. It falls with the rest of that
+  file in X2's host slice.
+- The whole workspace lints clean on Linux without any allowance (the three test
+  helpers that were dead code on Linux are gone with `bootstrap.rs`), so CI lints the
+  host with the rest of the workspace and the separate host lint step is removed.
+- `docs/FEATURES.md` and `docs/FEATURE-AREAS.md`: the summary rows are recounted from
+  the rows (In progress 64, Planned 53; AREA-02 16 and 3). Track A's summary was one
+  behind its own rows (FC-159 had moved to In progress).
+
+## macOS results from CI
+
+The macOS job (`macos-15`) runs the workspace's tests on every push. Run 44232051595
+on `f2ef6ba6` (X1d integrated; X1c and X1d code executed on macOS for the first
+time):
+
+- `org-platform` 94 passed (2 ignored: the real launchd and disk-encryption probes),
+  `libc_only` 3, `platform_conditionals` 24; `org-platform-host` 83 passed and the
+  presence bridge test 1; `org-socket` 59 + 7; `org-supervise` 96 + 49; `org-office`
+  567; every `apps/agentic-org` integration suite passed (app_token 7, binary 8, cli 3,
+  contract 12, create 21, host_control 14, instances 1, keys 9, peer_uid_source 6,
+  service 8, shutdown_signals 4, supervision 18).
+- `org-host` 492 passed, 6 failed, 4 ignored. Every test whose name contains
+  admission, credentials, keychain, presence, confine, server_check or custody passed
+  (59 tests). The 6 failures are `release::store::tests::*` (`PermissionDenied` at
+  `release/store/tests.rs:86`), which fail the same way on `v1-integration` and are
+  not in files Track X changed.
+- Also failing, on `v1-integration` as well: `agentic-org-web`
+  `release::tests::held_release_directory_cannot_switch_to_replaced_path`
+  (`PermissionDenied`), and `dependency_closure` on both systems (`cargo metadata
+  --offline` needs a crate of the other system that the runner's cache lacks).
+
+This is a debug, unsigned build: the Keychain, the publisher check of a signed image,
+Seatbelt on a signed web process and the presence dialog are still owed from a Mac
+(the lists under X1c and X1d).

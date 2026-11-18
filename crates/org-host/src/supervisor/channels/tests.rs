@@ -1,4 +1,5 @@
 use super::*;
+use org_office_launch::ServerEvent;
 
 /// This test process stands in for a worker whose pid is `pid`: an admission that checks no
 /// image (a debug build's) and a child handle that is never signalled or waited for. A system
@@ -173,6 +174,115 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
         .is_none());
 }
 
+/// The worker's side of a discard: `ready_for_secrets`, then the header bytes, one at a time,
+/// with no descriptor on any of them.
+pub(crate) fn discard_worker_reads_handoff(worker: &mut UnixStream) -> v3::Handoff {
+    frame::write_message(worker, &v3::ReadyForSecrets).unwrap();
+    let mut receiver = org_socket::rights::StreamReceiver::new(worker.try_clone().unwrap());
+    let mut header = Vec::new();
+    loop {
+        let (b, fds) = byte(&mut receiver, 0);
+        assert!(fds.is_empty());
+        if b == b'\n' {
+            break;
+        }
+        header.push(b);
+    }
+    let handoff = v3::decode_handoff(&header).unwrap();
+    crate::secrets::zero(&mut header);
+    handoff
+}
+
+#[test]
+fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    worker
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let worker_thread = std::thread::spawn(move || {
+        let v3::Handoff::Discard { db_key, fds } = discard_worker_reads_handoff(&mut worker) else {
+            panic!("not a discard handoff");
+        };
+        assert!(fds.is_empty());
+        // A discard gets no secret: the header's key is `null`.
+        assert!(db_key.is_none(), "a discard handoff carried a key");
+        // No marker and no transfer socket follow: the next bytes are the host's EOF once
+        // the stream closes, never a descriptor. The worker reports on the stream.
+        v3::write_rendezvous_event(
+            &mut worker,
+            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+        )
+        .unwrap();
+    });
+    let (signals, events) = mpsc::channel();
+    let (admission, child) = stand_in(std::process::id()).unwrap();
+    Broker::discard_handoff(host, &admission, &child, 9, signals).unwrap();
+    worker_thread.join().unwrap();
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Event {
+            generation: 9,
+            event: ServerEvent::Discarded
+        }
+    ));
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Closed { generation: 9 }
+    ));
+}
+
+#[test]
+fn a_discard_stream_ends_at_a_non_server_event() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    worker
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let worker_thread = std::thread::spawn(move || {
+        discard_worker_reads_handoff(&mut worker);
+        // A discard has no descriptor to acknowledge: a receipt is a protocol error.
+        v3::write_rendezvous_event(
+            &mut worker,
+            &v3::RendezvousEvent::FdsReceived {
+                of: "handoff".into(),
+            },
+        )
+        .unwrap();
+        v3::write_rendezvous_event(
+            &mut worker,
+            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+        )
+        .unwrap();
+        worker
+    });
+    let (signals, events) = mpsc::channel();
+    let (admission, child) = stand_in(std::process::id()).unwrap();
+    Broker::discard_handoff(host, &admission, &child, 3, signals).unwrap();
+    let _worker = worker_thread.join().unwrap();
+    // Only the stream's end: the `discarded` after the receipt is never forwarded.
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Closed { generation: 3 }
+    ));
+    assert!(events.recv_timeout(Duration::from_millis(200)).is_err());
+}
+
+#[test]
+fn a_discard_reader_from_another_process_identity_gets_no_header() {
+    let (host, worker) = UnixStream::pair().unwrap();
+    worker
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let (signals, events) = mpsc::channel();
+    let (admission, child) = stand_in(std::process::id() + 1).unwrap();
+    assert!(Broker::discard_handoff(host, &admission, &child, 1, signals,).is_err());
+    assert!(frame::read_line(&mut BufReader::new(worker))
+        .unwrap()
+        .is_none());
+    assert!(events.try_recv().is_err());
+}
+
 #[test]
 #[ignore = "root runs actual local listener; child sandbox forbids binding"]
 fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
@@ -220,13 +330,13 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             .is_none());
     });
     let (signals, _) = mpsc::channel();
-    let (admission, child) = stand_in(std::process::id()).unwrap();
+    let (admission, mut child) = stand_in(std::process::id()).unwrap();
     let endpoint = broker
         .accept(
             rendezvous,
             "office",
             &admission,
-            &child,
+            &mut child,
             &DbKey::from_bytes([73; 32]),
             None,
             1,
@@ -236,6 +346,58 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
     assert!(endpoint.live.load(Ordering::SeqCst));
     endpoint.fail();
     worker.join().unwrap();
+}
+
+#[test]
+fn a_worker_that_exits_without_connecting_ends_the_wait_at_once_as_a_crash() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let broker = Broker::new("instance".into(), root.path().to_owned());
+    let rendezvous = broker.bind().unwrap();
+    let started = Instant::now();
+    let mut asked = 0;
+    let error = Broker::connect(rendezvous, started + Duration::from_secs(30), &mut || {
+        asked += 1;
+        true
+    })
+    .unwrap_err();
+    // A crash (restart with backoff), not the listener's WouldBlock and not a 30 s stall.
+    assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    assert_eq!(asked, 1);
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn a_worker_that_connects_and_then_exits_is_still_accepted() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let broker = Broker::new("instance".into(), root.path().to_owned());
+    let rendezvous = broker.bind().unwrap();
+    let path = rendezvous.path().to_owned();
+    let mut client = None;
+    // The worker connects between the host's first accept and its exit check.
+    let result = Broker::connect(
+        rendezvous,
+        Instant::now() + Duration::from_secs(30),
+        &mut || {
+            client = Some(UnixStream::connect(&path).unwrap());
+            true
+        },
+    );
+    assert!(result.is_ok());
+    assert!(client.is_some());
+}
+
+#[test]
+fn no_connection_by_the_deadline_is_a_timeout_not_would_block() {
+    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let broker = Broker::new("instance".into(), root.path().to_owned());
+    let rendezvous = broker.bind().unwrap();
+    let error = Broker::connect(
+        rendezvous,
+        Instant::now() + Duration::from_millis(50),
+        &mut || false,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
 }
 
 /// Real host handoff/SCM_RIGHTS/event receiver with a bounded synthetic worker.
@@ -506,7 +668,7 @@ fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_inde
     assert_eq!(lock(&fixture.endpoint.channels).len(), 8);
     let request = org_office_launch::recovery::Request {
         version: 1,
-        instance_id: "instance".into(),
+        instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182".into(),
         office_id: "office".into(),
         organization_id: "org".into(),
         operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
@@ -683,4 +845,26 @@ fn actual_duplicate_misordered_or_post_close_lifecycle_receipts_fail_endpoint() 
         await_closed(&witness);
         assert!(!witness.is_live());
     }
+}
+
+/// Darwin answers `EINVAL` to a timeout change once the peer has closed. A worker that reports
+/// its failure and exits before the host changes the timeout must still have that report read,
+/// then EOF, rather than the change failing as an I/O error (a crash and a restart).
+#[test]
+fn a_timeout_change_after_the_worker_closed_keeps_its_buffered_report() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    v3::write_rendezvous_event(
+        &mut worker,
+        &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+    )
+    .unwrap();
+    drop(worker);
+    set_timeout_unless_peer_closed(&host, Some(Duration::from_secs(3))).unwrap();
+    set_timeout_unless_peer_closed(&host, None).unwrap();
+    let mut reader = BufReader::new(host);
+    assert!(matches!(
+        v3::read_server_event(&mut reader).unwrap(),
+        Some(v3::RendezvousEvent::Server(ServerEvent::Discarded))
+    ));
+    assert!(v3::read_server_event(&mut reader).unwrap().is_none());
 }
