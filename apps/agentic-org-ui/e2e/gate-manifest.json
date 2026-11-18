@@ -651,6 +651,8 @@
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
 			"src/lib/modules/shell/**",
+			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access}/**",
+			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+layout.svelte",
 			"src/routes/(shell)/settings/+layout.svelte",
