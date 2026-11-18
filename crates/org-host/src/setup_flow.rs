@@ -459,10 +459,7 @@ pub(crate) fn run_at(
     if administrator == Administrator::Present {
         return say(
             out,
-            format!(
-                "Instance {shown} is running. Open {} and sign in.",
-                record.input.listen.origin().as_str()
-            ),
+            running_with_administrator(shown, record.input.listen.origin().as_str()),
         );
     }
     say(out, "Instance ready. It has no administrator yet.")?;
@@ -609,16 +606,22 @@ fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, Path
     Ok((record, id, temp.join("host.sock")))
 }
 
+/// What `admin reset` answers when its output is not a terminal (spec §4a.4).
+pub(crate) const NOT_A_TERMINAL: &str = "Run this in a terminal.";
+
+/// What a repeated setup says once the instance has an administrator (spec §4a.2).
+fn running_with_administrator(shown: &str, origin: &str) -> String {
+    format!("Instance {shown} is running. Open {origin} and sign in.")
+}
+
 /// `agentic-org admin reset`: a new registration link after presence at the host.
 /// `terminal` says whether `out` is a terminal: the link is printed only there, so
 /// otherwise this refuses before asking the host, and no link is issued or cancelled.
 pub fn admin_reset(name: Option<&str>, terminal: bool, out: &mut dyn Write) -> Result<(), String> {
     if !terminal {
-        return Err(
-            "admin reset prints a one-time link only to a terminal; run it in Terminal on \
-             this Mac without redirecting its output; nothing was changed"
-                .into(),
-        );
+        // Spec §4a.4 copy. SIGN-34's SSH refusal ("shown before anything else") needs
+        // SSH-session detection, which is not built yet; it goes before this check.
+        return Err(NOT_A_TERMINAL.into());
     }
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let mut wire = connect(&socket, &id).map_err(|why| {

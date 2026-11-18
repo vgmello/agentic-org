@@ -98,3 +98,19 @@ fn the_development_pin_is_valid_and_stable() {
     pin.validate().unwrap();
     assert_eq!(pin, release_pin().unwrap());
 }
+
+#[test]
+fn a_repeated_setup_with_an_administrator_says_where_to_sign_in() {
+    assert_eq!(
+        running_with_administrator("default", "http://127.0.0.1:7420"),
+        "Instance default is running. Open http://127.0.0.1:7420 and sign in."
+    );
+}
+
+#[test]
+fn admin_reset_off_a_terminal_refuses_with_the_spec_copy_before_anything_else() {
+    let mut out = Vec::new();
+    let refused = admin_reset(Some("no-such-instance"), false, &mut out).unwrap_err();
+    assert_eq!(refused, NOT_A_TERMINAL);
+    assert!(out.is_empty());
+}

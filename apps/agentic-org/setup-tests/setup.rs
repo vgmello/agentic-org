@@ -247,7 +247,7 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     let piped = account.run(&["admin", "reset"]);
     assert!(!piped.status.success());
     assert!(
-        text(&piped).1.contains("only to a terminal"),
+        text(&piped).1.contains("Run this in a terminal."),
         "{:?}",
         text(&piped)
     );
