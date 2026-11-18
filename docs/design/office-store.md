@@ -472,7 +472,7 @@ engine and one projection schema).
 | Crash | What is on disk | How restart finishes |
 | --- | --- | --- |
 | During decide or apply | Nothing appended; projection transaction rolled back | Nothing to finish; a retry runs afresh |
-| During the append | A torn last entry (only a power cut tears a write) | The scan stops at the first bad length or hash and truncates it. It was never acknowledged durable; committed ones are lost as their class allows |
+| During the append | A torn last entry: a process kill mid-write or a power cut | Above the head the host custody last confirmed, the scan stops at the first bad length or hash and truncates there; that entry was never acknowledged durable. At or below that head a bad entry is corruption: the office refuses to open and names the ordinal |
 | After the append, before the projection commit | Journal ahead of projection | Replay the entries after the cursor through the projectors; a retry finds the receipt |
 | After the commit, before the reply | Both current | A retry by operation ID gets the original reply |
 | After a committed reply, before the flush (power cut) | Journal may end earlier; projection may be ahead of it | A cursor ahead of the journal, or a hash that differs at its ordinal, means: rebuild |
@@ -482,11 +482,21 @@ engine and one projection schema).
 | An append fails or is short | Possibly a partial entry at the tail | The batch fails and is rolled back; the segment is truncated to its last good entry before the next batch; a failed truncation stops the office |
 
 **Opening.** Take the office lock and the host custody checkpoint; open the journal
-(verify the chain from anchor or checkpoint, truncate a torn tail, refuse a journal
-behind the custody checkpoint, recover the high-waters); materialize the retained
+(verify the chain from anchor or checkpoint; refuse a journal behind the custody
+checkpoint; recover the high-waters; apply the torn-tail rule below); materialize the retained
 entries after the materialized mark; then either replay the entries after the
 projection cursor or, if the projection is missing, of another schema digest or ahead
 of the journal, rebuild (section 6). Confirm the head to the host and start accepting.
+
+**The torn-tail rule.** A write can be torn by a process kill as well as by a power
+cut. Only entries above the head the host custody last confirmed may be truncated, and
+only from the first entry whose length or hash is bad. A bad length or hash at or below
+that head is corruption: the office refuses to open, names the ordinal, and never
+truncates. Two tests inject the cases: the crash harness cuts the last append at a
+random byte, as a kill mid-write would, and checks that reopening truncates it and
+keeps everything before it; a corruption test flips one byte inside an entry at or
+below the confirmed head and checks that opening refuses and names that ordinal. The
+power-cut simulation of section 6 drops every byte after the last flush.
 
 **Idempotent retry.** A retry carries the same operation ID. The receipt is matched
 before any validation of current state (ADR-0006). A receipt whose entry is not yet
