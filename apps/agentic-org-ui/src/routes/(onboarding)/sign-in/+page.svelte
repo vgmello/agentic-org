@@ -60,7 +60,16 @@
 	 */
 	async function enter() {
 		try {
-			await goto(resolve(destination()), { replaceState: true });
+			// resolve() reads a query as route segments: an unencoded '/', '(' or '[' in it would
+			// change or reject the target (/chat?thread=a//b). The query is rebuilt with
+			// URLSearchParams, which encodes them; every parameter keeps its value.
+			const target = destination();
+			const query = target.indexOf('?');
+			const path = query < 0 ? target : target.slice(0, query);
+			const search = query < 0 ? '' : new URLSearchParams(target.slice(query)).toString();
+			await goto(resolve((search ? `${path}?${search}` : path) as `/${string}`), {
+				replaceState: true
+			});
 		} catch {
 			await goto(resolve('/welcome'), { replaceState: true }).catch(() =>
 				location.assign(resolve('/welcome'))
