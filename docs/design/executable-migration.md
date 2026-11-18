@@ -41,7 +41,7 @@ source; recheck it against the commit you work on.
 | Executable | What works |
 | --- | --- |
 | `agentic-org` | `serve`, help and version. `setup` refuses without changing state ([`apps/agentic-org/src/lib.rs`](../../apps/agentic-org/src/lib.rs)). The host socket answers only `hello` and `instance.status` (`crates/org-host/src/service/mod.rs`). |
-| `agentic-org-office` | Runs when the host starts it, on macOS only (`crates/org-host/src/spawn.rs`). Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls yet. |
+| `agentic-org-office` | Runs when the host starts it, on macOS only (`crates/org-host/src/spawn.rs`). The host launches it only over the registered instance's verified rendezvous; a host with no registered instance starts no office. Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls yet. The host no longer sends the name-only non-HQ `organization.create`; the worker's v2 create arm and the v2 wire types are removed in A1.5. |
 | `agentic-org-web` | Help and version. `--serve` runs only after a verified host handoff and otherwise refuses without opening a listener ([`apps/agentic-org-web/src/main.rs`](../../apps/agentic-org-web/src/main.rs)); the host starts it only in debug/test instance composition, and it serves only `GET /api/v1/version`. |
 | `agent-os` | Messaging, directory and work calls against a running office when one is named; with none it writes to a file queue, which is deleted (implementation plan B6). |
 
