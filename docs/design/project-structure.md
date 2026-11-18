@@ -174,7 +174,7 @@ library.
 | `org-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
 | `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
 | `org-platform` | Holds every operating-system difference: the platform contracts of ADR-0017 with macOS, Linux and refusing adapters ([Linux host design](linux-host.md)) | New in X1a; the only crate with platform conditionals | Track X, from X1a (the first day) |
-| `org-store` | The office store's engine-neutral foundation ([office store design](office-store.md)) | New in B1a; depends on no family (on `org-platform` once X1b moves its flush there) | B1a |
+| `org-store` | The office store's engine-neutral foundation ([office store design](office-store.md)) | New in B1a; depends on no family and not on `org-proto`: it checks only that an ID is one safe path component, and families validate UUIDv7 (on `org-platform` once X1b moves its flush there) | B1a |
 | `org-spool` | File queue `agent-os` uses when no office is named | Deleted, with the route through it | With conversations and messages (implementation plan B6) |
 
 ## 4. Svelte and TypeScript layout
@@ -291,6 +291,5 @@ The application renames and host extraction are done. The domain modules above a
 not finished: `org-office` has `organization`, `employees`, `processes` and `rules`
 modules that implement the older model with several memberships per member, and `store` holds the SQL for all of them,
 with SQL in four files outside it (`organization/bootstrap.rs`,
-`organization/admission.rs`, `office.rs`, `office/hq_creation.rs`). `org-store` does not
-exist yet; B1b deletes today's `store` whole and the SQL outside it. `org-git` and the vendor runtime adapters do
+`organization/admission.rs`, `office.rs`, `office/hq_creation.rs`). `org-store` exists since B1a; B1b deletes today's `store` whole and the SQL outside it. `org-git` and the vendor runtime adapters do
 not exist yet.

@@ -111,7 +111,9 @@ module grows.
 | Execution: placements, permits, turns, process cleanup | `org-office/src/employees/` | C2, C3 |
 | Accounting, budgets | Their own module, same shape | L2, L3 |
 
-**Dependencies** point from composition to families to the foundation:
+**Dependencies** point from composition to families to the foundation. `org-store` has no
+edge to `org-proto`: it checks only that an ID is one safe path component, and each
+family validates the form of its own IDs (UUIDv7):
 
 ```text
 apps/agentic-org-office ─> org-office ─┬─> org-store    (─> org-platform once X1b lands)
@@ -408,14 +410,21 @@ interrupt), the remaining operations decide again in a new transaction, as ADR-0
 decision 3 states. After the append, nothing decides again: if the projection commit
 fails, the writer replays the appended entries from the journal; if that fails, the
 office stops accepting and reports recovery required. No reply ever reports failure
-for an appended entry.
+for an appended entry. A request whose entry is appended when the store stops this way is
+answered `OutcomeUnknown`: the operation is accepted, not failed, and the same operation
+ID submitted after reopening gets its answer.
 
 **The flusher.** When a durable reply waits, or the flush interval (default 50 ms,
 fixed by measurement in B1c) has passed with unflushed entries, it: fully flushes the
-segment and answers every durable operation through that ordinal; confirms the flushed
-head to the host's writer custody; writes the final state of each path touched by the
+segment; confirms the flushed head to the host's writer custody; answers every durable
+operation through that ordinal; writes the final state of each path touched by the
 newly flushed entries (section 5); and advances the materialized mark. A committed
 operation never waits for the drive, even in a batch with a durable one.
+
+**Durable means flushed and confirmed.** A durable answer is given only when the segment
+holding the entry is fully flushed and the host's writer custody has confirmed that
+flushed head. A flush the host has not confirmed answers nobody as durable: the request
+waits for the confirmation, and gets the custody error if it fails.
 
 **A failed flush is fatal.** If a full flush of a journal segment, of a materialized
 file or of a directory returns an error, the office never retries it in the same
@@ -534,12 +543,28 @@ second finds the first's receipt. Operations whose record ID is their idempotenc
 (a message, ADR-0003 decision 9) need no receipt: their decision finds the record.
 Receipts are never deleted by the store; expiry is a reviewed procedure (document 16).
 
-**Directory generations** (ADR-0006, document 16) need no mechanism of their own: the
-generation is the ordinal of the last entry that changed an organization-family file,
-and since every decision runs on the one writer against the projection at head, task
-state and directory facts are always read from the same generation.
+**Directory generations** (ADR-0006, document 16): the generation is the organization
+stream's high-water. Every organization decision takes one position of that stream; the
+engine commits the stream high-waters with its cursor, so a read returns the generation
+of its own snapshot. A rejected organization command gives its position back, so the
+generation does not advance. On rebuild the value comes from the journal or its
+checkpoint, never from a file, so it is equal after a delete-and-rebuild and after a
+segment release. Since every decision runs on the one writer against the projection at
+head, task state and directory facts are always read from the same generation.
 
 ## 5. Files
+
+**Paths.** A durable path is relative, `/`-separated, at most 512 bytes, and starts with
+a known tree (`state`, `authority`, `accounting`, `messaging`, `recovery`, `budgets`,
+`local`). Every component comes from the portable set `[a-z0-9._-]`, is at most 255
+bytes, is not `.` or `..` and does not begin with the store's temporary-file prefix. No
+file system folds, normalizes or refuses any of that set, so two accepted paths never
+name one file and every accepted path can be written. An ID is checked by the store as
+one such component and no more; its family validates its form. A path names a file or a
+directory, never both: a change whose path is a directory, or lies below a file, among
+the paths on the drive or accepted and not yet written, is refused before its entry is
+accepted. Every source path has exactly one owning family; `state/repositories.yaml` is
+the organization family's, and B3 writes it through that family's port.
 
 **From record to file.** The family's codec turns a record into the exact bytes the data
 contract defines, at the path it names, under the tree it belongs to:
@@ -641,7 +666,9 @@ kept state or read something other than its file.
 
 **A projection schema change before v1 ships** is a new digest. The SQLite projection's
 digest is the SHA-256 of the DDL it loads: the contract's `schema.sql`, the adapter's
-own tables (`store_cursor`, `store_sources`) and its extra indexes. Opening with a
+own tables (`store_schema`, `store_cursor`, `store_sources`, and `store_receipts`, the
+reply table: each receipt whole with its original reply, so a retry is answered without
+a file read) and its extra indexes. Opening with a
 different digest deletes the projection and rebuilds it. There is no migration code. A
 change to a file format before v1 is a change to its codec; files in a format the code
 no longer reads are refused by path, because nothing has shipped to keep.
@@ -671,7 +698,9 @@ bounded in-memory ring (8,192 entries) and to every subscriber. Feed positions a
 store sequence recorded in each entry, never reused, continued from the journal after a
 restart. `subscribe(after)` replays from the ring and then follows; a position older
 than the ring, which includes every position from before a restart, answers `Resync`,
-and the client reads again (getting a fresh position) and subscribes from there.
+and the client reads again (getting a fresh position) and subscribes from there. A
+subscriber's own queue is bounded too: one that does not keep up is dropped, never
+waited for, and subscribes again.
 
 Families turn paths into their events. The work family emits `work.changed` to the web
 process over its office connection (the web process has no database). The messaging
@@ -773,7 +802,8 @@ Replication between offices ships files, stamped with where they came from. The 
 offers four things; B1 builds the first three, S1 the fourth.
 
 - **Origin positions.** Every entry records the positions it took in this office's
-  origin streams (work, message, and at HQ organization) under the office's origin
+  four origin streams (organization, work, message content and message state, as the
+  data contract names them) under the office's origin
   incarnation. They are recovered from the journal, never from the projection, and a
   new incarnation never reuses them (document 16).
 - **An outbox.** `Journal::after` reads flushed entries in order. A consumer registers a
@@ -874,11 +904,17 @@ SQLCipher-initialization tests) with SQLCipher (ADR-0016).
 
 Each needs a decision during B1; the recommendation is what this design assumes.
 
-1. **Generic office or trait objects.** Making `Office` generic over `E: Engine` spreads a
-   type parameter through the office. Recommendation: keep `Office` non-generic. Box the
-   engine behind a blanket supertrait `OfficeTx: OrganizationRead + OrganizationWrite +
-   …` that grows by one bound per family, and pass families `&dyn` ports (trait
-   upcasting is stable). Decide in B1a with the first family.
+1. **Generic office or trait objects.** Decided in B1a: static dispatch, `Office` stays
+   non-generic. `store/open.rs` holds `enum OfficeStore` with one arm per engine (`Sqlite`,
+   and `Memory` under `testkit`). An operation is a `StoreOp`, a read is a `ReadOp`; each
+   is generic over the engine and compiled once per arm. `OfficeEngine` is a blanket
+   supertrait that grows by one bound per family. Nothing above `open_store` is generic,
+   there are no boxed ports and no forwarding impls, and adding an operation changes no
+   shared file. Its costs, accepted: an operation or a read is a named type, because a
+   closure cannot be generic over the engine; each is compiled once per engine, so code
+   size and build time grow with operations times engines; a new engine adds an arm to
+   the enum and to each of its methods; and the operations of a family that the office
+   runs are named where the store is composed, not in the family.
 2. **The flush interval.** Default 50 ms. Recommendation: keep it unless B1c's
    measurement on the reference Mac shows the full flush costs more than a tenth of it
    under load.

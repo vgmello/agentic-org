@@ -1,8 +1,8 @@
 # ADR-0021 · The office store: one journal of file changes, a projection rebuilt from files
 
-Status: **proposed** 2026-11-18, answering the owner's request to define the store's new
+Status: **accepted** 2026-11-18, answering the owner's request to define the store's new
 architecture ("without unnecessary coupling", "without over-engineering"); accepted when
-the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
+the Track B lead took B1a. Implementation in progress: increments B1a to B1c of the
 [implementation plan](../implementation-plan.md). The design is the
 [office store](../design/office-store.md). This record states the choices that
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md),
