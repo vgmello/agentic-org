@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "2bb8b7c66b1f6d86e04ebbc65a46f5f32cbf1eac34206dd99bb90c4facb1f47a"
+      "sha256": "6c73aeeb56f77763040df08af66fba0573436e82cb9be778ebe010d5713503f6"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "efe8ef0145a8d74a73b85853dbbbda1f57c001cdaa2fe59edfd0e305e45124f5"
+      "sha256": "7827a21bae5c9e6cae99db266fe608aa7f3b21b2a7d461ebb955d96929275967"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "7acdfe9d7de32c7475ecdedb33c250b38daa2a9aface14007712c509c8bd0b04"
+      "sha256": "221c90230efe184e091e74b9e67a1dbe669d1b9881ac2b3cb041fd964db22e14"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -106,7 +106,7 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "3158f539fbd4addf0bab993d4764b6ba357fa881f8cf887f750e8714290128f8"
+      "sha256": "0fd3ca79b38b73e0f64a6d5066fe713f0cb56e62c05f07b93ec7b72c53bf3cdf"
     },
     {
       "path": "crates/org-release/Cargo.toml",

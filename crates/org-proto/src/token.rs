@@ -184,11 +184,11 @@ impl OfficeSecretsKey {
         OfficeSecretsKey(Box::new(bytes))
     }
 
-    /// The raw key, only for storing it in the host's key store and for keying SQLCipher,
-    /// nothing else. Don't copy the bytes beyond their immediate use: borrow them for the one
-    /// call that needs them.
-    /// `*key.expose_bytes()` copies the array, and any copy (or a hex form made for SQLCipher's
-    /// `x'…'` key syntax) is the caller's to zero. Never log or format it.
+    /// The raw key, only for storing it in the host's key store and for wrapping or unwrapping
+    /// an office's private keys (`org_pki::wrap`), nothing else. Don't copy the bytes beyond
+    /// their immediate use: borrow them for the one call that needs them.
+    /// `*key.expose_bytes()` copies the array, and any copy is the caller's to zero. Never log
+    /// or format it.
     pub fn expose_bytes(&self) -> &[u8; OFFICE_SECRETS_KEY_BYTES] {
         &self.0
     }
