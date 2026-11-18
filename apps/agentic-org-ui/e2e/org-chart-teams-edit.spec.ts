@@ -2,11 +2,10 @@ import { viewAction } from './org-chart-menu';
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openChart(page: Page) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/org-chart');
 	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
@@ -73,9 +72,7 @@ test('TEAM-5: Add team under… prefills Part of', async ({ page }) => {
 });
 
 test('TEAM-5: the empty organization offers Create your first team', async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/org-chart?org=empty');
 	await expect(page.getByText('A team can be part of another team')).toBeVisible();

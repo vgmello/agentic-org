@@ -82,11 +82,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "4f78594e2b745bca03a5569f192d3aedc98a14ba8fee9f208d92ab4feb8c4646"
+      "sha256": "d08256c52c9e026601d763cb30dbe91a0c4fdd50be2e0d1550a45323d82965dd"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "591cf095cf4cb7f69693dd3448e935e6b5159b3d60b6d7b49923cc2e74b3456c"
+      "sha256": "c13c73847a64a80a097ac0d9743e84517f26fcce5a6bc654323a637cbbd3690a"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -126,7 +126,7 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "0fd3ca79b38b73e0f64a6d5066fe713f0cb56e62c05f07b93ec7b72c53bf3cdf"
+      "sha256": "03d722e695c9cfbbe54bb592d029d05bc212c127d4986e43e3e71ee76df4a204"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
@@ -186,11 +186,11 @@
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "10a6fbe4af84b6bbe7dcf1681795e8436fddced0e7d91d24d18410af7a119cdf"
+      "sha256": "f90935b8d6fd2d93d800bfaec3ce1c5fd9f148d89b4f9982b3556bc99a40b08b"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "99237f8b2683c1f515eeed2fe72f7d4333ed2e6dbbb5dfa8c61e867bac769745"
+      "sha256": "0dc331c337857e46229fda1e7ef2ce47ed3b9b8880cdda0995c7bd6efe99d700"
     },
     {
       "path": "docs/independent-delivery.md",

@@ -2,12 +2,11 @@ import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import { viewAction as chooseView } from './org-chart-menu';
+import { enterMockedOrganization } from './mock-organization';
 
 async function open(page: Page, width = 1280, text = 1, query = '') {
 	await page.setViewportSize({ width, height: 640 });
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/org-chart' + query);
 	await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });

@@ -1,11 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openChart(page: Page) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/org-chart');
 	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
@@ -346,9 +345,7 @@ test('LIVE: a change someone else makes shows on the open org chart without a re
 });
 
 test('LIVE: a change that lands while the user is navigating does not cancel the navigation', async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents/);
 	await visit(page, '/org-chart?org=slow'); // loads of the org take a moment (the mock's `org=slow`)
 	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();

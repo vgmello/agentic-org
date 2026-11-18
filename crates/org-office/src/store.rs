@@ -15,6 +15,7 @@
 pub(crate) mod acceptance;
 pub(crate) mod hq_creation;
 pub(crate) mod messages;
+pub(crate) mod open;
 pub(crate) mod org;
 #[cfg_attr(
     not(test),
@@ -25,6 +26,7 @@ pub(crate) mod org;
 )]
 pub(crate) mod origin;
 pub(crate) mod owned_processes;
+pub(crate) mod sqlite;
 pub(crate) mod status;
 mod sync;
 #[cfg_attr(

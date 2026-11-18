@@ -498,6 +498,35 @@ describe('P6a session ownership', () => {
 		await s.controller.read('/api/v1/capabilities', signal);
 		expect(s.http.mock.calls[2][0].proof).toBe(rotated);
 	});
+	it('submit posts once with the proof in the header only, and never without a session', async () => {
+		const s = setup();
+		await s.controller.boot();
+		s.http.mockResolvedValueOnce({ status: 202, body: { outcome: 'accepted' } });
+		const body = { operation_id: 'op', params: {} };
+		expect((await s.controller.submit('/api/v1/organizations', body)).status).toBe(202);
+		expect(s.http.mock.calls.map(([request]) => request)).toEqual([
+			{ method: 'POST', path: '/api/v1/organizations', body, proof, signal: undefined }
+		]);
+		await s.controller.signOut();
+		await expect(s.controller.submit('/api/v1/organizations', body)).rejects.toThrow(
+			'Sign in required'
+		);
+		expect(s.http).toHaveBeenCalledTimes(1);
+	});
+	it('submit re-sends after a 401 only with a proof another tab rotated; else it asks for sign-in', async () => {
+		const s = setup();
+		await s.controller.boot();
+		s.replace({ ...record, proof: rotated });
+		s.http
+			.mockResolvedValueOnce({ status: 401, body: {} })
+			.mockResolvedValueOnce({ status: 200, body: {} })
+			.mockResolvedValueOnce({ status: 401, body: {} });
+		expect((await s.controller.submit('/api/v1/organizations', {})).status).toBe(200);
+		expect(s.http.mock.calls.map(([request]) => request.proof)).toEqual([proof, rotated]);
+		expect((await s.controller.submit('/api/v1/organizations', {})).status).toBe(401);
+		expect(s.http).toHaveBeenCalledTimes(3);
+		expect(s.states.at(-1)).toHaveProperty('reauth');
+	});
 	it('does not retry a 401 with the same proof, retaining the mounted view', async () => {
 		const s = setup();
 		await s.controller.boot();

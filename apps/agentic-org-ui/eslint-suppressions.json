@@ -219,11 +219,6 @@
       "count": 1
     }
   },
-  "src/routes/(onboarding)/create/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
-    }
-  },
   "src/routes/(shell)/agents/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 3

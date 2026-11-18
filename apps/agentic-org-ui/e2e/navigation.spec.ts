@@ -1,15 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 const SECTIONS = ['Chat', 'Agents', 'Org chart', 'Projects', 'Work', 'Sessions', 'Activity', 'Processes', 'Offices', 'Settings'];
 const JOURNEY_SECTIONS = ['Chat', 'Org chart', 'Projects', 'Work', 'Offices'];
 const slug = (name: string) => name.toLowerCase().replace(' ', '-');
 
 test.beforeEach(async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 });
 

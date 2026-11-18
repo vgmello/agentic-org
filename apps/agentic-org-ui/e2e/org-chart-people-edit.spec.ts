@@ -2,11 +2,10 @@ import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import type { OrgApi } from '../src/lib/org/api';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openChart(page: Page) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/org-chart');
 	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
