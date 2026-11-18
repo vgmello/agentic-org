@@ -127,7 +127,9 @@ These settle what the decisions above left open. The detail is in the
 11. **Recovery, reset and native clients on Linux.** A native client on `host.sock` is
     admitted by its kernel UID; Linux has no code identity for it, so the "verified
     signed `agentic-org` client" of ADR-0011 means, on Linux, a peer with the service
-    user's UID, and authority comes only from the browser-approved session. The
+    user's UID, and authority comes only from the browser-approved session (the one
+    exception is the initial registration link of ADR-0022, which setup takes before
+    any account exists and which any process of that user could take in its place). The
     recovery code's confirmation is the administrator's browser approval of the run
     (ADR-0011); the local context is a controlling terminal in the foreground. Against
     a same-user process these are a gate against mistakes, not a security control,

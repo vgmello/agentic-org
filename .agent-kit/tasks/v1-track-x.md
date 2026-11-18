@@ -384,7 +384,7 @@ not compiled):
    refused ("it isn't the signed office server …; it was stopped before it ran and
    got nothing") and receives no key; a web image with `keychain-access-groups` or
    `get-task-allow` is refused at admission; with a selected release, an image with
-   another CDHash is refused ("selected release kernel image mismatch"); a debug
+   another CDHash is refused ("selected release image mismatch", the text since X2); a debug
    build with a pin is refused ("selected release requires platform-audited image");
    a signed CLI is admitted on `host.sock` and one signed by someone else is refused;
    `check_self` passes for the installed host; the release install's static check
@@ -579,8 +579,38 @@ macOS and the refusing target; `platform_conditionals`, `libc_only`; the whole
 workspace unprivileged: 69 test binaries, 3,443 tests passed, 4 failed, none of them
 this slice's (`dependency_closure` needs the network; two `org-socket` tests need
 IPv6; one `web::tests` test whose premise X4 ended and whose rewrite is on X4's
-branch). `lnx1` passed. A fresh read-only review of `cbb9b515..e8cf07fb` and of the
-lead's adapter repair (`db6b3bfe`) is in progress.
+branch). `lnx1` passed.
+
+**Review of slice 2: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the
+lead, on `cbb9b515..e8cf07fb` and the lead's adapter repair `db6b3bfe`). It ran the
+host's and the app's suites (957 passed, the one known failure), LNX-1 ten times
+under load, the refusal and admission tests ten times each, and probed the repair:
+with the process non-dumpable a same-user process is denied the unsealed memory
+file and the memory of a child before `exec`; without it both are open. It found no
+path by which a process that is not the verified image gets a secret, no release
+image admitted without its publisher identity, and no macOS regression by reading.
+LNX-1 it judged honestly proved on Linux, with the parts that are not the product
+route named: a debug build with a development key folder, an instance from the
+fixture instead of `setup`, the office stored in-process, `agent-os` run by hand,
+and the linked socket.
+
+| Finding | Severity | State |
+| --- | --- | --- |
+| H1 Two host tests lost a macOS assertion ("either outcome passes") and two more hang on an unnamed platform fact | MAJOR by the rule that a test is never weakened | With the author: one expected outcome per system, chosen by a named testing fact |
+| H2 `admin.link.initial` needs no session: on Linux any process of the service user that names the setup operation gets the one initial link | MINOR, inside the accepted threat model | Stated in ADR-0017 decision 11 and design section 5; the host's log line is corrected by the author |
+| H3 A command would send the administrator's password to a host it knows only by its user, once Linux presence exists | MINOR, latent | With the author: the command refuses to send a secret to such a host |
+| H4 The Linux CI test job is red on one web test whose premise X4 ended | MINOR | Ends with the merge of X4's host branch |
+| H5 The host is open between `exec` and its hardening call | MINOR | With the author: first act of `serve`; the residual is in design section 5 |
+| H6 A Linux release host needs the macOS team identifier to start anything | MINOR | With the author: the admission contract says whether the system checks a code signature; where it does not, a release is checked by its pin alone |
+| H7 `setup` does not refuse root | MINOR | With the author |
+| H8 The macOS adapter treats a digest-only pin as no pin | NIT, unreachable | With the author: refused |
+| H9 Stale texts | NIT | Fixed by the lead and the author |
+| H10 Tests that skip as root pass silently; the root refusal test never runs in CI | NIT | With the author |
+
+Not verified by the reviewer: anything on macOS at run time (first-run risks it
+names: hard-linking a socket in LNX-1, path lengths under `/private/tmp`, the private
+program copies, the background admission build), a release-profile build on either
+system, kernels before 6.3.
 
 ## X4 · The web process confined on Linux (in work)
 

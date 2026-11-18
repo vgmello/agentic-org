@@ -783,14 +783,27 @@ everything. The cases that matter run as the service user:
   root-owned path closes this; the container image already does.
 - **Impersonate the host to a command.** On Linux the `agentic-org` command cannot
   authenticate `host.sock`: a same-user process can bind its own socket at that path.
-  The command then talks to the impostor, which can show it anything and capture what
-  the person types, but receives no credential the real host would accept, because
-  sign-in is approved in the browser.
+  The command then talks to the impostor, which can show it anything (a false
+  registration link, for example) and capture what the person types. It receives no
+  credential the real host would accept, because sign-in is approved in the browser:
+  a command never sends a password or a recovery secret to a host it knows only by
+  its user (enforced in the command since X2's review; before, only the missing Linux
+  presence adapter kept the recovery command from sending the administrator's
+  password).
 - **Trace or alter what the person runs**: the `agentic-org` command, and agent
   processes, are ordinary dumpable processes. The host, the workers and the web
-  process are not (section 3.1).
-- **Connect to `host.sock`.** Admission is by UID only; nothing is granted without a
-  session the person approved in the browser.
+  process are not (section 3.1). The host makes itself non-dumpable as the first act
+  of `serve`; a process that opened the host's `/proc/<pid>/mem` in the instant after
+  the `exec` and before that call keeps its descriptor (measured), which adds nothing
+  to what this user can already read.
+- **Connect to `host.sock`.** Admission is by UID only. With one exception, nothing is
+  granted without a session the person approved in the browser. The exception is the
+  one initial registration link (`admin.link.initial`,
+  [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md)): setup
+  asks for it before any account exists, so on Linux any process of the service user
+  that names the setup operation, which the setup record holds, can take it, once.
+  That user can also write the host's registry directly, so the link gives it nothing
+  more.
 - **Stop the service**: kill or stop the host or its children. This denies service and
   exposes nothing; recovery is as after a crash.
 - **Make the web process refuse to start** on a kernel without Landlock or under a
