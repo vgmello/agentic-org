@@ -78,7 +78,11 @@ flusher, the file materializer, rebuild, the change stream, the `Engine` and
 property harness. It exists because every family crate (`org-work`, `org-mailbox`) and
 the office's own families must name `Change` and `Ack` (ADR-0014 decision 8 puts each
 operation's class in the crate that owns it), and they cannot depend on `org-office`.
-It depends on `org-platform` for flushes and exclusive renames and on no family.
+It depends on no family. Its full flush and exclusive rename are today's primitives
+from `store/acceptance/durable.rs`, carried into `files.rs` as they are: one small
+platform-conditional function (`F_FULLFSYNC` on macOS), listed on the Linux track's
+check allowlist in place of `durable.rs`. When X1b lands, `org-platform`'s `fs` takes
+that function over and `org-store` gains that dependency; B1a does not wait for it.
 
 **No adapter crate.** The SQLite engine is the module `org-office/src/store/sqlite/`, the
 only office module that names `rusqlite`. A separate crate would have to depend on
@@ -110,7 +114,7 @@ module grows.
 **Dependencies** point from composition to families to the foundation:
 
 ```text
-apps/agentic-org-office ─> org-office ─┬─> org-store ─> org-platform
+apps/agentic-org-office ─> org-office ─┬─> org-store    (─> org-platform once X1b lands)
                                        ├─> org-work ────> org-store, org-docs, org-proto
                                        ├─> org-mailbox ─> org-store, org-proto
                                        ├─> org-docs
@@ -132,7 +136,7 @@ crates/org-store/src/
   writer.rs         # the single writer: queue, batch, decide, apply, append, commit, reply
   journal.rs        # segments, entry frame, chain, anchor, checkpoint, recovery scan
   flusher.rs        # group flush, durable replies, materialization, consumer cursors
-  files.rs          # atomic, flushed publication under durable/ (org-platform fs)
+  files.rs          # atomic, flushed publication under durable/; full flush, exclusive rename
   receipts.rs       # the receipt family: files, projector, lookup before decide
   sequences.rs      # origin streams and feed positions
   changes.rs        # the change stream
@@ -497,9 +501,9 @@ Markdown record goes through `org-docs`'s source-preserving editor over the byte
 **How a file is written.** The flusher writes the final state of each path touched
 since the materialized mark, never intermediate versions:
 
-1. Write a temporary file in the same directory and flush its data (`org-platform`'s
-   `fs::full_sync`).
-2. `Create`: exclusive rename (`rename_noreplace_at`); existing identical bytes are a
+1. Write a temporary file in the same directory and flush its data (the full flush
+   of `files.rs`, section 2).
+2. `Create`: exclusive rename; existing identical bytes are a
    no-op, other bytes stop the office. `Put` and `Remove`: the current bytes must hash
    to the `previous_sha256` of the first pending change to that path, or to a later
    version in the retained entries (a crash mid-round); then rename over, or unlink.
@@ -763,7 +767,8 @@ uses them yet.
   flush; there are no capture triggers and no per-read verification.
 - **The publication primitives** of `store/acceptance/durable.rs` (path validation,
   directory checks, temporary file, flush, exclusive rename): into `org-store`'s
-  `files.rs`, over `org-platform`'s `fs` once X1b has moved the flush there.
+  `files.rs` as they are in B1a; X1b later moves the platform-conditional flush into
+  `org-platform`'s `fs`.
 - **The batching rules of ADR-0002 decision 3** and their tests in `store.rs` (one failing
   request fails alone; when SQLite ends the transaction the others run again; a failed
   commit fails every request): ported to `org-store`'s writer suite.

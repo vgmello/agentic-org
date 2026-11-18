@@ -318,7 +318,11 @@ onto it and deletes the old store; B1c measures and guards it.
   reopens to the entry wholly absent or wholly present, with no decision run twice;
   deleting the projection and reopening rebuilds an equal one; a committed write is
   answered while a flush is held back (STORE-1 to STORE-5).
-- **Needs:** X1b (`org-platform`'s `fs`: `full_sync` and `rename_noreplace_at`). Not A1.
+- **Needs:** nothing. B1a carries the full-flush and exclusive-rename primitives of
+  `store/acceptance/durable.rs` into `org-store`'s `files.rs` as they are (one small
+  platform-conditional function, on the Linux check's allowlist in place of
+  `durable.rs`), and uses `org-platform`'s `fs` instead only if X1b has already landed.
+  Milestone one's path does not wait for Track X. Not A1.
 
 ### B1b · The office runs on the new store
 
@@ -772,7 +776,9 @@ half of LNX-6 run).
   checks, the default locations, process supervision and socket peer checks of all
   four executables come from `org-platform`.
 - **Build:** the `fs`, `dirs`, `process` and `socket` modules with today's macOS code
-  and today's Linux code moved in unchanged and refusing adapters elsewhere;
+  and today's Linux code moved in unchanged and refusing adapters elsewhere (the flush
+  of `store/acceptance/durable.rs`, or of `org-store/src/files.rs` once B1a has carried
+  it there);
   `org-proto/src/location.rs` keeps only path composition; `org-supervise`'s
   `compile_error!` goes; the allowlist shrinks by every moved file.
 - **Read:** [Linux host design](design/linux-host.md) section 4.
