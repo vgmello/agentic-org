@@ -19,7 +19,7 @@ org-socket = { path = "../../crates/org-socket" }
 org-release = { path = "../../crates/org-release" }
 # process handoff lines and host typed requests (Serialize/Deserialize).
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 # host::Reply and host request lines: control replies can carry the listener's TLS key.
 zeroize = "=1.9.1"
 sha2.workspace = true

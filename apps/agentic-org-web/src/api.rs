@@ -97,14 +97,17 @@ pub struct Credentials {
 #[serde(deny_unknown_fields)]
 struct SignInBody {
     login: String,
+    #[serde(deserialize_with = "crate::secret_json::password")]
     password: Password,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RegisterBody {
+    #[serde(deserialize_with = "crate::secret_json::link")]
     link: LinkToken,
     login: String,
+    #[serde(deserialize_with = "crate::secret_json::password")]
     password: Password,
 }
 
@@ -147,21 +150,39 @@ fn result(value: impl serde::Serialize) -> ApiReply {
     )
 }
 
-/// web-api-v1 §5: 401 for no valid session, 404 for a link that doesn't redeem, the
-/// host refusal's own class (400 with `field`/`rule`, 429 with `retry_after_ms`),
-/// 503 for everything else.
+/// web-api-v1 §5: 401 for no valid session, 404 for a link that doesn't redeem, a
+/// credential rule refusal (400 with `field`/`rule`), a rate limit (429 with
+/// `retry_after_ms`), 503 for everything else. Only `code`, `field`, `rule` and
+/// `retry_after_ms` come from the host; the messages are this process's own, so the
+/// web-to-host contract's wording never reaches the browser. An `invalid_request`
+/// without a rule pair is a web-to-host fault, not the browser's: 503.
 fn failure(failure: Failure) -> ApiReply {
     match failure {
         Failure::Denied => signed_out(),
         Failure::NotFound => not_found(),
         Failure::Refused(error) => {
-            let error = GatewayError::from(*error);
-            let Some(status) = error
-                .http_status(false)
-                .and_then(|s| StatusCode::from_u16(s).ok())
-            else {
-                return unavailable();
+            let host = GatewayError::from(*error);
+            let (status, mut error) = match (host.code, host.field, host.rule) {
+                (GatewayErrorCode::InvalidRequest, Some(field), Some(rule)) => {
+                    let mut error = GatewayError::new(
+                        GatewayErrorCode::InvalidRequest,
+                        "This doesn't meet the sign-in rules.",
+                    );
+                    (error.field, error.rule) = (Some(field), Some(rule));
+                    (StatusCode::BAD_REQUEST, error)
+                }
+                (GatewayErrorCode::RateLimited, _, _) if host.retry_after_ms.is_some() => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    GatewayError::new(
+                        GatewayErrorCode::RateLimited,
+                        "Too many attempts. Try again later.",
+                    ),
+                ),
+                _ => return unavailable(),
             };
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                error.retry_after_ms = host.retry_after_ms;
+            }
             ApiReply::json(
                 status,
                 serde_json::to_value(ReadResponse::<()>::Error(error))
@@ -219,8 +240,8 @@ fn view(instance_id: &str, session: BrowserSession) -> Result<SessionView, Failu
                 office_ids: o.office_ids,
             })
             .collect(),
-        server_time_ms: Milliseconds::new(session.server_time_ms)
-            .map_err(|_| Failure::Unavailable)?,
+        // The reply's time, not the record's: a cached session may be hours old.
+        server_time_ms: Milliseconds::new(now_ms()).map_err(|_| Failure::Unavailable)?,
         idle_expires_at: rfc3339_millis(session.idle_expires_at_ms),
     })
 }

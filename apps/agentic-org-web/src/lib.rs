@@ -31,6 +31,7 @@ mod origin;
 pub mod path;
 pub mod process;
 mod release;
+mod secret_json;
 pub mod service;
 pub mod session;
 mod static_ui;

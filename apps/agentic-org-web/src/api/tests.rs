@@ -316,7 +316,7 @@ fn sign_in_sets_the_pair_and_caches_the_session() {
     let result = &answer.body["result"];
     assert_eq!(result["instance_id"], INSTANCE);
     assert_eq!(result["account"], json!({"id":"A1","login":"alex"}));
-    assert_eq!(result["server_time_ms"], 1_794_312_000_000u64);
+    assert_fresh(&result["server_time_ms"]);
     assert!(result["idle_expires_at"].as_str().unwrap().ends_with('Z'));
     assert!(result.get("session_id").is_none());
 
@@ -612,19 +612,84 @@ fn sign_out_ends_the_session_and_drops_the_warm_cache_entry() {
     );
 }
 
-/// Host refusals keep their web class and safe fields; nothing else leaks.
+/// A reply's `server_time_ms` is this process's clock at reply time, not a stored
+/// record's (the scripted record says 1_794_312_000_000, days before any test run).
+fn assert_fresh(time: &Value) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let time = time.as_u64().unwrap();
+    assert!(time <= now && now - time < 60_000, "{time} vs {now}");
+}
+
+/// An escaped password reaches the host as the text the browser typed.
+#[test]
+fn an_escaped_password_is_sent_as_typed() {
+    let (gateway, calls) = gateway(default_script());
+    let body = r#"{"login":"alex","password":"q\"uote\\ \u00e9"}"#;
+    let answer = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/session/sign-in",
+        body,
+        None,
+        &[],
+    );
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    assert_eq!(calls.last()["password"], "q\"uote\\ é");
+}
+
+/// A cache hit answers with the time of the reply, not the validation it reuses.
+#[test]
+fn a_cached_session_reports_the_current_server_time() {
+    let (gateway, calls) = gateway(default_script());
+    let pair = sign_in(&gateway).pair();
+    let view = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/session",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(view.status, StatusCode::OK);
+    assert_eq!(calls.methods(), ["session.sign_in"]);
+    assert_fresh(&view.body["result"]["server_time_ms"]);
+}
+
+/// Host refusals keep their web class and only `code`, `field`, `rule` and
+/// `retry_after_ms`; the message is the web process's own, never the host's.
 #[test]
 fn host_refusals_map_to_their_http_class_and_set_no_cookie() {
     for (error, status, expected) in [
         (
-            json!({"code":"invalid_request","message":"login rule","field":"login","rule":"taken"}),
+            json!({"code":"invalid_request","message":"host rule text","field":"login","rule":"taken"}),
             StatusCode::BAD_REQUEST,
-            json!({"code":"invalid_request","field":"login","rule":"taken"}),
+            json!({"code":"invalid_request","message":"This doesn't meet the sign-in rules.","field":"login","rule":"taken"}),
         ),
         (
-            json!({"code":"rate_limited","message":"slow down","retry_after_ms":1500}),
+            json!({"code":"rate_limited","message":"host rate text","retry_after_ms":1500}),
             StatusCode::TOO_MANY_REQUESTS,
-            json!({"code":"rate_limited","retry_after_ms":1500}),
+            json!({"code":"rate_limited","message":"Too many attempts. Try again later.","retry_after_ms":1500}),
+        ),
+        // A pair this build can't name stays a rule refusal (`unknown`, forward
+        // compatible) and still never carries the host's names or message.
+        (
+            json!({"code":"invalid_request","message":"invalid origin"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"code":"unavailable","message":"Service unavailable."}),
+        ),
+        (
+            json!({"code":"invalid_request","message":"the params don't fit this method","field":"origin","rule":"shape"}),
+            StatusCode::BAD_REQUEST,
+            json!({"code":"invalid_request","message":"This doesn't meet the sign-in rules.","field":"unknown","rule":"unknown"}),
+        ),
+        // A web-to-host contract fault: `invalid_request` without a rule pair is 503.
+        (
+            json!({"code":"invalid_request","message":"the params don't fit this method","field":"login"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"code":"unavailable","message":"Service unavailable."}),
         ),
         (
             json!({"code":"not_authorized","message":"no"}),
@@ -655,7 +720,17 @@ fn host_refusals_map_to_their_http_class_and_set_no_cookie() {
             for (key, value) in expected.as_object().unwrap() {
                 assert_eq!(&answer.body["error"][key], value, "{error} {target}");
             }
-            assert!(!answer.body.to_string().contains("/private"));
+            let text = answer.body.to_string();
+            for host_text in ["/private", "host rule", "host rate", "origin", "params"] {
+                assert!(!text.contains(host_text), "{text}");
+            }
+            let fields = answer.body["error"].as_object().unwrap();
+            assert!(
+                fields
+                    .keys()
+                    .all(|k| expected.get(k).is_some() || k == "message"),
+                "{text}"
+            );
             assert!(answer.headers.get(header::SET_COOKIE).is_none());
         }
     }
