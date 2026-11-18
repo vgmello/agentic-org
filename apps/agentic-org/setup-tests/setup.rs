@@ -7,10 +7,44 @@ use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 const BIN: &str = env!("CARGO_BIN_EXE_agentic-org");
+
+/// On macOS a new socket or terminal descriptor gets close-on-exec in a second step after
+/// it is created, so a child spawned by a parallel test in between inherits it. A probe
+/// listener inherited by a long-lived service child keeps its port held, and the setup that
+/// asked for that port then refuses it as in use. Every descriptor this process creates
+/// without atomic close-on-exec, and every spawn, happens under this lock.
+static DESCRIPTORS: Mutex<()> = Mutex::new(());
+
+fn descriptors() -> MutexGuard<'static, ()> {
+    DESCRIPTORS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Spawns under the descriptor lock; the caller waits outside it.
+fn spawn(command: &mut Command) -> Child {
+    let _held = descriptors();
+    command.spawn().unwrap()
+}
+
+/// `Command::output`, spawned under the descriptor lock. Unlike `output`, it always sets
+/// stdin to null and pipes stdout and stderr, overriding any stdio the caller set.
+fn output(command: &mut Command) -> Output {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    spawn(command).wait_with_output().unwrap()
+}
+
+/// A loopback listener, created under the descriptor lock so no child inherits it.
+fn listen(port: u16) -> std::io::Result<std::net::TcpListener> {
+    let _held = descriptors();
+    std::net::TcpListener::bind(("127.0.0.1", port))
+}
 
 struct Account {
     base: PathBuf,
@@ -50,12 +84,14 @@ impl Account {
 
     /// Runs with stdout and stderr piped: not a terminal.
     fn run(&self, args: &[&str]) -> Output {
-        self.command(args).output().unwrap()
+        output(&mut self.command(args))
     }
 
     /// Runs with stdout on a pseudo-terminal, as at a person's terminal (stdin stays
     /// closed, so setup asks no question). Returns success, stdout and stderr.
     fn run_in_terminal(&self, args: &[&str]) -> (bool, String, String) {
+        // Held from openpty until the spawn, so no other child inherits the terminal.
+        let held = descriptors();
         let (mut master, mut slave) = (-1, -1);
         // SAFETY: openpty only writes the two descriptors; no name, termios or size.
         let opened = unsafe {
@@ -82,6 +118,7 @@ impl Account {
             .stdout(Stdio::from(slave))
             .stderr(Stdio::piped());
         let mut child = command.spawn().unwrap();
+        drop(held);
         drop(command);
         let (send, receive) = std::sync::mpsc::channel();
         let mut reader = std::fs::File::from(master);
@@ -165,11 +202,7 @@ fn text(output: &Output) -> (String, String) {
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    listen(0).unwrap().local_addr().unwrap().port()
 }
 
 fn alive(pid: u32) -> bool {
@@ -273,7 +306,7 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
 
     // While the service is stopped, another program takes the saved port: setup names the
     // port and the way out instead of starting a service that cannot serve it.
-    let busy = std::net::TcpListener::bind(("127.0.0.1", port.parse::<u16>().unwrap())).unwrap();
+    let busy = listen(port.parse().unwrap()).unwrap();
     let held = account.run(&["setup"]);
     let (held_out, held_err) = text(&held);
     assert!(!held.status.success(), "{held_out}");
@@ -344,7 +377,7 @@ fn a_named_instance_skips_ports_other_instances_saved() {
 #[test]
 fn a_named_instance_takes_the_first_free_port_from_7421() {
     let account = Account::new();
-    let held = std::net::TcpListener::bind(("127.0.0.1", 7421)).ok();
+    let held = listen(7421).ok();
     let output = account.run(&["setup", "--name", "lab"]);
     let (out, err) = text(&output);
     assert!(output.status.success(), "stdout:\n{out}\nstderr:\n{err}");
@@ -380,7 +413,7 @@ fn a_named_instance_takes_the_first_free_port_from_7421() {
 #[test]
 fn an_occupied_port_is_refused_and_nothing_is_saved() {
     let account = Account::new();
-    let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let busy = listen(0).unwrap();
     let port = busy.local_addr().unwrap().port().to_string();
     let output = account.run(&["setup", "--name", "lab", "--port", &port]);
     let (out, err) = text(&output);
@@ -422,13 +455,13 @@ fn satellite_flags_and_unknown_arguments_are_refused_before_any_change() {
 #[test]
 fn a_release_style_base_must_be_absolute() {
     let account = Account::new();
-    let output = Command::new(BIN)
-        .args(["setup"])
-        .env_clear()
-        .env("ORG_DEV_ACCOUNT_BASE", "relative/base")
-        .env("ORG_DEV_SERVICE_DIR", account.base.join("svc"))
-        .output()
-        .unwrap();
+    let output = output(
+        Command::new(BIN)
+            .args(["setup"])
+            .env_clear()
+            .env("ORG_DEV_ACCOUNT_BASE", "relative/base")
+            .env("ORG_DEV_SERVICE_DIR", account.base.join("svc")),
+    );
     assert!(!output.status.success());
     assert!(text(&output).1.contains("absolute"), "{:?}", text(&output));
 }
@@ -444,16 +477,16 @@ fn the_registered_account_fixture_serves_with_serve_name() {
     let registered =
         org_host::setup_flow::fixture::registered_account(&app, None, free_port()).unwrap();
     assert!(registered.root.starts_with(&app));
-    let mut child = Command::new(BIN)
-        .args(["serve", "--name", "default"])
-        .env_clear()
-        .env("HOME", &account.base)
-        .env("ORG_DEV_ACCOUNT_BASE", &app)
-        .env("ORG_OFFICE_DEV_KEY_DIR", account.base.join("keys"))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut child = spawn(
+        Command::new(BIN)
+            .args(["serve", "--name", "default"])
+            .env_clear()
+            .env("HOME", &account.base)
+            .env("ORG_DEV_ACCOUNT_BASE", &app)
+            .env("ORG_OFFICE_DEV_KEY_DIR", account.base.join("keys"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while !registered.host_socket().exists() {
         assert!(
