@@ -104,6 +104,7 @@ crates/
   org-proto/                         # Local request and event contracts
   org-office-launch/                 # Private host/worker launch contract (the verified rendezvous)
   org-client/                        # Local IPC client
+  org-command/                       # The command contract: table, parser, envelope, help, schemas, contract tests
   org-platform/                      # Every OS difference: platform contracts and their macOS, Linux and refusing adapters
   org-socket/                        # Portable Unix-socket I/O: ticked reads, descriptor passing
   org-runtime/                       # Vendor runtime contract and conformance support

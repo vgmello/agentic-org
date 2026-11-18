@@ -76,9 +76,9 @@ Options every command takes:
 | --- | --- | --- |
 | `--format json\|yaml\|compact` | all | How the answer is printed (2.3). Default `json` |
 | `--fields <a,b,c>` | all | Keep only these fields of `data`, for one record or for each item of a list; a dot reaches into a nested field. The record's own field order is kept |
-| `--limit <n>`, `--cursor <token>` | lists | Page size (default 20) and where to continue; the next token is `meta.next_cursor` |
+| `--limit <n>`, `--cursor <token>` | lists | Page size, 1 to 200 (default 20), and where to continue; the next token is `meta.next_cursor`. A size outside 1 to 200 is `invalid_request` |
 | `--schema` | all | Print the command's input and output schema and stop (2.5) |
-| `--help` | all | Print the command's flags in plain text and stop |
+| `--help` | all | Print the command's flags in plain text and stop. It is read only where a flag is read: after a flag that takes a value it is that flag's value (`--body --help` gives the body the text `--help`). Where it is read, help is printed whatever else is wrong with the line |
 | `--json '<object>'` | commands with input | The whole input, as one JSON object |
 | `--input-file <path>`, `--stdin` | commands with input | The content, read as bytes; or, with `--input-format json` or `yaml`, the whole input (2.2) |
 | `--dry-run` | writes | Decide and report; change nothing (2.6) |
@@ -93,7 +93,9 @@ and they combine:
 
 - **Flat flags** for short values: `--status in_progress`.
 - **`--json '<object>'`** for the whole object, or the part the flags do not give. A
-  field given both ways with different values is `invalid_request`.
+  field given both ways with different values is `invalid_request`. So is a name given
+  twice in one object, in `--json`, in a JSON file or in YAML: no reader is left to
+  choose which of the two values counts.
 - **`--input-file <path>` or `--stdin`** for the command's **content field**. A command
   that carries long text declares exactly one content field: a message's body, a
   task's description, a comment's body. The bytes are taken unchanged as UTF-8, so
@@ -106,6 +108,19 @@ and they combine:
   structure, such as an ask with several questions, is given without quoting anything
   for the shell. The default, `text`, is the content field.
 
+**What a command reads is bounded.** Text and JSON from `--input-file` or `--stdin`,
+and the value of `--json`, are at most 1 MiB (1,048,576 bytes). YAML is at most 64 KiB
+(65,536 bytes), the bound of the YAML reader. Input over the limit is `invalid_request`
+with the limits in the hint, and nothing is sent. The limit is part of the `Sources`
+contract: the library asks for at most that many bytes, and an implementation reads no
+more than one byte past it, however long the file or the stream is. `--help` states the
+numbers.
+
+**A whole number is the same however it is given.** A flag and `--json` read the same
+range (a signed or an unsigned 64-bit integer), and a number written with no
+fractional part, such as `2.0` in JSON or YAML, is the integer 2, as JSON Schema's
+`integer` says. The office receives 2.
+
 `agent-os` reads the file itself, as the agent, inside the agent's isolation. The
 content travels in the request. **The office never opens a path that a caller names.**
 A command reads standard input only when `--stdin` is given, and no command ever
@@ -115,7 +130,7 @@ prompts.
 
 Every command prints exactly one envelope on standard output and nothing else: no
 colour, no progress, no second line. There are two stated exceptions: `--help` prints
-plain text, and `--format compact` prints `data` alone on success.
+plain text, and `--format compact` prints `data` on success, without the envelope.
 
 ```json
 {"ok":true,"data":{"reference":"T-B37","status":"in_progress","revision":4},"meta":{"status":"completed","operation_id":"0193…","ack":"committed"},"error":null}
@@ -128,9 +143,19 @@ plain text, and `--format compact` prints `data` alone on success.
 - **`ok`** is true when the command did what was asked or reached one of the stated
   waiting outcomes below. It is false when the command was refused or failed.
 - **`data`** is the result: one record, or a list. Field order is fixed and lists have
-  a stated order, so the same state prints the same bytes.
+  a stated order, so the same state prints the same bytes. **`data` is exactly what
+  the command's row declares, in every format.** A field the office answers that the
+  row does not declare is dropped, at every depth (a field the row declares as open
+  JSON is kept whole). An answer without a required field, or with a field of the
+  wrong type, is not printed: the command fails with `unavailable` and exit code 1,
+  and the message names the field. For a write the hint says the change may have been
+  made, and `meta.operation_id` is reported. A row declares every field `data` can
+  hold under any `meta.status`; a field only one outcome carries is optional. The
+  contract tests hold an office to the same rule and fail on an undeclared or a
+  missing field, so the drop is a guard, not a way to ship one. An office leaves out
+  an optional field that has no value; `null` is a value only in a field of open JSON.
 - **`meta`** carries what is about the call, not the record: `status` on every
-  answer; `operation_id` and `ack` (`committed` or `durable`) for a write; `revision`
+  answer with `ok: true`; `operation_id` and `ack` (`committed` or `durable`) for a write; `revision`
   when the write produced one; `next_cursor` for a list; `dry_run: true` for a dry run.
 - **`meta.status`** is one of:
 
@@ -146,9 +171,30 @@ plain text, and `--format compact` prints `data` alone on success.
   an ask in ADR-0020.
 - **Formats.** `json` prints the envelope on one line. `yaml` prints the same envelope
   as YAML, with long text as block text; it is the format for reading a document's
-  body. `compact` prints `data` only: one line for each item of a list, the chosen
+  body. `compact` prints `data`: one line for each item of a list, the chosen
   fields separated by tabs, or `name: value` lines for one record. A failure prints the
   JSON envelope in every format.
+- **A `compact` value is one cell on one line.** Text prints as it is. It prints as a
+  JSON string when it is empty (`""`), is the word `null`, starts with a double quote,
+  reads as `meta:` (in any case, after white space or characters that do not show), or holds a tab, a new line, another control character or a Unicode line or paragraph
+  separator (U+2028, U+2029); those characters are then written as escapes, inside a
+  list or an object too. `null` prints as `null`. In a list, a field an item does not
+  have is an empty cell, so empty text, `null` and an absent field are three different
+  cells. A number, `true`, `false`, a list and an object print as JSON; text that
+  reads like a number, `true`, `false`, a list or an object is not told apart from
+  that value, and the schema says which it is. A name that is not ASCII letters, digits, `_`, `-` and `.` prints as a JSON string,
+  and so does a field named `meta` in any case.
+- **`compact` prints `meta` only when the caller cannot act without it.** When
+  `meta.status` is not `completed`, or `meta.next_cursor` is present, the last line is
+  `meta: ` followed by `meta` as one line of JSON. Otherwise `data` is printed alone.
+  So a page with another after it ends with its cursor, and a `suspended` or
+  `gate_required` answer says so. A line that starts with a bare `meta:` is only ever
+  this line: a field named `meta` prints as `"meta": `, and text that reads as
+  `meta:` prints as a JSON string, so no record or cell begins with the bytes `meta: `. The
+  guarantee is on bytes, not on what shows: text that only looks like it (a zero-width joiner or
+  a direction mark in front, an invisible character inside the word, a letter from another
+  script) prints as it is. A reader finds the call's line by matching the exact bytes `meta: `
+  at the start of the last line, never by how a line looks.
 - **Exit code.** 0 when `ok` is true, 1 when it is false, 2 when the command line
   itself could not be read. The envelope is printed in all three cases. The command
   line is read first: a line that cannot be read exits 2 without contacting the office,
@@ -230,6 +276,17 @@ This is the requirement's `grant check`. It is not a second command.
   `operation_reused`. A write that carries no key is given one by `agent-os`, reported
   in `meta.operation_id` on success and on failure. How a key becomes the stored
   operation ID is B2's decision.
+- **Where the key comes from.** The library makes no randomness. It owns a contract,
+  `KeySource`, that the executable supplies, and asks it for one key for a write that
+  is not a dry run and carries no `--idempotency-key`, after the command line is read
+  and before the office is called. A read, a dry run, `--help`, `--schema` and a line
+  that cannot be read ask for none. The key goes to the office with the request.
+  `meta.operation_id` is the operation ID the office reports, and the key when the
+  office reports none. For `unavailable` and `not_ready` the library puts the key in
+  `retry_with` as `idempotency-key`, beside what the office already said to change;
+  the key there is always the one the request carried. A
+  key source that gives something that is not a key fails the command before anything
+  is sent.
 - **`--if-match`** is the record's revision as the caller last read it. Where the data
   contract requires an expected revision (assignment, for one), the flag is required. A
   stale revision is `conflict`, and `retry_with` carries the current one.
@@ -624,14 +681,27 @@ capability of `org-platform`, on both systems.
 ## 7. Where the code lives
 
 - **The shared library** holds the table, the parser, the envelope, the formats, the
-  schemas and the client side of the session mode. It depends on `org-proto` and
-  `org-client`, and on nothing that knows a database or an operating system. Whether it
-  is a module of `org-client` or a crate of its own is K1's decision.
+  schemas and the client side of the session mode. It is the crate `crates/org-command`
+  (K1's decision: a crate of its own, so that the contract and its tests need no socket).
+  It depends on `org-proto` for the error codes and on `org-docs` for the bounded YAML
+  reader, and on nothing that knows a database or an operating system. It owns three
+  contracts that the executable supplies: `Office`, the one call a command makes;
+  `Sources`, where `--input-file` and `--stdin` read from, each read bounded (2.2); and
+  `KeySource`, where the key of a write that carries none comes from (2.7). The connection through
+  `org-client` is the executable's implementation of `Office` (A5), and the client side
+  of the session mode arrives with B6. The contract checks of section 8 are the crate's
+  `testkit` feature, which an increment runs on the table it adds rows to. The checks
+  take a function that makes the office to run against; the default is a stub that
+  answers each row's example. Against any office they fail when an answer holds a field
+  its row does not declare or lacks a required one.
 - **`apps/agent-os` and `apps/agentic-org`** stay thin: each chooses how the caller is
   identified and hands the arguments to the library
   ([non-negotiable 15](../architecture-non-negotiables.md)).
-- **A domain's rows** are declared beside that domain's wire types, by the increment
-  that builds the domain. Adding a command touches the table and nothing in the parser.
+- **A domain's rows** are declared in the domain's crate, beside the mapping to its
+  wire call, by the increment that builds the domain; never in `org-proto`, which
+  `org-command` depends on for the error codes and so cannot depend on it. Until
+  domain crates exist, the rows are one library module shared by both executables.
+  Adding a command touches the table and nothing in the parser.
 - **The office** owns authorization, the decision and the dry run. Its wire calls keep
   their own names.
 - **The built-in guidance** (`skill`) ships in the release as files the office reads.
@@ -641,7 +711,7 @@ capability of `org-platform`, on both systems.
 | ID | Passing evidence |
 | --- | --- |
 | CLI-1 | For every row of the table: a positional argument, an unknown flag and a missing required flag are each refused with `invalid_request`, a hint and exit code 2, and nothing reaches the office |
-| CLI-2 | For every row, standard output in `json` and `yaml` is exactly one envelope that validates against the envelope's schema, and `json` is one line; `compact` prints `data` alone on success and the JSON envelope on failure; `--help` prints text |
+| CLI-2 | For every row, standard output in `json` and `yaml` is exactly one envelope that validates against the envelope's schema, and `json` is one line; `compact` prints `data` on success, with a last `meta:` line only when the command did not complete or there is another page (2.3), and the JSON envelope on failure; `--help` prints text |
 | CLI-3 | Every `--schema` output is valid JSON Schema, and every row's example input and recorded output validate against it |
 | CLI-4 | `--dry-run` on every writing row leaves the store's positions, numbers, files and receipts unchanged; it reports the refusal the real call reports, including one raised while applying to the projection; with `--idempotency-key` it is refused |
 | CLI-5 | The same `--idempotency-key` twice makes one change and returns the same answer; the same key with other input is `operation_reused` |
