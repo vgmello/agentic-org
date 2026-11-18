@@ -50,7 +50,9 @@ inherited, and what an agent receives. The records are owned by
    - **How to use the tools.** Guidance for the product's own commands ships with
      the product as built-in skills, not as organization documents. An agent reads
      them with `agent-os skill list` and `skill read`. None of it is served as an
-     MCP tool ([agent command line](agent-os-command-line.md), section 2.10).
+     MCP tool ([agent command line](agent-os-command-line.md), section 2.10). How
+     an agent is to behave in the product is one built-in text, the
+     [agent instructions](agent-instructions.md), which every agent receives first.
    - **Field name.** The record field is `overridable`, default `true`.
 5. **Code branch bases.** Every project-repository association has a required
    `integration_branch`. A task targets zero or more repositories, so branch, base

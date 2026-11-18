@@ -30,8 +30,8 @@ when the turn ends.
      lead.
    - A message sent by an agent that mentions the recipient by name.
    - An answer to a question the recipient itself asked, whoever answers: a reply in
-     the question's thread, or a message the watch judged to answer it
-     ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md)). The turn
+     the question's thread, or a message the channel's watcher is confident responds to
+     it ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md)). The turn
      continues the asker's session.
 
    Nothing else does: not an announcement, not `@here`, not an ordinary post or an

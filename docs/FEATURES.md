@@ -29,11 +29,11 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | --- | ---: |
 | Done | 9 |
 | In progress | 62 |
-| Planned | 56 |
+| Planned | 57 |
 | Blocked | 1 |
 | Deferred | 42 |
 | Needs verification | 0 |
-| **Total** | **170** |
+| **Total** | **171** |
 
 ## Feature tables
 
@@ -183,7 +183,7 @@ Full requirements: [Chat and agent messaging](specs/chat-ux.md).
 | [ ] | FC-078 | [Drafts, history bounds and conversation performance](specs/chat-ux.md) | In progress | Sample drafts/history and bounded UI behavior exist; durable retention/pagination and real conversation performance remain. |
 | [ ] | FC-079 | [Directed asks, answers and withdrawals](specs/chat-ux.md) | In progress | CLI asks and replies and sample cards exist; protected-source resolution and withdrawal remain. An ask carries one to eight questions answered together, by a person in one form or an agent in one reply (owner, 2026-11-18; CHAT-44). [REQ-04](specs/req-04-channel-messaging-and-question-components.md): the `ask_user` schema with choice, yes/no and free-text components, rendered with shadcn-svelte and Bits UI in the product's own chat. A default value is preselected, is handed to the agent with the timeout of an ask that is not required, and never answers a required ask. |
 | [ ] | FC-166 | [Required asks: wait with a timeout, suspend the agent, resume on the answer](adr/0020-required-asks-suspend-and-resume.md) | Planned | An ask has no `required` field, no office timer for a suspended asker and no resume on an answer today; criteria ASK-1 to ASK-9 are unmet. Needs the agent launch path (FC-101). |
-| [ ] | FC-170 | [An agent's inbox holds what is addressed to it; a channel question is watched for its answer](adr/0024-a-channel-question-is-watched-for-its-answer.md) | Planned | Owner decision 2026-11-18. Today a message has no mention record and no reason for being in an inbox, and nothing matches a channel message to a question. Remaining: the four inbox reasons and mentions (B6; WATCH-1, 2, 9); the watch and its tool-less model run through the copilot's runtime port, with bounds, cost attribution and feedback into the asker's session (C9; WATCH-3 to WATCH-8). |
+| [ ] | FC-170 | [An agent's inbox holds what is addressed to it; each channel has a watcher that feeds responses back](adr/0024-a-channel-question-is-watched-for-its-answer.md) | Planned | Owner decision 2026-11-18. Today a message has no mention record and no reason for being in an inbox, and nothing matches a channel message to a question. Remaining: the four inbox reasons, and mentions read from `@handle` (B6; WATCH-1, 2, 9); subscriptions, the per-channel pass on a cheaper model through the copilot's runtime port, bounds, cost division, `channel summarize` and the accuracy measurement (C9; WATCH-3 to WATCH-8, 10, 11). |
 | [ ] | FC-080 | [Atomic task handoff and system notices](specs/chat-ux.md) | In progress | Sample recipient-only handoffs/notices exist; no atomic task/history/protected-message/receipt transaction. |
 | [ ] | FC-081 | [Uninterrupting delivery, pause and waiting](specs/chat-ux.md) | In progress | SQL-backed office mailbox send/inbox/read/held-wait is wired; execution-aware wake/holds/noninterrupting delivery remain. |
 | [ ] | FC-082 | [Live transport cutover with triage preservation](adr/0003-agent-messaging-office-first.md) | Deferred | Withdrawn: the development team's message queue is dropped and nothing is carried over. Not to be built. |
@@ -234,6 +234,7 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 | [ ] | FC-161 | [Selectable agent isolation with a dedicated OS user](adr/0015-agent-isolation-modes.md) | Planned | The launch contract has no isolation setting and agents share the service user; the macOS spike of decision 7 and criteria ISO-1 to ISO-9 are unmet. Includes the private agent home and the sign-in from the subscription pool (decisions 10 to 12). |
 | [ ] | FC-168 | [The agent command line: one grammar, one answer envelope, one table of commands](design/agent-os-command-line.md) | Planned | Owner requirement [REQ-08](specs/req-08-agent-os-cli-and-kernel-primitives.md), 2026-11-18. `apps/agent-os/src/main.rs` parses by hand with positional arguments, prints text unless `--json` is given and has no schema, dry run or structured error hint. Remaining: the shared command library and its contract tests (K1, CLI-1 to CLI-14; `gate`, `worktree create` and `cleanup`, and `grant check` are not commands, for the reasons in the design), then each domain's commands with the increment that builds the domain, on macOS and Linux. Process packages, the information architecture index, artifacts and the event bus wait for the owner's baseline requirements. |
 | [ ] | FC-169 | [An agent's ask or hand-off starts a turn for an idle agent](adr/0023-an-agents-ask-starts-a-turn.md) | Planned | Owner decision 2026-11-18. No agent can be launched today, and a message starts no turn. Remaining: the office starts one ordinary turn for an idle recipient of another agent's ask, hand-off or mention, or of an answer to its own question, under the hourly limit, with what started it recorded (C8, WAKE-1 to WAKE-7). Scheduled and always-on modes stay deferred (FC-104). |
+| [ ] | FC-171 | [The built-in agent instructions and their scenarios](design/agent-instructions.md) | Planned | Owner request 2026-11-18: one text, the same for every agent, on how to work in the product. A first version is written in the design, with the turn-start inputs, the skills and twelve scenarios (INSTR-1 to INSTR-12). No agent has run, so none of it is tested. Remaining: shipped with C3 as the first part of an agent's instructions; each later increment adds its section and makes its scenario pass on every supported runtime. |
 
 ### Roles, processes and retrospectives
 

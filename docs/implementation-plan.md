@@ -619,6 +619,10 @@ on the offers of design section 10.
   sections 2.5, 2.8, 2.10 and 3.1; CLI-9, 10 and 12). The check that the caller
   descends from the started process uses `org-platform` and passes on Linux in the same
   change.
+- **Instructions:** the built-in agent instructions are the first part of what an
+  agent receives, with the sections for what this build has, and their scenarios run
+  ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8 and 12). Row
+  FC-171.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
@@ -674,7 +678,7 @@ on the offers of design section 10.
   - A send is acknowledged at the local commit and relayed afterwards.
   - `agent-os` talks to the office for every call and gains the long-running mode. The
     file queue, `crates/org-spool` and the route through it are deleted.
-- **Commands:** `msg send` (with `--mention`), `reply`, `accept`, `inbox`, `read`, `list`,
+- **Commands:** `msg send` (mentions are read from `@handle` in the text), `reply`, `accept`, `inbox`, `read`, `list`,
   `done`, `defer` and `wait`, keeping today's names in the new grammar. An agent's inbox
   holds only what is addressed to it, and each entry says why it is there (ADR-0024
   decisions 5 to 7; WATCH-1, 2 and 9); `channel list`, `join` and `leave`;
@@ -748,25 +752,28 @@ on the offers of design section 10.
 - **Done when:** WAKE-1 to WAKE-7 pass.
 - **Needs:** B7, C3.
 
-### C9 · A channel question is watched for its answer
+### C9 · A channel's watcher feeds responses back to the agents who asked
 
 - **Outcome:** an agent asks a question in a channel, somebody answers in the channel
-  without replying in the thread, and the agent receives that answer in its inbox. It
-  never reads the rest of the channel.
-- **Build:** the watch, a durable local record of the asker's office; the short,
-  tool-less model run that judges whether new messages answer the question, through
-  the copilot's runtime port and a registry entry of its own; the organization's
-  watching model profile, with the feature off when none is set; the bounds (one run
-  in 30 seconds for a question, 24 hours, 200 messages, 5 open watches for an agent);
-  the cost recorded against the asker; the `answer_candidate` inbox entry linked to its
-  question.
+  without replying in the thread, and the agent receives that response in its inbox.
+  It never reads the rest of the channel. An agent that needs something from a channel
+  asks for a summary instead of loading it.
+- **Build:** first the measurement of ADR-0024 decision 17, on labelled channel
+  excerpts with the chosen watching model. Then: the subscription a channel question
+  opens; the pass, one tool-less model run for all the open questions of a channel,
+  through the copilot's runtime port and a registry entry of its own; the
+  organization's watching model profile, with the feature off when none is set; the
+  bounds; the cost divided among the askers; the `answer_candidate` inbox entry linked
+  to its question; `channel summarize`.
+- **Commands:** `channel summarize` ([command line design](design/agent-os-command-line.md), section 3.3).
 - **Read:** [ADR-0024](adr/0024-a-channel-question-is-watched-for-its-answer.md)
-  (WATCH-1 to WATCH-9), [smart features](design/smart-features.md) (how a tool-less
-  run is made and validated), [messaging](design/organization-data/15-messaging-and-chat.md),
-  [command line design](design/agent-os-command-line.md) section 3.3. Row FC-170.
+  (WATCH-1 to WATCH-11), [smart features](design/smart-features.md) (how a tool-less
+  run is made and validated), [messaging](design/organization-data/15-messaging-and-chat.md).
+  Row FC-170.
 - **Code today:** `crates/org-copilot` has the registry, rendering and validation for
   tool-less runs, wired to no model.
-- **Done when:** WATCH-3 to WATCH-8 pass. WATCH-1, 2 and 9 pass with B6.
+- **Done when:** WATCH-3 to WATCH-8, WATCH-10 and WATCH-11 pass. WATCH-1, 2 and 9
+  pass with B6.
 - **Needs:** B7, C3, C8.
 
 ---
@@ -1128,6 +1135,9 @@ each is finished.
 
 ## For every increment
 
+- An increment that gives agents a command adds or changes the section of the
+  [built-in agent instructions](design/agent-instructions.md) that tells them when to use
+  it, and makes its scenario pass.
 - Branch from `origin/v1-integration`. One writer per file at a time.
 - Before code, write the short plan for the increment: what a person can do at the end,
   the files you will own, what you will delete, and the decisions you are taking where
