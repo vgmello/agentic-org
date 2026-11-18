@@ -425,7 +425,9 @@ onto it and deletes the old store; B1c measures and guards it.
 - **Build:** the benchmark target of design section 8; the flush interval fixed from
   its results; a load test of the flush bound; a CI regression check; the wording of
   documents 06 and 11 and the ADRs checked for engine mechanisms; the trigger and
-  generated-column constraints listed in words in schema coverage.
+  generated-column constraints listed in words in schema coverage; a SQLite checkpoint
+  that keeps failing after each round is made visible (today the flusher drops its
+  error and leaves the log to the next round, so a log that grows is not reported).
 - **Read:** [office store design](design/office-store.md) sections 8 and 9;
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 7 and
   ACK-2, ACK-3, ACK-5 to ACK-7; [ADR-0018](adr/0018-storage-engine-independence.md)

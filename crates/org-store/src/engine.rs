@@ -47,7 +47,9 @@ pub trait Engine: Send + Sync + 'static {
     /// stays open (a write-ahead log to fold into its file). The flusher calls it after
     /// each round that wrote files and set the mark, before anyone waiting for that round
     /// is told: never on the writer's thread and never inside a transaction, though the
-    /// writer may hold one meanwhile. It must not wait for a reader or for the writer.
+    /// writer may hold one meanwhile. It must not wait for a reader or for the writer's
+    /// transactions; it may wait for a `replace`, which runs only at open, before the
+    /// flusher starts, so the two never meet in a running store.
     ///
     /// The store depends on nothing it does, so it returns nothing: an engine whose
     /// upkeep fails leaves it for the next round. The default does nothing.
