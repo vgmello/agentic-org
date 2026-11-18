@@ -55,8 +55,8 @@ use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
     salvage_id, ApiRange, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
     ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, Organization,
-    OrganizationCreate, OrganizationCreateParams, OrganizationList, Position, Request, Response,
-    ServerMessage, Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
+    OrganizationList, Position, Request, Response, ServerMessage, Subscribe, SubscribeParams,
+    API_VERSION, MAX_FRAME_BYTES,
 };
 
 pub use error::ClientError;
@@ -64,20 +64,12 @@ pub use error::ClientError;
 /// How long a call waits for its answer unless told otherwise.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What `organization.create` gets by default. The host may hold a create up to 30 s while it
-/// starts up (and answers `not_ready` when it would take longer), so the short default would give
-/// up on a call that is going to succeed.
-pub const CREATE_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// The timeout [`Client::call`] gives a call by default: [`CREATE_TIMEOUT`] for
-/// `organization.create` (the one call that is slow by nature), [`DEFAULT_TIMEOUT`] for every
-/// other. A caller that knows better
-/// uses [`Client::call_with_timeout`].
-pub fn default_timeout(method: &str) -> Duration {
-    match method {
-        "organization.create" => CREATE_TIMEOUT,
-        _ => DEFAULT_TIMEOUT,
-    }
+/// The timeout [`Client::call`] gives a call by default: [`DEFAULT_TIMEOUT`] for every
+/// method. No call this client makes is slow by nature (an organization is created
+/// through the browser API, not through this client). A caller that knows better uses
+/// [`Client::call_with_timeout`].
+pub fn default_timeout(_method: &str) -> Duration {
+    DEFAULT_TIMEOUT
 }
 
 /// Events waiting to be read. A reader that falls this far behind loses the connection
@@ -765,14 +757,6 @@ impl Client {
         })
     }
 
-    /// `organization.create` (host): creates an organization and starts its HQ office, waiting
-    /// up to [`CREATE_TIMEOUT`] (the host may hold a create while it starts up). Check
-    /// the HQ office's `status` in the result: the organization exists even if its server
-    /// hasn't started.
-    pub fn create_organization(&self, name: &str) -> Result<Organization, ClientError> {
-        self.call::<OrganizationCreate>(&OrganizationCreateParams { name: name.into() })
-    }
-
     /// `organization.list` (host): every organization with an office on this machine.
     pub fn list_organizations(&self) -> Result<Vec<Organization>, ClientError> {
         let ListOrganizationsResult { organizations } = self.call::<OrganizationList>(&Empty {})?;
@@ -1069,6 +1053,19 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use super::*;
+    use org_proto::OfficeRestartParams;
+
+    /// A call of these tests' own: one string in (`office_id`, the
+    /// contract's one-string params), an organization out. What is tested here is the
+    /// connection (framing, queueing, timeouts), not a method the host serves.
+    struct Named;
+    type NamedParams = OfficeRestartParams;
+
+    impl Call for Named {
+        const METHOD: &'static str = "test.named";
+        type Params = NamedParams;
+        type Result = Organization;
+    }
 
     #[test]
     fn the_office_home_is_the_override_or_the_systems_base_for_an_absolute_home() {
@@ -1309,13 +1306,12 @@ mod tests {
     }
 
     #[test]
-    fn a_request_has_ten_seconds_unless_its_kind_is_slow_by_nature() {
+    fn every_request_has_ten_seconds_by_default() {
         assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(10));
         assert_eq!(default_timeout("hello"), DEFAULT_TIMEOUT);
         assert_eq!(default_timeout("organization.list"), DEFAULT_TIMEOUT);
-        assert_eq!(default_timeout(OrganizationCreate::METHOD), CREATE_TIMEOUT);
-        // The host may hold a create 30 s at startup.
-        assert!(CREATE_TIMEOUT >= Duration::from_secs(45));
+        // The retired name-only create has no special case left.
+        assert_eq!(default_timeout("organization.create"), DEFAULT_TIMEOUT);
     }
 
     #[test]
@@ -1330,8 +1326,8 @@ mod tests {
                 let client = Arc::clone(&client);
                 let name = name.clone();
                 std::thread::spawn(move || {
-                    client.call_with_timeout::<OrganizationCreate>(
-                        &OrganizationCreateParams { name },
+                    client.call_with_timeout::<Named>(
+                        &NamedParams { office_id: name },
                         Duration::from_secs(60),
                     )
                 })

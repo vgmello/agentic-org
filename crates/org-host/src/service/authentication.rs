@@ -183,6 +183,17 @@ impl Authentication {
     pub(crate) fn provisioning_storage(&self) -> (Arc<HostDb>, Arc<dyn HostSecrets>) {
         (Arc::clone(&self.db), Arc::clone(&self._custody))
     }
+    /// The name the organization was created with; empty when no create of this host
+    /// made it. A registry that cannot be read is an error, never an empty name: a
+    /// caller resolving a name must not be told the account can see no organization.
+    fn organization_name(&self, org: &str) -> Result<String, ApiError> {
+        Ok(self
+            .db
+            .provisioning_linked_to(org)
+            .map_err(storage)?
+            .map(|r| r.prepared.plan.name)
+            .unwrap_or_default())
+    }
     pub(super) fn inspect(
         &self,
         connection: &Connection,
@@ -212,6 +223,7 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
+                    name: String::new(),
                     employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })
@@ -405,6 +417,20 @@ impl Authentication {
         account: Account,
     ) -> Result<AccountVerifyResult, ApiError> {
         self.reap();
+        // Read before the session table is locked and before a session exists: a
+        // registry failure refuses the sign-in and leaves nothing to end.
+        let orgs = account
+            .links()
+            .iter()
+            .map(|l| {
+                Ok(LinkedOrg {
+                    org_id: l.org_id().into(),
+                    name: self.organization_name(l.org_id())?,
+                    employee_id: l.member_id().into(),
+                    office_ids: vec![],
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
         let handle = random_handle()?;
         let key = digest(&handle);
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
@@ -429,15 +455,7 @@ impl Authentication {
             session: handle,
             account: account.account_id().into(),
             admin: account.admin(),
-            orgs: account
-                .links()
-                .iter()
-                .map(|l| LinkedOrg {
-                    org_id: l.org_id().into(),
-                    employee_id: l.member_id().into(),
-                    office_ids: vec![],
-                })
-                .collect(),
+            orgs,
         };
         let session = Session {
             account: AccountId::parse(account.account_id()).map_err(|_| unavailable())?,

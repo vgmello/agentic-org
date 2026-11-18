@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { checkNewPassword, checkRegistration, checkSignIn, checkUsername } from './credential-rules';
+import {
+	checkNewPassword,
+	checkRegistration,
+	checkSignIn,
+	checkUsername
+} from './credential-rules';
 
 // Mirrors `crates/org-host/src/accounts/rules.rs` tests; the host stays authoritative.
 describe('B6 username rule mirrors the host', () => {
@@ -50,9 +55,15 @@ describe('B6 form checks', () => {
 		expect(checkSignIn(' not a valid username ', 'x')).toEqual([]);
 	});
 	it('SIGN-21 registration reports a mismatch only after the rule passes', () => {
-		expect(checkRegistration('alex', 'long-enough-pw', 'long-enough-pX')).toEqual([{ field: 'password', rule: 'mismatch' }]);
-		expect(checkRegistration('alex', 'short', 'other')).toEqual([{ field: 'password', rule: 'too_short' }]);
-		expect(checkRegistration(' alex', 'long-enough-pw', 'long-enough-pw')).toEqual([{ field: 'login', rule: 'format' }]);
+		expect(checkRegistration('alex', 'long-enough-pw', 'long-enough-pX')).toEqual([
+			{ field: 'password', rule: 'mismatch' }
+		]);
+		expect(checkRegistration('alex', 'short', 'other')).toEqual([
+			{ field: 'password', rule: 'too_short' }
+		]);
+		expect(checkRegistration(' alex', 'long-enough-pw', 'long-enough-pw')).toEqual([
+			{ field: 'login', rule: 'format' }
+		]);
 		expect(checkRegistration('alex', 'long-enough-pw', 'long-enough-pw')).toEqual([]);
 	});
 });

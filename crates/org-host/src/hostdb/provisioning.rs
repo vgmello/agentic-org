@@ -25,7 +25,7 @@ pub(crate) struct Reservation {
 fn administrator(db: &rusqlite::Connection, account: &str) -> Result<(), Error> {
     let allowed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 AND admin=1 AND revoked_at_ms IS NULL)",[account],|r|r.get(0))?;
     if !allowed {
-        return Err(Error::Unsafe);
+        return Err(Error::NotAdministrator);
     }
     Ok(())
 }
@@ -52,7 +52,98 @@ pub(super) fn read(
     })
     .transpose()
 }
+/// Which of a plan's two catalog-unique values another create already holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Taken {
+    Name,
+    Slug,
+}
+/// Names compare by their case-folded key; a slug is already lowercase.
+fn taken(db: &rusqlite::Connection, name: &str, slug: &str) -> Result<Option<Taken>, Error> {
+    let key = OrganizationName::parse(name).map_err(|_| Error::Unsafe)?;
+    let exists = |sql: &str, value: &str| -> Result<bool, Error> {
+        Ok(db.query_row(sql, [value], |r| r.get(0))?)
+    };
+    if exists(
+        "SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE name_key=?1)",
+        key.key(),
+    )? {
+        return Ok(Some(Taken::Name));
+    }
+    if exists(
+        "SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE slug=?1)",
+        slug,
+    )? {
+        return Ok(Some(Taken::Slug));
+    }
+    Ok(None)
+}
+fn select(db: &rusqlite::Connection, filter: &str, value: &str) -> Result<Vec<Reservation>, Error> {
+    let mut statement = db.prepare(&format!(
+        "SELECT operation_id FROM selected_provisioning WHERE {filter} ORDER BY operation_id"
+    ))?;
+    let ids = statement
+        .query_map([value], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.iter()
+        .map(|id| read(db, id)?.ok_or(Error::Unsafe))
+        .collect()
+}
 impl HostDb {
+    /// Whether another create already holds the plan's name or slug. Read-only: a refusal
+    /// from this check has stored nothing anywhere.
+    pub(crate) fn provisioning_taken(
+        &self,
+        name: &str,
+        slug: &str,
+    ) -> Result<Option<Taken>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        taken(&db, name, slug)
+    }
+    /// Whether a reservation exists for the operation, whoever made it.
+    pub(crate) fn provisioning_known(&self, operation: &str) -> Result<bool, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE operation_id=?1)",
+            [operation],
+            |r| r.get(0),
+        )?)
+    }
+    /// The linked create that made the organization; `None` when no reservation did.
+    pub(crate) fn provisioning_linked_to(&self, org: &str) -> Result<Option<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let operation: Option<String> = db
+            .query_row(
+                "SELECT operation_id FROM selected_provisioning WHERE linked=1 AND json_extract(prepared,'$.organization_id')=?1 ORDER BY operation_id LIMIT 1",
+                [org],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match operation {
+            Some(operation) => read(&db, &operation),
+            None => Ok(None),
+        }
+    }
+    /// Every create that reserved its identity and has not been linked: what a starting host
+    /// continues without waiting for a client.
+    pub(crate) fn provisioning_reserved(&self) -> Result<Vec<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        select(&db, "linked=0 AND ?1=?1", "")
+    }
+    /// The account's creates, linked or not.
+    pub(crate) fn provisioning_of(&self, account: &str) -> Result<Vec<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        select(&db, "account=?1", account)
+    }
+    /// One of the account's own creates. Another account's operation reads as absent.
+    pub(crate) fn provisioning_lookup(
+        &self,
+        account: &str,
+        operation: &str,
+    ) -> Result<Option<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        Ok(read(&db, operation)?.filter(|r| r.account == account))
+    }
     pub(crate) fn provisioning_offices(&self) -> Result<std::collections::BTreeSet<String>, Error> {
         let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         let mut statement =
@@ -84,10 +175,9 @@ impl HostDb {
             if r.account != account.account_id() || &r.fingerprint != fingerprint {
                 return Err(Error::OperationReused);
             }
-            let time = org_proto::ulid_time_ms(operation).ok_or(Error::InvalidId)? as i64;
-            if now >= time + 30 * 86_400_000 {
-                return Err(Error::Expired);
-            }
+            // An operation the host knows answers its stored state whatever its age: its
+            // organization exists or is still being created. Only an id it has never
+            // seen can be too old.
         } else {
             let time = org_proto::ulid_time_ms(operation).ok_or(Error::InvalidId)? as i64;
             if time < now.saturating_sub(29 * 86_400_000) {
@@ -108,7 +198,7 @@ impl HostDb {
     ) -> Result<Reservation, Error> {
         if !frozen.prepared.valid()
             || frozen.account != account.account_id()
-            || !org_proto::is_valid_member_id(&frozen.owner_member)
+            || frozen.prepared.creator.employee_id != frozen.owner_member
             || frozen.recovery_handle != format!("recovery.{}", frozen.operation_id)
             || frozen.key_fingerprint.is_some()
             || frozen.linked
@@ -128,6 +218,11 @@ impl HostDb {
                 return Err(Error::OperationReused);
             }
             return Ok(prior);
+        }
+        // The same check as admission, repeated in the inserting transaction; the UNIQUE
+        // constraints remain underneath it.
+        if taken(&tx, &frozen.prepared.plan.name, &frozen.prepared.plan.slug)?.is_some() {
+            return Err(Error::Conflict);
         }
         let name =
             OrganizationName::parse(&frozen.prepared.plan.name).map_err(|_| Error::Unsafe)?;

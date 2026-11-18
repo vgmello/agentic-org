@@ -47,6 +47,10 @@ pub struct AccountVerifyResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedOrg {
     pub org_id: String,
+    /// The organization's name, when the answer carries it (`account.verify` does). An
+    /// answer without it reads as an empty name; an empty name is not written.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
     pub employee_id: String,
     pub office_ids: Vec<String>,
 }
@@ -125,53 +129,6 @@ impl Call for SessionGrant {
     type Result = SessionGrantResult;
 }
 
-/// `organization.create` (admin; journaled, §6.3): create an organization and its HQ office. It
-/// answers `accepted` while the create is in flight and `completed` with the organization once
-/// the worker reported `created`; a retry with the same `operation_id` uses the same IDs, key and
-/// recovery code.
-pub struct OrganizationCreate;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OrganizationCreateParams {
-    pub session: SessionHandle,
-    pub operation_id: String,
-    pub name: String,
-}
-
-impl Call for OrganizationCreate {
-    const METHOD: &'static str = "organization.create";
-    type Params = OrganizationCreateParams;
-    type Result = HostOpResult<org_proto::Organization>;
-}
-
-/// `organization.cancel` (the same account, or an admin): mark a `reserved` create `abandoned`.
-/// `conflict` while an attempt is in flight.
-pub struct OrganizationCancel;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OrganizationCancelParams {
-    pub session: SessionHandle,
-    pub operation_id: String,
-}
-
-impl Call for OrganizationCancel {
-    const METHOD: &'static str = "organization.cancel";
-    type Params = OrganizationCancelParams;
-    type Result = Empty;
-}
-
-/// `organization.list`: the organizations the session's account is linked to, each with its
-/// recovery state.
-pub struct OrganizationList;
-
-/// One linked organization: `org-proto`'s [`org_proto::Organization`] fields, plus `recovery`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkedOrganization {
-    #[serde(flatten)]
-    pub organization: org_proto::Organization,
-    pub recovery: RecoveryState,
-}
-
 /// Where an organization's recovery code is (X-02 §6.4). Unknown values decode as
 /// [`RecoveryState::Unknown`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -187,17 +144,6 @@ pub enum RecoveryState {
     /// A state this build doesn't know. It is never sent: serializing it fails.
     #[serde(other, skip_serializing)]
     Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrganizationListResult {
-    pub organizations: Vec<LinkedOrganization>,
-}
-
-impl Call for OrganizationList {
-    const METHOD: &'static str = "organization.list";
-    type Params = SessionParams;
-    type Result = OrganizationListResult;
 }
 
 /// `office.list`: the offices of the organizations the session is linked to, or of `org_id`.
@@ -894,4 +840,26 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(hex, "{b:02x}");
         hex
     })
+}
+
+#[cfg(test)]
+mod linked_org_tests {
+    use super::LinkedOrg;
+    use serde_json::json;
+
+    /// `name` is additive: an answer without it still reads, and an empty name is not
+    /// written, so a peer that does not know the field sees what it saw before.
+    #[test]
+    fn a_linked_organization_carries_its_name_and_reads_an_answer_without_one() {
+        let named = json!({"org_id": "0193a5c0-0000-7000-8000-000000000001", "name": "Acme",
+            "employee_id": "0193a5c0-0000-7000-8000-000000000006", "office_ids": []});
+        let read: LinkedOrg = serde_json::from_value(named.clone()).unwrap();
+        assert_eq!(read.name, "Acme");
+        assert_eq!(serde_json::to_value(&read).unwrap(), named);
+        let unnamed = json!({"org_id": "0193a5c0-0000-7000-8000-000000000001",
+            "employee_id": "0193a5c0-0000-7000-8000-000000000006", "office_ids": []});
+        let read: LinkedOrg = serde_json::from_value(unnamed.clone()).unwrap();
+        assert_eq!(read.name, "");
+        assert_eq!(serde_json::to_value(&read).unwrap(), unnamed);
+    }
 }

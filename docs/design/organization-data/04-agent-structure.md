@@ -199,7 +199,7 @@ The runtime team tree is the local office's projection of the organization-wide 
 
 | Table | Source |
 | --- | --- |
-| `employees` | `profile.md`: stable identity/revision fields, required `handle`, `kind`, `name`, `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, and body. File location and `kind` must agree. |
+| `employees` | `profile.md`: stable identity/revision fields, required `handle`, `kind`, `name`, `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, and body. File location and `kind` must agree, and `kind` never changes: a person stays a person and an agent stays an agent. |
 | `agent_placements` | Current placement projection, rebuilt from HQ's durable execution placement/generation journal. Only agents are eligible. No office_id is silently added to an employee profile. |
 | `agent_execution_configs` | execution.md front matter/body; full table and routing contract are owned by document 11. |
 | `task_workspaces` | Current workspace-controller state; runtime-only office/employee/task/repository IDs and `worktree_path`. |

@@ -944,6 +944,37 @@ scaffolding (an office planted by an example program and the linked socket), bec
 no product command creates an office in the container. Not verified by anyone: real
 systemd, AppArmor, Docker Desktop on a Mac, a release-build host.
 
+**Plain HTTP and the review's repairs: built on the branch (`7e52887f`), not
+integrated.** The author confirmed all eleven findings and rejected none.
+
+- A listener mode of its own, `http_published`: the listen address is not loopback,
+  the origin's host is exactly `localhost`, `127.0.0.1` or `[::1]`, and only an
+  instance whose service mode is `foreground` may have it; never implied by another
+  mode; a record edited by hand does not start a host. It crosses one contract, the
+  `tls.fetch` reply between host and web process (a new variant with no pair; the
+  vectors gained rows). The web process serves it as it serves loopback HTTP.
+- In the container (Debian 13, default profiles): `GET /api/v1/version` answers 200,
+  `GET /` serves the UI's index, another `Host` is refused with 400, and the host log
+  says `web process started, confined by the seccomp filter and Landlock ABI 7`, with
+  no killed system call: the first run of the web process's confinement inside a
+  container.
+- What the product itself lacks there: `GET /register` is 404 (the registration page
+  is not built), so the link root's command prints cannot be used yet.
+- V1: everything that can refuse is asked before the record is frozen, and a record
+  this run froze is removed when the reservation refuses. V2: the stop grace is 5 s
+  (a worker that ignores the stop is killed; exit 0 in about 5.4 s). V3: a foreground
+  host judges the recorded directory at every start. V4: only this instance's own
+  link is printed. V5: no initial link for a foreground instance. V6 to V11 as the
+  review asked; `https` is refused at setup until X7.
+- Lead's decisions: the image's origin is `http://127.0.0.1:8443`, not `localhost`
+  (a name may resolve to `::1`, where another local process can listen); the limits
+  the author names (a registered setup that fails after the registry reserved keeps
+  its record; no Docker case for V4 and V5; two XDG names hard-coded beside the
+  platform's list) are written down as known limits.
+- Next: the branch takes the Track X tip (`daa46cdf`: the other team's changes, the
+  mount-table fix, X4's last slice), its checks and the container script run on that,
+  then a fresh review of what the first X5 review has not read.
+
 Lead's decisions so far: `root` at `/data/instance` with the service user's home at
 `/data` is accepted (the host refuses overlapping instance and locator roots);
 `hello` for root is accepted as the handshake of `admin.reset`, subject to the review.
@@ -1017,6 +1048,57 @@ The worker's checks on `e28aee39`: lint for the three targets, guard tests, the 
 workspace unprivileged (71 binaries, 3,639 passed; failing only the two IPv6 tests),
 the app and host loops five times. The lead's checks on the combined tree are in the
 commit that merges `1b260dee`.
+
+**Lead's whole-workspace run of `daa46cdf`** (unprivileged; the machine at load average
+15 on 4 cores, with three reviewers and a worker building): 71 test binaries, 3,646
+tests passed, 4 failed. Two need IPv6. One setup test found its fixed port 7421 held
+by another agent's run. One is new:
+`web_process_tests::lnx_3_under_a_profile_that_refuses_landlock_the_real_web_process_serves_by_the_filter_alone`
+ended with "HQ provisioning deadline": the web process had started (`state before HQ:
+Running`), and the real office worker the fixture adds beside it missed the host's
+5 s launch deadline again and again until the test's wait ran out. Run alone under
+the same load the four `lnx_3_*` tests pass (105 s). The web process no longer needs
+an HQ to start; the fixture still makes one. Whether this can fail on a CI runner,
+and what to do, is put to the reviewer of that part.
+
+Three fresh reviewers are reading `daa46cdf` in parallel, one part each: the merges
+with `v1-integration` and what they change for the other team; the web process's
+confinement and its start by the host as they are now; the repairs of X2's host slice
+and of X3. The merge into `v1-integration` needs all three to accept.
+
+**The final review of `daa46cdf`, in three parts** (three fresh read-only reviewers,
+same model as the lead):
+
+| Part | Verdict | What must precede the merge |
+| --- | --- | --- |
+| A: the two merges with `v1-integration` and what they change for the other team | ACCEPT_WITH_FOLLOW_UPS: no blocker and no major. 1,562 of their files accounted for (18 moved or replaced, each traced); 3,205 of their test functions accounted for (17 renamed, each with its successor; none newly ignored; 104 lost a platform gate); all 102 tests they added since the earlier merge present by name; their three behaviour changes complete; the Keychain attributes and sequences unchanged; the whole workspace lints for Linux, macOS and musl | Nothing in its part. It keeps the record's own condition: a macOS CI result on the pushed commit |
+| B: the web process's confinement and its start by the host | CHANGES_REQUIRED: one MAJOR, test only. Three converted web tests give the real Seatbelt confinement a rendezvous path that is not resolved (`/var/folders/…` on macOS is reached through a link), so the confined connect would be denied on a Mac. The filter itself: 143 instructions decoded and found correct; no next hole of the fast-open kind found by probe; Landlock optional found correct | The one-line test fix; then the macOS job |
+| C: the repairs of X2's host slice and of X3 | CHANGES_REQUIRED: one MAJOR, test only. A host test added by X2's repairs expects an image refusal on macOS where the macOS adapter starts nothing and answers a plain error. The store's repairs attacked on ext4, Btrfs, loop volumes and in Docker and found sound; the intermittent channels test traced to a race in the other team's own test, fixed by them in a commit this merge brings | The test fix; then the macOS job |
+
+Both majors are tests that would fail only on macOS, found by reading, in code that
+has never run on a Mac. Repaired by the lead in the commit after this record:
+`a_release_build_without_a_team_admits_only_the_image_the_release_pins` expects what
+the macOS adapter does (nothing started, no image refusal); `confined_config` gives
+the resolved runtime folder. From the same reviews, also done: the real-host tests'
+HQ step has its own bound of 300 s (reviewer B judged the failure in the lead's run
+overload, with a thin margin: one miss recovers, the lead's run needed about ten in
+a row); Argon2 is optimised in development builds (one of the other team's sign-in
+tests missed its 10 s read timeout at load 15 in reviewer A's run); the documents
+reviewer A found stale say what is built; design 3.2 and ADR decision 8 state the
+store as repaired, with the stacked-filesystem limit reviewer C probed. By the
+owner's instruction the two tests that need IPv6 skip that case where the machine
+has no IPv6 loopback.
+
+Follow-ups accepted for after the merge: the development key store is stricter than
+the other team's old one (a key file with a wrong mode is a storage error, not a
+null-key start); a failed `F_FULLFSYNC` no longer falls back to `fsync` in the agent
+spool; the worker launch deadline should be a timing the real-process tests can
+lengthen (with the other team); small parser and wording nits. Reviewer A's list
+"what the other team must be told at the merge" goes to them with the merge.
+
+**Still required before the merge:** the two reviewers who asked for changes confirm
+the repairs on the exact commit, and the macOS CI job runs on it (GitHub's queue for
+this branch is hours long; nothing after `e8cf07fb` has executed on macOS).
 
 ## macOS results from CI
 
@@ -1136,3 +1218,112 @@ approves it. What must be true of the one commit that is merged:
    told what changed under them (the platform crates, the rule against platform
    predicates and its CI check, the admission and credential contracts, the root
    refusal, the runner's test user).
+
+### Where it stands (end of the session of 2026-11-18)
+
+- **The target moved.** The owner merged `v1-integration` into `v1` (PR #16, `c88c56c2`)
+  and deleted `v1-integration`. Owner's decision, asked and answered: Track X merges
+  **directly into `v1`** (`git merge --no-ff`, push `v1`), once the gates below pass.
+  `AGENTS.md` and `docs/processes/branch-and-merge.md` still name `v1-integration`;
+  updating them is the owner's call, not this track's.
+- **Three final reviewers accepted** Track X at `1b21c71f` (A: merges,
+  ACCEPT_WITH_FOLLOW_UPS; B: confinement and web host, ACCEPT; C: X2/X3 repairs,
+  ACCEPT); `e31b1d67` corrected three sentences of design 3.2 (documentation only).
+- **`45daf87a` merges `origin/v1` (`c88c56c2`, 42 commits past `1b260dee`) into
+  Track X.** Nine conflicts; how each was resolved is in the commit message. Points a
+  reviewer must check: Track A's new supervisor shutdown test lost its
+  `cfg(target_os = "macos")` and runs on Linux; `web::Stderr::capture` copies into
+  Track A's test-only `CAPTURED_STDERR`; `provision.v1` is gone, so the LNX-3 hosts
+  create HQ through the browser API when the web process serves and through
+  `Provisioning::create` in the host's process (test-only `account_for_test`) when it
+  never starts; one Argon2 dev profile; checklist totals recounted (188: 9 / 67 / 67 /
+  1 / 44).
+- **Checks on `45daf87a`, by the lead (Opus 5.5):** fmt; Linux
+  `cargo clippy --locked --workspace --all-targets -D warnings` clean; macOS
+  cross-lint of the workspace clean; `platform_conditionals` and `libc_only` pass.
+  The whole-workspace test run (unprivileged) and one fresh read-only review of the
+  merge itself (Opus 5.5 subagent) were started and had not reported when the session
+  ended: **both must be run again in the next session.**
+
+**Pending, in order:**
+
+1. On `45daf87a` (or the branch tip): the whole workspace's tests as an unprivileged
+   user (expected failures only: `agentic-org-web` `dependency_closure` without
+   network, the two `org-socket` IPv6 cases now skip), and the LNX-3 tests
+   (`org-host` `web_process_tests::lnx_3_*`) five times, since their HQ creation
+   changed. Fix anything red.
+2. A fresh read-only review of the merge `45daf87a` (scope: the conflict
+   resolutions above, and semantic conflicts with Track A's 42 commits). ACCEPT
+   required; repairs are reviewed again.
+3. Confirm `origin/v1` has not moved; if it has, merge it in and repeat 1–2 for the
+   new merge only. Then `git merge --no-ff` the branch into `v1` and push `v1`. Tell
+   the Track A lead what changed under them (reviewer A's list: the platform crates,
+   the rule against platform predicates and its CI job, the admission and credential
+   contracts, the root refusal, the runner's test user, the macOS behaviour changes).
+4. macOS CI on the merged commit: no failure `v1` does not already have. Mac
+   signed-build checks are still owed.
+5. **X5** (systemd unit, container): local branch `x/x5-service` at `6d94deaf` (17
+   commits past `e31b1d67`; last commit is work in progress). It needs: merging the
+   new Track X tip, the container checks (`deploy/container/lnx2.sh` three times,
+   with Docker), a fresh review, then its own merge into `v1`.
+6. X6 (CI matrix and container job, the 16 allowlisted files), X7 (HTTPS with the
+   instance's own certificate, with Track A).
+7. Housekeeping the owner may do: the stray remote branch `x/x2-linux-admission`.
+
+Tooling used in this session lived in the session's scratch directory and is gone with
+it: a runner that builds tests as root and runs each test binary as uid 1000 (CI runs
+unprivileged); a macOS cross-lint (`cargo clippy --target aarch64-apple-darwin` with C
+build steps stubbed); a catalog hash refresher (`kit_skills.py validate` reports what
+to refresh). Recreate them as needed.
+
+### Session of 2026-11-18 (evening): the merge into `v1`
+
+Lead: Claude Opus 5.5. Reviews on GPT 6.2 Sol (Codex, `codex exec -m gpt-6.2-sol`,
+read-only, effort xhigh) at the owner's request, after two Claude Opus 5.5 reviews.
+
+- **`v1` had moved** to `74865317` (62 commits: A4.5, B1a with the new crate
+  `org-store`, agent tooling). `c96b7cea` merges it: three conflicts and one semantic
+  conflict (`org-store`'s macOS `F_FULLFSYNC` branch, refused by the platform check;
+  moved onto `org_platform::fs`), as its message says.
+- **Linux checks** (Docker Desktop on an arm64 Mac, native `linux/arm64`, a clean export
+  of the exact commit, built and run as uid 1000, `/var/tmp` on an ext4 volume, `cargo
+  fetch` first as CI does) on `6fe50d34`: Clippy of the workspace clean; the whole
+  workspace 99 binaries, 3,923 passed, none failed, 24 ignored; `lnx_3_*` five times,
+  4/4 each (41–47 s). This is the first arm64 run: earlier runs were x86-64. An
+  overlayfs `/var/tmp` fails the credential tests by design (the rule refuses it);
+  CI's is ext4.
+- **Reviews.** Merge review (Opus, `c96b7cea`): ACCEPT_WITH_FOLLOW_UPS; three findings
+  repaired in `6fe50d34` (CI list base is `v1`; the LNX-3 serving path waits
+  `HQ_WAIT`; e2e-real teardown), whose review (Opus) accepted. GPT 6.2 Sol on
+  `6fe50d34`: REJECT, five findings. Repaired in the next commit: the first merge had
+  dropped `crates/org-platform` and `crates/org-platform-host` from the catalog's
+  `host-and-storage` paths; the LNX-3 sign-in retries a 503; `libc_only` checks every
+  workspace member outside the host chain (it missed `org-store`). The teardown change
+  is reverted, leaving v1's file as it was, because of the two findings below.
+- **Left for Track A (their fixture, not in CI):** the real-instance browser suite
+  (`apps/agentic-org-ui/e2e-real`) cannot start on GNU/Linux: `instance.ts` calls BSD
+  `script` arguments, util-linux `script` needs `-c`; and its teardown matches roots
+  by string prefix (`/private/tmp/<prefix>.`, macOS only), stops processes from PID
+  files that may be reused, and falls back to `pkill -f <root>`. Running that suite on
+  Linux needs a portable PTY launcher and a teardown bound to the run's own directory
+  and processes.
+- **Later in the session.** `04a006e4` showed one load flake on Linux (the confinement
+  test read the child's answer under a 10 s timeout; ten runs alone passed), repaired
+  in `eb5b750b` with the review's follow-ups. GPT 6.2 Sol rejected `eb5b750b`: the
+  test-only stderr capture returned partial bytes after a timeout and treated a read
+  error as the end; the manifest reader still missed valid TOML. The next commit makes
+  the capture fail a test on a timeout or read error, reads linked dependencies from
+  `cargo metadata --no-deps` (tried: a dependency in its own table with a comment, and
+  a single-quoted rename, both fail the check), and aligns X4's build, acceptance and
+  code-today text with decision 9.
+- **The ignored real-process run on Linux** (`cargo test -p org-host --lib --
+  --ignored`): 12 passed. Two cannot pass there as written. One needs
+  `ORG_TEST_OFFICE_BIN` (its setup, as on macOS). The other, Track A's
+  `actual_host_stop_leaves_no_create_worker_that_ignores_its_closed_stdin` (29cf70b8),
+  fails three of three times on Linux ("timed out waiting for the create's worker to
+  start"): it replaces the worker with a `#!/bin/sh` stand-in, and the Linux host
+  starts a worker only from a sealed, execute-only, close-on-exec memory copy of the
+  pinned image, which no interpreter can open. The real worker starts (the other
+  real-process creates pass on Linux), and the behaviour is covered at supervisor level
+  on Linux by the shutdown test this merge enabled there. Follow-up (Track X with
+  Track A): a compiled stand-in program, so the end-to-end test runs on Linux too.

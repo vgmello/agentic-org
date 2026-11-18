@@ -21,6 +21,8 @@ const view = {
 	server_time_ms: 100,
 	idle_expires_at: 'sooner'
 };
+/** A session view the gateway returns with a freshly rotated proof. */
+type Rotated = typeof view & { proof: string };
 const unauthorized = () =>
 	new SessionRequestError(401, {
 		code: 'not_authorized',
@@ -48,17 +50,22 @@ function setup(initial: SessionRecord | undefined = record) {
 	};
 	const gateway = {
 		version: vi.fn(async () => ({ api_version: 1, contract_revision: 2 })),
-		get: vi.fn(async (_proof: string) => view),
-		signIn: vi.fn(async (_credentials: unknown, _signal?: AbortSignal) => ({
+		get: vi.fn<(proof: string) => Promise<typeof view>>(async () => view),
+		signIn: vi.fn<(credentials: unknown, signal?: AbortSignal) => Promise<Rotated>>(async () => ({
 			...view,
 			proof: rotated
 		})),
-		register: vi.fn(async (_request: unknown, _signal?: AbortSignal) => ({
+		register: vi.fn<(request: unknown, signal?: AbortSignal) => Promise<Rotated>>(async () => ({
 			...view,
 			proof: rotated
 		})),
-		refresh: vi.fn(async (_proof: string, _signal?: AbortSignal) => ({ ...view, proof: rotated })),
-		signOut: vi.fn(async (_proof: string, _signal?: AbortSignal) => ({}))
+		refresh: vi.fn<(proof: string, signal?: AbortSignal) => Promise<Rotated>>(async () => ({
+			...view,
+			proof: rotated
+		})),
+		signOut: vi.fn<(proof: string, signal?: AbortSignal) => Promise<Record<string, never>>>(
+			async () => ({})
+		)
 	};
 	const listeners = new Set<EventListenerOrEventListenerObject>();
 	const postMessage = vi.fn();
@@ -469,7 +476,10 @@ describe('P6a session ownership', () => {
 		expect(s.stored()).toMatchObject({ proof: rotated, account_id: view.account.id });
 		expect(s.states.at(-1)).toMatchObject({ kind: 'signed-in' });
 		expect(JSON.stringify(s.states.at(-1))).not.toContain(rotated);
-		expect(s.postMessage).toHaveBeenLastCalledWith({ kind: 'signed-in', account_id: view.account.id });
+		expect(s.postMessage).toHaveBeenLastCalledWith({
+			kind: 'signed-in',
+			account_id: view.account.id
+		});
 	});
 	it('retries exactly one READ after a proof change, preserving the path and signal', async () => {
 		const s = setup();
@@ -487,6 +497,35 @@ describe('P6a session ownership', () => {
 		expect(s.states.at(-1)).not.toHaveProperty('reauth');
 		await s.controller.read('/api/v1/capabilities', signal);
 		expect(s.http.mock.calls[2][0].proof).toBe(rotated);
+	});
+	it('submit posts once with the proof in the header only, and never without a session', async () => {
+		const s = setup();
+		await s.controller.boot();
+		s.http.mockResolvedValueOnce({ status: 202, body: { outcome: 'accepted' } });
+		const body = { operation_id: 'op', params: {} };
+		expect((await s.controller.submit('/api/v1/organizations', body)).status).toBe(202);
+		expect(s.http.mock.calls.map(([request]) => request)).toEqual([
+			{ method: 'POST', path: '/api/v1/organizations', body, proof, signal: undefined }
+		]);
+		await s.controller.signOut();
+		await expect(s.controller.submit('/api/v1/organizations', body)).rejects.toThrow(
+			'Sign in required'
+		);
+		expect(s.http).toHaveBeenCalledTimes(1);
+	});
+	it('submit re-sends after a 401 only with a proof another tab rotated; else it asks for sign-in', async () => {
+		const s = setup();
+		await s.controller.boot();
+		s.replace({ ...record, proof: rotated });
+		s.http
+			.mockResolvedValueOnce({ status: 401, body: {} })
+			.mockResolvedValueOnce({ status: 200, body: {} })
+			.mockResolvedValueOnce({ status: 401, body: {} });
+		expect((await s.controller.submit('/api/v1/organizations', {})).status).toBe(200);
+		expect(s.http.mock.calls.map(([request]) => request.proof)).toEqual([proof, rotated]);
+		expect((await s.controller.submit('/api/v1/organizations', {})).status).toBe(401);
+		expect(s.http).toHaveBeenCalledTimes(3);
+		expect(s.states.at(-1)).toHaveProperty('reauth');
 	});
 	it('does not retry a 401 with the same proof, retaining the mounted view', async () => {
 		const s = setup();

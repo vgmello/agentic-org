@@ -682,7 +682,7 @@ Linux, including a container, and confirms no production mock fallback.
   (`host-registry.db`). SQLCipher was removed under ADR-0016 (implementation plan A1);
   the files move to the storage tree above in B1b.
 - Host secrets use the macOS Keychain (`crates/org-host/src/host_secrets`), and the
-  host starts workers only on macOS (the admission contract's Linux adapter, `crates/org-platform-host/src/admission/linux.rs`, refuses until X2).
+  host starts workers on macOS and, since X2, on GNU/Linux (`org_platform_host::admission`; a system with no admission adapter starts none).
 - The launch code has two forms, the older first line and the rendezvous in
   `crates/org-office-launch/src/contract.rs`; only the rendezvous stays (A1).
 - Provisioning operation IDs are ULIDs; they become UUIDv7 under FC-142.

@@ -1579,7 +1579,7 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
                 description: "nothing: a test's own child".to_owned(),
                 landlock_missing: false,
             },
-            captured: Stderr::capture(spawned.stderr).unwrap(),
+            captured: Stderr::capture(spawned.stderr, "stderr-unit-test").unwrap(),
         };
         (running, io::BufReader::new(peer))
     };
@@ -1870,6 +1870,10 @@ fn confined_config(after_ready: &str) -> (tempfile::TempDir, Configuration) {
     let steps = format!("first-line\nconfine\nready\n{after_ready}");
     let (dir, mut config) = scripted_config(&steps, |_, _, _| Ok(None));
     let root = fs::canonicalize(dir.path()).unwrap();
+    // The real confinement names the rendezvous by its resolved path, as the kernel sees
+    // it: a temporary directory reached through a link (macOS: `/var` is a link to
+    // `/private/var`) must be given resolved, as every production runtime folder is.
+    config.runtime = root.clone();
     let critical = root.join("critical");
     fs::create_dir(&critical).unwrap();
     config.critical_paths = vec![critical];
@@ -2045,12 +2049,13 @@ fn a_refusal_line_is_found_only_whole_printable_and_bounded() {
 fn only_the_start_of_a_childs_standard_error_is_kept() {
     let reason = "kept";
     let early = format!("{REFUSAL_PREFIX}{reason}\n{}", "x".repeat(100_000));
-    let captured = Stderr::capture(io::Cursor::new(early.into_bytes())).unwrap();
+    let captured =
+        Stderr::capture(io::Cursor::new(early.into_bytes()), "stderr-unit-test").unwrap();
     assert_eq!(captured.refusal(WAIT).as_deref(), Some(reason));
     assert_eq!(lock(&captured.kept).0.len(), STDERR_KEPT);
     // A refusal line after the kept bytes is not seen.
     let late = format!("{}\n{REFUSAL_PREFIX}{reason}\n", "x".repeat(STDERR_KEPT));
-    let captured = Stderr::capture(io::Cursor::new(late.into_bytes())).unwrap();
+    let captured = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
     assert_eq!(captured.refusal(WAIT), None);
     assert!(lock(&captured.kept).1, "read to its end");
 }
@@ -2112,10 +2117,18 @@ fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standar
     assert!(matches!(silent.try_wait(), Ok(false)));
     // Ended, or with its kept bytes full: nothing more can come, and nothing is
     // waited for.
-    let ended = Stderr::capture(io::Cursor::new(b"something else\n".to_vec())).unwrap();
-    let full = Stderr::capture(io::Cursor::new(vec![b'x'; 10 * STDERR_KEPT])).unwrap();
+    let ended = Stderr::capture(
+        io::Cursor::new(b"something else\n".to_vec()),
+        "stderr-unit-test",
+    )
+    .unwrap();
+    let full = Stderr::capture(
+        io::Cursor::new(vec![b'x'; 10 * STDERR_KEPT]),
+        "stderr-unit-test",
+    )
+    .unwrap();
     let late = format!("{}\n{line}\n", "x".repeat(STDERR_KEPT));
-    let late = Stderr::capture(io::Cursor::new(late.into_bytes())).unwrap();
+    let late = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
     let asked = Instant::now();
     for captured in [ended, full, late] {
         assert_eq!(captured.landlock_not_applied(WAIT), None);
@@ -2162,7 +2175,7 @@ fn stepping(steps: &str) -> (Child, Arc<Stderr>, (fs::File, tempfile::TempDir)) 
         .unwrap()
         .spawn(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
         .unwrap();
-    let captured = Stderr::capture(spawned.stderr).unwrap();
+    let captured = Stderr::capture(spawned.stderr, "stderr-unit-test").unwrap();
     (spawned.child, captured, (spawned.stdin, dir))
 }
 

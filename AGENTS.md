@@ -77,6 +77,15 @@ they are not preserved, imported or cut over, and no rule protects them. Standal
 person-started commands select an explicit instance and office or a saved context;
 managed employees use their injected binding.
 
+## Session start: check for a handover
+
+At the start of every lead session, check for `.agent-kit/tasks/HANDOVER.md` in this
+checkout (each checkout has its own). It is local session state, ignored by Git and
+never committed. If it exists, read it before starting new work, summarize its state and
+next step to the user in a few lines, and ask whether to continue that work; do not
+resume it unasked. When the handed-over work is finished or the user drops it, say so
+and, after the user confirms, delete or replace the file.
+
 ## Local coordination
 
 Use local subagents through the installed agentic kit when needed. Until the product

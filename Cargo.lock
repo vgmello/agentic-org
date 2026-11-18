@@ -710,6 +710,7 @@ dependencies = [
  "org-mailbox",
  "org-platform",
  "org-proto",
+ "org-store",
  "org-sync",
  "org-sync-proto",
  "org-work",
@@ -745,6 +746,7 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "proc-macro2",
+ "serde_json",
  "syn 2.0.119",
  "tempfile",
 ]
@@ -815,6 +817,18 @@ dependencies = [
  "org-platform",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "org-store"
+version = "0.0.0"
+dependencies = [
+ "org-platform",
+ "org-store",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

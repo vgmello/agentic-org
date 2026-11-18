@@ -18,14 +18,13 @@ gitleaks git --redact
 
 CI runs the same workspace Clippy and tests on macOS and Linux, with no package
 excluded (`.github/workflows/ci.yml`). On Linux the host starts office workers since
-increment X2 of the [implementation plan](docs/implementation-plan.md); the web
-process, release key stores, the systemd service and the container follow in X3 to
-X5. `agentic-org serve` refuses to run as root, so run the tests as an ordinary user.
-A development host refuses a worker executable that its group can write: with a
-umask of `002` (the default of an Ubuntu account) the integration tests copy the
-programs they start into a private folder, and a host you start by hand needs
-`chmod g-w` on `target/debug/agentic-org-office` until increment X3 admits a file
-whose group is the user's own private group.
+increment X2 of the [implementation plan](docs/implementation-plan.md), keeps a
+release build's secrets in a checked directory since X3 and confines the web process
+since X4; the systemd service and the container follow in X5. `agentic-org serve` and
+`setup` refuse to run as root, so run the tests as an ordinary user. A development
+host admits a worker executable that its group can write only when that group is the
+user's own private group (the default of an Ubuntu account with a umask of `002`);
+the integration tests copy the programs they start into a private folder.
 
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, for example through Homebrew.
 CI pins the cargo-deny action by commit and verifies the Gitleaks binary checksum.
@@ -85,18 +84,41 @@ regenerate `scripts/format-baseline.json` to make a failing check pass.
 
 ## AI tools
 
-Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte
-and Microsoft's Playwright CLI. `skills-lock.json` records their sources. The existing
-Svelte plugin supplies Svelte skills and MCP tools; the Rust LSP MCP supplies
-rust-analyzer navigation, types, references and rename edits. Follow the UI's
+Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte,
+Microsoft's Playwright CLI and the Svelte skills `svelte-code-writer` and
+`svelte-core-bestpractices`. `skills-lock.json` records their sources. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.
 
-The project pins `@sveltejs/mcp`; `bun run mcp:svelte` starts that installed version.
-For a manually configured Codex server, match the project's version:
+Both harnesses get the same tools from committed configuration:
+
+| Tool | Claude Code | Codex |
+| --- | --- | --- |
+| Instructions | `CLAUDE.md` imports `AGENTS.md` | `AGENTS.md` |
+| Repowise lookup (`starter_kit_context`) | `.mcp.json` | `.codex/config.toml` |
+| Svelte MCP, pinned `@sveltejs/mcp` | `svelte` plugin | `.codex/config.toml` |
+| Rust, TypeScript and Svelte language servers | LSP plugins in `.claude/settings.json` | `mcp-language-server` entries in `.codex/config.toml` |
+| Kit hooks (secret-file guard, format, verify, checkpoint) | `.claude/settings.json` | `.codex/hooks.json` |
+| Roles | `.claude/agents` | `.codex/agents` |
+
+Trust the project when Claude Code asks, so it installs the plugins and starts the
+servers. Install the binaries both harnesses run:
 
 ```sh
-codex mcp add svelte -- npx -y @sveltejs/mcp@0.1.30
+rustup component add rust-analyzer rust-src
+bun add --global --exact typescript@6.0.3 typescript-language-server svelte-language-server
+go install github.com/isaacphi/mcp-language-server@v0.1.1
+python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs
 ```
+
+Codex needs `mcp-language-server`; Claude Code does not. Run `bun install` in
+`apps/agentic-org-ui` before the Svelte MCP starts. `bun run mcp:svelte` starts the
+same pinned server by hand.
+
+`.claude/cloud-setup.sh` is the setup script for a Claude Code cloud environment. It
+installs the pinned Node, Bun, Rust components, language servers, cargo-deny,
+gitleaks, Repowise, UI dependencies and Playwright browsers, and links
+`.agents/skills` into the ignored `.claude/skills`. Paste it into the environment's
+Setup script setting.
 
 The browser skill uses a separate global CLI so its Playwright dependency cannot
 change the application's test runner. Install its pinned version:
@@ -114,3 +136,23 @@ Newly installed skills are available to an agent from its next turn.
 
 `cargo-nextest` is optional for local test selection and reporting. It does not
 replace the repository's required `cargo test --workspace` gate.
+
+### The principal designer agent
+
+For a new or changed screen, component or flow in `apps/agentic-org-ui`, and for UX
+reviews, a lead may dispatch the `principal-designer` agent when it is useful. It is defined
+for both tools:
+`.claude/agents/principal-designer.md` for Claude Code and
+`.codex/agents/principal-designer.toml` for Codex. Both are thin: they point at one persona,
+`.agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
+place. The assignment names the job: design (propose), implement (build) or review
+(read-only). The agent sorts what a screen shows by what the data is worth to the person,
+weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect while building,
+and runs a measured consistency audit before handing over. Product specs outrank it. The
+lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
+
+The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
+checkout (`.claude/skills/`, ignored by Git). It is optional and nothing depends on it.
+Installing it is a lead's decision: the installer adds six other, uninspected skills that
+must be removed, and whatever is left is offered to every Claude session in that checkout.
+The persona file gives the pinned command and the limits.

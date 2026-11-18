@@ -7,7 +7,7 @@
 # are the files that had such predicates when the check was written (increment X1a).
 #
 # This list only shrinks. No count is raised and the total never rises (CI compares
-# the list with the commit where the branch left v1-integration; a renamed or split
+# the list with the commit where the branch left v1; a renamed or split
 # file may appear under its new paths as long as the total does not rise): a new
 # operating-system difference goes into crates/org-platform, behind a contract
 # (docs/design/linux-host.md, section 1). When a file loses predicates, lower its

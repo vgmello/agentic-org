@@ -101,8 +101,9 @@ class ReviewIsolationTests(unittest.TestCase):
                     return process
                 with patch.object(kit_codex.subprocess, 'Popen', side_effect=launch) as popen:
                     kit_codex.invoke(repo, repo / 'run', phase, 'Read source independently', 'high', 10,
-                                     session=session if phase == 'fix' else None)
+                                     'gpt-6.2-sol', session=session if phase == 'fix' else None)
                 args = popen.call_args.args[0]
+                self.assertEqual(args[args.index('-m') + 1], 'gpt-6.2-sol')
                 overrides = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-c']
                 self.assertIn('features.hooks=false', overrides)
                 self.assertIn('mcp_servers.hindsight.enabled=false', overrides)

@@ -1,0 +1,24 @@
+[package]
+name = "org-store"
+description = "The engine-neutral office store: the commit contract, the single writer, the acceptance journal, the flusher, file publication, receipts, origin and feed positions, the change stream, rebuild, and the Engine and Projector seam. It depends on no record family and names no database."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `testkit`: the memory engine, the engine conformance suite, fakes for custody, clock and disk
+# faults, the crash points, the probe family and the rebuild-equivalence harness.
+testkit = ["dep:tempfile"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# `O_NOFOLLOW`, `O_NONBLOCK` and the full flush to the device (ADR-0017).
+org-platform = { path = "../org-platform" }
+tempfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+org-store = { path = ".", features = ["testkit"] }
+tempfile.workspace = true

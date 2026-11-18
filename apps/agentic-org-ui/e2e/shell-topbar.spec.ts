@@ -1,11 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openOffice(page: Page, createPath = '/create') {
-	await visit(page, createPath);
-	await page.getByLabel('Organization name').fill('Topbar reference');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page, 'Topbar reference', createPath);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices');
 	await expect(page.getByTestId('office-row')).toHaveCount(1);

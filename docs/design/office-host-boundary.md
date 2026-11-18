@@ -187,10 +187,16 @@ conflicting bytes require recovery.
 
 ### Provisioning an organization
 
-The native `organization.provision.v1` call carries the session, a UUIDv7
+`organization.create` is served only on the admitted web connection. It carries the
+SHA-256 digests of the browser's cookie and proof with the configured origin, an
 `operation_id` and a plan with explicit `name`, `slug`, `repository_remote_url`,
-and `state_branch`. It asks for no team. The host rechecks the live administrator and
-binds the operation and its fingerprint to that account. Creation makes one top-level
+and `state_branch`. It asks for no team. The host resolves the browser session from
+the digests and the origin, requires the live administrator and binds the operation
+and its fingerprint to that account. `host.sock` refuses the call, unauthenticated
+and with a native administrator session alike; there is no native create and no
+`organization.provision.v1`. Admission answers `accepted`; a host thread carries
+the create out, and `operation.lookup` on the same connection reports its progress
+to the account that started it. Creation makes one top-level
 team named after the organization, the creator's person record in it as its lead, and
 the built-in HR employee (not runnable without its own execution configuration). The
 creator's account owns the organization; ownership is a permission of the account at
@@ -384,8 +390,9 @@ it restarts the worker; it never races a live worker over its agents.
   records. It depends only on `org-proto`, `serde` and `serde_json`.
 - `crates/org-host`: `catalog` (scan, `office.json`, name uniqueness, create),
   `supervisor` (spawn, the launch protocol, status, backoff, shutdown), `service` (the
-  host socket), `keys` and `host_secrets` (credential providers), `spawn` (process
-  admission).
+  host socket), `keys` and `host_secrets` (typed views over the platform's credential
+  store), `server_check` (the policy that says what a started program must be;
+  starting and checking it is `org_platform_host::admission`).
 - `keys::OfficeSecretsKeys` is the host's own contract for the office secrets keys
   (create add-only, load, delete, list; errors carry codes, never key bytes). It is a
   typed view (`keys/custody.rs`) over one item store of the platform
@@ -419,10 +426,12 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
 | A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5), a view over the platform's credential store; a system without a credential store refuses every call. |
-| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (the admission contract's Linux adapter, `crates/org-platform-host/src/admission/linux.rs`, refuses until X2); host secrets use the Keychain. |
+| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Since X2 to X4 (2026-11-18): workers start on macOS and GNU/Linux (`org_platform_host::admission`); host secrets use the Keychain on macOS and a checked, owner-only directory on Linux (`org_platform_host::credentials`); the web process confines itself with Seatbelt on macOS and a seccomp filter on Linux. Service registration on Linux and the container are X5, not integrated. |
 
-`organization.provision.v1` today carries a `home_team_name`, creates no person record
-for the creator, and is reached only from tests (implementation plan A4).
+`organization.create` is the only create: served on the admitted web connection,
+authorized by the browser pair digests and the origin, administrator required, and
+refused on `host.sock`. It writes the creator's person record and takes no team name;
+`organization.provision.v1` is deleted (implementation plan A4).
 
 The office directory today is `<home>/offices/<office-id>/` under the host home
 resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`

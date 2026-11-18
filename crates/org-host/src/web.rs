@@ -51,6 +51,43 @@ const STABLE_RUNNING: Duration = Duration::from_secs(60);
 /// First restart delay; each further consecutive failure doubles it.
 const RESTART_BACKOFF: Duration = Duration::from_secs(1);
 
+/// What one instance's web processes wrote to stderr, for a test.
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct Captured {
+    bytes: Vec<u8>,
+    /// Readers that have not reached the end of their pipe yet.
+    reading: usize,
+    /// Why a reader stopped before the end of its pipe.
+    failed: Option<String>,
+}
+/// What each instance's web processes wrote to stderr. The host keeps none of it; a
+/// real-process test reads it to prove what the web process never prints.
+#[cfg(test)]
+static CAPTURED_STDERR: Mutex<std::collections::BTreeMap<String, Captured>> =
+    Mutex::new(std::collections::BTreeMap::new());
+/// Everything `instance`'s web processes wrote to stderr, once every reader has read its
+/// pipe to the end. A reader that failed, or one still reading after ten seconds, fails
+/// the test: a partial capture would prove nothing about what was never printed.
+#[cfg(test)]
+pub(crate) fn captured_stderr(instance: &str) -> Option<Vec<u8>> {
+    let until = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let captured = lock(&CAPTURED_STDERR).get(instance).cloned()?;
+        if let Some(failed) = captured.failed {
+            panic!("a reader of {instance}'s web stderr failed: {failed}");
+        }
+        if captured.reading == 0 {
+            return Some(captured.bytes);
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "{instance}'s web stderr was still being read after ten seconds"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Supervisor timing. Production uses [`Timing::PRODUCTION`]; tests shorten it.
 #[derive(Clone, Copy)]
 struct Timing {
@@ -181,26 +218,73 @@ struct Stderr {
 impl Stderr {
     /// Reads `stderr` to its end on a new thread, keeping its first [`STDERR_KEPT`]
     /// bytes and dropping the rest, so that a child never blocks on a full pipe.
-    fn capture(mut stderr: impl Read + Send + 'static) -> io::Result<Arc<Self>> {
+    /// A test build also copies all of it into [`CAPTURED_STDERR`] under `instance`.
+    fn capture(mut stderr: impl Read + Send + 'static, instance: &str) -> io::Result<Arc<Self>> {
+        #[cfg(test)]
+        let instance = instance.to_owned();
+        #[cfg(not(test))]
+        let _ = instance;
         let captured = Arc::new(Self {
             kept: Mutex::new((Vec::new(), false)),
             changed: Condvar::new(),
         });
         let filling = Arc::clone(&captured);
-        thread::Builder::new()
+        // Counted before the reader starts, so a test that reads the capture after the
+        // process ended waits for this reader too.
+        #[cfg(test)]
+        {
+            lock(&CAPTURED_STDERR)
+                .entry(instance.clone())
+                .or_default()
+                .reading += 1;
+        }
+        #[cfg(test)]
+        let ended = {
+            let instance = instance.clone();
+            move |failed: Option<String>| {
+                if let Some(entry) = lock(&CAPTURED_STDERR).get_mut(&instance) {
+                    entry.reading -= 1;
+                    entry.failed = entry.failed.take().or(failed);
+                }
+            }
+        };
+        #[cfg(test)]
+        let on_spawn_failure = ended.clone();
+        let spawned = thread::Builder::new()
             .name("web-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
-                while let Ok(read @ 1..) = stderr.read(&mut bytes) {
+                // Reads until the end of the pipe or an error, which also ends it.
+                let stopped = loop {
+                    let read = match stderr.read(&mut bytes) {
+                        Ok(0) => break None,
+                        Ok(read) => read,
+                        Err(error) => break Some(error),
+                    };
+                    #[cfg(test)]
+                    lock(&CAPTURED_STDERR)
+                        .entry(instance.clone())
+                        .or_default()
+                        .bytes
+                        .extend_from_slice(&bytes[..read]);
                     let mut kept = lock(&filling.kept);
                     let room = STDERR_KEPT - kept.0.len();
                     kept.0.extend_from_slice(&bytes[..read.min(room)]);
                     drop(kept);
                     filling.changed.notify_all();
-                }
+                };
                 lock(&filling.kept).1 = true;
                 filling.changed.notify_all();
-            })?;
+                #[cfg(test)]
+                ended(stopped.map(|error| error.to_string()));
+                #[cfg(not(test))]
+                let _ = stopped;
+            });
+        #[cfg(test)]
+        if let Err(error) = &spawned {
+            on_spawn_failure(Some(format!("the reader did not start: {error}")));
+        }
+        spawned?;
         Ok(captured)
     }
 
@@ -800,8 +884,8 @@ impl Running {
             .map_err(os_failed("start the stdout drain"))?;
         // Its standard error is drained too; only its start is kept, for the one line
         // of a child that could not confine itself.
-        let captured =
-            Stderr::capture(spawned.stderr).map_err(os_failed("start the stderr drain"))?;
+        let captured = Stderr::capture(spawned.stderr, &config.instance)
+            .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + wait;
         let mut stream = rendezvous
             .accept(&mut spawned.child, until)

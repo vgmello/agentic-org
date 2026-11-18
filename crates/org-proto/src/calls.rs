@@ -255,28 +255,6 @@ impl Call for Hello {
     type Result = HelloResult;
 }
 
-/// `organization.create` (host): create an organization and start its HQ office on this
-/// machine. The result lists that HQ.
-///
-/// It succeeds once the organization and its HQ office are stored. Whether the HQ's server
-/// process started is reported in that office's `status` (`starting`, `active`, or
-/// `unavailable`), not as an error, so a client never retries into `already_exists`.
-/// Errors: `invalid_name`, `already_exists`, `storage_error`, `not_ready` (the host is still
-/// starting: its startup discards are running; retry shortly), `unavailable` (too many creates
-/// in progress; retry).
-pub struct OrganizationCreate;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrganizationCreateParams {
-    pub name: String,
-}
-
-impl Call for OrganizationCreate {
-    const METHOD: &'static str = "organization.create";
-    type Params = OrganizationCreateParams;
-    type Result = Organization;
-}
-
 /// `organization.list` (host): every organization with an office on this machine, each
 /// with its offices here.
 pub struct OrganizationList;

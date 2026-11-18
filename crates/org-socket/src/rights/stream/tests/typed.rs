@@ -24,7 +24,28 @@ fn tcp_listener_requires_inet_stream_listening_and_cloexec_and_closes_refusals()
         "tcp-connected",
         "tcp-no-cloexec",
     ] {
+        if case == "tcp-v6" && !ipv6_loopback() {
+            continue;
+        }
         run_typed(case);
+    }
+}
+
+/// Whether this machine has an IPv6 loopback to bind. A machine without one (a sandbox
+/// or a container with IPv6 switched off) answers "address family not supported" or
+/// "address not available": the IPv6 case is then skipped, with the reason printed, and
+/// the IPv4 case still runs. Any other failure to bind is a failure of the test.
+fn ipv6_loopback() -> bool {
+    match TcpListener::bind("[::1]:0") {
+        Ok(_) => true,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AddrNotAvailable
+                || error.raw_os_error() == Some(libc::EAFNOSUPPORT) =>
+        {
+            eprintln!("skipped the IPv6 case: this machine has no IPv6 loopback ({error})");
+            false
+        }
+        Err(error) => panic!("binding the IPv6 loopback: {error}"),
     }
 }
 

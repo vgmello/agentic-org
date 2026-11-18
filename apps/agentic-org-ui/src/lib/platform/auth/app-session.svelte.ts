@@ -6,7 +6,11 @@ import { createSessionStore } from './session-store';
 export type AppSessionState = SessionState | { kind: 'loading' } | { kind: 'unreachable' };
 type Controller = ReturnType<typeof createSessionController>;
 
-const LIMITS = { timeoutMs: 15_000, maxRequestBytes: 16 * 1024, maxResponseBytes: 1024 * 1024 } as const;
+const LIMITS = {
+	timeoutMs: 15_000,
+	maxRequestBytes: 16 * 1024,
+	maxResponseBytes: 1024 * 1024
+} as const;
 
 /**
  * The browser composition of the session controller: same-origin HTTP, IndexedDB, Web Locks

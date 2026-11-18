@@ -47,8 +47,9 @@ pub enum Failure {
     Denied,
     NotFound,
     Unavailable,
-    /// A host refusal the browser may see as is: an input rule
-    /// (`invalid_request` with `field`/`rule`) or a rate limit with its delay.
+    /// A host refusal a route may show the browser: an input rule (`invalid_request`
+    /// with `field`/`rule`), a rate limit with its delay, or a create refusal
+    /// (`already_exists`, `operation_reused`, `expired`, `clock_skew`).
     Refused(Box<org_proto::ApiError>),
 }
 /// Applies a host event (`name`, `data`) on the reader thread, in arrival order.
@@ -128,7 +129,12 @@ fn decode<T: DeserializeOwned>(bytes: &[u8], id: u64, desync: &dyn Fn()) -> Resu
         (None, Some(e))
             if matches!(
                 e.code,
-                org_proto::ErrorCode::InvalidRequest | org_proto::ErrorCode::RateLimited
+                org_proto::ErrorCode::InvalidRequest
+                    | org_proto::ErrorCode::RateLimited
+                    | org_proto::ErrorCode::AlreadyExists
+                    | org_proto::ErrorCode::OperationReused
+                    | org_proto::ErrorCode::Expired
+                    | org_proto::ErrorCode::ClockSkew
             ) =>
         {
             Err(Failure::Refused(Box::new(e)))

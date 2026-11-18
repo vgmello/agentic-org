@@ -250,12 +250,27 @@ fn watch_stdin(mut input: impl Read + Send + 'static, host: Arc<HostControl>) ->
         .map(drop)
 }
 
-/// Applies the host's `session.ended` pushes to the cache on the reader thread.
+/// Applies the host's `session.ended` and `account.changed` pushes to the cache on the
+/// reader thread.
 /// No session request precedes serving, so the generation is set before any
 /// event can name a cached session; an event before then has nothing to drop.
-fn session_events(cache: Arc<SessionCache>, generation: Arc<OnceLock<u64>>) -> EventSink {
+pub(crate) fn session_events(
+    cache: Arc<SessionCache>,
+    generation: Arc<OnceLock<u64>>,
+) -> EventSink {
     use org_host_control::browser::{SessionEnded, SESSION_ENDED};
+    use org_host_control::organization::AccountChangedData;
     Arc::new(move |name: &str, data: &serde_json::Value| {
+        // An organization was linked: the account's cached sessions predate it.
+        if name == org_host_control::event::ACCOUNT_CHANGED {
+            if let (Some(generation), Ok(changed)) = (
+                generation.get(),
+                serde_json::from_value::<AccountChangedData>(data.clone()),
+            ) {
+                cache.account_changed(&changed.account_id, *generation);
+            }
+            return;
+        }
         if name != SESSION_ENDED {
             return;
         }

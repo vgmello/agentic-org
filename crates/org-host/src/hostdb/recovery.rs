@@ -259,6 +259,11 @@ impl HostDb {
     pub(crate) fn recovery_db_unlocked_for_test(&self) -> bool {
         self.connection.try_lock().is_ok()
     }
+    /// Where an operation's recovery code is; `None` until its ledger exists (never shown).
+    pub(crate) fn recovery_state(&self, operation: &str) -> Result<Option<State>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        Ok(read(&db, operation)?.map(|l| l.state))
+    }
     pub(crate) fn recovery_observed(&self, operation: &str) -> Result<Ledger, Error> {
         let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         read(&db, operation)?.ok_or(Error::Unsafe)

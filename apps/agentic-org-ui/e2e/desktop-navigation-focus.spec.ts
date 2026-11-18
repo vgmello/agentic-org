@@ -2,13 +2,12 @@ import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 // Signed in as the administrator (SIGN-9); the organizations list names the organization opened here.
 async function openOffices(page: Page) {
 	await signInAsAdmin(page, [{ id: 'org-heading-focus', name: 'Heading focus', created_at: '2026-11-18T00:00:00Z', recovery: 'acknowledged' }]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Heading focus');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page, 'Heading focus');
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices');
 }

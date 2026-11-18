@@ -1,13 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 test.use({ locale: 'en-GB', timezoneId: 'UTC' });
 
 async function open(page: Page, query = '') {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, `/processes${query}`);
 	await expect(page.getByTestId('process-list')).toBeVisible();

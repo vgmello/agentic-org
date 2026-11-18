@@ -15,6 +15,7 @@
 pub(crate) mod acceptance;
 pub(crate) mod hq_creation;
 pub(crate) mod messages;
+pub(crate) mod open;
 pub(crate) mod org;
 #[cfg_attr(
     not(test),
@@ -25,6 +26,7 @@ pub(crate) mod org;
 )]
 pub(crate) mod origin;
 pub(crate) mod owned_processes;
+pub(crate) mod sqlite;
 pub(crate) mod status;
 mod sync;
 #[cfg_attr(
@@ -973,7 +975,7 @@ mod tests {
         /// must have cleaned up after itself. If it succeeds and the batch is then not
         /// committed, the `Undo` it returned is run. It may run more than once, for a request
         /// that is re-run, so it must be repeatable.
-        pub(crate) fn create_organization(
+        pub(crate) fn register_organization(
             &self,
             name: &OrganizationName,
             before_commit: impl Fn(&Organization) -> std::io::Result<Undo> + Send + 'static,
@@ -1126,7 +1128,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = open_in(&dir);
         let name = OrganizationName::parse("Acme").unwrap();
-        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        store
+            .register_organization(&name, |_| Ok(no_undo()))
+            .unwrap();
         drop(store);
 
         let store = open_store(&dir.path().join("office.db"), Opening::Existing).unwrap();
@@ -1157,7 +1161,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = open_in(&dir);
         let name = OrganizationName::parse("Distinctive Corporation Name").unwrap();
-        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        store
+            .register_organization(&name, |_| Ok(no_undo()))
+            .unwrap();
         let header = std::fs::read(dir.path().join("office.db")).unwrap();
         assert!(header.starts_with(b"SQLite format 3\0"));
         let raw = connection_for_test(dir.path().join("office.db")).unwrap();
@@ -1177,7 +1183,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = open_in(&dir);
         let name = OrganizationName::parse("Acme").unwrap();
-        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        store
+            .register_organization(&name, |_| Ok(no_undo()))
+            .unwrap();
         let copy = TempDir::new().unwrap();
         for file in ["office.db", "office.db-wal"] {
             std::fs::copy(dir.path().join(file), copy.path().join(file)).unwrap();
@@ -1208,11 +1216,13 @@ mod tests {
         let store = open_in(&dir);
         let name = OrganizationName::parse("Acme").unwrap();
 
-        let failed = store.create_organization(&name, |_| Err(std::io::Error::other("no")));
+        let failed = store.register_organization(&name, |_| Err(std::io::Error::other("no")));
         assert!(matches!(failed, Err(OfficeError::Storage(_))));
         assert!(store.list_organizations().unwrap().is_empty());
         // The name stays free.
-        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        store
+            .register_organization(&name, |_| Ok(no_undo()))
+            .unwrap();
     }
 
     #[test]
@@ -1221,10 +1231,12 @@ mod tests {
         let store = open_in(&dir);
         let name = OrganizationName::parse("Acme").unwrap();
 
-        let crashed = store.create_organization(&name, |_| panic!("boom"));
+        let crashed = store.register_organization(&name, |_| panic!("boom"));
         assert!(matches!(crashed, Err(OfficeError::Storage(_))));
         assert!(store.list_organizations().unwrap().is_empty());
-        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        store
+            .register_organization(&name, |_| Ok(no_undo()))
+            .unwrap();
     }
 
     #[test]
@@ -1240,7 +1252,7 @@ mod tests {
                 let name = OrganizationName::parse("Slow").unwrap();
                 let wait_for_release = Mutex::new(wait_for_release);
                 let started = Mutex::new(started);
-                store.create_organization(&name, move |_| {
+                store.register_organization(&name, move |_| {
                     lock(&started).send(()).unwrap();
                     lock(&wait_for_release).recv().unwrap();
                     Ok(no_undo())
@@ -1318,7 +1330,7 @@ mod tests {
                 let (store, effect) = (Arc::clone(&store), folders.effect());
                 std::thread::spawn(move || {
                     let name = OrganizationName::parse(&format!("Org {n}")).unwrap();
-                    store.create_organization(&name, effect)
+                    store.register_organization(&name, effect)
                 })
             })
             .collect();
@@ -1350,7 +1362,7 @@ mod tests {
             .map(|name| {
                 let (store, effect) = (Arc::clone(&store), folders.effect());
                 let name = OrganizationName::parse(name).unwrap();
-                std::thread::spawn(move || store.create_organization(&name, effect))
+                std::thread::spawn(move || store.register_organization(&name, effect))
             })
             .collect();
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -1459,7 +1471,7 @@ mod tests {
                 let (store, effect) = (Arc::clone(&store), folders.effect());
                 std::thread::spawn(move || {
                     let name = OrganizationName::parse(&format!("Org {n}")).unwrap();
-                    store.create_organization(&name, effect)
+                    store.register_organization(&name, effect)
                 })
             })
             .collect();
@@ -1483,7 +1495,9 @@ mod tests {
         // The writer is still usable once the cause is gone.
         store.run_sql_for_test("DROP TRIGGER violate;");
         let name = OrganizationName::parse("After").unwrap();
-        store.create_organization(&name, folders.effect()).unwrap();
+        store
+            .register_organization(&name, folders.effect())
+            .unwrap();
         assert_eq!(registered_ids(&store), folders.ids());
     }
 
@@ -1505,13 +1519,15 @@ mod tests {
             |_| Ok(Box::new(|| panic!("undo failed")));
 
         assert!(matches!(
-            store.create_organization(&name, panicking),
+            store.register_organization(&name, panicking),
             Err(OfficeError::Storage(_))
         ));
 
         // The writer thread survived the panic and still takes writes.
         store.run_sql_for_test("DROP TRIGGER violate;");
-        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        store
+            .register_organization(&name, |_| Ok(no_undo()))
+            .unwrap();
         assert_eq!(registered_ids(&store).len(), 1);
     }
 
@@ -1525,7 +1541,7 @@ mod tests {
         let good = |n: usize| {
             let (store, effect) = (Arc::clone(&store), folders.effect());
             let name = OrganizationName::parse(&format!("Good {n}")).unwrap();
-            std::thread::spawn(move || store.create_organization(&name, effect))
+            std::thread::spawn(move || store.register_organization(&name, effect))
         };
         let first = good(1);
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1574,7 +1590,7 @@ mod tests {
         let good = |n: usize| {
             let (store, effect) = (Arc::clone(&store), folders.effect());
             let name = OrganizationName::parse(&format!("Good {n}")).unwrap();
-            std::thread::spawn(move || store.create_organization(&name, effect))
+            std::thread::spawn(move || store.register_organization(&name, effect))
         };
         let first = good(1);
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1602,7 +1618,9 @@ mod tests {
         assert_eq!(registered_ids(&store), folders.ids());
         // And the writer still works.
         let name = OrganizationName::parse("Later").unwrap();
-        store.create_organization(&name, folders.effect()).unwrap();
+        store
+            .register_organization(&name, folders.effect())
+            .unwrap();
         assert_eq!(registered_ids(&store), folders.ids());
     }
 

@@ -201,18 +201,27 @@ fn typed_core_commands_and_cancellation_do_not_accept_another_operation_identity
     let vectors: Value =
         serde_json::from_str(include_str!("../../test-vectors/v2/gateway-envelopes.json")).unwrap();
     let request = &vectors["cases"][0]["wire"];
-    let typed: OrganizationCreateRequest = parse(request).unwrap();
+    #[derive(Debug, serde::Deserialize)]
+    struct Named {
+        name: String,
+    }
+    let typed: CommandEnvelope<Named> = parse(request).unwrap();
     assert_eq!(typed.params.name, "Acme");
     let mut invalid = request.clone();
     invalid["params"] = json!({});
-    assert!(parse::<OrganizationCreateRequest>(&invalid).is_err());
+    assert!(parse::<CommandEnvelope<Named>>(&invalid).is_err());
+    // The envelope has three keys. Any other top-level key is refused, not ignored.
+    let mut extra = request.clone();
+    extra["command_id"] = json!("01M72N8MG00000000000000006");
+    assert!(parse::<CommandEnvelope<Named>>(&extra).is_err());
+    assert!(parse::<CommandEnvelope<Value>>(&extra).is_err());
 }
 
 #[test]
 fn shared_envelopes_have_one_native_id_unchanged_versions_and_explicit_scope() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-envelopes.json"),
-        17,
+        18,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let result: Result<CommandEnvelope<Value>, _> = parse(&case["wire"]);
@@ -719,11 +728,29 @@ fn shared_create_and_restart_projections_match_lookup_bytes_and_reject_private_f
     }
 }
 
+/// Instance, organization and office ids are canonical UUIDv7 text: a lookup query names
+/// them as written. Anything outside letters, digits and the hyphen is still refused.
+#[test]
+fn a_lookup_query_names_canonical_uuid_ids() {
+    let instance = "0193a5c0-0000-7000-8000-000000000009";
+    let query = LookupQuery::from_fields([("instance_id", instance)]).unwrap();
+    assert!(query.scope(OperationKind::Host, instance).is_ok());
+    assert!(query
+        .scope(OperationKind::Host, "0193a5c0-0000-7000-8000-00000000000a")
+        .is_err());
+    for refused in ["../outside", "a/b", "a b", "a.b", "a_b", ""] {
+        assert!(
+            LookupQuery::from_fields([("instance_id", refused)]).is_err(),
+            "{refused}"
+        );
+    }
+}
+
 #[test]
 fn shared_lookup_query_fields_are_strict_and_bound_to_the_session_instance() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-lookup-query.json"),
-        19,
+        20,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let kind: OperationKind = serde_json::from_value(case["kind"].clone()).unwrap();

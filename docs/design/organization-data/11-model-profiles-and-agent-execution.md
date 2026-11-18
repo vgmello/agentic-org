@@ -930,9 +930,9 @@ BEGIN SELECT RAISE(ABORT,'execution config requires an agent employee') WHERE EX
 CREATE TRIGGER agent_config_update_requires_agent BEFORE UPDATE OF employee_id,organization_id ON agent_execution_configs
 BEGIN SELECT RAISE(ABORT,'execution config requires an agent employee') WHERE EXISTS (
  SELECT 1 FROM employees e WHERE e.organization_id=NEW.organization_id AND e.id=NEW.employee_id AND e.kind<>'agent'); END;
-CREATE TRIGGER configured_employee_stays_agent BEFORE UPDATE OF kind ON employees
-WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM agent_execution_configs c WHERE c.organization_id=OLD.organization_id AND c.employee_id=OLD.id)
-BEGIN SELECT RAISE(ABORT,'configured employee must remain an agent'); END;
+CREATE TRIGGER employee_kind_never_changes BEFORE UPDATE OF kind ON employees
+WHEN NEW.kind<>OLD.kind
+BEGIN SELECT RAISE(ABORT,'an employee''s kind never changes'); END;
 
 CREATE VIEW model_profile_model_union AS
 SELECT m.organization_id,m.office_id,p.model_profile_id,m.model_id,

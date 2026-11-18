@@ -12,7 +12,7 @@
 //! handoff form); once that file is deleted, no remaining file holds the key as raw bytes
 //! or lowercase/uppercase hex. The wrapped CA record is found raw in the office's folder
 //! and, in any of those forms, in no file outside it.
-use crate::web_process_tests::{provision_hq, start_signed_in, Started};
+use crate::web_process_tests::{create_hq, start_signed_in, Started};
 use org_proto::{OfficeInfo, OfficeStatus};
 use std::{
     fs,
@@ -77,7 +77,7 @@ fn kill_worker_and_wait_for_another(worker: &Path) -> i32 {
     }
 }
 
-fn files(root: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn files(root: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(root).unwrap() {
         let path = entry.unwrap().path();
         let kind = fs::symlink_metadata(&path).unwrap().file_type();
@@ -89,20 +89,20 @@ fn files(root: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 /// The forms a secret can take in a file: raw bytes and lowercase/uppercase hex. Keys
 /// travel as hex (handoff JSON, the development store of `keys/custody.rs`); no key or CA
 /// channel uses base64.
-fn encodings(bytes: &[u8]) -> [Vec<u8>; 3] {
+pub(crate) fn encodings(bytes: &[u8]) -> [Vec<u8>; 3] {
     let lower: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let upper = lower.to_ascii_uppercase();
     [bytes.to_vec(), lower.into_bytes(), upper.into_bytes()]
 }
 
-fn unhex(text: &str) -> Vec<u8> {
+pub(crate) fn unhex(text: &str) -> Vec<u8> {
     let text = text.trim();
     (0..text.len())
         .step_by(2)
@@ -116,17 +116,15 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
     // `_temp` is bound first so it drops last, after the host and its children.
     let Started {
         temp: _temp,
+        address,
         program,
         host,
-        mut wire,
-        session,
+        wire,
         ..
     } = start_signed_in();
     let base = _temp.path().canonicalize().unwrap();
     let worker = program.with_file_name("agentic-org-office");
-    let mut id = 3;
-    let (_, provisioned) = provision_hq(&mut wire, &mut id, session);
-    let office_id = provisioned.office_id;
+    let office_id = create_hq(&host, address).office_id;
     wait_active(&host, &office_id, "provisioned");
 
     // The dev store holds exactly one key file for this office, outside the office home.

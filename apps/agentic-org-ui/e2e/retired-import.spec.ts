@@ -1,11 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 test('IMP-retired: hiring remains while existing-team import and native window controls are absent', { tag: '@journey' }, async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Fresh organization');
-	await page.getByRole('button', { name: 'Create organization' }).click();
+	await enterMockedOrganization(page, 'Fresh organization');
 	await expect(page).toHaveURL(/\/agents$/);
 	await expect(page.getByRole('button', { name: 'Add agent', exact: true })).toBeVisible();
 	await expect(page.getByRole('button', { name: /bring in/i })).toHaveCount(0);

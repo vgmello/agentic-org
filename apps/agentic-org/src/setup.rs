@@ -95,6 +95,7 @@ fn run_as(
         name: options.get("--name").cloned(),
         port,
         prompt: if interactive { Some(&mut ask) } else { None },
+        named_port_base: named_port_base()?,
         program,
         env: service_environment(),
         terminal,
@@ -143,6 +144,7 @@ fn apply(configuration: setup_flow::Configuration, name: Option<&str>) -> Result
         name: name.map(str::to_owned),
         port: None,
         prompt: None,
+        named_port_base: named_port_base()?,
         program: own_program()?,
         env: service_environment(),
         terminal: false,
@@ -150,6 +152,24 @@ fn apply(configuration: setup_flow::Configuration, name: Option<&str>) -> Result
     };
     let mut out = std::io::stdout().lock();
     setup_flow::run(&platform, request, &mut out)
+}
+
+/// Where a named instance's port search starts: 7421 in every build that people run. A
+/// debug build with `test-support` reads `ORG_DEV_NAMED_PORT_BASE` so its tests search a
+/// range of their own instead of the one real instances and other test runs use.
+fn named_port_base() -> Result<u16, String> {
+    #[cfg(all(debug_assertions, feature = "test-support"))]
+    if let Some(value) = std::env::var_os("ORG_DEV_NAMED_PORT_BASE").filter(|v| !v.is_empty()) {
+        return value
+            .to_str()
+            .and_then(|v| v.parse::<u16>().ok())
+            .filter(|base| *base != 0)
+            .ok_or_else(|| {
+                "ORG_DEV_NAMED_PORT_BASE is not a port from 1 to 65535; nothing was changed"
+                    .to_owned()
+            });
+    }
+    Ok(setup_flow::NAMED_PORT_BASE)
 }
 
 fn ask_port(address: &str) -> Result<Option<u16>, String> {

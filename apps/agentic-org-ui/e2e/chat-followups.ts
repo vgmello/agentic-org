@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function create(page: Page, width: number, scale = 1) {
 	await page.setViewportSize({ width, height: 900 });
@@ -9,9 +10,7 @@ async function create(page: Page, width: number, scale = 1) {
 		addEventListener('DOMContentLoaded', apply, { once: true });
 		if (document.documentElement) apply();
 	}, scale);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization', exact: true }).click();
+	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/agents$/);
 	// URL changes before the destination is ready; avoid interrupting the create handoff (BUG-93).
 	await expect(page.getByRole('main', { name: 'Agents', exact: true })).toBeVisible();

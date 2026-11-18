@@ -226,14 +226,16 @@ Three things to know about the order:
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-2). Rows FC-016,
   FC-018, FC-029, FC-031.
 - **Code today:**
-  - Two host commands create an organization. `organization.create` takes a name only.
-    `organization.provision.v1` already carries the selected payload (name, slug,
-    repository address, state branch, home team name: `crates/org-proto/src/selected_bootstrap.rs`)
-    and is implemented by `crates/org-host/src/provisioning.rs` with the office's
-    `hq_creation`. One command remains, named `organization.create` as the web API
-    design has it, with the second one's payload and implementation; the name-only
-    handler and the versioned name are deleted.
-  - The UI flow runs against fakes (`apps/agentic-org-ui/src/lib/create-flow.ts`).
+  - One command creates an organization: the host's `organization.create`, served on
+    the admitted web connection only, with the selected payload (name, slug,
+    repository address, state branch; `crates/org-proto/src/selected_bootstrap.rs`,
+    `crates/org-host/src/provisioning.rs`, the office's `hq_creation`). The name-only
+    declarations and `organization.provision.v1` are deleted. The web process serves
+    `POST` and `GET /api/v1/organizations` and the host operation lookup over it
+    ([web API](design/web-api-v1.md#selected-create-organization-payload)).
+  - The UI's create page and organizations page read that API through
+    `apps/agentic-org-ui/src/lib/platform/organizations` (A4.5); the former
+    `src/lib/create-flow.ts`, which ran against fakes, is deleted.
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once; ENC-2 passes.
@@ -353,7 +355,17 @@ onto it and deletes the old store; B1c measures and guards it.
   source-preserving editor; `organization/bootstrap.rs` and `organization/admission.rs`
   today's creation path; `org_mailbox::mailbox_conformance_tests!` the suite pattern.
   Since A1 the workspace `rusqlite` is plain bundled SQLite; the new engine never sets a
-  key.
+  key. Built by B1a, beside the store above and not yet in its place: `crates/org-store`
+  (the writer, the journal, the flusher, the files, receipts, rebuild, the engine
+  contracts and, under its `testkit` feature, the memory engine, the fault disk and the
+  engine and rebuild suites); `crates/org-office/src/store/sqlite/` (the SQLite engine:
+  one plain `office.db` per office under the runtime root, made from the contract's
+  `schema.sql` and four tables of its own, never migrated); the organization family on
+  the new contracts (`organization/records.rs`, `ports.rs`, `projector.rs`, `features/`
+  with creating an organization and a team, and `testkit.rs` with its conformance
+  suite); and `store/open.rs`, whose `open_store` is the one place that names an engine.
+  Nothing in production calls `open_store` yet: the office still opens today's store
+  until B1b.
 - **Done when:** the organization suite passes against SQLite and memory (ENG-3 for
   organization records); the rebuild-equivalence harness passes for the organization
   family on both engines; a crash injected at each point of the design's crash table
@@ -407,6 +419,8 @@ onto it and deletes the old store; B1c measures and guards it.
   office's tests pass on the memory engine through `open_store` (ENG-2); STORE-6 passes.
 - **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
   it moves).
+- **Paths:** the data-root contract paths (`<data-root>/<org-id>/durable/state/…`) are
+  B1b's. A4 writes `<instance-root>/durable/state/<org-id>/`.
 
 ### B1c · The store measured and guarded
 
@@ -415,7 +429,9 @@ onto it and deletes the old store; B1c measures and guards it.
 - **Build:** the benchmark target of design section 8; the flush interval fixed from
   its results; a load test of the flush bound; a CI regression check; the wording of
   documents 06 and 11 and the ADRs checked for engine mechanisms; the trigger and
-  generated-column constraints listed in words in schema coverage.
+  generated-column constraints listed in words in schema coverage; a SQLite checkpoint
+  that keeps failing after each round is made visible (today the flusher drops its
+  error and leaves the log to the next round, so a log that grows is not reported).
 - **Read:** [office store design](design/office-store.md) sections 8 and 9;
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 7 and
   ACK-2, ACK-3, ACK-5 to ACK-7; [ADR-0018](adr/0018-storage-engine-independence.md)
@@ -1100,26 +1116,32 @@ half of LNX-6 run).
 
 ### X4 · The web process confined on Linux
 
-- **Outcome:** on Linux the web process confines itself with Landlock and seccomp
-  before it handles input, and refuses to start where it cannot.
+- **Outcome:** on Linux the web process confines itself with a seccomp filter, and with
+  Landlock where the kernel has it, before it handles input, and refuses to start where
+  it cannot install the filter.
 - **Build:**
   - First, on the first day of Track X: a one-hour probe of Docker Desktop's kernel on
-    a Mac (Landlock ABI, seccomp, `memfd_create` and `execveat`). If it has no
-    Landlock, the web process cannot run in a container on a Mac, and the Track X lead
-    brings that to the owner with a recommendation before this adapter is built.
-  - The Linux confinement adapter (Landlock ABI 3 or higher handling every filesystem
-    right, a seccomp allowlist that kills on anything else, `prctl` and `ioctl`
-    filtered by argument) and the host's check of the child's seccomp and
+    a Mac (Landlock ABI, seccomp, `memfd_create` and `execveat`), brought to the owner
+    before this adapter was built. Since ADR-0017 decision 9 was amended on
+    2026-11-18, a kernel without Landlock still runs the web process, under the filter
+    alone.
+  - The Linux confinement adapter (Landlock at any ABI the kernel offers, handling every
+    filesystem right it knows, a seccomp allowlist that kills on anything else, `prctl`
+    and `ioctl` filtered by argument) and the host's check of the child's seccomp and
     no-new-privileges state.
 - **Read:** [Linux host design](design/linux-host.md) section 3.3,
   [ADR-0008](adr/0008-gateway-macos-sandbox.md). LNX-3.
-- **Code today:** `org-platform/src/confinement/linux.rs` has a refusing adapter, as on every
-  system but macOS; the host does not start the web process yet (A3).
-- **Done when:** LNX-3 passes: with Landlock unavailable, below ABI 3 or blocked by a
-  seccomp profile, the web process refuses and reports which (proved first with the
-  confinement example process); confined, it cannot open a file, create a socket or
-  start a program, and its whole HTTP and TLS path works under the filter on the
-  development system and in the container image.
+- **Code today:** the Linux adapter is `org-platform/src/confinement/linux/` (Landlock,
+  the seccomp filter and the ready report); the host starts the web process, checks its
+  `/proc` status and logs how it is confined (`org-host/src/web.rs`, the `lnx_3_*`
+  real-process tests).
+- **Done when:** LNX-3 passes: the seccomp filter is mandatory, and a web process that
+  cannot install it refuses and reports why; Landlock is applied when the kernel offers
+  it (any ABI) and, when it is unavailable or blocked by a seccomp profile, the web
+  process serves under the filter alone and the host logs which (ADR-0017 decision 9,
+  amended 2026-11-18; proved first with the confinement example process); confined,
+  it cannot open a file, create a socket or start a program, and its whole HTTP and
+  TLS path works under the filter on the development system and in the container image.
 - **Needs:** X1c; the HTTP and TLS proof needs A3.
 
 ### X5 · Service and container

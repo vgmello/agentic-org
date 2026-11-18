@@ -18,6 +18,10 @@ export default defineConfig({
 	globalSetup: './e2e-real/instance.ts',
 	globalTeardown: './e2e-real/teardown.ts',
 	outputDir: 'test-results/real-instance',
-	use: { browserName: 'chromium', viewport: { width: 1280, height: 860 }, trace: 'retain-on-failure' },
+	use: {
+		browserName: 'chromium',
+		viewport: { width: 1280, height: 860 },
+		trace: 'retain-on-failure'
+	},
 	projects: [{ name: 'real-instance', testMatch: '*.spec.ts' }]
 });

@@ -476,14 +476,48 @@ it). As built, where the text above is not exact:
   (ext2 and ext3 share ext4's number and pass); disjointness from the data root; the
   mount point when asked; the empty store; then the lock, which is the first thing
   made.
+- Disjointness is decided twice (X3's review, S1). First by the walk up from each
+  directory by device and inode. Then each directory is placed in its filesystem from
+  the mount table: its mount by the mount id the kernel gives for the held descriptor
+  (`statx`), that mount's root from `/proc/self/mountinfo`, and the path below the
+  mount point; equal or nested places refuse. This catches a store that is a bind
+  mount of a directory inside the data root, which the walk cannot see because it
+  leaves a mount through its mount point. Of the table only the two mounts looked for
+  are read in full; a machine that runs Docker has mounts whose root is not a path,
+  and they refuse nothing. Any doubt refuses: no `/proc`, a kernel that reports no
+  mount id (before 5.8), a table that cannot be read, a deleted mount root.
+- With a required mount point (the foreground mode) the store is also compared with
+  the whole of what the data root's mount shows, so a secrets volume that is a
+  directory of the data volume is refused even when the instance root is a folder
+  inside that volume (`InsideDataVolume`). On Btrfs the filesystem is the mount
+  table's device, so subvolumes are placed by their path from the top.
+- **Not seen:** a stacked filesystem. A data root on an overlay and a store in a
+  directory of that overlay's upper layer are two filesystems in the mount table
+  (probed in the final review: such a store opens, and is visible inside the data
+  root through the overlay). It needs a data root on an overlay whose upper layer
+  the service user can name; inside a container the upper layer is not reachable. A
+  backup of such a data root holds the keys. Do not put the data root on an overlay.
+- A directory admitted by a group-write exception (the private group, or a root-owned
+  sticky directory) must carry no access ACL, and neither may an image file admitted
+  that way: an ACL entry for another user shows in the mode only as group bits.
+- The host declares its item stores (`office-keys`, `host-secrets`). A declared store
+  that is not the service user's directory with mode `0700` refuses by its own rule,
+  naming it, before the store is called empty; only what the engine would hand the
+  host counts as an item; when the records say keys exist, a file named like an item
+  that is not one refuses the store (`ItemUnsafe`), and otherwise the engine refuses
+  that item when it is used; entries the host did not declare are ignored and never
+  opened (a root-owned `lost+found` in a volume root is tolerated).
+- Whatever an open makes gets its mode set, whatever the process's mask is (the lock
+  and item files on their descriptor; an item store's directory by name in its parent,
+  which is the checked owner-only directory); nothing that exists is changed.
 - The lock file is `.lock`, the engine's name. The layout is `<dir>/.lock`,
   `<dir>/office-keys/<office id>.key` (the raw 32 bytes, as in the Keychain) and
   `<dir>/host-secrets/<name>`.
-- An item, for the empty-store rule, is a regular file whose name does not start with
-  a dot, in a directory directly below the root that is the service user's with mode
-  `0700`. The rule is checked over the whole store before any view exists. The host
-  says keys exist when the office home holds an office folder (a folder is made only
-  after its key was stored).
+- The empty-store rule is checked over the whole store before any view exists. The
+  host says keys exist when the office home holds an office folder (a folder is made
+  only after its key was stored). A store that holds host secrets but no office key
+  passes the rule; an office whose key is gone is started without a key (its handoff
+  carries none) and never gets a fresh one.
 - The private group is the user's primary group whose member list is empty or names
   only the user. An account that has that group as its primary group is not in the
   member list and is not looked for (it cannot be found without enumerating
@@ -582,7 +616,8 @@ runtime thread. The host starts the web process with an empty environment (so no
      `prctl` only `PR_SET_NAME`; `ioctl` only `FIONBIO` and `FIONREAD`; `fcntl` only
      `F_GETFD`, `F_GETFL` and `F_DUPFD_CLOEXEC`; `mmap` and `mprotect` without
      `PROT_EXEC`; `mremap` with no flag or `MREMAP_MAYMOVE`; `tgkill` only to the
-     process itself; `clock_gettime` only with a fixed clock.
+     process itself; `clock_gettime` only with a non-negative clock id (the fixed clocks; a
+     process's or thread's CPU clock has a negative id).
    - `clone3` answers `ENOSYS`, so glibc falls back to `clone`, whose flags the filter
      can read. `sendmsg` is killed: the web process sends no descriptor.
    - Everything else kills, among them `socket`, `connect`, `bind`, `listen`, every
@@ -624,7 +659,7 @@ Landlock ABI n`, or `the seccomp filter alone: Landlock was not applied: <reason
 connect a socket, start a program, or trace or signal another process; it can only
 serve the listener and descriptors it holds. The whole list of forbidden operations
 is proved under the filter alone as well as under both layers, and no operation the
-list allows was found that only Landlock stopped (X4, 22 candidates in six
+list allows was found that only Landlock stopped (X4, 21 operations in six
 layerings). **What it does not prove.** The host cannot observe another process's
 Landlock domain, nor which filter a process installed: it trusts the report of an
 image it admitted by digest, and observes that a filter beyond its own, and

@@ -156,9 +156,6 @@
   "src/lib/platform/auth/session-controller.test.ts": {
     "@typescript-eslint/no-empty-object-type": {
       "count": 8
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 7
     }
   },
   "src/lib/platform/auth/session-controller.ts": {
@@ -194,11 +191,6 @@
       "count": 2
     }
   },
-  "src/lib/platform/shell/capabilities.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/lib/platform/tooling/production-import-guard.test.ts": {
     "no-useless-escape": {
       "count": 2
@@ -225,16 +217,6 @@
   "src/lib/work/support.ts": {
     "no-control-regex": {
       "count": 1
-    }
-  },
-  "src/routes/(onboarding)/create/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
-    }
-  },
-  "src/routes/(onboarding)/welcome/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
     }
   },
   "src/routes/(shell)/agents/+page.svelte": {
