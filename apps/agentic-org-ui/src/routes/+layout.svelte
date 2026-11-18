@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { areaCapability } from '$lib/platform/shell/capabilities';
 	import Unavailable from '$lib/platform/shell/Unavailable.svelte';
+	import SessionInterruptions from '$lib/platform/auth/SessionInterruptions.svelte';
 
 	let { children } = $props();
 	const capability = $derived(areaCapability(page.url.pathname));
@@ -17,3 +18,4 @@
 {:else}
 	<Unavailable />
 {/if}
+<SessionInterruptions />

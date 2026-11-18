@@ -1,5 +1,5 @@
 import { NotDispatchedError } from './errors';
-import { readSignIn } from './wire';
+import { readRegister, readSignIn } from './wire';
 
 type JsonRequest = { path: string; signal?: AbortSignal } & (
 	| { method: 'GET'; body?: never }
@@ -149,6 +149,12 @@ export function createGatewayPublicHttp(options: JsonHttpOptions) {
 			try { body = readSignIn(credentials); }
 			catch { throw new NotDispatchedError('Invalid sign-in request'); }
 			return send({ path: '/api/v1/session/sign-in', method: 'POST', body, signal });
+		},
+		async register(request: unknown, signal?: AbortSignal) {
+			let body;
+			try { body = readRegister(request); }
+			catch { throw new NotDispatchedError('Invalid registration request'); }
+			return send({ path: '/api/v1/links/register', method: 'POST', body, signal });
 		}
 	});
 }
