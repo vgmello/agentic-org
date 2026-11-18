@@ -76,6 +76,7 @@ mod peer;
 mod provisioning;
 mod recovery;
 mod registered;
+mod release_store;
 mod secrets;
 mod server_check;
 mod service;
@@ -98,6 +99,8 @@ use std::io;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use org_platform_host::credentials::ReleaseRoot;
 
 use crate::app_auth::AppPolicy;
 use crate::broadcast::Broadcast;
@@ -408,6 +411,7 @@ fn startup_keys(
     config: &Config,
     instance: &Option<instance::registry::Instance>,
     dev_key_dir: Option<&Path>,
+    release_directory: Option<&ReleaseRoot>,
 ) -> Result<Arc<dyn keys::KeyStore>, HostError> {
     let keys = keys::store_for(
         dev_key_dir,
@@ -416,6 +420,7 @@ fn startup_keys(
             .map_or(config.home.as_path(), |i| i.root()),
         instance.as_ref().map(|i| i.id()),
         code_signing::own_signing,
+        release_directory,
     )
     .map_err(|e| match e {
         keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
@@ -424,9 +429,23 @@ fn startup_keys(
             HostError::KeychainGroupNotEntitled { group }
         }
         keys::StoreError::NotHardened => HostError::NotHardened,
+        keys::StoreError::NoCredentialDirectory => HostError::Io {
+            context: "choosing the key store",
+            source: io::Error::other(NO_CREDENTIAL_DIRECTORY),
+        },
+        keys::StoreError::CredentialDirectory(why) => HostError::Io {
+            context: "opening the office keys in the credential directory",
+            source: io::Error::other(why),
+        },
     })?;
     Ok(keys)
 }
+
+/// What a release host says when it keeps its keys in a credential directory and has none:
+/// only a registered instance has one, at the path its setup recorded.
+const NO_CREDENTIAL_DIRECTORY: &str = "this host keeps the offices' keys in the credential \
+     directory that setup records, and it serves no registered instance: run agentic-org \
+     setup, then agentic-org serve --name <instance>";
 
 fn startup_app_policy(config: &Config, selected: bool) -> Result<AppPolicy, HostError> {
     // Registered selected instances admit the same human CLI/host image as
@@ -457,6 +476,7 @@ fn startup_authentication(
     instance: &Option<instance::registry::Instance>,
     custody: &mut Option<Arc<dyn host_secrets::HostSecrets>>,
     dev_key_dir: Option<&Path>,
+    release_directory: Option<&ReleaseRoot>,
 ) -> Result<Option<Arc<service::authentication::Authentication>>, HostError> {
     let authentication = if let Some(instance) = instance {
         match fs::symlink_metadata(layout.home.join("host-registry.db")) {
@@ -468,6 +488,7 @@ fn startup_authentication(
                         instance.root(),
                         instance.id(),
                         code_signing::own_signing,
+                        release_directory,
                     )
                     .map_err(|_| HostError::Io {
                         context: "opening protected account custody",
@@ -642,9 +663,21 @@ impl Host {
     }
 
     fn start_prepared(
+        config: Config,
+        instance: Option<instance::registry::Instance>,
+        prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
+    ) -> Result<Self, HostError> {
+        Self::start_with(config, instance, prepared, None)
+    }
+
+    /// The composition. `release_directory` is the credential directory a registered start
+    /// opened, where a release build keeps its secrets in one: the office keys are opened
+    /// below it, and each view keeps it locked for as long as the view lives.
+    fn start_with(
         mut config: Config,
         instance: Option<instance::registry::Instance>,
         prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
+        release_directory: Option<ReleaseRoot>,
     ) -> Result<Self, HostError> {
         harden()?;
         if instance.is_some() {
@@ -668,7 +701,7 @@ impl Host {
         let dev_key_dir = config.dev_key_dir.as_deref();
         #[cfg(not(debug_assertions))]
         let dev_key_dir = None;
-        let keys = startup_keys(&config, &instance, dev_key_dir)?;
+        let keys = startup_keys(&config, &instance, dev_key_dir, release_directory.as_ref())?;
         layout.check_socket_paths()?;
         layout.prepare()?;
         let (held, mut custody) = prepared.unzip();
@@ -681,7 +714,15 @@ impl Host {
         let sweep_orphans = instance.is_some();
         let server_check = startup_server_check(&config)?;
         let io = |context| move |source| HostError::Io { context, source };
-        let authentication = startup_authentication(&layout, &instance, &mut custody, dev_key_dir)?;
+        let authentication = startup_authentication(
+            &layout,
+            &instance,
+            &mut custody,
+            dev_key_dir,
+            release_directory.as_ref(),
+        )?;
+        // The views hold the credential directory from here on.
+        drop(release_directory);
         let authentication_lifecycle = authentication
             .as_ref()
             .map(service::authentication::Lifecycle::start)

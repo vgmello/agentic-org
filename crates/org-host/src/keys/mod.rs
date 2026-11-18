@@ -9,8 +9,11 @@
 //! particular store. It is a typed view (`custody`) over one credential store of the platform
 //! (`org_platform_host::credentials`): the view keeps the name rule, the add-only rule and what a
 //! key looks like; the platform keeps the bytes. Which store a build uses is decided here:
-//! - **Release builds:** the Data Protection keychain, in the host's access group, so other code
-//!   gets `errSecItemNotFound`, never a prompt. A system without such a store has none.
+//! - **Release builds:** the system's protected store, whichever kind it is
+//!   (`org_platform_host::credentials::protected_store`). The Data Protection keychain, in the
+//!   host's access group, so other code gets `errSecItemNotFound`, never a prompt; or the
+//!   credential directory setup recorded, which the host opened and checked at its start
+//!   (`release_store`). A system without such a store has none.
 //! - **Debug builds:** plain files in a development folder (the platform's directory store), so
 //!   a debug host and the tests never write a real Keychain item. A debug host without that
 //!   folder refuses to start.
@@ -38,7 +41,10 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use org_platform_host::credentials::{credentials, CredentialLocation, KeychainItems};
+use org_platform::Refused;
+use org_platform_host::credentials::{
+    credentials, CredentialLocation, KeychainItems, ProtectedStore, ReleaseRoot,
+};
 use org_proto::DbKey;
 
 use crate::code_signing::{hardened_and_clean, Signing};
@@ -147,6 +153,12 @@ pub(crate) enum StoreError {
     /// any same-user process could then read the keys out of it.
     #[cfg_attr(debug_assertions, allow(dead_code))]
     NotHardened,
+    /// A release build on a system that keeps its secrets in a credential directory has none
+    /// open: it serves no registered instance, and only setup records the directory.
+    NoCredentialDirectory,
+    /// The office keys' item store could not be opened in the credential directory, for this
+    /// reason (a kind, never a path: the directory itself was checked when the host opened it).
+    CredentialDirectory(String),
 }
 
 /// The key store this host uses. Debug builds: the development folder `dev_key_dir`
@@ -159,25 +171,60 @@ pub(crate) enum StoreError {
 /// rather than at its first `SecItemAdd`) and the hardened runtime with none of the
 /// entitlements that let other code in ([`StoreError::NotHardened`] otherwise: an injectable
 /// host would give every key away). A release build ignores `dev_key_dir`.
+///
+/// Where a release build's protected store is a credential directory instead, the store is
+/// the office keys' item store below `release_directory`, the directory the host opened and
+/// checked at its start ([`StoreError::NoCredentialDirectory`] without one). The system says
+/// which kind it has; nothing here names a system. A debug build ignores `release_directory`.
 pub(crate) fn store_for(
     dev_key_dir: Option<&Path>,
     home: &Path,
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
+    release_directory: Option<&ReleaseRoot>,
 ) -> Result<Arc<dyn KeyStore>, StoreError> {
     #[cfg(debug_assertions)]
     {
-        let _ = own_signing;
+        let _ = (own_signing, release_directory);
         dev_store(dev_key_dir, home, instance_id)
     }
     #[cfg(not(debug_assertions))]
     {
         let _ = (dev_key_dir, home);
-        release_store_scoped(
+        selected_release_store(
+            org_platform_host::credentials::protected_store(),
             option_env!("ORG_HOST_KEYCHAIN_GROUP"),
             instance_id,
             own_signing,
+            release_directory,
         )
+    }
+}
+
+/// A release build's store on a system whose protected store is `store`: the office keys
+/// below the open release directory where it is one, and the Keychain store otherwise. A
+/// system without a protected store takes the Keychain's path too, and is refused there as
+/// it always was.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+pub(crate) fn selected_release_store(
+    store: Result<ProtectedStore, Refused>,
+    group: Option<&str>,
+    instance_id: Option<&str>,
+    own_signing: impl FnOnce() -> Option<Signing>,
+    release_directory: Option<&ReleaseRoot>,
+) -> Result<Arc<dyn KeyStore>, StoreError> {
+    match store {
+        Ok(ProtectedStore::ReleaseDirectory) => {
+            let root = release_directory.ok_or(StoreError::NoCredentialDirectory)?;
+            match custody::OfficeKeys::release_directory(root) {
+                Ok(keys) => Ok(Arc::new(keys)),
+                // Kinds only: no item operation or item store names a path.
+                Err(e) => Err(StoreError::CredentialDirectory(e.to_string())),
+            }
+        }
+        Ok(ProtectedStore::Keychain) | Err(_) => {
+            release_store_scoped(group, instance_id, own_signing)
+        }
     }
 }
 
@@ -295,13 +342,21 @@ mod tests {
         std::fs::create_dir(&home_a).unwrap();
         std::fs::create_dir(&home_b).unwrap();
         let key_base = fixture.path().join("keys");
-        let a = store_for(Some(&key_base), &home_a, Some("INSTANCEA"), || {
-            panic!("debug never signs")
-        })
+        let a = store_for(
+            Some(&key_base),
+            &home_a,
+            Some("INSTANCEA"),
+            || panic!("debug never signs"),
+            None,
+        )
         .unwrap();
-        let b = store_for(Some(&key_base), &home_b, Some("INSTANCEB"), || {
-            panic!("debug never signs")
-        })
+        let b = store_for(
+            Some(&key_base),
+            &home_b,
+            Some("INSTANCEB"),
+            || panic!("debug never signs"),
+            None,
+        )
         .unwrap();
         let office = "SAMEOFFICE";
         a.create(office, &DbKey::from_bytes([1; 32])).unwrap();
@@ -414,12 +469,12 @@ mod tests {
         assert_eq!(self_trusted(GROUP, None), Err(StoreError::NotHardened));
         let entitled = signing(Some(HARDENED), &["TEAMID1234.other", GROUP], &[]);
         assert_eq!(self_trusted(GROUP, Some(&entitled)), Ok(()));
-        // Choosing the store touches no Keychain item. A system without a protected store has
-        // none to choose.
+        // Choosing the store touches no Keychain item. A system whose protected store is not
+        // the Keychain has none to choose.
         let chosen = release_store(Some(GROUP), || Some(entitled));
         match org_platform_host::credentials::protected_store() {
-            Ok(_) => assert!(chosen.is_ok()),
-            Err(_) => assert!(matches!(chosen, Err(StoreError::NoKeychainGroup))),
+            Ok(ProtectedStore::Keychain) => assert!(chosen.is_ok()),
+            _ => assert!(matches!(chosen, Err(StoreError::NoKeychainGroup))),
         }
     }
 
@@ -441,9 +496,12 @@ mod tests {
     #[test]
     fn ids_that_arent_plain_are_refused_before_the_keychain() {
         let entitled = signing(Some(HARDENED), &[GROUP], &[]);
-        // Where there is no protected store there is no Keychain to keep them from.
+        // Where the protected store is not the Keychain there is none to keep them from.
         let Ok(store) = release_store(Some(GROUP), || Some(entitled)) else {
-            assert!(org_platform_host::credentials::protected_store().is_err());
+            assert_ne!(
+                org_platform_host::credentials::protected_store(),
+                Ok(ProtectedStore::Keychain)
+            );
             return;
         };
         let key = DbKey::from_bytes([1; 32]);
