@@ -233,8 +233,9 @@ impl AppPolicy {
         if by_user {
             lines.push(
                 "host.sock admits a native client run by this user: this system has no code \
-                 identity for a command, so admission grants nothing and authority comes only \
-                 from an approved session"
+                 identity for a command. Any process of this user that names the setup \
+                 operation is given the one initial administrator registration link, with no \
+                 session; every other authority comes only from an approved session"
                     .to_owned(),
             );
         }
@@ -599,20 +600,46 @@ mod tests {
         assert!(is_this_user(&user(me)));
     }
 
-    /// What the host logs: where a native client is named by its user alone it says so and
-    /// misses no team id; elsewhere a missing team id is a warning.
+    /// Whether this system names a native client by its user alone, as the platform's
+    /// admission says (it has no code signature to identify one by). Each test below that
+    /// differs by system expects exactly the outcome this names.
+    fn named_by_user_alone() -> bool {
+        use org_platform_host::admission::ImageIdentity;
+        match crate::test_programs::image_identity() {
+            ImageIdentity::VerifiedBytes => true,
+            ImageIdentity::CodeSignature => false,
+        }
+    }
+
+    /// What the host logs. Where a native client is named by its user alone it says so, says
+    /// what that admission alone gives (the initial registration link, to whoever names the
+    /// setup operation) and misses no team id. Elsewhere it says none of that, and a missing
+    /// team id is a warning.
     #[test]
     fn the_description_says_how_this_system_admits_a_native_client() {
         let lines = AppPolicy::new(APP_BUNDLE_ID, None).unwrap().describe();
-        let by_user = lines.iter().any(|line| line.contains("run by this user"));
+        let admitted: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.contains("admits a native client run by this user"))
+            .collect();
         let warned = lines.iter().any(|line| line.starts_with("WARNING"));
-        assert_eq!(by_user, names_peers_by_user(), "{lines:?}");
-        assert_ne!(by_user, warned, "{lines:?}");
-        let (one, _other) = std::os::unix::net::UnixStream::pair().unwrap();
-        assert_eq!(
-            by_user,
-            crate::peer::identity(&one).is_ok_and(|identity| is_this_user(&identity))
-        );
+        assert_eq!(names_peers_by_user(), named_by_user_alone());
+        if named_by_user_alone() {
+            assert_eq!(admitted.len(), 1, "{lines:?}");
+            let line = admitted[0];
+            assert!(
+                line.contains("initial administrator registration link")
+                    && line.contains("names the setup operation")
+                    && line.contains("with no session"),
+                "{line}"
+            );
+            // It does not claim that admission gives nothing.
+            assert!(!line.contains("grants nothing"), "{line}");
+            assert!(!warned, "{lines:?}");
+        } else {
+            assert!(admitted.is_empty(), "{lines:?}");
+            assert!(warned, "{lines:?}");
+        }
     }
 
     /// `nothing_after_request` on a real socket: true only while nothing waits past the
@@ -762,11 +789,18 @@ mod tests {
             },
         };
         let policy = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
-        assert_eq!(policy.allows(&peer), is_this_user(&identity));
-        assert_eq!(
-            policy.grant(&peer),
-            is_this_user(&identity).then_some(Grant::User)
-        );
+        // One outcome per kind of system, by the platform's fact (not by what the identity
+        // under test happens to carry).
+        if named_by_user_alone() {
+            assert!(is_this_user(&identity));
+            assert_eq!(policy.grant(&peer), Some(Grant::User));
+            assert!(policy.allows(&peer));
+        } else {
+            assert_eq!(identity.uid, None);
+            assert!(!is_this_user(&identity));
+            assert_eq!(policy.grant(&peer), None);
+            assert!(!policy.allows(&peer));
+        }
     }
 
     /// A request counts as sent after the accept only if its line starts at or after the bytes

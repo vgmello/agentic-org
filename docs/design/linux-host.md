@@ -790,10 +790,11 @@ everything. The cases that matter run as the service user:
   its user (enforced in the command since X2's review; before, only the missing Linux
   presence adapter kept the recovery command from sending the administrator's
   password).
-- **Trace or alter what the person runs**: the `agentic-org` command, and agent
-  processes, are ordinary dumpable processes. The host, the workers and the web
-  process are not (section 3.1). The host makes itself non-dumpable as the first act
-  of `serve`; a process that opened the host's `/proc/<pid>/mem` in the instant after
+- **Trace or alter what the person runs**: agent processes are ordinary dumpable
+  processes. The host, the workers and the web process are not (section 3.1), and
+  since X2's review neither is any other `agentic-org` command on Linux: the
+  executable hardens itself before it reads its arguments. That protects a command's
+  memory, not what the person types into a terminal the attacker can also read. The executable makes itself non-dumpable as its first act; a process that opened the host's `/proc/<pid>/mem` in the instant after
   the `exec` and before that call keeps its descriptor (measured), which adds nothing
   to what this user can already read.
 - **Connect to `host.sock`.** Admission is by UID only. With one exception, nothing is

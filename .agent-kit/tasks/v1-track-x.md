@@ -607,6 +607,35 @@ and the linked socket.
 | H9 Stale texts | NIT | Fixed by the lead and the author |
 | H10 Tests that skip as root pass silently; the root refusal test never runs in CI | NIT | With the author |
 
+**Repairs of slice 2: integrated** (branch `x/x2-repairs`, three commits ending at
+`a494befe`, by the slice's author, who confirmed all ten findings against the source
+and rejected none). Every test that differs by system takes its one expected outcome
+from a named platform fact and fails on any other
+(`admission::image_identity()`: a code signature or verified bytes;
+`fs::testing::device_flushes_per_full_sync`; `testing::names::equivalent_spellings_are_one_name`).
+`verify_host` says whether it knows the host by its image or by its user alone, and
+the recovery command refuses to send a password to the second kind. The executable
+hardens itself before it reads its arguments (every command, not only `serve`).
+`setup` refuses root. A release build on a system that checks verified bytes is
+checked by its pin alone (`ServerCheck::Published`); macOS still refuses a release
+without a team identifier, with the same text. The macOS decisions refuse a release
+image pinned only by its bytes. Open from the repairs: the web process's check still
+applies the signature rule on every system (one line and three tests in files X4's
+branch owns; done at X4's merge), and the office worker's own `setrlimit` could use
+the platform call.
+
+Lead's checks at the merge: lint for Linux (whole workspace), macOS and the refusing
+target; the refusing target's tests; `org-platform`, `org-platform-host`, `org-host`
+and `agentic-org` unprivileged: 969 passed, LNX-1 passed. One failure is the known
+web test. **A second is new and intermittent:**
+`apps/agentic-org` `service::a_list_answer_never_arrives_after_an_event_it_doesnt_reflect`
+(twelve offices started at once by an in-process host while a client lists them)
+went silent for 30 s in 3 of 6 runs with the machine under load (load average 7 to
+8, three other builds) and passed in the others in under 2 s. It ran on Linux for the
+first time with slice 2. Whether it is the test, the load or a hang in the host's
+Linux start path is not known yet; the slice's author is finding out before anything
+else is built on it.
+
 Not verified by the reviewer: anything on macOS at run time (first-run risks it
 names: hard-linking a socket in LNX-1, path lengths under `/private/tmp`, the private
 program copies, the background admission build), a release-profile build on either

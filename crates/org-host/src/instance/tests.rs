@@ -594,28 +594,34 @@ fn an_unavailable_other_instance_does_not_block_default_or_release_its_reservati
     }
 }
 
-/// An unavailable root keeps every spelling this system's filesystems may take for its name
-/// (`org_platform_host::names::paths_may_alias`): where the composed and the decomposed
-/// spelling may be one name, the second cannot be claimed while the first is unavailable;
-/// where names are bytes, it is another name and another root.
+/// An unavailable root keeps every spelling this system's filesystems may take for its name.
+/// Where the composed and the decomposed spelling may be one name (macOS), the second cannot
+/// be claimed while the first is unavailable and neither path appears; where names are bytes
+/// (GNU/Linux), it is another name and is claimed.
 #[test]
 fn an_unavailable_root_reserves_unicode_normalization_aliases() {
     let fixture = Fixture::new();
     let composed = fixture.root("caf\u{e9}");
     let decomposed = fixture.root("cafe\u{301}");
-    let one_name = org_platform_host::names::paths_may_alias(&composed, &decomposed).unwrap();
+    // The platform's fixed fact about this system's file names, not the comparison the
+    // registry itself calls: exactly one outcome is accepted on each kind of system.
+    let one_name = org_platform_host::testing::names::equivalent_spellings_are_one_name().unwrap();
     let held = fixture.registry.reserve(Some("lab"), &composed).unwrap();
     drop(held);
     fs::rename(&composed, fixture.root("moved-lab")).unwrap();
     let claimed = fixture.registry.reserve(Some("other"), &decomposed);
-    assert_eq!(
-        claimed.is_err(),
-        one_name,
-        "an unavailable NFC path must not be taken over through its NFD spelling"
-    );
-    assert!(!composed.exists());
     if one_name {
-        assert!(!decomposed.exists());
+        assert!(
+            claimed.is_err(),
+            "an unavailable NFC path must not be taken over through its NFD spelling"
+        );
+        assert!(!composed.exists() && !decomposed.exists());
+    } else {
+        // Names are bytes: the other spelling is another name, and a free root.
+        if let Err(error) = claimed {
+            panic!("another name was refused as an alias: {error}");
+        }
+        assert!(!composed.exists());
     }
 }
 

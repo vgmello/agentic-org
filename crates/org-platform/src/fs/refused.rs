@@ -23,6 +23,11 @@ pub(super) fn full_sync(_file: &File) -> io::Result<()> {
     refused()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn device_flushes_per_full_sync() -> Result<u64, Refused> {
+    Err(refusal())
+}
+
 pub(super) fn rename_noreplace_at(
     _from_dir: &File,
     _from: &CStr,
@@ -83,6 +88,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let file = File::create(directory.path().join("file")).unwrap();
         assert_refused(super::full_sync(&file));
+        assert_eq!(super::device_flushes_per_full_sync(), Err(super::refusal()));
         assert_refused(super::set_errno(0));
         // SAFETY: an all-zero `stat` is a valid value; the adapter does not read it.
         let stat: libc::stat = unsafe { std::mem::zeroed() };

@@ -38,6 +38,24 @@ pub fn paths_may_alias(a: &Path, b: &Path) -> Result<bool, Refused> {
     native::paths_may_alias(a, b)
 }
 
+/// Facts of this system's file names for a consumer's tests (`test-support`),
+/// re-exported from `crate::testing`.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod test_support {
+    use org_platform::Refused;
+
+    /// Whether this system's filesystems may take the composed and the decomposed
+    /// Unicode spelling of a name (`é` as one code point, or as `e` with a combining
+    /// accent) for the same name, as a fixed fact of the adapter: `true` on macOS,
+    /// `false` on GNU/Linux, where names are bytes. A consumer's test of its own rule
+    /// about such spellings expects exactly the outcome this names; it does not ask
+    /// [`paths_may_alias`](super::paths_may_alias), the function its code calls. The
+    /// refusing adapter refuses.
+    pub fn equivalent_spellings_are_one_name() -> Result<bool, Refused> {
+        super::native::equivalent_spellings_are_one_name()
+    }
+}
+
 /// What every refusing adapter in this capability answers.
 fn refusal() -> Refused {
     Refused::Unsupported {

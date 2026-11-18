@@ -32,6 +32,23 @@ fn a_full_sync_counts_each_step_that_succeeded() {
     assert!(device == 0 || device == 2, "{device}");
 }
 
+/// The fixed fact a consumer's test relies on is what a real flush does here: each
+/// `full_sync` adds exactly that many device flushes, and one `fsync`.
+#[test]
+fn the_device_flush_fact_is_what_one_full_sync_counts() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = std::fs::File::create(directory.path().join("file")).unwrap();
+    let per_sync = super::testing::device_flushes_per_full_sync().unwrap();
+    assert!(per_sync <= 1);
+    for _ in 0..3 {
+        let before = full_sync_counts();
+        full_sync(&file).unwrap();
+        let after = full_sync_counts();
+        assert_eq!(after.fsync - before.fsync, 1);
+        assert_eq!(after.device_flush - before.device_flush, per_sync);
+    }
+}
+
 #[test]
 fn a_full_sync_that_fails_is_an_error_and_counts_nothing() {
     // A pipe cannot be flushed.

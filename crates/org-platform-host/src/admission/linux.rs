@@ -265,6 +265,11 @@ pub(super) fn native_peers() -> Result<(), Refused> {
     Ok(())
 }
 
+/// The bytes that are executed, by their SHA-256.
+pub(super) fn image_identity() -> Result<super::ImageIdentity, Refused> {
+    Ok(super::ImageIdentity::VerifiedBytes)
+}
+
 /// No code signature exists to satisfy a requirement.
 pub(super) fn peer_satisfies(_peer: &Peer, _requirement: &str, _rule: &SigningRule) -> bool {
     false

@@ -277,11 +277,21 @@ fn root_refusal(euid: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Closes this process to the other processes of its user before it reads a key: no core
-/// dump, and where the system has the attribute, not dumpable (`org_platform::process`).
-/// Every way a host starts goes through it first.
+/// Closes this process to the other processes of its user: no core dump, and where the
+/// system has the attribute, not dumpable (`org_platform::process::harden_self`). The
+/// executable calls it as its first action, before it reads an argument: a descriptor of
+/// this process's memory that another process of the user opened earlier keeps working, so
+/// the time before this call is kept as short as it can be. It can be called again and
+/// changes nothing then.
+pub fn harden_process() -> io::Result<()> {
+    org_platform::process::harden_self()
+}
+
+/// [`harden_process`] before a host reads a key. Every way a host starts goes through it
+/// first, whatever its executable did: a host started inside another program (a test) is
+/// closed here.
 fn harden() -> Result<(), HostError> {
-    org_platform::process::harden_self().map_err(|source| HostError::Io {
+    harden_process().map_err(|source| HostError::Io {
         context: "closing this process to other processes before any key is read",
         source,
     })

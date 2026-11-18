@@ -45,15 +45,30 @@ pub(super) fn admit(
     }
 }
 
+/// Whether `expected` is a release image pinned only by a digest of its bytes, which an
+/// adapter that checks the loaded image cannot read: nothing this system can check pins
+/// it. A development image is its own build output and is not judged by this.
+fn pinned_by_bytes_alone(expected: &ExpectedImage) -> bool {
+    !expected.development && expected.sha256.is_some() && expected.macos_cdhash.is_none()
+}
+
 /// The pin on top of an admission: `admitted` is what the check before it answered.
 /// A pinned image must have been identified, and the hash of the image its token
-/// names (`digest`) must be the pinned one.
+/// names (`digest`) must be the pinned one. A release image pinned only by a digest of
+/// its bytes is never admitted here ([`ImageRefusal::Unidentified`]): this adapter has
+/// no way to check that pin, and treating it as no pin would admit an image the release
+/// does not name.
 pub(super) fn pinned(
     expected: &ExpectedImage,
     admitted: Result<Option<Token>, ImageRefusal>,
     digest: impl FnOnce(&Token) -> io::Result<[u8; 20]>,
 ) -> Result<Option<Token>, ImageRefusal> {
     let Some(pin) = expected.macos_cdhash else {
+        if pinned_by_bytes_alone(expected) {
+            // The refusal of the check before the pin still wins.
+            admitted?;
+            return Err(ImageRefusal::Unidentified);
+        }
         return admitted;
     };
     let token = admitted?.ok_or(ImageRefusal::Unidentified)?;
@@ -98,6 +113,9 @@ pub(super) fn still(
         Some(admitted) => unchanged(admitted, now())?,
     }
     let Some(pin) = expected.macos_cdhash else {
+        if pinned_by_bytes_alone(expected) {
+            return Err(ImageRefusal::Unidentified);
+        }
         return Ok(());
     };
     let token = admitted.ok_or(ImageRefusal::Unidentified)?;
@@ -306,6 +324,78 @@ mod tests {
                 admitted
             );
         }
+    }
+
+    /// A release image pinned only by the SHA-256 of its bytes names a pin this adapter
+    /// cannot check: it is refused at the pin and at every re-check, identified or not,
+    /// and no hash is read. The refusal of the check before the pin still wins. A
+    /// development image with such a digest, and a release image with both identities,
+    /// are judged as before.
+    #[test]
+    fn a_release_image_pinned_only_by_its_bytes_is_never_admitted() {
+        let never = || -> Result<Token, String> { panic!("asked for a token") };
+        let bytes_only = ExpectedImage {
+            sha256: Some([9; 32]),
+            ..release("R", RULE)
+        };
+        for admitted in [Ok(Some([7; 32])), Ok(None)] {
+            assert_eq!(
+                pinned(&bytes_only, admitted, no_digest),
+                Err(ImageRefusal::Unidentified)
+            );
+        }
+        assert_eq!(
+            pinned(&bytes_only, Err(ImageRefusal::NotTheImage), no_digest),
+            Err(ImageRefusal::NotTheImage)
+        );
+        assert_eq!(
+            still(&bytes_only, None, never, no_digest),
+            Err(ImageRefusal::Unidentified)
+        );
+        assert_eq!(
+            still(&bytes_only, Some([7; 32]), || Ok([7; 32]), no_digest),
+            Err(ImageRefusal::Unidentified)
+        );
+        // A changed token is still refused as that, first.
+        assert_eq!(
+            still(&bytes_only, Some([7; 32]), || Ok([8; 32]), no_digest),
+            Err(ImageRefusal::Changed)
+        );
+        // The same without a requirement (nothing names a publisher at all).
+        let unruled = ExpectedImage {
+            macos_requirement: None,
+            ..bytes_only.clone()
+        };
+        assert_eq!(
+            pinned(&unruled, Ok(None), no_digest),
+            Err(ImageRefusal::Unidentified)
+        );
+        // A development image carries the digest of a pin too (a debug host with a
+        // selected release for a system that has no CodeDirectory hash): unchanged.
+        let development_bytes = ExpectedImage {
+            sha256: Some([9; 32]),
+            ..development()
+        };
+        for admitted in [Ok(None), Ok(Some([7; 32]))] {
+            assert_eq!(
+                pinned(&development_bytes, admitted.clone(), no_digest),
+                admitted
+            );
+        }
+        assert_eq!(still(&development_bytes, None, never, no_digest), Ok(()));
+        // Both identities: the CodeDirectory hash is the pin, as before.
+        let both = ExpectedImage {
+            macos_cdhash: Some([3; 20]),
+            ..bytes_only
+        };
+        assert_eq!(
+            pinned(&both, Ok(Some([7; 32])), |_| Ok([3; 20])),
+            Ok(Some([7; 32]))
+        );
+        assert_eq!(
+            still(&both, Some([7; 32]), || Ok([7; 32]), |_| Ok([3; 20])),
+            Ok(())
+        );
     }
 
     #[test]

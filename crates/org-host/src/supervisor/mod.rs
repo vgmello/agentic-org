@@ -697,8 +697,9 @@ mod tests {
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
     use crate::peer::AuditToken;
-    use crate::server_check::{Pin, Scripted, Step};
-    use crate::test_programs::{recorded_starts, recorded_stdin, recording_worker};
+    use crate::server_check::{NoAdmission, Pin, Scripted, Step};
+    use crate::test_programs::{image_identity, recorded_starts, recorded_stdin, recording_worker};
+    use org_platform_host::admission::ImageIdentity;
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -903,12 +904,16 @@ mod tests {
     }
 
     /// L2: the check is asked once, when the child is admitted, and a child it refuses gets
-    /// nothing. Where the system checks a child after it was started (its admission names no
-    /// digest of verified bytes), the check runs while the child is still suspended: at the
-    /// admission the child is stopped (`ps` state `T`, the kernel's `SSTOP`), so not one
-    /// instruction of its image has run, and once refused it never does. Where the verified
-    /// bytes are executed there is no suspended child: the image was checked before the child
-    /// existed, so the child may have started, and still receives nothing.
+    /// nothing. What else holds is the one outcome of this system's kind of admission
+    /// (`org_platform_host::admission::image_identity`, the platform's fact):
+    ///
+    /// - A code signature is checked on the started child: the check runs while the child is
+    ///   still suspended. At the admission the child is stopped (`ps` state `T`, the
+    ///   kernel's `SSTOP`), so not one instruction of its image has run, and once refused it
+    ///   never does: the worker never records a start.
+    /// - The executed bytes are checked: there is no suspended child. The image was checked
+    ///   before the child existed (the admission names its digest), so the child may have
+    ///   started, and still receives nothing.
     #[test]
     fn the_check_runs_before_the_child_gets_anything() {
         let dir = short_tempdir();
@@ -926,21 +931,28 @@ mod tests {
             lock(&seen).push(state);
             Err("refused by the test".into())
         });
-        // Asked of this system's own admission, as plain data: no digest of verified bytes
-        // means the image is checked on the started child, which must then be held.
-        let checked_after_the_start = check.admission(&program).unwrap().image_sha256().is_none();
+        let verified_digest = check.admission(&program).unwrap().image_sha256();
         let supervisor = checked_supervisor(dir.path(), program, &keys, check);
         let err = supervisor.discard(OFFICE).unwrap_err();
         assert!(err.to_string().contains("refused by the test"), "{err}");
         let states = lock(&states).clone();
         assert_eq!(states.len(), 1, "{states:?}");
         thread::sleep(Duration::from_millis(200));
-        if checked_after_the_start {
-            assert!(
-                states[0].starts_with('T'),
-                "not stopped at the check: {states:?}"
-            );
-            assert_eq!(recorded_starts(dir.path()), 0, "the child ran");
+        match image_identity() {
+            ImageIdentity::CodeSignature => {
+                assert!(
+                    states[0].starts_with('T'),
+                    "not stopped at the check: {states:?}"
+                );
+                assert_eq!(recorded_starts(dir.path()), 0, "the child ran");
+                assert_eq!(verified_digest, None);
+            }
+            ImageIdentity::VerifiedBytes => {
+                assert!(
+                    verified_digest.is_some(),
+                    "the image was not verified before the child existed"
+                );
+            }
         }
         assert_eq!(recorded_stdin(dir.path()), b"", "it got a line");
     }
@@ -1015,7 +1027,16 @@ mod tests {
         keys.create(OFFICE, &DbKey::from_bytes([4; 32])).unwrap();
         let supervisor = supervisor(dir.path(), program.clone(), &keys);
         let images = Arc::clone(&supervisor.spawner().unwrap().images);
-        let before = images.admission().ok();
+        let before = match (image_identity(), images.admission()) {
+            // Nothing is read until a child is started: the admission exists at once.
+            (ImageIdentity::CodeSignature, Ok(admission)) => Some(admission),
+            // The image is read when the admission is built: there is none yet.
+            (ImageIdentity::VerifiedBytes, Err(NoAdmission::Unavailable(error))) => {
+                assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error:?}");
+                None
+            }
+            (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
+        };
         // No server starts, whichever step notices: the host keeps serving and reports it.
         assert!(supervisor.discard(OFFICE).is_err());
         assert_eq!(recorded_starts(dir.path()), 0);
@@ -1084,10 +1105,15 @@ mod tests {
             sha256: Sha256::digest(&released).into(),
             macos_cdhash: Some([7; 20]),
         });
-        let refusals = [
-            check.why(&org_platform_host::admission::ImageRefusal::DigestMismatch),
-            check.why(&org_platform_host::admission::ImageRefusal::Unidentified),
-        ];
+        // The one refusal of this system's kind of admission.
+        let refusal = check.why(&match image_identity() {
+            ImageIdentity::VerifiedBytes => {
+                org_platform_host::admission::ImageRefusal::DigestMismatch
+            }
+            ImageIdentity::CodeSignature => {
+                org_platform_host::admission::ImageRefusal::Unidentified
+            }
+        });
         let supervisor = checked_supervisor(dir.path(), program.clone(), &keys, check);
         let (outcome, logged) = spawn_discard(&supervisor);
         let why = match outcome {
@@ -1095,7 +1121,7 @@ mod tests {
             Err(other) => panic!("not a refusal: {other}"),
             Ok(()) => panic!("an image that is not the pinned one was started"),
         };
-        assert!(refusals.contains(&why), "{why}");
+        assert_eq!(why, refusal);
         assert!(
             logged
                 .iter()

@@ -582,6 +582,30 @@ pub fn peer(stream: &UnixStream) -> io::Result<Peer> {
     native::peer(stream)
 }
 
+/// What identifies an image to this system's admission: the fact a consumer's policy
+/// needs to know which of its data ([`ExpectedImage`]) can vouch for a publisher here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageIdentity {
+    /// The code signature of the loaded image (macOS). A child is started first, held
+    /// suspended, and checked against the requirement, the signing rule and the pinned
+    /// CodeDirectory hash before it runs. A release image therefore needs a requirement:
+    /// without one nothing names its publisher. A native client is identified by its
+    /// image as well.
+    CodeSignature,
+    /// The bytes themselves (GNU/Linux). The image is read and its SHA-256 compared with
+    /// the expected digest before any child exists, and a child executes exactly those
+    /// bytes: no suspended child, no code signature, no requirement. A release image's
+    /// publisher is whoever signed the digest it is pinned to. A native client is
+    /// identified by its user alone.
+    VerifiedBytes,
+}
+
+/// What identifies an image to this system's admission, or the `process admission`
+/// refusal on a system without an adapter.
+pub fn image_identity() -> Result<ImageIdentity, Refused> {
+    native::image_identity()
+}
+
 /// Whether this system identifies a native client at all ([`peer`]): by its image
 /// on macOS, by its user and PID only on GNU/Linux, where [`Peer::satisfies`] is
 /// always `false`. A consumer refuses to serve native clients where this refuses.

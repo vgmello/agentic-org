@@ -9,6 +9,11 @@ pub mod admission {
     };
 }
 
+/// File names: what this system's filesystems take for one name.
+pub mod names {
+    pub use crate::names::test_support::equivalent_spellings_are_one_name;
+}
+
 /// The directory credential store's write hooks: a step between flush and
 /// publication, a step after a name collision, and failing directory flushes.
 pub mod credentials {

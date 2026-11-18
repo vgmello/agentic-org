@@ -108,6 +108,10 @@ pub(super) fn native_peers() -> Result<(), Refused> {
     Err(peer_refusal())
 }
 
+pub(super) fn image_identity() -> Result<super::ImageIdentity, Refused> {
+    Err(refusal())
+}
+
 pub(super) fn peer_satisfies(_peer: &Peer, _requirement: &str, _rule: &SigningRule) -> bool {
     false
 }
@@ -208,6 +212,8 @@ mod tests {
         let Refused::Unsupported { capability, os } = native_peers().unwrap_err();
         assert_eq!(capability, "peer identity");
         assert_eq!(os, std::env::consts::OS);
+        // No adapter, so no identity it checks an image by.
+        assert_eq!(image_identity(), Err(refusal()));
         for peer in [
             Peer::from_macos_audit_token([0; 32]),
             Peer::from_macos_audit_token([7; 32]),
