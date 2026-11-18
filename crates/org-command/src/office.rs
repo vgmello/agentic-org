@@ -1,5 +1,6 @@
 //! What the library needs from outside it, as contracts it owns: an office to send a command to,
-//! and somewhere to read a named file and standard input from. The executable supplies both.
+//! somewhere to read a named file and standard input from, and a source of idempotency keys.
+//! The executable supplies all three.
 
 use std::io;
 
@@ -19,6 +20,8 @@ pub struct Request {
     pub limit: Option<u32>,
     pub cursor: Option<String>,
     pub dry_run: bool,
+    /// The key of a write that is not a dry run: the caller's `--idempotency-key`, or one from
+    /// the [`KeySource`]. `None` for a read and for a dry run.
     pub idempotency_key: Option<String>,
     pub if_match: Option<u64>,
     pub durable: bool,
@@ -57,10 +60,14 @@ impl Status {
 /// The office's answer to a command it did not refuse.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Answer {
-    /// One record, or a list of records.
+    /// One record, or a list of records: exactly the fields the row declares. The library drops
+    /// a field the row does not declare and fails the command when a required one is missing.
+    /// An optional field that has no value is left out; `null` is a value only where the row
+    /// declares open JSON.
     pub data: Value,
     pub status: Status,
-    /// For a write.
+    /// For a write: the operation's ID, when the office has one to report. Without it
+    /// `meta.operation_id` is the request's idempotency key.
     pub operation_id: Option<String>,
     /// For a write.
     pub ack: Option<Ack>,
@@ -92,9 +99,11 @@ pub struct Refusal {
     pub message: String,
     /// What to do next, in a sentence.
     pub hint: String,
-    /// The flags to change for a retry that can succeed, from flag name to value.
+    /// The flags to change for a retry that can succeed, from flag name to value. For
+    /// `unavailable` and `not_ready` the library adds the write's `idempotency-key` itself.
     pub retry_with: Option<Map<String, Value>>,
-    /// For a write.
+    /// For a write, when the office has one to report. Without it `meta.operation_id` is the
+    /// request's idempotency key.
     pub operation_id: Option<String>,
 }
 
@@ -118,7 +127,22 @@ pub trait Office {
 
 /// Where `--input-file` and `--stdin` read from. The library calls `stdin` only when `--stdin`
 /// was given, and `file` only for the path of `--input-file`.
+///
+/// Every read is bounded. `max_bytes` is the most the command accepts
+/// ([`crate::MAX_INPUT_BYTES`], or [`crate::MAX_YAML_INPUT_BYTES`] for `--input-format yaml`).
+/// An implementation reads at most `max_bytes + 1` bytes and returns what it read: it never
+/// holds more than that, however long the file or the stream is. The library refuses an answer
+/// longer than `max_bytes` with `invalid_request`, so the one byte over is how an
+/// implementation says the input is too long.
 pub trait Sources {
-    fn file(&mut self, path: &str) -> io::Result<Vec<u8>>;
-    fn stdin(&mut self) -> io::Result<Vec<u8>>;
+    fn file(&mut self, path: &str, max_bytes: usize) -> io::Result<Vec<u8>>;
+    fn stdin(&mut self, max_bytes: usize) -> io::Result<Vec<u8>>;
+}
+
+/// Where the idempotency key of a write that carries none comes from (design 2.7). The library
+/// makes no randomness itself. It asks for a key only for a write that is not a dry run and has
+/// no `--idempotency-key`, after the command line is read and before the office is called.
+pub trait KeySource {
+    /// A new key no earlier call used: 1 to 64 letters, digits and hyphens.
+    fn new_key(&mut self) -> String;
 }

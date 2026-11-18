@@ -270,25 +270,25 @@ pub(crate) const OPTIONS: &[CommonOption] = &[
         "json",
         Some("object"),
         Applies::WithInput,
-        "The whole input, or the part the flags do not give, as one JSON object",
+        "The whole input, or the part the flags do not give, as one JSON object of at most 1 MiB",
     ),
     option(
         "input-file",
         Some("path"),
         Applies::WithInput,
-        "Read the content field from this file, bytes unchanged",
+        "Read the content field from this file, bytes unchanged, at most 1 MiB",
     ),
     option(
         "stdin",
         None,
         Applies::WithInput,
-        "Read the content field from standard input, bytes unchanged",
+        "Read the content field from standard input, bytes unchanged, at most 1 MiB",
     ),
     option(
         "input-format",
         Some("text|json|yaml"),
         Applies::WithInput,
-        "With json or yaml, the file or standard input is the whole input (yaml: at most 64 KiB). Default text",
+        "With json or yaml, the file or standard input is the whole input (json: at most 1 MiB; yaml: at most 64 KiB). Default text",
     ),
     option(
         "dry-run",
@@ -300,7 +300,7 @@ pub(crate) const OPTIONS: &[CommonOption] = &[
         "idempotency-key",
         Some("key"),
         Applies::Writes,
-        "A key you choose, up to 64 letters, digits and hyphens, for safe retries",
+        "A key you choose, up to 64 letters, digits and hyphens, for safe retries. Without it the command makes one and reports it in meta.operation_id",
     ),
     option(
         "if-match",

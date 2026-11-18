@@ -1,5 +1,8 @@
 //! The contract every row is held to, and the test office it is run against: a stub inside the
-//! test process. An increment that adds rows calls [`check_contract`] on its table.
+//! test process. An increment that adds rows calls [`check_contract`] on its table. An increment
+//! that has an office to answer them calls [`check_contract_with`] and gives a function that
+//! makes that office: the same checks then also hold the office to the rows, and fail when it
+//! answers a field a row does not declare or leaves out a required one.
 //!
 //! The checks are CLI-1, 2, 3, 7, 8 and 11 of `docs/design/agent-os-command-line.md`, section 8.
 //! Each panics with the row's name and what failed.
@@ -12,8 +15,8 @@ use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
 use crate::{
-    envelope_schema, run, yaml_object, Ack, Answer, Command, CommandTable, Example, Field, IfMatch,
-    Kind, Office, Output, Refusal, Request, Sources, Status, Type, CATALOGUE_LIMIT,
+    envelope_schema, run, shape, Ack, Answer, Command, CommandTable, Example, Field, IfMatch,
+    KeySource, Kind, Office, Output, Refusal, Request, Sources, Status, Type, CATALOGUE_LIMIT,
 };
 
 /// The test office. It answers every command with the row's example output and records what
@@ -35,12 +38,7 @@ impl Office for StubOffice {
             .expect("the table checked the example output");
         let mut answer = Answer::completed(data);
         if let Kind::Write { ack, if_match } = command.kind {
-            answer.operation_id = Some(
-                request
-                    .idempotency_key
-                    .clone()
-                    .unwrap_or_else(|| "op-stub".to_owned()),
-            );
+            // No operation ID of its own: `meta.operation_id` is then the request's key.
             answer.ack = Some(if request.durable { Ack::Durable } else { ack });
             if if_match != IfMatch::No && !request.dry_run {
                 answer.revision = Some(request.if_match.unwrap_or(0) + 1);
@@ -51,43 +49,137 @@ impl Office for StubOffice {
 }
 
 /// Files and standard input held in memory. `stdin: None` is standard input closed. Every read
-/// is counted.
+/// is counted, and it hands over at most one byte more than the limit it is given, as the
+/// contract of [`Sources`] states.
 #[derive(Debug, Default)]
 pub struct StubSources {
     pub files: BTreeMap<String, Vec<u8>>,
     pub stdin: Option<Vec<u8>>,
     pub file_reads: usize,
     pub stdin_reads: usize,
+    /// The limit of the last read.
+    pub last_limit: Option<usize>,
+}
+
+fn bounded(bytes: &[u8], max_bytes: usize) -> Vec<u8> {
+    bytes[..bytes.len().min(max_bytes.saturating_add(1))].to_vec()
 }
 
 impl Sources for StubSources {
-    fn file(&mut self, path: &str) -> io::Result<Vec<u8>> {
+    fn file(&mut self, path: &str, max_bytes: usize) -> io::Result<Vec<u8>> {
         self.file_reads += 1;
+        self.last_limit = Some(max_bytes);
         self.files
             .get(path)
-            .cloned()
+            .map(|bytes| bounded(bytes, max_bytes))
             .ok_or_else(|| io::ErrorKind::NotFound.into())
     }
 
-    fn stdin(&mut self) -> io::Result<Vec<u8>> {
+    fn stdin(&mut self, max_bytes: usize) -> io::Result<Vec<u8>> {
         self.stdin_reads += 1;
+        self.last_limit = Some(max_bytes);
         self.stdin
-            .clone()
+            .as_deref()
+            .map(|bytes| bounded(bytes, max_bytes))
             .ok_or_else(|| io::ErrorKind::BrokenPipe.into())
+    }
+}
+
+/// Keys in a fixed order: `key-1`, `key-2`, and so on. `made` counts them.
+#[derive(Debug, Default)]
+pub struct StubKeys {
+    pub made: usize,
+}
+
+impl KeySource for StubKeys {
+    fn new_key(&mut self) -> String {
+        self.made += 1;
+        format!("key-{}", self.made)
     }
 }
 
 const PROGRAM: &str = "agent-os";
 
-/// Runs one command line against a fresh stub office.
+/// Runs one command line against a fresh stub office, with fresh [`StubKeys`].
 pub fn run_stub(
     table: &CommandTable,
     args: &[String],
     sources: &mut StubSources,
 ) -> (Output, StubOffice) {
     let mut office = StubOffice::default();
-    let output = run(table, PROGRAM, args, sources, &mut office);
+    let output = run(
+        table,
+        PROGRAM,
+        args,
+        sources,
+        &mut StubKeys::default(),
+        &mut office,
+    );
     (output, office)
+}
+
+/// Makes the office a check runs one command line against. Each command line gets a new one.
+pub type OfficeFactory<'a> = &'a dyn Fn() -> Box<dyn Office>;
+
+/// The default office of the checks: a [`StubOffice`].
+pub fn stub_office() -> Box<dyn Office> {
+    Box::new(StubOffice::default())
+}
+
+/// An office with everything it was sent and everything it answered, as it answered it: before
+/// the library drops or refuses anything.
+pub struct Recorded {
+    office: Box<dyn Office>,
+    pub calls: Vec<Request>,
+    pub answers: Vec<Result<Answer, Refusal>>,
+}
+
+impl Office for Recorded {
+    fn call(&mut self, request: &Request) -> Result<Answer, Refusal> {
+        self.calls.push(request.clone());
+        let answer = self.office.call(request);
+        self.answers.push(answer.clone());
+        answer
+    }
+}
+
+/// Runs one command line against a new office from `office`, with fresh [`StubKeys`].
+pub fn run_recorded(
+    table: &CommandTable,
+    args: &[String],
+    sources: &mut StubSources,
+    office: OfficeFactory,
+) -> (Output, Recorded) {
+    let mut recorded = Recorded {
+        office: office(),
+        calls: Vec::new(),
+        answers: Vec::new(),
+    };
+    let output = run(
+        table,
+        PROGRAM,
+        args,
+        sources,
+        &mut StubKeys::default(),
+        &mut recorded,
+    );
+    (output, recorded)
+}
+
+/// Holds an office to its rows: every answer it gave is exactly what the row declares. The
+/// library would drop an undeclared field and refuse a missing one; here either is a failure,
+/// so an office that drifts from its rows is caught by its own increment's tests.
+fn assert_declared(recorded: &Recorded, context: &str) {
+    for (request, answer) in recorded.calls.iter().zip(&recorded.answers) {
+        if let Ok(answer) = answer {
+            if let Err(problem) = shape::validate_data(request.command, &answer.data) {
+                panic!(
+                    "{context}: the office answered outside the row's declared output: {problem}\n{}",
+                    answer.data
+                );
+            }
+        }
+    }
 }
 
 fn example_input(row: &Command) -> Map<String, Value> {
@@ -125,13 +217,17 @@ pub fn json_envelope(output: &Output, context: &str) -> Value {
     );
     let envelope: Value = serde_json::from_str(line)
         .unwrap_or_else(|e| panic!("{context}: the output is not JSON ({e}):\n{line}"));
-    if let Err(problem) = validate_schema(&envelope_schema(), &envelope) {
+    let schema = envelope_schema();
+    if let Err(problem) = check_schema(&schema) {
+        panic!("{context}: the envelope's schema is not valid JSON Schema: {problem}");
+    }
+    if let Err(problem) = validate_schema(&schema, &envelope) {
         panic!("{context}: the envelope does not validate: {problem}\n{line}");
     }
     envelope
 }
 
-fn assert_refused_unread(output: &Output, office: &StubOffice, context: &str) {
+fn assert_refused_unread(output: &Output, office: &Recorded, context: &str) {
     let envelope = json_envelope(output, context);
     assert_eq!(output.exit_code, 2, "{context}: exit code");
     assert_eq!(envelope["ok"], json!(false), "{context}");
@@ -151,18 +247,19 @@ fn assert_refused_unread(output: &Output, office: &StubOffice, context: &str) {
 
 /// CLI-1: a positional argument, an unknown flag and a missing required flag are each refused
 /// with `invalid_request`, a hint and exit code 2, and nothing reaches the office.
-pub fn check_grammar(table: &CommandTable) {
+pub fn check_grammar(table: &CommandTable, make: OfficeFactory) {
     for row in table.rows() {
         let name = row.name();
         let input = example_input(row);
         let base = args_for(row, &input);
-        let (output, office) = run_stub(table, &base, &mut StubSources::default());
+        let (output, office) = run_recorded(table, &base, &mut StubSources::default(), make);
         assert_eq!(
             output.exit_code, 0,
             "{name}: the example is refused: {}",
             output.stdout
         );
         assert_eq!(office.calls.len(), 1, "{name}: the example makes one call");
+        assert_declared(&office, &name);
         assert_eq!(
             office.calls[0].input, input,
             "{name}: the office receives the example input"
@@ -175,7 +272,7 @@ pub fn check_grammar(table: &CommandTable) {
                 &["stray"],
             ),
         ] {
-            let (output, office) = run_stub(table, &args, &mut StubSources::default());
+            let (output, office) = run_recorded(table, &args, &mut StubSources::default(), make);
             assert_refused_unread(&output, &office, &format!("{name}: a positional argument"));
         }
         for extra in [
@@ -183,18 +280,23 @@ pub fn check_grammar(table: &CommandTable) {
             &["--no-such-flag=x"],
             &["--no-such-flag"],
         ] {
-            let (output, office) = run_stub(
+            let (output, office) = run_recorded(
                 table,
                 &with(base.clone(), extra),
                 &mut StubSources::default(),
+                make,
             );
             assert_refused_unread(&output, &office, &format!("{name}: an unknown flag"));
         }
         for field in row.input.iter().filter(|field| field.required) {
             let mut partial = input.clone();
             partial.remove(field.name);
-            let (output, office) =
-                run_stub(table, &args_for(row, &partial), &mut StubSources::default());
+            let (output, office) = run_recorded(
+                table,
+                &args_for(row, &partial),
+                &mut StubSources::default(),
+                make,
+            );
             assert_refused_unread(
                 &output,
                 &office,
@@ -208,7 +310,7 @@ pub fn check_grammar(table: &CommandTable) {
                 "--json".to_owned(),
             ];
             args.push(Value::Object(input.clone()).to_string());
-            let (output, office) = run_stub(table, &args, &mut StubSources::default());
+            let (output, office) = run_recorded(table, &args, &mut StubSources::default(), make);
             assert_refused_unread(
                 &output,
                 &office,
@@ -219,17 +321,19 @@ pub fn check_grammar(table: &CommandTable) {
 }
 
 /// CLI-2: `json` and `yaml` print exactly one envelope that validates against the envelope's
-/// schema, and `json` is one line; `compact` prints `data` alone on success and the JSON
-/// envelope on failure; `--help` prints text.
-pub fn check_answers(table: &CommandTable) {
+/// schema, and `json` is one line; `compact` prints `data` on success (with a last `meta:` line
+/// only when the command did not complete or there is another page) and the JSON envelope on
+/// failure; `--help` prints text.
+pub fn check_answers(table: &CommandTable, make: OfficeFactory) {
     for row in table.rows() {
         let name = row.name();
         let base = args_for(row, &example_input(row));
 
-        let (output, _) = run_stub(
+        let (output, _) = run_recorded(
             table,
             &with(base.clone(), &["--format", "json"]),
             &mut StubSources::default(),
+            make,
         );
         let envelope = json_envelope(&output, &format!("{name}: json"));
         assert_eq!(
@@ -239,12 +343,13 @@ pub fn check_answers(table: &CommandTable) {
         );
         assert_eq!(envelope["error"], Value::Null, "{name}: json");
 
-        let (output, _) = run_stub(
+        let (output, _) = run_recorded(
             table,
             &with(base.clone(), &["--format=yaml"]),
             &mut StubSources::default(),
+            make,
         );
-        let from_yaml = yaml_object(&output.stdout).unwrap_or_else(|e| {
+        let from_yaml = org_docs::parse_mapping(&output.stdout).unwrap_or_else(|e| {
             panic!(
                 "{name}: the yaml answer is not one YAML mapping ({e}):\n{}",
                 output.stdout
@@ -257,13 +362,25 @@ pub fn check_answers(table: &CommandTable) {
         );
         assert_eq!(output.exit_code, 0, "{name}: yaml");
 
-        let (output, _) = run_stub(
+        let (output, _) = run_recorded(
             table,
             &with(base.clone(), &["--format", "compact"]),
             &mut StubSources::default(),
+            make,
         );
         assert_eq!(output.exit_code, 0, "{name}: compact");
-        let lines: Vec<&str> = output.stdout.lines().collect();
+        let mut lines: Vec<&str> = output.stdout.lines().collect();
+        // `compact` ends with one `meta:` line exactly when the command did not complete or
+        // there is another page.
+        let meta = &envelope["meta"];
+        if meta["status"] != json!("completed") || meta.get("next_cursor").is_some() {
+            let last = lines.pop().unwrap_or_default();
+            let printed = last
+                .strip_prefix("meta: ")
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .unwrap_or_else(|| panic!("{name}: compact does not end with meta: `{last}`"));
+            assert_eq!(printed["status"], meta["status"], "{name}: compact meta");
+        }
         match &envelope["data"] {
             Value::Array(items) => {
                 assert_eq!(
@@ -316,6 +433,7 @@ pub fn check_answers(table: &CommandTable) {
                 PROGRAM,
                 &args,
                 &mut StubSources::default(),
+                &mut StubKeys::default(),
                 &mut office,
             );
             let failed = json_envelope(&output, &format!("{name}: a failure in {format}"));
@@ -329,10 +447,11 @@ pub fn check_answers(table: &CommandTable) {
             );
         }
 
-        let (output, office) = run_stub(
+        let (output, office) = run_recorded(
             table,
             &with(base.clone(), &["--help"]),
             &mut StubSources::default(),
+            make,
         );
         assert_eq!(output.exit_code, 0, "{name}: --help");
         assert!(
@@ -356,14 +475,14 @@ pub fn check_answers(table: &CommandTable) {
 
 /// CLI-3: every `--schema` output is valid JSON Schema, and every row's example input and
 /// recorded output validate against it. The example input also goes through the parser.
-pub fn check_schemas(table: &CommandTable) {
+pub fn check_schemas(table: &CommandTable, make: OfficeFactory) {
     for row in table.rows() {
         let name = row.name();
         let args = with(
             vec![row.resource.to_owned(), row.verb.to_owned()],
             &["--schema"],
         );
-        let (output, office) = run_stub(table, &args, &mut StubSources::default());
+        let (output, office) = run_recorded(table, &args, &mut StubSources::default(), make);
         let envelope = json_envelope(&output, &format!("{name}: --schema"));
         assert_eq!(output.exit_code, 0, "{name}: --schema");
         assert!(
@@ -404,7 +523,12 @@ pub fn check_schemas(table: &CommandTable) {
                 "{name}: the example input does not validate against the input schema: {problem}"
             );
         }
-        let (output, office) = run_stub(table, &args_for(row, &input), &mut StubSources::default());
+        let (output, office) = run_recorded(
+            table,
+            &args_for(row, &input),
+            &mut StubSources::default(),
+            make,
+        );
         assert_eq!(
             office.calls.first().map(|call| &call.input),
             Some(&input),
@@ -423,15 +547,19 @@ pub const HARD_TEXT: &str = "# Title with \"double\" and 'single' quotes\n\n`cod
 /// CLI-7: Markdown with quotes, backticks, dollar signs, new lines and non-ASCII text arrives
 /// byte-identical through `--input-file`, `--stdin` and `--json` (and the field's own flag). A
 /// row with no content field refuses `--input-file` and `--stdin` and reads neither.
-pub fn check_content(table: &CommandTable) {
+pub fn check_content(table: &CommandTable, make: OfficeFactory) {
     for row in table.rows() {
         let name = row.name();
         let mut input = example_input(row);
         let Some(content) = row.content_field else {
             for extra in [&["--input-file", "content.md"][..], &["--stdin"]] {
                 let mut sources = sources_with_content();
-                let (output, office) =
-                    run_stub(table, &with(args_for(row, &input), extra), &mut sources);
+                let (output, office) = run_recorded(
+                    table,
+                    &with(args_for(row, &input), extra),
+                    &mut sources,
+                    make,
+                );
                 assert_refused_unread(
                     &output,
                     &office,
@@ -462,7 +590,7 @@ pub fn check_content(table: &CommandTable) {
             ),
         ];
         for (way, args) in ways {
-            let (output, office) = run_stub(table, &args, &mut sources_with_content());
+            let (output, office) = run_recorded(table, &args, &mut sources_with_content(), make);
             assert_eq!(
                 output.exit_code, 0,
                 "{name}: content through {way}: {}",
@@ -475,13 +603,14 @@ pub fn check_content(table: &CommandTable) {
                 "{name}: content through {way}"
             );
         }
-        let (output, office) = run_stub(
+        let (output, office) = run_recorded(
             table,
             &with(
                 args_for(row, &input),
                 &["--input-file", "content.md", "--stdin"],
             ),
             &mut sources_with_content(),
+            make,
         );
         assert_refused_unread(
             &output,
@@ -492,10 +621,11 @@ pub fn check_content(table: &CommandTable) {
             stdin: Some(vec![b'a', 0xff, b'b']),
             ..StubSources::default()
         };
-        let (output, office) = run_stub(
+        let (output, office) = run_recorded(
             table,
             &with(args_for(row, &input), &["--stdin"]),
             &mut sources,
+            make,
         );
         assert_refused_unread(
             &output,
@@ -515,7 +645,7 @@ fn sources_with_content() -> StubSources {
 
 /// CLI-8: with standard input closed, every row completes, and no row reads standard input
 /// without `--stdin`.
-pub fn check_no_stdin(table: &CommandTable) {
+pub fn check_no_stdin(table: &CommandTable, make: OfficeFactory) {
     for row in table.rows() {
         let name = row.name();
         let base = args_for(row, &example_input(row));
@@ -527,7 +657,7 @@ pub fn check_no_stdin(table: &CommandTable) {
             &["--help"],
         ] {
             let mut sources = StubSources::default();
-            let (output, _) = run_stub(table, &with(base.clone(), extra), &mut sources);
+            let (output, _) = run_recorded(table, &with(base.clone(), extra), &mut sources, make);
             assert_eq!(
                 output.exit_code, 0,
                 "{name} {extra:?}: does not complete with standard input closed"
@@ -621,19 +751,31 @@ pub fn check_snapshots(table: &CommandTable, dir: &Path) {
     }
 }
 
-/// Everything K1 holds a table to, except the snapshots: CLI-1, 2, 3, 7, 8 and the catalogue.
+/// Everything K1 holds a table to, except the snapshots: CLI-1, 2, 3, 7, 8 and the catalogue,
+/// against the stub office.
 pub fn check_rows(table: &CommandTable) {
-    check_grammar(table);
-    check_answers(table);
-    check_schemas(table);
-    check_content(table);
-    check_no_stdin(table);
+    check_rows_with(table, &stub_office);
+}
+
+/// [`check_rows`] against the office `office` makes, which is also held to the rows: an answer
+/// with a field its row does not declare, or without a required one, fails.
+pub fn check_rows_with(table: &CommandTable, office: OfficeFactory) {
+    check_grammar(table, office);
+    check_answers(table, office);
+    check_schemas(table, office);
+    check_content(table, office);
+    check_no_stdin(table, office);
     check_catalogue(table);
 }
 
-/// The whole contract, with the snapshots in `snapshots`.
+/// The whole contract, with the snapshots in `snapshots`, against the stub office.
 pub fn check_contract(table: &CommandTable, snapshots: &Path) {
-    check_rows(table);
+    check_contract_with(table, snapshots, &stub_office);
+}
+
+/// [`check_contract`] against the office `office` makes ([`check_rows_with`]).
+pub fn check_contract_with(table: &CommandTable, snapshots: &Path, office: OfficeFactory) {
+    check_rows_with(table, office);
     check_snapshots(table, snapshots);
 }
 
@@ -641,7 +783,8 @@ fn type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "boolean",
-        Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
+        // As the parser reads it: a number with no fractional part is an integer, `1.0` too.
+        Value::Number(n) if shape::whole(n).is_some() => "integer",
         Value::Number(_) => "number",
         Value::String(_) => "string",
         Value::Array(_) => "array",
@@ -649,7 +792,8 @@ fn type_name(value: &Value) -> &'static str {
     }
 }
 
-/// Validates `instance` against `schema`, for the JSON Schema keywords this library writes:
+/// Validates `instance` against `schema`, for the JSON Schema keywords this library writes
+/// (an empty schema accepts anything):
 /// `type`, `properties`, `required`, `additionalProperties` (a boolean), `items`, `enum`,
 /// `const`, `minimum` and `oneOf`. It is a test tool, not a general validator.
 pub fn validate_schema(schema: &Value, instance: &Value) -> Result<(), String> {
@@ -753,13 +897,13 @@ pub fn check_schema(schema: &Value) -> Result<(), String> {
                 }
                 _ => false,
             },
+            // A name is text. Where the same schema lists properties, a required name is one
+            // of them; a schema that only adds `required` to another's properties lists none.
             "required" => value.as_array().is_some_and(|names| {
+                let properties = object.get("properties").and_then(Value::as_object);
                 names.iter().all(|name| {
                     name.as_str().is_some_and(|name| {
-                        object
-                            .get("properties")
-                            .and_then(Value::as_object)
-                            .is_some_and(|p| p.contains_key(name))
+                        properties.is_none_or(|properties| properties.contains_key(name))
                     })
                 })
             }),

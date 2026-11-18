@@ -183,12 +183,20 @@ impl Node {
     /// with one cell for each of `columns`, separated by tabs. A field an item does not have is
     /// an empty cell, so a column is the same field on every line. Ends with a new line unless
     /// there is nothing to print.
+    ///
+    /// A value is one cell on one line. Text prints as it is. It prints as a JSON string when it
+    /// is empty (`""`), is the word `null`, starts with a double quote, reads as `meta:` (in any case, after white space or characters that do not show), or holds a tab, a new
+    /// line, another control character or a Unicode line or paragraph separator; those
+    /// characters are then written as escapes. `null` prints as `null`, so an empty cell is
+    /// only ever a field the item does not have. A number, `true`, `false`, a list and an
+    /// object print as JSON. A name that is not ASCII letters, digits, `_`, `-` and `.`, and the name
+    /// `meta`, print as a JSON string too: a line that starts with a bare `meta:` is never data.
     pub fn to_compact(&self, columns: &[&str]) -> String {
         let mut out = String::new();
         match self {
             Node::Map(entries) => {
                 for (key, value) in entries {
-                    out.push_str(key);
+                    out.push_str(&compact_key(key));
                     out.push_str(": ");
                     out.push_str(&value.compact_cell());
                     out.push('\n');
@@ -222,14 +230,69 @@ impl Node {
         out
     }
 
-    /// One value on one line: text as it is when it has no tab, new line or other control
-    /// character, and as JSON otherwise.
+    /// One value on one line, as [`Node::to_compact`] states.
     fn compact_cell(&self) -> String {
         match self {
-            Node::Null => String::new(),
-            Node::String(s) if !s.chars().any(char::is_control) => s.clone(),
-            other => other.to_json(),
+            Node::String(s) if is_plain_cell(s) => s.clone(),
+            other => other.to_one_line(),
         }
+    }
+
+    /// JSON that no reader splits: beyond what JSON itself escapes, every other control
+    /// character and the Unicode line and paragraph separators are written as escapes. In JSON
+    /// they can only be inside a string, so escaping them in the whole text is safe.
+    pub(crate) fn to_one_line(&self) -> String {
+        let json = self.to_json();
+        if !json.chars().any(breaks_a_line) {
+            return json;
+        }
+        let mut out = String::with_capacity(json.len() + 8);
+        for c in json.chars() {
+            if breaks_a_line(c) {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+}
+
+/// A character that ends a line, moves to the next cell or does not print.
+fn breaks_a_line(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
+}
+
+fn is_plain_cell(text: &str) -> bool {
+    !text.is_empty()
+        && text != "null"
+        && !text.starts_with('"')
+        // No value can pass for the call's own `meta:` line, which only the library prints.
+        && !reads_as_meta(text)
+        && !text.chars().any(breaks_a_line)
+}
+
+/// Whether a reader could take `text` for the start of the `meta:` line: `meta:` in any case,
+/// after any white space or character that does not show.
+fn reads_as_meta(text: &str) -> bool {
+    let shown =
+        text.trim_start_matches(|c: char| c.is_whitespace() || org_docs::is_invisible_or_break(c));
+    shown
+        .get(..5)
+        .is_some_and(|start| start.eq_ignore_ascii_case("meta:"))
+}
+
+fn compact_key(key: &str) -> String {
+    // A field named `meta` is quoted: a bare `meta:` line is only ever the call's.
+    let plain = !key.is_empty()
+        && !key.eq_ignore_ascii_case("meta")
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if plain {
+        key.to_owned()
+    } else {
+        Node::text(key).to_one_line()
     }
 }
 

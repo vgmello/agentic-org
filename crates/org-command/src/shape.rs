@@ -2,7 +2,7 @@
 //! Schema `--schema` prints, the order `data` is printed in, and `--fields`. One declaration
 //! drives all four, so the schema and the parser cannot drift.
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
 use crate::node::Node;
 use crate::table::{Command, Field, Kind, Type};
@@ -58,7 +58,7 @@ fn validate_type(ty: &Type, value: &Value, at: &str) -> Result<(), String> {
         }
         (Type::String, _) => wrong("text"),
         (Type::Boolean, _) => wrong("true or false"),
-        (Type::Integer, Value::Number(n)) if n.is_i64() || n.is_u64() => Ok(()),
+        (Type::Integer, Value::Number(n)) if whole(n).is_some() => Ok(()),
         (Type::Integer, _) => wrong("a whole number"),
         (Type::Enum(words), Value::String(s)) if words.contains(&s.as_str()) => Ok(()),
         (Type::Enum(words), _) => wrong(&format!("one of {}", words.join(", "))),
@@ -72,6 +72,82 @@ fn validate_type(ty: &Type, value: &Value, at: &str) -> Result<(), String> {
         }
         (Type::Object(_), _) => wrong("an object"),
     }
+}
+
+/// The largest whole number a JSON number written with a fraction or an exponent holds exactly.
+const MAX_EXACT_FLOAT: f64 = 9_007_199_254_740_992.0;
+
+/// `n` as a whole number, when it is one. JSON Schema's `integer` is any number with no
+/// fractional part, so `1.0` is one, and it is the integer 1 from here on: the schema and the
+/// parser agree, and the office never receives `1.0` for an integer field.
+pub(crate) fn whole(n: &Number) -> Option<Number> {
+    if n.is_i64() || n.is_u64() {
+        return Some(n.clone());
+    }
+    let f = n.as_f64()?;
+    if f.fract() != 0.0 || f.abs() > MAX_EXACT_FLOAT {
+        return None;
+    }
+    Some(if f < 0.0 {
+        Number::from(f as i64)
+    } else {
+        Number::from(f as u64)
+    })
+}
+
+/// Rewrites every declared integer that is written like `1.0` as the integer it is. With
+/// `declared_only`, a field the fields do not declare is also dropped, at every depth.
+fn fit(fields: &[Field], object: &mut Map<String, Value>, declared_only: bool) {
+    if declared_only {
+        object.retain(|key, _| fields.iter().any(|field| field.name == key));
+    }
+    for field in fields {
+        if let Some(value) = object.get_mut(field.name) {
+            fit_type(&field.ty, value, declared_only);
+        }
+    }
+}
+
+fn fit_type(ty: &Type, value: &mut Value, declared_only: bool) {
+    match (ty, value) {
+        (Type::Integer, Value::Number(n)) => {
+            if let Some(integer) = whole(n) {
+                *n = integer;
+            }
+        }
+        (Type::List(inner), Value::Array(items)) => items
+            .iter_mut()
+            .for_each(|item| fit_type(inner, item, declared_only)),
+        (Type::Object(fields), Value::Object(object)) => fit(fields, object, declared_only),
+        _ => {}
+    }
+}
+
+/// An input object with its whole numbers as integers, before it is compared and checked.
+pub(crate) fn normalize(fields: &[Field], object: &mut Map<String, Value>) {
+    fit(fields, object, false);
+}
+
+/// The office's `data` as the row declares it, in the row's order: a field the row does not
+/// declare is dropped, at every depth (a `Type::Json` field is kept whole). `Err` says what is
+/// missing or of the wrong type; the answer is then not printed.
+pub(crate) fn conform(command: &Command, data: &Value) -> Result<Node, String> {
+    let mut data = data.clone();
+    match (command.kind, &mut data) {
+        (Kind::List, Value::Array(items)) => {
+            for item in items {
+                if let Value::Object(object) = item {
+                    fit(command.output, object, true);
+                }
+            }
+        }
+        (Kind::Read | Kind::Write { .. }, Value::Object(object)) => {
+            fit(command.output, object, true);
+        }
+        _ => {}
+    }
+    validate_data(command, &data)?;
+    Ok(order_data(command, &data))
 }
 
 fn schema_of_type(ty: &Type) -> Vec<(String, Node)> {
@@ -140,9 +216,8 @@ pub(crate) fn output_schema(command: &Command) -> Node {
     })
 }
 
-/// A command's `data` in the order its row declares. A field the row does not declare follows
-/// the declared ones, in name order.
-pub(crate) fn order_data(command: &Command, data: &Value) -> Node {
+/// A command's `data` in the order its row declares: the declared fields and no other.
+fn order_data(command: &Command, data: &Value) -> Node {
     match (command.kind, data) {
         (Kind::List, Value::Array(items)) => Node::List(
             items
@@ -158,7 +233,7 @@ fn order_fields(fields: &[Field], value: &Value) -> Node {
     let Value::Object(object) = value else {
         return Node::from_value(value);
     };
-    let mut entries: Vec<(String, Node)> = fields
+    let entries: Vec<(String, Node)> = fields
         .iter()
         .filter_map(|field| {
             Some((
@@ -167,11 +242,6 @@ fn order_fields(fields: &[Field], value: &Value) -> Node {
             ))
         })
         .collect();
-    for (key, value) in object {
-        if !fields.iter().any(|field| field.name == key) {
-            entries.push((key.clone(), Node::from_value(value)));
-        }
-    }
     Node::Map(entries)
 }
 

@@ -4,6 +4,8 @@ use org_proto::ErrorCode;
 use serde_json::{json, Value};
 
 use crate::node::Node;
+#[cfg(doc)]
+use crate::office::Request;
 use crate::office::{Answer, Refusal, Status};
 use crate::shape::SCHEMA_DIALECT;
 use crate::table::Ack;
@@ -25,10 +27,11 @@ fn envelope(ok: bool, data: Node, meta: Vec<(String, Node)>, error: Node) -> Nod
     ])
 }
 
-/// The envelope of a command that was not refused. `data` is already in its printed order.
-pub(crate) fn success(data: Node, answer: &Answer, dry_run: bool) -> Node {
+/// `meta` of a command that was not refused. `key` is the [`Request`]'s idempotency key: it is
+/// the operation ID reported when the office reports none.
+pub(crate) fn success_meta(answer: &Answer, dry_run: bool, key: Option<&str>) -> Node {
     let mut meta = vec![("status".to_owned(), Node::text(answer.status.as_str()))];
-    if let Some(id) = &answer.operation_id {
+    if let Some(id) = answer.operation_id.as_deref().or(key) {
         meta.push(("operation_id".to_owned(), Node::text(id)));
     }
     if let Some(ack) = answer.ack {
@@ -43,12 +46,25 @@ pub(crate) fn success(data: Node, answer: &Answer, dry_run: bool) -> Node {
     if dry_run {
         meta.push(("dry_run".to_owned(), Node::Bool(true)));
     }
-    envelope(true, data, meta, Node::Null)
+    Node::Map(meta)
+}
+
+/// The envelope of a command that was not refused. `data` is already in its printed order.
+pub(crate) fn success(data: Node, meta: Node) -> Node {
+    Node::map([
+        ("ok", Node::Bool(true)),
+        ("data", data),
+        ("meta", meta),
+        ("error", Node::Null),
+    ])
 }
 
 /// The envelope of a command that made no call and has data to show (`--schema`).
 pub(crate) fn local(data: Node) -> Node {
-    success(data, &Answer::completed(Value::Null), false)
+    success(
+        data,
+        success_meta(&Answer::completed(Value::Null), false, None),
+    )
 }
 
 /// The envelope of a refusal or a failure.
