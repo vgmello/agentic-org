@@ -1,6 +1,6 @@
 # Identity and numbering
 
-Status: **selected** data contract, revision 2.9. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
+Status: **selected** data contract, revision 2.10. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
 
 ## Stable IDs, readable references and scopes
 
@@ -68,14 +68,11 @@ HQ-only entities cannot be independently created at a disconnected satellite off
 ├── allocations/<scope-kind>/<scope-id>/<entity-kind>/<number>.yaml
 └── office-codes.yaml               # Every code HQ has issued, current and retired
 
-<data-root>/<organization-id>/durable/authority/
-└── numbering-journal/             # Acknowledged allocations not yet in Git
-
 <data-root>/<organization-id>/durable/local/offices/<office-id>/
 └── task-counter.yaml              # This office's last_number and reserved_through
 ```
 
-Each counter file stores `scope_kind`, `scope_id`, `entity_kind`, `last_number`. Each allocation file stores `scope_kind`, `scope_id`, `entity_kind`, `number`, `entity_id`, `allocated_at`. Organization ID comes from `organization.yaml`. One writer serializes authority changes; office caches project these files but cannot rewrite the counter independently. The accepted creation's entity and allocation must be recoverable together before acknowledgement; the authority's commit/journal protocol must provide that guarantee before implementation ships.
+Each counter file stores `scope_kind`, `scope_id`, `entity_kind`, `last_number`. Each allocation file stores `scope_kind`, `scope_id`, `entity_kind`, `number`, `entity_id`, `allocated_at`. Organization ID comes from `organization.yaml`. One writer serializes authority changes; office caches project these files but cannot rewrite the counter independently. The accepted creation's entity, its counter and its allocation are files written by one entry of HQ's acceptance journal ([document 16](16-recovery-and-office-continuity.md)), so they are recoverable together before acknowledgement. HQ's acknowledged allocations live in its `durable/state/identity/` files and, until those files are written, in that journal entry; there is no separate numbering journal.
 
 ```yaml
 scope_kind: project
@@ -86,7 +83,7 @@ entity_id: 01930000-0000-7000-8000-000000000040
 allocated_at: "2026-11-14T10:00:00Z"
 ```
 
-Allocation entries survive closure and deletion of the record they name. A cache rebuild loads the latest counter snapshots and allocation journal; it never infers the high-water mark from the records that happen to be open. Removing `runtime/` must not remove that journal. Hourly Git publication leaves an unpublished recovery window: recovering on another machine requires the acknowledged authority journal too. If only an older snapshot remains, pause allocation until a safe high-water mark is established. Automatic failover requires fencing the previous writer; that protocol and a zero-loss remote backup mechanism remain separate implementation decisions. A Git snapshot is not a cross-machine database transaction.
+Allocation entries survive closure and deletion of the record they name. A cache rebuild loads the counter and allocation files, after HQ's acceptance journal has written the files of its retained entries; it never infers the high-water mark from the records that happen to be open. Hourly Git publication leaves an unpublished recovery window: recovering on another machine requires HQ's `durable/` (its state files and acceptance journal) too. If only an older snapshot remains, pause allocation until a safe high-water mark is established. Automatic failover requires fencing the previous writer; that protocol and a zero-loss remote backup mechanism remain separate implementation decisions. A Git snapshot is not a cross-machine database transaction.
 
 **Task sequences.** An office's `task-counter.yaml` is that office's own durable state. It is part of what the office backs up, it is not a cache, and removing `runtime/` must not remove it. A task that was closed or deleted keeps its reference reserved, because the sequence only moves forward. If the file is lost, or restored from a copy older than tasks the office has already created, the office cannot prove its sequence: it stops creating tasks and asks HQ for a new code. HQ never reconstructs an office's sequence from the tasks it has seen, since an office may hold tasks HQ has not received yet.
 
@@ -99,7 +96,7 @@ Primary keys and UNIQUE constraints already create indexes; do not duplicate the
 | Table | Canonical source |
 | --- | --- |
 | `reference_counters` | Counter YAML: all same-named fields except inherited `organization_id`. Durable authority state, projected into office SQLite caches. |
-| `reference_allocations` | Allocation YAML: all same-named fields except inherited `organization_id`. Retained after entity deletion; unpublished entries are in the durable authority journal. |
+| `reference_allocations` | Allocation YAML: all same-named fields except inherited `organization_id`. Retained after entity deletion; unpublished entries are in HQ's `durable/state/identity/` files or, until written, its acceptance journal. |
 | `office_codes` | `identity/office-codes.yaml`, written by HQ: code, office, issue and retirement time. Retired codes are kept so that old task references resolve and no code is issued twice. |
 | `office_task_counters` | The office's own `task-counter.yaml` under `durable/local/offices/<office-id>/`. Durable office-local state, not Git content and not a cache; other offices do not hold it. |
 

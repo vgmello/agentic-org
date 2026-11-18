@@ -93,11 +93,11 @@ classes defined here.
      each request needs its class on the write job, the commit must not force the
      drive, and a flush must complete before any durable reply in the batch is sent.
      `org-mailbox` has several write entry points and a port comment promising that
-     success means durable; both are updated. Where the store publishes journal
-     envelope files, as the work-acceptance journal does at HQ, a committed-class
-     envelope may be published without a flush, a durable publication first flushes
-     every earlier unflushed envelope, and recovery stops at the first missing or
-     incomplete ordinal.
+     success means durable; both are updated. The office's acceptance journal
+     ([ADR-0021](0021-office-store-architecture.md)) appends a committed-class entry
+     without a flush; the group flush that answers a durable request covers every
+     earlier entry, and recovery truncates a torn tail only above the head the host
+     custody last confirmed.
    - What every adapter must guarantee is stated in engine-neutral terms: a committed
      write survives a crash of the office process and is flushed within the bounded
      interval; a durable write is not acknowledged before it would survive a power

@@ -537,7 +537,7 @@ offices/
   <ul>
     <li>A task created offline has its final reference at once. A feature created offline is saved with its permanent ID and an empty number, shown as "Pending number".</li>
     <li>The feature is fully usable by ID. On reconnect HQ allocates once; the number is added and never changes.</li>
-    <li>Counters and allocations are files in organization Git (<code>identity/counters/</code>, <code>identity/allocations/</code>), published hourly. Allocations since the last publish live in <code>durable/authority/numbering-journal/</code>.</li>
+    <li>Counters and allocations are files in organization Git (<code>identity/counters/</code>, <code>identity/allocations/</code>), published hourly. Allocations since the last publish live in HQ's <code>durable/state/identity/</code> files and, until written, its acceptance journal.</li>
     <li>Each office keeps its own task counter with a durable mark above the last number used. An office that cannot prove its sequence gets a new letter from HQ before it creates another task (register entry C-12).</li>
   </ul>
 </section>
