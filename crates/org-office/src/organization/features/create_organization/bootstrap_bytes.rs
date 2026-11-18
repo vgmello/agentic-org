@@ -18,16 +18,17 @@ use crate::{
 };
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
-const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
-struct Owner;
+/// The live owner authority: the creator, whose person record is the owner's (creation
+/// refuses any other owner member).
+struct Owner(String);
 
 impl OwnerAuthority for Owner {
     fn verify_live(&self, _: &AcceptanceIdentity) -> Result<OwnerAccount, OfficeError> {
         Ok(OwnerAccount {
             account_id: "account".into(),
-            member_id: OWNER.into(),
+            member_id: self.0.clone(),
         })
     }
 }
@@ -84,7 +85,7 @@ fn bootstrap_files() -> BTreeMap<String, Vec<u8>> {
     std::fs::create_dir(&public).unwrap();
     let binding = Binding {
         operation_id: OPERATION.into(),
-        owner_member_id: OWNER.into(),
+        owner_member_id: prepared.creator.employee_id.clone(),
         public_root: public.clone(),
         bootstrap: Some(prepared.clone()),
     };
@@ -121,8 +122,9 @@ fn bootstrap_files() -> BTreeMap<String, Vec<u8>> {
         authority: None,
     };
     office.install_selected_acceptance(config).unwrap();
-    office.bind_selected_owner(Arc::new(Owner)).unwrap();
-    office.finish_selected_bootstrap(Arc::new(Owner)).unwrap();
+    let owner = || Arc::new(Owner(prepared.creator.employee_id.clone()));
+    office.bind_selected_owner(owner()).unwrap();
+    office.finish_selected_bootstrap(owner()).unwrap();
 
     let (written_at, golden_at) = (&office.info().created_at, records::time_text(CREATION_AT));
     let at_golden_time = |bytes: Vec<u8>| match String::from_utf8(bytes) {
@@ -186,10 +188,11 @@ fn differences(
 }
 
 #[test]
-#[ignore = "A4 bootstrap bytes differ: created_by/updated_by kind and id on every record; \
-            team lead_employee_id; HR profile agent_status, is_owner, may_hire, contact, \
-            title, focus, role_text, title_in_team; repository key; the creator's profile \
-            and identity/office-codes.yaml are not written"]
+#[ignore = "A4 bootstrap bytes differ in 14 places: identity/office-codes.yaml is not \
+            written; the repositories.yaml entry has no key (organization); the HR agent's \
+            and the creator's profile.md each lack contact, focus, may_hire, role_text, \
+            title and title_in_team. Not fixed: B1b block 4 deletes this bootstrap, and \
+            organizations it made are not migrated"]
 fn todays_bootstrap_writes_the_golden_creation_files() {
     let found = differences(&creation_files(), &bootstrap_files());
     assert!(
@@ -201,7 +204,7 @@ fn todays_bootstrap_writes_the_golden_creation_files() {
 }
 
 /// The comparison itself is not ignored: it must keep finding what it found, so the
-/// ignore reason above stays true until A4 adopts the golden bytes.
+/// ignore reason above stays true until B1b block 4 deletes today's bootstrap.
 #[test]
 fn the_comparison_with_todays_bootstrap_reports_each_difference() {
     let golden = BTreeMap::from([
