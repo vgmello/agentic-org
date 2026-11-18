@@ -37,6 +37,12 @@ impl Key {
     pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         self.0.expose_bytes()
     }
+
+    /// The raw key, for the worker to wrap and unwrap the office's private keys
+    /// (`org_pki::wrap`). Never log, persist or send it.
+    pub fn expose_bytes(&self) -> &[u8; 32] {
+        self.0.expose_bytes()
+    }
 }
 
 impl PartialEq for Key {

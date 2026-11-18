@@ -1,7 +1,6 @@
 //! Worker-local creation receipt. Private CA bytes never enter organization
 //! replication or the selected public/protected acceptance capture allowlist.
 use crate::{store::hq_creation as storage, Office, OfficeError};
-use zeroize::Zeroizing;
 
 #[derive(Clone)]
 pub struct Binding {
@@ -44,7 +43,8 @@ pub struct LocalRecord {
     pub operation_id: String,
     pub public_key: [u8; 65],
     pub package: Vec<u8>,
-    pub(crate) private_der: Zeroizing<Vec<u8>>,
+    /// The CA private key as an `org_pki::wrap` record (opaque here).
+    pub(crate) wrapped_ca_key: Vec<u8>,
 }
 impl std::fmt::Debug for LocalRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -59,7 +59,7 @@ impl LocalRecord {
         operation_id: String,
         public_key: [u8; 65],
         package: Vec<u8>,
-        private_der: Zeroizing<Vec<u8>>,
+        wrapped_ca_key: Vec<u8>,
     ) -> Result<Self, OfficeError> {
         if organization_id.is_empty()
             || organization_id.len() > 255
@@ -67,8 +67,8 @@ impl LocalRecord {
             || public_key[0] != 4
             || package.is_empty()
             || package.len() > 4475
-            || private_der.is_empty()
-            || private_der.len() > 4096
+            || wrapped_ca_key.len() < MIN_WRAPPED_CA_KEY
+            || wrapped_ca_key.len() > MAX_WRAPPED_CA_KEY
         {
             return Err(invalid());
         }
@@ -77,13 +77,17 @@ impl LocalRecord {
             operation_id,
             public_key,
             package,
-            private_der,
+            wrapped_ca_key,
         })
     }
-    pub fn local_der(&self) -> &[u8] {
-        &self.private_der
+    /// The wrapped CA private key. The worker unwraps it with the office secrets key.
+    pub fn wrapped_ca_key(&self) -> &[u8] {
+        &self.wrapped_ca_key
     }
 }
+/// Bounds of a wrapped record: version, nonce and tag around 1..=4096 key bytes.
+pub(crate) const MIN_WRAPPED_CA_KEY: usize = 1 + 12 + 1 + 16;
+pub(crate) const MAX_WRAPPED_CA_KEY: usize = 1 + 12 + 4096 + 16;
 fn invalid() -> OfficeError {
     OfficeError::Invalid("HQ provisioning requires recovery")
 }
