@@ -10,8 +10,7 @@ use std::io::{self, Read};
 
 use org_proto::{DbKey, DB_KEY_BYTES};
 
-/// A fresh database key: 32 bytes from `/dev/urandom`. It goes straight into the create message,
-/// which the host keeps in a `Box` (`supervisor::child::CreateLine`).
+/// A fresh database key: 32 bytes from `/dev/urandom`.
 pub(crate) fn generate_db_key() -> io::Result<DbKey> {
     random(DbKey::from_bytes)
 }

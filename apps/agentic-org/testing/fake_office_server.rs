@@ -2,18 +2,17 @@
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
 //! It follows the launch protocol (`org-office-launch`) without SQLCipher or a key store, and
-//! does what the test scripted. It accepts either launch version for the rollout, as the real
-//! server does (`v3::read_first_line_any`):
-//! - **v2:** the first stdin line carries the secrets; events go to stdout; the host's lifetime
-//!   is stdin.
-//! - **v3:** the first stdin line names the rendezvous socket. The fake connects to it, sends
-//!   `ready_for_secrets`, receives the handoff header byte by byte (no descriptor on any header
-//!   byte), then, when the header names descriptors (create and start), receives the transfer
-//!   socket on its marker byte and answers `fds_received`. A discard names none: no marker is
-//!   read and no `fds_received` is sent. Events then go on the rendezvous stream (stdout is not
-//!   used), and the host's lifetime is stdin or the rendezvous stream, whichever ends first.
-//!   The transfer socket is held but never read: a host that transfers a channel or writer
-//!   control descriptor gets no receipt, so offices needing those can't run on the fake.
+//! does what the test scripted. Like the real server it speaks only launch v3
+//! (`v3::read_first_line`): the first stdin line names the rendezvous socket. The fake connects
+//! to it, sends `ready_for_secrets`, receives the handoff header byte by byte (no descriptor on
+//! any header byte), then, when the header names descriptors (create and start), receives the
+//! transfer socket on its marker byte and answers `fds_received`. A discard names none: no
+//! marker is read and no `fds_received` is sent. Events then go on the rendezvous stream; stdout
+//! carries nothing, and a refusal before the rendezvous is connected is only recorded. The
+//! host's lifetime is stdin or the rendezvous stream, whichever ends first (the real server
+//! watches only the rendezvous; the host's shutdown closes both).
+//! The transfer socket is held but never read: a host that transfers a channel or writer
+//! control descriptor gets no receipt, so offices needing those can't run on the fake.
 //!
 //! The script is `<ORG_OFFICE_HOME>/fake-script.json`:
 //! ```json
@@ -39,14 +38,13 @@
 //! - `report` (`--create`): fields of the office it stores and reports in `created` that
 //!   differ from the create message: `office_id`, `org_id`, `org_name`, `office_name` or `role`.
 //!
-//! Its first stdin line must match its flag, as the contract says: a `create` message with
-//! `--create`, a `start` message with `--office`, a `discard` message with `--discard`. A
-//! malformed or other line is refused with `failed: invalid_request` (a broken pipe with
-//! `storage_error`), before any scripted step (for `--discard`, before its step too). EOF before
-//! the first line means the host is gone: it exits 0 without a line.
-//! It never logs a secret: for the app token and the database key it records only a fingerprint
-//! (the 64-bit FNV-1a hash of the 32 bytes, as 16 hex digits), in `fake.log` and, unless
-//! `stderr_bytes` is set, the token's on stderr (so in the office's log), so tests can tell
+//! Its first stdin line must match its flag, as the contract says: a v3 `create` line with
+//! `--create`, a `start` line with `--office`, a `discard` line with `--discard`. A malformed,
+//! other-version or other line is refused before any scripted step (for `--discard`, before its
+//! step too): it records `first-line-refused` and exits 1 (reporting `failed` only if the
+//! rendezvous is already connected). EOF before the first line means the host is gone: it exits 0.
+//! It never logs a secret: for the database and grant keys it records only a fingerprint (the
+//! 64-bit FNV-1a hash of the 32 bytes, as 16 hex digits) in `fake.log`, so tests can tell
 //! secrets apart without seeing them.
 //!
 //! On `--create` it makes the office folder and holds `office.lock` before anything else (so a
@@ -59,10 +57,9 @@
 //! `crash` and `hang` work there too).
 //!
 //! It records what it does in `<home>/fake.log`, one line each:
-//! `start <key> <pid> <run> <unix ms>`, `launch <key> <pid> v2|v3`, `instance <key> <pid> <id>`
-//! (v3), `token <key> <pid> <fingerprint>` (v2), `grant <key> <pid> <fingerprint>` (v3),
-//! `recovery <key> <pid> present` (v3 create), `transfer <key> <pid> received` (v3 create and
-//! start),
+//! `start <key> <pid> <run> <unix ms>`, `launch <key> <pid> v3`, `instance <key> <pid> <id>`,
+//! `grant <key> <pid> <fingerprint>`, `recovery <key> <pid> present` (create),
+//! `transfer <key> <pid> received` (create and start),
 //! `dbkey <key> <pid> <fingerprint or null>` (`dbkey discard <pid> <fingerprint or null> <id>`
 //! for `--discard`), `env <key> <pid> <its environment variables' names>`,
 //! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`,
@@ -82,11 +79,10 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use org_office_launch::v3::{self, AnyFirstLine, Handoff, HostFirstLine, RendezvousEvent};
+use org_office_launch::v3::{self, Handoff, HostFirstLine, RendezvousEvent};
 use org_office_launch::{
-    office_dir, write_server_event, FailCode, FirstLine, HostMessage, OfficeFile, ServerEvent,
-    CREATE_FLAG, DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME,
-    OFFICE_LOCK_WAIT,
+    office_dir, FailCode, FirstLine, OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG,
+    OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
 };
 use org_proto::frame;
 use org_proto::location::{
@@ -94,8 +90,8 @@ use org_proto::location::{
 };
 use org_proto::OfficeRole;
 use org_proto::{
-    ApiError, AppToken, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo,
-    OfficeStatus, Request, Response,
+    ApiError, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeStatus, Request,
+    Response,
 };
 use org_socket::rights::{ReceiveError, StreamReceiver};
 use serde::Serialize;
@@ -106,24 +102,23 @@ const DB_FILE_NAME: &str = "db";
 
 const CRASH: i32 = 3;
 
-/// The v3 rendezvous stream, once its handoff is done: events go here instead of stdout.
+/// The rendezvous stream, once connected: every event goes here.
 static RENDEZVOUS: OnceLock<Mutex<UnixStream>> = OnceLock::new();
 /// The v3 transfer socket, held (never read) for the process's life.
 static TRANSFER: OnceLock<OwnedFd> = OnceLock::new();
 
-/// A first line of either launch version, its secrets noted as fingerprints only.
+/// A first line and its handoff, the secrets noted as fingerprints only.
 enum Launch {
     Create(CreateFields),
     Start,
-    /// A v2 discard carries the key (or `null`); a v3 discard carries none (`keyless`), as the
-    /// databases are plain SQLite, so its folder is removed whatever it holds.
+    /// A discard's handoff carries no key the fake needs: the databases are plain SQLite, so
+    /// its folder is removed whatever it holds.
     Discard {
         db_key: Option<DbKey>,
-        keyless: bool,
     },
 }
 
-/// What a create names, from a v2 create message or a v3 create line.
+/// What a create line names.
 struct CreateFields {
     office_id: String,
     org_id: String,
@@ -213,7 +208,7 @@ fn main() {
     // another id: a refused create must not replace another office's live socket.
     let (office, lock, socket_id) = match office_id {
         None => {
-            let create = match first_line(&home, &key, &step, &mut stdin, FirstLine::Create, None) {
+            let create = match first_line(&home, &key, &mut stdin, FirstLine::Create, None) {
                 Launch::Create(create) => create,
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             };
@@ -276,7 +271,7 @@ fn main() {
             (office, lock, socket_id)
         }
         Some(id) => {
-            match first_line(&home, &key, &step, &mut stdin, FirstLine::Start, Some(&id)) {
+            match first_line(&home, &key, &mut stdin, FirstLine::Start, Some(&id)) {
                 Launch::Start => {}
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             }
@@ -368,20 +363,19 @@ fn inherited_fds() -> String {
     }
 }
 
-/// The first stdin line, of either version, checked against the flag (`expected`, and for a
-/// v3 line the flag's office id, `flag_id`); a v3 line also runs the rendezvous handshake. An
-/// unreadable or mismatched line is refused here. EOF before it means the host is gone: exit 0
-/// without a line.
+/// The first stdin line, checked against the flag (`expected`, and the flag's office id,
+/// `flag_id`), then the rendezvous handshake. An unreadable or mismatched line (another
+/// version's included) is refused here. EOF before it means the host is gone: exit 0 without a
+/// line.
 fn first_line(
     home: &Path,
     key: &str,
-    step: &Step,
     stdin: &mut impl BufRead,
     expected: FirstLine,
     flag_id: Option<&str>,
 ) -> Launch {
     let pid = std::process::id();
-    let line = match v3::read_first_line_any(stdin, expected) {
+    let line = match v3::read_first_line(stdin, expected) {
         Ok(Some(line)) => line,
         Ok(None) => {
             record(home, &format!("eof-before-first-line {key} {pid}"));
@@ -389,83 +383,49 @@ fn first_line(
         }
         Err(e) => refuse_first_line(home, key, e.fail_code()),
     };
-    match line {
-        AnyFirstLine::V2(message) => {
-            record(home, &format!("launch {key} {pid} v2"));
-            match message {
-                HostMessage::Create(create) => {
-                    note_token(home, key, step, &create.app_token);
-                    note_db_key(home, key, Some(&create.db_key), "");
-                    Launch::Create(CreateFields {
-                        office_id: create.office_id.clone(),
-                        org_id: create.org_id.clone(),
-                        org_name: create.org_name.clone(),
-                        office_name: create.office_name.clone(),
-                        role: create.role,
-                    })
-                }
-                HostMessage::Start(start) => {
-                    note_token(home, key, step, &start.app_token);
-                    note_db_key(home, key, Some(&start.db_key), "");
-                    Launch::Start
-                }
-                HostMessage::Discard(discard) => Launch::Discard {
-                    db_key: discard.db_key,
-                    keyless: false,
-                },
-                _ => refuse_first_line(home, key, FailCode::InvalidRequest),
-            }
+    record(home, &format!("launch {key} {pid} v3"));
+    let Some(office) = line.office() else {
+        refuse_first_line(home, key, FailCode::InvalidRequest)
+    };
+    record(
+        home,
+        &format!("instance {key} {pid} {}", office.instance_id),
+    );
+    // As the real server: the line's office must be the flag's, before connecting.
+    if flag_id.is_some_and(|id| office.office_id != id) {
+        refuse_first_line(home, key, FailCode::InvalidRequest)
+    }
+    let handoff = rendezvous(home, key, &line, &office.rendezvous);
+    match (line, handoff) {
+        (
+            HostFirstLine::Create(create),
+            Handoff::Create {
+                db_key, grant_key, ..
+            },
+        ) => {
+            note_db_key(home, key, Some(&db_key), "");
+            note_grant(home, key, &grant_key);
+            record(home, &format!("recovery {key} {pid} present"));
+            Launch::Create(CreateFields {
+                office_id: create.office.office_id,
+                org_id: create.org_id,
+                org_name: create.org_name,
+                office_name: create.office_name,
+                role: create.role,
+            })
         }
-        AnyFirstLine::V3(line) => {
-            record(home, &format!("launch {key} {pid} v3"));
-            let Some(office) = line.office() else {
-                refuse_first_line(home, key, FailCode::InvalidRequest)
-            };
-            record(
-                home,
-                &format!("instance {key} {pid} {}", office.instance_id),
-            );
-            // As the real server: the line's office must be the flag's, before connecting.
-            if flag_id.is_some_and(|id| office.office_id != id) {
-                refuse_first_line(home, key, FailCode::InvalidRequest)
-            }
-            let handoff = rendezvous(home, key, &line, &office.rendezvous);
-            match (line, handoff) {
-                (
-                    HostFirstLine::Create(create),
-                    Handoff::Create {
-                        db_key, grant_key, ..
-                    },
-                ) => {
-                    note_db_key(home, key, Some(&db_key), "");
-                    note_grant(home, key, &grant_key);
-                    record(home, &format!("recovery {key} {pid} present"));
-                    Launch::Create(CreateFields {
-                        office_id: create.office.office_id,
-                        org_id: create.org_id,
-                        org_name: create.org_name,
-                        office_name: create.office_name,
-                        role: create.role,
-                    })
-                }
-                (
-                    HostFirstLine::Start(_),
-                    Handoff::Start {
-                        db_key, grant_key, ..
-                    },
-                ) => {
-                    note_db_key(home, key, Some(&db_key), "");
-                    note_grant(home, key, &grant_key);
-                    Launch::Start
-                }
-                (HostFirstLine::Discard(_), Handoff::Discard { db_key, .. }) => Launch::Discard {
-                    db_key,
-                    keyless: true,
-                },
-                _ => refuse_first_line(home, key, FailCode::InvalidRequest),
-            }
+        (
+            HostFirstLine::Start(_),
+            Handoff::Start {
+                db_key, grant_key, ..
+            },
+        ) => {
+            note_db_key(home, key, Some(&db_key), "");
+            note_grant(home, key, &grant_key);
+            Launch::Start
         }
-        _ => refuse_first_line(home, key, FailCode::UnsupportedVersion),
+        (HostFirstLine::Discard(_), Handoff::Discard { db_key, .. }) => Launch::Discard { db_key },
+        _ => refuse_first_line(home, key, FailCode::InvalidRequest),
     }
 }
 
@@ -599,22 +559,6 @@ fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
     fail(code)
 }
 
-/// Records the token's fingerprint (never the token) in `fake.log`, and on stderr unless the
-/// step writes its own stderr bytes.
-fn note_token(home: &Path, key: &str, step: &Step, token: &AppToken) {
-    let fingerprint = fingerprint(token);
-    record(
-        home,
-        &format!("token {key} {} {fingerprint}", std::process::id()),
-    );
-    if step.stderr_bytes == 0 {
-        let _ = writeln!(
-            io::stderr(),
-            "fake office server {key}: got its first line, token fingerprint {fingerprint}"
-        );
-    }
-}
-
 /// Records the database key's fingerprint (never the key), or `null`, in `fake.log`. `more` is
 /// appended (the office id, for a discard).
 fn note_db_key(home: &Path, key: &str, db_key: Option<&DbKey>, more: &str) {
@@ -651,11 +595,10 @@ fn nibble(hex: u8) -> u8 {
     }
 }
 
-/// `--discard <id>`: removes an unfinished office's folder, then exits. A v2 discard without a
-/// key refuses a folder holding databases (`db`); a v3 discard needs no key.
+/// `--discard <id>`: removes an unfinished office's folder, then exits. It needs no key.
 fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut impl BufRead) -> ! {
-    let (db_key, keyless) = match first_line(home, key, step, stdin, FirstLine::Discard, Some(id)) {
-        Launch::Discard { db_key, keyless } => (db_key, keyless),
+    let db_key = match first_line(home, key, stdin, FirstLine::Discard, Some(id)) {
+        Launch::Discard { db_key } => db_key,
         _ => refuse_first_line(home, key, FailCode::InvalidRequest),
     };
     note_db_key(home, key, db_key.as_ref(), id);
@@ -665,9 +608,6 @@ fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut imp
         let lock = take_lock(&dir);
         if dir.join(OFFICE_FILE_NAME).exists() {
             fail(FailCode::AlreadyExists);
-        }
-        if !keyless && db_key.is_none() && dir.join(DB_FILE_NAME).exists() {
-            fail(FailCode::StorageError);
         }
         if fs::remove_dir_all(&dir).is_err() {
             fail(FailCode::StorageError);
@@ -745,7 +685,8 @@ fn fail(code: FailCode) -> ! {
     exit(1);
 }
 
-/// Writes an event to the host: on the rendezvous stream after a v3 handshake, else stdout.
+/// Writes an event to the host on the rendezvous stream. Before it is connected there is nowhere
+/// to report, as for the real server: nothing is written (stdout carries nothing).
 fn emit(event: &ServerEvent) {
     let written = match RENDEZVOUS.get() {
         Some(stream) => {
@@ -753,7 +694,7 @@ fn emit(event: &ServerEvent) {
             v3::write_rendezvous_event(&mut *stream, &RendezvousEvent::Server(event.clone()))
                 .is_ok()
         }
-        None => write_server_event(&mut io::stdout().lock(), event).is_ok(),
+        None => true,
     };
     if !written {
         exit(4);

@@ -10,13 +10,15 @@
 //! **A contract (owner: ada): additive and versioned.** Every line and `office.json` carries `"v"`.
 //! Readers ignore unknown fields and unknown server events ([`ServerEvent::Unknown`]), and decode
 //! unknown failure codes as [`FailCode::StorageError`]. A server parses only its first stdin line
-//! ([`read_first_host_message`]). A field a create can't work without (e.g. a satellite's HQ
+//! ([`v3::read_first_line`]). A field a create can't work without (e.g. a satellite's HQ
 //! address) arrives with a role or op that older servers refuse, never as a field they would
 //! silently ignore. `v` is reserved in every line: no op or event has a field named `v`.
 //!
 //! The types check their own rules (plain ids, a role this version can create) whenever they
-//! are decoded or encoded, by any serde path. The `"v"` of a pipe line is checked by
-//! [`read_host_message`] and [`read_server_event`], so read and write lines only through them.
+//! are decoded or encoded, by any serde path. The `"v"` of a launch line is checked by
+//! [`v3::read_first_line`] and [`v3::read_server_event`], so read and write lines only through
+//! the [`v3`] functions. Launch version 3 ([`v3::LAUNCH_VERSION`]) is the only one: version 2
+//! (secrets and the app token on stdin, events on stdout) was removed in A1.5.
 //!
 //! ## Starting a server
 //! ```text
@@ -26,27 +28,25 @@
 //! ```
 //! - The host makes `<home>` and `<home>/offices/` (owner-only) and sets
 //!   `ORG_OFFICE_HOME` ([`org_proto::location::OFFICE_HOME_ENV`]) on the child, so both use the
-//!   same office home. In launch v2 it also supplies an absolute `ORG_OFFICE_RUNTIME_DIR`
+//!   same office home. It also supplies an absolute `ORG_OFFICE_RUNTIME_DIR`
 //!   ([`org_proto::location::OFFICE_RUNTIME_DIR_ENV`]) for the private socket directory,
 //!   independently of the data root. The legacy host supplies `<home>/run/` explicitly.
 //!   Release workers require this value. Only debug workers fall back to `<home>/run/`
 //!   when it is absent; an empty or relative override is refused without fallback.
-//! - **stdin is the control pipe from the host.** Its first line matches the flag
-//!   ([`FirstLine`]): a [`HostMessage::Create`] with `--create`, a [`HostMessage::Start`] with
-//!   `--office`, a [`HostMessage::Discard`] with `--discard`. A server whose first line is
-//!   malformed, an op it doesn't know, or for another flag fails with
-//!   [`FailCode::InvalidRequest`]. EOF on stdin means the host is gone: the server shuts down
-//!   cleanly and exits 0, also when the EOF comes before the first line (then without a
-//!   `failed` line: nobody is left to read it), and when the pipe ends in the middle of the first
-//!   line ([`LaunchError::is_host_gone`]). After the first line, a server only drains stdin
-//!   and discards what it reads, known ops included, without parsing it, so nothing on a later
-//!   line can stop it from seeing the EOF.
-//! - **Version 2** added the database key to the lines. A line of another version, version 1
-//!   included, is [`LaunchError::UnsupportedVersion`] ("launch version 1 isn't supported"),
-//!   reported as [`FailCode::UnsupportedVersion`]. `office.json` has its own version,
-//!   [`OFFICE_FILE_VERSION`], still 1: its shape didn't change, so existing files still read.
-//!   There is no migration: no real office existed before version 2, and a development office
-//!   whose key the host doesn't hold is `key_missing`; a person deletes it and creates it again.
+//! - **stdin carries only the first line from the host.** It matches the flag ([`FirstLine`]):
+//!   a [`v3::HostFirstLine::Create`] with `--create`, a [`v3::HostFirstLine::Start`] with
+//!   `--office`, a [`v3::HostFirstLine::Discard`] with `--discard`. It is non-secret and names
+//!   the per-spawn rendezvous socket (see [`v3`]). A server whose first line is malformed, of
+//!   another version (version 2 included), an op it doesn't know, or for another flag exits
+//!   non-zero before it dials the rendezvous, logging to stderr only. EOF on stdin before the
+//!   first line, or in the middle of it ([`LaunchError::is_host_gone`]), means the host is gone:
+//!   the server exits 0. After the first line, a server only drains stdin and discards what it
+//!   reads without parsing it. Its lifetime then follows the rendezvous connection: EOF there
+//!   means the host is gone.
+//! - **Versions.** A launch line of a version the reader doesn't take is
+//!   [`LaunchError::UnsupportedVersion`], reported as [`FailCode::UnsupportedVersion`] where
+//!   there is a channel to report it on. `office.json` has its own version
+//!   ([`OFFICE_FILE_VERSION`], [`SELECTED_OFFICE_FILE_VERSION`]).
 //! - **Descriptors:** no child of a server can read the host's lines or write a control line.
 //!   First thing at startup, before any thread or child starts, the server moves its stdin and
 //!   stdout pipes to new close-on-exec descriptors and reopens 0 and 1 on `/dev/null`. Every
@@ -54,30 +54,27 @@
 //!   inherited it would keep the lock after the server died). A child's stdin and stdout are
 //!   `/dev/null` unless it's given its own pipes; stderr (the logs) is inherited. The host opens
 //!   its own descriptors close-on-exec, so no child holds `host.lock`.
-//! - **The app token** ([`AppToken`], ADR-0003 §2.1) travels only in that first line, on every
-//!   create and start. The host makes a new one for each office each time the host starts and
-//!   keeps it only in memory. The server keeps it only in memory and never logs it.
-//! - **The database key** ([`DbKey`], 32 bytes) also travels only in the first line. The host
-//!   creates each office's key and stores it in its own key store before the office's first
-//!   `--create`, and sends it on every create, start and discard line. The server never creates,
-//!   stores, loads or deletes a key, and never touches the Keychain: it uses only the key on its
-//!   first line. After it first opens the databases it wipes every copy it holds, except the one
-//!   its store keeps for its reader pool: in memory only, zeroed on drop, never logged. Wiping is
-//!   best effort, as for the app token (see `org_proto`'s token docs): the key's bytes live on
-//!   the heap, so moving it leaves no copy, but buffers it passed through can. A key that doesn't
-//!   open an office's existing databases is [`FailCode::KeyMissing`], and the server deletes
-//!   nothing on it.
-//! - **Zeroing is best effort.** [`read_host_message`] and [`write_host_message`] zero their own
+//! - **No app token** travels at launch: a worker's persons act only through owner grants.
+//! - **The database key** ([`DbKey`], 32 bytes) and the grant key travel only in the rendezvous
+//!   handoff ([`v3::Handoff`]), never on stdin. The host creates each office's key and stores it
+//!   in its own key store before the office's first `--create`, and sends it on every create,
+//!   start and discard handoff. The server never creates, stores, loads or deletes a key, and
+//!   never touches the Keychain: it uses only the key its handoff carries. After it first opens
+//!   the databases it wipes every copy it holds, except the one its store keeps for its reader
+//!   pool: in memory only, zeroed on drop, never logged. Wiping is best effort: the key's bytes
+//!   live on the heap, so moving it leaves no copy, but buffers it passed through can. A key that
+//!   doesn't open an office's existing databases is [`FailCode::KeyMissing`], and the server
+//!   deletes nothing on it.
+//! - **Zeroing is best effort.** [`v3::read_first_line`] and the handoff readers zero their own
 //!   buffers and never reallocate them with a secret inside. Copies outside this crate remain:
 //!   the caller's reader and writer buffers (e.g. `Stdin`'s, which may keep the line for the
 //!   process's life; read stdin unbuffered or through a small buffer you control), and serde's
-//!   buffers when a secret arrives with JSON escapes. See `org_proto`'s `AppToken` and `DbKey`
-//!   docs.
-//! - **stdout carries only [`ServerEvent`] lines.** Logs go to stderr.
+//!   buffers when a secret arrives with JSON escapes. See `org_proto`'s `DbKey` docs.
+//! - **stdout carries nothing.** Worker events ([`ServerEvent`]) travel as v3 lines over the
+//!   rendezvous connection; the host treats stdout as untrusted. Logs go to stderr.
 //! - Lines are JSON, one object per line, at most [`org_proto::MAX_FRAME_BYTES`]
-//!   ([`org_proto::frame`]). Use [`read_host_message`], [`write_host_message`] (or
-//!   [`write_host_line`], which borrows the secrets), [`read_server_event`] and
-//!   [`write_server_event`].
+//!   ([`org_proto::frame`]). Use [`v3::write_first_line`], [`v3::read_first_line`],
+//!   [`v3::write_server_event`] and [`v3::read_server_event`].
 //! - The server listens on [`org_proto::location::office_socket_in`] using the selected
 //!   runtime directory; the host computes the same path and only cross-checks
 //!   [`ServerEvent::Ready`]'s `socket`. [`org_proto::location::office_socket_path`] remains
@@ -95,8 +92,8 @@
 //! The host runs `--discard <id>` for every plain-id office folder without `office.json` (a
 //! folder with an unreadable or invalid `office.json` is logged and left alone; once
 //! `office.json` exists the host never discards the office: it adopts or quarantines it). Its
-//! first line is a [`HostMessage::Discard`] with the office's key, or `"db_key": null` when the
-//! host has none for that id.
+//! first line is a [`v3::HostFirstLine::Discard`]; its handoff carries the office's key, or
+//! `"db_key": null` when the host has none for that id.
 //! An office with no folder: the server takes no lock, creates nothing and reports `discarded`.
 //! The server takes the office lock (same wait) and removes only an office that never finished.
 //! It refuses ([`FailCode::AlreadyExists`]) a folder that holds `office.json`. With a key, it
@@ -127,20 +124,17 @@ use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use org_proto::frame::{self, FrameError};
-use org_proto::{AppToken, OfficeRole};
+use org_proto::frame::FrameError;
+use org_proto::OfficeRole;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// An office's database key, re-exported from `org_proto` so the host and the server name it
-/// through this contract. See [`CreateOffice::db_key`] and the crate docs.
+/// through this contract. It travels only in the rendezvous handoff ([`v3::Handoff`]); see the
+/// crate docs.
 pub use org_proto::DbKey;
 pub use org_proto::DB_KEY_BYTES;
 
-/// The version of the pipe lines (host messages and server events). Bumped only for a breaking
-/// change. Version 2 added the database key.
-pub const LAUNCH_VERSION: u32 = 2;
-
-/// The version of `office.json`, separate from the pipe lines' [`LAUNCH_VERSION`]. Bumped only
+/// The version of `office.json`, separate from the launch lines' [`v3::LAUNCH_VERSION`]. Bumped only
 /// for a breaking change to the file.
 pub const OFFICE_FILE_VERSION: u32 = 1;
 /// Additive selected carrier, with UUIDv7 entity IDs; legacy v1 is unchanged.
@@ -499,148 +493,8 @@ impl<'de> Deserialize<'de> for OfficeFile {
     }
 }
 
-/// A line from the host to a server, on the server's stdin. Not `Clone`: it may hold the app
-/// token and the database key. **Write it only with [`write_host_message`]**, which zeroes its
-/// buffer: any other serialization (e.g. `serde_json::to_string`) leaves their hex in a buffer
-/// nobody clears.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum HostMessage {
-    /// Create this office (the first line with [`CREATE_FLAG`]).
-    Create(CreateOffice),
-    /// Serve the existing office (the first line with [`OFFICE_FLAG`]).
-    Start(StartOffice),
-    /// Remove the unfinished office (the first line with [`DISCARD_FLAG`]).
-    Discard(DiscardOffice),
-    /// An op this build doesn't know. As the first line it is [`FailCode::InvalidRequest`]
-    /// ([`read_first_host_message`]); later lines aren't parsed at all. It is never written.
-    #[serde(other, skip_serializing)]
-    Unknown,
-}
-
-/// The details of a new office. The host has already checked the organization's name and its
-/// uniqueness on this machine, and that the office id's socket handle is unique; the server
-/// checks the name again with `org_proto`'s rule and refuses a folder that already exists.
-///
-/// Both ids must be plain, and this version creates only HQ offices ([`OfficeRole::Hq`]):
-/// any other role is refused whenever a create is decoded or encoded. A satellite create comes
-/// in a later version, with the fields it needs.
-///
-/// `org_name` and `office_name` travel in their [`org_proto::OrganizationName::as_str`] form
-/// (already trimmed), because they go into `office.json` as they are. The server checks them
-/// with that rule and fails with [`FailCode::InvalidName`] if they break it or aren't trimmed.
-#[derive(Debug, PartialEq, Eq)]
-pub struct CreateOffice {
-    pub org_id: String,
-    pub org_name: String,
-    pub office_id: String,
-    pub office_name: String,
-    pub role: OfficeRole,
-    /// The office's app token for this host run.
-    pub app_token: AppToken,
-    /// The office's database key, which the host made and stored before it started the server.
-    /// The server creates the databases with it and never stores it.
-    pub db_key: DbKey,
-}
-
-/// What a server started with [`OFFICE_FLAG`] gets: the office's app token for this host run,
-/// and the office's database key from the host's key store.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StartOffice {
-    pub app_token: AppToken,
-    pub db_key: DbKey,
-}
-
-/// What a server started with [`DISCARD_FLAG`] gets: the office's database key, or `None`
-/// (`"db_key": null`) when the host has none for that office. The field must be present, `null`
-/// included: a line without it is refused. See "Discarding an unfinished office" in the crate
-/// docs for what each form may delete.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiscardOffice {
-    #[serde(deserialize_with = "nullable_key")]
-    pub db_key: Option<DbKey>,
-}
-
-/// Decodes a key that must be present but may be `null`. (A plain `Option` field would read a
-/// missing one as `None`.)
-fn nullable_key<'de, D: Deserializer<'de>>(d: D) -> Result<Option<DbKey>, D::Error> {
-    Option::<DbKey>::deserialize(d)
-}
-
-impl CreateOffice {
-    fn check(&self) -> Result<(), LaunchError> {
-        if !is_plain_id(&self.org_id) || !is_plain_id(&self.office_id) {
-            return Err(LaunchError::Invalid(
-                "the create message holds an id that isn't plain",
-            ));
-        }
-        if self.role != OfficeRole::Hq {
-            return Err(LaunchError::Invalid("this version creates only HQ offices"));
-        }
-        Ok(())
-    }
-}
-
-/// A create as it is read, without its `op` and `v`.
-#[derive(Deserialize)]
-struct RawCreateOffice {
-    org_id: String,
-    org_name: String,
-    office_id: String,
-    office_name: String,
-    #[serde(default)]
-    role: OfficeRole,
-    app_token: AppToken,
-    db_key: DbKey,
-}
-
-/// A create as it is written, borrowing from a [`CreateOffice`].
-#[derive(Serialize)]
-struct RawCreateOfficeRef<'a> {
-    org_id: &'a str,
-    org_name: &'a str,
-    office_id: &'a str,
-    office_name: &'a str,
-    role: OfficeRole,
-    app_token: &'a AppToken,
-    db_key: &'a DbKey,
-}
-
-impl Serialize for CreateOffice {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        self.check().map_err(serde::ser::Error::custom)?;
-        RawCreateOfficeRef {
-            org_id: &self.org_id,
-            org_name: &self.org_name,
-            office_id: &self.office_id,
-            office_name: &self.office_name,
-            role: self.role,
-            app_token: &self.app_token,
-            db_key: &self.db_key,
-        }
-        .serialize(s)
-    }
-}
-
-impl<'de> Deserialize<'de> for CreateOffice {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let raw = RawCreateOffice::deserialize(d)?;
-        let create = CreateOffice {
-            org_id: raw.org_id,
-            org_name: raw.org_name,
-            office_id: raw.office_id,
-            office_name: raw.office_name,
-            role: raw.role,
-            app_token: raw.app_token,
-            db_key: raw.db_key,
-        };
-        create.check().map_err(serde::de::Error::custom)?;
-        Ok(create)
-    }
-}
-
-/// A line from a server to the host, on the server's stdout.
+/// A worker event to the host. Workers send it as a v3 line over the rendezvous connection
+/// ([`v3::write_server_event`]), never on stdout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -700,8 +554,7 @@ pub enum LaunchError {
     /// The pipe failed or a line was malformed (see [`LaunchError::closes_stream`]).
     Frame(FrameError),
     /// A pipe or rendezvous line whose `v` isn't one the reader expects: `found` is the line's,
-    /// `supported` the versions that reader takes (`[2]` for a v2 reader, `[3]` for a v3 one,
-    /// `[2, 3]` for [`v3::read_first_line_any`]).
+    /// `supported` the versions that reader takes (`[3]`).
     UnsupportedVersion {
         found: u32,
         supported: &'static [u32],
@@ -793,42 +646,12 @@ impl LaunchError {
 /// Which first line a server expects, from the flag it was started with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirstLine {
-    /// [`CREATE_FLAG`]: a [`HostMessage::Create`].
+    /// [`CREATE_FLAG`]: a [`v3::HostFirstLine::Create`].
     Create,
-    /// [`OFFICE_FLAG`]: a [`HostMessage::Start`].
+    /// [`OFFICE_FLAG`]: a [`v3::HostFirstLine::Start`].
     Start,
-    /// [`DISCARD_FLAG`]: a [`HostMessage::Discard`].
+    /// [`DISCARD_FLAG`]: a [`v3::HostFirstLine::Discard`].
     Discard,
-}
-
-/// Read a server's first stdin line, the one rule for both sides. `Ok(None)` means EOF before
-/// it (the host is gone: exit 0, no `failed` line). An unknown op, or another flag's op, is
-/// [`LaunchError::Invalid`] (report [`LaunchError::fail_code`], i.e. `invalid_request`).
-pub fn read_first_host_message(
-    r: &mut impl BufRead,
-    expected: FirstLine,
-) -> Result<Option<HostMessage>, LaunchError> {
-    let Some(message) = read_host_message(r)? else {
-        return Ok(None);
-    };
-    match (&message, expected) {
-        (HostMessage::Create(_), FirstLine::Create)
-        | (HostMessage::Start(_), FirstLine::Start)
-        | (HostMessage::Discard(_), FirstLine::Discard) => Ok(Some(message)),
-        _ => Err(LaunchError::Invalid(
-            "the first line isn't the op this server's flag expects",
-        )),
-    }
-}
-
-/// Read one host message. `Ok(None)` means the host closed the pipe. The line it was read from
-/// is zeroed afterwards, since it may hold the app token and the database key. A server reads its
-/// first line with [`read_first_host_message`], which also checks the op.
-pub fn read_host_message(r: &mut impl BufRead) -> Result<Option<HostMessage>, LaunchError> {
-    match read_secret_line(r)? {
-        Some(mut line) => decode_host_line(&mut line).map(Some),
-        None => Ok(None),
-    }
 }
 
 /// One line, without its `\n`, read into a buffer reserved up front for the largest line, so it
@@ -859,96 +682,6 @@ fn read_secret_line_into(r: &mut impl BufRead, buf: &mut Vec<u8>) -> Result<bool
     outcome.map_err(LaunchError::Frame)
 }
 
-/// Decode a host line, then zero it, on every path.
-fn decode_host_line(line: &mut [u8]) -> Result<HostMessage, LaunchError> {
-    let message = versioned(line)
-        .and_then(|()| serde_json::from_slice::<HostMessage>(line).map_err(LaunchError::Json));
-    zero(line);
-    message
-}
-
-/// Write one host message, then flush. [`HostMessage::Unknown`] and a create that breaks
-/// [`CreateOffice`]'s rules are refused, and nothing is written. It writes through
-/// [`write_host_line`], so the bytes are the same.
-pub fn write_host_message(w: &mut impl Write, message: &HostMessage) -> Result<(), LaunchError> {
-    let line = match message {
-        HostMessage::Create(create) => HostLine::Create(create),
-        HostMessage::Start(start) => HostLine::Start {
-            app_token: &start.app_token,
-            db_key: &start.db_key,
-        },
-        HostMessage::Discard(discard) => HostLine::Discard {
-            db_key: discard.db_key.as_ref(),
-        },
-        HostMessage::Unknown => return Err(LaunchError::Invalid("can't send an unknown op")),
-    };
-    write_host_line(w, &line)
-}
-
-/// A host line to write that borrows its secrets, for a host that keeps them elsewhere (e.g. the
-/// app token in an `Arc` for the host's whole run) and can't move them into a [`HostMessage`].
-/// [`write_host_line`] writes exactly the bytes [`write_host_message`] writes for the owned
-/// equivalent; a server reads the line as a [`HostMessage`]. Copying a `HostLine` copies only
-/// references. **Write it only with [`write_host_line`]**, for the reason given on
-/// [`HostMessage`].
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum HostLine<'a> {
-    /// As [`HostMessage::Create`].
-    Create(&'a CreateOffice),
-    /// As [`HostMessage::Start`].
-    Start {
-        app_token: &'a AppToken,
-        db_key: &'a DbKey,
-    },
-    /// As [`HostMessage::Discard`]: `None` is written as `"db_key": null`.
-    Discard { db_key: Option<&'a DbKey> },
-}
-
-/// Write one host line, then flush. A create that breaks [`CreateOffice`]'s rules is refused, and
-/// nothing is written. Its buffer is zeroed afterwards, as [`write_host_message`]'s is.
-pub fn write_host_line(w: &mut impl Write, line: &HostLine<'_>) -> Result<(), LaunchError> {
-    if let HostLine::Create(create) = line {
-        create.check()?;
-    }
-    let mut bytes = encode_host_line(line)?;
-    send_and_zero(w, &mut bytes)
-}
-
-/// One write of the whole line and a flush, then the buffer is zeroed (it holds secrets),
-/// whether the write worked or not.
-fn send_and_zero(w: &mut impl Write, line: &mut [u8]) -> Result<(), LaunchError> {
-    let result = w
-        .write_all(line)
-        .and_then(|()| w.flush())
-        .map_err(|e| LaunchError::Frame(FrameError::Io(e)));
-    zero(line);
-    result
-}
-
-/// Encode a host message as one line with its `\n`, into a buffer of exactly that size
-/// (measured first), so it never reallocates and leaves a copy of a secret behind. The
-/// caller zeroes it after use.
-fn encode_host_line<T: Serialize>(message: &T) -> Result<Vec<u8>, LaunchError> {
-    let body = Line {
-        v: LAUNCH_VERSION,
-        body: message,
-    };
-    let mut counter = ByteCounter(0);
-    serde_json::to_writer(&mut counter, &body).map_err(LaunchError::Json)?;
-    if counter.0 > org_proto::MAX_FRAME_BYTES {
-        return Err(LaunchError::Frame(FrameError::TooLargeToSend));
-    }
-    let mut line = Vec::with_capacity(counter.0 + 1);
-    if let Err(e) = serde_json::to_writer(&mut line, &body) {
-        zero(&mut line);
-        return Err(LaunchError::Json(e));
-    }
-    line.push(b'\n');
-    Ok(line)
-}
-
 /// Counts the bytes written to it and keeps none.
 struct ByteCounter(usize);
 
@@ -963,7 +696,7 @@ impl Write for ByteCounter {
 }
 
 /// Overwrite with zeros in a way the optimizer can't remove (best effort, as for
-/// [`AppToken`]).
+/// [`org_proto::AppToken`]).
 #[allow(unsafe_code)]
 fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
@@ -973,54 +706,10 @@ fn zero(bytes: &mut [u8]) {
     std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Read one server event. `Ok(None)` means the server closed its stdout (it exited).
-pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<ServerEvent>, LaunchError> {
-    let Some(line) = read_versioned_line(r)? else {
-        return Ok(None);
-    };
-    let event: ServerEvent = serde_json::from_slice(&line).map_err(LaunchError::Json)?;
-    if let ServerEvent::Created { office } = &event {
-        // The same limit as office.json itself, so the host never accepts an office the server
-        // couldn't have stored.
-        office.to_vec()?;
-    }
-    Ok(Some(event))
-}
-
-/// Write one server event, then flush. [`ServerEvent::Unknown`] and a created office that
-/// [`OfficeFile::to_vec`] would refuse are refused, and nothing is written. Keep a `failed` message
-/// short: a line over [`org_proto::MAX_FRAME_BYTES`] isn't sent ([`FrameError::TooLargeToSend`]).
-pub fn write_server_event(w: &mut impl Write, event: &ServerEvent) -> Result<(), LaunchError> {
-    match event {
-        // Everything `to_vec` checks, the size included.
-        ServerEvent::Created { office } => drop(office.to_vec()?),
-        ServerEvent::Unknown => return Err(LaunchError::Invalid("can't send an unknown event")),
-        ServerEvent::Ready { .. } | ServerEvent::Discarded | ServerEvent::Failed { .. } => {}
-    }
-    write_versioned(w, event)
-}
-
+/// The `"v"` of `office.json`, read before the rest so a newer file reports its version.
 #[derive(Deserialize)]
 struct Versioned {
     v: u32,
-}
-
-#[derive(Serialize)]
-struct Line<'a, T> {
-    v: u32,
-    #[serde(flatten)]
-    body: &'a T,
-}
-
-fn check_version(v: u32, supported: &'static [u32]) -> Result<(), LaunchError> {
-    if supported.contains(&v) {
-        Ok(())
-    } else {
-        Err(LaunchError::UnsupportedVersion {
-            found: v,
-            supported,
-        })
-    }
 }
 
 fn check_office_file_version(v: u32) -> Result<(), LaunchError> {
@@ -1029,30 +718,6 @@ fn check_office_file_version(v: u32) -> Result<(), LaunchError> {
     } else {
         Err(LaunchError::UnsupportedOfficeFileVersion(v))
     }
-}
-
-/// One line whose `v` this build supports, checked before its shape, so a newer peer gets
-/// `UnsupportedVersion` rather than a decoding error.
-fn read_versioned_line(r: &mut impl BufRead) -> Result<Option<Vec<u8>>, LaunchError> {
-    let Some(line) = frame::read_line(r).map_err(LaunchError::Frame)? else {
-        return Ok(None);
-    };
-    versioned(&line)?;
-    Ok(Some(line))
-}
-
-/// Whether a line's `v` is one this build supports.
-fn versioned(line: &[u8]) -> Result<(), LaunchError> {
-    let version: Versioned = serde_json::from_slice(line).map_err(LaunchError::Json)?;
-    check_version(version.v, &[LAUNCH_VERSION])
-}
-
-fn write_versioned<T: Serialize>(w: &mut impl Write, body: &T) -> Result<(), LaunchError> {
-    let line = Line {
-        v: LAUNCH_VERSION,
-        body,
-    };
-    frame::write_message(w, &line).map_err(LaunchError::Frame)
 }
 
 pub mod recovery;

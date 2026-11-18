@@ -1,4 +1,4 @@
-//! `change_id` idempotency (§2.3), the age checks, app-only calls, sizes and re-runs.
+//! `change_id` idempotency (§2.3), the age checks, grant-only calls, sizes and re-runs.
 
 use org_proto::work::*;
 use org_proto::ErrorCode;
@@ -105,7 +105,7 @@ fn a_change_id_that_isnt_a_ulid_is_invalid() {
     let mut p = w.create_params(PROJECT);
     p.change_id = "not-a-ulid".into();
     assert_eq!(
-        w.code(&app(), WorkCall::TaskCreate(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
         ErrorCode::InvalidRequest
     );
 }
@@ -121,10 +121,13 @@ fn a_storage_error_rolls_back_and_is_not_stored() {
         let p = w.create_params(PROJECT);
         let before = w.store.snapshot();
         w.store.fail_next(point);
-        assert!(w.svc.call(app(), WorkCall::TaskCreate(p.clone())).is_err());
+        assert!(w
+            .svc
+            .call(owner_by_grant(), WorkCall::TaskCreate(p.clone()))
+            .is_err());
         assert_eq!(w.store.snapshot(), before, "{point:?}: nothing kept");
         // The retry succeeds, with the number the failed attempt didn't keep.
-        let a = w.ok(&app(), WorkCall::TaskCreate(p));
+        let a = w.ok(&owner_by_grant(), WorkCall::TaskCreate(p));
         assert_eq!(a.items[0].number, Some(1));
     }
 }
@@ -158,9 +161,14 @@ fn delete_over_an_agent_connection_is_not_authorized_before_any_other_check() {
         expected_version: 99,
     });
     assert_eq!(w.code(&agent(), call), ErrorCode::NotAuthorized);
-    assert_eq!(w.code(&agent(), w.delete(&id)), ErrorCode::NotAuthorized);
+    let refusal = w.err(&agent(), w.delete(&id));
+    assert_eq!(refusal.code, ErrorCode::NotAuthorized);
+    assert_eq!(
+        refusal.message,
+        "`work.delete` can only be made through a person's grant"
+    );
     assert!(!w.item(&id).deleted);
-    w.ok(&app(), w.delete(&id));
+    w.ok(&owner_by_grant(), w.delete(&id));
     assert!(w.item(&id).deleted);
 }
 
@@ -171,9 +179,15 @@ fn too_large_comes_after_not_found_and_before_everything_else_and_is_not_stored(
     let mut p = w.create_params(PROJECT);
     p.description = Some(huge.clone());
     let change_id = p.change_id.clone();
-    assert_eq!(w.code(&app(), WorkCall::TaskCreate(p)), ErrorCode::TooLarge);
+    assert_eq!(
+        w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
+        ErrorCode::TooLarge
+    );
     assert!(!w.store.snapshot().results.contains_key(&change_id));
     let mut p = w.create_params("no-such-project");
     p.description = Some(huge);
-    assert_eq!(w.code(&app(), WorkCall::TaskCreate(p)), ErrorCode::NotFound);
+    assert_eq!(
+        w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
+        ErrorCode::NotFound
+    );
 }

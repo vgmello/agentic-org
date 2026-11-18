@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use org_office_launch::{CreateOffice, FailCode, OfficeFile, ServerEvent};
-use org_proto::{AppToken, OfficeStatus, OfficeStatusReason, APP_TOKEN_BYTES};
+use org_office_launch::{FailCode, OfficeFile, ServerEvent};
+use org_proto::{OfficeStatus, OfficeStatusReason};
 
 use crate::host_log;
 use crate::ids::handle_of;
@@ -348,19 +348,7 @@ impl Supervisor {
             .load(&first.office.office_id)
             .map_err(|_| CreateStartError::NotStarted("original HQ key unavailable".into()))?
             .ok_or_else(|| CreateStartError::NotStarted("original HQ key missing".into()))?;
-        let create = CreateOffice {
-            office_id: first.office.office_id.clone(),
-            office_name: first.office_name.clone(),
-            org_id: first.org_id.clone(),
-            org_name: first.org_name.clone(),
-            role: first.role,
-            // The v2 `CreateOffice` carrier still has this field, but the v3 handoff never sends
-            // it and the host keeps no app token: a zero placeholder until A1.5 removes the
-            // v2 carrier.
-            app_token: AppToken::from_bytes([0; APP_TOKEN_BYTES]),
-            db_key,
-        };
-        let line = CreateLine::hq(create, child::HqCreate { first, recovery });
+        let line = CreateLine::hq(first, db_key, recovery);
         let log = self.log_for(line.office_id());
         let spawned = self
             .spawner()
@@ -380,10 +368,8 @@ impl Supervisor {
     }
 
     /// Runs `agentic-org-office --discard <office_id>` and waits (up to the discard timeout) for
-    /// it to report. Over the v3 rendezvous the server gets no key (its handoff's `db_key` is
-    /// `null`); a legacy v2 line still carries the office's key, or `null` when the key store
-    /// has none. The
-    /// server takes the office lock, refuses a folder that holds `office.json`, and removes the
+    /// it to report. The server gets no key (its handoff's `db_key` is `null`); the host reads
+    /// the key only so that an unreadable key store starts no server. The server takes the office lock, refuses a folder that holds `office.json`, and removes the
     /// folder. After `discarded`, and only then, the office's key is deleted from the key store.
     /// A key store that can't be read starts no server ([`DiscardOutcome::KeyUnreadable`]).
     pub(crate) fn discard(&self, office_id: &str) -> io::Result<DiscardOutcome> {
@@ -981,14 +967,14 @@ mod tests {
     #[test]
     #[ignore = "run only as the v3 discard server of a supervisor test"]
     fn v3_discard_server() {
-        use org_office_launch::v3::{self, AnyFirstLine, HostFirstLine};
+        use org_office_launch::v3::{self, HostFirstLine};
         use std::os::unix::net::UnixStream;
         let Some(seen) = std::env::var_os(V3_DISCARD_SEEN) else {
             return;
         };
         let mut stdin = std::io::BufReader::new(std::io::stdin());
-        let Ok(Some(AnyFirstLine::V3(HostFirstLine::Discard(office)))) =
-            v3::read_first_line_any(&mut stdin, org_office_launch::FirstLine::Discard)
+        let Ok(Some(HostFirstLine::Discard(office))) =
+            v3::read_first_line(&mut stdin, org_office_launch::FirstLine::Discard)
         else {
             std::process::exit(2);
         };
@@ -1068,15 +1054,15 @@ mod tests {
     #[test]
     #[ignore = "run only as the v3 HQ create server of a supervisor test"]
     fn v3_hq_create_server() {
-        use org_office_launch::v3::{self, AnyFirstLine, HostFirstLine};
+        use org_office_launch::v3::{self, HostFirstLine};
         use std::os::unix::net::UnixStream;
         let Some(pid_file) = std::env::var_os(V3_CREATE_PID) else {
             return;
         };
         fs::write(pid_file, std::process::id().to_string()).unwrap();
         let mut stdin = std::io::BufReader::new(std::io::stdin());
-        let Ok(Some(AnyFirstLine::V3(HostFirstLine::Create(create)))) =
-            v3::read_first_line_any(&mut stdin, org_office_launch::FirstLine::Create)
+        let Ok(Some(HostFirstLine::Create(create))) =
+            v3::read_first_line(&mut stdin, org_office_launch::FirstLine::Create)
         else {
             std::process::exit(2);
         };

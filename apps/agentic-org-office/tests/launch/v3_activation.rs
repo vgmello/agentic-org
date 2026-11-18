@@ -7,7 +7,7 @@ use std::io::BufRead;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+pub(super) const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
 fn create_line(path: &Path) -> HostFirstLine {
@@ -190,9 +190,10 @@ use org_proto::{
     ErrorCode,
 };
 
-struct Session {
-    run: Run,
-    stream: UnixStream,
+/// A worker the fake host launched: its process and the authenticated rendezvous.
+pub(super) struct Session {
+    pub(super) run: Run,
+    pub(super) stream: UnixStream,
     reader: BufReader<UnixStream>,
     transfer: Option<UnixDatagram>,
     // Sender copy of a descriptor in flight on `transfer`, kept until the worker answers
@@ -201,12 +202,14 @@ struct Session {
     in_flight: std::cell::RefCell<Option<UnixStream>>,
 }
 impl Session {
-    fn event(&mut self) -> Value {
+    /// The next v3 event on the rendezvous.
+    pub(super) fn event(&mut self) -> Value {
         let event = line(&mut self.reader);
         self.in_flight.get_mut().take();
         event
     }
-    fn no_stdout(&self) {
+    /// stdout ended with nothing on it (it is untrusted; the worker writes nothing there).
+    pub(super) fn no_stdout(&self) {
         assert!(
             matches!(
                 self.run.events.recv_timeout(WAIT),
@@ -216,13 +219,38 @@ impl Session {
         );
     }
     fn stop(mut self) {
-        self.stream.shutdown(std::net::Shutdown::Both).unwrap();
-        assert!(self.run.wait().success());
+        assert!(self.host_goes_away().success());
         self.no_stdout();
+    }
+    /// Ends the rendezvous, as a host that goes away does, and waits for the exit.
+    pub(super) fn host_goes_away(&mut self) -> std::process::ExitStatus {
+        self.stream.shutdown(std::net::Shutdown::Both).unwrap();
+        self.run.wait()
     }
 }
 
-fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -> Session {
+/// The v3 first line for `op`, naming `rendezvous`, with this file's instance and office.
+pub(super) fn first_line(op: FirstLine, rendezvous: &Path) -> HostFirstLine {
+    let office = OfficeLine {
+        id_profile: None,
+        selected_writer_required: false,
+        instance_id: INSTANCE.into(),
+        office_id: OFFICE.into(),
+        rendezvous: rendezvous.to_str().unwrap().into(),
+    };
+    match op {
+        FirstLine::Create => create_line(rendezvous),
+        FirstLine::Start => HostFirstLine::Start(office),
+        FirstLine::Discard => HostFirstLine::Discard(office),
+    }
+}
+
+pub(super) fn handshake(
+    world: &World,
+    op: FirstLine,
+    instance: &str,
+    key: Option<DbKey>,
+) -> Session {
     handshake_with(world, op, instance, key, |_| {})
 }
 
@@ -241,35 +269,21 @@ fn handshake_with(
         NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     ));
     let listener = UnixListener::bind(&path).unwrap();
-    let (args, first) = match op {
-        FirstLine::Create => {
-            let HostFirstLine::Create(mut create) = create_line(&path) else {
-                unreachable!()
-            };
+    let mut first = first_line(op, &path);
+    match &mut first {
+        HostFirstLine::Create(create) => {
             create.office.instance_id = instance.into();
-            edit(&mut create);
-            (vec!["--create"], HostFirstLine::Create(create))
+            edit(create);
         }
-        FirstLine::Start => (
-            vec!["--office", OFFICE],
-            HostFirstLine::Start(OfficeLine {
-                id_profile: None,
-                selected_writer_required: false,
-                instance_id: instance.into(),
-                office_id: OFFICE.into(),
-                rendezvous: path.to_str().unwrap().into(),
-            }),
-        ),
-        FirstLine::Discard => (
-            vec!["--discard", OFFICE],
-            HostFirstLine::Discard(OfficeLine {
-                id_profile: None,
-                selected_writer_required: false,
-                instance_id: instance.into(),
-                office_id: OFFICE.into(),
-                rendezvous: path.to_str().unwrap().into(),
-            }),
-        ),
+        HostFirstLine::Start(office) | HostFirstLine::Discard(office) => {
+            office.instance_id = instance.into();
+        }
+        _ => unreachable!(),
+    }
+    let args = match op {
+        FirstLine::Create => vec!["--create"],
+        FirstLine::Start => vec!["--office", OFFICE],
+        FirstLine::Discard => vec!["--discard", OFFICE],
     };
     let mut run = world.spawn(&args);
     v3::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
@@ -629,14 +643,12 @@ fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
             },
         )
         .unwrap();
-        assert!(matches!(
-            run.event(),
-            ServerEvent::Failed {
-                code: FailCode::InvalidRequest,
-                ..
-            }
-        ));
+        // Refused before any trusted channel exists: nothing reported, nothing on stdout.
         assert!(!run.wait().success());
+        assert!(matches!(
+            run.events.recv_timeout(WAIT),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        ));
         assert!(
             matches!(listener.accept(),Err(error) if error.kind()==std::io::ErrorKind::WouldBlock)
         );
@@ -647,46 +659,39 @@ fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
 #[test]
 fn malformed_launch_json_never_echoes_input_bytes() {
     let _process = process_isolation();
-    let mut legacy = serde_json::to_value(create_message()).unwrap();
-    legacy["v"] = json!(2);
-    legacy["org_name"] = json!(314159265358979323u64);
     let world = World::new();
     let mut v3 = serde_json::to_value(create_line(&world.home.join("unused"))).unwrap();
     v3["v"] = json!(3);
     v3.as_object_mut()
         .unwrap()
         .insert("TEST-RECOVERY-SECRET".into(), json!(true));
-    for (value, secret) in [(legacy, "314159265358979323"), (v3, "TEST-RECOVERY-SECRET")] {
-        let wire = format!("{value}\n");
-        // Prove this exact malformed input reaches a decoder error that quotes its secret.
-        let error = v3::read_first_line_any(
-            &mut std::io::Cursor::new(wire.as_bytes()),
-            FirstLine::Create,
-        )
-        .unwrap_err();
-        assert!(matches!(error, org_office_launch::LaunchError::Json(_)));
-        assert!(
-            error.to_string().contains(secret),
-            "fixture never reached a secret-bearing decoder error: {error}"
-        );
-        let mut run = world.spawn(&["--create"]);
-        run.stdin
-            .as_mut()
-            .unwrap()
-            .write_all(wire.as_bytes())
-            .unwrap();
-        match run.event() {
-            ServerEvent::Failed { code, message } => {
-                assert_eq!(code, FailCode::InvalidRequest);
-                assert_eq!(message, "invalid launch message");
-                assert!(!message.contains(secret));
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
-        assert!(!run.wait().success());
-        assert!(!run.stderr().contains(secret));
-        assert!(!world.folder(OFFICE).exists());
-    }
+    let secret = "TEST-RECOVERY-SECRET";
+    let wire = format!("{v3}\n");
+    // Prove this exact malformed input reaches a decoder error that quotes its secret.
+    let error = v3::read_first_line(
+        &mut std::io::Cursor::new(wire.as_bytes()),
+        FirstLine::Create,
+    )
+    .unwrap_err();
+    assert!(matches!(error, org_office_launch::LaunchError::Json(_)));
+    assert!(
+        error.to_string().contains(secret),
+        "fixture never reached a secret-bearing decoder error: {error}"
+    );
+    let mut run = world.spawn(&["--create"]);
+    run.stdin
+        .as_mut()
+        .unwrap()
+        .write_all(wire.as_bytes())
+        .unwrap();
+    // Refused before any trusted channel exists: no event at all, so none can echo it.
+    assert!(!run.wait().success());
+    assert!(matches!(
+        run.events.recv_timeout(WAIT),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+    ));
+    assert!(!run.stderr().contains(secret));
+    assert!(!world.folder(OFFICE).exists());
 }
 
 #[test]

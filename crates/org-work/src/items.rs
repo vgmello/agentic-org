@@ -258,7 +258,7 @@ pub(crate) fn unlink(ctx: &mut Ctx, p: &WorkUnlinkParams) -> Result<Plan, Fail> 
     Ok(Plan::of(vec![draft]))
 }
 
-/// `work.delete` (app-only, checked before this): the item becomes a tombstone. Its number
+/// `work.delete` (grant-only, checked before this): the item becomes a tombstone. Its number
 /// stays used; a made-task step whose task this is becomes a plain step again.
 pub(crate) fn delete(ctx: &mut Ctx, p: &WorkDeleteParams) -> Result<Plan, Fail> {
     let item = load(ctx, &p.item_id)?;

@@ -77,9 +77,7 @@ fn inbox_hint_registration_uses_real_unbound_bound_restore_and_replica_authority
             }
         }
         drop(office);
-        let mut run = world.spawn(&["--office", OFFICE]);
-        run.send(&start_message());
-        assert!(matches!(run.event(), ServerEvent::Ready { .. }), "{state}");
+        let mut run = started(&world);
         // A raw synchronous hello owns no detached client helpers across the next spawn.
         let mut reader = BufReader::new(UnixStream::connect(socket(&world)).unwrap());
         frame::write_message(

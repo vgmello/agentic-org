@@ -1,4 +1,4 @@
-//! The fake office server speaks launch v3 as well as v2: these tests drive it as a v3 host does
+//! The fake office server speaks only launch v3, as the real one does: these tests drive it as the host does
 //! (first line on stdin, then `ready_for_secrets`, the handoff header and, for create and start,
 //! the transfer socket on its marker byte over the rendezvous socket), so the app's tests can
 //! move to the rendezvous. Everything runs in a temporary home.
@@ -281,12 +281,8 @@ fn the_fake_refuses_a_start_line_naming_another_office_before_connecting() {
         matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
         "the fake connected to the rendezvous"
     );
-    // Not connected, so the refusal goes to stdout.
-    let out = stdout_of(&mut child);
-    assert!(
-        out.contains("failed") && out.contains("invalid_request"),
-        "{out}"
-    );
+    // Not connected, so the refusal reaches no one: stdout carries nothing.
+    assert_eq!(stdout_of(&mut child), "");
     let pid = child.id();
     let log = home.log();
     assert!(
@@ -364,8 +360,10 @@ fn the_fake_fails_a_bad_header_on_the_stream_not_stdout() {
     }
 }
 
+/// A retired v2 line (here a discard, which once needed no rendezvous) is refused by its version
+/// before anything else, as the real server refuses it: nothing is removed or reported.
 #[test]
-fn the_fake_still_speaks_v2() {
+fn the_fake_refuses_a_v2_line() {
     let home = Home::new();
     let mut child = Command::new(fake_server())
         .args([DISCARD_FLAG, OFFICE])
@@ -379,9 +377,13 @@ fn the_fake_still_speaks_v2() {
     let line = json!({"v": 2, "op": "discard", "db_key": null});
     let stdin = child.stdin.as_mut().unwrap();
     stdin.write_all(format!("{line}\n").as_bytes()).unwrap();
-    assert_eq!(wait_exit(&mut child), 0);
-    let out = stdout_of(&mut child);
-    assert!(out.contains("discarded"), "{out}");
+    assert_eq!(wait_exit(&mut child), 1);
+    assert_eq!(stdout_of(&mut child), "");
     let pid = child.id();
-    assert!(log_has(&home.log(), &format!("launch discard {pid} v2")));
+    let log = home.log();
+    assert!(
+        log_has(&log, &format!("first-line-refused discard {pid}")),
+        "{log}"
+    );
+    assert!(!log.contains("launch discard"), "{log}");
 }

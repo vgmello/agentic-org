@@ -310,15 +310,6 @@ impl TestHome {
             .collect()
     }
 
-    /// The fingerprints of the app tokens the fake's runs for `key` got, in order (one per run
-    /// that accepted its first line).
-    pub fn token_fingerprints(&self, key: &str) -> Vec<String> {
-        self.log_fields("token", key)
-            .iter()
-            .map(|f| f[3].clone())
-            .collect()
-    }
-
     /// The fingerprints of the grant keys the fake's v3 runs for `key` got over the rendezvous,
     /// in order (one per run whose handoff carried one).
     pub fn grant_fingerprints(&self, key: &str) -> Vec<String> {

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_office_launch::{CreateOffice, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
+use org_office_launch::{ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
 use org_proto::location::{self, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::DbKey;
 
@@ -130,31 +130,41 @@ pub(crate) enum Mode<'a> {
     Discard(&'a str),
 }
 
-/// The HQ create: the new office's details and database key, carried in the v2 `CreateOffice`
-/// message (its `app_token` is a zero placeholder the v3 handoff never sends; A1.5 removes the
-/// carrier), plus the v3 first line and recovery code the rendezvous handoff delivers.
+/// The HQ create: the v3 first line (no secret: the office, organization, names, role and HQ
+/// context) plus the new office's database key and recovery code, which the rendezvous handoff
+/// delivers. The first line is the only source of the office's details, so the line the worker
+/// reads and the key the handoff sends always name the same office.
 ///
-/// It is kept as one value, built once, because the message owns its key and [`DbKey`] isn't
-/// `Clone`: the handoff borrows it, and dropping it zeroes it. It lives on the heap (a `Box`), so
-/// moving it moves a pointer, not the secrets. Building it still leaves the usual stack copies
-/// behind (see `DbKey`'s docs).
-pub(crate) struct CreateLine(Box<CreateOffice>, Option<HqCreate>);
-pub(crate) struct HqCreate {
-    pub first: org_office_launch::v3::CreateLine,
-    pub recovery: org_proto::RecoveryCode,
+/// It is kept as one value, built once, because it owns its key and [`DbKey`] isn't `Clone`: the
+/// handoff borrows it, and dropping it zeroes it. It lives on the heap (a `Box`), so moving it
+/// moves a pointer, not the secrets. Building it still leaves the usual stack copies behind (see
+/// `DbKey`'s docs).
+pub(crate) struct CreateLine(Box<HqCreate>);
+struct HqCreate {
+    first: org_office_launch::v3::CreateLine,
+    db_key: DbKey,
+    recovery: org_proto::RecoveryCode,
 }
 
 impl CreateLine {
-    pub(crate) fn hq(create: CreateOffice, context: HqCreate) -> Self {
-        Self(Box::new(create), Some(context))
+    pub(crate) fn hq(
+        first: org_office_launch::v3::CreateLine,
+        db_key: DbKey,
+        recovery: org_proto::RecoveryCode,
+    ) -> Self {
+        Self(Box::new(HqCreate {
+            first,
+            db_key,
+            recovery,
+        }))
     }
 
     /// The id of the office it creates.
     pub(crate) fn office_id(&self) -> &str {
-        &self.0.office_id
+        &self.0.first.office.office_id
     }
 
-    /// The new office's database key, for the key store. Never copy it.
+    /// The new office's database key, for the handoff. Never copy it.
     pub(crate) fn db_key(&self) -> &DbKey {
         &self.0.db_key
     }
@@ -203,10 +213,6 @@ impl Spawner {
             host_log::log(&format!("didn't start an office server: {why}"));
             SpawnError::Untrusted(why)
         })?;
-        // The only creation is HQ provisioning: a create line always carries its HQ context.
-        if let Mode::Create(CreateLine(_, None)) = mode {
-            return Err(io::Error::other("a create needs its HQ creation context").into());
-        }
         let rendezvous = self.broker.bind()?;
         let args: Vec<&OsStr> = match mode {
             Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
@@ -313,18 +319,8 @@ impl Spawner {
             }
             Mode::Create(line) => {
                 let context = rendezvous;
-                let hq = line
-                    .1
-                    .as_ref()
-                    .ok_or_else(|| io::Error::other("missing HQ creation context"))?;
-                let mut first = hq.first.clone();
-                if first.office.instance_id != broker.instance
-                    || first.office.office_id != line.0.office_id
-                    || first.org_id != line.0.org_id
-                    || first.org_name != line.0.org_name
-                    || first.office_name != line.0.office_name
-                    || first.role != line.0.role
-                {
+                let mut first = line.0.first.clone();
+                if first.office.instance_id != broker.instance {
                     return Err(io::Error::other("HQ create scope mismatch").into());
                 }
                 first.office.rendezvous = context
@@ -347,7 +343,7 @@ impl Spawner {
                     admitted,
                     &self.check,
                     line.db_key(),
-                    Some(&hq.recovery),
+                    Some(&line.0.recovery),
                     running.generation,
                     v3_signals,
                     &mut || running.process.try_wait().unwrap_or(false),

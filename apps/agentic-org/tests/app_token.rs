@@ -16,8 +16,7 @@ mod support;
 use std::time::Duration;
 
 use org_host::Host;
-use org_office_launch::{write_host_message, CreateOffice, HostMessage};
-use org_proto::{AppToken, DbKey, Empty, OfficeList, OfficeRole, OfficeStatus, OfficeStatusReason};
+use org_proto::{Empty, OfficeList, OfficeStatus, OfficeStatusReason};
 use serde_json::json;
 use support::{eventually, has_hex_run, hq, office_info, Client, TestHome};
 
@@ -42,13 +41,6 @@ fn wait_for(host: &Host, office_id: &str, want: OfficeStatus) {
     });
 }
 
-/// A host message as one pipe line, for a wrapper script to send in the host's place.
-fn line(message: &HostMessage) -> String {
-    let mut out = Vec::new();
-    write_host_message(&mut out, message).unwrap();
-    String::from_utf8(out).unwrap()
-}
-
 #[cfg(target_os = "macos")]
 #[test]
 fn every_start_gets_a_grant_key_of_its_own() {
@@ -71,10 +63,6 @@ fn every_start_gets_a_grant_key_of_its_own() {
     assert_eq!(b.len(), 1);
     assert!(!a.contains(&b[0]), "two offices share a grant key");
     assert!(home.first_line_refusals(A).is_empty());
-    assert!(
-        home.token_fingerprints(A).is_empty(),
-        "v3 hands off no app token"
-    );
     home.assert_no_secret_in_home();
     host.shutdown();
 }
@@ -86,15 +74,13 @@ fn every_start_gets_a_grant_key_of_its_own() {
 #[cfg(target_os = "macos")]
 #[test]
 fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secret() {
-    let create = line(&HostMessage::Create(CreateOffice {
-        org_id: "01ORGA".into(),
-        org_name: "Acme".into(),
-        office_id: A.into(),
-        office_name: "HQ".into(),
-        role: OfficeRole::Hq,
-        app_token: AppToken::from_bytes([7; 32]),
-        db_key: DbKey::from_bytes([8; 32]),
-    }));
+    // A retired v2 create line, keys included (the launch library no longer writes v2): the
+    // worker refuses it by its version without decoding it.
+    let v2_create = format!(
+        r#"{{"v":2,"op":"create","org_id":"01ORGA","org_name":"Acme","office_id":"{A}","office_name":"HQ","role":"hq","app_token":"{}","db_key":"{}"}}"#,
+        "07".repeat(32),
+        "08".repeat(32),
+    );
     let cases = [
         (
             "malformed",
@@ -105,8 +91,8 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
             r#"printf '{"v":2,"op":"stop"}\n' | "$FAKE" "$@""#.to_owned(),
         ),
         (
-            "create-op",
-            format!(r#"printf '%s' '{create}' | "$FAKE" "$@""#),
+            "v2-create",
+            format!(r#"printf '%s\n' '{v2_create}' | "$FAKE" "$@""#),
         ),
     ];
     for (name, body) in cases {
@@ -174,7 +160,7 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     });
     assert_ne!(status(&host, A), OfficeStatus::Unavailable);
     assert!(home.first_line_refusals(A).is_empty());
-    assert!(home.token_fingerprints(A).is_empty());
+    assert!(home.grant_fingerprints(A).is_empty());
     host.shutdown();
 }
 

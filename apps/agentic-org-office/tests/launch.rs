@@ -1,6 +1,7 @@
-//! The real `agentic-org-office` binary, driven the way the host drives it: arguments, the control
-//! pipe on stdin and stdout, and the office socket. The host holds the database key and sends it
-//! on the first line (key custody), so there is no key store here and no test can touch a
+//! The real `agentic-org-office` binary, driven the way the host drives it: arguments, the v3
+//! first line on stdin, the authenticated rendezvous (keys, events, lifetime) and the office
+//! socket. stdout is untrusted and must stay empty. The host holds the database key and hands it
+//! over on the rendezvous (key custody), so there is no key store here and no test can touch a
 //! Keychain: the server has no Keychain code.
 
 use std::io::{BufReader, Write};
@@ -15,10 +16,7 @@ mod joined_client;
 #[path = "support/teardown.rs"]
 mod test_teardown;
 use joined_client::Client;
-use org_office_launch::{
-    office_dir, read_server_event, write_host_message, CreateOffice, DiscardOffice, FailCode,
-    HostMessage, OfficeFile, ServerEvent, StartOffice,
-};
+use org_office_launch::{office_dir, OfficeFile};
 use org_proto::location::office_socket_path;
 use org_proto::{frame, AppToken, DbKey, OfficeRole};
 use tempfile::TempDir;
@@ -67,11 +65,13 @@ impl World {
             .spawn()
             .unwrap();
         let stdout = child.stdout.take().unwrap();
+        // stdout is untrusted and the worker writes nothing there: any line it carries is a
+        // defect the cases see as an item on `events`.
         let (tx, events) = mpsc::channel();
         let reader = std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
-            while let Ok(Some(event)) = read_server_event(&mut reader) {
-                if tx.send(event).is_err() {
+            while let Ok(Some(line)) = frame::read_line(&mut reader) {
+                if tx.send(line).is_err() {
                     break;
                 }
             }
@@ -89,21 +89,13 @@ impl World {
 struct Run {
     child: Child,
     stdin: Option<ChildStdin>,
-    events: Receiver<ServerEvent>,
+    /// Lines the worker wrote on stdout (it must write none).
+    events: Receiver<Vec<u8>>,
     reader: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Run {
-    fn send(&mut self, message: &HostMessage) {
-        let stdin = self.stdin.as_mut().unwrap();
-        write_host_message(stdin, message).unwrap();
-    }
-
-    fn event(&self) -> ServerEvent {
-        self.events.recv_timeout(WAIT).expect("no control line")
-    }
-
-    /// Closes stdin, as a host that goes away does, and waits for the exit.
+    /// Closes stdin, as a host that goes away before the first line does, and waits for the exit.
     fn host_goes_away(&mut self) -> std::process::ExitStatus {
         self.stdin = None;
         self.wait()
@@ -144,6 +136,7 @@ impl Drop for Run {
     }
 }
 
+/// An app token: v3 has none, so a person's bind carrying one is refused like any other.
 fn token() -> AppToken {
     AppToken::from_bytes([0xA7; 32])
 }
@@ -153,55 +146,28 @@ fn db_key() -> DbKey {
     DbKey::from_bytes([0xB3; 32])
 }
 
-/// The key as the line carries it, to look for in logs.
+/// The key as the handoff carries it, to look for in logs.
 const DB_KEY_HEX: &str = "b3b3b3b3";
-
-fn create_message() -> HostMessage {
-    HostMessage::Create(CreateOffice {
-        org_id: ORG.into(),
-        org_name: "Acme".into(),
-        office_id: OFFICE.into(),
-        office_name: "HQ".into(),
-        role: OfficeRole::Hq,
-        app_token: token(),
-        db_key: db_key(),
-    })
-}
-
-fn start_message() -> HostMessage {
-    start_message_with(db_key())
-}
-
-fn start_message_with(db_key: DbKey) -> HostMessage {
-    HostMessage::Start(StartOffice {
-        app_token: token(),
-        db_key,
-    })
-}
-
-fn discard_message(db_key: Option<DbKey>) -> HostMessage {
-    HostMessage::Discard(DiscardOffice { db_key })
-}
 
 fn socket(world: &World) -> PathBuf {
     office_socket_path(&world.home, OFFICE).unwrap()
 }
 
 /// Stores the office with the library, as an HQ creation leaves it, then starts its server the
-/// way the host does and returns it. The worker creates offices only through HQ creation-v1
-/// over the rendezvous (`v3_activation`); every other case starts an existing office.
-fn started(world: &World) -> Run {
+/// way the host does (v3 start, handoff, ready on the rendezvous) and returns the session. The
+/// worker creates offices only through HQ creation-v1 (`v3_activation`); every other case starts
+/// an existing office.
+fn started(world: &World) -> Session {
     seed(world);
-    let mut run = world.spawn(&["--office", OFFICE]);
-    run.send(&start_message());
-    let ServerEvent::Ready {
-        socket: reported, ..
-    } = run.event()
-    else {
-        panic!("expected ready");
-    };
-    assert_eq!(Path::new(&reported), socket(world));
-    run
+    let mut session = handshake(world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let ready = session.event();
+    assert_eq!(ready["event"], "ready", "{ready}");
+    assert_eq!(
+        Path::new(ready["socket"].as_str().unwrap()),
+        socket(world),
+        "{ready}"
+    );
+    session
 }
 
 /// Stores the office with the library, as an HQ creation leaves it, unless it is stored.
@@ -234,11 +200,14 @@ fn hello(world: &World) -> org_proto::OfficeHello {
         .expect("an office answers hello with its identity")
 }
 
-fn failed_code(event: ServerEvent) -> FailCode {
-    match event {
-        ServerEvent::Failed { code, .. } => code,
-        other => panic!("expected failed, got {other:?}"),
-    }
+/// A failure the worker reported on the rendezvous: its code, after a failed exit with nothing
+/// on stdout.
+fn failed_code(mut session: Session) -> String {
+    let failed = session.event();
+    assert_eq!(failed["event"], "failed", "{failed}");
+    assert!(!session.run.wait().success());
+    session.no_stdout();
+    failed["code"].as_str().unwrap().to_owned()
 }
 
 #[test]
@@ -424,9 +393,7 @@ fn a_restart_with_the_same_key_serves_the_same_office() {
     let mut first = started(&world);
     assert!(first.host_goes_away().success());
 
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let mut again = started(&world);
     assert_eq!(hello(&world).office.id, OFFICE);
     assert!(again.host_goes_away().success());
 }
@@ -435,44 +402,57 @@ fn a_restart_with_the_same_key_serves_the_same_office() {
 fn the_first_line_must_match_the_flag() {
     let _process = process_isolation();
     let world = World::new();
-    // --create given a start message.
-    let mut run = world.spawn(&["--create"]);
-    run.send(&start_message());
-    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
-    assert!(!run.wait().success());
-
-    // --office given a create message, and garbage.
-    let mut run = world.spawn(&["--office", OFFICE]);
-    run.send(&create_message());
-    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
-    assert!(!run.wait().success());
-    let mut run = world.spawn(&["--office", OFFICE]);
-    std::io::Write::write_all(run.stdin.as_mut().unwrap(), b"not json at all\n").unwrap();
-    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
-    assert!(!run.wait().success());
+    let rendezvous = world.home.parent().unwrap().join("flag");
+    let listener = std::os::unix::net::UnixListener::bind(&rendezvous).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let line = |op: FirstLine| {
+        let mut bytes = Vec::new();
+        org_office_launch::v3::write_first_line(
+            &mut bytes,
+            &v3_activation::first_line(op, &rendezvous),
+        )
+        .unwrap();
+        bytes
+    };
+    // The worker refuses before it connects: no trusted channel exists, so nothing is reported
+    // (stdout is untrusted), the exit fails and the rendezvous is never dialled.
+    let refused = |args: &[&str], bytes: &[u8]| {
+        let mut run = world.spawn(args);
+        if let Some(stdin) = run.stdin.as_mut() {
+            // A worker refusing its arguments may already be gone.
+            let _ = stdin.write_all(bytes);
+        }
+        assert!(!run.wait().success(), "{args:?}");
+        assert!(
+            matches!(
+                run.events.recv_timeout(WAIT),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            ),
+            "{args:?} wrote on stdout"
+        );
+        assert!(
+            matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+            "{args:?} dialled the rendezvous"
+        );
+    };
+    // --create given a start line, --office a create line, and lines that aren't v3 at all.
+    refused(&["--create"], &line(FirstLine::Start));
+    refused(&["--office", OFFICE], &line(FirstLine::Create));
+    refused(&["--office", OFFICE], b"not json at all\n");
+    refused(&["--office", OFFICE], b"{\"v\":2,\"op\":\"start\"}\n");
 
     // The discard line belongs to --discard alone, and --discard takes no other.
-    let mut run = world.spawn(&["--create"]);
-    run.send(&discard_message(None));
-    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
-    assert!(!run.wait().success());
-    let mut run = world.spawn(&["--office", OFFICE]);
-    run.send(&discard_message(Some(db_key())));
-    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
-    assert!(!run.wait().success());
-    std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
-    for message in [create_message(), start_message()] {
-        let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
-        run.send(&message);
-        assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
-        assert!(!run.wait().success());
+    refused(&["--create"], &line(FirstLine::Discard));
+    refused(&["--office", OFFICE], &line(FirstLine::Discard));
+    std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
+    for op in [FirstLine::Create, FirstLine::Start] {
+        refused(&["--discard", OFFICE], &line(op));
     }
-    assert!(world.folder("UNFINISHED1").exists(), "a wrong line deleted");
+    assert!(world.folder(OFFICE).exists(), "a wrong line deleted");
+    assert!(!world.folder(OFFICE).join("office.json").exists());
 
     // Wrong arguments.
-    let mut run = world.spawn(&["--serve"]);
-    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
-    assert!(!run.wait().success());
+    refused(&["--serve"], b"");
 }
 
 #[test]
@@ -483,33 +463,6 @@ fn the_host_going_away_before_the_first_line_is_a_clean_exit_with_no_line() {
     let status = run.host_goes_away();
     assert!(status.success(), "{status:?}");
     assert!(run.events.recv_timeout(Duration::from_millis(200)).is_err());
-}
-
-#[test]
-fn discard_removes_an_unfinished_create_and_only_that() {
-    let _process = process_isolation();
-    let world = World::new();
-    // An unfinished create: a folder with the lock file, no office.json, no database. The host
-    // may hold a key for it or not; either way nothing is there to check.
-    for key in [None, Some(db_key())] {
-        std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
-        let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
-        run.send(&discard_message(key));
-        assert!(matches!(run.event(), ServerEvent::Discarded));
-        assert!(run.wait().success());
-        assert!(!world.folder("UNFINISHED1").exists());
-    }
-
-    // A finished office is refused and untouched, with a key or without.
-    let mut first = started(&world);
-    assert!(first.host_goes_away().success());
-    for key in [None, Some(db_key())] {
-        let mut run = world.spawn(&["--discard", OFFICE]);
-        run.send(&discard_message(key));
-        assert_eq!(failed_code(run.event()), FailCode::AlreadyExists);
-        assert!(!run.wait().success());
-        assert!(world.folder(OFFICE).join("office.json").exists());
-    }
 }
 
 #[test]
@@ -524,16 +477,17 @@ fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_del
     // The databases are plain SQLite (ADR-0016): with no key, a wrong key or the right one the
     // organization is found, so the discard is refused and nothing is deleted.
     for key in [None, Some(DbKey::from_bytes([0xC4; 32])), Some(db_key())] {
-        let mut run = world.spawn(&["--discard", OFFICE]);
-        run.send(&discard_message(key));
-        assert_eq!(failed_code(run.event()), FailCode::AlreadyExists);
-        assert!(!run.wait().success());
+        let mut session = handshake(&world, FirstLine::Discard, INSTANCE, key);
+        let failed = session.event();
+        assert_eq!(failed["code"], "already_exists", "{failed}");
+        assert!(!session.run.wait().success());
+        session.no_stdout();
         assert!(
             world.folder(OFFICE).join("org.db").exists(),
             "a database was deleted"
         );
         assert!(
-            !run.stderr().contains(DB_KEY_HEX),
+            !session.run.stderr().contains(DB_KEY_HEX),
             "the key reached the log of a failed discard"
         );
     }
@@ -548,17 +502,19 @@ fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
 
     // ADR-0016 decision 3: the key only wraps private keys; a wrong one does not stop the
     // office from serving its data.
-    let mut run = world.spawn(&["--office", OFFICE]);
-    run.send(&start_message_with(DbKey::from_bytes([0xC4; 32])));
-    assert!(matches!(run.event(), ServerEvent::Ready { .. }));
-    assert!(run.host_goes_away().success());
-    let log = run.stderr();
+    let mut session = handshake(
+        &world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(DbKey::from_bytes([0xC4; 32])),
+    );
+    assert_eq!(session.event()["event"], "ready");
+    assert!(session.host_goes_away().success());
+    let log = session.run.stderr();
     assert!(!log.contains(DB_KEY_HEX), "the key reached the log");
     assert!(!log.contains("c4c4c4c4"), "the wrong key reached the log");
 
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let mut again = started(&world);
     assert!(again.host_goes_away().success());
 }
 
@@ -591,14 +547,13 @@ fn a_stop_signal_closes_the_office_and_exits_clean() {
     let _process = process_isolation();
     for stop in [libc::SIGTERM, libc::SIGINT] {
         let world = World::new();
-        let mut run = started(&world);
-        signal(&run, stop);
-        let status = run.wait();
+        let mut session = started(&world);
+        signal(&session.run, stop);
+        let status = session.run.wait();
         assert_eq!(status.code(), Some(0), "signal {stop}: {status:?}");
+        session.no_stdout();
         // The office can be served again right away: its lock was released.
-        let mut again = world.spawn(&["--office", OFFICE]);
-        again.send(&start_message());
-        assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+        let mut again = started(&world);
         assert!(again.host_goes_away().success());
     }
 }
@@ -667,45 +622,44 @@ fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
     // A crashed server leaves its socket file behind.
     drop(std::os::unix::net::UnixListener::bind(socket(&world)).unwrap());
     assert!(socket(&world).exists());
-    let mut again = world.spawn(&["--office", OFFICE]);
-    again.send(&start_message());
-    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let mut again = started(&world);
     assert_eq!(hello(&world).office.id, OFFICE);
     assert!(again.host_goes_away().success());
 
     // A regular file is not ours to remove.
     std::fs::write(socket(&world), b"mine").unwrap();
-    let mut refused = world.spawn(&["--office", OFFICE]);
-    refused.send(&start_message());
-    assert_eq!(failed_code(refused.event()), FailCode::StorageError);
-    assert!(!refused.wait().success());
+    let refused = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    assert_eq!(failed_code(refused), "storage_error");
     assert_eq!(std::fs::read(socket(&world)).unwrap(), b"mine");
 }
 
 #[test]
-fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does() {
+fn what_the_host_writes_on_stdin_never_stops_the_server_and_rendezvous_eof_does() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = started(&world);
-    // Lines of any shape, and a lot of them: read and thrown away, unparsed.
-    let stdin = run.stdin.as_mut().unwrap();
-    std::io::Write::write_all(stdin, b"garbage\n{\"op\":\"nonsense\"}\n").unwrap();
-    std::io::Write::write_all(stdin, &vec![b'x'; 3 * 1024 * 1024]).unwrap();
+    let mut session = started(&world);
+    // Lines of any shape, and a lot of them: read and thrown away, unparsed. Then stdin ends:
+    // in v3 that is not the host going away, the rendezvous is.
+    let mut stdin = session.run.stdin.take().unwrap();
+    std::io::Write::write_all(&mut stdin, b"garbage\n{\"op\":\"nonsense\"}\n").unwrap();
+    std::io::Write::write_all(&mut stdin, &vec![b'x'; 3 * 1024 * 1024]).unwrap();
+    drop(stdin);
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(
         hello(&world).office.id,
         OFFICE,
         "the server stopped serving"
     );
-    assert!(run.host_goes_away().success());
+    assert!(session.host_goes_away().success());
+    session.no_stdout();
 }
 
 #[test]
-fn the_token_and_the_key_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
+fn the_keys_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = started(&world);
-    let pid = run.child.id();
+    let mut session = started(&world);
+    let pid = session.run.child.id();
     // fds 0 and 1 of the server are /dev/null (the control pipe was moved), checked with lsof.
     if let Ok(out) = Command::new("lsof")
         .args(["-a", "-p", &pid.to_string(), "-d", "0,1", "-Fn"])
@@ -719,9 +673,10 @@ fn the_token_and_the_key_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
             );
         }
     }
-    assert!(run.host_goes_away().success());
-    let log = run.stderr();
-    assert!(!log.contains("a7a7a7a7"), "the app token reached the log");
+    assert!(session.host_goes_away().success());
+    let log = session.run.stderr();
+    // The handoff's grant key is [7; 32] (`v3_activation::handshake`).
+    assert!(!log.contains("07070707"), "the grant key reached the log");
     assert!(
         !log.contains(DB_KEY_HEX),
         "the database key reached the log"
@@ -733,14 +688,15 @@ fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_reques
     let _process = process_isolation();
     // Disk state, not a bad argument: the host must be able to restart it once repaired.
     let world = World::new();
-    std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
-    std::fs::write(world.folder("UNFINISHED1").join("notes.txt"), b"not ours").unwrap();
-    let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
-    run.send(&discard_message(None));
-    assert_eq!(failed_code(run.event()), FailCode::StorageError);
-    assert_eq!(run.wait().code(), Some(1));
+    std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
+    std::fs::write(world.folder(OFFICE).join("notes.txt"), b"not ours").unwrap();
+    let mut session = handshake(&world, FirstLine::Discard, INSTANCE, None);
+    let failed = session.event();
+    assert_eq!(failed["code"], "storage_error", "{failed}");
+    assert_eq!(session.run.wait().code(), Some(1));
+    session.no_stdout();
     assert!(
-        world.folder("UNFINISHED1").join("notes.txt").exists(),
+        world.folder(OFFICE).join("notes.txt").exists(),
         "a foreign file was removed"
     );
 }
@@ -749,12 +705,12 @@ fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_reques
 fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = started(&world);
+    let mut session = started(&world);
     // A client that stays connected and silent: shutdown must close it, not wait for it.
     let idle = std::os::unix::net::UnixStream::connect(socket(&world)).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let started = std::time::Instant::now();
-    let status = run.host_goes_away();
+    let status = session.host_goes_away();
     assert!(status.success(), "{status:?}");
     assert!(started.elapsed() < Duration::from_secs(10));
     drop(idle);
@@ -822,6 +778,8 @@ fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_offic
 
 #[path = "launch/v3_activation.rs"]
 mod v3_activation;
+use org_office_launch::FirstLine;
+use v3_activation::{handshake, Session, INSTANCE};
 
 #[path = "launch/inbox_hint.rs"]
 mod inbox_hint;

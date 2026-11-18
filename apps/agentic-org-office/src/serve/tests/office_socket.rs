@@ -21,12 +21,11 @@ fn running(path: &Path, shared: &Arc<Shared>) -> Running {
         server: Some(server),
     }
 }
+/// `grants`: the launch key signed the test grants; otherwise it is another launch's key, so no
+/// test grant verifies (every launch carries a grant key since launch v2 went).
 fn auth(grants: bool) -> LaunchAuth {
-    if grants {
-        LaunchAuth::from(org_proto::GrantKey::from_bytes([7; 32]))
-    } else {
-        LaunchAuth::without_grants()
-    }
+    let byte = if grants { 7 } else { 9 };
+    LaunchAuth::from(org_proto::GrantKey::from_bytes([byte; 32]))
 }
 pub(super) fn principal_values() -> [Value; 3] {
     let vectors: Value = serde_json::from_str(include_str!(concat!(

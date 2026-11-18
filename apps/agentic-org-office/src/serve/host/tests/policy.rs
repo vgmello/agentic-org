@@ -322,7 +322,7 @@ fn live_owner_and_revocations_are_rechecked_per_request_and_poison_or_legacy_ref
     });
     refused(answer(&shared, &ctx, &request), "not_authorized");
     assert_eq!(directory.calls.load(Ordering::SeqCst), before);
-    shared.auth = LaunchAuth::without_grants();
+    shared.auth = LaunchAuth::from(org_proto::GrantKey::from_bytes([9; 32]));
     refused(answer(&shared, &context(), &request), "not_authorized");
     assert_eq!(directory.calls.load(Ordering::SeqCst), before);
 }
