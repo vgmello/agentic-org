@@ -310,6 +310,8 @@ const sessionFields = {
 	idle_expires_at: text
 };
 export const readSignIn = checked(object({ login: text, password: nonempty }));
+/** Registration redeems the fragment secret of a one-time link; the secret travels only in this JSON body. */
+export const readRegister = checked(object({ link: nonempty, login: text, password: nonempty }));
 export const readSession = checked(object(sessionFields));
 const proof: Reader<string> = (value) => /^[a-f0-9]{64}$/.test(text(value)) ? value as string : invalid();
 export const readSessionProof = checked(proof);
