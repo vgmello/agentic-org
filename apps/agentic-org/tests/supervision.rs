@@ -268,15 +268,20 @@ fn a_server_that_ignores_eof_is_killed_after_the_grace_period() {
 #[test]
 fn a_home_too_long_for_its_sockets_refuses_to_start() {
     let home = TestHome::new();
-    // run/<12 chars>.sock adds 22 bytes: make that exceed 103.
+    // run/<12 chars>.sock adds 22 bytes: make that exceed this system's limit.
+    let limit = org_platform::dirs::socket_path_limit().unwrap();
     let base = home.path();
-    let pad = 103 - 22 - base.as_os_str().len();
+    let pad = limit - 22 - base.as_os_str().len();
     let long = base.join("x".repeat(pad));
     let mut config = org_host::Config::new(&long, support::fake_server());
     config.dev_key_dir = Some(home.keys_dir());
     match home.start(config) {
         Err(e @ HostError::SocketPathTooLong { .. }) => {
-            assert!(e.to_string().contains("macOS allows at most 103"), "{e}");
+            assert!(
+                e.to_string()
+                    .contains(&format!("this system allows at most {limit}")),
+                "{e}"
+            );
         }
         Err(other) => panic!("{other}"),
         Ok(_) => panic!(

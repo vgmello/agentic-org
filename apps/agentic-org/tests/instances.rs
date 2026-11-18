@@ -98,7 +98,7 @@ fn two_long_root_instances_run_the_same_office_id_with_separate_data_sockets_and
     };
     assert_ne!(endpoints[0], endpoints[1]);
     for endpoint in &endpoints {
-        assert!(endpoint.len() <= org_proto::location::MAX_SOCKET_PATH_BYTES);
+        assert!(endpoint.len() <= org_platform::dirs::socket_path_limit().unwrap());
         assert!(Path::new(endpoint).exists());
     }
     assert_ne!(

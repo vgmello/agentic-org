@@ -14,6 +14,7 @@ org-docs = { path = "../org-docs" }
 zeroize = "=1.9.1"
 org-work = { path = "../org-work" }
 org-proto = { path = "../org-proto" }
+org-platform = { path = "../org-platform" }
 org-mailbox = { path = "../org-mailbox" }
 org-sync = { path = "../org-sync" }
 org-sync-proto = { path = "../org-sync-proto" }
@@ -27,6 +28,8 @@ libc.workspace = true
 org-work = { path = "../org-work", features = ["testkit"] }
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
 org-sync = { path = "../org-sync", features = ["testkit"] }
+# The flush steps the platform counted, for the publication evidence tests.
+org-platform = { path = "../org-platform", features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
 # Use the exact already-bundled source for the barrier-controlled upstream defect probe.

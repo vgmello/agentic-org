@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "ce972fdf901a513314a697997bd6ac0843552ddf45f0c7d9a4d3eee33fdd3b92"
+      "sha256": "b9fa4a354b55655d4fe8728aef30eb2d72b877adfc11da682fc201180b071611"
     },
     {
       "path": "Cargo.toml",
@@ -70,7 +70,7 @@
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "3cb5d19d40ccb2dd417d22d0ba9229b708be65f113b34f6ca92a08696642f4f8"
+      "sha256": "738546c1dcd73a3fdb969aa909b8dee545d63c05d9bd12d519290db34c16c1bf"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -90,7 +90,7 @@
     },
     {
       "path": "crates/org-client/Cargo.toml",
-      "sha256": "b413e712066ea48dd9bdebc854ac9d08b52cbfb2a8b6e6c1025c8958af293ac2"
+      "sha256": "5ddc9717ca0440e21eaf85e68d8e1ab85e4658dc099b2bf27d30045c96e74949"
     },
     {
       "path": "crates/org-host-control/Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "1409a7ec881cc1e520e6efec00677357f87ca56ebb5413ef7e0cb20f34364443"
+      "sha256": "2a3969c2407014015d0a23992350e9cdb3eef743acf7bc5301d2c02b63749904"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
@@ -106,7 +106,7 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "3158f539fbd4addf0bab993d4764b6ba357fa881f8cf887f750e8714290128f8"
+      "sha256": "72ad2369bd72ec8221fe41e1de41fa4b319dff81d9796a21f855a1153e7e9a83"
     },
     {
       "path": "crates/org-release/Cargo.toml",

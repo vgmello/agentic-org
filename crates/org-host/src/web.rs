@@ -301,7 +301,8 @@ impl Rendezvous {
         }
         home::owner_only_dir(&directory).map_err(invalid)?;
         let path = directory.join(crate::secrets::generate_unique_name()?);
-        org_proto::location::check_socket_path(&path).map_err(invalid)?;
+        org_proto::location::check_socket_path(&path, home::socket_path_limit()?)
+            .map_err(invalid)?;
         let listener = {
             let _fence = lock(&SPAWN_LOCK);
             UnixListener::bind(&path)?

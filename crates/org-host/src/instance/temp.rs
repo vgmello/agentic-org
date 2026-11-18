@@ -24,19 +24,14 @@ pub(super) fn validate_base(base: &Directory) -> Result<(), Error> {
             "user temp base must not be a shared temporary directory",
         ));
     }
-    #[cfg(target_os = "linux")]
     base.require_disk()?;
-    check_budget(&environment_base(base.path()))
+    check_budget(&environment_base(base.path())?)
 }
 
-fn environment_base(base: &Path) -> PathBuf {
-    #[cfg(target_os = "macos")]
-    if let Ok(suffix) = base.strip_prefix("/private/var") {
-        // The session environment uses DARWIN_USER_TEMP_DIR's /var spelling.
-        // Registry/denies retain the canonical /private/var spelling.
-        return Path::new("/var").join(suffix);
-    }
-    base.to_owned()
+/// The spelling the session environment carries (`org_platform::dirs`): on macOS
+/// DARWIN_USER_TEMP_DIR's /var spelling. Registry/denies retain the canonical spelling.
+fn environment_base(base: &Path) -> Result<PathBuf, Error> {
+    org_platform::dirs::environment_spelling(base).map_err(|refused| Error::Io(refused.into()))
 }
 
 fn check_budget(environment_path: &Path) -> Result<(), Error> {
@@ -99,19 +94,17 @@ mod tests {
         assert!(check_budget(Path::new(&format!("/{}", "a".repeat(50)))).is_err());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn darwin_environment_uses_var_without_changing_registry_paths() {
-        let canonical = Path::new("/private/var/folders/example/T");
-        assert_eq!(
-            environment_base(canonical),
-            Path::new("/var/folders/example/T")
-        );
-        assert_eq!(canonical, Path::new("/private/var/folders/example/T"));
-        assert_eq!(
-            environment_base(Path::new("/private/various/base")),
-            Path::new("/private/various/base")
-        );
+    fn the_environment_spelling_is_the_platforms_and_keeps_registry_paths() {
+        for canonical in [
+            Path::new("/private/var/folders/example/T"),
+            Path::new("/private/various/base"),
+        ] {
+            assert_eq!(
+                environment_base(canonical).unwrap(),
+                org_platform::dirs::environment_spelling(canonical).unwrap()
+            );
+        }
     }
     fn private_temp() -> tempfile::TempDir {
         let temporary = super::super::test_directory();

@@ -2,7 +2,9 @@
 //!
 //! The rule, in one place for the server and every client:
 //! - The office home is `$ORG_OFFICE_HOME` when set to an absolute path (tests,
-//!   development). Otherwise it is `~/Library/Application Support/agentic.org` (macOS).
+//!   development). Otherwise it is the system's default base for this user, which the caller
+//!   asks its platform layer for and passes in ([`office_home_from`]); this crate knows no
+//!   system's locations.
 //! - Relative paths are ignored, for `ORG_OFFICE_HOME` and `HOME` alike. The server runs with
 //!   `/` as its working directory, so a relative path would point it at a different socket
 //!   from the client's.
@@ -11,8 +13,9 @@
 //!   last 12 characters of the office id (its random part). The host checks handles are unique,
 //!   **ignoring case**, because macOS file systems usually are case-insensitive.
 //!
-//! macOS limits a Unix socket path to [`MAX_SOCKET_PATH_BYTES`] bytes, and binding or
-//! connecting fails beyond that. Check with [`check_socket_path`] and report it clearly.
+//! Every system limits the length of a Unix socket path, and binding or connecting fails
+//! beyond that. Check with [`check_socket_path`], passing the system's limit, and report it
+//! clearly.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -26,9 +29,6 @@ pub const OFFICE_RUNTIME_DIR_ENV: &str = "ORG_OFFICE_RUNTIME_DIR";
 /// The host's socket file name inside the office home.
 pub const HOST_SOCKET_FILE_NAME: &str = "host.sock";
 
-/// The longest Unix socket path macOS accepts, in bytes (`sun_path` is 104 with its NUL).
-pub const MAX_SOCKET_PATH_BYTES: usize = 103;
-
 /// How many trailing characters of an office id name its socket.
 pub const OFFICE_SOCKET_HANDLE_CHARS: usize = 12;
 
@@ -36,10 +36,17 @@ pub const OFFICE_SOCKET_HANDLE_CHARS: usize = 12;
 /// 26); the cap only bounds what arrives over the wire.
 const MAX_OFFICE_ID_CHARS: usize = 64;
 
-/// The office home on this machine, or `None` if neither `ORG_OFFICE_HOME` nor `HOME` is set
-/// to an absolute path.
-pub fn default_office_home() -> Option<PathBuf> {
-    office_home_from(std::env::var_os(OFFICE_HOME_ENV), std::env::var_os("HOME"))
+/// The office home: `override_home` (the value of [`OFFICE_HOME_ENV`]) when it is an absolute
+/// path, else `default_base`, the system's default base for this user, when the caller has
+/// one. `None` when neither gives a home.
+pub fn office_home_from(
+    override_home: Option<OsString>,
+    default_base: Option<PathBuf>,
+) -> Option<PathBuf> {
+    match override_home {
+        Some(dir) if Path::new(&dir).is_absolute() => Some(PathBuf::from(dir)),
+        _ => default_base,
+    }
 }
 
 /// The host's socket path inside an office home.
@@ -82,40 +89,33 @@ fn is_plain_office_id(office_id: &str) -> bool {
         && office_id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-/// A socket path longer than macOS allows.
+/// A socket path longer than the system allows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SocketPathTooLong {
     pub len: usize,
+    /// The most bytes the system allows.
+    pub limit: usize,
 }
 
 impl std::fmt::Display for SocketPathTooLong {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "socket path is {} bytes; macOS allows at most {MAX_SOCKET_PATH_BYTES} (set a shorter ORG_OFFICE_HOME)",
-            self.len
+            "socket path is {} bytes; this system allows at most {} (set a shorter ORG_OFFICE_HOME)",
+            self.len, self.limit
         )
     }
 }
 
 impl std::error::Error for SocketPathTooLong {}
 
-/// Check that a socket path fits macOS's limit.
-pub fn check_socket_path(path: &Path) -> Result<(), SocketPathTooLong> {
+/// Check that a socket path is at most `limit` bytes, the system's limit.
+pub fn check_socket_path(path: &Path, limit: usize) -> Result<(), SocketPathTooLong> {
     let len = path.as_os_str().len();
-    if len > MAX_SOCKET_PATH_BYTES {
-        Err(SocketPathTooLong { len })
+    if len > limit {
+        Err(SocketPathTooLong { len, limit })
     } else {
         Ok(())
-    }
-}
-
-fn office_home_from(override_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    match override_home {
-        Some(dir) if Path::new(&dir).is_absolute() => Some(PathBuf::from(dir)),
-        _ => home
-            .filter(|h| Path::new(h).is_absolute())
-            .map(|h| PathBuf::from(h).join("Library/Application Support/agentic.org")),
     }
 }
 
@@ -123,27 +123,25 @@ fn office_home_from(override_home: Option<OsString>, home: Option<OsString>) -> 
 mod tests {
     use super::*;
 
+    /// A default base as a caller's platform layer gives it for `/Users/me`.
+    const BASE: &str = "/Users/me/base";
+
     #[test]
     fn override_wins_when_set() {
-        let got = office_home_from(Some("/tmp/o1".into()), Some("/Users/me".into()));
+        let got = office_home_from(Some("/tmp/o1".into()), Some(BASE.into()));
         assert_eq!(got, Some(PathBuf::from("/tmp/o1")));
     }
 
     #[test]
-    fn empty_override_falls_back_to_home() {
-        let got = office_home_from(Some("".into()), Some("/Users/me".into()));
-        assert_eq!(
-            got,
-            Some(PathBuf::from(
-                "/Users/me/Library/Application Support/agentic.org"
-            ))
-        );
+    fn empty_override_falls_back_to_the_default_base() {
+        let got = office_home_from(Some("".into()), Some(BASE.into()));
+        assert_eq!(got, Some(PathBuf::from(BASE)));
     }
 
     #[test]
-    fn no_override_and_no_home_is_none() {
+    fn no_override_and_no_default_base_is_none() {
         assert_eq!(office_home_from(None, None), None);
-        assert_eq!(office_home_from(None, Some("".into())), None);
+        assert_eq!(office_home_from(Some("".into()), None), None);
     }
 
     #[test]
@@ -206,27 +204,34 @@ mod tests {
     }
 
     #[test]
-    fn socket_path_limit_is_103_bytes() {
-        let ok = PathBuf::from(format!("/{}", "a".repeat(102)));
-        assert!(check_socket_path(&ok).is_ok());
-        let long = PathBuf::from(format!("/{}", "a".repeat(103)));
-        assert_eq!(
-            check_socket_path(&long),
-            Err(SocketPathTooLong { len: 104 })
-        );
+    fn a_socket_path_may_be_as_long_as_the_limit_it_is_given() {
+        for limit in [103, 107] {
+            let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 1)));
+            assert!(check_socket_path(&ok, limit).is_ok());
+            let long = PathBuf::from(format!("/{}", "a".repeat(limit)));
+            let error = check_socket_path(&long, limit).unwrap_err();
+            assert_eq!(
+                error,
+                SocketPathTooLong {
+                    len: limit + 1,
+                    limit
+                }
+            );
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "socket path is {} bytes; this system allows at most {limit} (set a shorter ORG_OFFICE_HOME)",
+                    limit + 1
+                )
+            );
+        }
     }
 
     #[test]
-    fn relative_paths_are_ignored() {
-        let got = office_home_from(Some("tmp/o1".into()), Some("/Users/me".into()));
-        assert_eq!(
-            got,
-            Some(PathBuf::from(
-                "/Users/me/Library/Application Support/agentic.org"
-            ))
-        );
-        assert_eq!(office_home_from(None, Some("me".into())), None);
-        assert_eq!(office_home_from(Some("o1".into()), Some("me".into())), None);
+    fn a_relative_override_is_ignored() {
+        let got = office_home_from(Some("tmp/o1".into()), Some(BASE.into()));
+        assert_eq!(got, Some(PathBuf::from(BASE)));
+        assert_eq!(office_home_from(Some("o1".into()), None), None);
     }
 }
 
@@ -259,12 +264,10 @@ mod selected_socket_tests {
             Some(root.join("queLegacy123.sock"))
         );
         let name = "0123456789ac.sock";
-        let exact = PathBuf::from(format!(
-            "/{}",
-            "x".repeat(MAX_SOCKET_PATH_BYTES - name.len() - 2)
-        ));
-        assert!(check_socket_path(&selected_office_socket_in(&exact, id).unwrap()).is_ok());
+        const LIMIT: usize = 103;
+        let exact = PathBuf::from(format!("/{}", "x".repeat(LIMIT - name.len() - 2)));
+        assert!(check_socket_path(&selected_office_socket_in(&exact, id).unwrap(), LIMIT).is_ok());
         let over = PathBuf::from(format!("{}x", exact.display()));
-        assert!(check_socket_path(&selected_office_socket_in(&over, id).unwrap()).is_err());
+        assert!(check_socket_path(&selected_office_socket_in(&over, id).unwrap(), LIMIT).is_err());
     }
 }

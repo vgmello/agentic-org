@@ -7,49 +7,10 @@ use std::io::{self, ErrorKind, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
-// `open(2)` flags, from the platform headers (no `libc` dependency). `O_RDONLY` is 0 everywhere
-// and comes from `.read(true)`; std masks the access mode out of `custom_flags`.
-#[cfg(target_vendor = "apple")]
-mod flags {
-    pub const O_NONBLOCK: i32 = 0x0004;
-    pub const O_NOFOLLOW: i32 = 0x0100;
-    pub const O_CLOEXEC: i32 = 0x0100_0000;
-    pub const ELOOP: i32 = 62;
-}
-
-#[cfg(all(
-    target_os = "linux",
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "riscv64")
-))]
-mod flags {
-    pub const O_NONBLOCK: i32 = 0o4000;
-    pub const O_NOFOLLOW: i32 = 0o400000;
-    pub const O_CLOEXEC: i32 = 0o2000000;
-    pub const ELOOP: i32 = 40;
-}
-
-#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "arm")))]
-mod flags {
-    pub const O_NONBLOCK: i32 = 0o4000;
-    pub const O_NOFOLLOW: i32 = 0o100000;
-    pub const O_CLOEXEC: i32 = 0o2000000;
-    pub const ELOOP: i32 = 40;
-}
-
-#[cfg(not(any(
-    target_vendor = "apple",
-    all(
-        target_os = "linux",
-        any(
-            target_arch = "x86_64",
-            target_arch = "x86",
-            target_arch = "riscv64",
-            target_arch = "aarch64",
-            target_arch = "arm"
-        )
-    )
-)))]
-compile_error!("org-spool: add this platform's O_NONBLOCK / O_NOFOLLOW / O_CLOEXEC / ELOOP values");
+// `open(2)` flags and error numbers, from the platform's headers through `org-platform`.
+// `O_RDONLY` is 0 everywhere and comes from `.read(true)`; std masks the access mode out of
+// `custom_flags`.
+use org_platform::fs as flags;
 
 /// What [`read_spool_file`] found at a path.
 #[derive(Debug)]
@@ -214,12 +175,7 @@ mod tests {
             );
         }
         // EINTR, EIO, ENOMEM, ENFILE, EMFILE, EAGAIN (macOS 35, Linux 11).
-        let eagain = if cfg!(target_vendor = "apple") {
-            35
-        } else {
-            11
-        };
-        for code in [4, 5, 12, 23, 24, eagain] {
+        for code in [4, 5, 12, 23, 24, flags::EAGAIN] {
             assert!(
                 !is_permanent_file_error(&io::Error::from_raw_os_error(code)),
                 "errno {code}"

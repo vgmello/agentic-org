@@ -31,6 +31,7 @@ dependencies = [
  "org-host",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-socket",
  "serde",
@@ -50,6 +51,7 @@ dependencies = [
  "org-office",
  "org-office-launch",
  "org-pki",
+ "org-platform",
  "org-proto",
  "org-socket",
  "org-supervise",
@@ -614,6 +616,7 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-socket",
  "serde_json",
@@ -692,6 +695,7 @@ dependencies = [
  "libc",
  "org-docs",
  "org-mailbox",
+ "org-platform",
  "org-proto",
  "org-sync",
  "org-sync-proto",
@@ -729,6 +733,7 @@ dependencies = [
 name = "org-platform"
 version = "0.0.0"
 dependencies = [
+ "core-foundation",
  "libc",
  "proc-macro2",
  "syn 2.0.119",
@@ -784,6 +789,7 @@ dependencies = [
 name = "org-spool"
 version = "0.0.0"
 dependencies = [
+ "org-platform",
  "serde",
  "serde_json",
 ]
