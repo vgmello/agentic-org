@@ -692,6 +692,7 @@ dependencies = [
  "libc",
  "org-docs",
  "org-mailbox",
+ "org-platform",
  "org-proto",
  "org-sync",
  "org-sync-proto",
@@ -729,6 +730,7 @@ dependencies = [
 name = "org-platform"
 version = "0.0.0"
 dependencies = [
+ "core-foundation",
  "libc",
  "proc-macro2",
  "syn 2.0.119",

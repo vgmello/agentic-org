@@ -1,7 +1,5 @@
 //! Durable publication primitives. No key custody, no fallback on failed flush.
 
-#[cfg(target_os = "macos")]
-use std::os::unix::io::AsRawFd;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -159,26 +157,22 @@ fn check_directories(root: &Path, path: &Path, create: bool) -> io::Result<()> {
 }
 
 pub(super) fn flush(file: &File) -> io::Result<()> {
-    file.sync_all()?;
+    #[cfg(test)]
+    let before = org_platform::fs::testing::full_sync_counts();
+    // Failure is returned, never downgraded to ordinary fsync.
+    let flushed = org_platform::fs::full_sync(file);
     #[cfg(test)]
     CALLS.set({
+        // The platform counts each step that succeeded, also when a later one failed.
+        let after = org_platform::fs::testing::full_sync_counts();
         let (a, b, c) = CALLS.get();
-        (a + 1, b, c)
+        (
+            a + (after.fsync - before.fsync),
+            b + (after.device_flush - before.device_flush),
+            c,
+        )
     });
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: a live descriptor and a no-argument fcntl command. Failure is
-        // returned, never downgraded to ordinary fsync.
-        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        #[cfg(test)]
-        CALLS.set({
-            let (a, b, c) = CALLS.get();
-            (a, b + 1, c)
-        });
-    }
-    Ok(())
+    flushed
 }
 
 fn parent_flush(parent: &Path, file: &File) -> io::Result<()> {

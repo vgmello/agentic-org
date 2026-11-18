@@ -13,6 +13,9 @@ test-support = []
 [dependencies]
 libc.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 # The platform-conditional check (ADR-0017 LNX-5) reads the workspace's sources.
