@@ -421,7 +421,7 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     let handoff = Handoff::Create {
         db_key: db_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
-        recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+        recovery_code: recovery_code(),
         fds: vec![HandoffFd::Transfer],
     };
     let mut header = v3::encode_handoff(&handoff).unwrap();

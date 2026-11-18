@@ -40,7 +40,7 @@ fn hint_before(sub: &org_client::Subscription, deadline: Instant) -> InboxChange
 fn inbox_hint_real_mailbox_commit_advances_once_and_filters_the_same_hint_per_delivery() {
     let _processes = process_isolation();
     let world = World::new();
-    let _server = create(&world);
+    let _server = started(&world);
     let receiver = owner(&world);
     let sender = owner(&world);
     let nonowner = Client::connect(socket(&world)).unwrap();

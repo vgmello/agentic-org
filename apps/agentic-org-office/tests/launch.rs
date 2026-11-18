@@ -187,14 +187,29 @@ fn socket(world: &World) -> PathBuf {
     office_socket_path(&world.home, OFFICE).unwrap()
 }
 
-/// Creates the office and returns the running server.
-fn create(world: &World) -> Run {
-    let mut run = world.spawn(&["--create"]);
-    run.send(&create_message());
-    let ServerEvent::Created { office } = run.event() else {
-        panic!("expected created");
-    };
-    assert_eq!(office.office_id, OFFICE);
+/// Stores the office with the library, as an HQ creation leaves it, then starts its server the
+/// way the host does and returns it. The worker creates offices only through HQ creation-v1
+/// over the rendezvous (`v3_activation`); every other case starts an existing office.
+fn started(world: &World) -> Run {
+    if !world.folder(OFFICE).join("office.json").exists() {
+        let new = org_office::NewOffice {
+            office_id: OFFICE.into(),
+            office_name: "HQ".into(),
+            role: org_office::OfficeRole::Hq,
+            org_id: ORG.into(),
+            org_name: "Acme".into(),
+        };
+        drop(
+            org_office::Office::create(
+                world.folder(OFFICE),
+                &new,
+                org_office::Key::from_db_key(db_key()),
+            )
+            .unwrap(),
+        );
+    }
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send(&start_message());
     let ServerEvent::Ready {
         socket: reported, ..
     } = run.event()
@@ -222,38 +237,12 @@ fn failed_code(event: ServerEvent) -> FailCode {
 }
 
 #[test]
-fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut run = create(&world);
-
-    let identity = hello(&world);
-    assert_eq!(identity.organization_name, "Acme");
-    assert_eq!(identity.office.id, OFFICE);
-    assert_eq!(identity.office.organization_id, ORG);
-    assert_eq!(identity.office.name, "HQ");
-    assert_eq!(identity.office.role, OfficeRole::Hq);
-
-    // What the host reads is there, valid, and names this office.
-    let json = std::fs::read(world.folder(OFFICE).join("office.json")).unwrap();
-    let stored = OfficeFile::from_slice(&json).unwrap();
-    assert_eq!(
-        (stored.office_id.as_str(), stored.org_name.as_str()),
-        (OFFICE, "Acme")
-    );
-
-    let status = run.host_goes_away();
-    assert!(status.success(), "{status:?}");
-    assert!(!socket(&world).exists(), "the socket file was left behind");
-}
-
-#[test]
 fn srv_32_unsupported_range_closes_before_a_pipelined_call() {
     let _process = process_isolation();
     // X-02 §3: "unsupported_version and close" before the next request; this
     // B1-07.1 phase is V1-only until instance-aware launch can enable V2.
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let mut peer = UnixStream::connect(socket(&world)).unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     peer.set_write_timeout(Some(WAIT)).unwrap();
@@ -279,7 +268,7 @@ fn srv_32_legacy_first_call_locks_the_socket_to_version_one() {
     let _process = process_isolation();
     // X-02 §3: "A first request that isn't hello ... fixes the connection at v1".
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let mut peer = UnixStream::connect(socket(&world)).unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     peer.set_write_timeout(Some(WAIT)).unwrap();
@@ -332,7 +321,7 @@ fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
     // X-02 §3: malformed api/non-string client is "invalid_request, never
     // answered as v1". The strict shared HelloParams decoder owns these shapes.
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let cases = [
         serde_json::json!([]),
         serde_json::json!(true),
@@ -388,7 +377,7 @@ fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
     // X-02 §3: "api: null is the same as an absent api"; unknown outer hints
     // remain additive, while the nested api range has exactly min/max.
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let peer = UnixStream::connect(socket(&world)).unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     peer.set_write_timeout(Some(WAIT)).unwrap();
@@ -427,7 +416,7 @@ fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
 fn initial_replica_snapshot_is_unavailable_through_the_real_worker() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
     let source = org_office::Office::create(
         world.folder("SOURCE"),
@@ -484,7 +473,7 @@ fn initial_replica_snapshot_is_unavailable_through_the_real_worker() {
 fn a_restart_with_the_same_key_serves_the_same_office() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
 
     let mut again = world.spawn(&["--office", OFFICE]);
@@ -492,40 +481,6 @@ fn a_restart_with_the_same_key_serves_the_same_office() {
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));
     assert_eq!(hello(&world).office.id, OFFICE);
     assert!(again.host_goes_away().success());
-}
-
-#[test]
-fn creating_an_office_that_exists_is_already_exists_and_changes_nothing() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut first = create(&world);
-    assert!(first.host_goes_away().success());
-    let org_before = std::fs::read(world.folder(OFFICE).join("org.db")).unwrap();
-
-    let mut second = world.spawn(&["--create"]);
-    second.send(&create_message());
-    assert_eq!(failed_code(second.event()), FailCode::AlreadyExists);
-    assert!(!second.wait().success());
-    assert_eq!(
-        std::fs::read(world.folder(OFFICE).join("org.db")).unwrap(),
-        org_before
-    );
-    assert!(world.folder(OFFICE).join("office.json").exists());
-}
-
-#[test]
-fn a_bad_name_is_invalid_name_and_leaves_nothing() {
-    let _process = process_isolation();
-    let world = World::new();
-    let mut run = world.spawn(&["--create"]);
-    let HostMessage::Create(mut create) = create_message() else {
-        unreachable!()
-    };
-    create.org_name = "zero\u{200B}width".into();
-    run.send(&HostMessage::Create(create));
-    assert_eq!(failed_code(run.event()), FailCode::InvalidName);
-    assert!(!run.wait().success());
-    assert!(!world.folder(OFFICE).join("office.json").exists());
 }
 
 #[test]
@@ -598,7 +553,7 @@ fn discard_removes_an_unfinished_create_and_only_that() {
     }
 
     // A finished office is refused and untouched, with a key or without.
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
     for key in [None, Some(db_key())] {
         let mut run = world.spawn(&["--discard", OFFICE]);
@@ -613,7 +568,7 @@ fn discard_removes_an_unfinished_create_and_only_that() {
 fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_deletes_nothing() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
     // Lose office.json, as a crash or a person might: the databases are all that is left.
     std::fs::remove_file(world.folder(OFFICE).join("office.json")).unwrap();
@@ -640,7 +595,7 @@ fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_del
 fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
 
     // ADR-0016 decision 3: the key only wraps private keys; a wrong one does not stop the
@@ -688,7 +643,7 @@ fn a_stop_signal_closes_the_office_and_exits_clean() {
     let _process = process_isolation();
     for stop in [libc::SIGTERM, libc::SIGINT] {
         let world = World::new();
-        let mut run = create(&world);
+        let mut run = started(&world);
         signal(&run, stop);
         let status = run.wait();
         assert_eq!(status.code(), Some(0), "signal {stop}: {status:?}");
@@ -736,7 +691,7 @@ fn the_socket_is_owner_only_and_other_methods_are_unknown() {
     let _process = process_isolation();
     use std::os::unix::fs::PermissionsExt;
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let mode = std::fs::metadata(socket(&world))
         .unwrap()
         .permissions()
@@ -758,7 +713,7 @@ fn the_socket_is_owner_only_and_other_methods_are_unknown() {
 fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     assert!(first.host_goes_away().success());
 
     // A crashed server leaves its socket file behind.
@@ -783,7 +738,7 @@ fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
 fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     // Lines of any shape, and a lot of them: read and thrown away, unparsed.
     let stdin = run.stdin.as_mut().unwrap();
     std::io::Write::write_all(stdin, b"garbage\n{\"op\":\"nonsense\"}\n").unwrap();
@@ -798,37 +753,10 @@ fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does
 }
 
 #[test]
-fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
-    let _process = process_isolation();
-    let dir = tempfile::Builder::new().prefix("oo").tempdir().unwrap();
-    let long = dir.path().join("x".repeat(90));
-    std::fs::create_dir_all(long.join("offices")).unwrap();
-    std::fs::create_dir_all(long.join("run")).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_agentic-org-office"))
-        .arg("--create")
-        .env("ORG_OFFICE_HOME", &long)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    write_host_message(&mut stdin, &create_message()).unwrap();
-    let mut reader = BufReader::new(child.stdout.take().unwrap());
-    let first = read_server_event(&mut reader).unwrap().unwrap();
-    assert_eq!(failed_code(first), FailCode::InvalidRequest);
-    assert_eq!(child.wait().unwrap().code(), Some(1));
-    assert!(
-        !office_dir(&long, OFFICE).unwrap().exists(),
-        "an office was stored"
-    );
-}
-
-#[test]
 fn the_token_and_the_key_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let pid = run.child.id();
     // fds 0 and 1 of the server are /dev/null (the control pipe was moved), checked with lsof.
     if let Ok(out) = Command::new("lsof")
@@ -870,27 +798,10 @@ fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_reques
 }
 
 #[test]
-fn a_name_that_is_not_trimmed_is_refused_not_quietly_trimmed() {
-    let _process = process_isolation();
-    let world = World::new();
-    for (org_name, office_name) in [(" Acme", "HQ"), ("Acme", "HQ ")] {
-        let mut run = world.spawn(&["--create"]);
-        let HostMessage::Create(mut create) = create_message() else {
-            unreachable!()
-        };
-        create.org_name = org_name.into();
-        create.office_name = office_name.into();
-        run.send(&HostMessage::Create(create));
-        assert_eq!(failed_code(run.event()), FailCode::InvalidName);
-        assert!(!run.wait().success());
-    }
-}
-
-#[test]
 fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let client = Client::connect(socket(&world)).unwrap();
     // The organization is read by a bound connection only.
     assert_eq!(
@@ -935,7 +846,7 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
     let _processes = process_isolation();
     use org_proto::inbox::{InboxCounts, InboxList, InboxListParams, InboxState};
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let client = Client::connect(socket(&world)).unwrap();
     assert!(client.hello().unwrap().supports("inbox.list"));
     assert!(client.hello().unwrap().supports("inbox.changed"));
@@ -1006,7 +917,7 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
 fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
     let _process = process_isolation();
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     // A client that stays connected and silent: shutdown must close it, not wait for it.
     let idle = std::os::unix::net::UnixStream::connect(socket(&world)).unwrap();
     std::thread::sleep(Duration::from_millis(100));
@@ -1064,7 +975,7 @@ fn api_code(error: org_client::ClientError) -> org_proto::ErrorCode {
 fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_restart() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let command = command_id(1);
     let client = Client::connect(socket(&world)).unwrap();
 
@@ -1201,7 +1112,7 @@ fn next_event(sub: &org_client::Subscription) -> org_proto::Event {
 fn a_subscriber_follows_the_organization_and_resumes_from_where_it_was_after_a_restart() {
     let _process = process_isolation();
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let app = Client::connect(socket(&world)).unwrap();
     let watcher = Client::connect(socket(&world)).unwrap();
 
@@ -1280,7 +1191,7 @@ fn the_app_hires_an_agent_into_the_office_and_it_survives_a_restart() {
         MemberOffboard, MemberOffboardParams,
     };
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let client = Client::connect(socket(&world)).unwrap();
     bind(&client, token()).unwrap();
     let member_id = "AGENT00000000000000000000A".to_owned();
@@ -1374,7 +1285,7 @@ fn who_lists_the_directory_with_cards_for_the_app_and_not_for_an_unbound_connect
         MemberOffboard, MemberOffboardParams, TeamAddMember, TeamAddMemberParams,
     };
     let world = World::new();
-    let mut run = create(&world);
+    let mut run = started(&world);
     let client = Client::connect(socket(&world)).unwrap();
 
     // Unbound: not_bound, whatever the params.
@@ -1494,7 +1405,7 @@ fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_surv
         AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
     };
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let app = Client::connect(socket(&world)).unwrap();
     bind(&app, token()).unwrap();
     let agent_id = "AGENT00000000000000000000A".to_owned();
@@ -1607,7 +1518,7 @@ fn an_agent_sets_a_status_the_directory_shows_and_it_survives_a_restart() {
         AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
     };
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let app = Client::connect(socket(&world)).unwrap();
     bind(&app, token()).unwrap();
     app.call::<MemberAddAgent>(&MemberAddAgentParams {
@@ -1685,7 +1596,7 @@ fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_offic
         AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
     };
     let world = World::new();
-    let _server = create(&world);
+    let _server = started(&world);
     let app = Client::connect(socket(&world)).unwrap();
     bind(&app, token()).unwrap();
     app.call::<MemberAddAgent>(&MemberAddAgentParams {
@@ -1771,7 +1682,7 @@ fn c1_work_writes_use_the_real_office_and_replay_refusals_after_restart() {
         }
     }
     let world = World::new();
-    let mut first = create(&world);
+    let mut first = started(&world);
     let app = Client::connect(socket(&world)).unwrap();
     bind(&app, token()).unwrap();
     let agent_id = command_id(100);
