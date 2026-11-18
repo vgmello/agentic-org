@@ -11,10 +11,10 @@
 		"maxJourneyTests": 60,
 		"maxChromiumSeconds": 300,
 		"measured": {
-			"tests": 55,
-			"chromiumSeconds": 190,
+			"tests": 51,
+			"chromiumSeconds": 99,
 			"workers": 2,
-			"date": "2026-11-11"
+			"date": "2026-11-18"
 		}
 	},
 	"projectFiles": {
@@ -119,38 +119,6 @@
 		}
 	],
 	"journeys": [
-		{
-			"name": "create-organization",
-			"why": "First launch: welcome, create, land in the shell; invalid names are refused.",
-			"tests": [
-				{
-					"spec": "create-organization.spec.ts",
-					"match": "first launch: welcome",
-					"count": 1
-				},
-				{
-					"spec": "create-organization.spec.ts",
-					"match": "an empty or duplicate name stays on the form",
-					"count": 1
-				}
-			]
-		},
-		{
-			"name": "open-and-switch-organization",
-			"why": "Open an existing organization and switch to another.",
-			"tests": [
-				{
-					"spec": "open-organization.spec.ts",
-					"match": "the welcome screen lists the organizations",
-					"count": 1
-				},
-				{
-					"spec": "open-organization.spec.ts",
-					"match": "Switch organization returns to the list",
-					"count": 1
-				}
-			]
-		},
 		{
 			"name": "shell-navigation",
 			"why": "Every main section opens and is marked current; one main landmark; Back and pointer focus on WebKit.",
@@ -549,8 +517,6 @@
 		},
 		"org-lifecycle": {
 			"specs": [
-				"create-organization.spec.ts",
-				"open-organization.spec.ts",
 				"retired-import.spec.ts",
 				"session-foundation.spec.ts",
 				"accessibility.spec.ts"
