@@ -1,10 +1,12 @@
-//! The GNU/Linux socket adapter: `SO_PEERCRED`.
+//! The GNU/Linux socket adapter: `SO_PEERCRED`, `MSG_CMSG_CLOEXEC` and `MSG_NOSIGNAL`.
 
 #[cfg(test)]
 mod tests;
 
 use std::io;
-use std::os::fd::RawFd;
+use std::marker::PhantomData;
+use std::os::fd::{OwnedFd, RawFd};
+use std::sync::Mutex;
 
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     // SAFETY: every bit pattern is valid for ucred's integer fields.
@@ -22,4 +24,39 @@ pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
         )
     };
     super::checked_uid(rc, cred.uid, length, expected)
+}
+
+/// Nothing is held: `MSG_CMSG_CLOEXEC` sets close-on-exec atomically with the
+/// receive, so the fence is neither locked nor inspected.
+pub(super) struct DescriptorReceive<'fence> {
+    _fence: PhantomData<&'fence Mutex<()>>,
+}
+
+pub(super) fn descriptor_receive(_fence: &Mutex<()>) -> io::Result<DescriptorReceive<'_>> {
+    Ok(DescriptorReceive {
+        _fence: PhantomData,
+    })
+}
+
+impl DescriptorReceive<'_> {
+    pub(super) fn flags(&self) -> libc::c_int {
+        libc::MSG_DONTWAIT | libc::MSG_CMSG_CLOEXEC
+    }
+
+    // libc uses size_t on Linux.
+    pub(super) fn control_len(&self, message: &libc::msghdr) -> usize {
+        message.msg_controllen
+    }
+
+    pub(super) fn close_on_exec(
+        &self,
+        _descriptors: &[OwnedFd],
+        _set: impl FnMut(RawFd) -> io::Result<()>,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(super) fn send_flags() -> io::Result<libc::c_int> {
+    Ok(libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL)
 }
