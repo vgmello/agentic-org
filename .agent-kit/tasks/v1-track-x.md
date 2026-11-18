@@ -1049,6 +1049,23 @@ workspace unprivileged (71 binaries, 3,639 passed; failing only the two IPv6 tes
 the app and host loops five times. The lead's checks on the combined tree are in the
 commit that merges `1b260dee`.
 
+**Lead's whole-workspace run of `daa46cdf`** (unprivileged; the machine at load average
+15 on 4 cores, with three reviewers and a worker building): 71 test binaries, 3,646
+tests passed, 4 failed. Two need IPv6. One setup test found its fixed port 7421 held
+by another agent's run. One is new:
+`web_process_tests::lnx_3_under_a_profile_that_refuses_landlock_the_real_web_process_serves_by_the_filter_alone`
+ended with "HQ provisioning deadline": the web process had started (`state before HQ:
+Running`), and the real office worker the fixture adds beside it missed the host's
+5 s launch deadline again and again until the test's wait ran out. Run alone under
+the same load the four `lnx_3_*` tests pass (105 s). The web process no longer needs
+an HQ to start; the fixture still makes one. Whether this can fail on a CI runner,
+and what to do, is put to the reviewer of that part.
+
+Three fresh reviewers are reading `daa46cdf` in parallel, one part each: the merges
+with `v1-integration` and what they change for the other team; the web process's
+confinement and its start by the host as they are now; the repairs of X2's host slice
+and of X3. The merge into `v1-integration` needs all three to accept.
+
 ## macOS results from CI
 
 The macOS job (`macos-15`) runs the workspace's tests on every push. Run 44232051595
