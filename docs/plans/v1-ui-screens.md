@@ -34,14 +34,14 @@ screens and the order they are built in. Each row's Status is updated as it land
 | Screen or part | Route | Status |
 | --- | --- | --- |
 | Mock composition found by module name, `dev:mock` script | | Done |
-| Navigation in the spec's order: Home, Inbox, Projects (first five), Work, Chat, Activity, Teams (first five), Organization settings; rail and drawer | | To do |
-| Footer account menu (Your preferences, Switch organization, About, Sign out) and office line | | To do |
-| Top bar: Search field and New menu, `N` and `/` shortcuts | | To do |
-| Redirects that keep the query string: `/agents`, `/org-chart`, `/offices`, `/processes`, `/sessions` | | To do |
-| Organization settings frame with its section navigation | `/settings/*` | To do |
-| Existing pages moved: Members, Org chart, Offices, Processes | `/teams/members`, `/teams/org-chart`, `/settings/offices`, `/settings/processes` | To do |
-| Shared page parts: page header, tabs, empty / loading / error states, description list, field rows | | To do |
-| Honest placeholders ("isn't built yet", "Not in this release"); no "Coming soon" | | To do |
+| Navigation in the spec's order: Home, Inbox, Projects (first five), Work, Chat, Activity, Teams (first five), Organization settings; rail and drawer | | Done |
+| Footer account menu (Your preferences, Switch organization, About, Sign out) and office line | | Done |
+| Top bar: Search field and New menu, `N` and `/` shortcuts | | Done; New omits Project and Work item until a flow exists outside a project page |
+| Redirects that keep the query string: `/agents`, `/org-chart`, `/offices`, `/processes`, `/sessions` | | Done |
+| Organization settings frame with its section navigation | `/settings/*` | Done |
+| Existing pages moved: Members, Org chart, Offices, Processes | `/teams/members`, `/teams/org-chart`, `/settings/offices`, `/settings/processes` | Done (content unchanged) |
+| Shared page parts: page header, tabs, empty / loading / error states, description list, field rows | | Done: see `apps/agentic-org-ui/src/lib/components/README-screens.md` |
+| Honest placeholders ("isn't built yet", "Not in this release"); no "Coming soon" | | Done |
 
 ## Step 1 · Home, Inbox, Activity, Search, Preferences
 
@@ -52,7 +52,7 @@ screens and the order they are built in. Each row's Status is updated as it land
 | Activity: feed, filters, search, run rows, thread panel, "n new" | `/activity` | To do |
 | Search results, grouped | `/search?q=` | To do |
 | Your preferences: Keyboard, Time zone | `/preferences` | To do |
-| About | account menu | To do |
+| About | account menu | Done in step 0 |
 
 ## Step 2 · Teams and people
 
@@ -147,3 +147,11 @@ UI now shows against mock data.
 - New screens use the current data contract (accountable team, assignment pair, `T-`
   references). The older board and list code that still uses Areas is not rewritten here;
   it is listed as follow-up where a screen depends on it.
+- The Teams view switch is `src/routes/(shell)/teams/(views)/+layout.svelte`; the route group keeps
+  `/teams/[teamId]` outside it. The shell's top bar holds the page `h1` (the area name); page headings are h2.
+- Navigation counts and lists and top-bar search come from `src/lib/modules/shell/api.ts`; its mock derives
+  projects, teams and members from the org mock so IDs match the pages, and reads the Inbox count and work
+  items from `e2e/fakes/data/shell/`.
+- Step 9 must also restore four `allowedCoupling` entries in `e2e/gate-manifest.json` (focus-primitives →
+  Processes, look-primitives → Members/Org chart, org-chart-agents → Offices, production-unavailable →
+  Org chart) once those specs visit the new routes; the guard refuses entries without a current edge.

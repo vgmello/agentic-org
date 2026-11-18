@@ -37,11 +37,6 @@
       "count": 1
     }
   },
-  "src/lib/components/Sidebar.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 3
-    }
-  },
   "src/lib/components/TaskSheet.svelte": {
     "@typescript-eslint/no-unused-expressions": {
       "count": 1
@@ -194,11 +189,6 @@
       "count": 2
     }
   },
-  "src/lib/platform/shell/capabilities.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/lib/platform/tooling/production-import-guard.test.ts": {
     "no-useless-escape": {
       "count": 2
@@ -237,33 +227,10 @@
       "count": 2
     }
   },
-  "src/routes/(shell)/agents/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 3
-    }
-  },
   "src/routes/(shell)/chat/+page.svelte": {
     "no-undef": {
       "count": 2
     },
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/routes/(shell)/offices/+page.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/routes/(shell)/org-chart/+page.svelte": {
-    "@typescript-eslint/no-unused-expressions": {
-      "count": 7
-    }
-  },
-  "src/routes/(shell)/processes/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1
     },
@@ -279,6 +246,29 @@
   "src/routes/(shell)/projects/[id]/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 2
+    }
+  },
+  "src/routes/(shell)/settings/offices/+page.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/routes/(shell)/settings/processes/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    },
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/routes/(shell)/teams/(views)/members/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 3
+    }
+  },
+  "src/routes/(shell)/teams/(views)/org-chart/+page.svelte": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 7
     }
   },
   "src/routes/(shell)/work/+page.svelte": {

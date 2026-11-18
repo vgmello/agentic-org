@@ -441,8 +441,8 @@
 		"org-chart": {
 			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts"],
 			"sources": [
-				"src/routes/(shell)/org-chart/**",
-				"src/routes/(shell)/agents/**",
+				"src/routes/(shell)/teams/(views)/org-chart/**",
+				"src/routes/(shell)/teams/(views)/members/**",
 				"src/lib/modules/employees/**",
 				"src/lib/org/people-edit*",
 				"src/lib/org/team-edit*",
@@ -455,7 +455,7 @@
 		"offices": {
 			"specs": ["offices.spec.ts", "office-status-refresh.spec.ts"],
 			"sources": [
-				"src/routes/(shell)/offices/**",
+				"src/routes/(shell)/settings/offices/**",
 				"src/lib/offices/**",
 				"src/lib/components/Office*.svelte",
 				"src/lib/components/testing/office-status.*"
@@ -472,7 +472,10 @@
 				"shot.spec.ts"
 			],
 			"sources": [
-				"src/routes/(shell)/[section=section]/**",
+				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
+				"src/routes/(shell)/teams/(views)/+page.svelte",
+				"src/routes/(shell)/teams/[teamId]/**",
+				"src/routes/(shell)/settings/{+page.svelte,agents/**,roles/**,access/**,costs/**,updates/**}",
 				"src/lib/components/testing/look-primitives.*",
 				"src/lib/components/testing/focus-primitives.*",
 				"e2e/focus-primitives.ts"
@@ -505,7 +508,7 @@
 		},
 		"processes": {
 			"specs": ["processes.spec.ts", "processes-bugs.spec.ts"],
-			"sources": ["src/routes/(shell)/processes/**", "src/lib/modules/processes/**"]
+			"sources": ["src/routes/(shell)/settings/processes/**", "src/lib/modules/processes/**"]
 		},
 		"requests-copilot": {
 			"specs": ["requests.spec.ts", "copilot.spec.ts"],
@@ -516,11 +519,7 @@
 			]
 		},
 		"org-lifecycle": {
-			"specs": [
-				"retired-import.spec.ts",
-				"session-foundation.spec.ts",
-				"accessibility.spec.ts"
-			],
+			"specs": ["retired-import.spec.ts", "session-foundation.spec.ts", "accessibility.spec.ts"],
 			"sources": ["src/routes/(onboarding)/**", "src/lib/create-flow.ts", "src/lib/open-flow.ts"]
 		},
 		"production": {
@@ -532,7 +531,7 @@
 		{
 			"category": "projects-work",
 			"files": [
-				"src/routes/(shell)/org-chart/+page.{svelte,ts}",
+				"src/routes/(shell)/teams/(views)/org-chart/+page.{svelte,ts}",
 				"src/lib/components/ChartFitMenuItem.svelte"
 			],
 			"why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports."
@@ -568,9 +567,14 @@
 	],
 	"allowedCoupling": [
 		{
-			"from": "e2e/focus-primitives.spec.ts",
-			"to": "src/routes/(shell)/processes/+page.svelte",
-			"why": "Dedicated ProcessSheet caller-override regression for the shared Button outline. The helper also samples nine consumer families (documented route-scanner limit); shared primitive changes select FULL, page-only changes retain their category and journey coverage."
+			"from": "src/lib/platform/shell/NewMenu.svelte",
+			"to": "src/lib/{components/{NewRequestDialog,AddPersonSheet}.svelte,modules/employees/index.ts,modules/messaging/{index,model,legacy-api}.ts}",
+			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
+		},
+		{
+			"from": "src/routes/(shell)/+layout.svelte",
+			"to": "src/lib/offices/{model,probe}.ts",
+			"why": "The footer's office line uses the same status words and live-check rule as Offices (displayStatus, statusInfo); offices specs cover that model."
 		},
 		{
 			"from": "src/routes/(shell)/+layout.svelte",
@@ -584,33 +588,18 @@
 		},
 		{
 			"from": "e2e/{shell-*,desktop-navigation-focus}.spec.ts",
-			"to": "src/routes/(shell)/{offices,chat}/+page.svelte",
+			"to": "src/routes/(shell)/{settings/offices,chat}/+page.svelte",
 			"why": "These specs open Offices or Chat mainly for shell chrome (topbar, footer, navigation focus, Back), but they also assert page-owned states (for example a stopped office or an offline chat shown inside the shell). Accepted speed tradeoff: a page change does not re-run them; a shared or unknown change does."
 		},
 		{
-			"from": "e2e/look-primitives.spec.ts",
-			"to": "src/routes/(shell)/{agents,org-chart}/+page.svelte",
-			"why": "Checks the shared look primitives on the roster and chart pages, and also asserts page-owned roster states and filters. Accepted speed tradeoff: a page change does not re-run it; a primitive change is shared and runs everything."
-		},
-		{
 			"from": "e2e/{tasks,copilot}.spec.ts",
-			"to": "src/routes/(shell)/{org-chart,projects}/+page.svelte",
+			"to": "src/routes/(shell)/{teams/(views)/org-chart,projects}/+page.svelte",
 			"why": "tasks pauses an agent through the org chart; copilot opens a project page only to reach the report and task dialogs, which requests-copilot owns too."
 		},
 		{
 			"from": "e2e/agents-roster.spec.ts",
 			"to": "src/routes/(shell)/projects/+page.svelte",
 			"why": "Opens Projects to check the Agents views navigation leaves the roster."
-		},
-		{
-			"from": "e2e/org-chart-agents.spec.ts",
-			"to": "src/routes/(shell)/offices/+page.svelte",
-			"why": "Visits Offices to show the mock office keeps an agent change in browser storage."
-		},
-		{
-			"from": "e2e/production-unavailable.spec.ts",
-			"to": "src/routes/(shell)/org-chart/+page.svelte",
-			"why": "Asserts the static release ignores fake-enabling query flags on the org chart; the production journeys always run."
 		}
 	],
 	"rules": {
@@ -661,6 +650,11 @@
 			"src/lib/platform/auth/**",
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
+			"src/lib/modules/shell/**",
+			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
+			"src/routes/(shell)/teams/(views)/+layout.svelte",
+			"src/routes/(shell)/settings/+layout.svelte",
+			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt}.svelte",
 			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo}.*",
 			"static/**",
 			"vite.config.ts",

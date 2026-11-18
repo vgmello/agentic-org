@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 
 it('OFC-13 BUG-91: compact row thresholds use root-scaled container queries, not media queries', () => {
-	const source = readFileSync(new URL('../../routes/(shell)/offices/+page.svelte', import.meta.url), 'utf8');
+	const source = readFileSync(
+		new URL('../../routes/(shell)/settings/offices/+page.svelte', import.meta.url),
+		'utf8'
+	);
 	const compact = source.match(/const compactRow = \{([\s\S]*?)\n\t\};/)?.[1];
 	expect(compact).toBeDefined();
 	// Existing sm/lg page gutters are retained. Only the compact-row rules are

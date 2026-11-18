@@ -591,7 +591,7 @@ describe('selector', () => {
 	});
 
 	it('org-chart page, its load function and the chart fit menu item run org-chart and also the non-Chat icon spec (projects-work)', () => {
-		for (const file of ['src/routes/(shell)/org-chart/+page.svelte', 'src/routes/(shell)/org-chart/+page.ts', 'src/lib/components/ChartFitMenuItem.svelte']) {
+		for (const file of ['src/routes/(shell)/teams/(views)/org-chart/+page.svelte', 'src/routes/(shell)/teams/(views)/org-chart/+page.ts', 'src/lib/components/ChartFitMenuItem.svelte']) {
 			const chosen = plan([ui(file)], manifest);
 			expect(chosen.all, file).toBe(false);
 			expect(chosen.categories.sort(), file).toEqual(['org-chart', 'projects-work']);
