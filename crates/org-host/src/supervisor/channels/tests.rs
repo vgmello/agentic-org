@@ -182,53 +182,49 @@ fn discard_worker_reads_handoff(worker: &mut UnixStream) -> v3::Handoff {
 }
 
 #[test]
-fn a_discard_hands_off_the_key_without_descriptors_and_forwards_its_report() {
-    for key in [Some(DbKey::from_bytes([74; 32])), None] {
-        let (host, mut worker) = UnixStream::pair().unwrap();
-        host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-        worker
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
-        let expected = key.as_ref().map(|k| *k.expose_bytes());
-        let worker_thread = std::thread::spawn(move || {
-            let v3::Handoff::Discard { db_key, fds } = discard_worker_reads_handoff(&mut worker)
-            else {
-                panic!("not a discard handoff");
-            };
-            assert!(fds.is_empty());
-            assert_eq!(db_key.map(|k| *k.expose_bytes()), expected);
-            // No marker and no transfer socket follow: the next bytes are the host's EOF once
-            // the stream closes, never a descriptor. The worker reports on the stream.
-            v3::write_rendezvous_event(
-                &mut worker,
-                &v3::RendezvousEvent::Server(ServerEvent::Discarded),
-            )
-            .unwrap();
-        });
-        let (signals, events) = mpsc::channel();
-        Broker::discard_handoff(
-            host,
-            std::process::id(),
-            None,
-            &ServerCheck::Skip,
-            key.as_ref(),
-            9,
-            signals,
+fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    worker
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let worker_thread = std::thread::spawn(move || {
+        let v3::Handoff::Discard { db_key, fds } = discard_worker_reads_handoff(&mut worker) else {
+            panic!("not a discard handoff");
+        };
+        assert!(fds.is_empty());
+        // A discard gets no secret: the header's key is `null`.
+        assert!(db_key.is_none(), "a discard handoff carried a key");
+        // No marker and no transfer socket follow: the next bytes are the host's EOF once
+        // the stream closes, never a descriptor. The worker reports on the stream.
+        v3::write_rendezvous_event(
+            &mut worker,
+            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
         )
         .unwrap();
-        worker_thread.join().unwrap();
-        assert!(matches!(
-            events.recv_timeout(Duration::from_secs(3)).unwrap(),
-            Signal::Event {
-                generation: 9,
-                event: ServerEvent::Discarded
-            }
-        ));
-        assert!(matches!(
-            events.recv_timeout(Duration::from_secs(3)).unwrap(),
-            Signal::Closed { generation: 9 }
-        ));
-    }
+    });
+    let (signals, events) = mpsc::channel();
+    Broker::discard_handoff(
+        host,
+        std::process::id(),
+        None,
+        &ServerCheck::Skip,
+        9,
+        signals,
+    )
+    .unwrap();
+    worker_thread.join().unwrap();
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Event {
+            generation: 9,
+            event: ServerEvent::Discarded
+        }
+    ));
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(3)).unwrap(),
+        Signal::Closed { generation: 9 }
+    ));
 }
 
 #[test]
@@ -261,7 +257,6 @@ fn a_discard_stream_ends_at_a_non_server_event() {
         std::process::id(),
         None,
         &ServerCheck::Skip,
-        None,
         3,
         signals,
     )
@@ -276,7 +271,7 @@ fn a_discard_stream_ends_at_a_non_server_event() {
 }
 
 #[test]
-fn a_discard_reader_from_another_process_identity_gets_no_key_bytes() {
+fn a_discard_reader_from_another_process_identity_gets_no_header() {
     let (host, worker) = UnixStream::pair().unwrap();
     worker
         .set_read_timeout(Some(Duration::from_millis(100)))
@@ -287,7 +282,6 @@ fn a_discard_reader_from_another_process_identity_gets_no_key_bytes() {
         std::process::id() + 1,
         None,
         &ServerCheck::Skip,
-        Some(&DbKey::from_bytes([75; 32])),
         1,
         signals,
     )

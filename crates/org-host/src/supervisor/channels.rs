@@ -211,38 +211,35 @@ impl Broker {
         )?;
         Ok(reader)
     }
-    /// A `--discard` run over the rendezvous: the handoff carries the key (or `null`) and names
-    /// no descriptors, so no transfer pair is made, no marker is sent and no `fds_received` is
+    /// A `--discard` run over the rendezvous: the handoff carries no secret (its `db_key` is
+    /// always `null`; a plain office opens nothing that needs a key) and names no descriptors, so no transfer pair is made, no marker is sent and no `fds_received` is
     /// awaited. The worker's `discarded`/`failed` arrive on the stream and go to `signals` as
     /// [`Signal::Event`]; the stream's end (or any other event) is [`Signal::Closed`]. No
     /// endpoint is registered: a discard serves no channels.
-    #[allow(clippy::too_many_arguments)]
     pub fn discard(
         rendezvous: Rendezvous,
         pid: u32,
         admitted: Option<AuditToken>,
         check: &ServerCheck,
-        db_key: Option<&DbKey>,
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<()> {
         let (stream, _deadline) = Self::connect(rendezvous)?;
-        Self::discard_handoff(stream, pid, admitted, check, db_key, generation, signals)
+        Self::discard_handoff(stream, pid, admitted, check, generation, signals)
     }
     fn discard_handoff(
         stream: UnixStream,
         pid: u32,
         admitted: Option<AuditToken>,
         check: &ServerCheck,
-        db_key: Option<&DbKey>,
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<()> {
         let mut reader = Self::ready(stream, pid, admitted, check)?;
-        let mut header = v3::encode_discard_handoff(db_key).map_err(launch)?;
-        let sent = reader.get_mut().write_all(&header);
-        crate::secrets::zero(&mut header);
-        phase("secret header send", sent)?;
+        // Still sent only to the authenticated child reader, after `ready_for_secrets`, so a
+        // discard keeps the start/create handshake order; the header itself holds no key.
+        let header = v3::encode_discard_handoff(None).map_err(launch)?;
+        phase("handoff header send", reader.get_mut().write_all(&header))?;
         // The report may take as long as the supervisor's discard timeout allows; it kills the
         // worker at that deadline, which ends this stream.
         reader.get_ref().set_read_timeout(None)?;

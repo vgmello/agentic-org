@@ -109,8 +109,9 @@ pub(crate) enum Mode<'a> {
     /// Serve the office with this id: its first line is a start with the office's app token for
     /// this host run and its database key from the key store.
     Office(&'a str, &'a AppToken, &'a DbKey),
-    /// Remove an unfinished office, then exit: its first line is a discard with the office's
-    /// database key, or `null` when the host has none.
+    /// Remove an unfinished office, then exit. A legacy v2 first line is a discard with the
+    /// office's database key, or `null` when the host has none; the v3 discard handoff never
+    /// carries the key.
     Discard(&'a str, Option<&'a DbKey>),
 }
 
@@ -374,7 +375,8 @@ impl Spawner {
                     v3_signals,
                 )?);
             }
-            (Some(broker), Some(rendezvous), Mode::Discard(id, db_key)) => {
+            // The discard handoff carries no secret: the key store's key (if any) stays here.
+            (Some(broker), Some(rendezvous), Mode::Discard(id, _)) => {
                 let first = org_office_launch::v3::HostFirstLine::Discard(
                     org_office_launch::v3::OfficeLine {
                         id_profile: org_office_launch::is_selected_entity_id(id)
@@ -404,7 +406,6 @@ impl Spawner {
                     running.process.id(),
                     admitted,
                     &self.check,
-                    db_key,
                     running.generation,
                     v3_signals,
                 )?;

@@ -422,8 +422,10 @@ impl Supervisor {
         })
     }
 
-    /// Runs `agentic-org-office --discard <office_id>` with the office's key (or `null` when
-    /// the key store has none) and waits (up to the discard timeout) for it to report. The
+    /// Runs `agentic-org-office --discard <office_id>` and waits (up to the discard timeout) for
+    /// it to report. Over the v3 rendezvous the server gets no key (its handoff's `db_key` is
+    /// `null`); a legacy v2 line still carries the office's key, or `null` when the key store
+    /// has none. The
     /// server takes the office lock, refuses a folder that holds `office.json`, and removes the
     /// folder. After `discarded`, and only then, the office's key is deleted from the key store.
     /// A key store that can't be read starts no server ([`DiscardOutcome::KeyUnreadable`]).
