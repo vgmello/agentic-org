@@ -990,6 +990,7 @@ fn full_http_stack_times_out_when_a_client_stops_reading() {
         let server = WriteStall::new(server, Duration::from_secs(30)).unwrap();
         let connection = tokio::spawn(serve_connection(
             server,
+            None,
             Arc::new(large_response),
             HttpLimits::default(),
         ));
@@ -1026,6 +1027,7 @@ fn full_http_stack_completes_a_slow_but_continuously_read_response() {
         let server = WriteStall::new(server, Duration::from_secs(30)).unwrap();
         let connection = tokio::spawn(serve_connection(
             server,
+            None,
             Arc::new(large_response),
             HttpLimits::default(),
         ));

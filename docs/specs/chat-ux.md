@@ -15,7 +15,7 @@ builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-it
 
 [Messaging data](../design/organization-data/15-messaging-and-chat.md) owns conversations, protected sources and per-recipient lifecycle; [recovery](../design/organization-data/16-recovery-and-office-continuity.md) owns retained receipts and checkpoints; [ADR-0003](../adr/0003-agent-messaging-office-first.md) owns who commits, routes and owns a message; [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) owns how an ask waits. The questions an agent asks a person follow the owner's [REQ-04](req-04-channel-messaging-and-question-components.md). This spec owns what people see.
 
-Chat is conversation, not session or tool output, and not a knowledge store. Shared task comments stay shared; author-only private task notes live in a separate durable database with no owner or administrator exception and never appear in Chat. There is one chat, the product's own; no external chat product is bridged.
+Chat is conversation, not session or tool output, and not a knowledge store. Shared task comments stay shared; private task notes live in a separate durable database, are read only by their author and by people who can read the task, never by another agent, and never appear in Chat. There is one chat, the product's own; no external chat product is bridged.
 
 ## The request (the user, 2026-11-08)
 
@@ -36,7 +36,7 @@ Chat is conversation, not session or tool output, and not a knowledge store. Sha
 5. **DMs** with any member: an agent, a person or a group (up to 8). The authenticated owner may read DMs under the visibility rules of the [messaging contract](../design/organization-data/15-messaging-and-chat.md). Conversations the owner is not in are marked "You're reading as the owner"; reading changes no recipient state/presence. Posting still requires an authorized sender/admission path. The owner security principal is separate from employee membership: an owner employee/person record must have a home team.
 6. **Questions are answerable cards** (the agent-side question schema and the component per question type are the owner's [REQ-04](req-04-channel-messaging-and-question-components.md))**.** An agent's ask shows as a card with its options as buttons ("sam asks: Rename Open organization? **Yes** · **No** · **Reply…**"). An authorized answer is recorded in the answerer's own answer record, with its response identity, before acknowledgement. Needs you updates from that outcome; any waiting-turn or task transition must use its owning service, not infer completion from a button click.
 7. **Threads keep channels readable.** Agent conversations reply in threads by default. A thread can be sent to the channel ("Also send to #agentic-org") like Slack.
-8. **A message never starts or interrupts work by itself.** A message to a busy agent waits for the end of its turn (§4.2); urgency never interrupts. A message to an agent that isn't running waits until it next runs or checks messages; the composer says "HR lead isn't running. A reply waits for its next run." The only automatic start is the resume of an agent suspended on a required ask when the answer arrives (ADR-0020). Show "HR lead is typing…" only for observed live work; presence and typing are runtime state, not durable message facts.
+8. **A message never interrupts work; what is addressed to an agent starts it.** A message to a busy agent waits for the end of its turn (§4.2); urgency never interrupts. An agent that is not working shows as Available, and a direct message or a mention by name starts a turn for it, from a person as from an agent ([ADR-0028](../adr/0028-an-agent-is-always-available.md)); the composer says nothing about waiting. An ordinary post in a channel starts none. When an agent cannot run, the composer says why: "HR lead can't run right now, so it won't answer yet." The automatic starts are the resume of an agent suspended on a required ask when the answer arrives (ADR-0020), an answer to a question the agent asked, and being addressed by another agent (ADR-0023); the built-in HR lead runs when it is called. Show "HR lead is typing…" only for observed live work; presence and typing are runtime state, not durable message facts.
 9. **The product's own chat is the only channel.** Protected organization messaging sources are authoritative, agents use `agent-os`, and the app's chat is the product's own UI over the same messages.
 10. **What an agent can read:** an agent reads a channel/group DM only under its admitted membership and history policy, and a thread through the parent conversation. Leaving stops new delivery and reads. A new DM has two members. Filter counts, last-message, subjects, previews, search and Activity to visible messages; never expose a hidden parent's text through a reply. Rejoining grants no implicit historical backfill.
 ## 1. Layout
@@ -104,7 +104,7 @@ Titles follow `app-shell-ux.md` §4.
 
 | Kind | Who | Shown as | What answering does |
 | --- | --- | --- | --- |
-| **Ask** (an ask waits for a bounded time; it may be marked required, and a required ask left unanswered suspends the asking agent until it is answered, [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)) | an agent asking someone | a card: the question, options as buttons, **Reply…**, how long it's been waiting, and what it blocks, including that the agent is stopped waiting when the ask is required | the authorized answer/reply is stored under the expected envelope revision and shows **Answered by <name>**; the waiting service reconciles the retained outcome before resuming, and Needs you reflects that outcome |
+| **Ask** (an ask waits for a bounded time; it may be marked required, and a required ask left unanswered suspends the asking agent until it is answered, [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)) | an agent asking someone | a card: the question, options as buttons, **Reply…**; for an ask with several questions, a form with each question in its own component and one **Send answers** button, shown as steps when there are more than three; how long it's been waiting, and what it blocks, including that the agent is stopped waiting when the ask is required | the authorized answer/reply is stored under the expected envelope revision and shows **Answered by <name>**; the waiting service reconciles the retained outcome before resuming, and Needs you reflects that outcome |
 | **Hand-off** (`handoff`) | agent → agent or person | "[arrow-path] sam → server-dev: review the store traits" with **Accept** · **Reply…** (only the recipient sees Accept, or the owner when it's handed to the owner; everyone else sees Reply… only) | Accept durably records card acceptance, then the card reads "Accepted by <name> · <time>" with no buttons for authorized readers. A linked assignment change is a separate authorized atomic `(assigned_team_id, assignee_id)` update with expected task revision and durable task event; accountable team/reporter remain unchanged. Handoff never closes a task or removes its worktree |
 | **Announcement** | an agent, for something to act on or know | [megaphone] with links (branch, feature, report) and reactions | reactions are acknowledgements (Seen, Looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject, answered in the app) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
@@ -191,8 +191,12 @@ resolution back is process guidance, not a coded routing decision.
 Opening a DM is permitted under the same recipient rules as direct sends.
 Anything an agent's own subprocesses post is attributed to that agent.
 
-Ordinary channel activity goes to the inbox. Membership never causes a channel post
-to start anyone's work.
+For a person, ordinary channel activity shows as unread. An agent's inbox holds only
+what is addressed to it: a direct message, an ask or a hand-off, a mention by name, a
+reply in a thread it started or replied in, and a message the channel's watcher judged
+to respond to its own channel question ([ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md)).
+An agent reads the rest of a channel only when it chooses to. Membership never causes
+a channel post to start anyone's work.
 
 ### 4.2 System notices and delivery
 
@@ -235,7 +239,7 @@ Hover/focus still exposes each message's reactions, Reply and menu and each oper
 - CHAT-4 · Agents' messages are directed Asks, hand-offs, replies, announcements and nonblocking channel Questions (§4.1). Tool output, logs and routine progress never appear in Chat.
 - CHAT-5 · An ask shows options and Reply; only its addressed authorized actor can answer. Persist the revisioned outcome/reply before acknowledgement; Needs you and waiting execution reconcile that outcome rather than infer a completed transition from the UI.
 - CHAT-6 · An ask shows its default preselected and its deadline. A default is never recorded as the person's answer; when an agent continues with it after its wait ends, the card says so. A required ask is never closed by a default.
-- CHAT-7 · A message never starts or interrupts an agent's work; the UI says the reply waits for the agent's next run. The only automatic start is the resume on a required ask's answer, which respects execution admission, permits, placement and all holds. Typing requires live observed work.
+- CHAT-7 · A message never interrupts an agent's work. A direct message or a mention by name from a person starts a turn for an idle agent (ADR-0028), and an ordinary channel post starts none; an agent that cannot run says why instead. The other automatic starts are the resume on a required ask's answer (ADR-0020), an answer to a question the agent asked, and being addressed by another agent (ADR-0023). Each respects execution admission, permits, placement and all holds. Typing requires live observed work.
 - CHAT-8 · Agent conversations reply in threads by default, and a thread reply can also be sent to the channel.
 - CHAT-9 · `/bug`, `/request` and `/task` create typed tasks with scoped creation and assignment validation; Turn into… uses the same path.
 - CHAT-10 · Announcements are limited per agent per channel, and extra posts fold into a thread.
@@ -276,6 +280,7 @@ Hover/focus still exposes each message's reactions, Reply and menu and each oper
 - CHAT-41 · Agent-authored emoji sequences are removed at render only, including joiners/variation selectors/modifiers/keycaps while ordinary digits/# remain; human text and protected stored bodies/hashes remain exact. Message kind markers use Heroicons plus words.
 - CHAT-42 · MA-1–9 lifecycle and delivery acceptance in §§2.1–2.2/4.2 applies through authorized owning services; no reply/done/default timer/accept button can infer a task or execution transition.
 - CHAT-43 · AC-CP-1–5 in §4.3 limit initial/older pages to 200 authorized messages and validate the 1,000-message scenario with separate CI/manual metrics.
+- CHAT-44 · An ask with several questions shows one form: a single choice as a radio group, a multiple choice as checkboxes, yes or no as a button pair, free text as a text area, each default preselected. **Send answers** is enabled only when every question that is not optional has an answer, and it stores one answer for the whole ask. An agent answers the same ask with one `agent-os msg reply` naming each question by its ID, and the office refuses an answer that does not fit the questions, saying which IDs are valid.
 
 ## 8. Open questions
 

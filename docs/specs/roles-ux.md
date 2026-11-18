@@ -4,7 +4,7 @@ title: "Roles: what each agent is for (UX)"
 status: current
 owner: lead
 created: "2026-11-09"
-updated: "2026-11-17"
+updated: "2026-11-18"
 requested_by: owner
 builds_on: [processes-ux, our-org-in-the-app, agent-run-modes-ux]
 ---
@@ -27,6 +27,7 @@ v1 delivers shared roles and the employee's reference to one role. Per-agent ove
 4. **Processes and standards are separate records** scoped to the organization, a team or a project, overridable unless marked `overridable: false`. The [processes design](../design/processes.md) owns how the set for a task is resolved.
 5. **Role content is shared.** It describes work for teammates; editing is authorized and revision-checked. No prose and no employee field grants account rights.
 6. **Changing an employee's role** updates `role_id` with the expected employee revision and keeps history.
+7. **A development process names the roles it needs by key.** When a project chooses a development process, each of its roles that the organization lacks is created here from the development process's definition; one the organization already has is left as it is. An employee who has a role with that key receives the development process's skills for it. The key of a role that a development process in use names cannot be changed or removed ([development processes](../design/development-processes.md), [document 18](../design/organization-data/18-development-processes-and-project-documentation.md#roles-the-development-process-needs-and-the-organizations-roles)).
 
 Example (common attribution omitted; accepted writes supply the bound actor and timestamps):
 
@@ -71,7 +72,7 @@ Follow approved processes and enforced permission policy.
 
 The office composes an agent's instructions ([session design](../design/agent-sessions.md), decision 8) from its identity and role (`profile.md`, including the referenced role's body), its prompt and tools (`execution.md`), the turn's explicit objective, the effective processes and standards, built-in `agent-os` help, and the project's instruction files from the verified integration-branch cache. A referenced role grants no authority and starts nothing. Composing a per-agent role override is not in v1.
 
-- **Hire:** when the HR lead can't run, the requester can leave `role_id` unset or select an existing role (`our-org-in-the-app.md` §7). The Hire review shows the role (name and revision) and any execution suggestions for the owner to confirm; suggestions are not role fields.
+- **Hire:** when the HR lead can't run, the hirer can leave `role_id` unset or select an existing role (`our-org-in-the-app.md` §7). The Hire review shows the role (name and revision) and any execution suggestions for the hirer to confirm; suggestions are not role fields.
 
 ## 3. UX acceptance criteria (ROLE)
 
@@ -82,7 +83,7 @@ The office composes an agent's instructions ([session design](../design/agent-se
 - ROLE-5 · The roles view lists role name, revision and employee count and shows body, provenance and history. Labels use words plus icons.
 - ROLE-6 · Not in v1: drift review between a role revision and an override.
 - ROLE-7 · An agent's instructions are composed by the office from its identity and role, its execution configuration, the turn's objective, the applicable processes and standards, `agent-os` help and the project's instruction files (session design, decision 8); editable home notes never become authority-bearing instructions, and execution configuration stays distinct from identity and role records.
-- ROLE-8 · An agent reads roles with `agent-os role list` and `role inspect` ([agent command line](../design/agent-os-command-line.md), section 3.2). No command writes a role in v1.
+- ROLE-8 · An agent reads roles with `agent-os role list` and `role inspect` ([agent command line](../design/agent-os-command-line.md), section 3.2); `role inspect` also prints what a hire proposal for the role needs ([development processes](../design/development-processes.md#7-hiring-when-the-development-process-says-so)). No command writes a role in v1.
 - ROLE-9 · An employee's `role_id` is updated with the expected employee revision; free-text `role_text` is kept without inventing a role.
 - ROLE-10 · Role views cover loading, no roles, no role association, stale or unreachable organization data, invalid role details and revision conflicts without losing input. Empty copy never promises that HR can run.
 - ROLE-11 · Not in v1: generated employee harnesses and private specialists.

@@ -13,11 +13,10 @@ use org_client::{Client, ClientError};
 use org_proto::frame;
 use org_proto::msg::{MsgBind, MsgBindResult};
 use org_proto::{
-    ApiError, AppToken, Call, Empty, ErrorCode, Event, Hello, HelloParams, HelloResult,
-    ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, OfficeRole, OfficeStatus,
-    Organization, OrganizationCreate, OrganizationCreateParams, OrganizationCreated,
-    OrganizationList, Outcome, Position, Request, Response, API_VERSION, APP_TOKEN_BYTES,
-    MAX_FRAME_BYTES,
+    ApiError, Call, Empty, ErrorCode, Event, Hello, HelloParams, HelloResult, ListOfficesResult,
+    ListOrganizationsResult, OfficeInfo, OfficeList, OfficeRole, OfficeStatus, Organization,
+    OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Outcome,
+    Position, Request, Response, API_VERSION, MAX_FRAME_BYTES,
 };
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -465,33 +464,29 @@ fn a_result_of_the_wrong_shape_is_a_protocol_error() {
 }
 
 #[test]
-fn bind_app_sends_the_token_and_no_member_and_a_refusal_is_the_servers_code() {
+fn bind_member_sends_the_member_alone_and_a_refusal_is_the_servers_code() {
     let server = fake(|mut peer| {
         let bind = peer.next_request().unwrap();
         assert_eq!(bind.method, "msg.bind");
-        assert!(bind.params.get("member").is_none(), "{}", bind.params);
-        assert_eq!(bind.params["app_token"], "03".repeat(32));
+        // The member and nothing else: no credential field exists to send.
+        assert_eq!(bind.params, serde_json::json!({"member": "ada"}));
         peer.reply::<MsgBind>(
             bind.id,
             &MsgBindResult {
-                member_id: None,
+                member_id: Some("M1".into()),
                 office_id: "OFFICE1".into(),
             },
         );
-        let wrong = peer.next_request().unwrap();
-        assert_eq!(wrong.params["app_token"], "04".repeat(32));
-        peer.fail(wrong.id, ErrorCode::NotAuthorized);
+        let person = peer.next_request().unwrap();
+        assert_eq!(person.params, serde_json::json!({"member": "pat"}));
+        peer.fail(person.id, ErrorCode::NotAuthorized);
     });
     let client = server.client();
 
-    let bound = client
-        .bind_app(AppToken::from_bytes([3; APP_TOKEN_BYTES]))
-        .unwrap();
+    let bound = client.bind_member("ada").unwrap();
     assert_eq!(bound.office_id, "OFFICE1");
-    assert_eq!(bound.member_id, None);
-    let refused = client
-        .bind_app(AppToken::from_bytes([4; APP_TOKEN_BYTES]))
-        .unwrap_err();
+    assert_eq!(bound.member_id.as_deref(), Some("M1"));
+    let refused = client.bind_member("pat").unwrap_err();
     assert!(
         matches!(&refused, ClientError::Api(e) if e.code == ErrorCode::NotAuthorized),
         "{refused:?}"

@@ -43,7 +43,7 @@
 //! This crate holds types and pure functions only. Not here yet, because X-02 leaves their params
 //! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
-//! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
+//! Transfer-socket records are `org-office-launch`'s `TransferRecord`, defined once there.
 //! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde,
 //! `serde_json` and `sha2` (X-02 §5.2, §11; `sha2` for the pair fingerprint of `tls.set`,
 //! [`ops::TlsPairFingerprint`]): the gateway imports it from `org-office-launch`.
@@ -70,7 +70,7 @@ pub use status::{
 
 /// An organization's recovery code (X-02 §6.4), in `recovery.release`'s result: shown once,
 /// printed only to a TTY, never in JSON status output or logs. Defined once in `org-proto`, shared
-/// with `org-office-launch`'s v3 create handoff.
+/// with `org-office-launch`'s create handoff.
 pub use org_proto::RecoveryCode;
 pub use org_proto::{ApiRange, Call, Empty, Hello, HelloParams, HelloResult};
 pub use secret::{LinkToken, OneTimeLinkUrl, Password, SessionHandle, TlsPrivateKey};

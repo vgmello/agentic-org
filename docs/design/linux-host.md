@@ -729,9 +729,13 @@ reaped and the stop signal reaches `serve`.
 
 **Amended by the owner's direction of 2026-11-18, to be rewritten with X5:** the
 container starts with a plain `docker run` that publishes the port. The image declares
-its volumes; without an operator's certificate the instance makes its own at first
-start; the seccomp and AppArmor options below are optional and only let agents'
-vendor sandboxes create user namespaces.
+its volumes; the seccomp and AppArmor options below are optional and only let agents'
+vendor sandboxes create user namespaces. The listener paragraph below (HTTPS with an
+operator's certificate) is NOT what is built: for now the container serves plain HTTP
+through a listener mode of its own that only the foreground mode may choose, and the
+run command publishes it on `127.0.0.1` only. HTTPS with a certificate the instance
+makes for itself, or one the operator supplies, is pending (implementation plan, X7):
+the product serves no HTTPS on any system yet.
 
 **The container file** (`deploy/container/Dockerfile`):
 
@@ -996,7 +1000,7 @@ How the tracks avoid each other:
   dialog checks on a Mac and records the result in the merge; X1b needs only macOS CI.
 - **Agree the shared hot spots.** `supervisor/child.rs`, `supervisor/channels.rs`
   and `supervisor/mod.rs` (A1 removes the older launch form there), `keys/` (A1
-  renames the database key), `org-host/src/lib.rs` and `instance/` (A2, A3),
+  replaced the database key with the office secrets key), `org-host/src/lib.rs` and `instance/` (A2, A3),
   `hostdb` (A2, A3) and `offices.rs` (A4) are edited by both tracks. The Track X lead
   asks the other lead which lands first; the second rebases. X1c's change in those files
   is limited to call sites: `spawn_suspended`, `ServerCheck::admit`, `still` and

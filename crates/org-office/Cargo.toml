@@ -32,9 +32,3 @@ org-sync = { path = "../org-sync", features = ["testkit"] }
 org-platform = { path = "../org-platform", features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
-# Use the exact already-bundled source for the barrier-controlled upstream defect probe.
-sqlcipher-src = "=420.0.0"
-
-# Reuse locked parsers only for the opener regression policy.
-syn = { version = "=2.0.119", default-features = false, features = ["full", "parsing", "printing", "visit"] }
-proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }

@@ -1,8 +1,9 @@
 //! Actual single-thread host-managed entry. No public socket/path fallback.
 use crate::{
-    api::VersionApi,
-    host::HostControl,
+    api::SessionApi,
+    host::{EventSink, HostControl},
     service::{self, ApiLimits, GatewayConfig},
+    session::SessionCache,
     tls::TlsCertificates,
     transport::{HttpLimits, ListenMode},
     Hsts,
@@ -24,7 +25,7 @@ use std::{
         unix::net::{UnixDatagram, UnixStream},
     },
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
@@ -249,6 +250,25 @@ fn watch_stdin(mut input: impl Read + Send + 'static, host: Arc<HostControl>) ->
         .map(drop)
 }
 
+/// Applies the host's `session.ended` pushes to the cache on the reader thread.
+/// No session request precedes serving, so the generation is set before any
+/// event can name a cached session; an event before then has nothing to drop.
+fn session_events(cache: Arc<SessionCache>, generation: Arc<OnceLock<u64>>) -> EventSink {
+    use org_host_control::browser::{SessionEnded, SESSION_ENDED};
+    Arc::new(move |name: &str, data: &serde_json::Value| {
+        if name != SESSION_ENDED {
+            return;
+        }
+        let (Some(generation), Ok(ended)) = (
+            generation.get(),
+            serde_json::from_value::<SessionEnded>(data.clone()),
+        ) else {
+            return;
+        };
+        cache.ended(&ended.session_id, *generation);
+    })
+}
+
 /// Resolves once the host connection is gone (control EOF, a failed call or
 /// stdin EOF): serving stops and the listener closes with the process.
 async fn host_lost(host: Arc<HostControl>) {
@@ -303,8 +323,18 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     }
     let (control, transfer, listener) = handoff(confined.stream, confined.enforcement)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
-    let host =
-        HostControl::from_handoff(control, transfer, line.instance_id, Arc::new(|| fatal()))?;
+    // The cache exists before the connection so the reader can apply every
+    // `session.ended` event, in arrival order, from the first frame on.
+    let cache = Arc::new(SessionCache::default());
+    let generation = Arc::new(OnceLock::new());
+    let host = HostControl::from_handoff(
+        control,
+        transfer,
+        line.instance_id,
+        Arc::new(|| fatal()),
+        session_events(Arc::clone(&cache), Arc::clone(&generation)),
+    )?;
+    let _ = generation.set(host.generation());
     let (mode, origin, hsts) = match host.fetch_listener().map_err(|_| failure())? {
         TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
         TlsFetchResult::HttpPublished { origin, hsts } => (ListenMode::HttpPublished, origin, hsts),
@@ -329,6 +359,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         org_host_control::listen::Hsts::On => Hsts::On,
         org_host_control::listen::Hsts::Clear => Hsts::Clear,
     };
+    let browser_origin = origin.clone();
     let config = GatewayConfig {
         mode,
         origin,
@@ -346,8 +377,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         config,
         files,
         move || {
-            // Browser sign-in waits for stored sessions (FC-159, ADR-0013).
-            let backend = VersionApi;
+            let backend = SessionApi::new(Arc::clone(&host), cache, &browser_origin);
             Ok((backend, host_lost(host)))
         },
         serving,
@@ -526,6 +556,7 @@ mod tests {
             transfer(),
             INSTANCE.into(),
             Arc::new(|| panic!("unexpected ancillary failure")),
+            Arc::new(|_: &str, _: &serde_json::Value| {}),
         )
         .unwrap();
         (control, stop)

@@ -147,7 +147,6 @@ describe('OFC-11..13 why an office stopped', () => {
 	it('gives each reason its words, and "It isn’t running" when the host does not know why', () => {
 		expect(whyStopped(stopped('crashed'), NOW)).toBe('It stopped unexpectedly');
 		expect(whyStopped(stopped('start_timeout', undefined, 'unavailable'), NOW)).toBe("It didn't start in time");
-		expect(whyStopped(stopped('key_missing', undefined, 'unavailable'), NOW)).toContain('key isn\'t available on this Mac');
 		expect(whyStopped(stopped('stopped_by_owner', undefined, 'unavailable'), NOW)).toBe('You stopped it');
 		expect(whyStopped(stopped(undefined, undefined, 'unavailable'), NOW)).toBe("It isn't running");
 	});
@@ -225,20 +224,19 @@ describe('OFC-11..13 why an office stopped', () => {
 	});
 
 	it('copies the office, status, reason, time and app version, never a key', () => {
-		const o = { id: 'o1', organization_id: 'org', name: 'HQ', host: 'This Mac', status: 'unavailable', status_reason: 'key_missing' } as OfficeInfo;
+		const o = { id: 'o1', organization_id: 'org', name: 'HQ', host: 'This Mac', status: 'unavailable', status_reason: 'crashed' } as OfficeInfo;
 		const text = copyDetails(o, 'Stopped', NOW, '0.1.0');
-		expect(text).toBe(['Office: HQ', 'Id: o1', 'Status: Stopped', 'Reason: key_missing', 'Time: 2026-11-08T12:00:00.000Z', 'Agentic Org: 0.1.0'].join('\n'));
+		expect(text).toBe(['Office: HQ', 'Id: o1', 'Status: Stopped', 'Reason: crashed', 'Time: 2026-11-08T12:00:00.000Z', 'Agentic Org: 0.1.0'].join('\n'));
 		expect(text).not.toMatch(/endpoint|key=|secret/i);
 	});
 });
 
 describe('OFC-11 what can be done about a stopped office', () => {
 	const stoppedFor = (status_reason?: OfficeStatusReason, status: OfficeInfo['status'] = 'unavailable') => ({ status, status_reason });
-	it('names the button by reason: Restart office, Try again for a missing key, Start office after the owner stopped it', () => {
+	it('names the button by reason: Restart office, Start office after the owner stopped it', () => {
 		expect(restartAction(stoppedFor('crashed'))).toEqual({ label: 'Restart office' });
 		expect(restartAction(stoppedFor(undefined, 'offline'))).toEqual({ label: 'Restart office' });
 		expect(restartAction(stoppedFor('in_use'))).toEqual({ label: 'Restart office' });
-		expect(restartAction(stoppedFor('key_missing'))).toEqual({ label: 'Try again' });
 		expect(restartAction(stoppedFor('stopped_by_owner'))).toEqual({ label: 'Start office' });
 		expect(restartAction(stoppedFor('unknown'))).toEqual({ label: 'Restart office' });
 	});

@@ -1,9 +1,10 @@
 # ADR-0016 · No application-level encryption of organization data
 
 Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
-plan entry E-01). Implementation in progress: the office databases are plain SQLite, the CA
-private key is stored wrapped and the replication snapshot is a plain file checked by its SHA-256
-digest (implementation plan A1.3); the host registry key and the launch rename remain. The owner chose the key storage of decision 3 on 2026-11-17
+plan entry E-01). Implemented (implementation plan A1.1 to A1.7): the office databases and the host registry
+are plain bundled SQLite and the workspace no longer builds SQLCipher, the CA private key is
+stored wrapped, the replication snapshot is a plain file checked by its SHA-256 digest, and the
+one launch contract carries the office secrets key. The owner chose the key storage of decision 3 on 2026-11-17
 (option 2 in the options table below). Supersedes the SQLCipher requirement of
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 1 and narrows the
 key custody of its decision 2 to wrapping an office's private keys. ADR-0002's choice of SQLite, its single writer
@@ -87,7 +88,7 @@ and WAL stand, and its durability rule stands as amended by
    protection of `same-user` mode for data; private keys stay wrapped in both modes.
 6. **Backups.** A copy of the data folder is readable. Backup guidance must say to
    encrypt backups at their destination.
-7. **Private notes.** Author-only access is enforced by the service, as before. A
+7. **Private notes.** Who may read a note (its author and people, never another agent, [ADR-0031](0031-any-employee-changes-tasks.md)) is enforced by the service, as before. A
    person with file access to the machine can read the file; this was also true of
    anyone able to obtain the database key.
 8. **Linux.** A Linux host needs a credential provider for one small key per office

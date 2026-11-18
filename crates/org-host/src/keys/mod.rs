@@ -1,19 +1,23 @@
-//! Key custody: where the host keeps every office's database key.
+//! Key custody: where the host keeps every office's secrets key.
 //!
-//! The host creates each office's key (`secrets::generate_db_key`), stores it here before the
+//! The host creates each office's key (`secrets::generate_office_secrets_key`), stores it here before the
 //! office's first `--create`, loads it before every `--office` and `--discard`, and sends it on
 //! the first line of the launch pipe (`org-office-launch`). Its servers never touch a key store.
 //! A key is in the host's memory only from its creation or load until that first line is written.
 //!
-//! [`KeyStore`] is the host's own abstraction: the supervisor depends on it, never on a
-//! particular store. It is a typed view (`custody`) over one credential store of the platform
-//! (`org_platform_host::credentials`): the view keeps the name rule, the add-only rule and what a
-//! key looks like; the platform keeps the bytes. Which store a build uses is decided here:
+//! [`OfficeSecretsKeys`] is the host's own contract: the supervisor and provisioning depend on it,
+//! never on a particular store or system. It is a typed view (`custody`) over one credential
+//! store of the platform (`org_platform_host::credentials`): the view keeps the name rule, the
+//! add-only rule and what a key looks like; the platform keeps the bytes. Which store a build
+//! uses is decided here:
 //! - **Release builds:** the system's protected store, whichever kind it is
 //!   (`org_platform_host::credentials::protected_store`). The Data Protection keychain, in the
 //!   host's access group, so other code gets `errSecItemNotFound`, never a prompt; or the
 //!   credential directory setup recorded, which the host opened and checked at its start
-//!   (`release_store`). A system without such a store has none.
+//!   (`release_store`). A system without such a store gets the refusing view, which refuses
+//!   every call with a reported reason ([`KeyStoreError::Unsupported`]). It is chosen before any
+//!   Keychain precondition is checked, so such a host never reports a Keychain-only reason (no
+//!   access group, not hardened).
 //! - **Debug builds:** plain files in a development folder (the platform's directory store), so
 //!   a debug host and the tests never write a real Keychain item. A debug host without that
 //!   folder refuses to start.
@@ -46,7 +50,7 @@ use org_platform::Refused;
 use org_platform_host::credentials::{
     credentials, CredentialLocation, KeychainItems, ProtectedStore, ReleaseRoot,
 };
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 
 use crate::code_signing::{hardened_and_clean, Signing};
 
@@ -65,22 +69,22 @@ fn keychain_service(instance_id: Option<&str>) -> String {
     }
 }
 
-/// Where the host keeps every office's database key (see the module docs). Office ids are plain
+/// Where the host keeps every office's secrets key (see the module docs). Office ids are plain
 /// ids ([`org_office_launch::is_plain_id`]); a store refuses any other
 /// ([`KeyStoreError::NotPlainId`]).
-pub(crate) trait KeyStore: Send + Sync {
+pub(crate) trait OfficeSecretsKeys: Send + Sync {
     /// Stores `key` as office `office_id`'s key. Add-only: an existing item is
     /// [`KeyStoreError::Exists`] and is left as it is. On any other error no key is replaced
     /// and no partial item is left. One error can follow a complete store: in the
     /// development store, a directory flush that fails after the key was published. The key
     /// then exists although `create` failed; it belongs to no started office and the orphan
     /// sweep removes it.
-    fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError>;
+    fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError>;
 
     /// Office `office_id`'s key, or `None` if the store has no item for it. An item that isn't a
-    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. A `DbKey` keeps its bytes
+    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. An `OfficeSecretsKey` keeps its bytes
     /// on the heap, so moving it moves a pointer; drop it as soon as its line is written.
-    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError>;
+    fn load(&self, office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError>;
 
     /// Deletes office `office_id`'s key. A missing item is `Ok`.
     fn delete(&self, office_id: &str) -> Result<(), KeyStoreError>;
@@ -104,10 +108,15 @@ pub(crate) enum KeyStoreError {
     /// The development store's file I/O failed, or one of its checks refused. The error holds a
     /// kind and a fixed text, never a path.
     Io(io::Error),
+    /// This system has no credential store to keep an office secrets key in
+    /// (`org_platform_host::credentials` refused).
+    Unsupported,
 }
 
 impl KeyStoreError {
-    pub(crate) fn means_key_missing(&self) -> bool {
+    /// Whether the office's key is to be treated as missing: only an item that isn't a key.
+    /// Every other error, a refused platform included, is a store failure.
+    pub(crate) fn means_no_key(&self) -> bool {
         matches!(self, Self::Corrupt)
     }
 }
@@ -116,10 +125,13 @@ impl fmt::Display for KeyStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
-            KeyStoreError::Corrupt => f.write_str("the stored item isn't a database key"),
+            KeyStoreError::Corrupt => f.write_str("the stored item isn't an office secrets key"),
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
+            KeyStoreError::Unsupported => {
+                f.write_str("this operating system has no office secrets key store")
+            }
         }
     }
 }
@@ -164,10 +176,12 @@ pub(crate) enum StoreError {
 
 /// The key store this host uses. Debug builds: the development folder `dev_key_dir`
 /// (absolute, outside the office `home`), and [`StoreError::NoDevKeyDir`] without one, so a
-/// debug host never writes a real Keychain item. Release builds: the Data Protection keychain
-/// in the access group compiled in as `ORG_HOST_KEYCHAIN_GROUP`: [`StoreError::NoKeychainGroup`]
-/// without one. `own_signing` (the host's own signing information, read once) must show both
-/// that group in its `keychain-access-groups` entitlement
+/// debug host never writes a real Keychain item. Release builds on a system with no protected
+/// store: the refusing view ([`KeyStoreError::Unsupported`] on every call), before any of
+/// the checks below. Release builds whose protected store is the Keychain: the Data Protection
+/// keychain in the access group compiled in as `ORG_HOST_KEYCHAIN_GROUP`:
+/// [`StoreError::NoKeychainGroup`] without one. `own_signing` (the host's own signing
+/// information, read once) must show both that group in its `keychain-access-groups` entitlement
 /// ([`StoreError::KeychainGroupNotEntitled`] otherwise, so a misbuilt host fails at startup
 /// rather than at its first `SecItemAdd`) and the hardened runtime with none of the
 /// entitlements that let other code in ([`StoreError::NotHardened`] otherwise: an injectable
@@ -183,7 +197,7 @@ pub(crate) fn store_for(
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
     release_directory: Option<&ReleaseRoot>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     #[cfg(debug_assertions)]
     {
         let _ = (own_signing, release_directory);
@@ -203,9 +217,10 @@ pub(crate) fn store_for(
 }
 
 /// A release build's store on a system whose protected store is `store`: the office keys
-/// below the open release directory where it is one, and the Keychain store otherwise. A
-/// system without a protected store takes the Keychain's path too, and is refused there as
-/// it always was.
+/// below the open release directory where it is one, and the Keychain store where it is the
+/// Keychain. A system without a protected store gets the refusing view, which refuses
+/// every call ([`KeyStoreError::Unsupported`]): it is chosen before any Keychain check, so
+/// `group` and `own_signing` are not consulted and no Keychain-only reason is reported there.
 #[cfg_attr(debug_assertions, allow(dead_code))]
 pub(crate) fn selected_release_store(
     store: Result<ProtectedStore, Refused>,
@@ -213,7 +228,7 @@ pub(crate) fn selected_release_store(
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
     release_directory: Option<&ReleaseRoot>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     match store {
         Ok(ProtectedStore::ReleaseDirectory) => {
             let root = release_directory.ok_or(StoreError::NoCredentialDirectory)?;
@@ -223,9 +238,8 @@ pub(crate) fn selected_release_store(
                 Err(e) => Err(StoreError::CredentialDirectory(e.to_string())),
             }
         }
-        Ok(ProtectedStore::Keychain) | Err(_) => {
-            release_store_scoped(group, instance_id, own_signing)
-        }
+        Ok(ProtectedStore::Keychain) => release_store_scoped(group, instance_id, own_signing),
+        Err(_) => Ok(Arc::new(custody::UnsupportedKeys)),
     }
 }
 
@@ -239,7 +253,7 @@ fn dev_store(
     dir: Option<&Path>,
     home: &Path,
     instance_id: Option<&str>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     let inside = |dir: &Path| {
         let lexical = dir.starts_with(home);
         let canonical = match (dir.canonicalize(), home.canonicalize()) {
@@ -274,7 +288,7 @@ fn dev_store(
 fn release_store(
     group: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     release_store_scoped(group, None, own_signing)
 }
 
@@ -283,7 +297,7 @@ fn release_store_scoped(
     group: Option<&str>,
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
-) -> Result<Arc<dyn KeyStore>, StoreError> {
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     let group = match group {
         Some(group) if !group.trim().is_empty() => group,
         _ => return Err(StoreError::NoKeychainGroup),
@@ -360,8 +374,10 @@ mod tests {
         )
         .unwrap();
         let office = "SAMEOFFICE";
-        a.create(office, &DbKey::from_bytes([1; 32])).unwrap();
-        b.create(office, &DbKey::from_bytes([2; 32])).unwrap();
+        a.create(office, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
+        b.create(office, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
         assert_eq!(a.list().unwrap(), vec![office]);
         assert_eq!(b.list().unwrap(), vec![office]);
         let before = b.load(office).unwrap().unwrap();
@@ -385,14 +401,15 @@ mod tests {
 
     #[test]
     fn only_a_corrupt_item_means_the_key_is_missing() {
-        assert!(KeyStoreError::Corrupt.means_key_missing());
+        assert!(KeyStoreError::Corrupt.means_no_key());
         for error in [
             KeyStoreError::Exists,
             KeyStoreError::NotPlainId,
             KeyStoreError::Os(-25308),
             KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+            KeyStoreError::Unsupported,
         ] {
-            assert!(!error.means_key_missing(), "{error:?}");
+            assert!(!error.means_no_key(), "{error:?}");
         }
     }
 
@@ -404,6 +421,7 @@ mod tests {
             KeyStoreError::NotPlainId,
             KeyStoreError::Os(-25308),
             KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+            KeyStoreError::Unsupported,
         ]
         .map(|e| e.to_string());
         assert!(shown[3].contains("-25308"), "{}", shown[3]);
@@ -479,6 +497,76 @@ mod tests {
         }
     }
 
+    /// The release store this system's protected store decides, for an entitled, hardened host
+    /// with its access group compiled in and no release directory open: one outcome per kind
+    /// of store. Where it is the Keychain, choosing it touches no item. Where it is a
+    /// credential directory, the Keychain preconditions are never consulted. A system with no
+    /// protected store gets the refusing view, never a fallback store.
+    #[test]
+    fn the_release_adapter_for_this_target_is_chosen_without_touching_a_store() {
+        let mut asked = false;
+        let keys = selected_release_store(
+            org_platform_host::credentials::protected_store(),
+            Some(GROUP),
+            Some("INSTANCEA"),
+            || {
+                asked = true;
+                Some(signing(Some(HARDENED), &[GROUP], &[]))
+            },
+            None,
+        );
+        match org_platform_host::credentials::protected_store() {
+            Ok(ProtectedStore::Keychain) => {
+                assert!(keys.is_ok());
+                assert!(
+                    asked,
+                    "the Keychain was chosen without the host's own signing"
+                );
+            }
+            Ok(ProtectedStore::ReleaseDirectory) => {
+                assert!(matches!(keys, Err(StoreError::NoCredentialDirectory)));
+                assert!(!asked, "the signing information was read");
+            }
+            Err(_) => {
+                let keys = keys.unwrap_or_else(|e| panic!("{e:?}"));
+                assert!(matches!(keys.list(), Err(KeyStoreError::Unsupported)));
+                assert!(!asked, "the signing information was read");
+            }
+        }
+    }
+
+    /// Another operating system (one with no protected store) gets the refusing view whatever
+    /// the group and signing: no Keychain reason (a missing group, an unsigned host) is ever
+    /// reported there, and the signing information is never read. The system is given as the
+    /// platform's answer, so this holds on every build target.
+    #[test]
+    fn another_operating_system_gets_the_refusing_adapter_before_any_keychain_check() {
+        let refused = || Refused::Unsupported {
+            capability: "credentials",
+            os: std::env::consts::OS,
+        };
+        for group in [None, Some(""), Some(GROUP)] {
+            let mut asked = false;
+            let keys = selected_release_store(
+                Err(refused()),
+                group,
+                Some("INSTANCEA"),
+                || {
+                    asked = true;
+                    None
+                },
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{group:?}: {e:?}"));
+            assert!(!asked, "the signing information was read");
+            assert!(matches!(keys.list(), Err(KeyStoreError::Unsupported)));
+            assert!(matches!(
+                keys.load("01JAAAAAAAAAAAAAAAAAAAAAAA"),
+                Err(KeyStoreError::Unsupported)
+            ));
+        }
+    }
+
     #[test]
     fn the_service_is_the_one_the_adr_fixes_and_an_instance_has_its_own() {
         // Persisted state: changing it orphans every office's key (ADR-0002).
@@ -505,7 +593,7 @@ mod tests {
             );
             return;
         };
-        let key = DbKey::from_bytes([1; 32]);
+        let key = OfficeSecretsKey::from_bytes([1; 32]);
         for id in ["", "../x", "a b"] {
             assert!(matches!(
                 store.create(id, &key),

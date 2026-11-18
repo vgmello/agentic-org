@@ -10,7 +10,7 @@ const STORAGE_KEY = 'agentic-org.mock.connections';
 const ORGANIZATIONS_KEY = 'agentic-org.mock.organizations';
 
 /**
- * The HQ office every organization starts with, on this Mac. `?office=crashed|restarting|key_missing|unknown` makes it a
+ * The HQ office every organization starts with, on this Mac. `?office=crashed|restarting|stopped_by_owner|unknown` makes it a
  * stopped office with a reason, so the Offices screen's reason lines can be seen and tested (spec §3.3).
  */
 /** A current host's `hello`: it lists the optional calls and events the app uses (`office.status_changed`, `office.restart`). */
@@ -21,7 +21,7 @@ const hqOffice = (organizationId: string): OfficeInfo => {
 	const stopped = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('office');
 	if (stopped === 'crashed') return { ...base, status: 'unavailable', status_reason: 'crashed' };
 	if (stopped === 'restarting') return { ...base, status: 'offline', status_reason: 'crashed', next_restart_at: new Date(Date.now() + 10 * 60_000).toISOString() };
-	if (stopped === 'key_missing') return { ...base, status: 'unavailable', status_reason: 'key_missing' };
+	if (stopped === 'stopped_by_owner') return { ...base, status: 'unavailable', status_reason: 'stopped_by_owner' };
 	if (stopped === 'unknown') return { ...base, status: 'unavailable' };
 	return base;
 };

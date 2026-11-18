@@ -1019,9 +1019,11 @@ fn a_required_mount_point_refuses_an_ordinary_directory_and_the_probe_knows_moun
 }
 
 /// The other way of the mount-point rule: a store that is the root of a mount is
-/// accepted when one is required. Making a mount takes root (and a container that
-/// allows it); otherwise the reason is printed and the probe test above, with the
-/// decision's tests, carries the rule.
+/// accepted when one is required, next to a data root on a volume of its own (where a
+/// mount point is required the store may not be in the data root's volume, and a data
+/// root on the machine's own disk has all of that disk as its volume). Making a mount
+/// takes root (and a container that allows it); otherwise the reason is printed and
+/// the probe test above, with the decision's tests, carries the rule.
 #[test]
 fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
     if !is_root() {
@@ -1052,6 +1054,17 @@ fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
         );
         return;
     }
+    // The data volume: a directory of its own, mounted where the data root is.
+    let data_volume = tree.dir("data-volume", 0o700);
+    let _data_mount = match bind(&data_volume, &tree.data) {
+        Ok(mount) => mount,
+        Err(error) => {
+            // SAFETY: a NUL-terminated path; `MNT_DETACH` cannot block.
+            unsafe { libc::umount2(target.as_ptr(), libc::MNT_DETACH) };
+            println!("skipped: this environment refuses a second bind mount: {error}");
+            return;
+        }
+    };
     // An empty mounted volume with records: credentials missing, as after a replaced
     // container with a new volume.
     let first = tree
@@ -1826,12 +1839,18 @@ fn a_group_writable_ancestor_with_an_access_acl_is_refused() {
 /// was deleted has no place.
 #[test]
 fn a_directory_is_placed_in_its_filesystem_by_the_real_mount_table() {
-    let table = mount_table().unwrap();
-    assert!(!table.is_empty());
+    let bytes = mount_table().unwrap();
+    let table = Table::of(&bytes).unwrap();
+    println!(
+        "this machine's mount table: {} bytes, {} mounts",
+        bytes.len(),
+        bytes.iter().filter(|byte| **byte == b'\n').count()
+    );
     let tree = Tree::new();
     mkdir(&tree.base.join("a"), 0o700);
     mkdir(&tree.base.join("a/b with space"), 0o700);
-    let at = |path: &Path| place(File::open(path).unwrap().as_fd(), &table);
+    let at =
+        |path: &Path| place(File::open(path).unwrap().as_fd(), &table).map(|(place, _mount)| place);
     let base = at(&tree.base).unwrap();
     let below = at(&tree.base.join("a/b with space")).unwrap();
     assert_eq!(below.filesystem, base.filesystem);
@@ -1845,7 +1864,7 @@ fn a_directory_is_placed_in_its_filesystem_by_the_real_mount_table() {
     );
     // A descriptor opened for passing through only is placed the same.
     let passing = open_absolute(&tree.base).unwrap();
-    assert_eq!(place(passing.as_fd(), &table).unwrap(), base);
+    assert_eq!(place(passing.as_fd(), &table).unwrap().0, base);
     // `/proc` is another filesystem than the disk the tree is on.
     let proc_place = at(Path::new("/proc")).unwrap();
     assert_ne!(proc_place.filesystem, base.filesystem);
@@ -1857,8 +1876,8 @@ fn a_directory_is_placed_in_its_filesystem_by_the_real_mount_table() {
     let held = File::open(&doomed).unwrap();
     fs::remove_dir(&doomed).unwrap();
     assert_eq!(
-        place(held.as_fd(), &table),
-        Err(MountDoubt::PathOutsideMount)
+        place(held.as_fd(), &table).err(),
+        Some(MountDoubt::PathOutsideMount)
     );
     // And one that was renamed is placed where it is now.
     let moved = tree.base.join("moved");
@@ -1866,7 +1885,13 @@ fn a_directory_is_placed_in_its_filesystem_by_the_real_mount_table() {
     fs::rename(tree.base.join("a"), &moved).unwrap();
     let mut expected = base.path.clone();
     expected.push(b"moved".to_vec());
-    assert_eq!(place(held.as_fd(), &table).unwrap().path, expected);
+    assert_eq!(place(held.as_fd(), &table).unwrap().0.path, expected);
+    // The mount a directory is in comes with its place: what it shows is the top of
+    // the subtree the directory is in, and the directory's place is inside that.
+    let (placed, mount) = place(File::open(&tree.base).unwrap().as_fd(), &table).unwrap();
+    let volume = mounts::shown(&mount).unwrap();
+    assert_eq!(volume.filesystem, placed.filesystem);
+    assert!(placed.path.starts_with(&volume.path));
 }
 
 /// A bind mount, unmounted when it goes out of scope, so that a failed assertion
@@ -2006,16 +2031,23 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     drop((through, fourth));
     assert!(listing(&inside).is_empty());
 
-    // 4. A bind of a directory that shares nothing with the data root is a store:
-    //    a container's mounted secrets volume.
+    // 4. Two volumes, as a container has them: a bind of one directory where the
+    //    data is, a bind of another where the secrets are, the instance's root a
+    //    directory inside the data volume. Accepted, as a mount point and otherwise.
+    let data_volume = tree.dir("data-volume", 0o700);
+    mkdir(&data_volume.join("instance"), 0o700);
+    let data_mount = tree.dir("container-data", 0o700);
+    let Some(data_bound) = mounted(&data_volume, &data_mount) else {
+        return;
+    };
+    let instance = File::open(data_mount.join("instance")).unwrap();
     let volume = tree.dir("volume", 0o700);
     let secrets = tree.dir("secrets", 0o700);
     let Some(fifth) = mounted(&volume, &secrets) else {
         return;
     };
-    let opened = tree
-        .open_with(&secrets, &tree.data_root(), true, false)
-        .unwrap();
+    drop(tree.open_with(&secrets, &instance, false, false).unwrap());
+    let opened = tree.open_with(&secrets, &instance, true, false).unwrap();
     opened
         .store(OFFICE_KEYS)
         .unwrap()
@@ -2026,10 +2058,58 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
         fs::read(volume.join("office-keys/office-a.key")).unwrap(),
         b"key"
     );
-    assert!(listing(&tree.data)
+    assert!(listing(&data_volume)
         .iter()
         .all(|entry| !entry.ends_with(".key")));
-    drop(fifth);
+    // Where a mount point is required, a data root on the machine's own disk has all
+    // of that disk as its volume, and a store that is a bind of a directory of the
+    // same disk is in it. (No such store is asked for on an ordinary machine.)
+    assert_eq!(
+        refusal(tree.open_with(&secrets, &tree.data_root(), true, false)),
+        (RootRule::InsideDataVolume, secrets.clone())
+    );
+    drop(
+        tree.open_with(&secrets, &tree.data_root(), false, false)
+            .unwrap(),
+    );
+    drop((fifth, instance, data_bound));
+
+    // 4a. The container mistake with the instance's root below the data volume's top:
+    //     `-v D:/data -v D/secrets:/secrets`, data root `/data/instance`. The store is
+    //     beside the instance root, not inside it, and every key is in the data
+    //     volume. As a mount point it is refused for the volume it is in.
+    let agentic = tree.dir("agentic", 0o700);
+    mkdir(&agentic.join("instance"), 0o700);
+    mkdir(&agentic.join("secrets"), 0o700);
+    let container_data = tree.dir("container-data-2", 0o700);
+    let container_secrets = tree.dir("container-secrets-2", 0o700);
+    let Some(data_bound) = mounted(&agentic, &container_data) else {
+        return;
+    };
+    let Some(secrets_bound) = mounted(&agentic.join("secrets"), &container_secrets) else {
+        return;
+    };
+    let instance = File::open(container_data.join("instance")).unwrap();
+    // Neither the walk through `..` nor the comparison with the data root sees it.
+    assert_eq!(
+        rules::disjoint(
+            &chain(File::open(&container_secrets).unwrap().as_fd()).unwrap(),
+            &chain(instance.as_fd()).unwrap()
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        refusal(tree.open_with(&container_secrets, &instance, true, false)),
+        (RootRule::InsideDataVolume, container_secrets.clone())
+    );
+    assert_eq!(listing(&agentic), ["instance", "secrets"]);
+    // With the data root at the top of the volume it is inside the data root itself.
+    let top = File::open(&container_data).unwrap();
+    assert_eq!(
+        refusal(tree.open_with(&container_secrets, &top, true, false)),
+        (RootRule::InsideDataRoot, container_secrets.clone())
+    );
+    drop((top, instance, secrets_bound, data_bound));
 
     // 5. A mount whose directory was deleted: where it is cannot be said, so it is
     //    refused, not assumed to be elsewhere.
@@ -2050,7 +2130,8 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     }
     drop(sixth);
     println!(
-        "bind mounts judged on a real kernel: inside, reverse, alias, unrelated, deleted ({})",
+        "bind mounts judged on a real kernel: inside, reverse, alias, two volumes, secrets \
+         in the data volume, deleted ({})",
         tree.base.display()
     );
 }
@@ -2097,4 +2178,82 @@ fn a_store_whose_lock_cannot_be_made_reports_the_lock() {
         )
     );
     assert!(listing(&store).is_empty());
+}
+
+// ---------------------------------------------------------------------------------
+// A deployment's own directories.
+// ---------------------------------------------------------------------------------
+
+/// The directories a deployment names, judged exactly as its host judges them: from
+/// `/`, through the contract, as a store that must be a mount point. It is for a run
+/// inside a container, where the mount table is the container's own and the two
+/// volumes are what the operator mounted:
+///
+/// ```text
+/// ORG_RELEASE_DIRECTORY_PROBE_STORE=/secrets
+/// ORG_RELEASE_DIRECTORY_PROBE_DATA_ROOT=/data/instance
+/// ORG_RELEASE_DIRECTORY_PROBE_EXPECT=accepted        (or a rule's name: InsideDataVolume)
+/// ```
+///
+/// Without the three variables it runs nothing. Accepted, it adds a key through the
+/// office keys' item store and loads it through a second handle.
+#[test]
+fn the_directories_a_deployment_names_are_judged_as_its_host_judges_them() {
+    let variable = |name: &str| std::env::var_os(format!("ORG_RELEASE_DIRECTORY_PROBE_{name}"));
+    let (Some(store), Some(data_root), Some(expected)) =
+        (variable("STORE"), variable("DATA_ROOT"), variable("EXPECT"))
+    else {
+        println!("skipped: no deployment is named (ORG_RELEASE_DIRECTORY_PROBE_*)");
+        return;
+    };
+    let (store, data_root) = (PathBuf::from(store), PathBuf::from(data_root));
+    let expected = expected.to_string_lossy().into_owned();
+    let bytes = mount_table().unwrap();
+    println!(
+        "probe: uid {}, mount table of {} mounts, store {}, data root {}",
+        euid(),
+        bytes.iter().filter(|byte| **byte == b'\n').count(),
+        store.display(),
+        data_root.display()
+    );
+    let data = File::open(&data_root).unwrap();
+    let location = ReleaseDirectory {
+        path: &store,
+        data_root: data.as_fd(),
+        mount_point_required: true,
+        expect_items: false,
+    };
+    match contract(location, &STORES) {
+        Ok(opened) => {
+            println!("probe: accepted");
+            assert_eq!(expected, "accepted");
+            let keys = opened.store(OFFICE_KEYS).unwrap();
+            let item = name("probe-office");
+            keys.delete(&item).unwrap();
+            keys.add(&item, b"probe key").unwrap();
+            drop((keys, opened));
+            let again = contract(
+                ReleaseDirectory {
+                    expect_items: true,
+                    ..location
+                },
+                &STORES,
+            )
+            .unwrap();
+            assert_eq!(
+                loaded(&again.store(OFFICE_KEYS).unwrap(), "probe-office").unwrap(),
+                b"probe key"
+            );
+            // Nothing of it is in the data root.
+            assert!(listing(&data_root)
+                .iter()
+                .all(|entry| !entry.ends_with(".key")));
+            println!("probe: a key was added and loaded through a second handle");
+        }
+        Err(CredentialError::Root(refused)) => {
+            println!("probe: refused: {refused}");
+            assert_eq!(format!("{:?}", refused.rule), expected);
+        }
+        Err(other) => panic!("probe: {other:?}"),
+    }
 }

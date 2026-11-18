@@ -11,9 +11,9 @@
 //! Organization content stays in office databases: the catalog is the folders under `<home>/offices/` that hold
 //! a valid `office.json` (`catalog`). It talks to its servers only through
 //! `org-office-launch`, and never depends on `org-office`. The private `hostdb` stores the
-//! host's registry in SQLCipher; organization databases remain in office servers.
+//! host's registry in plain SQLite; organization databases remain in office servers.
 //!
-//! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
+//! It holds every office's secrets key (`keys`): it creates each one, keeps it in its key store
 //! (in release builds the system's protected store: the Data Protection keychain on macOS, the
 //! credential directory setup recorded on Linux; a development folder in debug builds) and
 //! hands it to the office's server on the launch pipe. Its servers never touch a key store.
@@ -65,6 +65,10 @@ mod ids;
 mod links;
 pub mod release;
 mod web;
+
+// Real-process tests (debug builds only).
+#[cfg(all(test, debug_assertions))]
+mod enc1_process_tests;
 #[cfg(all(test, debug_assertions))]
 mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
@@ -169,7 +173,7 @@ pub struct Config {
     #[cfg(debug_assertions)]
     pub dev_app_path: Option<PathBuf>,
     /// Debug builds only (release builds don't have the field): the folder (absolute) where the
-    /// host keeps the offices' database keys, as plain files, instead of the Keychain. A debug
+    /// host keeps the offices' secrets keys, as plain files, instead of the Keychain. A debug
     /// host without it refuses to start ([`HostError::NoDevKeyDir`]), so it never writes a real
     /// Keychain item. The binary takes it from `ORG_OFFICE_DEV_KEY_DIR`; tests set it directly.
     /// It must not be inside the office home, and two homes must not share one.
@@ -423,7 +427,7 @@ fn startup_keys(
     instance: &Option<instance::registry::Instance>,
     dev_key_dir: Option<&Path>,
     release_directory: Option<&ReleaseRoot>,
-) -> Result<Arc<dyn keys::KeyStore>, HostError> {
+) -> Result<Arc<dyn keys::OfficeSecretsKeys>, HostError> {
     let keys = keys::store_for(
         dev_key_dir,
         instance
@@ -605,7 +609,7 @@ fn startup_protected_services(
     instance: &Option<instance::registry::Instance>,
     authentication: &Option<Arc<service::authentication::Authentication>>,
     supervisor: Supervisor,
-    keys: &Arc<dyn keys::KeyStore>,
+    keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
 ) -> Result<ProtectedServices, HostError> {
     let io = |context| move |source| HostError::Io { context, source };

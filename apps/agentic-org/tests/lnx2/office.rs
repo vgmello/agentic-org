@@ -20,7 +20,7 @@ use std::process::ExitCode;
 
 use org_office::rules::OrgCommand;
 use org_proto::org::{AgentProfile, AgentRuntime, AgentStatus, MemberAddAgentParams};
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
 const ORG: &str = "01ORG0000000000000000ACME1";
@@ -61,7 +61,7 @@ fn store(office_home: PathBuf, keys: PathBuf) -> Result<(), String> {
             org_id: ORG.into(),
             org_name: "Acme".into(),
         },
-        org_office::Key::from_db_key(DbKey::from_bytes(KEY)),
+        org_office::Key::from_office_secrets_key(OfficeSecretsKey::from_bytes(KEY)),
     )
     .map_err(|e| format!("creating the office: {e:?}"))?;
     for (n, id, handle) in AGENTS {

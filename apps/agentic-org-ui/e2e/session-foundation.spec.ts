@@ -11,7 +11,9 @@ declare global {
 const lowerHex64 = /^[0-9a-f]{64}$/;
 const denied = { error: { code: 'not_authorized', session_reason: 'session_ended' } };
 async function mount(page: Page) {
-	await page.goto('/welcome');
+	// A page that composes no app session: /welcome and the sign-in pages boot their own
+	// controller (SIGN-7), whose requests and broadcasts would mix with the harness's.
+	await page.goto('/no-such-area');
 	await expect(page.locator('html')).toHaveAttribute('data-hydrated', 'true');
 	await page.evaluate(async () => {
 		const source = '/e2e/session-browser-harness.ts';

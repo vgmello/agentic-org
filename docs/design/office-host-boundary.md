@@ -151,7 +151,7 @@ worker keeps one copy in memory, zeroed on drop.
 
 The transfer socket (a datagram socket pair, host to worker) carries channel records:
 a JSON header of at most 1024 bytes and zero or one descriptor. Web channels arrive as
-`ChannelKind::Gateway` records and native ones as `ChannelKind::Local`. An office
+`ChannelKind::Web` records and native ones as `ChannelKind::Local`. An office
 accepts at most eight channels, at most seven of them from the web process, so one
 stays free for a local caller. Session revocation arrives as a `Revoked` record. Package
 export for recovery uses a separate `recovery_public_read` record with one connected
@@ -235,8 +235,11 @@ The instance configuration has an optional `browser` listener snapshot, written 
 protected setup under the instance lock and never taken from HTTP. A bind uses one
 validated snapshot. Loopback HTTP is admitted; HTTPS is unavailable until the host
 verifies its certificate pair, and it is never downgraded. The browser service starts
-only for a registered, protected HQ instance, restarts with bounded backoff and is
-killed and reaped at host shutdown. Its failure leaves native control available.
+once the instance is registered and its host authentication (registry) is present; no
+organization or Active HQ is required, because the person registers from setup's link and
+creates the organization in the browser, and routes that need an organization or office
+answer their own "not yet" state (for example `organizations: []`). It restarts with
+bounded backoff and is killed and reaped at host shutdown. Its failure leaves native control available.
 
 ### `failed` codes
 
@@ -368,7 +371,7 @@ completed snapshot bytes and actor-bound command outcomes. `outcome_unknown` is
 reconciled before any side effect repeats. A copied checkpoint cannot promote an office.
 
 Before launching an agent the office restores HQ's placement generation and its
-execution journals, binds credentials again and verifies old-process cleanup or an
+execution records from the acceptance journal, binds credentials again and verifies old-process cleanup or an
 explicit machine fence. A restored PID is never signalled without a matching ownership
 mark, generation and machine, boot and start identity. Deleting a cache does not prove
 the old process stopped; missing evidence means recovery is required. The host keeps
@@ -383,6 +386,23 @@ it restarts the worker; it never races a live worker over its agents.
   `supervisor` (spawn, the launch protocol, status, backoff, shutdown), `service` (the
   host socket), `keys` and `host_secrets` (credential providers), `spawn` (process
   admission).
+- `keys::OfficeSecretsKeys` is the host's own contract for the office secrets keys
+  (create add-only, load, delete, list; errors carry codes, never key bytes). It is a
+  typed view (`keys/custody.rs`) over one item store of the platform
+  (`org_platform_host::credentials`): the Data Protection keychain on macOS (service
+  `org.agentic.office-key`), the credential directory setup recorded on Linux, and one
+  owner-only directory engine for every development build; `keys/memory.rs` is the
+  in-memory store with fault injection for tests. `keys/mod.rs` chooses the store from
+  the platform's own fact (`credentials::protected_store`) and holds the Keychain
+  preconditions (the compiled-in access group, its entitlement and the host's own
+  hardening). A system with no protected store gets a view that refuses each call with
+  a reported reason, chosen before any Keychain precondition is checked, so its operator
+  sees "this operating system has no office secrets key store", never a Keychain-only
+  reason. No file of key custody names an operating system. The supervisor and
+  provisioning never branch on the platform.
+- Storage: every database (host registry, `org.db`, `office.db`) is plain SQLite from
+  `rusqlite`'s `bundled` feature, protected by owner-only file permissions; there is no
+  SQLCipher dependency, database key or initialization fence (ADR-0016).
 - The organization name rule is `org_proto::OrganizationName`: trimmed, Unicode
   lowercase as its key, refusing empty, too long and control characters
   (`invalid_name`).
@@ -393,12 +413,12 @@ it restarts the worker; it never races a live worker over its agents.
 
 | Increment | Requirement | Code today |
 | --- | --- | --- |
-| A1 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/v3.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
-| A1, A3 | People are authorized by grants; no application token | The older first line still carries `app_token`, and the host still has `app_auth.rs`; the worker stores the grant key unused. |
+| A1 | One launch contract, the verified rendezvous | Done: the rendezvous at the `org-office-launch` crate root (`LAUNCH_VERSION = 1`, `crates/org-office-launch/src/contract.rs`) is the only form; a `"v":2` or `"v":3` first line is refused as `unsupported_version`, and a discard gets no secret. |
+| A1, A3 | People are authorized by grants; no application token | The application token is deleted (A1.8): the launch line carries none, `org-proto` defines no token type and no `office.app_token` call, and `org-client` has no app bind. A person or the owner acts only through a host-issued grant that the worker verifies. `msg.bind` binds agents only: it refuses a person or the owner (`not_authorized`) and refuses the retired `app_token` field on presence (`invalid_request`, `org_proto::retired`). The host refuses `office.app_token` like any call it does not serve. The host's `app_auth.rs` (`AppPolicy`) is not a token: it checks the calling process's code signature for `admin` and `recovery` calls, and stays. |
 | A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
-| A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
+| A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
-| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the first line still carries the per-office key as `db_key`, which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The field rename is pending (implementation plan A1.6). |
+| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5), a view over the platform's credential store; a system without a credential store refuses every call. |
 | X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (the admission contract's Linux adapter, `crates/org-platform-host/src/admission/linux.rs`, refuses until X2); host secrets use the Keychain. |
 
 `organization.provision.v1` today carries a `home_team_name`, creates no person record

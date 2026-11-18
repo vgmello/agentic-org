@@ -19,6 +19,7 @@
 		"test:e2e:select": "bun scripts/ui-gate.ts select --explain",
 		"test:e2e:areas": "bun scripts/ui-gate.ts areas",
 		"test:e2e:verify": "bun scripts/ui-gate.ts verify",
+		"test:e2e:real-instance": "playwright test --config playwright.real-instance.config.ts",
 		"test:e2e:csp": "playwright test --config playwright.csp.config.ts",
 		"test:e2e:csp-gateway": "bun scripts/csp-gateway.ts",
 		"lint": "eslint . --max-warnings=0",

@@ -8,6 +8,13 @@ import {
 } from './session-gateway';
 import { readSessionRecord, type SessionRecord, type SessionStore } from './session-record';
 
+/** The API and this page disagree on the contract version: the page must reload (§4a.3 "Page out of date"). */
+export class UpdateRequiredError extends Error {
+	constructor() {
+		super('Gateway update required');
+		this.name = 'UpdateRequiredError';
+	}
+}
 export type SessionState =
 	| { kind: 'signed-out'; reason?: 'ended' | 'signed-out' | 'changed-account'; login?: string }
 	| { kind: 'update-required' }
@@ -216,29 +223,38 @@ export function createSessionController({
 		});
 	};
 	channel.addEventListener('message', received);
+	/** Sign-in and registration both create a pair under the cross-tab session lock. */
+	async function establish(
+		call: (signal?: AbortSignal) => Promise<EstablishedSession>,
+		signal?: AbortSignal
+	) {
+		ensureOpen();
+		return locks.request('org-session:refresh', async () => {
+			ensureOpen();
+			recovery++;
+			const version = negotiate(signal),
+				info = await version;
+			if (!authoritative(version)) throw new Error('Session changed');
+			if (!versionCompatible(info)) {
+				generation++;
+				recovery++;
+				record = undefined;
+				publish({ kind: 'update-required' });
+				throw new UpdateRequiredError();
+			}
+			const session = await call(signal);
+			const next = accept(session);
+			await store.write(next);
+			await publishEstablished(session, next, { kind: 'signed-in', account_id: next.account_id });
+		});
+	}
 	return Object.freeze({
 		boot,
-		async signIn(credentials: unknown, signal?: AbortSignal) {
-			ensureOpen();
-			return locks.request('org-session:refresh', async () => {
-				ensureOpen();
-				recovery++;
-				const version = negotiate(signal),
-					info = await version;
-				if (!authoritative(version)) throw new Error('Session changed');
-				if (!versionCompatible(info)) {
-					generation++;
-					recovery++;
-					record = undefined;
-					publish({ kind: 'update-required' });
-					throw new Error('Gateway update required');
-				}
-				const session = await gateway.signIn(credentials, signal);
-				const next = accept(session);
-				await store.write(next);
-				await publishEstablished(session, next, { kind: 'signed-in', account_id: next.account_id });
-			});
-		},
+		signIn: (credentials: unknown, signal?: AbortSignal) =>
+			establish((signal) => gateway.signIn(credentials, signal), signal),
+		/** Redeems a registration link; the new account is signed in exactly as by sign-in. */
+		register: (request: unknown, signal?: AbortSignal) =>
+			establish((signal) => gateway.register(request, signal), signal),
 		async refresh(triggered_at_ms: number, signal?: AbortSignal) {
 			ensureOpen();
 			readSafeInteger(triggered_at_ms);

@@ -4,12 +4,12 @@ use std::os::unix::fs::PermissionsExt;
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
 
-fn key(seed: u8) -> DbKey {
-    let mut bytes = [0u8; DB_KEY_BYTES];
+fn key(seed: u8) -> OfficeSecretsKey {
+    let mut bytes = [0u8; OFFICE_SECRETS_KEY_BYTES];
     for (i, b) in bytes.iter_mut().enumerate() {
         *b = (i as u8).wrapping_mul(29).wrapping_add(seed);
     }
-    DbKey::from_bytes(bytes)
+    OfficeSecretsKey::from_bytes(bytes)
 }
 
 /// The development store in `dir`, for a host without a registered instance.
@@ -179,7 +179,7 @@ fn a_file_that_isnt_a_key_is_corrupt_and_its_text_isnt_shown() {
         write(&path, &bad);
         let err = store.load(A).unwrap_err();
         assert!(matches!(err, KeyStoreError::Corrupt), "{bad:?}");
-        assert!(err.means_key_missing());
+        assert!(err.means_no_key());
         assert!(!err.to_string().contains("0123"), "{err}");
     }
     // The server's format allowed a trailing newline and uppercase digits.
@@ -198,7 +198,7 @@ fn a_key_file_open_to_others_is_refused_and_is_not_a_missing_key() {
         fs::set_permissions(&path, fs::Permissions::from_mode(open)).unwrap();
         let err = store.load(A).unwrap_err();
         assert!(matches!(err, KeyStoreError::Io(_)), "{open:o}: {err}");
-        assert!(!err.means_key_missing());
+        assert!(!err.means_no_key());
         let shown = err.to_string();
         assert!(!shown.contains("0123"), "{shown}");
         assert!(!shown.contains(dir.path().to_str().unwrap()), "{shown}");
@@ -246,7 +246,7 @@ fn a_symlink_or_fifo_isnt_a_key_and_a_folder_open_to_others_is_refused_not_repai
     // as a file that fails its checks, where the former one called it corrupt.
     let err = store.load(C).unwrap_err();
     assert!(matches!(err, KeyStoreError::Io(_)), "{err}");
-    assert!(!err.means_key_missing());
+    assert!(!err.means_no_key());
     // A key folder that's a file isn't mistaken for an existing key.
     let file = dir.path().join("a-file");
     fs::write(&file, b"").unwrap();
@@ -275,8 +275,16 @@ fn ids_that_arent_plain_are_refused() {
 
 #[test]
 fn a_keychain_item_is_a_key_only_at_its_exact_length() {
-    assert!(raw_key(&Secret::from(vec![7; DB_KEY_BYTES])).unwrap() == DbKey::from_bytes([7; 32]));
-    for length in [0, DB_KEY_BYTES - 1, DB_KEY_BYTES + 1, 64] {
+    assert!(
+        raw_key(&Secret::from(vec![7; OFFICE_SECRETS_KEY_BYTES])).unwrap()
+            == OfficeSecretsKey::from_bytes([7; 32])
+    );
+    for length in [
+        0,
+        OFFICE_SECRETS_KEY_BYTES - 1,
+        OFFICE_SECRETS_KEY_BYTES + 1,
+        64,
+    ] {
         assert!(
             raw_key(&Secret::from(vec![7; length])).is_none(),
             "{length}"
@@ -317,7 +325,43 @@ fn the_platforms_kinds_keep_their_meaning_and_show_no_path() {
     ] {
         let error = KeyStoreError::from(kind);
         assert!(matches!(error, KeyStoreError::Io(_)), "{error}");
-        assert!(!error.means_key_missing());
+        assert!(!error.means_no_key());
         assert!(!error.to_string().contains('/'), "{error}");
     }
+}
+
+#[test]
+fn every_call_is_refused_with_its_reason_and_nothing_is_kept() {
+    let store = UnsupportedKeys;
+    let key = OfficeSecretsKey::from_bytes([7; 32]);
+    let id = "01JAAAAAAAAAAAAAAAAAAAAAAA";
+    let refusals = [
+        store.create(id, &key).unwrap_err(),
+        store.load(id).unwrap_err(),
+        store.delete(id).unwrap_err(),
+        store.list().unwrap_err(),
+    ];
+    for refusal in refusals {
+        assert!(matches!(refusal, KeyStoreError::Unsupported), "{refusal:?}");
+        assert!(!refusal.means_no_key(), "a refusal is not a missing key");
+        assert_eq!(
+            refusal.to_string(),
+            "this operating system has no office secrets key store"
+        );
+    }
+    // A create that was refused stored nothing: the next load is still refused, not a key.
+    assert!(store.load(id).is_err());
+}
+
+/// The platform's own refusal (a system with no credential store) is the same reason.
+#[test]
+fn the_platforms_refusal_is_the_unsupported_reason_and_not_a_missing_key() {
+    let refused = org_platform::Refused::Unsupported {
+        capability: "credentials",
+        os: std::env::consts::OS,
+    };
+    let error = KeyStoreError::from(CredentialError::Refused(refused));
+    assert!(matches!(error, KeyStoreError::Unsupported), "{error:?}");
+    assert!(!error.means_no_key());
+    assert!(!error.to_string().contains('/'), "{error}");
 }

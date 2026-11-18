@@ -51,6 +51,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X4 web process confined on Linux (LNX-3) | Adapter reviewed and repaired; Landlock optional; host slice integrated (`4823b23a`); the real-host LNX-3 test and the last web tests are in work; a fresh review of the host work is owed | See below |
 | X5 service and container (LNX-2) | Built on branch `x/x5-service` (`a31873e8`), not integrated; under fresh review; the browser is not served from the container | See below |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
+| X7 HTTPS for a container with the instance's own certificate | Pending, recorded by the owner 2026-11-18; with Track A | Implementation plan X7 |
 
 ## X1a · The platform crate and the check
 
@@ -825,6 +826,28 @@ is regenerated for an existing office (writer custody and a pending recovery cod
 refuse), but the start itself does not refuse; a marker in the data root
 (`selected-writer.required`) could make `expect_items` exact per item store. Open.
 
+**Defect in the S1 repair, found by the lead's full run at `8ab12056`** (3,563 tests
+passed; 28 failed, of them 24 this one): with a Docker daemon running on the machine,
+every store is refused with `Undetermined(Malformed)`. Docker mounts its network
+namespaces (`57 27 0:4 net:[4026532268] /run/docker/netns/… - nsfs nsfs rw`); the root
+of such a mount is not a path, the mount-table reader called the line malformed, and
+one unreadable line refused everything. It passed in the author's runs and in the
+lead's check of the merge because no daemon was running then. So a release host on
+any machine that runs Docker could not open its store. **Fixed, integrated** (branch `x/x3-mounts`, `9d364c66`, by the author): the two
+directories are found in the table by the mount id the kernel gives for their held
+descriptors; of every other line only the mount id is read, so no other line can
+refuse a store, and a line whose id cannot be read still refuses the table. The
+fixtures are real tables (this machine with Docker; two containers). With a required
+mount point the store is also compared with what the data root's mount shows, so
+`-v D:/data -v D/secrets:/secrets` is refused (`InsideDataVolume`); run by the author
+inside a container as uid 61000: two volumes accepted, a key added and read back; the
+three nested layouts refused. Lead's checks with a container running (the mount
+table then has the `nsfs` line): lint for the three targets; 1,003 tests of the
+platform and host crates unprivileged and the store's 92 as root, none failing. The other failures of that run: the offline and IPv6
+tests, and `supervisor::channels::tests::a_discard_stream_ends_at_a_non_server_event`
+(Track A's test; X5's worker saw it fail twice and pass once: intermittent, cause not
+yet looked for).
+
 **Review: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the lead, on
 `4823b23a..d13aa040`). It built trees as root on ext4, tmpfs and overlay and attacked
 them as three other users; ran the store's tests ten times as uid 1000 and as root
@@ -885,11 +908,41 @@ store are each refused by their rule.
 
 | Gap | What it needs |
 | --- | --- |
-| The browser is not served from the container. The web process serves plain HTTP on loopback only (`web.rs` requires a verified HTTP loopback listener; `tls.fetch` answers only that profile; the `tls_pair` custody is unused), a published port is not loopback, and no workspace dependency can make a certificate | Either HTTPS serving in the host and the web process (a product feature that exists on no system yet: FC-017, Track A's area) with a certificate made at first start, or plain HTTP allowed on the container's interface. The owner's decision |
+| The browser is not served from the container. The web process serves plain HTTP on loopback only (`web.rs` requires a verified HTTP loopback listener; `tls.fetch` answers only that profile; the `tls_pair` custody is unused), a published port is not loopback, and no workspace dependency can make a certificate | Either HTTPS serving in the host and the web process (a product feature that exists on no system yet: FC-017, Track A's area) with a certificate made at first start, or plain HTTP allowed on the container's interface. **Decided by the owner, 2026-11-18: plain HTTP for now** (a listener mode only the foreground mode may choose; X5's worker is building it), **and HTTPS with the instance's own certificate recorded as pending work** (implementation plan X7, ADR-0017 decision 10). Owed after the merge of `x/merge-a`: the same note in `docs/FEATURES.md` rows FC-164 and FC-017 |
 | The container uses the development key store (`/secrets/dev-keys`), because the image holds a debug build; a release directory is used only by a release-profile host | A release image needs the release pipeline (a signed manifest and pinned runtime); until then the release store runs in no host anywhere |
 | A new, empty secrets volume does not stop the start in that image: the host serves and reports the office as having no usable key; no key is made | Follows from the development store |
 | `-v D:/data -v D/secrets:/secrets` is not refused: the store is beside the instance root (`/data/instance`), not inside it | The store must be compared with the data volume, not only with the instance root: X3's author, after the merge |
 | Real systemd never ran (no user bus in the sandbox) | A CI runner or a machine with a user manager; an opt-in test exists |
+
+**Review of X5: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the lead,
+on `82fbc3d1..a31873e8`; it built the image and attacked the running container as the
+service user, as root and as a third user, with hostile volume layouts and 19
+malformed setup files). It confirmed the plain `docker run`, an empty `docker diff`,
+the owner-only modes in both volumes, every volume refusal, root's client against a
+hostile `/data` (links, forged folders: refused; no root-owned file appears), the
+image's content and the unit-file grammar, and each of the worker's stated gaps. It
+found no way for a non-root user to gain administrator authority beyond what design
+section 5 accepts. All findings are with the author:
+
+| Finding | Severity |
+| --- | --- |
+| V1 A refused non-interactive setup leaves its frozen record behind, and every later start with a corrected file is refused: the operator must delete the data volume (shown with a typo in the credentials path) | MAJOR |
+| V2 Stop is not bounded at 8 s: with a worker that ignores the stop, `docker stop` took 12.3 s and the runtime killed the host; the README says the grace is never needed | MAJOR |
+| V3 The README says the store's directory is checked at every start; only first-start setup checks it (a tmpfs `/secrets` on a later start is accepted) | MINOR |
+| V4 Root's `admin reset --user` prints whatever link a host of the service user returns: another origin and raw terminal escape sequences reached root's terminal | MINOR (security) |
+| V5 In foreground mode the service user can take the first registration link itself, though decision 10 says it comes only from root | MINOR |
+| V6 The disk probe says "on" for dm-integrity and dm-verity targets and for a Btrfs with one encrypted member | MINOR |
+| V7 The systemd unit carries only `HOME`; with an XDG variable in the shell that ran setup the service looks elsewhere and never becomes ready | MINOR |
+| V8 systemd drop-ins that replace `ExecStart` are not seen | MINOR |
+| V9 SIGN-33's wording | MINOR |
+| V10 After a test run the image can pack a binary built with the test seams | MINOR |
+| V11 `https` is accepted in a setup file though no build serves it | MINOR: refused until X7, by the owner's decision |
+
+Also from the review: on macOS `account_folders()` newly refuses a home folder that is
+a symbolic link, which no design asks for (to be undone); LNX-2 rests on test
+scaffolding (an office planted by an example program and the linked socket), because
+no product command creates an office in the container. Not verified by anyone: real
+systemd, AppArmor, Docker Desktop on a Mac, a release-build host.
 
 Lead's decisions so far: `root` at `/data/instance` with the service user's home at
 `/data` is accepted (the host refuses overlapping instance and locator roots);
@@ -928,6 +981,42 @@ the host files Track X moved behind the platform crates. Resolved by the lead:
 - `docs/FEATURES.md` and `docs/FEATURE-AREAS.md`: the summary rows are recounted from
   the rows (In progress 64, Planned 53; AREA-02 16 and 3). Track A's summary was one
   behind its own rows (FC-159 had moved to In progress).
+
+**`f7e60098` and `1b260dee`, 2026-11-18.** Track A had 82 more commits (and 12 more,
+documents and one command file, while the merge was made). A trial merge conflicted
+in 21 files. It was made in its own worktree (`x/merge-a`, `e28aee39`) by a worker
+with a written analysis of Track A's changes (the merge guide in the lead's
+scratchpad), then brought onto this branch (`5bcbfbfb`) with the 12 newer commits
+merged on top. How it was resolved:
+
+- Track X's structure in every host file; Track A's renames (`OfficeSecretsKey`,
+  `OfficeSecretsKeys`, `means_no_key`, the launch contract's module path) through all
+  of them, including Track X-only files git did not report.
+- Track A's three behaviour changes carried over: a start without a usable key still
+  spawns the server (`Mode::Office(id, Option<..>)`, `HandoffSecrets`; `key_missing`
+  is gone); `web::Running::start` takes a wait; the web process starts without an
+  Active HQ, so on Linux it goes through the admission and the filter from host start
+  (two LNX-3 assertions follow: the state before an HQ is `Running`, or `Failed`).
+- The 13 platform predicates Track A had added in the key store are gone with its
+  four files (`keys/{dev,keychain,platform,unsupported}.rs`); the store asks
+  `credentials::protected_store()`.
+- The one difference in intent, decided by the lead for Track A's behaviour: on a
+  system with no protected key store the host starts and each call that needs an
+  office key is refused (`KeyStoreError::Unsupported`), chosen before any Keychain
+  check; the host-secrets store still refuses the start there, as Track A's did.
+- All 102 tests Track A added are in the tree by name. Its script-worker test runs
+  through the by-path test admission. Its five ignored real-process tests were run
+  once on Linux and pass, its session routes under the seccomp filter.
+- A key file that is a FIFO, a symbolic link or has a wrong mode is a storage error
+  in Track X's store, not a null-key start as in Track A's old development store.
+- The list of platform predicates: 16 files, 78 predicates.
+- Feature tables recounted from the rows: 187 rows; Done 9, In progress 66, Planned
+  68, Blocked 1, Deferred 43; AREA-02 22 rows.
+
+The worker's checks on `e28aee39`: lint for the three targets, guard tests, the whole
+workspace unprivileged (71 binaries, 3,639 passed; failing only the two IPv6 tests),
+the app and host loops five times. The lead's checks on the combined tree are in the
+commit that merges `1b260dee`.
 
 ## macOS results from CI
 

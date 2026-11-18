@@ -28,7 +28,7 @@ use std::time::Duration;
 use org_host::setup_flow::fixture::{registered_account, RegisteredAccount};
 use org_office::rules::OrgCommand;
 use org_proto::org::{AgentProfile, AgentRuntime, AgentStatus, MemberAddAgentParams};
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 use support::{eventually, private_program, sibling_program, Client};
 
 const WAIT: Duration = Duration::from_secs(30);
@@ -107,7 +107,7 @@ impl World {
                 org_id: ORG.into(),
                 org_name: "Acme".into(),
             },
-            org_office::Key::from_db_key(DbKey::from_bytes(KEY)),
+            org_office::Key::from_office_secrets_key(OfficeSecretsKey::from_bytes(KEY)),
         )
         .unwrap();
         for (n, id, handle) in [(1, PIXEL, "pixel"), (2, NOVA, "nova")] {

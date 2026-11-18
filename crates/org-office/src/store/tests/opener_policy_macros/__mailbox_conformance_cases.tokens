@@ -1,8 +1,0 @@
-    ($open:expr; $($case:ident),* $(,)?) => {
-        $(
-            #[test]
-            fn $case() {
-                $crate::testkit::conformance::$case($open)
-            }
-        )*
-    };

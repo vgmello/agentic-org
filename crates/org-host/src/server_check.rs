@@ -1,5 +1,5 @@
-//! Who may get an office's database key: the check of every office server the host starts,
-//! before its first line (which carries the key) is written.
+//! Who may get an office's secrets key: the check of every office server the host starts,
+//! before its handoff (which carries the key) is written.
 //!
 //! The threat: a same-user process runs the signed host from a copy, a symlink or a hard link,
 //! next to its own `agentic-org-office` (the host starts the server next to its own executable),

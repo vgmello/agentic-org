@@ -71,8 +71,8 @@ does not promise available capacity.
    next turn boundary ([ADR-0004](../adr/0004-headless-agent-sessions.md)). Taking
    over an agent is a local command-line operation, never a browser action.
 7. **An agent follows the people above it.** It always replies to a person. It
-   follows instructions from a person above it in the organization's hierarchy (its
-   team lead chain, up to the owner); a message from anyone else is a request, and
+   follows instructions from whoever it reports to, a person or an agent, and up
+   that reporting line to the owner; a message from anyone else is a request, and
    its own chain wins. The rule is defined once, in the
    [supervision design](../design/employee-supervision.md) (decision 6).
 
@@ -131,7 +131,7 @@ stop work.
 - EMP-2 · Health distinguishes a known wait from unresponsiveness. A silent long tool run is not killed merely for producing no tokens; recovery has explicit deadlines and a bounded retry budget.
 - EMP-3 · Not in v1: durable goals delivered and reminded at start, resume and recovery.
 - EMP-4 · Not in v1: a generated harness replica definition for each employee.
-- EMP-5 · Not in v1: fresh-self delegates.
+- EMP-5 · Not in v1: fresh-self delegates. A general-purpose sub-agent inside a turn is in v1 (ADR-0025).
 - EMP-6 · Not in v1: private specialists.
 - EMP-7 · Not in v1: process-driven delegation choices.
 - EMP-8 · No launch or subprocess gains more permissions, channels, credentials or spending authority than its employee's grant.

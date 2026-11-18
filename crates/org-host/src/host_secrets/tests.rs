@@ -223,7 +223,7 @@ mod development {
         )
         .unwrap();
         office
-            .create("OFFICE", &org_proto::DbKey::from_bytes([3; 32]))
+            .create("OFFICE", &org_proto::OfficeSecretsKey::from_bytes([3; 32]))
             .unwrap();
         assert_eq!(office.list().unwrap(), vec!["OFFICE"]);
         assert_eq!(a.list().unwrap(), vec![n.clone()]);

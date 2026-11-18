@@ -470,14 +470,7 @@ fn revocation_precedes_principal_refusal_and_closes_the_office_socket() {
             );
             frame::write_message(
                 &mut peer,
-                &Request::new::<MsgBind>(
-                    1,
-                    &MsgBindParams {
-                        member: Some("ada".into()),
-                        app_token: None,
-                    },
-                )
-                .unwrap(),
+                &Request::new::<MsgBind>(1, &MsgBindParams::member("ada")).unwrap(),
             )
             .unwrap();
             let mut polls = 0;

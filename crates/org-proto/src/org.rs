@@ -18,7 +18,7 @@
 //! `member.set_run_mode`, `member.offboard` and `member.remove` change who works for the
 //! organization and what it spends, and some cannot be undone. The wire
 //! carries no caller identity: the office that receives a command knows whose connection it came
-//! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
+//! in on (a person acts through an owner grant on a host channel, X-02 §4.1), enforces this before it
 //! queues or forwards the command, and HQ relies on that.
 //!
 //! ## Command ids and retries

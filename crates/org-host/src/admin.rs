@@ -69,10 +69,10 @@ impl Drop for Resetting<'_> {
 /// Admission order: only the local channel may administer, whatever the signing
 /// policy would say; the policy is consulted only for a local caller.
 pub(crate) fn admit_with(
-    channel: org_office_launch::v3::ChannelKind,
+    channel: org_office_launch::ChannelKind,
     policy_allows: impl FnOnce() -> bool,
 ) -> Result<(), ApiError> {
-    if channel != org_office_launch::v3::ChannelKind::Local {
+    if channel != org_office_launch::ChannelKind::Local {
         return Err(denied());
     }
     if policy_allows() {

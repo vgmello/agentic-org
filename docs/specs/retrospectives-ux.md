@@ -23,7 +23,7 @@ plan so that v1 does not build something that conflicts with it.
 - A retro's write-up is a `kind: report` supporting document in organization Git
   ([project documents](../design/organization-data/02-project-structure.md)): stable
   UUIDv7 ID, schema and revision, title, project, status `draft | current | deprecated`,
-  owner and attribution, at `projects/<project-id>/reports/<document-id>.md` (or the
+  owner and attribution, in the project's documentation tree under `docs/reports/` (or the
   feature's `reports/` folder for a single-feature report). It is not a new entity,
   kind or counter.
 - Action items that are work are ordinary typed tasks

@@ -31,6 +31,13 @@ pub(crate) struct Service {
     /// Installed once by the registered start after composition; until then the admin calls
     /// answer `unavailable`.
     admin: std::sync::OnceLock<Arc<crate::admin::Admin>>,
+    /// The registered instance's name, installed once by the registered start; until then
+    /// `instance.view` answers `unavailable`.
+    instance_name: std::sync::OnceLock<String>,
+    /// Browser ops this service accepted on a web connection; real-process tests prove
+    /// that an ingress refusal reaches no host op.
+    #[cfg(test)]
+    browser_ops: std::sync::atomic::AtomicUsize,
 }
 
 impl Service {
@@ -47,6 +54,9 @@ impl Service {
             provisioning: None,
             recovery: None,
             admin: std::sync::OnceLock::new(),
+            instance_name: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            browser_ops: std::sync::atomic::AtomicUsize::new(0),
             gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
         }
     }
@@ -78,6 +88,27 @@ impl Service {
     }
     pub(crate) fn install_admin(&self, admin: Arc<crate::admin::Admin>) -> bool {
         self.admin.set(admin).is_ok()
+    }
+    #[cfg(test)]
+    pub(crate) fn browser_ops(&self) -> usize {
+        self.browser_ops.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// The registered name `instance.view` reports. Installed at most once.
+    pub(crate) fn install_instance_name(&self, name: &str) -> bool {
+        self.instance_name.set(name.to_owned()).is_ok()
+    }
+    /// `instance.view` on the web connection: the name, mode, web state and whether an
+    /// administrator exists. Nothing else about the host.
+    fn instance_view(&self) -> Result<org_host_control::browser::InstanceViewResult, ApiError> {
+        let name = self.instance_name.get().cloned().ok_or_else(|| {
+            ApiError::new(ErrorCode::Unavailable, "the instance view is unavailable")
+        })?;
+        Ok(org_host_control::browser::InstanceViewResult {
+            name,
+            status: InstanceMode::Service,
+            web_status: *crate::sync::lock(&self.gateway),
+            administrator: self.administrator()?,
+        })
     }
     fn administer(
         &self,
@@ -192,10 +223,13 @@ impl Service {
         self.gateway = state;
         self
     }
-    /// Whether the host may start its web process: host authentication is
-    /// present and HQ is Active. Persisted listener configuration alone never qualifies.
+    /// Whether the host may start its web process: the instance is registered and its
+    /// host authentication is present. No organization or office is required: the person
+    /// registers from setup's link and creates the organization in the browser, so routes
+    /// that need one answer their own "not yet" state. Persisted listener configuration
+    /// alone never qualifies.
     pub(crate) fn web_eligible(&self) -> bool {
-        web_start_eligible(self.authentication.is_some(), self.hq_active())
+        web_start_eligible(self.authentication.is_some(), self.registered())
     }
     /// The start-eligibility predicate the host wires into its web process supervisor:
     /// [`Service::web_eligible`], evaluated live on each supervisor poll.
@@ -208,15 +242,12 @@ impl Service {
     pub(crate) fn web_ready(&self) -> bool {
         web_serving(
             self.authentication.is_some(),
-            self.hq_active(),
+            self.registered(),
             *crate::sync::lock(&self.gateway),
         )
     }
-    fn hq_active(&self) -> bool {
-        self.offices.offices().iter().any(|office| {
-            office.role == org_proto::OfficeRole::Hq
-                && office.status == org_proto::OfficeStatus::Active
-        })
+    fn registered(&self) -> bool {
+        self.instance_id.is_some()
     }
     #[cfg(test)]
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
@@ -227,15 +258,30 @@ impl Service {
     /// connection's one ordered writer, after the record's delete.
     fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::browser::{
-            BrowserSessionEnd, LinkRegister, SessionEnded, SessionSignIn, SessionValidate,
-            SESSION_ENDED,
+            BrowserSessionEnd, InstanceView, LinkRegister, SessionEnded, SessionSignIn,
+            SessionValidate, SESSION_ENDED,
         };
         let browser = request.is::<LinkRegister>()
             || request.is::<SessionSignIn>()
             || request.is::<SessionValidate>()
-            || request.is::<BrowserSessionEnd>();
+            || request.is::<BrowserSessionEnd>()
+            || request.is::<InstanceView>();
         if !browser || connection.gateway_listen().is_none() {
             return false;
+        }
+        #[cfg(test)]
+        self.browser_ops
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if request.is::<InstanceView>() {
+            let reply = request
+                .params::<InstanceView>()
+                .map_err(|_| {
+                    ApiError::new(ErrorCode::InvalidRequest, "invalid instance view request")
+                })
+                .and_then(|_| self.instance_view())
+                .map(|r| ok::<InstanceView>(request.id, &r));
+            connection.send_response(reply.unwrap_or_else(|e| Response::error(request.id, e)));
+            return true;
         }
         let Some(authentication) = &self.authentication else {
             connection.send_response(not_authorized(request.id));
@@ -768,50 +814,61 @@ pub(crate) fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
     })
 }
 
-/// The start-eligibility rule: host authentication is present and HQ is Active.
-/// Persisted listener configuration alone never qualifies.
-pub(crate) fn web_start_eligible(authenticated: bool, hq_active: bool) -> bool {
-    authenticated && hq_active
+/// The start-eligibility rule: the instance is registered and host authentication is
+/// present. HQ being Active is not required. Persisted listener configuration alone never
+/// qualifies.
+pub(crate) fn web_start_eligible(authenticated: bool, registered: bool) -> bool {
+    authenticated && registered
 }
 
 /// The readiness rule: all three conditions, never persisted state alone.
-pub(crate) fn web_serving(authenticated: bool, hq_active: bool, state: GatewayState) -> bool {
-    web_start_eligible(authenticated, hq_active) && state == GatewayState::Running
+pub(crate) fn web_serving(authenticated: bool, registered: bool, state: GatewayState) -> bool {
+    web_start_eligible(authenticated, registered) && state == GatewayState::Running
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     #[test]
-    fn web_start_needs_authentication_and_an_active_hq() {
+    fn web_start_needs_authentication_and_a_registered_instance() {
         use super::web_start_eligible;
         assert!(web_start_eligible(true, true));
         assert!(!web_start_eligible(false, true), "no authentication");
-        assert!(!web_start_eligible(true, false), "no Active HQ");
+        assert!(!web_start_eligible(true, false), "not registered");
         assert!(!web_start_eligible(false, false));
     }
 
     /// The service fixture, and the predicate the host wires into its web process
-    /// supervisor, refuse to start the web process without authentication and without an
-    /// Active HQ. An Active HQ needs a real office worker: the ignored real-process
-    /// test covers the eligible case and the authenticated, not-yet-Active window.
+    /// supervisor, refuse to start the web process without authentication or without a
+    /// registered instance, and allow it once both hold, before any organization or
+    /// office exists (lead ruling: the person registers and creates the organization
+    /// in the browser).
     #[test]
-    fn the_wired_web_eligibility_refuses_without_authentication_or_an_active_hq() {
+    fn the_wired_web_eligibility_needs_authentication_and_registration_but_no_office() {
         let home = tempfile::tempdir().unwrap();
         let bare = Arc::new(service(home.path()));
         assert!(!bare.web_eligible(), "no authentication");
         assert!(!(bare.web_eligibility())(), "wired: no authentication");
         let (_root, authentication, _connection) = crate::service::authentication::tests::fixture();
-        let authenticated =
-            Arc::new(service(home.path()).with_authentication(Some(Arc::new(authentication))));
-        assert!(authenticated.offices.offices().is_empty());
-        assert!(!authenticated.web_eligible(), "no Active HQ");
-        assert!(!(authenticated.web_eligibility())(), "wired: no Active HQ");
+        let authentication = Arc::new(authentication);
+        let unregistered =
+            Arc::new(service(home.path()).with_authentication(Some(Arc::clone(&authentication))));
+        assert!(unregistered.instance_id.is_none());
+        assert!(!unregistered.web_eligible(), "not registered");
+        assert!(!(unregistered.web_eligibility())(), "wired: not registered");
+        let mut registered = service(home.path()).with_authentication(Some(authentication));
+        registered.instance_id = Some(crate::ids::uuid_v7().unwrap());
+        let registered = Arc::new(registered);
+        assert!(registered.offices.offices().is_empty(), "no office at all");
+        assert!(registered.web_eligible(), "registered, no organization yet");
+        assert!((registered.web_eligibility())(), "wired: registered");
+        assert!(!registered.web_ready(), "eligible is not serving");
         bare.offices.shutdown();
-        authenticated.offices.shutdown();
+        unregistered.offices.shutdown();
+        registered.offices.shutdown();
     }
 
     #[test]
-    fn web_ready_needs_authentication_active_hq_and_a_serving_web() {
+    fn web_ready_needs_authentication_registration_and_a_serving_web() {
         use super::web_serving;
         assert!(web_serving(true, true, GatewayState::Running));
         for state in [
@@ -830,8 +887,8 @@ pub(crate) mod tests {
     use std::path::Path;
 
     use org_proto::{
-        Empty, HelloParams, OfficeAppToken, OfficeAppTokenParams, OfficeList, OfficeRestart,
-        OfficeRestartParams, OrganizationCreate, OrganizationCreateParams,
+        Empty, HelloParams, OfficeList, OfficeRestart, OfficeRestartParams, OrganizationCreate,
+        OrganizationCreateParams,
     };
 
     use crate::catalog::Catalog;
@@ -1230,6 +1287,92 @@ pub(crate) mod tests {
         offices.shutdown();
     }
 
+    /// `instance.view` on the web connection: `unavailable` until the registered start
+    /// installs the name, then the name, mode, web state and administrator presence.
+    /// On host.sock it is `not_authorized`. Every accepted op counts once.
+    #[test]
+    fn instance_view_is_served_only_on_the_web_connection_after_the_name_is_installed() {
+        use org_host_control::browser::{InstanceView, InstanceViewResult};
+        use org_host_control::{Administrator, GatewayState, InstanceMode};
+        let home = tempfile::tempdir().unwrap();
+        let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+        let authentication = Arc::new(authentication);
+        let mut service = service(home.path()).with_authentication(Some(authentication.clone()));
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
+        let service = Arc::new(service);
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let listen = serde_json::from_str(
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        )
+        .unwrap();
+        let web = listener::WebConnection::start(
+            host,
+            transfer,
+            listen,
+            service.clone() as Arc<dyn Handler>,
+        )
+        .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<InstanceView>(&mut peer, 2, &Default::default()),
+            ErrorCode::Unavailable
+        ));
+        assert!(service.install_instance_name("studio"));
+        assert!(!service.install_instance_name("other"), "installed once");
+        let view = exchange::<InstanceView>(&mut peer, 3, &Default::default())
+            .unwrap()
+            .into_result::<InstanceView>()
+            .unwrap();
+        assert_eq!(
+            view,
+            InstanceViewResult {
+                name: "studio".into(),
+                status: InstanceMode::Service,
+                web_status: GatewayState::NotConfigured,
+                administrator: Administrator::Present,
+            }
+        );
+        assert_eq!(service.browser_ops(), 2);
+        // Unknown params are refused, not ignored.
+        org_proto::frame::write_message(
+            peer.get_mut(),
+            &serde_json::json!({"id": 4, "method": InstanceView::METHOD, "params": {"path": "/"}}),
+        )
+        .unwrap();
+        let response: org_proto::Response =
+            org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+        assert!(matches!(
+            response.outcome,
+            org_proto::Outcome::Error(ref e) if e.code == ErrorCode::InvalidRequest
+        ));
+        drop(web);
+
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let local =
+            listener::LocalConnection::start(host, service.clone() as Arc<dyn Handler>).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<InstanceView>(&mut peer, 2, &Default::default()),
+            ErrorCode::NotAuthorized
+        ));
+        assert_eq!(service.browser_ops(), 3, "host.sock reaches no browser op");
+        drop(local);
+        service.offices.shutdown();
+    }
+
     /// A local (host.sock) connection cannot create or validate browser sessions:
     /// every browser op is `not_authorized` there and writes no session or throttle state.
     #[test]
@@ -1398,13 +1541,13 @@ pub(crate) mod tests {
         let id = "01AAAAAAAAAAAAAAAAAAAAAAAA".to_owned();
         let inline = [
             Request::new::<Hello>(1, &HelloParams::default()).unwrap(),
-            Request::new::<OfficeAppToken>(
-                1,
-                &OfficeAppTokenParams {
-                    office_id: id.clone(),
-                },
-            )
-            .unwrap(),
+            // The retired `office.app_token`: refused inline, like any call the host doesn't serve.
+            Request {
+                id: 1,
+                method: "office.app_token".to_owned(),
+                params: serde_json::json!({"office_id": id.clone()}),
+                principal: None,
+            },
             Request::new::<OfficeRestart>(1, &OfficeRestartParams { office_id: id }).unwrap(),
         ];
         let threaded = [

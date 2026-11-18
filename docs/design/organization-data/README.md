@@ -1,6 +1,6 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.16 (2026-11-18). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.21 (2026-11-18). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **data relationships, fields and canonical sources**. Where the code or another design differs, the code or that design changes. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes implementation status and deferred scope.
 
@@ -24,12 +24,13 @@ This set owns the **data relationships, fields and canonical sources**. Where th
 | [Messaging and chat](15-messaging-and-chat.md) | Conversations, memberships, messages, recipient state, attachments, read markers and reactions; runtime ownership and routing rules merged from ADR-0003 | Transport/wake engines and external bridges |
 | [Recovery and office continuity](16-recovery-and-office-continuity.md) | Mutation receipts, origin streams, checkpoints, snapshots and process cleanup evidence | Automatic promotion, restore engines or backup automation |
 | [Budgets and controls](17-budgets-and-controls.md) | Task, agent and release policies, periods, threshold notices, extensions and holds | Budget service, automatic pausing or distributed admission implementation |
+| [Development processes and project documentation](18-development-processes-and-project-documentation.md) | Development processes and a project's choice of one; the project documentation tree and index; issued versions, code links, realizing tasks | An engine or triggers |
 
-Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, including model profiles/execution and task assignment/history, into one shared draft containing 77 tables and 10 views plus indexes/triggers. Document 14 describes the provider and pool records and links to document 11 for their SQL. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
+Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, including model profiles/execution and task assignment/history, into one shared draft containing 91 tables and 12 views plus indexes/triggers. Document 14 describes the provider and pool records and links to document 11 for their SQL. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
 
 ## Shared identity contract
 
-Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text ([document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). Code today: organization provisioning mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
+Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames (tree documents use paths, document 18). IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text ([document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). Code today: organization provisioning mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
 
 | Entity | Readable identifier | Uniqueness / counter scope |
 | --- | --- | --- |
@@ -42,7 +43,7 @@ Every entity keeps an immutable stable `id`, used for foreign keys, synchronizat
 | Feature | `F-6` and full slug `reservations/table-booking` | Feature counter and `local_slug` within project; full slug unique within organization |
 | Release | `R-3` and optional text `version_label` | Release counter within project |
 | Milestone | `M-2` | Milestone counter within release |
-| Repository, role, provider connection or model profile | Descriptive `key` | Organization, separately per entity type; no counter |
+| Repository, role, provider connection, model profile or development process | Descriptive `key` | Organization, separately per entity type; no counter |
 
 Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied it must match. `number: null` denotes a locally created feature awaiting allocation and exposes no final readable reference. A task is numbered by its creating office at creation, so it is never null. Changing task type never changes its ID or number.
 
@@ -69,8 +70,8 @@ The organization repository must be remote. Its tracked content is mirrored as o
 │   ├── recovery/                    # Receipts, each office's acceptance journal (the commit
 │   │                                #   point), checkpoints, snapshots (16)
 │   ├── budgets/                     # Protected policies, periods, events, holds (17)
-│   ├── private/task-notes.db        # HQ only: author-private task notes (05)
-│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11);
+│   ├── private/task-notes.db        # HQ only: private task notes (05)
+│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and execution records (11);
 │   │                                #   agents/<employee-id>/home/, each agent's private home (ADR-0015)
 │   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
 └── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
@@ -93,7 +94,7 @@ Shared SQLite is the indexed projection for domain records, task activity and ac
 
 Structural validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
 
-Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. Offices submit their stable IDs and scopes to the shared organization authority for final number allocation and feature-slug registration; they never increment replicated counters independently. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
+Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. An office numbers its own tasks at creation (document 06). For a feature it submits the stable ID and scope to HQ for the number and the slug; no office increments a replicated counter. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
 
 ## No compatibility obligations before v1 ships
 
@@ -120,7 +121,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Accounts and people | An account is held by the host and, in each organization it can open, tied to exactly one person record; a person needs no account; an account is never tied to an agent. Whoever acts is recorded as an employee (person or agent) or the system, never as "the owner" ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)) |
 | Organization owner | The person whose account holds ownership: the creator, until handed over; ownership is a permission of that account at the host. Records that address `owner` mean that person at the time they are read |
 | Creating an organization | The signed-in administrator creates it; one transaction makes the organization, HQ office, top-level team named after it, the creator's person record as its lead and the HR lead ([document 01](01-organization-structure.md#creating-an-organization)) |
-| Agents | Built-in HR lead, an agent that runs only when called; agents are onboarded only through the HR hire flow after approval; an agent follows instructions from its lead chain up to the owner ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)) |
+| Agents | Built-in HR lead, an agent that runs only when called; agents are onboarded only through the HR hire flow, started by someone who may hire; an agent follows whoever it reports to, up to the owner ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)) |
 | Project teams | Creating a project creates its owning team under the top-level team by default, or names an existing team ([document 02](02-project-structure.md#creating-a-project)) |
 | Tasks | One entity with required team, optional project and extensible type |
 | Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |
@@ -132,7 +133,8 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Creation authority | HQ creates teams/projects/releases/milestones; any office creates tasks/features |
 | Organization authority | The HQ office worker in v1: one role for numbering, slug/key registration, permits, placement generations, budget-control state and corrections; promotion deferred |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
-| Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md` |
+| Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md`. Project-wide documents live in the project's documentation tree with one index (document 18) |
+| Development processes | Optional per project; content only (18) |
 | Accountability and lifecycle | Feature/document owners; active/archived teams; employees `active`, `paused` (agents) or `inactive` in one status field; draft/current/deprecated documents |
 | Task, milestone and release completion | Task status is the closed list `todo`, `in_progress`, `blocked`, `cancelled`, `done`; done or cancelled is finished. Milestones and releases store no status; done is derived from their tasks |
 | Compatibility before v1 ships | None. Nothing is deployed: no migration, import, alias or legacy shape is kept ([rule](#no-compatibility-obligations-before-v1-ships)) |

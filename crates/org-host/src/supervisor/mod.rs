@@ -2,14 +2,14 @@
 //! (`office`), plus the short runs around them: `--create` makes a new office, `--discard`
 //! removes an unfinished one.
 //!
-//! The host hands a server no app token: a v3 launch handoff carries only the office's
-//! database key (and, for the HQ create, its recovery code) over the instance's rendezvous.
+//! A launch handoff carries only the office's
+//! secrets key (and, for the HQ create, its recovery code) over the instance's rendezvous.
 //!
-//! Each office's database key lives in the host's key store ([`KeyStore`], the host's own
+//! Each office's secrets key lives in the host's key store ([`OfficeSecretsKeys`], the host's own
 //! abstraction: the supervisor never knows which store it is). A create stores the new key
 //! before its server starts; every start and discard loads it just before the spawn, and drops
 //! it once the first line is written. A start whose key is missing, or whose item isn't a key,
-//! spawns nothing: the office is `unavailable`/`key_missing` until `office.restart`. The supervisor
+//! still spawns the server, whose handoff carries `null`. The supervisor
 //! deletes a key **only** after the office's `--discard` reported `discarded`.
 //!
 //! Status per office ([`OfficeState`]): `starting` (spawned, no `ready` yet) → `active`
@@ -37,7 +37,7 @@ use org_proto::{OfficeStatus, OfficeStatusReason};
 
 use crate::host_log;
 use crate::ids::handle_of;
-use crate::keys::KeyStore;
+use crate::keys::OfficeSecretsKeys;
 use crate::logs::RotatingLog;
 use crate::server_check::ServerCheck;
 use crate::sync::lock;
@@ -56,8 +56,8 @@ pub(crate) struct SupervisorConfig {
     pub(crate) logs_dir: PathBuf,
     pub(crate) log_max_bytes: u64,
     pub(crate) timings: Timings,
-    /// Where every office's database key is kept.
-    pub(crate) keys: Arc<dyn KeyStore>,
+    /// Where every office's secrets key is kept.
+    pub(crate) keys: Arc<dyn OfficeSecretsKeys>,
     /// How every server is checked before it gets its first line (`server_check`).
     pub(crate) server_check: Arc<ServerCheck>,
     /// Whether [`Supervisor::sweep_orphan_keys`] may delete keys (see `keys::sweep_orphans`
@@ -334,7 +334,7 @@ impl Supervisor {
     /// writer custody. No create/discard cleanup is permitted on this path.
     pub(crate) fn begin_hq_create(
         &self,
-        first: org_office_launch::v3::CreateLine,
+        first: org_office_launch::CreateLine,
         recovery: org_proto::RecoveryCode,
     ) -> Result<PendingCreate<'_>, CreateStartError> {
         let (sender, signals) = mpsc::channel();
@@ -345,13 +345,13 @@ impl Supervisor {
             .server_check
             .may_spawn()
             .map_err(CreateStartError::NotStarted)?;
-        let db_key = self
+        let office_secrets_key = self
             .config
             .keys
             .load(&first.office.office_id)
             .map_err(|_| CreateStartError::NotStarted("original HQ key unavailable".into()))?
             .ok_or_else(|| CreateStartError::NotStarted("original HQ key missing".into()))?;
-        let line = CreateLine::hq(first, db_key, recovery);
+        let line = CreateLine::hq(first, office_secrets_key, recovery);
         let log = self.log_for(line.office_id());
         let spawned = self
             .spawner()
@@ -371,7 +371,7 @@ impl Supervisor {
     }
 
     /// Runs `agentic-org-office --discard <office_id>` and waits (up to the discard timeout) for
-    /// it to report. The server gets no key (its handoff's `db_key` is `null`); the host reads
+    /// it to report. The server gets no key (its handoff carries no secret); the host reads
     /// the key only so that an unreadable key store starts no server. The server takes the office lock, refuses a folder that holds `office.json`, and removes the
     /// folder. After `discarded`, and only then, the office's key is deleted from the key store.
     /// A key store that can't be read starts no server ([`DiscardOutcome::KeyUnreadable`]).
@@ -693,7 +693,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
-    use org_proto::DbKey;
+    use org_proto::OfficeSecretsKey;
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
     use crate::peer::AuditToken;
@@ -728,7 +728,7 @@ mod tests {
                 logs_dir: dir.join("logs"),
                 log_max_bytes: 1024,
                 timings,
-                keys: Arc::clone(keys) as Arc<dyn KeyStore>,
+                keys: Arc::clone(keys) as Arc<dyn OfficeSecretsKeys>,
                 server_check: Arc::new(check),
                 sweep_orphans: false,
             },
@@ -780,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn a_start_without_a_usable_key_spawns_nothing() {
+    fn a_start_without_a_usable_key_still_spawns_its_server() {
         let dir = short_tempdir();
         let ran = dir.path().join("ran");
         let program = script(
@@ -789,43 +789,30 @@ mod tests {
             &format!("echo \"$@\" >> '{}'", ran.display()),
         );
         let keys = Arc::new(MemoryKeys::default());
-        let supervisor = supervisor(dir.path(), program, &keys);
-        let unavailable = |reason| move |s: &OfficeState| *s == OfficeState::unavailable(reason);
-        // No item: `key_missing`, fatal.
-        supervisor.start_office(OFFICE).unwrap();
-        wait_for_state(
-            &supervisor,
-            OFFICE,
-            unavailable(OfficeStatusReason::KeyMissing),
-        );
-        // `office.restart` loads it again (and still finds none).
-        let loads = || {
-            keys.calls()
-                .iter()
-                .filter(|call| **call == (Op::Load, OFFICE.to_owned()))
-                .count()
+        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
+        let spawned = |id: &str| {
+            fs::read_to_string(&ran)
+                .unwrap_or_default()
+                .lines()
+                .any(|line| line.split_whitespace().any(|arg| arg == id))
         };
-        assert_eq!(loads(), 1);
-        assert_eq!(supervisor.restart(OFFICE), RestartOutcome::Restarting);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while loads() < 2 {
-            assert!(
-                Instant::now() < deadline,
-                "the restart didn't reload the key"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
-        wait_for_state(
-            &supervisor,
-            OFFICE,
-            unavailable(OfficeStatusReason::KeyMissing),
-        );
+        let wait_for_spawn = |id: &str| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !spawned(id) {
+                assert!(Instant::now() < deadline, "office {id} wasn't started");
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        // No item: the server starts anyway (its handoff would carry `null`).
+        supervisor.start_office(OFFICE).unwrap();
+        wait_for_spawn(OFFICE);
         // An item that isn't a key: the same.
         const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
-        keys.create(B, &DbKey::from_bytes([1; 32])).unwrap();
+        keys.create(B, &OfficeSecretsKey::from_bytes([1; 32]))
+            .unwrap();
         keys.fail(Op::Load, Fault::Corrupt);
         supervisor.start_office(B).unwrap();
-        wait_for_state(&supervisor, B, unavailable(OfficeStatusReason::KeyMissing));
+        wait_for_spawn(B);
         // A store that fails otherwise: `storage_error`, retried with backoff.
         const C: &str = "01CCCCCCCCCCCCCCCCCCCCCCCC";
         keys.fail(Op::Load, Fault::Io);
@@ -836,7 +823,7 @@ mod tests {
                 && s.next_restart_at.is_some()
         });
         supervisor.shutdown();
-        assert!(!ran.exists(), "a server started without its key");
+        assert!(!spawned(C), "a server started over an unreadable key store");
         // Nothing was deleted, and the item that isn't a key is still there.
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
         assert!(keys.has(B));
@@ -857,7 +844,8 @@ mod tests {
         let program = script(dir.path(), "server", &format!("cat >> '{}'", got.display()));
         let keys = Arc::new(MemoryKeys::default());
         for id in [OFFICE, B] {
-            keys.create(id, &DbKey::from_bytes([3; 32])).unwrap();
+            keys.create(id, &OfficeSecretsKey::from_bytes([3; 32]))
+                .unwrap();
         }
         let requirement = crate::server_check::server_requirement("AB12CD34EF").unwrap();
         let checked = checked_supervisor(
@@ -963,7 +951,8 @@ mod tests {
     fn a_child_whose_token_changed_before_its_line_gets_nothing() {
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([6; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([6; 32]))
+            .unwrap();
         let check = scripted(|step, _| match step {
             Step::Admit => Ok(Some([1; 32])),
             Step::Still => Ok(Some([2; 32])),
@@ -996,7 +985,8 @@ mod tests {
     fn one_admission_serves_every_start_of_a_host() {
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([4; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([4; 32]))
+            .unwrap();
         let supervisor = supervisor(dir.path(), recording_worker(), &keys);
         let images = Arc::clone(&supervisor.spawner().unwrap().images);
         let built = images.admission().expect("built with the supervisor");
@@ -1024,7 +1014,8 @@ mod tests {
         let dir = short_tempdir();
         let program = dir.path().join("worker");
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([4; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([4; 32]))
+            .unwrap();
         let supervisor = supervisor(dir.path(), program.clone(), &keys);
         let images = Arc::clone(&supervisor.spawner().unwrap().images);
         let before = match (image_identity(), images.admission()) {
@@ -1095,7 +1086,8 @@ mod tests {
         use sha2::{Digest, Sha256};
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([5; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([5; 32]))
+            .unwrap();
         let program = recording_worker();
         let image = fs::read(&program).unwrap();
         // What the release names: this program with its last byte changed.
@@ -1165,7 +1157,8 @@ mod tests {
         ] {
             let dir = short_tempdir();
             let keys = Arc::new(MemoryKeys::default());
-            keys.create(OFFICE, &DbKey::from_bytes([9; 32])).unwrap();
+            keys.create(OFFICE, &OfficeSecretsKey::from_bytes([9; 32]))
+                .unwrap();
             let mut supervisor = supervisor(dir.path(), recording_worker(), &keys);
             supervisor
                 .spawner
@@ -1213,27 +1206,27 @@ mod tests {
         assert!(!recorded_stdin(dir.path()).is_empty());
     }
 
-    /// Names the file where this test binary, run again as a v3 `--discard` server by
-    /// [`a_v3_discard_hands_off_no_key_and_deletes_it_only_after_discarded`], records its
-    /// handoff's `db_key` (`null` or `key`).
-    const V3_DISCARD_SEEN: &str = "ORG_HOST_TEST_V3_DISCARD_SEEN";
+    /// Names the file where this test binary, run again as a launch `--discard` server by
+    /// [`a_discard_hands_off_no_key_and_deletes_it_only_after_discarded`], records its
+    /// handoff's op (`discard`).
+    const DISCARD_SEEN: &str = "ORG_HOST_TEST_DISCARD_SEEN";
     const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 
-    /// Not a test: the v3 `--discard` server the supervisor test runs, as the real worker
+    /// Not a test: the launch `--discard` server the supervisor test runs, as the real worker
     /// speaks it (first line on stdin, the rendezvous connect, `ready_for_secrets`, the handoff
     /// header with no descriptor, then `discarded` on the stream). Without its variable it does
     /// nothing.
     #[test]
-    #[ignore = "run only as the v3 discard server of a supervisor test"]
-    fn v3_discard_server() {
-        use org_office_launch::v3::{self, HostFirstLine};
+    #[ignore = "run only as the launch discard server of a supervisor test"]
+    fn discard_server() {
+        use org_office_launch::HostFirstLine;
         use std::os::unix::net::UnixStream;
-        let Some(seen) = std::env::var_os(V3_DISCARD_SEEN) else {
+        let Some(seen) = std::env::var_os(DISCARD_SEEN) else {
             return;
         };
         let mut stdin = std::io::BufReader::new(std::io::stdin());
         let Ok(Some(HostFirstLine::Discard(office))) =
-            v3::read_first_line(&mut stdin, org_office_launch::FirstLine::Discard)
+            org_office_launch::read_first_line(&mut stdin, org_office_launch::FirstLine::Discard)
         else {
             std::process::exit(2);
         };
@@ -1241,29 +1234,29 @@ mod tests {
             std::process::exit(3);
         }
         let mut stream = UnixStream::connect(&office.rendezvous).unwrap();
-        let v3::Handoff::Discard { db_key, fds } =
+        let org_office_launch::Handoff::Discard { fds } =
             channels::tests::discard_worker_reads_handoff(&mut stream)
         else {
             std::process::exit(4);
         };
         assert!(fds.is_empty());
-        let note = if db_key.is_some() { "key\n" } else { "null\n" };
+        let note = "discard\n";
         fs::write(seen, note).unwrap();
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut stream,
-            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+            &org_office_launch::RendezvousEvent::Server(ServerEvent::Discarded),
         )
         .unwrap();
         std::process::exit(0);
     }
 
-    /// The whole v3 discard path: the spawner binds a rendezvous, writes the discard line, the
-    /// broker hands off a header whose `db_key` is `null` although the key store holds the
+    /// The whole discard path: the spawner binds a rendezvous, writes the discard line, the
+    /// broker hands off a header with no secret although the key store holds the
     /// office's key, the worker's `discarded` arrives on the stream, and only then is the key
     /// deleted. The server is a `#!` script that runs this test binary, so it is started by
     /// its path (the test admission): a system that executes verified bytes starts no script.
     #[test]
-    fn a_v3_discard_hands_off_no_key_and_deletes_it_only_after_discarded() {
+    fn a_discard_hands_off_no_key_and_deletes_it_only_after_discarded() {
         // Under /tmp: the rendezvous path must fit a socket address.
         let dir = tempfile::Builder::new()
             .prefix("sv")
@@ -1271,15 +1264,15 @@ mod tests {
             .unwrap();
         fs::create_dir(dir.path().join("run")).unwrap();
         let keys = Arc::new(MemoryKeys::default());
-        let key = DbKey::from_bytes([8; 32]);
+        let key = OfficeSecretsKey::from_bytes([8; 32]);
         keys.create(OFFICE, &key).unwrap();
         let seen = dir.path().join("seen");
-        // The host closes the server's stdout over v3, so libtest's output goes nowhere.
+        // The host closes the server's stdout over the rendezvous, so libtest's output goes nowhere.
         let program = script(
             dir.path(),
             "server",
             &format!(
-                "{V3_DISCARD_SEEN}='{}' exec '{}' --exact supervisor::tests::v3_discard_server \
+                "{DISCARD_SEEN}='{}' exec '{}' --exact supervisor::tests::discard_server \
                  --ignored --test-threads=1 >/dev/null",
                 seen.display(),
                 std::env::current_exe().unwrap().display()
@@ -1293,8 +1286,8 @@ mod tests {
         assert!(!keys.has(OFFICE), "the key outlived `discarded`");
         assert_eq!(
             fs::read_to_string(&seen).unwrap(),
-            "null\n",
-            "the discard handoff carried the key"
+            "discard\n",
+            "the server didn't read a discard handoff"
         );
         assert!(keys
             .calls()
@@ -1302,31 +1295,31 @@ mod tests {
             .any(|call| *call == (Op::Delete, OFFICE.to_owned())));
     }
 
-    /// Names the file where this test binary, run again as a v3 HQ `--create` server by
+    /// Names the file where this test binary, run again as a launch HQ `--create` server by
     /// [`an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted`], records its pid.
-    const V3_CREATE_PID: &str = "ORG_HOST_TEST_V3_CREATE_PID";
+    const CREATE_PID: &str = "ORG_HOST_TEST_CREATE_PID";
 
-    /// Not a test: a v3 HQ `--create` server, as the real worker speaks it (first line on
+    /// Not a test: a launch HQ `--create` server, as the real worker speaks it (first line on
     /// stdin, the rendezvous connect, `ready_for_secrets`, the handoff header, the transfer
     /// socket after its marker, the receipt), that reports `created` at once and keeps running.
     /// Without its variable it does nothing.
     #[test]
-    #[ignore = "run only as the v3 HQ create server of a supervisor test"]
-    fn v3_hq_create_server() {
-        use org_office_launch::v3::{self, HostFirstLine};
+    #[ignore = "run only as the launch HQ create server of a supervisor test"]
+    fn hq_create_server() {
+        use org_office_launch::HostFirstLine;
         use std::os::unix::net::UnixStream;
-        let Some(pid_file) = std::env::var_os(V3_CREATE_PID) else {
+        let Some(pid_file) = std::env::var_os(CREATE_PID) else {
             return;
         };
         fs::write(pid_file, std::process::id().to_string()).unwrap();
         let mut stdin = std::io::BufReader::new(std::io::stdin());
         let Ok(Some(HostFirstLine::Create(create))) =
-            v3::read_first_line(&mut stdin, org_office_launch::FirstLine::Create)
+            org_office_launch::read_first_line(&mut stdin, org_office_launch::FirstLine::Create)
         else {
             std::process::exit(2);
         };
         let mut stream = UnixStream::connect(&create.office.rendezvous).unwrap();
-        org_proto::frame::write_message(&mut stream, &v3::ReadyForSecrets).unwrap();
+        org_proto::frame::write_message(&mut stream, &org_office_launch::ReadyForSecrets).unwrap();
         let fence = std::sync::Mutex::new(());
         let mut receiver = org_socket::rights::StreamReceiver::new(stream.try_clone().unwrap());
         let mut receive = |count: usize, marker: bool| {
@@ -1334,8 +1327,8 @@ mod tests {
             loop {
                 let got = if marker {
                     receiver
-                        .receive_marker(count, v3::FD_MARKER, &fence)
-                        .map(|fds| (v3::FD_MARKER, fds))
+                        .receive_marker(count, org_office_launch::FD_MARKER, &fence)
+                        .map(|fds| (org_office_launch::FD_MARKER, fds))
                 } else {
                     receiver.receive_byte(count, &fence)
                 };
@@ -1358,16 +1351,18 @@ mod tests {
             }
             header.push(b);
         }
-        let Ok(v3::Handoff::Create { fds, .. }) = v3::decode_handoff(&header) else {
+        let Ok(org_office_launch::Handoff::Create { fds, .. }) =
+            org_office_launch::decode_handoff(&header)
+        else {
             std::process::exit(5);
         };
         crate::secrets::zero(&mut header);
         let (_, _transfer) = receive(fds.len(), true);
         drop(receiver);
         stream.set_nonblocking(false).unwrap();
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut stream,
-            &v3::RendezvousEvent::FdsReceived {
+            &org_office_launch::RendezvousEvent::FdsReceived {
                 of: "handoff".into(),
             },
         )
@@ -1380,9 +1375,9 @@ mod tests {
             &create.org_name,
             "2026-11-08T00:00:00.000Z",
         );
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut stream,
-            &v3::RendezvousEvent::Server(ServerEvent::Created { office }),
+            &org_office_launch::RendezvousEvent::Server(ServerEvent::Created { office }),
         )
         .unwrap();
         std::thread::sleep(Duration::from_secs(30));
@@ -1397,23 +1392,23 @@ mod tests {
     fn an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted() {
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
-        let key = DbKey::from_bytes([2; 32]);
+        let key = OfficeSecretsKey::from_bytes([2; 32]);
         keys.create(OFFICE, &key).unwrap();
         let pid_file = dir.path().join("pid");
-        // The host closes the server's stdout over v3, so libtest's output goes nowhere.
+        // The host closes the server's stdout over the rendezvous, so libtest's output goes nowhere.
         let program = script(
             dir.path(),
             "server",
             &format!(
-                "{V3_CREATE_PID}='{}' exec '{}' --exact supervisor::tests::v3_hq_create_server \
+                "{CREATE_PID}='{}' exec '{}' --exact supervisor::tests::hq_create_server \
                  --ignored --test-threads=1 >/dev/null",
                 pid_file.display(),
                 std::env::current_exe().unwrap().display()
             ),
         );
         let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
-        let first = org_office_launch::v3::CreateLine {
-            office: org_office_launch::v3::OfficeLine {
+        let first = org_office_launch::CreateLine {
+            office: org_office_launch::OfficeLine {
                 id_profile: None,
                 selected_writer_required: false,
                 instance_id: INSTANCE.into(),
@@ -1451,7 +1446,8 @@ mod tests {
     fn a_discard_whose_key_cant_be_read_starts_nothing_and_keeps_everything() {
         let dir = short_tempdir();
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([7; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([7; 32]))
+            .unwrap();
         let seen = dir.path().join("seen");
         let program = script(
             dir.path(),
@@ -1483,7 +1479,8 @@ mod tests {
             &format!("echo run >> '{}'", ran.display()),
         );
         let keys = Arc::new(MemoryKeys::default());
-        keys.create(OFFICE, &DbKey::from_bytes([3; 32])).unwrap();
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([3; 32]))
+            .unwrap();
         let supervisor = Supervisor::unregistered(SupervisorConfig {
             program,
             home: dir.path().to_path_buf(),
@@ -1491,7 +1488,7 @@ mod tests {
             logs_dir: dir.path().join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
-            keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+            keys: Arc::clone(&keys) as Arc<dyn OfficeSecretsKeys>,
             server_check: Arc::new(ServerCheck::Skip),
             sweep_orphans: false,
         });

@@ -205,6 +205,7 @@ impl Host {
             .record_registry_created()
             .map_err(|e| refused("recording the host registry", e))?;
 
+        let instance_name = instance.name().to_owned();
         let host = Self::start_with(
             config,
             Some(instance),
@@ -232,6 +233,8 @@ impl Host {
         }
         let installed = host.service.install_admin(Arc::new(admin));
         debug_assert!(installed, "the administrator service is installed once");
+        let named = host.service.install_instance_name(&instance_name);
+        debug_assert!(named, "the instance name is installed once");
         Ok(host)
     }
 }

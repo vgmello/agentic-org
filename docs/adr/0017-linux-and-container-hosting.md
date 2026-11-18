@@ -128,12 +128,18 @@ These settle what the decisions above left open. The detail is in the
     serve --setup <file>` in the foreground under `tini`, stopping within 8 seconds on
     `SIGTERM`. Setup's non-interactive configuration names the mode and the credential
     directory; nothing detects a container. `serve` and `setup` refuse to run as root.
-    The container runs as UID 61000 and listens with HTTPS on its network interface.
+    The container runs as UID 61000 and listens on its network interface.
     It starts with a plain `docker run` that publishes the port (amended by the
-    owner's direction of 2026-11-18): the image declares its two volumes, a
-    certificate is made for the instance at first start unless the operator supplies
-    one, and the repository's seccomp and AppArmor profiles are optional files that
-    let agents' vendor sandboxes create user namespaces. Its first registration link
+    owner's direction of 2026-11-18): the image declares its two volumes, and the
+    repository's seccomp and AppArmor profiles are optional files that let agents'
+    vendor sandboxes create user namespaces. **For now the container serves plain
+    HTTP** (owner, 2026-11-18: "http for now is fine"): a listener mode of its own,
+    allowed only in the foreground mode and chosen explicitly in the setup file; the
+    documented command publishes it on `127.0.0.1` only, and published on another
+    interface sign-in and sessions travel unencrypted. **Pending, recorded by the
+    owner the same day:** HTTPS for the container with a certificate the instance
+    makes for itself at first start, or one the operator supplies (implementation
+    plan, X7); the product serves no HTTPS on any system yet. Its first registration link
     comes only from
     `docker exec -u 0 <container> agentic-org admin reset --user <service user>`.
 11. **Recovery, reset and native clients on Linux.** A native client on `host.sock` is

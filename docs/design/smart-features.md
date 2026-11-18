@@ -24,6 +24,25 @@ definition of done, task breakdown, reply suggestions, summaries, release notes,
 asking the organization, staffing a team) are not part of v1. Each would need its
 own registry entry, schemas and authorized context.
 
+## Product-run judgments
+
+Two uses of the same tool-less run are not drafts for a person. They are judgments the
+product makes itself, defined by
+[ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md):
+
+- **The channel watcher's pass:** which new message in a channel responds to which
+  open question. Its only effect is entries in the askers' inboxes.
+- **`channel summarize`:** a short answer about a channel's recent messages, for the
+  agent that asked.
+
+They follow every principle below except the first: nothing waits for a person's
+confirmation, because nothing is saved as a fact. Each has its own registry entry and
+schema, accepts in its output only IDs it was given, and is unavailable until a
+runtime adapter exists, like the drafting features. Where principle 5 would refuse a
+whole run for an input shaped like a secret, the watcher's pass leaves that one
+message out and judges the rest. The "summaries" candidate named above, a summary
+drafted for a person, stays out of v1.
+
 ## Principles
 
 1. **Drafts only.** A result is a value the UI shows in an editable form. Nothing is
