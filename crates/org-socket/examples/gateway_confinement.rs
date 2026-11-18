@@ -377,8 +377,9 @@ mod vector {
             denied("connect over TCP", TcpStream::connect(&args[3]));
             denied("bind a TCP listener", TcpListener::bind("127.0.0.1:0"));
             // The program is this process's own executable, which the parent starts
-            // unconfined before and after (`starts_unconfined`): macOS 15 reports the
-            // sandbox's refusal as ENOENT, later systems as EPERM. It never ran.
+            // unconfined before and after (`starts_unconfined`). Observed: macOS 15 fails
+            // this confined start with ENOENT, later systems with EPERM. Either way it
+            // never ran.
             refused_with(
                 "start a program",
                 Command::new(own_program()).arg(NOOP).status(),
