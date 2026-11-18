@@ -1,13 +1,21 @@
 // The Offices screen's rules as pure functions (UX spec §3.1). Phase 1 shows HQ only and changes nothing:
 // adding and removing offices come with the local satellite in phase 2.
 import { isFormer } from '$lib/org/model';
-import type { Member, OfficeInfo, OfficeStatus, OfficeStatusReason, OrgSnapshot, StatusUpdate } from '$lib/proto';
+import type {
+	Member,
+	OfficeInfo,
+	OfficeStatus,
+	OfficeStatusReason,
+	OrgSnapshot,
+	StatusUpdate
+} from '$lib/proto';
 
 const THIS_MAC = 'This Mac';
 
 export const isHq = (o: OfficeInfo) => o.role === 'hq';
 // On this Mac: it has a local endpoint (the host label is the fallback).
-export const isHere = (o: Pick<OfficeInfo, 'host' | 'endpoint'>) => !!o.endpoint || o.host === THIS_MAC;
+export const isHere = (o: Pick<OfficeInfo, 'host' | 'endpoint'>) =>
+	!!o.endpoint || o.host === THIS_MAC;
 
 /** The owner-facing word for an office's role: an unrecognised role is never described as HQ or as an office that keeps a copy. */
 export function roleInfo(o: OfficeInfo): { label: string; description: string } {
@@ -22,7 +30,15 @@ export function roleInfo(o: OfficeInfo): { label: string; description: string } 
 }
 
 /** An icon name for a status (see `statusIcon`). */
-export type StatusIcon = 'circle' | 'circle-outline' | 'loader' | 'circle-x' | 'circle-arrow-up' | 'mail' | 'circle-help' | 'wifi-off';
+export type StatusIcon =
+	| 'circle'
+	| 'circle-outline'
+	| 'loader'
+	| 'circle-x'
+	| 'circle-arrow-up'
+	| 'mail'
+	| 'circle-help'
+	| 'wifi-off';
 
 /**
  * What the app has verified about the office it is connected to (OFC-12). Until the host reports status live
@@ -39,21 +55,40 @@ export type DisplayStatus = OfficeStatus | 'unreachable' | 'checking' | 'status_
  * not enough: a stopped office under a running host must not read Online, OFC-12). If it answers but reports another
  * status (Starting, Stopped…), that status is shown. Any other office reads "Status unknown".
  */
-export function displayStatus(connected: boolean, check: LiveCheck, reported?: OfficeStatus, capabilities?: string[]): DisplayStatus {
+export function displayStatus(
+	connected: boolean,
+	check: LiveCheck,
+	reported?: OfficeStatus,
+	capabilities?: string[]
+): DisplayStatus {
 	if (!connected) return 'status_unknown';
 	// A host whose hello doesn't list `office.status_changed` is not live: what it reported is not trusted (spec rev 9).
-	if (check === 'up' && capabilities && !capabilities.includes('office.status_changed')) return 'status_unknown';
+	if (check === 'up' && capabilities && !capabilities.includes('office.status_changed'))
+		return 'status_unknown';
 	// An office on this Mac never reads Offline, only Stopped (spec §3.1); the connected office is always on this Mac.
-	if (check === 'up') return reported === 'offline' ? 'unavailable' : reported && reported !== 'active' ? reported : 'active';
+	if (check === 'up')
+		return reported === 'offline'
+			? 'unavailable'
+			: reported && reported !== 'active'
+				? reported
+				: 'active';
 	return check === 'down' ? 'unreachable' : 'checking';
 }
 
 /** `displayStatus` for an office in a list: connected means it is the office the app is connected to. */
-export const displayStatusFor = (officeId: string, connectedOfficeId: string, check: LiveCheck, reported?: OfficeStatus, capabilities?: string[]): DisplayStatus =>
-	displayStatus(officeId === connectedOfficeId, check, reported, capabilities);
+export const displayStatusFor = (
+	officeId: string,
+	connectedOfficeId: string,
+	check: LiveCheck,
+	reported?: OfficeStatus,
+	capabilities?: string[]
+): DisplayStatus => displayStatus(officeId === connectedOfficeId, check, reported, capabilities);
 
 /** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
-export function statusInfo(status: DisplayStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {
+export function statusInfo(status: DisplayStatus | undefined): {
+	label: string;
+	tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad';
+} {
 	switch (status) {
 		case 'active':
 			return { label: 'Online', tone: 'ok' };
@@ -81,14 +116,22 @@ export function statusInfo(status: DisplayStatus | undefined): { label: string; 
  * lists every organization on this Mac, so only this one's offices are kept); one office's record replaces its
  * older one, or joins the list when it is new to this organization. Another organization's office changes nothing.
  */
-export function applyStatusUpdate(known: OfficeInfo[], organizationId: string, update: StatusUpdate): OfficeInfo[] {
-	if (update.kind === 'offices') return update.offices.filter((o) => o.organization_id === organizationId);
+export function applyStatusUpdate(
+	known: OfficeInfo[],
+	organizationId: string,
+	update: StatusUpdate
+): OfficeInfo[] {
+	if (update.kind === 'offices')
+		return update.offices.filter((o) => o.organization_id === organizationId);
 	const { office } = update;
 	if (office.organization_id !== organizationId) return known;
-	return known.some((o) => o.id === office.id) ? known.map((o) => (o.id === office.id ? office : o)) : [...known, office];
+	return known.some((o) => o.id === office.id)
+		? known.map((o) => (o.id === office.id ? office : o))
+		: [...known, office];
 }
 
-const byName = (a: OfficeInfo, b: OfficeInfo) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+const byName = (a: OfficeInfo, b: OfficeInfo) =>
+	a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
 
 /**
  * The list order (OFC-1): HQ, then this Mac's other offices, then the rest, each A–Z, then
@@ -110,7 +153,9 @@ export const agentsIn = (s: OrgSnapshot, officeId: string): Member[] =>
 /** Agents placed in an office that isn't in the list: they are "unplaced" (spec §6.4). */
 export function unplacedAgents(s: OrgSnapshot, offices: OfficeInfo[]): Member[] {
 	const ids = new Set(offices.map((o) => o.id));
-	return s.members.filter((m) => m.kind === 'agent' && !isFormer(m) && (!m.office_id || !ids.has(m.office_id)));
+	return s.members.filter(
+		(m) => m.kind === 'agent' && !isFormer(m) && (!m.office_id || !ids.has(m.office_id))
+	);
 }
 
 /** "This Mac", "invitation" or where it runs: the line under an office's name (OFC-1). */
@@ -147,12 +192,22 @@ export function statusIcon(status: DisplayStatus | undefined): StatusIcon {
  * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
  * agents it has. `agents` is undefined while they are still being counted.
  */
-export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined, why?: string): string {
+export function rowLabel(
+	o: OfficeInfo,
+	agents: number | undefined,
+	here: boolean,
+	status: DisplayStatus | undefined,
+	why?: string
+): string {
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
 	// An office that can't be reached shows "Can't reach this office" where its location was: the label says the same.
 	// Where it runs always stays; a stopped office's reason follows its status (spec §6.1).
-	parts.push(status === 'unreachable' ? "Can't reach this office" : secondaryText(o) + (here ? " (you're here)" : ''));
+	parts.push(
+		status === 'unreachable'
+			? "Can't reach this office"
+			: secondaryText(o) + (here ? " (you're here)" : '')
+	);
 	parts.push(statusInfo(status).label + (why ? `: ${why}` : ''));
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 	parts.push('opens details');
@@ -173,7 +228,10 @@ const REASON_COPY: Record<Exclude<OfficeStatusReason, 'unsupported_version'>, st
 	unknown: "It stopped for a reason this version doesn't know"
 };
 
-type OfficeStop = Pick<OfficeInfo, 'host' | 'endpoint' | 'status' | 'status_reason' | 'next_restart_at'>;
+type OfficeStop = Pick<
+	OfficeInfo,
+	'host' | 'endpoint' | 'status' | 'status_reason' | 'next_restart_at'
+>;
 export type RestartDeadlineSample = { deadline: string; observedAt: number };
 
 /** Shared reason copy: the rendered host may be styled, while the accessible name stays plain text. */
@@ -212,7 +270,11 @@ export function whyForLabel(o: OfficeStop, now: Date): string | undefined {
 	if (n === undefined) return lower;
 	// A restart a minute or more away is read as a clock time, which does not tick; a nearer one as "shortly".
 	if (n < 60) return `${lower}, restarting shortly`;
-	const at = new Date(Date.parse(o.next_restart_at!)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+	const at = new Date(Date.parse(o.next_restart_at!)).toLocaleTimeString([], {
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false
+	});
 	return `${lower}, restarting at ${at}`;
 }
 
@@ -220,7 +282,8 @@ export function whyForLabel(o: OfficeStop, now: Date): string | undefined {
 export function secondsUntil(nextRestartAt: string | undefined, now: Date): number | undefined {
 	if (!nextRestartAt) return undefined;
 	// RFC 3339 with a time zone only: Date.parse alone accepts junk like "5".
-	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(nextRestartAt)) return undefined;
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(nextRestartAt))
+		return undefined;
 	const t = Date.parse(nextRestartAt);
 	return Number.isNaN(t) ? undefined : Math.max(0, Math.floor((t - now.getTime()) / 1000));
 }
@@ -234,7 +297,11 @@ export function whyStopped(o: OfficeStop, now: Date): string | undefined {
 	if (o.status !== 'offline' && o.status !== 'unavailable') return undefined;
 	if (o.status_reason === 'unsupported_version')
 		return `${repairReasonCopy.before}${repairLocation(o.host, o.endpoint)}${repairReasonCopy.after}`;
-	const base = o.status_reason ? (Object.hasOwn(REASON_COPY, o.status_reason) ? REASON_COPY[o.status_reason] : REASON_COPY.unknown) : "It isn't running";
+	const base = o.status_reason
+		? Object.hasOwn(REASON_COPY, o.status_reason)
+			? REASON_COPY[o.status_reason]
+			: REASON_COPY.unknown
+		: "It isn't running";
 	const n = secondsUntil(o.next_restart_at, now);
 	if (n === undefined) return base;
 	const action = o.status_reason === 'in_use' ? 'Trying again' : 'Restarting';
@@ -243,7 +310,12 @@ export function whyStopped(o: OfficeStop, now: Date): string | undefined {
 }
 
 /** What "Copy details" puts on the clipboard (spec §3.3): the office, its status and reason, the time and the app version. Never keys or tokens. */
-export function copyDetails(o: OfficeInfo, statusLabel: string, now: Date, appVersion: string): string {
+export function copyDetails(
+	o: OfficeInfo,
+	statusLabel: string,
+	now: Date,
+	appVersion: string
+): string {
 	return [
 		`Office: ${o.name}`,
 		`Id: ${o.id}`,
@@ -263,17 +335,24 @@ export interface RestartAction {
 	note?: string;
 }
 
-export function restartAction(o: Pick<OfficeInfo, 'status' | 'status_reason'>, capabilities?: string[]): RestartAction {
+export function restartAction(
+	o: Pick<OfficeInfo, 'status' | 'status_reason'>,
+	capabilities?: string[]
+): RestartAction {
 	if (o.status !== 'offline' && o.status !== 'unavailable') return {};
 	// The contract refuses a restart only for these two reasons.
 	if (o.status_reason === 'unsupported_version' || o.status_reason === 'invalid_request') return {};
-	if (capabilities && !capabilities.includes('office.restart')) return { note: 'Update Agentic Org to restart offices from here' };
+	if (capabilities && !capabilities.includes('office.restart'))
+		return { note: 'Update Agentic Org to restart offices from here' };
 	if (o.status_reason === 'stopped_by_owner') return { label: 'Start office' };
 	return { label: 'Restart office' };
 }
 
 /** What `office.restart` answered, in the owner's words (spec §3.3); `ignore` is an answer that is no error. */
-export function restartOutcome(code: string): { kind: 'wait' | 'unsupported' | 'refresh' | 'error'; message?: string } {
+export function restartOutcome(code: string): {
+	kind: 'wait' | 'unsupported' | 'refresh' | 'error';
+	message?: string;
+} {
 	switch (code) {
 		case 'conflict':
 			return { kind: 'wait' };
@@ -285,7 +364,10 @@ export function restartOutcome(code: string): { kind: 'wait' | 'unsupported' | '
 		case 'not_authorized':
 			return { kind: 'error', message: "You can't restart this office from here." };
 		case 'not_ready':
-			return { kind: 'error', message: 'The office host is still starting. Try again in a moment.' };
+			return {
+				kind: 'error',
+				message: 'The office host is still starting. Try again in a moment.'
+			};
 		default:
 			return { kind: 'error', message: "The office couldn't be restarted. Try again in a moment." };
 	}

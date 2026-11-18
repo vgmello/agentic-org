@@ -241,7 +241,8 @@ export function sessionTestMiddleware() {
 				return;
 			}
 			if (url.pathname === '/api/v1/organizations') {
-				if (req.method === 'GET' && url.search === '') respond({ organizations: state.organizations });
+				if (req.method === 'GET' && url.search === '')
+					respond({ organizations: state.organizations });
 				else json(invalidRequest, 400);
 				return;
 			}

@@ -516,11 +516,7 @@
 			]
 		},
 		"org-lifecycle": {
-			"specs": [
-				"retired-import.spec.ts",
-				"session-foundation.spec.ts",
-				"accessibility.spec.ts"
-			],
+			"specs": ["retired-import.spec.ts", "session-foundation.spec.ts", "accessibility.spec.ts"],
 			"sources": ["src/routes/(onboarding)/**", "src/lib/create-flow.ts", "src/lib/open-flow.ts"]
 		},
 		"production": {

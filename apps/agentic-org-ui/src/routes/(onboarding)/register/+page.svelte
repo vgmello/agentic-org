@@ -1,9 +1,15 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { onMount, tick } from 'svelte';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
-	import { credentialCopy, describeCredentialFailure, LINK_USED_COPY, type CredentialFailure } from '$lib/platform/auth/credential-copy';
+	import {
+		credentialCopy,
+		describeCredentialFailure,
+		LINK_USED_COPY,
+		type CredentialFailure
+	} from '$lib/platform/auth/credential-copy';
 	import { checkRegistration } from '$lib/platform/auth/credential-rules';
 	import { takeLinkSecret } from '$lib/platform/auth/link-fragment';
 	import PasswordField from '$lib/platform/auth/PasswordField.svelte';
@@ -52,7 +58,7 @@
 			await appSession.controller().register({ link: secret, login, password });
 			secret = undefined;
 			password = again = '';
-			await goto('/welcome', { replaceState: true });
+			await goto(resolve('/welcome'), { replaceState: true });
 		} catch (error) {
 			const result = describeCredentialFailure(error, Date.now(), 'register');
 			if (result.kind === 'field') {
@@ -74,21 +80,43 @@
 
 {#if !linkPresent}
 	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">{LINK_USED_COPY}</h1>
-	<p class="mt-4 text-sm/6 text-gray-300">For the administrator: on the HQ machine, run <code class="text-gray-100">agentic-org admin reset --name &lt;instance&gt;</code>.</p>
-	<p class="mt-2 text-sm/6 text-gray-300">For anyone else: ask the owner of your organization for a new link.</p>
-	<a href="/sign-in" class="mt-6 inline-block text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300">Sign in</a>
+	<p class="mt-4 text-sm/6 text-gray-300">
+		For the administrator: on the HQ machine, run <code class="text-gray-100"
+			>agentic-org admin reset --name &lt;instance&gt;</code
+		>.
+	</p>
+	<p class="mt-2 text-sm/6 text-gray-300">
+		For anyone else: ask the owner of your organization for a new link.
+	</p>
+	<a
+		href={resolve('/sign-in')}
+		class="mt-6 inline-block text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300"
+		>Sign in</a
+	>
 {:else}
-	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">Create your account on HQ at {address}</h1>
+	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">
+		Create your account on HQ at {address}
+	</h1>
 	<p class="mt-2 text-sm/6 text-gray-400">It will be this instance's administrator.</p>
 
 	<div aria-live="assertive">
 		{#if failure}
-			<div id="register-error" role="alert" class="mt-6 border-l-4 border-red-400 bg-red-500/10 p-3 text-sm/6 text-red-200">
+			<div
+				id="register-error"
+				role="alert"
+				class="mt-6 border-l-4 border-red-400 bg-red-500/10 p-3 text-sm/6 text-red-200"
+			>
 				<p>{failure.message}</p>
 				{#if failure.kind === 'out_of_date'}
-					<button type="button" class="mt-2 font-semibold underline" onclick={() => location.reload()}>Reload</button>
+					<button
+						type="button"
+						class="mt-2 font-semibold underline"
+						onclick={() => location.reload()}>Reload</button
+					>
 				{:else}
-					<button type="submit" form="register-form" class="mt-2 font-semibold underline">Try again</button>
+					<button type="submit" form="register-form" class="mt-2 font-semibold underline"
+						>Try again</button
+					>
 				{/if}
 			</div>
 		{/if}
@@ -111,8 +139,22 @@
 			/>
 			{#if loginError}<p id="login-error" class="mt-2 text-sm/6 text-red-400">{loginError}</p>{/if}
 		</div>
-		<PasswordField id="password" label="Password (at least 12 characters)" autocomplete="new-password" bind:value={password} bind:input={passwordInput} error={passwordError} readonly={busy} />
-		<PasswordField id="password-again" label="Password again" autocomplete="new-password" bind:value={again} readonly={busy} />
+		<PasswordField
+			id="password"
+			label="Password (at least 12 characters)"
+			autocomplete="new-password"
+			bind:value={password}
+			bind:input={passwordInput}
+			error={passwordError}
+			readonly={busy}
+		/>
+		<PasswordField
+			id="password-again"
+			label="Password again"
+			autocomplete="new-password"
+			bind:value={again}
+			readonly={busy}
+		/>
 		<button
 			type="submit"
 			disabled={busy}

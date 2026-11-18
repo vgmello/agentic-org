@@ -21,6 +21,8 @@ const view = {
 	server_time_ms: 100,
 	idle_expires_at: 'sooner'
 };
+/** A session view the gateway returns with a freshly rotated proof. */
+type Rotated = typeof view & { proof: string };
 const unauthorized = () =>
 	new SessionRequestError(401, {
 		code: 'not_authorized',
@@ -48,17 +50,22 @@ function setup(initial: SessionRecord | undefined = record) {
 	};
 	const gateway = {
 		version: vi.fn(async () => ({ api_version: 1, contract_revision: 2 })),
-		get: vi.fn(async (_proof: string) => view),
-		signIn: vi.fn(async (_credentials: unknown, _signal?: AbortSignal) => ({
+		get: vi.fn<(proof: string) => Promise<typeof view>>(async () => view),
+		signIn: vi.fn<(credentials: unknown, signal?: AbortSignal) => Promise<Rotated>>(async () => ({
 			...view,
 			proof: rotated
 		})),
-		register: vi.fn(async (_request: unknown, _signal?: AbortSignal) => ({
+		register: vi.fn<(request: unknown, signal?: AbortSignal) => Promise<Rotated>>(async () => ({
 			...view,
 			proof: rotated
 		})),
-		refresh: vi.fn(async (_proof: string, _signal?: AbortSignal) => ({ ...view, proof: rotated })),
-		signOut: vi.fn(async (_proof: string, _signal?: AbortSignal) => ({}))
+		refresh: vi.fn<(proof: string, signal?: AbortSignal) => Promise<Rotated>>(async () => ({
+			...view,
+			proof: rotated
+		})),
+		signOut: vi.fn<(proof: string, signal?: AbortSignal) => Promise<Record<string, never>>>(
+			async () => ({})
+		)
 	};
 	const listeners = new Set<EventListenerOrEventListenerObject>();
 	const postMessage = vi.fn();
@@ -469,7 +476,10 @@ describe('P6a session ownership', () => {
 		expect(s.stored()).toMatchObject({ proof: rotated, account_id: view.account.id });
 		expect(s.states.at(-1)).toMatchObject({ kind: 'signed-in' });
 		expect(JSON.stringify(s.states.at(-1))).not.toContain(rotated);
-		expect(s.postMessage).toHaveBeenLastCalledWith({ kind: 'signed-in', account_id: view.account.id });
+		expect(s.postMessage).toHaveBeenLastCalledWith({
+			kind: 'signed-in',
+			account_id: view.account.id
+		});
 	});
 	it('retries exactly one READ after a proof change, preserving the path and signal', async () => {
 		const s = setup();

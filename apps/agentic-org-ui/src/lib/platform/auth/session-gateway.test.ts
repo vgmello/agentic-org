@@ -73,19 +73,28 @@ describe('P6a fixed session operations', () => {
 	});
 	it('B6 register refuses a request without a link before any dispatch', async () => {
 		const { gateway, fetch } = setup({ result: { ...view, proof } });
-		await expect(gateway.register({ link: '', login: 'alex', password: 'long-enough-pw' })).rejects.toThrow();
+		await expect(
+			gateway.register({ link: '', login: 'alex', password: 'long-enough-pw' })
+		).rejects.toThrow();
 		expect(fetch).not.toHaveBeenCalled();
 	});
 	it('B6 errors carry the credential field and rule but never the server message', async () => {
 		const { gateway } = setup(
-			{ error: { code: 'invalid_request', message: 'server words', field: 'login', rule: 'taken' } },
+			{
+				error: { code: 'invalid_request', message: 'server words', field: 'login', rule: 'taken' }
+			},
 			400
 		);
 		const error = await gateway
 			.register({ link: 'x', login: 'alex', password: 'long-enough-pw' })
 			.catch((e: unknown) => e);
 		expect(error).toBeInstanceOf(SessionRequestError);
-		expect(error).toMatchObject({ status: 400, code: 'invalid_request', field: 'login', rule: 'taken' });
+		expect(error).toMatchObject({
+			status: 400,
+			code: 'invalid_request',
+			field: 'login',
+			rule: 'taken'
+		});
 		expect(String((error as Error).message)).not.toContain('server words');
 	});
 	it('does not publish an unsolicited proof from GET session', async () => {
