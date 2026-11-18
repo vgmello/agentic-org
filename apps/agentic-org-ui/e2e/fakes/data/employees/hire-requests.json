@@ -1,0 +1,45 @@
+[
+ {
+  "id": "h4",
+  "state": "drafting",
+  "name": "Marlowe",
+  "role": "QA engineer",
+  "requestedBy": "you",
+  "homeTeam": "web",
+  "agoMin": 15
+ },
+ {
+  "id": "h3",
+  "state": "hiring",
+  "name": "Rowan",
+  "role": "Data analyst",
+  "requestedBy": "sam",
+  "homeTeam": "platform",
+  "agoMin": 90,
+  "failedStep": "couldn't register with messaging",
+  "doneSteps": [
+   "Created Rowan's record",
+   "Set up the home folder"
+  ]
+ },
+ {
+  "id": "h2",
+  "state": "hired",
+  "name": "Quinn Adeyemi",
+  "role": "Researcher",
+  "requestedBy": "you",
+  "homeTeam": "eng",
+  "agoMin": 4320,
+  "employeeId": "quinn"
+ },
+ {
+  "id": "h1",
+  "state": "withdrawn",
+  "name": "Sasha",
+  "role": "Support agent",
+  "requestedBy": "juno",
+  "homeTeam": "design",
+  "agoMin": 8000,
+  "closedReason": "Withdrawn by Juno Park"
+ }
+]
