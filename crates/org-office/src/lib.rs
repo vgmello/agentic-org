@@ -17,9 +17,15 @@ mod organization;
 pub use organization::admission::{OwnerAccount, OwnerAuthority};
 pub use organization::{activity, directory};
 /// The organization family on the office store (`docs/design/office-store.md`): its
-/// records and codec.
+/// records and codec, its two ports and its projector.
 pub mod organization_family {
+    pub use crate::organization::ports::{
+        OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
+    };
+    pub use crate::organization::projector::OrganizationFiles;
     pub use crate::organization::records;
+    #[cfg(any(test, feature = "testkit"))]
+    pub use crate::organization::testkit;
 }
 mod error;
 mod key;

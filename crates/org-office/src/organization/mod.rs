@@ -8,9 +8,13 @@ mod canonical_directory;
 pub mod directory;
 mod people;
 mod policy;
+pub mod ports;
+pub mod projector;
 pub mod records;
 mod status;
 mod structure;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 mod view;
 
 pub use apply::{apply, UnknownChange};
