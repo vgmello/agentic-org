@@ -1,11 +1,16 @@
-//! The macOS socket adapter: `getpeereid` and the fenced `FD_CLOEXEC` after `recvmsg`.
+//! The macOS socket adapter: `getpeereid`, the fenced `FD_CLOEXEC` after `recvmsg`,
+//! and listener state from `proc_pidfdinfo`.
 
+mod listening;
 #[cfg(test)]
 mod tests;
 
 use std::io;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::sync::{Mutex, MutexGuard};
+
+/// A peer-address query on a stream whose peer has closed fails with `EINVAL`.
+pub(super) const PEER_CLOSED_IS_EINVAL: bool = true;
 
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     let (mut uid, mut gid) = (0, 0);
@@ -52,4 +57,12 @@ impl DescriptorReceive<'_> {
 /// macOS has no `MSG_NOSIGNAL`: the caller ignores `SIGPIPE` or sets `SO_NOSIGPIPE`.
 pub(super) fn send_flags() -> io::Result<libc::c_int> {
     Ok(libc::MSG_DONTWAIT)
+}
+
+pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
+    listening::listening(fd)
+}
+
+fn invalid(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
 }

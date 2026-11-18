@@ -1,4 +1,6 @@
-use std::os::unix::net::UnixStream;
+use std::cell::Cell;
+use std::net::TcpListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::TryLockError;
 
 use super::*;
@@ -80,4 +82,88 @@ fn control_length_is_the_message_field() {
 #[test]
 fn a_send_is_nonblocking_and_has_no_sigpipe_flag() {
     assert_eq!(send_flags().unwrap(), libc::MSG_DONTWAIT);
+}
+
+#[test]
+fn listener_state_is_read_for_unix_and_inet_sockets() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener = UnixListener::bind(directory.path().join("listener")).unwrap();
+    assert!(listening(listener.as_raw_fd()).unwrap());
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    assert!(!listening(stream.as_raw_fd()).unwrap());
+    let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+    assert!(listening(tcp.as_raw_fd()).unwrap());
+}
+
+// Test-only syscall interposition leaves the live fd open, so the count guard is
+// observed on sockets whose genuine metadata would have answered.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fault {
+    Failed,
+    Negative,
+    Short,
+    Long,
+}
+thread_local! { static FAULT: Cell<Option<Fault>> = const { Cell::new(None) }; }
+fn injected(fault: Fault) -> bool {
+    let fail = FAULT.with(|value| value.get() == Some(fault));
+    if fail {
+        // SAFETY: no descriptor is closed; this sets a genuine thread-local EBADF.
+        assert_eq!(unsafe { libc::close(-1) }, -1);
+    }
+    fail
+}
+
+pub(super) unsafe fn proc_pidfdinfo(
+    pid: libc::c_int,
+    fd: libc::c_int,
+    flavor: libc::c_int,
+    buffer: *mut libc::c_void,
+    size: libc::c_int,
+) -> libc::c_int {
+    for (fault, result) in [
+        (Fault::Failed, 0),
+        (Fault::Negative, -1),
+        (Fault::Short, size - 1),
+        (Fault::Long, size + 1),
+    ] {
+        if injected(fault) {
+            // Keep genuine metadata in the buffer so a deleted count guard is
+            // not masked by the listener's later state check.
+            // SAFETY: these are the unchanged live output buffers from the helper.
+            assert_eq!(
+                unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) },
+                size
+            );
+            return result;
+        }
+    }
+    // SAFETY: the helper supplies an owned fd and its exact SDK-aligned writable buffer.
+    unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) }
+}
+
+// Moved from org-socket's `fault-proc-*` and `tcp-fault-proc-*` adoption cases: a
+// connected stream (genuinely not listening) and a TCP listener (genuinely listening)
+// are both refused when the reply's size is wrong, whichever way a missing guard
+// would have answered.
+#[test]
+fn an_incomplete_socket_information_reply_is_refused_whatever_the_buffer_holds() {
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    for fd in [stream.as_raw_fd(), listener.as_raw_fd()] {
+        for fault in [
+            Fault::Failed,
+            Fault::Negative,
+            Fault::Short,
+            Fault::Long,
+        ] {
+            FAULT.with(|slot| slot.set(Some(fault)));
+            let result = listening(fd);
+            FAULT.with(|slot| slot.set(None));
+            let error = result.expect_err("an incomplete reply was accepted");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        }
+    }
+    assert!(!listening(stream.as_raw_fd()).unwrap());
+    assert!(listening(listener.as_raw_fd()).unwrap());
 }

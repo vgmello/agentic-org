@@ -69,9 +69,7 @@ crates/org-socket/examples/gateway_confinement.rs 3
 crates/org-socket/src/confinement.rs 12
 crates/org-socket/src/image.rs 8
 crates/org-socket/src/rights/send/tests.rs 2
-crates/org-socket/src/rights/stream.rs 5
-crates/org-socket/src/rights/stream/tests.rs 27
-crates/org-socket/src/rights/stream/tests/typed.rs 7
+crates/org-socket/src/rights/stream/tests.rs 10
 crates/org-socket/src/rights/tests.rs 6
 crates/org-socket/src/rights/tests/bounded.rs 5
 crates/org-socket/tests/stream_adoption.rs 1

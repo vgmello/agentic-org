@@ -1,5 +1,5 @@
-//! The refusing socket adapter: no peer credential and no descriptor passing. Nothing
-//! here falls back to another system's flags or checks.
+//! The refusing socket adapter: no peer credential, no descriptor passing and no
+//! socket-shape query. Nothing here falls back to another system's flags or checks.
 
 use std::convert::Infallible;
 use std::io;
@@ -8,6 +8,9 @@ use std::os::fd::{OwnedFd, RawFd};
 use std::sync::Mutex;
 
 use crate::Refused;
+
+/// No peer-query error is accepted: the caller refuses the descriptor.
+pub(super) const PEER_CLOSED_IS_EINVAL: bool = false;
 
 pub(super) fn peer_uid(_fd: RawFd) -> io::Result<u32> {
     Err(Refused::unsupported("socket").into())
@@ -45,11 +48,15 @@ pub(super) fn send_flags() -> io::Result<libc::c_int> {
     Err(Refused::unsupported("socket").into())
 }
 
+pub(super) fn listening(_fd: RawFd) -> io::Result<bool> {
+    Err(Refused::unsupported("socket").into())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io;
     use std::os::fd::AsRawFd;
-    use std::os::unix::net::UnixStream;
+    use std::os::unix::net::{UnixListener, UnixStream};
     use std::sync::{Mutex, TryLockError};
 
     use super::*;
@@ -90,4 +97,24 @@ mod tests {
         assert_refused(send_flags());
     }
 
+    #[test]
+    fn listener_state_is_refused_for_listeners_streams_and_bad_descriptors() {
+        let directory = tempfile::tempdir().unwrap();
+        let listener = UnixListener::bind(directory.path().join("listener")).unwrap();
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        assert_refused(listening(listener.as_raw_fd()));
+        assert_refused(listening(stream.as_raw_fd()));
+        assert_refused(listening(-1));
+    }
+
+    #[test]
+    fn no_peer_query_error_is_accepted_as_a_closed_peer() {
+        for errno in [libc::EINVAL, libc::ENOTCONN, libc::EBADF] {
+            let error = io::Error::from_raw_os_error(errno);
+            assert!(!super::super::peer_closed_when(
+                &error,
+                PEER_CLOSED_IS_EINVAL
+            ));
+        }
+    }
 }

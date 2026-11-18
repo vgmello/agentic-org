@@ -85,16 +85,7 @@ fn typed_child() {
             "kind" => Fault::Kind,
             "family" => Fault::Family,
             "flags" => Fault::Flags,
-            #[cfg(target_os = "linux")]
             "listener" => Fault::Listener,
-            #[cfg(target_os = "macos")]
-            "proc-error" => Fault::ProcError,
-            #[cfg(target_os = "macos")]
-            "proc-negative" => Fault::ProcNegative,
-            #[cfg(target_os = "macos")]
-            "proc-short" => Fault::ProcShort,
-            #[cfg(target_os = "macos")]
-            "proc-long" => Fault::ProcLong,
             _ => panic!("unknown fault {name}"),
         };
         FAULT.with(|slot| slot.set(Some(fault)));
@@ -156,7 +147,7 @@ fn check_flags_and_drop(descriptor: OwnedFd, raw: RawFd, flags: libc::c_int) {
 fn check_refusal<T: std::fmt::Debug>(result: io::Result<T>, raw: RawFd, case: &str) {
     let error = result.expect_err("wrong descriptor admitted by typed adoption");
     FAULT.with(|slot| slot.set(None));
-    if case.contains("-fault-") && !case.contains("-fault-proc-") {
+    if case.contains("-fault-") {
         assert_eq!(error.raw_os_error(), Some(libc::EBADF));
     } else {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
@@ -203,12 +194,7 @@ fn each_typed_metadata_error_refuses_and_drops_the_owned_descriptor() {
             run_typed(&format!("{adapter}-fault-{fault}"));
         }
     }
-    #[cfg(target_os = "linux")]
     run_typed("tcp-fault-listener");
-    #[cfg(target_os = "macos")]
-    for fault in ["proc-error", "proc-negative", "proc-short", "proc-long"] {
-        run_typed(&format!("tcp-fault-{fault}"));
-    }
 }
 
 #[test]

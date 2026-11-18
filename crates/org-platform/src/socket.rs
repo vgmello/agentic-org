@@ -11,6 +11,10 @@
 //!   the caller's spawn fence is held from before `recvmsg` until every received
 //!   descriptor has `FD_CLOEXEC`.
 //! - [`send_flags`]: Linux adds `MSG_NOSIGNAL`; macOS has no such flag.
+//! - [`listening`]: macOS reads the socket's options through `proc_pidfdinfo`, which
+//!   also sees a socket that was connected before it listened; Linux reads
+//!   `SO_ACCEPTCONN`.
+//! - [`peer_closed`]: which peer-query error means only that the peer already closed.
 //!
 //! Descriptors are passed as raw numbers. Every function here only queries the
 //! descriptor: none closes it, keeps it or changes its flags, and a number that is
@@ -103,6 +107,29 @@ impl DescriptorReceive<'_> {
 /// `SIGPIPE`.
 pub fn send_flags() -> io::Result<libc::c_int> {
     native::send_flags()
+}
+
+/// Whether the socket `fd` is listening for connections.
+pub fn listening(fd: RawFd) -> io::Result<bool> {
+    native::listening(fd)
+}
+
+/// Whether `error`, from a peer-address query on a Unix stream socket, means only
+/// that the peer has already closed, so the stream may still be adopted and read to
+/// its end.
+///
+/// Ask only after [`listening`] has returned `false` for the socket: on macOS a
+/// listener answers the query with the same error. Where the system has no such
+/// error, or no adapter, this is `false` and the caller refuses the descriptor.
+pub fn peer_closed(error: &io::Error) -> bool {
+    peer_closed_when(error, native::PEER_CLOSED_IS_EINVAL)
+}
+
+// Both platforms reject listeners first, including macOS sockets that were
+// connected before listening. Only then may macOS peer-gone EINVAL be adopted.
+// Linux never accepts peer-query errors.
+fn peer_closed_when(error: &io::Error, einval_means_closed: bool) -> bool {
+    einval_means_closed && error.raw_os_error() == Some(libc::EINVAL)
 }
 
 #[cfg(test)]

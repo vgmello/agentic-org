@@ -1,12 +1,22 @@
-//! The GNU/Linux socket adapter: `SO_PEERCRED`, `MSG_CMSG_CLOEXEC` and `MSG_NOSIGNAL`.
+//! The GNU/Linux socket adapter: `SO_PEERCRED`, `MSG_CMSG_CLOEXEC`, `MSG_NOSIGNAL`
+//! and `SO_ACCEPTCONN`.
 
 #[cfg(test)]
 mod tests;
 
+#[cfg(not(test))]
+use libc::getsockopt;
 use std::io;
 use std::marker::PhantomData;
+use std::mem;
 use std::os::fd::{OwnedFd, RawFd};
 use std::sync::Mutex;
+#[cfg(test)]
+use tests::getsockopt;
+
+/// A peer-address query on a stream whose peer has closed still succeeds, so no
+/// peer-query error is accepted.
+pub(super) const PEER_CLOSED_IS_EINVAL: bool = false;
 
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     // SAFETY: every bit pattern is valid for ucred's integer fields.
@@ -59,4 +69,23 @@ impl DescriptorReceive<'_> {
 
 pub(super) fn send_flags() -> io::Result<libc::c_int> {
     Ok(libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL)
+}
+
+pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
+    let mut value: libc::c_int = 0;
+    let mut length = mem::size_of_val(&value) as libc::socklen_t;
+    // SAFETY: the live fd and initialized output/length cover this integer socket option.
+    let result = unsafe {
+        getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_ACCEPTCONN,
+            (&mut value as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(value != 0)
 }
