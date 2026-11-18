@@ -146,8 +146,6 @@ weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect whil
 and runs a measured consistency audit before handing over. Product specs outrank it. The
 lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
 
-The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
-checkout (`.claude/skills/`, which Git ignores apart from the committed skill links). It is optional and nothing depends on it.
-Installing it is a lead's decision: the installer adds six other, uninspected skills that
-must be removed, and whatever is left is offered to every Claude session in that checkout.
-The persona file gives the pinned command and the limits.
+The persona's third-party UI/UX Pro Max companion skill is disabled (owner, 2026-11-18): agents
+do not check for, install or use it. Its former instructions stay commented out in the persona
+file for reference.
