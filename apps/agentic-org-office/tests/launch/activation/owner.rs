@@ -1,22 +1,22 @@
-//! The owner's organization commands through the real worker, started under v3. Persons and the
+//! The owner's organization commands through the real worker, started by the host. Persons and the
 //! owner act only through grants on host channels: each case opens a local host channel over the
 //! transfer socket and signs a grant for the owner with the test grant key. Agents bind on the
 //! office socket by handle, with no token.
 use super::*;
 use agentic_org_office::test_support::{signed_grant, ChannelCaller};
-use org_office_launch::v3::{ChannelKind, TransferRecord};
+use org_office_launch::{ChannelKind, TransferRecord};
 use org_proto::org::{
     AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
 };
 use org_proto::{ApiError, Call};
 
-/// A worker started under v3 (it adopts the library-stored office on its first start).
+/// A worker started by the host (it adopts the library-stored office on its first start).
 pub(super) struct Live {
     pub(super) session: Session,
     channels: u32,
 }
 
-/// Starts the stored office under v3 and waits for `ready`.
+/// Starts the stored office through the launch contract and waits for `ready`.
 pub(super) fn live(world: &World) -> Live {
     let mut session = handshake(world, FirstLine::Start, INSTANCE, Some(db_key()));
     let ready = session.event();
@@ -34,7 +34,7 @@ impl Live {
         let id = format!("channel-{}", self.channels);
         let (source, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(WAIT)).unwrap();
-        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: OFFICE.into(),
             channel_id: id.clone(),
@@ -52,7 +52,7 @@ impl Live {
                 break event;
             }
         };
-        assert_eq!(received, json!({"v":3,"event":"fds_received","of":id}));
+        assert_eq!(received, json!({"v":1,"event":"fds_received","of":id}));
         drop(source);
         let mut caller = ChannelCaller::new(peer);
         assert_eq!(caller.hello()["result"]["api_version"], 2);

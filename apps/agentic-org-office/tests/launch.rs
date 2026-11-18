@@ -1,4 +1,4 @@
-//! The real `agentic-org-office` binary, driven the way the host drives it: arguments, the v3
+//! The real `agentic-org-office` binary, driven the way the host drives it: arguments, the launch
 //! first line on stdin, the authenticated rendezvous (keys, events, lifetime) and the office
 //! socket. stdout is untrusted and must stay empty. The host holds the database key and hands it
 //! over on the rendezvous (key custody), so there is no key store here and no test can touch a
@@ -136,7 +136,7 @@ impl Drop for Run {
     }
 }
 
-/// An app token: v3 has none, so a person's bind carrying one is refused like any other.
+/// An app token: launch has none, so a person's bind carrying one is refused like any other.
 fn token() -> AppToken {
     AppToken::from_bytes([0xA7; 32])
 }
@@ -154,8 +154,8 @@ fn socket(world: &World) -> PathBuf {
 }
 
 /// Stores the office with the library, as an HQ creation leaves it, then starts its server the
-/// way the host does (v3 start, handoff, ready on the rendezvous) and returns the session. The
-/// worker creates offices only through HQ creation-v1 (`v3_activation`); every other case starts
+/// way the host does (start, handoff, ready on the rendezvous) and returns the session. The
+/// worker creates offices only through HQ creation-v1 (`activation`); every other case starts
 /// an existing office.
 fn started(world: &World) -> Session {
     seed(world);
@@ -407,11 +407,8 @@ fn the_first_line_must_match_the_flag() {
     listener.set_nonblocking(true).unwrap();
     let line = |op: FirstLine| {
         let mut bytes = Vec::new();
-        org_office_launch::v3::write_first_line(
-            &mut bytes,
-            &v3_activation::first_line(op, &rendezvous),
-        )
-        .unwrap();
+        org_office_launch::write_first_line(&mut bytes, &activation::first_line(op, &rendezvous))
+            .unwrap();
         bytes
     };
     // The worker refuses before it connects: no trusted channel exists, so nothing is reported
@@ -435,7 +432,7 @@ fn the_first_line_must_match_the_flag() {
             "{args:?} dialled the rendezvous"
         );
     };
-    // --create given a start line, --office a create line, and lines that aren't v3 at all.
+    // --create given a start line, --office a create line, and lines that aren't launch lines.
     refused(&["--create"], &line(FirstLine::Start));
     refused(&["--office", OFFICE], &line(FirstLine::Create));
     refused(&["--office", OFFICE], b"not json at all\n");
@@ -643,7 +640,7 @@ fn what_the_host_writes_on_stdin_never_stops_the_server_and_rendezvous_eof_does(
     let world = World::new();
     let mut session = started(&world);
     // Lines of any shape, and a lot of them: read and thrown away, unparsed. Then stdin ends:
-    // in v3 that is not the host going away, the rendezvous is.
+    // in this contract that is not the host going away, the rendezvous is.
     let mut stdin = session.run.stdin.take().unwrap();
     std::io::Write::write_all(&mut stdin, b"garbage\n{\"op\":\"nonsense\"}\n").unwrap();
     std::io::Write::write_all(&mut stdin, &vec![b'x'; 3 * 1024 * 1024]).unwrap();
@@ -679,7 +676,7 @@ fn the_keys_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     }
     assert!(session.host_goes_away().success());
     let log = session.run.stderr();
-    // The handoff's grant key is [7; 32] (`v3_activation::handshake`).
+    // The handoff's grant key is [7; 32] (`activation::handshake`).
     assert!(!log.contains("07070707"), "the grant key reached the log");
     assert!(
         !log.contains(DB_KEY_HEX),
@@ -780,10 +777,10 @@ fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_offic
     panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
 }
 
-#[path = "launch/v3_activation.rs"]
-mod v3_activation;
+#[path = "launch/activation.rs"]
+mod activation;
+use activation::{handshake, Session, INSTANCE};
 use org_office_launch::FirstLine;
-use v3_activation::{handshake, Session, INSTANCE};
 
 #[path = "launch/inbox_hint.rs"]
 mod inbox_hint;

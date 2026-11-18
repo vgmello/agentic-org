@@ -310,7 +310,7 @@ impl TestHome {
             .collect()
     }
 
-    /// The fingerprints of the grant keys the fake's v3 runs for `key` got over the rendezvous,
+    /// The fingerprints of the grant keys the fake's launch runs for `key` got over the rendezvous,
     /// in order (one per run whose handoff carried one).
     pub fn grant_fingerprints(&self, key: &str) -> Vec<String> {
         self.log_fields("grant", key)

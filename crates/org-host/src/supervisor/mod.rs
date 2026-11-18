@@ -2,7 +2,7 @@
 //! (`office`), plus the short runs around them: `--create` makes a new office, `--discard`
 //! removes an unfinished one.
 //!
-//! The host hands a server no app token: a v3 launch handoff carries only the office's
+//! The host hands a server no app token: a launch handoff carries only the office's
 //! database key (and, for the HQ create, its recovery code) over the instance's rendezvous.
 //!
 //! Each office's database key lives in the host's key store ([`KeyStore`], the host's own
@@ -331,7 +331,7 @@ impl Supervisor {
     /// writer custody. No create/discard cleanup is permitted on this path.
     pub(crate) fn begin_hq_create(
         &self,
-        first: org_office_launch::v3::CreateLine,
+        first: org_office_launch::CreateLine,
         recovery: org_proto::RecoveryCode,
     ) -> Result<PendingCreate<'_>, CreateStartError> {
         let (sender, signals) = mpsc::channel();
@@ -957,27 +957,27 @@ mod tests {
         assert!(keys.has(OFFICE));
     }
 
-    /// Names the file where this test binary, run again as a v3 `--discard` server by
-    /// [`a_v3_discard_hands_off_no_key_and_deletes_it_only_after_discarded`], records its
+    /// Names the file where this test binary, run again as a launch `--discard` server by
+    /// [`a_discard_hands_off_no_key_and_deletes_it_only_after_discarded`], records its
     /// handoff's `db_key` (`null` or `key`).
-    const V3_DISCARD_SEEN: &str = "ORG_HOST_TEST_V3_DISCARD_SEEN";
+    const DISCARD_SEEN: &str = "ORG_HOST_TEST_DISCARD_SEEN";
     const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 
-    /// Not a test: the v3 `--discard` server the supervisor test runs, as the real worker
+    /// Not a test: the launch `--discard` server the supervisor test runs, as the real worker
     /// speaks it (first line on stdin, the rendezvous connect, `ready_for_secrets`, the handoff
     /// header with no descriptor, then `discarded` on the stream). Without its variable it does
     /// nothing.
     #[test]
-    #[ignore = "run only as the v3 discard server of a supervisor test"]
-    fn v3_discard_server() {
-        use org_office_launch::v3::{self, HostFirstLine};
+    #[ignore = "run only as the launch discard server of a supervisor test"]
+    fn discard_server() {
+        use org_office_launch::HostFirstLine;
         use std::os::unix::net::UnixStream;
-        let Some(seen) = std::env::var_os(V3_DISCARD_SEEN) else {
+        let Some(seen) = std::env::var_os(DISCARD_SEEN) else {
             return;
         };
         let mut stdin = std::io::BufReader::new(std::io::stdin());
         let Ok(Some(HostFirstLine::Discard(office))) =
-            v3::read_first_line(&mut stdin, org_office_launch::FirstLine::Discard)
+            org_office_launch::read_first_line(&mut stdin, org_office_launch::FirstLine::Discard)
         else {
             std::process::exit(2);
         };
@@ -985,7 +985,7 @@ mod tests {
             std::process::exit(3);
         }
         let mut stream = UnixStream::connect(&office.rendezvous).unwrap();
-        let v3::Handoff::Discard { db_key, fds } =
+        let org_office_launch::Handoff::Discard { db_key, fds } =
             channels::tests::discard_worker_reads_handoff(&mut stream)
         else {
             std::process::exit(4);
@@ -993,21 +993,21 @@ mod tests {
         assert!(fds.is_empty());
         let note = if db_key.is_some() { "key\n" } else { "null\n" };
         fs::write(seen, note).unwrap();
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut stream,
-            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+            &org_office_launch::RendezvousEvent::Server(ServerEvent::Discarded),
         )
         .unwrap();
         std::process::exit(0);
     }
 
-    /// The whole v3 discard path: the spawner binds a rendezvous, writes the discard line, the
+    /// The whole discard path: the spawner binds a rendezvous, writes the discard line, the
     /// broker hands off a header whose `db_key` is `null` although the key store holds the
     /// office's key, the worker's `discarded` arrives on the stream, and only then is the key
     /// deleted.
     #[cfg(target_os = "macos")]
     #[test]
-    fn a_v3_discard_hands_off_no_key_and_deletes_it_only_after_discarded() {
+    fn a_discard_hands_off_no_key_and_deletes_it_only_after_discarded() {
         // Under /tmp: the rendezvous path must fit a socket address.
         let dir = tempfile::Builder::new()
             .prefix("sv")
@@ -1018,12 +1018,12 @@ mod tests {
         let key = OfficeSecretsKey::from_bytes([8; 32]);
         keys.create(OFFICE, &key).unwrap();
         let seen = dir.path().join("seen");
-        // The host closes the server's stdout over v3, so libtest's output goes nowhere.
+        // The host closes the server's stdout over the rendezvous, so libtest's output goes nowhere.
         let program = script(
             dir.path(),
             "server",
             &format!(
-                "{V3_DISCARD_SEEN}='{}' exec '{}' --exact supervisor::tests::v3_discard_server \
+                "{DISCARD_SEEN}='{}' exec '{}' --exact supervisor::tests::discard_server \
                  --ignored --test-threads=1 >/dev/null",
                 seen.display(),
                 std::env::current_exe().unwrap().display()
@@ -1046,31 +1046,31 @@ mod tests {
             .any(|call| *call == (Op::Delete, OFFICE.to_owned())));
     }
 
-    /// Names the file where this test binary, run again as a v3 HQ `--create` server by
+    /// Names the file where this test binary, run again as a launch HQ `--create` server by
     /// [`an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted`], records its pid.
-    const V3_CREATE_PID: &str = "ORG_HOST_TEST_V3_CREATE_PID";
+    const CREATE_PID: &str = "ORG_HOST_TEST_CREATE_PID";
 
-    /// Not a test: a v3 HQ `--create` server, as the real worker speaks it (first line on
+    /// Not a test: a launch HQ `--create` server, as the real worker speaks it (first line on
     /// stdin, the rendezvous connect, `ready_for_secrets`, the handoff header, the transfer
     /// socket after its marker, the receipt), that reports `created` at once and keeps running.
     /// Without its variable it does nothing.
     #[test]
-    #[ignore = "run only as the v3 HQ create server of a supervisor test"]
-    fn v3_hq_create_server() {
-        use org_office_launch::v3::{self, HostFirstLine};
+    #[ignore = "run only as the launch HQ create server of a supervisor test"]
+    fn hq_create_server() {
+        use org_office_launch::HostFirstLine;
         use std::os::unix::net::UnixStream;
-        let Some(pid_file) = std::env::var_os(V3_CREATE_PID) else {
+        let Some(pid_file) = std::env::var_os(CREATE_PID) else {
             return;
         };
         fs::write(pid_file, std::process::id().to_string()).unwrap();
         let mut stdin = std::io::BufReader::new(std::io::stdin());
         let Ok(Some(HostFirstLine::Create(create))) =
-            v3::read_first_line(&mut stdin, org_office_launch::FirstLine::Create)
+            org_office_launch::read_first_line(&mut stdin, org_office_launch::FirstLine::Create)
         else {
             std::process::exit(2);
         };
         let mut stream = UnixStream::connect(&create.office.rendezvous).unwrap();
-        org_proto::frame::write_message(&mut stream, &v3::ReadyForSecrets).unwrap();
+        org_proto::frame::write_message(&mut stream, &org_office_launch::ReadyForSecrets).unwrap();
         let fence = std::sync::Mutex::new(());
         let mut receiver = org_socket::rights::StreamReceiver::new(stream.try_clone().unwrap());
         let mut receive = |count: usize, marker: bool| {
@@ -1078,8 +1078,8 @@ mod tests {
             loop {
                 let got = if marker {
                     receiver
-                        .receive_marker(count, v3::FD_MARKER, &fence)
-                        .map(|fds| (v3::FD_MARKER, fds))
+                        .receive_marker(count, org_office_launch::FD_MARKER, &fence)
+                        .map(|fds| (org_office_launch::FD_MARKER, fds))
                 } else {
                     receiver.receive_byte(count, &fence)
                 };
@@ -1102,16 +1102,18 @@ mod tests {
             }
             header.push(b);
         }
-        let Ok(v3::Handoff::Create { fds, .. }) = v3::decode_handoff(&header) else {
+        let Ok(org_office_launch::Handoff::Create { fds, .. }) =
+            org_office_launch::decode_handoff(&header)
+        else {
             std::process::exit(5);
         };
         crate::secrets::zero(&mut header);
         let (_, _transfer) = receive(fds.len(), true);
         drop(receiver);
         stream.set_nonblocking(false).unwrap();
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut stream,
-            &v3::RendezvousEvent::FdsReceived {
+            &org_office_launch::RendezvousEvent::FdsReceived {
                 of: "handoff".into(),
             },
         )
@@ -1124,9 +1126,9 @@ mod tests {
             &create.org_name,
             "2026-11-08T00:00:00.000Z",
         );
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut stream,
-            &v3::RendezvousEvent::Server(ServerEvent::Created { office }),
+            &org_office_launch::RendezvousEvent::Server(ServerEvent::Created { office }),
         )
         .unwrap();
         std::thread::sleep(Duration::from_secs(30));
@@ -1144,20 +1146,20 @@ mod tests {
         let key = OfficeSecretsKey::from_bytes([2; 32]);
         keys.create(OFFICE, &key).unwrap();
         let pid_file = dir.path().join("pid");
-        // The host closes the server's stdout over v3, so libtest's output goes nowhere.
+        // The host closes the server's stdout over the rendezvous, so libtest's output goes nowhere.
         let program = script(
             dir.path(),
             "server",
             &format!(
-                "{V3_CREATE_PID}='{}' exec '{}' --exact supervisor::tests::v3_hq_create_server \
+                "{CREATE_PID}='{}' exec '{}' --exact supervisor::tests::hq_create_server \
                  --ignored --test-threads=1 >/dev/null",
                 pid_file.display(),
                 std::env::current_exe().unwrap().display()
             ),
         );
         let supervisor = supervisor(dir.path(), program, &keys);
-        let first = org_office_launch::v3::CreateLine {
-            office: org_office_launch::v3::OfficeLine {
+        let first = org_office_launch::CreateLine {
+            office: org_office_launch::OfficeLine {
                 id_profile: None,
                 selected_writer_required: false,
                 instance_id: INSTANCE.into(),

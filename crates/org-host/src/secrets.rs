@@ -1,5 +1,5 @@
 //! Making the host's secrets, `std` only: database keys, plus non-secret unique names drawn from
-//! the same source. The host makes no app tokens: a v3 launch handoff carries none.
+//! the same source. The host makes no app tokens: a launch handoff carries none.
 //!
 //! The host makes an office's database key once, when it creates the office, and stores it in its
 //! key store (`keys`) before the office's server starts. It is in the host's memory only from its

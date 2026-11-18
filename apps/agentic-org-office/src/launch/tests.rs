@@ -1,5 +1,5 @@
 use super::*;
-use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
+use org_office_launch::{CreateLine, HandoffFd, OfficeLine};
 use org_proto::{GrantKey, OfficeSecretsKey};
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
@@ -32,7 +32,7 @@ fn create() -> CreateLine {
 }
 fn request(op: u8, key: bool) -> Request {
     match op {
-        0 => Request::V3 {
+        0 => Request::Launch {
             line: HostFirstLine::Create(create()),
             handoff: Handoff::Create {
                 db_key: db_key(),
@@ -41,7 +41,7 @@ fn request(op: u8, key: bool) -> Request {
                 fds: vec![HandoffFd::Transfer],
             },
         },
-        1 => Request::V3 {
+        1 => Request::Launch {
             line: HostFirstLine::Start(office()),
             handoff: Handoff::Start {
                 db_key: db_key(),
@@ -49,7 +49,7 @@ fn request(op: u8, key: bool) -> Request {
                 fds: vec![HandoffFd::Transfer],
             },
         },
-        _ => Request::V3 {
+        _ => Request::Launch {
             line: HostFirstLine::Discard(office()),
             handoff: Handoff::Discard {
                 db_key: key.then(db_key),
@@ -59,7 +59,7 @@ fn request(op: u8, key: bool) -> Request {
     }
 }
 #[test]
-fn v3_create_preserves_identity_keys_and_typed_recovery() {
+fn launch_create_preserves_identity_keys_and_typed_recovery() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let Launch::Create(c) = Launch::from_request(request(0, true)).unwrap() else {
         panic!("not create")
@@ -117,7 +117,7 @@ fn unknown_or_mismatched_requests_never_normalize() {
         HostFirstLine::Start(office()),
         HostFirstLine::Unknown,
     ] {
-        let request = Request::V3 {
+        let request = Request::Launch {
             line,
             handoff: Handoff::Discard {
                 db_key: None,
@@ -132,16 +132,16 @@ fn unknown_or_mismatched_requests_never_normalize() {
 }
 
 #[test]
-fn every_mismatched_v3_pair_is_refused() {
+fn every_mismatched_launch_pair_is_refused() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     for first_op in 0..3 {
         for handoff_op in 0..3 {
             if first_op == handoff_op {
                 continue;
             }
-            let Request::V3 { line, .. } = request(first_op, true);
-            let Request::V3 { handoff, .. } = request(handoff_op, true);
-            assert!(Launch::from_request(Request::V3 { line, handoff }).is_err());
+            let Request::Launch { line, .. } = request(first_op, true);
+            let Request::Launch { handoff, .. } = request(handoff_op, true);
+            assert!(Launch::from_request(Request::Launch { line, handoff }).is_err());
         }
     }
 }
@@ -153,7 +153,7 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
         for role in [OfficeRole::Satellite, OfficeRole::Unknown] {
             let mut request = request(0, true);
             match &mut request {
-                Request::V3 {
+                Request::Launch {
                     line: HostFirstLine::Create(c),
                     ..
                 } => c.role = role,
@@ -168,12 +168,12 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
 }
 
 #[test]
-fn distinct_v3_identities_are_preserved_on_every_operation() {
+fn distinct_launch_identities_are_preserved_on_every_operation() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184";
     const OTHER_OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
     for op in 0..3 {
-        let Request::V3 { mut line, handoff } = request(op, true);
+        let Request::Launch { mut line, handoff } = request(op, true);
         let office = match &mut line {
             HostFirstLine::Create(c) => {
                 c.owner_member_id = OTHER_OWNER.into();
@@ -184,7 +184,7 @@ fn distinct_v3_identities_are_preserved_on_every_operation() {
         };
         office.office_id = "OFFICE2".into();
         office.instance_id = OTHER_INSTANCE.into();
-        match Launch::from_request(Request::V3 { line, handoff }).unwrap() {
+        match Launch::from_request(Request::Launch { line, handoff }).unwrap() {
             Launch::Create(c) => {
                 assert_eq!(c.office.office_id, "OFFICE2");
                 assert_eq!(c.instance, OTHER_INSTANCE);

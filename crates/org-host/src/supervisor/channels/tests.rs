@@ -16,14 +16,14 @@ fn byte(receiver: &mut org_socket::rights::StreamReceiver, count: usize) -> (u8,
 fn datagram(
     receiver: &mut org_socket::rights::DatagramReceiver,
     count: usize,
-) -> (v3::TransferRecord, Vec<OwnedFd>) {
+) -> (org_office_launch::TransferRecord, Vec<OwnedFd>) {
     let deadline = Instant::now() + Duration::from_secs(3);
-    let mut buffer = [0; v3::TRANSFER_HEADER_MAX_BYTES];
+    let mut buffer = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
     loop {
         match receiver.receive(&mut buffer, count, &SPAWN_LOCK) {
             Ok(received) => {
                 return (
-                    v3::decode_transfer_record(&buffer[..received.bytes]).unwrap(),
+                    org_office_launch::decode_transfer_record(&buffer[..received.bytes]).unwrap(),
                     received.descriptors,
                 );
             }
@@ -36,11 +36,11 @@ fn datagram(
 }
 
 #[test]
-fn actual_v3_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unknown_receipt() {
+fn actual_launch_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unknown_receipt() {
     let (host, mut worker) = UnixStream::pair().unwrap();
     host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
     let worker_thread = std::thread::spawn(move || {
-        frame::write_message(&mut worker, &v3::ReadyForSecrets).unwrap();
+        frame::write_message(&mut worker, &org_office_launch::ReadyForSecrets).unwrap();
         let mut receiver = org_socket::rights::StreamReceiver::new(worker.try_clone().unwrap());
         let mut header = Vec::new();
         loop {
@@ -51,22 +51,22 @@ fn actual_v3_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unk
             }
             header.push(b);
         }
-        let handoff = v3::decode_handoff(&header).unwrap();
+        let handoff = org_office_launch::decode_handoff(&header).unwrap();
         crate::secrets::zero(&mut header);
-        assert!(matches!(handoff, v3::Handoff::Start { .. }));
+        assert!(matches!(handoff, org_office_launch::Handoff::Start { .. }));
         let (marker, mut fds) = byte(&mut receiver, 1);
-        assert_eq!(marker, v3::FD_MARKER);
+        assert_eq!(marker, org_office_launch::FD_MARKER);
         let transfer = org_socket::rights::unix_datagram(fds.pop().unwrap()).unwrap();
         let mut transfer = org_socket::rights::DatagramReceiver::new(transfer);
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut worker,
-            &v3::RendezvousEvent::FdsReceived {
+            &org_office_launch::RendezvousEvent::FdsReceived {
                 of: "handoff".into(),
             },
         )
         .unwrap();
         let (record, mut fds) = datagram(&mut transfer, 1);
-        let v3::TransferRecord::Channel {
+        let org_office_launch::TransferRecord::Channel {
             office_id,
             channel_id,
             ..
@@ -76,9 +76,9 @@ fn actual_v3_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unk
         };
         assert_eq!(office_id, "office");
         let channel = org_socket::rights::connected_unix_stream(fds.pop().unwrap()).unwrap();
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut worker,
-            &v3::RendezvousEvent::FdsReceived { of: channel_id },
+            &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
         )
         .unwrap();
         let mut input = BufReader::new(channel.try_clone().unwrap());
@@ -87,11 +87,11 @@ fn actual_v3_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unk
         let (record, fds) = datagram(&mut transfer, 0);
         assert!(fds.is_empty());
         assert!(
-            matches!(record,v3::TransferRecord::Revoked {session_ids} if session_ids==["session"])
+            matches!(record,org_office_launch::TransferRecord::Revoked {session_ids} if session_ids==["session"])
         );
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut worker,
-            &v3::RendezvousEvent::FdsReceived {
+            &org_office_launch::RendezvousEvent::FdsReceived {
                 of: "not-pending".into(),
             },
         )
@@ -118,7 +118,9 @@ fn actual_v3_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on_unk
         )
         .unwrap();
     assert!(broker.endpoint("office").is_some());
-    let (_id, mut channel, slot) = endpoint.open(v3::ChannelKind::Local).unwrap();
+    let (_id, mut channel, slot) = endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .unwrap();
     frame::write_message(
         &mut channel,
         &serde_json::json!({"through":"actual SCM_RIGHTS"}),
@@ -164,8 +166,8 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
 
 /// The worker's side of a discard: `ready_for_secrets`, then the header bytes, one at a time,
 /// with no descriptor on any of them.
-pub(crate) fn discard_worker_reads_handoff(worker: &mut UnixStream) -> v3::Handoff {
-    frame::write_message(worker, &v3::ReadyForSecrets).unwrap();
+pub(crate) fn discard_worker_reads_handoff(worker: &mut UnixStream) -> org_office_launch::Handoff {
+    frame::write_message(worker, &org_office_launch::ReadyForSecrets).unwrap();
     let mut receiver = org_socket::rights::StreamReceiver::new(worker.try_clone().unwrap());
     let mut header = Vec::new();
     loop {
@@ -176,7 +178,7 @@ pub(crate) fn discard_worker_reads_handoff(worker: &mut UnixStream) -> v3::Hando
         }
         header.push(b);
     }
-    let handoff = v3::decode_handoff(&header).unwrap();
+    let handoff = org_office_launch::decode_handoff(&header).unwrap();
     crate::secrets::zero(&mut header);
     handoff
 }
@@ -189,7 +191,9 @@ fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
     let worker_thread = std::thread::spawn(move || {
-        let v3::Handoff::Discard { db_key, fds } = discard_worker_reads_handoff(&mut worker) else {
+        let org_office_launch::Handoff::Discard { db_key, fds } =
+            discard_worker_reads_handoff(&mut worker)
+        else {
             panic!("not a discard handoff");
         };
         assert!(fds.is_empty());
@@ -197,9 +201,9 @@ fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
         assert!(db_key.is_none(), "a discard handoff carried a key");
         // No marker and no transfer socket follow: the next bytes are the host's EOF once
         // the stream closes, never a descriptor. The worker reports on the stream.
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut worker,
-            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+            &org_office_launch::RendezvousEvent::Server(ServerEvent::Discarded),
         )
         .unwrap();
     });
@@ -237,16 +241,16 @@ fn a_discard_stream_ends_at_a_non_server_event() {
     let worker_thread = std::thread::spawn(move || {
         discard_worker_reads_handoff(&mut worker);
         // A discard has no descriptor to acknowledge: a receipt is a protocol error.
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut worker,
-            &v3::RendezvousEvent::FdsReceived {
+            &org_office_launch::RendezvousEvent::FdsReceived {
                 of: "handoff".into(),
             },
         )
         .unwrap();
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut worker,
-            &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+            &org_office_launch::RendezvousEvent::Server(ServerEvent::Discarded),
         )
         .unwrap();
         worker
@@ -307,7 +311,7 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
         // Ensure accept precedes READY. This failed immediately on macOS when
         // the accepted connected stream retained the listener's O_NONBLOCK.
         std::thread::sleep(Duration::from_millis(150));
-        frame::write_message(&mut stream, &v3::ReadyForSecrets).unwrap();
+        frame::write_message(&mut stream, &org_office_launch::ReadyForSecrets).unwrap();
         let mut receiver = org_socket::rights::StreamReceiver::new(stream.try_clone().unwrap());
         let mut header = Vec::new();
         loop {
@@ -319,17 +323,17 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             header.push(b);
         }
         assert!(matches!(
-            v3::decode_handoff(&header).unwrap(),
-            v3::Handoff::Start { .. }
+            org_office_launch::decode_handoff(&header).unwrap(),
+            org_office_launch::Handoff::Start { .. }
         ));
         crate::secrets::zero(&mut header);
         let (marker, mut fds) = byte(&mut receiver, 1);
-        assert_eq!(marker, v3::FD_MARKER);
+        assert_eq!(marker, org_office_launch::FD_MARKER);
         let _transfer = org_socket::rights::unix_datagram(fds.pop().unwrap()).unwrap();
         std::thread::sleep(Duration::from_millis(150));
-        v3::write_rendezvous_event(
+        org_office_launch::write_rendezvous_event(
             &mut stream,
-            &v3::RendezvousEvent::FdsReceived {
+            &org_office_launch::RendezvousEvent::FdsReceived {
                 of: "handoff".into(),
             },
         )
@@ -470,7 +474,7 @@ pub(crate) fn worker_fixture(office: &str) -> WorkerFixture {
 fn synthetic_worker_handoff(
     mut worker: UnixStream,
 ) -> (org_socket::rights::DatagramReceiver, Arc<Mutex<UnixStream>>) {
-    frame::write_message(&mut worker, &v3::ReadyForSecrets).unwrap();
+    frame::write_message(&mut worker, &org_office_launch::ReadyForSecrets).unwrap();
     let mut receiver = org_socket::rights::StreamReceiver::new(worker.try_clone().unwrap());
     let mut header = Vec::new();
     loop {
@@ -482,17 +486,17 @@ fn synthetic_worker_handoff(
         header.push(b);
     }
     assert!(matches!(
-        v3::decode_handoff(&header).unwrap(),
-        v3::Handoff::Start { .. }
+        org_office_launch::decode_handoff(&header).unwrap(),
+        org_office_launch::Handoff::Start { .. }
     ));
     crate::secrets::zero(&mut header);
     let (_, mut fds) = byte(&mut receiver, 1);
     let transfer = org_socket::rights::DatagramReceiver::new(
         org_socket::rights::unix_datagram(fds.pop().unwrap()).unwrap(),
     );
-    v3::write_rendezvous_event(
+    org_office_launch::write_rendezvous_event(
         &mut worker,
-        &v3::RendezvousEvent::FdsReceived {
+        &org_office_launch::RendezvousEvent::FdsReceived {
             of: "handoff".into(),
         },
     )
@@ -508,7 +512,7 @@ fn synthetic_worker_loop(
 ) {
     let mut threads = Vec::new();
     let mut writers = Vec::new();
-    let mut buffer = [0; v3::TRANSFER_HEADER_MAX_BYTES];
+    let mut buffer = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
     while !stop.load(Ordering::SeqCst) {
         let received = match transfer.receive_up_to(&mut buffer, 1, &SPAWN_LOCK) {
             Ok(received) => received,
@@ -518,21 +522,23 @@ fn synthetic_worker_loop(
             }
             Err(error) => panic!("{error}"),
         };
-        let record = v3::decode_transfer_record(&buffer[..received.bytes]).unwrap();
+        let record = org_office_launch::decode_transfer_record(&buffer[..received.bytes]).unwrap();
         let mut fds = received.descriptors;
         let (id, recovery) = match record {
-            v3::TransferRecord::Channel { channel_id, .. } => (channel_id, false),
-            v3::TransferRecord::RecoveryPublicRead { channel_id, .. } => (channel_id, true),
-            v3::TransferRecord::WriterControl { channel_id, .. } => {
+            org_office_launch::TransferRecord::Channel { channel_id, .. } => (channel_id, false),
+            org_office_launch::TransferRecord::RecoveryPublicRead { channel_id, .. } => {
+                (channel_id, true)
+            }
+            org_office_launch::TransferRecord::WriterControl { channel_id, .. } => {
                 writers.push(fds.pop().unwrap());
-                v3::write_rendezvous_event(
+                org_office_launch::write_rendezvous_event(
                     &mut *lock(&out),
-                    &v3::RendezvousEvent::FdsReceived { of: channel_id },
+                    &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
                 )
                 .unwrap();
                 continue;
             }
-            v3::TransferRecord::Revoked { .. } => {
+            org_office_launch::TransferRecord::Revoked { .. } => {
                 assert!(fds.is_empty());
                 continue;
             }
@@ -542,11 +548,11 @@ fn synthetic_worker_loop(
         assert!(fds.is_empty());
         if refusing.swap(false, Ordering::SeqCst) {
             drop(stream);
-            v3::write_rendezvous_event(
+            org_office_launch::write_rendezvous_event(
                 &mut *lock(&out),
-                &v3::RendezvousEvent::FdsRefused {
+                &org_office_launch::RendezvousEvent::FdsRefused {
                     of: id,
-                    reason: v3::RefusalReason::Capacity,
+                    reason: org_office_launch::RefusalReason::Capacity,
                 },
             )
             .unwrap();
@@ -554,9 +560,9 @@ fn synthetic_worker_loop(
             stream
                 .set_read_timeout(Some(Duration::from_millis(100)))
                 .unwrap();
-            v3::write_rendezvous_event(
+            org_office_launch::write_rendezvous_event(
                 &mut *lock(&out),
-                &v3::RendezvousEvent::FdsReceived { of: id.clone() },
+                &org_office_launch::RendezvousEvent::FdsReceived { of: id.clone() },
             )
             .unwrap();
             let out = Arc::clone(&out);
@@ -598,9 +604,9 @@ fn synthetic_channel(
         }
     }
     drop(stream);
-    let _ = v3::write_rendezvous_event(
+    let _ = org_office_launch::write_rendezvous_event(
         &mut *lock(&out),
-        &v3::RendezvousEvent::ChannelClosed { of: id },
+        &org_office_launch::RendezvousEvent::ChannelClosed { of: id },
     );
 }
 pub(crate) fn await_closed(slot: &ChannelSlot) {
@@ -620,26 +626,40 @@ fn actual_host_reserves_gateway_and_total_before_fd_send_and_keeps_held_fd_occup
     let endpoint = &fixture.endpoint;
     let mut held = Vec::new();
     for _ in 0..7 {
-        held.push(endpoint.open(v3::ChannelKind::Gateway).unwrap());
+        held.push(
+            endpoint
+                .open(org_office_launch::ChannelKind::Gateway)
+                .unwrap(),
+        );
     }
     assert_eq!(fixture.transferred.load(Ordering::SeqCst), 7);
-    assert!(endpoint.open(v3::ChannelKind::Gateway).is_err());
+    assert!(endpoint
+        .open(org_office_launch::ChannelKind::Gateway)
+        .is_err());
     assert_eq!(
         fixture.transferred.load(Ordering::SeqCst),
         7,
         "refusal must precede FD send"
     );
-    let (_, mut local, local_slot) = endpoint.open(v3::ChannelKind::Local).unwrap();
-    assert!(endpoint.open(v3::ChannelKind::Local).is_err());
+    let (_, mut local, local_slot) = endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .unwrap();
+    assert!(endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .is_err());
     // Dropping permission witnesses must not free a descriptor still held by a caller.
     let (id, stream, slot) = held.pop().unwrap();
     let closed = slot.clone();
     drop((id, slot));
     assert_eq!(lock(&endpoint.channels).len(), 8);
-    assert!(endpoint.open(v3::ChannelKind::Gateway).is_err());
+    assert!(endpoint
+        .open(org_office_launch::ChannelKind::Gateway)
+        .is_err());
     drop(stream);
     await_closed(&closed);
-    let (_, replacement, witness) = endpoint.open(v3::ChannelKind::Gateway).unwrap();
+    let (_, replacement, witness) = endpoint
+        .open(org_office_launch::ChannelKind::Gateway)
+        .unwrap();
     local.write_all(b"existing RPC").unwrap();
     local
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -657,9 +677,15 @@ fn actual_host_reserves_gateway_and_total_before_fd_send_and_keeps_held_fd_occup
 fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_independent() {
     use std::io::Read;
     let fixture = worker_fixture("office");
-    let (_, mut client, witness) = fixture.endpoint.open(v3::ChannelKind::Local).unwrap();
+    let (_, mut client, witness) = fixture
+        .endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .unwrap();
     fixture.refuse.store(true, Ordering::SeqCst);
-    assert!(fixture.endpoint.open(v3::ChannelKind::Local).is_err());
+    assert!(fixture
+        .endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .is_err());
     assert_eq!(lock(&fixture.endpoint.channels).len(), 1);
     assert!(fixture.endpoint.is_live());
     client.write_all(b"still live").unwrap();
@@ -671,7 +697,12 @@ fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_inde
     assert_eq!(&bytes, b"still live");
     let mut held = Vec::new();
     for _ in 1..8 {
-        held.push(fixture.endpoint.open(v3::ChannelKind::Local).unwrap());
+        held.push(
+            fixture
+                .endpoint
+                .open(org_office_launch::ChannelKind::Local)
+                .unwrap(),
+        );
     }
     let (host, worker) = UnixStream::pair().unwrap();
     fixture.endpoint.writer_control(worker).unwrap();
@@ -709,7 +740,7 @@ fn incompatible_profile_gets_no_secret_or_descriptor() {
         worker
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
-        let mut ready = serde_json::json!({"v":3,"event":"ready_for_secrets"});
+        let mut ready = serde_json::json!({"v":1,"event":"ready_for_secrets"});
         if let Some(profile) = profile {
             ready["channel_profile"] = profile.into();
         }
@@ -743,7 +774,7 @@ fn actual_concurrent_gateway_opens_reserve_before_send_without_overadmission_or_
             let barrier = Arc::clone(&barrier);
             std::thread::spawn(move || {
                 barrier.wait();
-                endpoint.open(v3::ChannelKind::Gateway)
+                endpoint.open(org_office_launch::ChannelKind::Gateway)
             })
         })
         .collect();
@@ -754,7 +785,10 @@ fn actual_concurrent_gateway_opens_reserve_before_send_without_overadmission_or_
         .collect();
     assert_eq!(held.len(), 7);
     assert_eq!(fixture.transferred.load(Ordering::SeqCst), 7);
-    let local = fixture.endpoint.open(v3::ChannelKind::Local).unwrap();
+    let local = fixture
+        .endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .unwrap();
     assert_eq!(fixture.transferred.load(Ordering::SeqCst), 8);
     assert_eq!(lock(&fixture.endpoint.channels).len(), 8);
     let witnesses: Vec<_> = held
@@ -774,10 +808,10 @@ fn endpoint_failure_releases_pending_sender_copy_and_invalidates_all_witnesses()
     use std::io::Read;
     let (endpoint, first, worker, _control) = Endpoint::for_grant_test();
     let opening = Arc::clone(&endpoint);
-    let opener = std::thread::spawn(move || opening.open(v3::ChannelKind::Local));
+    let opener = std::thread::spawn(move || opening.open(org_office_launch::ChannelKind::Local));
     let mut receiver = org_socket::rights::DatagramReceiver::new(worker);
     let (record, mut fds) = datagram(&mut receiver, 1);
-    let v3::TransferRecord::Channel { channel_id, .. } = record else {
+    let org_office_launch::TransferRecord::Channel { channel_id, .. } = record else {
         panic!("channel")
     };
     let mut owned = org_socket::rights::connected_unix_stream(fds.pop().unwrap()).unwrap();
@@ -791,7 +825,9 @@ fn endpoint_failure_releases_pending_sender_copy_and_invalidates_all_witnesses()
     assert!(lock(&endpoint.pending).is_empty());
     assert_eq!(lock(&endpoint.channels).len(), 0);
     assert_eq!(owned.read(&mut [0]).unwrap(), 0);
-    assert!(endpoint.open(v3::ChannelKind::Local).is_err());
+    assert!(endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .is_err());
 }
 #[test]
 fn pretransfer_pending_limit_rolls_back_physical_reservation_without_failing_endpoint() {
@@ -812,7 +848,9 @@ fn pretransfer_pending_limit_rolls_back_physical_reservation_without_failing_end
         peers.push(peer);
         waiters.push(waiter);
     }
-    assert!(endpoint.open(v3::ChannelKind::Local).is_err());
+    assert!(endpoint
+        .open(org_office_launch::ChannelKind::Local)
+        .is_err());
     assert!(slot.is_live());
     assert_eq!(lock(&endpoint.channels).len(), 1);
     assert!(endpoint.is_live());
@@ -829,23 +867,26 @@ fn actual_duplicate_misordered_or_post_close_lifecycle_receipts_fail_endpoint() 
         "close-before-ack",
     ] {
         let fixture = worker_fixture("office");
-        let (id, stream, witness) = fixture.endpoint.open(v3::ChannelKind::Local).unwrap();
+        let (id, stream, witness) = fixture
+            .endpoint
+            .open(org_office_launch::ChannelKind::Local)
+            .unwrap();
         let event = match violation {
-            "duplicate-ack" => v3::RendezvousEvent::FdsReceived { of: id },
-            "refusal-after-ack" => v3::RendezvousEvent::FdsRefused {
+            "duplicate-ack" => org_office_launch::RendezvousEvent::FdsReceived { of: id },
+            "refusal-after-ack" => org_office_launch::RendezvousEvent::FdsRefused {
                 of: id,
-                reason: v3::RefusalReason::Capacity,
+                reason: org_office_launch::RefusalReason::Capacity,
             },
             "duplicate-close" => {
                 drop(stream);
                 await_closed(&witness);
-                v3::RendezvousEvent::ChannelClosed { of: id }
+                org_office_launch::RendezvousEvent::ChannelClosed { of: id }
             }
-            _ => v3::RendezvousEvent::ChannelClosed {
+            _ => org_office_launch::RendezvousEvent::ChannelClosed {
                 of: "not-yet-acknowledged".into(),
             },
         };
-        v3::write_rendezvous_event(&mut *lock(&fixture.events), &event).unwrap();
+        org_office_launch::write_rendezvous_event(&mut *lock(&fixture.events), &event).unwrap();
         let until = Instant::now() + Duration::from_secs(3);
         while fixture.endpoint.is_live() {
             assert!(Instant::now() < until, "{violation} did not fail Endpoint");
@@ -863,9 +904,9 @@ fn actual_duplicate_misordered_or_post_close_lifecycle_receipts_fail_endpoint() 
 #[test]
 fn a_timeout_change_after_the_worker_closed_keeps_its_buffered_report() {
     let (host, mut worker) = UnixStream::pair().unwrap();
-    v3::write_rendezvous_event(
+    org_office_launch::write_rendezvous_event(
         &mut worker,
-        &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+        &org_office_launch::RendezvousEvent::Server(ServerEvent::Discarded),
     )
     .unwrap();
     drop(worker);
@@ -873,8 +914,12 @@ fn a_timeout_change_after_the_worker_closed_keeps_its_buffered_report() {
     set_timeout_unless_peer_closed(&host, None).unwrap();
     let mut reader = BufReader::new(host);
     assert!(matches!(
-        v3::read_server_event(&mut reader).unwrap(),
-        Some(v3::RendezvousEvent::Server(ServerEvent::Discarded))
+        org_office_launch::read_server_event(&mut reader).unwrap(),
+        Some(org_office_launch::RendezvousEvent::Server(
+            ServerEvent::Discarded
+        ))
     ));
-    assert!(v3::read_server_event(&mut reader).unwrap().is_none());
+    assert!(org_office_launch::read_server_event(&mut reader)
+        .unwrap()
+        .is_none());
 }

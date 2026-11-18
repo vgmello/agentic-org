@@ -3,7 +3,7 @@
 //! `office.app_token` and `office.restart` calls, against the fake office server.
 //!
 //! Retired wire calls are refused under every peer configuration. The host keeps no app token
-//! (a v3 handoff carries none). Native restart lifecycle checks use the temporary in-process
+//! (a launch handoff carries none). Native restart lifecycle checks use the temporary in-process
 //! fixture; these gate tests do not establish signed-peer authorization. Real app_auth wire
 //! coverage returns with verified sessions in 2b.3.
 
@@ -97,12 +97,12 @@ fn wait_for_state(
 #[cfg(debug_assertions)]
 #[cfg(target_os = "macos")]
 #[test]
-fn the_v3_worker_gets_no_app_token() {
+fn the_launch_worker_gets_no_app_token() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
-    // The v3 handoff carries the database and grant keys only: it has no app-token field, so the
+    // The launch handoff carries the database and grant keys only: it has no app-token field, so the
     // worker is handed none. What it does get is one grant key.
     assert_eq!(home.grant_fingerprints(A).len(), 1);
     home.assert_no_secret_in_home();

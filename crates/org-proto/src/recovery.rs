@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::gateway::SecretText;
 
 /// An organization's recovery code (X-02 §6.4): staged by the host, sent to the office server in
-/// launch v3's create handoff (`org-office-launch`) and shown once by `recovery.release`
+/// launch create handoff (`org-office-launch`) and shown once by `recovery.release`
 /// (`org-host-control`), printed only to a TTY, never in JSON status output or logs. It isn't part
 /// of the browser contract: it lives in its own module, built on [`SecretText`], so that both crates
 /// re-export one type with one set of guards. It decodes from a JSON string (a non-empty one), its `Debug`

@@ -1,5 +1,5 @@
 //! Physical occupancy belongs to authenticated lifecycle receipts, never witness drops.
-use org_office_launch::v3::{ChannelKind, MAX_CHANNELS, MAX_GATEWAY_CHANNELS};
+use org_office_launch::{ChannelKind, MAX_CHANNELS, MAX_GATEWAY_CHANNELS};
 use std::{
     collections::BTreeMap,
     sync::{

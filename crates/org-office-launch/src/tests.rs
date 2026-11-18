@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::path::Path;
 
 use super::*;
-use crate::v3::write_server_event;
+use crate::write_server_event;
 
 /// A fixed database key's wire form, for the secret-line reader's tests.
 const KEY_HEX: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
@@ -70,10 +70,10 @@ fn selected_marker_round_trip_keeps_version_and_explicit_uuid_identity() {
     );
 }
 
-/// Reads one worker event as the host does ([`crate::v3::read_server_event`]).
+/// Reads one worker event as the host does ([`crate::read_server_event`]).
 fn decode_event(r: &mut impl BufRead) -> Result<Option<ServerEvent>, LaunchError> {
-    Ok(crate::v3::read_server_event(r)?.map(|event| match event {
-        crate::v3::RendezvousEvent::Server(event) => event,
+    Ok(crate::read_server_event(r)?.map(|event| match event {
+        crate::RendezvousEvent::Server(event) => event,
         other => panic!("not a worker event: {other:?}"),
     }))
 }
@@ -95,21 +95,21 @@ fn server_events_have_the_agreed_shapes() {
                 socket: "/h/run/3RXF2NS0SH84.sock".into(),
                 pid: 4242,
             },
-            serde_json::json!({"v":3,"event":"ready","socket":"/h/run/3RXF2NS0SH84.sock","pid":4242}),
+            serde_json::json!({"v":1,"event":"ready","socket":"/h/run/3RXF2NS0SH84.sock","pid":4242}),
         ),
         (
             ServerEvent::Failed {
                 code: FailCode::KeyMissing,
                 message: "the office's key is missing".into(),
             },
-            serde_json::json!({"v":3,"event":"failed","code":"key_missing",
+            serde_json::json!({"v":1,"event":"failed","code":"key_missing",
                 "message":"the office's key is missing"}),
         ),
         (
             ServerEvent::Created {
                 office: office_file(),
             },
-            serde_json::json!({"v":3,"event":"created","office":{"v":1,
+            serde_json::json!({"v":1,"event":"created","office":{"v":1,
                 "office_id":"01M6WGY1WJCC503RXF2NS0SH84","office_name":"HQ","role":"hq",
                 "org_id":"01M6WGY1WJCC503RXF2NS0SH83","org_name":"Acme",
                 "created_at":"2026-11-08T02:10:00.000Z"}}),
@@ -145,14 +145,14 @@ fn every_fail_code_has_its_wire_name() {
 
 #[test]
 fn unknown_events_and_failure_codes_are_tolerated() {
-    let line = br#"{"v":3,"event":"status","busy":true}
+    let line = br#"{"v":1,"event":"status","busy":true}
 "#;
     assert_eq!(
         decode_event(&mut Cursor::new(&line[..])).unwrap(),
         Some(ServerEvent::Unknown)
     );
 
-    let line = br#"{"v":3,"event":"failed","code":"disk_on_fire","message":"m"}
+    let line = br#"{"v":1,"event":"failed","code":"disk_on_fire","message":"m"}
 "#;
     assert_eq!(
         decode_event(&mut Cursor::new(&line[..])).unwrap(),
@@ -180,7 +180,7 @@ fn the_types_check_their_rules_on_every_serde_path() {
 fn a_created_event_with_a_bad_office_is_refused() {
     let mut office = serde_json::to_value(office_file()).unwrap();
     office["office_id"] = "../../x".into();
-    let line = serde_json::json!({"v":3,"event":"created","office":office}).to_string() + "\n";
+    let line = serde_json::json!({"v":1,"event":"created","office":office}).to_string() + "\n";
     assert!(matches!(
         decode_event(&mut Cursor::new(line)),
         Err(LaunchError::Json(_))
@@ -188,7 +188,7 @@ fn a_created_event_with_a_bad_office_is_refused() {
 
     let mut office = serde_json::to_value(office_file()).unwrap();
     office["v"] = 7.into();
-    let line = serde_json::json!({"v":3,"event":"created","office":office}).to_string() + "\n";
+    let line = serde_json::json!({"v":1,"event":"created","office":office}).to_string() + "\n";
     assert!(matches!(
         decode_event(&mut Cursor::new(line)),
         Err(LaunchError::Json(_))
@@ -263,7 +263,7 @@ fn an_office_file_without_a_role_reads_as_unknown() {
 fn discarded_has_its_shape_and_fail_codes_map_errors() {
     let mut out = Vec::new();
     write_server_event(&mut out, &ServerEvent::Discarded).unwrap();
-    assert_eq!(json(&out), serde_json::json!({"v":3,"event":"discarded"}));
+    assert_eq!(json(&out), serde_json::json!({"v":1,"event":"discarded"}));
     assert_eq!(
         decode_event(&mut Cursor::new(out)).unwrap(),
         Some(ServerEvent::Discarded)
@@ -642,13 +642,13 @@ fn a_version_1_office_file_still_reads_and_is_written_as_version_1() {
     assert_eq!(file, office_file());
     assert_eq!(json(&file.to_vec().unwrap())["v"], 1);
     assert_eq!(OFFICE_FILE_VERSION, 1);
-    assert_eq!(crate::v3::LAUNCH_VERSION, 3);
-    // The office inside a v3 `created` event keeps its own v1.
+    assert_eq!(crate::LAUNCH_VERSION, 1);
+    // The office inside a `created` event keeps its own version.
     let mut out = Vec::new();
     write_server_event(&mut out, &ServerEvent::Created { office: file }).unwrap();
     let event = json(&out);
     assert_eq!(
         (event["v"].clone(), event["office"]["v"].clone()),
-        (3.into(), 1.into())
+        (1.into(), 1.into())
     );
 }

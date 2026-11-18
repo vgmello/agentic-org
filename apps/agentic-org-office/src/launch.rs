@@ -1,10 +1,7 @@
-//! Turn the v3 launch request into the office workflow's input at the process boundary.
+//! Turn the launch request into the office workflow's input at the process boundary.
 use crate::{serve::LaunchAuth, startup::Request};
 use org_office::{Key, NewOffice};
-use org_office_launch::{
-    v3::{Handoff, HostFirstLine},
-    LaunchError,
-};
+use org_office_launch::{Handoff, HostFirstLine, LaunchError};
 use org_proto::{OfficeRole, RecoveryCode};
 
 pub(super) struct Create {
@@ -17,7 +14,7 @@ pub(super) struct Create {
     /// Consumed by HQ creation-v1 during preparation, before serving.
     pub recovery: RecoveryCode,
     /// A create without it is refused: HQ creation-v1 is the only create (G2).
-    pub hq_creation: Option<org_office_launch::v3::HqCreationV1>,
+    pub hq_creation: Option<org_office_launch::HqCreationV1>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -43,7 +40,7 @@ pub(super) enum Launch {
 impl Launch {
     pub fn from_request(request: Request) -> Result<Self, LaunchError> {
         Ok(match request {
-            Request::V3 {
+            Request::Launch {
                 line: HostFirstLine::Create(c),
                 handoff:
                     Handoff::Create {
@@ -68,7 +65,7 @@ impl Launch {
                 hq_creation: c.hq_creation,
                 recovery: recovery_code,
             }),
-            Request::V3 {
+            Request::Launch {
                 line: HostFirstLine::Start(s),
                 handoff:
                     Handoff::Start {
@@ -82,7 +79,7 @@ impl Launch {
                     instance_id: s.instance_id,
                 },
             },
-            Request::V3 {
+            Request::Launch {
                 line: HostFirstLine::Discard(d),
                 handoff: Handoff::Discard { .. },
             } => Self::Discard {

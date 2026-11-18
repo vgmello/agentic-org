@@ -1,6 +1,6 @@
-//! Launch secrets on the v3 rendezvous, against the fake office server: every start's handoff
+//! Launch secrets on the launch rendezvous, against the fake office server: every start's handoff
 //! carries a grant key of its own (a fresh one per run), and a worker that refuses its first line
-//! never gets one. v3 hands off no app token.
+//! never gets one. The handoff carries no app token.
 //!
 //! The tests never see a key: the fake records a fingerprint of each one it gets.
 
@@ -67,7 +67,7 @@ fn every_start_gets_a_grant_key_of_its_own() {
     host.shutdown();
 }
 
-/// Under v3 the worker can report on the rendezvous only once it has read a valid first line
+/// The worker can report on the rendezvous only once it has read a valid first line
 /// naming it; a refusal before that goes to stdout, which the host does not read. So a worker
 /// that refuses its first line and exits is a crash: restarted with backoff, never given a key,
 /// and noticed when it exits rather than at the end of the rendezvous wait.

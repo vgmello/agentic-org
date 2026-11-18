@@ -2,8 +2,8 @@
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
 //! It follows the launch protocol (`org-office-launch`) without SQLCipher or a key store, and
-//! does what the test scripted. Like the real server it speaks only launch v3
-//! (`v3::read_first_line`): the first stdin line names the rendezvous socket. The fake connects
+//! does what the test scripted. Like the real server it speaks only launch
+//! (`org_office_launch::read_first_line`): the first stdin line names the rendezvous socket. The fake connects
 //! to it, sends `ready_for_secrets`, receives the handoff header byte by byte (no descriptor on
 //! any header byte), then, when the header names descriptors (create and start), receives the
 //! transfer socket on its marker byte and answers `fds_received`. A discard names none: no
@@ -38,7 +38,7 @@
 //! - `report` (`--create`): fields of the office it stores and reports in `created` that
 //!   differ from the create message: `office_id`, `org_id`, `org_name`, `office_name` or `role`.
 //!
-//! Its first stdin line must match its flag, as the contract says: a v3 `create` line with
+//! Its first stdin line must match its flag, as the contract says: a launch `create` line with
 //! `--create`, a `start` line with `--office`, a `discard` line with `--discard`. A malformed,
 //! other-version or other line is refused before any scripted step (for `--discard`, before its
 //! step too): it records `first-line-refused` and exits 1 (reporting `failed` only if the
@@ -57,7 +57,7 @@
 //! `crash` and `hang` work there too).
 //!
 //! It records what it does in `<home>/fake.log`, one line each:
-//! `start <key> <pid> <run> <unix ms>`, `launch <key> <pid> v3`, `instance <key> <pid> <id>`,
+//! `start <key> <pid> <run> <unix ms>`, `launch <key> <pid> v1`, `instance <key> <pid> <id>`,
 //! `grant <key> <pid> <fingerprint>`, `recovery <key> <pid> present` (create),
 //! `transfer <key> <pid> received` (create and start),
 //! `dbkey <key> <pid> <fingerprint or null>` (`dbkey discard <pid> <fingerprint or null> <id>`
@@ -79,11 +79,11 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use org_office_launch::v3::{self, Handoff, HostFirstLine, RendezvousEvent};
 use org_office_launch::{
     office_dir, FailCode, FirstLine, OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG,
     OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
 };
+use org_office_launch::{Handoff, HostFirstLine, RendezvousEvent};
 use org_proto::frame;
 use org_proto::location::{
     office_socket_in, office_socket_path, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
@@ -104,7 +104,7 @@ const CRASH: i32 = 3;
 
 /// The rendezvous stream, once connected: every event goes here.
 static RENDEZVOUS: OnceLock<Mutex<UnixStream>> = OnceLock::new();
-/// The v3 transfer socket, held (never read) for the process's life.
+/// The launch transfer socket, held (never read) for the process's life.
 static TRANSFER: OnceLock<OwnedFd> = OnceLock::new();
 
 /// A first line and its handoff, the secrets noted as fingerprints only.
@@ -375,7 +375,7 @@ fn first_line(
     flag_id: Option<&str>,
 ) -> Launch {
     let pid = std::process::id();
-    let line = match v3::read_first_line(stdin, expected) {
+    let line = match org_office_launch::read_first_line(stdin, expected) {
         Ok(Some(line)) => line,
         Ok(None) => {
             record(home, &format!("eof-before-first-line {key} {pid}"));
@@ -383,7 +383,7 @@ fn first_line(
         }
         Err(e) => refuse_first_line(home, key, e.fail_code()),
     };
-    record(home, &format!("launch {key} {pid} v3"));
+    record(home, &format!("launch {key} {pid} v1"));
     let Some(office) = line.office() else {
         refuse_first_line(home, key, FailCode::InvalidRequest)
     };
@@ -429,7 +429,7 @@ fn first_line(
     }
 }
 
-/// The v3 handshake on the rendezvous socket at `path`, as the real server does it. Any fault
+/// The launch handshake on the rendezvous socket at `path`, as the real server does it. Any fault
 /// fails the run (`storage_error`; `invalid_request` for a bad header, a fatal receive, or a
 /// header whose op isn't `line`'s). As in the real server, events go on the stream as soon as it is connected, so a
 /// failure during the handshake reaches the host there, never on stdout.
@@ -439,7 +439,7 @@ fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Hando
         .try_clone()
         .unwrap_or_else(|_| fail(FailCode::StorageError));
     let _ = RENDEZVOUS.set(Mutex::new(events));
-    if frame::write_message(&mut stream, &v3::ReadyForSecrets).is_err() {
+    if frame::write_message(&mut stream, &org_office_launch::ReadyForSecrets).is_err() {
         bail(&stream, FailCode::StorageError);
     }
     let fence = Mutex::new(());
@@ -449,7 +449,7 @@ fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Hando
             .unwrap_or_else(|_| bail(&stream, FailCode::StorageError)),
     );
     // Reserved once, so a header holding keys never reallocates; zeroed after the decode.
-    let mut header = Vec::with_capacity(v3::TRANSFER_HEADER_MAX_BYTES + 1);
+    let mut header = Vec::with_capacity(org_office_launch::TRANSFER_HEADER_MAX_BYTES + 1);
     loop {
         let (byte, fds) = receive(&stream, || receiver.receive_byte(0, &fence));
         if !fds.is_empty() {
@@ -458,13 +458,13 @@ fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Hando
         if byte == b'\n' {
             break;
         }
-        if header.len() == v3::TRANSFER_HEADER_MAX_BYTES {
+        if header.len() == org_office_launch::TRANSFER_HEADER_MAX_BYTES {
             zero(&mut header);
             bail(&stream, FailCode::InvalidRequest);
         }
         header.push(byte);
     }
-    let decoded = v3::decode_handoff(&header);
+    let decoded = org_office_launch::decode_handoff(&header);
     zero(&mut header);
     let handoff = decoded.unwrap_or_else(|_| bail(&stream, FailCode::InvalidRequest));
     // The op check comes right after the decode, before any marker or receipt, as in the real
@@ -483,7 +483,7 @@ fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Hando
     }
     if !handoff.fds().is_empty() {
         let mut fds = receive(&stream, || {
-            receiver.receive_marker(handoff.fds().len(), v3::FD_MARKER, &fence)
+            receiver.receive_marker(handoff.fds().len(), org_office_launch::FD_MARKER, &fence)
         });
         let Some(transfer) = fds.pop() else {
             bail(&stream, FailCode::StorageError)
@@ -496,7 +496,7 @@ fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Hando
         let receipt = RendezvousEvent::FdsReceived {
             of: "handoff".into(),
         };
-        if v3::write_rendezvous_event(&mut stream, &receipt).is_err() {
+        if org_office_launch::write_rendezvous_event(&mut stream, &receipt).is_err() {
             bail(&stream, FailCode::StorageError);
         }
     }
@@ -653,7 +653,7 @@ fn wait_for_eof(step: &Step, home: &Path, key: &str, stdin: &mut impl BufRead) {
             let mut sink = Vec::new();
             let _ = stdin.read_to_end(&mut sink);
         }
-        // v3: the host is gone when either its stdin or the rendezvous stream ends.
+        // The host is gone when either its stdin or the rendezvous stream ends.
         Some(mut stream) => {
             let (ended, eof) = mpsc::channel();
             let stdin_ended = ended.clone();
@@ -691,8 +691,11 @@ fn emit(event: &ServerEvent) {
     let written = match RENDEZVOUS.get() {
         Some(stream) => {
             let mut stream = stream.lock().unwrap_or_else(|p| p.into_inner());
-            v3::write_rendezvous_event(&mut *stream, &RendezvousEvent::Server(event.clone()))
-                .is_ok()
+            org_office_launch::write_rendezvous_event(
+                &mut *stream,
+                &RendezvousEvent::Server(event.clone()),
+            )
+            .is_ok()
         }
         None => true,
     };

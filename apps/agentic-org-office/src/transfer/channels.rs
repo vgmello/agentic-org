@@ -1,7 +1,7 @@
 //! Own live channel identity, shutdown handles and serving threads before ACK.
 use super::{invalid, Channel};
 use crate::{revocations::Revocations, serve, startup};
-use org_office_launch::v3::{
+use org_office_launch::{
     ChannelKind, RefusalReason, RendezvousEvent, MAX_CHANNELS, MAX_GATEWAY_CHANNELS,
 };
 

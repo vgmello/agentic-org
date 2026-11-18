@@ -145,8 +145,7 @@ impl Recovery {
         run()
     }
     fn native(&self, c: &Connection, received: Received) -> Result<(), ApiError> {
-        if c.channel_kind() != org_office_launch::v3::ChannelKind::Local || !c.recovery_peer_idle()
-        {
+        if c.channel_kind() != org_office_launch::ChannelKind::Local || !c.recovery_peer_idle() {
             return Err(denied());
         }
         #[cfg(target_os = "macos")]

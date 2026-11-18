@@ -6,7 +6,7 @@
 //! agentic-org-office --office <id>   # first stdin line: the start message; serves the office
 //! agentic-org-office --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
-//! Launch v3 only: events travel on the authenticated rendezvous; its EOF closes the databases
+//! One launch version: events travel on the authenticated rendezvous; its EOF closes the databases
 //! and exits 0. stdin is drained unparsed after the first line and is not a lifetime signal;
 //! stdout carries nothing. Logs go to stderr.
 //! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
@@ -516,8 +516,8 @@ fn serve_office(
             let mut channels = transfer::Channels::new(
                 Arc::clone(&shared),
                 Arc::clone(&office),
-                instance.expect("verified v3 instance"),
-                control.writer().expect("v3 rendezvous writer"),
+                instance.expect("verified launch instance"),
+                control.writer().expect("launch rendezvous writer"),
                 Arc::clone(&revocations),
             );
             transfer::Service::start(transport, revocations, move |channel| {

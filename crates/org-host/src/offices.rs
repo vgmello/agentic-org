@@ -297,7 +297,7 @@ impl Offices {
     /// retains all intent, data and custody; no legacy discard or key sweep runs.
     pub(crate) fn provision_hq(
         &self,
-        first: org_office_launch::v3::CreateLine,
+        first: org_office_launch::CreateLine,
         recovery: org_proto::RecoveryCode,
     ) -> Result<bool, ApiError> {
         let deadline = Instant::now() + self.create_wait;

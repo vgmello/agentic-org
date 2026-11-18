@@ -334,7 +334,7 @@ impl Authentication {
         let _ = permit;
         let _permit = HashPermit(&self.hashing);
         let now = wall_ms()?;
-        let socket = if connection.channel_kind() == org_office_launch::v3::ChannelKind::Gateway {
+        let socket = if connection.channel_kind() == org_office_launch::ChannelKind::Gateway {
             Socket::Control
         } else {
             Socket::Local

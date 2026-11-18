@@ -1,7 +1,7 @@
 //! Key custody against the fake office server: a start hands the stored database key over the
 //! rendezvous, a missing or unreadable key is `key_missing` with no spawn, and the key is never
 //! touched by a failed start. (Create-time key custody is the HQ create's, tested in org-host;
-//! the v3 discard handoff carries no key and is tested in org-host's supervisor.)
+//! the launch discard handoff carries no key and is tested in org-host's supervisor.)
 //!
 //! Every host here keeps its keys in a development key folder next to its test home (never the
 //! Keychain); the tests never see a key in a log: the fake records only fingerprints.

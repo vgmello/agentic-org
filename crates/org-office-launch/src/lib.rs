@@ -10,15 +10,15 @@
 //! **A contract (owner: ada): additive and versioned.** Every line and `office.json` carries `"v"`.
 //! Readers ignore unknown fields and unknown server events ([`ServerEvent::Unknown`]), and decode
 //! unknown failure codes as [`FailCode::StorageError`]. A server parses only its first stdin line
-//! ([`v3::read_first_line`]). A field a create can't work without (e.g. a satellite's HQ
+//! ([`read_first_line`]). A field a create can't work without (e.g. a satellite's HQ
 //! address) arrives with a role or op that older servers refuse, never as a field they would
 //! silently ignore. `v` is reserved in every line: no op or event has a field named `v`.
 //!
 //! The types check their own rules (plain ids, a role this version can create) whenever they
 //! are decoded or encoded, by any serde path. The `"v"` of a launch line is checked by
-//! [`v3::read_first_line`] and [`v3::read_server_event`], so read and write lines only through
-//! the [`v3`] functions. Launch version 3 ([`v3::LAUNCH_VERSION`]) is the only one: version 2
-//! (secrets and the app token on stdin, events on stdout) was removed in A1.5.
+//! [`read_first_line`] and [`read_server_event`], so read and write lines only through
+//! these functions. Launch version 1 ([`LAUNCH_VERSION`]) is the only one: the earlier
+//! numbered versions (secrets on stdin in version 2, version 3) were retired in A1.5 and A1.6.
 //!
 //! ## Starting a server
 //! ```text
@@ -34,10 +34,10 @@
 //!   Release workers require this value. Only debug workers fall back to `<home>/run/`
 //!   when it is absent; an empty or relative override is refused without fallback.
 //! - **stdin carries only the first line from the host.** It matches the flag ([`FirstLine`]):
-//!   a [`v3::HostFirstLine::Create`] with `--create`, a [`v3::HostFirstLine::Start`] with
-//!   `--office`, a [`v3::HostFirstLine::Discard`] with `--discard`. It is non-secret and names
-//!   the per-spawn rendezvous socket (see [`v3`]). A server whose first line is malformed, of
-//!   another version (version 2 included), an op it doesn't know, or for another flag exits
+//!   a [`HostFirstLine::Create`] with `--create`, a [`HostFirstLine::Start`] with
+//!   `--office`, a [`HostFirstLine::Discard`] with `--discard`. It is non-secret and names
+//!   the per-spawn rendezvous socket (see [`HostFirstLine`]). A server whose first line is malformed, of
+//!   another version (a retired version 2 or 3 included), an op it doesn't know, or for another flag exits
 //!   non-zero before it dials the rendezvous, logging to stderr only. EOF on stdin before the
 //!   first line, or in the middle of it ([`LaunchError::is_host_gone`]), means the host is gone:
 //!   the server exits 0. After the first line, a server only drains stdin and discards what it
@@ -56,7 +56,7 @@
 //!   its own descriptors close-on-exec, so no child holds `host.lock`.
 //! - **No app token** travels at launch: a worker's persons act only through owner grants.
 //! - **The database key** ([`OfficeSecretsKey`], 32 bytes) and the grant key travel only in the rendezvous
-//!   handoff ([`v3::Handoff`]), never on stdin. The host creates each office's key and stores it
+//!   handoff ([`Handoff`]), never on stdin. The host creates each office's key and stores it
 //!   in its own key store before the office's first `--create`, and sends it on every create,
 //!   start and discard handoff. The server never creates, stores, loads or deletes a key, and
 //!   never touches the Keychain: it uses only the key its handoff carries. After it first opens
@@ -65,16 +65,16 @@
 //!   live on the heap, so moving it leaves no copy, but buffers it passed through can. A key that
 //!   doesn't open an office's existing databases is [`FailCode::KeyMissing`], and the server
 //!   deletes nothing on it.
-//! - **Zeroing is best effort.** [`v3::read_first_line`] and the handoff readers zero their own
+//! - **Zeroing is best effort.** [`read_first_line`] and the handoff readers zero their own
 //!   buffers and never reallocate them with a secret inside. Copies outside this crate remain:
 //!   the caller's reader and writer buffers (e.g. `Stdin`'s, which may keep the line for the
 //!   process's life; read stdin unbuffered or through a small buffer you control), and serde's
 //!   buffers when a secret arrives with JSON escapes. See `org_proto`'s `OfficeSecretsKey` docs.
-//! - **stdout carries nothing.** Worker events ([`ServerEvent`]) travel as v3 lines over the
+//! - **stdout carries nothing.** Worker events ([`ServerEvent`]) travel as launch lines over the
 //!   rendezvous connection; the host treats stdout as untrusted. Logs go to stderr.
 //! - Lines are JSON, one object per line, at most [`org_proto::MAX_FRAME_BYTES`]
-//!   ([`org_proto::frame`]). Use [`v3::write_first_line`], [`v3::read_first_line`],
-//!   [`v3::write_server_event`] and [`v3::read_server_event`].
+//!   ([`org_proto::frame`]). Use [`write_first_line`], [`read_first_line`],
+//!   [`write_server_event`] and [`read_server_event`].
 //! - The server listens on [`org_proto::location::office_socket_in`] using the selected
 //!   runtime directory; the host computes the same path and only cross-checks
 //!   [`ServerEvent::Ready`]'s `socket`. [`org_proto::location::office_socket_path`] remains
@@ -92,7 +92,7 @@
 //! The host runs `--discard <id>` for every plain-id office folder without `office.json` (a
 //! folder with an unreadable or invalid `office.json` is logged and left alone; once
 //! `office.json` exists the host never discards the office: it adopts or quarantines it). Its
-//! first line is a [`v3::HostFirstLine::Discard`]; its handoff carries the office's key, or
+//! first line is a [`HostFirstLine::Discard`]; its handoff carries the office's key, or
 //! `"db_key": null` when the host has none for that id.
 //! An office with no folder: the server takes no lock, creates nothing and reports `discarded`.
 //! The server takes the office lock (same wait) and removes only an office that never finished.
@@ -129,12 +129,12 @@ use org_proto::OfficeRole;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// An office's database key, re-exported from `org_proto` so the host and the server name it
-/// through this contract. It travels only in the rendezvous handoff ([`v3::Handoff`]); see the
+/// through this contract. It travels only in the rendezvous handoff ([`Handoff`]); see the
 /// crate docs.
 pub use org_proto::OfficeSecretsKey;
 pub use org_proto::OFFICE_SECRETS_KEY_BYTES;
 
-/// The version of `office.json`, separate from the launch lines' [`v3::LAUNCH_VERSION`]. Bumped only
+/// The version of `office.json`, separate from the launch lines' [`LAUNCH_VERSION`]. Bumped only
 /// for a breaking change to the file.
 pub const OFFICE_FILE_VERSION: u32 = 1;
 /// Additive selected carrier, with UUIDv7 entity IDs; legacy v1 is unchanged.
@@ -493,8 +493,8 @@ impl<'de> Deserialize<'de> for OfficeFile {
     }
 }
 
-/// A worker event to the host. Workers send it as a v3 line over the rendezvous connection
-/// ([`v3::write_server_event`]), never on stdout.
+/// A worker event to the host. Workers send it as a launch line over the rendezvous connection
+/// ([`write_server_event`]), never on stdout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -646,11 +646,11 @@ impl LaunchError {
 /// Which first line a server expects, from the flag it was started with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirstLine {
-    /// [`CREATE_FLAG`]: a [`v3::HostFirstLine::Create`].
+    /// [`CREATE_FLAG`]: a [`HostFirstLine::Create`].
     Create,
-    /// [`OFFICE_FLAG`]: a [`v3::HostFirstLine::Start`].
+    /// [`OFFICE_FLAG`]: a [`HostFirstLine::Start`].
     Start,
-    /// [`DISCARD_FLAG`]: a [`v3::HostFirstLine::Discard`].
+    /// [`DISCARD_FLAG`]: a [`HostFirstLine::Discard`].
     Discard,
 }
 
@@ -720,8 +720,17 @@ fn check_office_file_version(v: u32) -> Result<(), LaunchError> {
     }
 }
 
+mod contract;
 pub mod recovery;
-pub mod v3;
+pub use contract::{
+    decode_handoff, decode_transfer_record, encode_create_handoff, encode_discard_handoff,
+    encode_handoff, encode_start_handoff, encode_transfer_record, read_first_line,
+    read_server_event, write_first_line, write_rendezvous_event, write_server_event, ChannelKind,
+    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, IdProfile, OfficeLine,
+    ReadyForSecrets, RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE,
+    FD_MARKER, LAUNCH_VERSION, MAX_CHANNELS, MAX_GATEWAY_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
+    TRANSFER_SOCKET_BUFFER_BYTES,
+};
 pub mod writer;
 
 #[cfg(test)]

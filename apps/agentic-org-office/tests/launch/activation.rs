@@ -1,6 +1,6 @@
 //! X-02 rev15 §5.1/5.2/5.4: a fake host drives the real worker independently of 2b.4.
 use super::*;
-use org_office_launch::v3::{self, CreateLine, Handoff, HandoffFd, HostFirstLine, OfficeLine};
+use org_office_launch::{CreateLine, Handoff, HandoffFd, HostFirstLine, OfficeLine};
 use org_proto::{GrantKey, RecoveryCode};
 use serde_json::{json, Value};
 use std::io::BufRead;
@@ -29,10 +29,10 @@ fn create_line(path: &Path) -> HostFirstLine {
 }
 
 /// HQ creation-v1 without a selected bootstrap: the only create the worker accepts.
-fn hq_creation(rendezvous: &Path) -> v3::HqCreationV1 {
+fn hq_creation(rendezvous: &Path) -> org_office_launch::HqCreationV1 {
     let public = rendezvous.parent().unwrap().join("state");
     std::fs::create_dir_all(&public).unwrap();
-    v3::HqCreationV1 {
+    org_office_launch::HqCreationV1 {
         version: 1,
         operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
         escrow_profile: 1,
@@ -84,7 +84,7 @@ fn line(reader: &mut impl BufRead) -> Value {
 }
 
 fn pass_fd(stream: &UnixStream, fd: RawFd) {
-    pass_fds(stream, v3::FD_MARKER, &[fd]);
+    pass_fds(stream, org_office_launch::FD_MARKER, &[fd]);
 }
 fn pass_fds(stream: &UnixStream, byte: u8, fds: &[RawFd]) {
     let mut marker = [byte];
@@ -112,18 +112,18 @@ fn pass_fds(stream: &UnixStream, byte: u8, fds: &[RawFd]) {
 }
 
 #[test]
-fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
+fn launch_receives_keys_and_acknowledges_handoff_before_ready() {
     let _process = process_isolation();
     let world = World::new();
     let path = world.home.join("r.sock");
     let listener = UnixListener::bind(&path).unwrap();
     let mut run = world.spawn(&["--create"]);
-    v3::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path)).unwrap();
+    org_office_launch::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path)).unwrap();
     let mut stream = accepted(&listener, &mut run);
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(
         line(&mut reader),
-        json!({"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
+        json!({"v":1,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
     );
     // The host may fill stdin before supplying secrets. Handoff must not gate draining.
     let mut stdin = run.stdin.take().unwrap();
@@ -146,13 +146,13 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
         recovery_code: recovery_code(),
         fds: vec![HandoffFd::Transfer],
     };
-    let mut header = v3::encode_handoff(&handoff).unwrap();
+    let mut header = org_office_launch::encode_handoff(&handoff).unwrap();
     stream.write_all(&header).unwrap();
     header.fill(0);
     pass_fd(&stream, transfer.as_raw_fd());
     assert_eq!(
         line(&mut reader),
-        json!({"v":3,"event":"fds_received","of":"handoff"})
+        json!({"v":1,"event":"fds_received","of":"handoff"})
     );
     drop(transfer);
     let created = line(&mut reader);
@@ -162,14 +162,15 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
     assert_eq!(hello(&world).organization_name, "Acme");
     // Sender closed its passed copy after ACK. The live worker must still own the datagram end.
     host_end.set_nonblocking(true).unwrap();
-    let record = v3::encode_transfer_record(&v3::TransferRecord::Revoked {
-        session_ids: vec![],
-    })
-    .unwrap();
+    let record =
+        org_office_launch::encode_transfer_record(&org_office_launch::TransferRecord::Revoked {
+            session_ids: vec![],
+        })
+        .unwrap();
     assert_eq!(host_end.send(&record).unwrap(), record.len());
     assert!(
         run.events.try_recv().is_err(),
-        "v3 authority events leaked onto stdout"
+        "launch authority events leaked onto stdout"
     );
     // Rendezvous EOF is fatal even though stdin remains open (X-02 §5.1 step9).
     stream.shutdown(std::net::Shutdown::Both).unwrap();
@@ -202,7 +203,7 @@ pub(super) struct Session {
     in_flight: std::cell::RefCell<Option<UnixStream>>,
 }
 impl Session {
-    /// The next v3 event on the rendezvous.
+    /// The next launch event on the rendezvous.
     pub(super) fn event(&mut self) -> Value {
         let event = line(&mut self.reader);
         self.in_flight.get_mut().take();
@@ -229,7 +230,7 @@ impl Session {
     }
 }
 
-/// The v3 first line for `op`, naming `rendezvous`, with this file's instance and office.
+/// The launch first line for `op`, naming `rendezvous`, with this file's instance and office.
 pub(super) fn first_line(op: FirstLine, rendezvous: &Path) -> HostFirstLine {
     let office = OfficeLine {
         id_profile: None,
@@ -286,12 +287,12 @@ fn handshake_with(
         FirstLine::Discard => vec!["--discard", OFFICE],
     };
     let mut run = world.spawn(&args);
-    v3::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
+    org_office_launch::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
     let mut stream = accepted(&listener, &mut run);
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(
         line(&mut reader),
-        json!({"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
+        json!({"v":1,"event":"ready_for_secrets","channel_profile":"office-channels/1"})
     );
     let header = match op {
         FirstLine::Create => Handoff::Create {
@@ -310,7 +311,7 @@ fn handshake_with(
             fds: vec![],
         },
     };
-    let mut bytes = v3::encode_handoff(&header).unwrap();
+    let mut bytes = org_office_launch::encode_handoff(&header).unwrap();
     stream.write_all(&bytes).unwrap();
     bytes.fill(0);
     let transfer_host = if op != FirstLine::Discard {
@@ -319,7 +320,7 @@ fn handshake_with(
         pass_fd(&stream, transfer.as_raw_fd());
         assert_eq!(
             line(&mut reader),
-            json!({"v":3,"event":"fds_received","of":"handoff"})
+            json!({"v":1,"event":"fds_received","of":"handoff"})
         );
         drop(transfer);
         Some(host_end)
@@ -453,11 +454,11 @@ fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
 }
 
 #[test]
-fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() {
+fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_binds() {
     let _process = process_isolation();
     use org_proto::org::MemberAddAgent;
     let world = World::new();
-    // Seed through the library, then start under v3 and hire through the owner's grant.
+    // Seed through the library, then start it as the host does and hire through the owner's grant.
     seed(&world);
     let owner_id = {
         let office =
@@ -547,7 +548,7 @@ fn database_bytes(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
     result
 }
 #[test]
-fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() {
+fn start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() {
     let _process = process_isolation();
     let world = World::new();
     let mut legacy = started(&world);
@@ -588,13 +589,13 @@ fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes
 }
 
 #[test]
-fn v3_discard_uses_zero_fds_and_no_receipt_with_null_or_present_key() {
+fn discard_uses_zero_fds_and_no_receipt_with_null_or_present_key() {
     let _process = process_isolation();
     let world = World::new();
     for key in [None, Some(db_key())] {
         std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
         let mut session = handshake(&world, FirstLine::Discard, INSTANCE, key);
-        assert_eq!(session.event(), json!({"v":3,"event":"discarded"}));
+        assert_eq!(session.event(), json!({"v":1,"event":"discarded"}));
         assert!(session.run.wait().success());
         session.no_stdout();
         assert!(!world.folder(OFFICE).exists());
@@ -612,7 +613,7 @@ fn v3_discard_uses_zero_fds_and_no_receipt_with_null_or_present_key() {
 }
 
 #[test]
-fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
+fn cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
     let _process = process_isolation();
     for op in [FirstLine::Start, FirstLine::Discard] {
         let world = World::new();
@@ -634,7 +635,7 @@ fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
             office_id: "OTHEROFFICE".into(),
             rendezvous: path.to_str().unwrap().into(),
         };
-        v3::write_first_line(
+        org_office_launch::write_first_line(
             run.stdin.as_mut().unwrap(),
             &if op == FirstLine::Start {
                 HostFirstLine::Start(office)
@@ -660,15 +661,15 @@ fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
 fn malformed_launch_json_never_echoes_input_bytes() {
     let _process = process_isolation();
     let world = World::new();
-    let mut v3 = serde_json::to_value(create_line(&world.home.join("unused"))).unwrap();
-    v3["v"] = json!(3);
-    v3.as_object_mut()
+    let mut line = serde_json::to_value(create_line(&world.home.join("unused"))).unwrap();
+    line["v"] = json!(org_office_launch::LAUNCH_VERSION);
+    line.as_object_mut()
         .unwrap()
         .insert("TEST-RECOVERY-SECRET".into(), json!(true));
     let secret = "TEST-RECOVERY-SECRET";
-    let wire = format!("{v3}\n");
+    let wire = format!("{line}\n");
     // Prove this exact malformed input reaches a decoder error that quotes its secret.
-    let error = v3::read_first_line(
+    let error = org_office_launch::read_first_line(
         &mut std::io::Cursor::new(wire.as_bytes()),
         FirstLine::Create,
     )
@@ -731,11 +732,12 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
         let path = world.home.join("r.sock");
         let listener = UnixListener::bind(&path).unwrap();
         let mut run = world.spawn(&["--create"]);
-        v3::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path)).unwrap();
+        org_office_launch::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path))
+            .unwrap();
         let mut stream = accepted(&listener, &mut run);
         let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
         assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
-        let header = v3::encode_handoff(&Handoff::Create {
+        let header = org_office_launch::encode_handoff(&Handoff::Create {
             db_key: db_key(),
             grant_key: GrantKey::from_bytes([7; 32]),
             recovery_code: recovery_code(),
@@ -756,9 +758,17 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
             _ => {
                 stream.write_all(&header).unwrap();
                 match case {
-                    "zero_fds" => stream.write_all(&[v3::FD_MARKER]).unwrap(),
-                    "extra_fds" => pass_fds(&stream, v3::FD_MARKER, &[passed.as_raw_fd(); 2]),
-                    "ctrunc" => pass_fds(&stream, v3::FD_MARKER, &[passed.as_raw_fd(); 8]),
+                    "zero_fds" => stream.write_all(&[org_office_launch::FD_MARKER]).unwrap(),
+                    "extra_fds" => pass_fds(
+                        &stream,
+                        org_office_launch::FD_MARKER,
+                        &[passed.as_raw_fd(); 2],
+                    ),
+                    "ctrunc" => pass_fds(
+                        &stream,
+                        org_office_launch::FD_MARKER,
+                        &[passed.as_raw_fd(); 8],
+                    ),
                     "wrong_marker" => pass_fds(&stream, 9, &[passed.as_raw_fd()]),
                     _ => unreachable!(),
                 }
@@ -781,10 +791,10 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
     }
 }
 
-#[path = "v3_activation/transfer.rs"]
+#[path = "activation/transfer.rs"]
 mod transfer;
 
-#[path = "v3_activation/owner.rs"]
+#[path = "activation/owner.rs"]
 mod owner;
 
 fn selected_plan() -> org_proto::selected_bootstrap::PreparedV1 {
@@ -814,7 +824,7 @@ fn selected_handshake(world: &World, start: bool) -> Session {
     ));
     let listener = UnixListener::bind(&path).unwrap();
     let office = OfficeLine {
-        id_profile: Some(v3::IdProfile::SelectedV1),
+        id_profile: Some(org_office_launch::IdProfile::SelectedV1),
         selected_writer_required: true,
         instance_id: INSTANCE.into(),
         office_id: prepared.office_id.clone(),
@@ -832,7 +842,7 @@ fn selected_handshake(world: &World, start: bool) -> Session {
             office_name: "HQ".into(),
             role: OfficeRole::Hq,
             owner_member_id: OWNER.into(),
-            hq_creation: Some(v3::HqCreationV1 {
+            hq_creation: Some(org_office_launch::HqCreationV1 {
                 version: 1,
                 operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
                 escrow_profile: 1,
@@ -850,7 +860,7 @@ fn selected_handshake(world: &World, start: bool) -> Session {
     } else {
         vec!["--create"]
     });
-    v3::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
+    org_office_launch::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
     let mut stream = accepted(&listener, &mut run);
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
@@ -871,7 +881,7 @@ fn selected_handshake(world: &World, start: bool) -> Session {
             fds: vec![HandoffFd::Transfer],
         }
     };
-    let mut header = v3::encode_handoff(&handoff).unwrap();
+    let mut header = org_office_launch::encode_handoff(&handoff).unwrap();
     stream.write_all(&header).unwrap();
     header.fill(0);
     let (worker, host) = UnixDatagram::pair().unwrap();
@@ -879,7 +889,7 @@ fn selected_handshake(world: &World, start: bool) -> Session {
     pass_fd(&stream, worker.as_raw_fd());
     assert_eq!(
         line(&mut reader),
-        json!({"v":3,"event":"fds_received","of":"handoff"})
+        json!({"v":1,"event":"fds_received","of":"handoff"})
     );
     drop(worker);
     let mut session = Session {
@@ -1003,10 +1013,12 @@ fn selected_writer_attempt(
             }
         }
     });
-    let record = v3::encode_transfer_record(&v3::TransferRecord::WriterControl {
-        office_id: selected_plan().office_id,
-        channel_id: "initial-writer".into(),
-    })
+    let record = org_office_launch::encode_transfer_record(
+        &org_office_launch::TransferRecord::WriterControl {
+            office_id: selected_plan().office_id,
+            channel_id: "initial-writer".into(),
+        },
+    )
     .unwrap();
     let sent = org_socket::rights::send(
         session.transfer.as_ref().unwrap().as_fd(),
@@ -1038,7 +1050,7 @@ fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
     let thread = selected_writer(&world, &create, checkpoint.clone(), "allow");
     assert_eq!(
         create.event(),
-        json!({"v":3,"event":"fds_received","of":"initial-writer"})
+        json!({"v":1,"event":"fds_received","of":"initial-writer"})
     );
     assert_eq!(create.event()["event"], "ready");
     assert_eq!(checkpoint.lock().unwrap().as_ref().unwrap().ordinal, 2);
@@ -1193,7 +1205,7 @@ fn selected_expect_start_refusal(
     let outcome = if first["event"] == "fds_received" {
         assert_eq!(
             first,
-            json!({"v":3,"event":"fds_received","of":"initial-writer"})
+            json!({"v":1,"event":"fds_received","of":"initial-writer"})
         );
         assert!(
             sent.is_ok(),

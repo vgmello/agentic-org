@@ -130,7 +130,7 @@ pub(crate) enum Mode<'a> {
     Discard(&'a str),
 }
 
-/// The HQ create: the v3 first line (no secret: the office, organization, names, role and HQ
+/// The HQ create: the launch first line (no secret: the office, organization, names, role and HQ
 /// context) plus the new office's database key and recovery code, which the rendezvous handoff
 /// delivers. The first line is the only source of the office's details, so the line the worker
 /// reads and the key the handoff sends always name the same office.
@@ -141,14 +141,14 @@ pub(crate) enum Mode<'a> {
 /// `OfficeSecretsKey`'s docs).
 pub(crate) struct CreateLine(Box<HqCreate>);
 struct HqCreate {
-    first: org_office_launch::v3::CreateLine,
+    first: org_office_launch::CreateLine,
     db_key: OfficeSecretsKey,
     recovery: org_proto::RecoveryCode,
 }
 
 impl CreateLine {
     pub(crate) fn hq(
-        first: org_office_launch::v3::CreateLine,
+        first: org_office_launch::CreateLine,
         db_key: OfficeSecretsKey,
         recovery: org_proto::RecoveryCode,
     ) -> Self {
@@ -277,15 +277,15 @@ impl Spawner {
         mode: Mode<'_>,
         rendezvous: super::channels::Rendezvous,
         admitted: Option<crate::peer::AuditToken>,
-        v3_signals: Sender<Signal>,
+        launch_signals: Sender<Signal>,
     ) -> Result<(), SpawnError> {
         let broker = &self.broker;
         match mode {
             Mode::Office(id, db_key) => {
-                let first = org_office_launch::v3::HostFirstLine::Start(
-                    org_office_launch::v3::OfficeLine {
+                let first =
+                    org_office_launch::HostFirstLine::Start(org_office_launch::OfficeLine {
                         id_profile: org_office_launch::is_selected_entity_id(id)
-                            .then_some(org_office_launch::v3::IdProfile::SelectedV1),
+                            .then_some(org_office_launch::IdProfile::SelectedV1),
                         selected_writer_required: broker.writer_required(id)?,
                         instance_id: broker.instance.clone(),
                         office_id: id.into(),
@@ -294,9 +294,8 @@ impl Spawner {
                             .to_str()
                             .ok_or_else(|| io::Error::other("invalid rendezvous path"))?
                             .into(),
-                    },
-                );
-                org_office_launch::v3::write_first_line(
+                    });
+                org_office_launch::write_first_line(
                     running
                         .stdin
                         .as_mut()
@@ -313,7 +312,7 @@ impl Spawner {
                     db_key,
                     None,
                     running.generation,
-                    v3_signals,
+                    launch_signals,
                     &mut || running.process.try_wait().unwrap_or(false),
                 )?);
             }
@@ -328,12 +327,12 @@ impl Spawner {
                     .to_str()
                     .ok_or_else(|| io::Error::other("invalid rendezvous"))?
                     .into();
-                org_office_launch::v3::write_first_line(
+                org_office_launch::write_first_line(
                     running
                         .stdin
                         .as_mut()
                         .ok_or_else(|| io::Error::other("missing stdin"))?,
-                    &org_office_launch::v3::HostFirstLine::Create(first),
+                    &org_office_launch::HostFirstLine::Create(first),
                 )
                 .map_err(|_| io::Error::other("HQ create line refused"))?;
                 running.channel = Some(broker.accept(
@@ -345,16 +344,16 @@ impl Spawner {
                     line.db_key(),
                     Some(&line.0.recovery),
                     running.generation,
-                    v3_signals,
+                    launch_signals,
                     &mut || running.process.try_wait().unwrap_or(false),
                 )?);
             }
             // The discard handoff carries no secret: the key store's key (if any) stays here.
             Mode::Discard(id) => {
-                let first = org_office_launch::v3::HostFirstLine::Discard(
-                    org_office_launch::v3::OfficeLine {
+                let first =
+                    org_office_launch::HostFirstLine::Discard(org_office_launch::OfficeLine {
                         id_profile: org_office_launch::is_selected_entity_id(id)
-                            .then_some(org_office_launch::v3::IdProfile::SelectedV1),
+                            .then_some(org_office_launch::IdProfile::SelectedV1),
                         // As over v2: a discard never claims writer custody, so the worker
                         // keeps refusing a folder marked `selected-writer.required`.
                         selected_writer_required: false,
@@ -365,9 +364,8 @@ impl Spawner {
                             .to_str()
                             .ok_or_else(|| io::Error::other("invalid rendezvous path"))?
                             .into(),
-                    },
-                );
-                org_office_launch::v3::write_first_line(
+                    });
+                org_office_launch::write_first_line(
                     running
                         .stdin
                         .as_mut()
@@ -381,7 +379,7 @@ impl Spawner {
                     admitted,
                     &self.check,
                     running.generation,
-                    v3_signals,
+                    launch_signals,
                     &mut || running.process.try_wait().unwrap_or(false),
                 )?;
             }

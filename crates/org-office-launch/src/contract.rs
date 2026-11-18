@@ -1,7 +1,7 @@
-//! Launch contract v3 (X-02 §5.1, §5.2, §5.4), the only launch version: version 2 was removed
-//! in A1.5.
+//! The launch contract (X-02 §5.1, §5.2, §5.4), version 1, the only launch version. The
+//! retired numbered versions 2 and 3 were removed in A1.5 and A1.6.
 //!
-//! What changes from v2:
+//! Its parts:
 //! - **The first line is non-secret** ([`HostFirstLine`]): the instance, the office and the path
 //!   of a per-spawn **rendezvous** socket the host made after checking the server's image, plus,
 //!   for a create, the organization, the names, the role and the owner's member id. No app token
@@ -14,7 +14,7 @@
 //!   that connection only with `recvmsg` and a control buffer sized for the count; `MSG_CTRUNC`,
 //!   `MSG_TRUNC` or another count is fatal.
 //! - **Worker events** (`created`, `ready`, `discarded`, `failed`: [`crate::ServerEvent`]) also
-//!   travel over the rendezvous connection, as v3 lines ([`write_server_event`],
+//!   travel over the rendezvous connection, as launch lines ([`write_server_event`],
 //!   [`read_server_event`]); [`RendezvousEvent`] adds authenticated descriptor receipts.
 //!   The host treats stdout as untrusted.
 //! - **The transfer socket** (an `AF_UNIX SOCK_DGRAM` socket pair, host → server only) carries
@@ -28,9 +28,9 @@
 //!   public exchange is defined by [`crate::recovery`]; it is not writer control
 //!   and cannot carry private CA material.
 //!
-//! The "first line only, then drain unparsed" rule of v2 stays for the pipe. A v3 line is
-//! `{"v": 3, ...}`; a v2 build refuses it as another version, and [`read_first_line`] refuses a
-//! v2 line the same way, by its version, without decoding it.
+//! The "first line only, then drain unparsed" rule stays for the pipe. A launch line is
+//! `{"v": 1, ...}` ([`LAUNCH_VERSION`]); [`read_first_line`] refuses a line of any retired
+//! version (2, which carried keys, or 3) by its version, without decoding it.
 
 use std::io::{BufRead, Write};
 
@@ -50,8 +50,8 @@ use crate::{
 /// `org-host-control`'s `recovery.release`.
 pub use org_proto::RecoveryCode;
 
-/// The version of v3 pipe lines and rendezvous lines.
-pub const LAUNCH_VERSION: u32 = 3;
+/// The version of launch pipe lines and rendezvous lines.
+pub const LAUNCH_VERSION: u32 = 1;
 
 /// Matched host/worker channel ownership and closure contract (CH-LIFE-1).
 pub const CHANNEL_PROFILE: &str = "office-channels/1";
@@ -69,7 +69,7 @@ pub const TRANSFER_SOCKET_BUFFER_BYTES: usize = 64 * 1024;
 /// The one byte sent with the descriptors that follow a [`Handoff`] header.
 pub const FD_MARKER: u8 = 0;
 
-/// A server's first stdin line in v3, matching its flag ([`FirstLine`]). It holds **no secret**:
+/// A server's first stdin line, matching its flag ([`FirstLine`]). It holds **no secret**:
 /// it's `Clone`, which no secret type is. Write it with [`write_first_line`], read it with
 /// [`read_first_line`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,7 +87,7 @@ pub enum HostFirstLine {
     Unknown,
 }
 
-/// What every v3 first line names: the instance, the office and the rendezvous socket.
+/// What every launch first line names: the instance, the office and the rendezvous socket.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawOfficeLine")]
 pub struct OfficeLine {
@@ -97,7 +97,7 @@ pub struct OfficeLine {
     pub selected_writer_required: bool,
     /// The instance the office belongs to: canonical lowercase UUIDv7 text (a ULID is refused).
     /// The server stores it at create and refuses a `start` naming another; an office created
-    /// before v3 adopts it on its first v3 `start`.
+    /// before instance ids adopts it on its first `start`.
     pub instance_id: String,
     pub office_id: String,
     /// The absolute path of the per-spawn rendezvous socket: `<runtime>/r/<16 hex>`.
@@ -162,7 +162,7 @@ impl OfficeLine {
     }
 }
 
-/// A v3 create. As in v2, this version creates only HQ offices, and both ids and the
+/// A create. As in the retired version 2, this version creates only HQ offices, and both ids and the
 /// owner's member id are checked whenever it's decoded or encoded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawCreateLine")]
@@ -346,7 +346,7 @@ struct Versioned {
     v: u32,
 }
 
-fn check_v3(line: &[u8]) -> Result<(), LaunchError> {
+fn check_version(line: &[u8]) -> Result<(), LaunchError> {
     let version: Versioned = serde_json::from_slice(line).map_err(LaunchError::Json)?;
     if version.v == LAUNCH_VERSION {
         Ok(())
@@ -358,7 +358,7 @@ fn check_v3(line: &[u8]) -> Result<(), LaunchError> {
     }
 }
 
-/// Write a v3 first line, then flush. An unknown op, or a line that breaks its rules, is
+/// Write a first line, then flush. An unknown op, or a line that breaks its rules, is
 /// refused and nothing is written.
 pub fn write_first_line(w: &mut impl Write, line: &HostFirstLine) -> Result<(), LaunchError> {
     line.check()?;
@@ -369,7 +369,7 @@ pub fn write_first_line(w: &mut impl Write, line: &HostFirstLine) -> Result<(), 
     frame::write_message(w, &body).map_err(LaunchError::Frame)
 }
 
-/// Read a server's v3 first line and check it matches the flag. `Ok(None)` means EOF before it
+/// Read a server's first line and check it matches the flag. `Ok(None)` means EOF before it
 /// (the host is gone). Another `v` is [`LaunchError::UnsupportedVersion`]; an unknown op, or
 /// another flag's op, is [`LaunchError::Invalid`]. The line is read through a buffer reserved
 /// up front and zeroed afterwards, since a stray v2 host line carries keys.
@@ -382,7 +382,7 @@ pub fn read_first_line(
     };
     // The version first, so a line of any other version (a v2 line with its keys included) is
     // refused as a version without being decoded.
-    let decoded = check_v3(&line)
+    let decoded = check_version(&line)
         .and_then(|()| serde_json::from_slice::<HostFirstLine>(&line).map_err(LaunchError::Json));
     zero(&mut line);
     let message = decoded?;
@@ -396,9 +396,9 @@ pub fn read_first_line(
     }
 }
 
-/// Write a worker event on the rendezvous connection, as a v3 line (`{"v": 3, "event": ...}`).
+/// Write a worker event on the rendezvous connection, as a launch line (`{"v": 1, "event": ...}`).
 /// [`ServerEvent::Unknown`] and a created office that [`crate::OfficeFile::to_vec`] would refuse
-/// are refused, and nothing is written. In v3 the host acts on `created` and `discarded` only
+/// are refused, and nothing is written. In the launch contract the host acts on `created` and `discarded` only
 /// when they arrive this way; stdout is untrusted.
 pub fn write_server_event(w: &mut impl Write, event: &ServerEvent) -> Result<(), LaunchError> {
     match event {
@@ -413,7 +413,7 @@ pub fn write_server_event(w: &mut impl Write, event: &ServerEvent) -> Result<(),
     frame::write_message(w, &body).map_err(LaunchError::Frame)
 }
 
-/// Events authenticated by the v3 rendezvous, including descriptor receipts (X-02 rev15 §5.2).
+/// Events authenticated by the launch rendezvous, including descriptor receipts (X-02 rev15 §5.2).
 /// [`ServerEvent`] (a worker's own event) deliberately has no receipt variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -426,7 +426,7 @@ pub enum RendezvousEvent {
     FdsRefused { of: String, reason: RefusalReason },
     /// An acknowledged channel's serving owner and shutdown descriptors are gone.
     ChannelClosed { of: String },
-    /// An ordinary worker event, carried on the authenticated connection in v3.
+    /// An ordinary worker event, carried on the authenticated connection.
     #[serde(untagged)]
     Server(ServerEvent),
 }
@@ -439,7 +439,7 @@ pub enum RefusalReason {
     Capacity,
 }
 
-/// Write a v3 rendezvous event, including a descriptor receipt, and flush.
+/// Write a launch rendezvous event, including a descriptor receipt, and flush.
 /// Ordinary events retain [`write_server_event`]'s validation.
 pub fn write_rendezvous_event(
     w: &mut impl Write,
@@ -460,14 +460,14 @@ pub fn write_rendezvous_event(
     }
 }
 
-/// Read one v3 worker event from the rendezvous connection. `Ok(None)` means it closed. Another
+/// Read one worker event from the rendezvous connection. `Ok(None)` means it closed. Another
 /// `v` is [`LaunchError::UnsupportedVersion`]; an event this build doesn't know is
 /// [`RendezvousEvent::Server`] containing [`ServerEvent::Unknown`], which the host ignores.
 pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<RendezvousEvent>, LaunchError> {
     let Some(line) = frame::read_line(r).map_err(LaunchError::Frame)? else {
         return Ok(None);
     };
-    check_v3(&line)?;
+    check_version(&line)?;
     let event = serde_json::from_slice::<RawServerEvent>(&line)
         .map_err(LaunchError::Json)?
         .into_event();
@@ -477,8 +477,8 @@ pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<RendezvousEvent>
     Ok(Some(event))
 }
 
-/// A v3 worker event as it arrives: [`ServerEvent`]'s variants plus `v`, refusing any field the
-/// event doesn't define, like every other v3 line.
+/// A worker event as it arrives: [`ServerEvent`]'s variants plus `v`, refusing any field the
+/// event doesn't define, like every other launch line.
 /// The `office` in `created` is an `office.json` body and keeps that file's own rule: fields this
 /// build doesn't know are kept, not refused. An event name this build doesn't know is
 /// [`ServerEvent::Unknown`], whatever its fields.
@@ -544,7 +544,7 @@ impl RawServerEvent {
     }
 }
 
-/// The server's first line on the rendezvous connection: `{"v": 3, "event":
+/// The server's first line on the rendezvous connection: `{"v": 1, "event":
 /// "ready_for_secrets", "channel_profile":"office-channels/1"}`. The host accepts it only after its post-accept checks (it starts after
 /// anything buffered at accept, nothing follows it, and the peer's token is still the admitted
 /// one), then sends the [`Handoff`].
@@ -584,7 +584,7 @@ impl<'de> Deserialize<'de> for ReadyForSecrets {
             || wire.event != READY_FOR_SECRETS
             || wire.channel_profile != CHANNEL_PROFILE
         {
-            return Err(serde::de::Error::custom("not a v3 ready_for_secrets"));
+            return Err(serde::de::Error::custom("not a launch ready_for_secrets"));
         }
         Ok(ReadyForSecrets)
     }
@@ -815,7 +815,7 @@ fn encode_secret(handoff: &impl Serialize) -> Result<Vec<u8>, LaunchError> {
 /// and a header naming the wrong descriptors is [`LaunchError::Invalid`]. The caller zeroes the
 /// line afterwards.
 pub fn decode_handoff(line: &[u8]) -> Result<Handoff, LaunchError> {
-    check_v3(line)?;
+    check_version(line)?;
     let handoff: Handoff = serde_json::from_slice(line).map_err(LaunchError::Json)?;
     handoff.check()?;
     Ok(handoff)

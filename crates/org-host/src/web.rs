@@ -531,11 +531,11 @@ fn transfer_pair() -> io::Result<(UnixDatagram, UnixDatagram)> {
     };
     org_socket::rights::set_buffer_sizes(
         transfer.as_fd(),
-        org_office_launch::v3::TRANSFER_SOCKET_BUFFER_BYTES,
+        org_office_launch::TRANSFER_SOCKET_BUFFER_BYTES,
     )?;
     org_socket::rights::set_buffer_sizes(
         child.as_fd(),
-        org_office_launch::v3::TRANSFER_SOCKET_BUFFER_BYTES,
+        org_office_launch::TRANSFER_SOCKET_BUFFER_BYTES,
     )?;
     child.shutdown(std::net::Shutdown::Write)?;
     transfer.shutdown(std::net::Shutdown::Read)?;
