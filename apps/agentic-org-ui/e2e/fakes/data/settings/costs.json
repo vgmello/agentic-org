@@ -1,0 +1,19 @@
+{
+	"budgetZone": "America/New_York",
+	"periods": {
+		"this_month": { "projects": { "atlas": 412300000, "beacon": 188750000, "onboarding": null, "scratch": 3200000 }, "notOnTask": 21400000, "excluded": { "missing": 2, "unpriced": 5 } },
+		"last_month": { "projects": { "atlas": 366100000, "beacon": 91000000, "onboarding": 12400000, "scratch": 0 }, "notOnTask": 14000000, "excluded": { "missing": 0, "unpriced": 0 } }
+	},
+	"consumers": [
+		{ "label": "Sam Okafor (agent)", "workType": "Build", "this_month": 238400000, "last_month": 201000000, "apiEquivalent": true },
+		{ "label": "Noor Haddad (agent)", "workType": "Build", "this_month": 151900000, "last_month": 99000000 },
+		{ "label": "Kai Lindqvist (agent)", "workType": "Run", "this_month": 102250000, "last_month": 88000000 },
+		{ "label": "Copilot (smart features)", "workType": "Unknown", "this_month": 9900000, "last_month": 4100000 },
+		{ "label": "Mira Castillo (agent)", "workType": "Build", "this_month": null, "last_month": 12400000 }
+	],
+	"budgets": [
+		{ "memberId": "sam", "daily": { "spent": 6400000, "limit": 20000000 }, "monthly": { "spent": 238400000, "limit": 300000000 } },
+		{ "memberId": "noor", "daily": { "spent": 18900000, "limit": 20000000 }, "monthly": { "spent": 151900000, "limit": 200000000 } },
+		{ "memberId": "kai", "monthly": { "spent": 102250000, "limit": 100000000 } }
+	]
+}
