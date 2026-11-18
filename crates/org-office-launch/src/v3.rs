@@ -409,7 +409,7 @@ pub fn write_server_event(w: &mut impl Write, event: &ServerEvent) -> Result<(),
 }
 
 /// Events authenticated by the v3 rendezvous, including descriptor receipts (X-02 rev15 §5.2).
-/// The v2 stdout [`ServerEvent`] and its reader deliberately have no receipt variant.
+/// [`ServerEvent`] (a worker's own event) deliberately has no receipt variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 #[non_exhaustive]
