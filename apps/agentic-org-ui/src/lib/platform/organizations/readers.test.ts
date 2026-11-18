@@ -53,6 +53,13 @@ describe('organization view', () => {
 			expect(() => readOrganizationView({ ...organization, [key]: null })).toThrow(WireDecodeError);
 		}
 	);
+	it.each(['a b', 'org/1', '../x', 'é', 'a'.repeat(65), 'a_b', '<b>'])(
+		'refuses a view whose id (%j) the selection would not keep',
+		(id) => expect(() => readOrganizationView({ ...organization, id })).toThrow(WireDecodeError)
+	);
+	it.each(['org-1', 'A', 'a'.repeat(64), organization.id])('reads a view with the id %j', (id) =>
+		expect(readOrganizationView({ ...organization, id }).id).toBe(id)
+	);
 	it('puts HQ first and reads an unknown recovery state as unknown', () => {
 		const satellite = { ...office, id: 'sat', role: 'satellite', name: 'Lab' };
 		const view = readOrganizationView({

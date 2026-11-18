@@ -3,13 +3,14 @@
  * not an authorization: the server decides what an account can open on every request.
  * Only IDs are stored; a damaged or foreign value reads as no selection.
  */
+import { ORGANIZATION_ID as ID } from './readers';
+
 export interface SelectionOwner {
 	instanceId: string;
 	accountId: string;
 }
 type KeyValue = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 const KEY = 'org-selection';
-const ID = /^[A-Za-z0-9-]{1,64}$/;
 
 export function createSelection(storage: () => KeyValue | undefined) {
 	const read = (): Record<string, string> => {

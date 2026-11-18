@@ -29,6 +29,11 @@ function guarded<T>(reader: (value: unknown) => T): (value: unknown) => T {
 	};
 }
 
+/** An organization ID: what the browser's selection stores, so nothing else is read as one. */
+export const ORGANIZATION_ID = /^[A-Za-z0-9-]{1,64}$/;
+const organizationId = (value: unknown): string =>
+	ORGANIZATION_ID.test(text(value)) ? (value as string) : refuse();
+
 const RECOVERY = ['pending', 'delivered', 'acknowledged'] as const;
 export type Recovery = (typeof RECOVERY)[number] | 'unknown';
 export type OfficeView = ReturnType<typeof readOffice>;
@@ -49,7 +54,7 @@ export const readOrganizationView = guarded((value): OrganizationView => {
 	const recovery = text(own(input, 'recovery'));
 	const offices = list(own(input, 'offices'), readOffice);
 	return {
-		id: present(own(input, 'id')),
+		id: organizationId(own(input, 'id')),
 		slug: present(own(input, 'slug')),
 		name: present(own(input, 'name')),
 		created_at: present(own(input, 'created_at')),
