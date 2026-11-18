@@ -104,11 +104,18 @@ mod vector {
     }
     /// `operation`, run by a confined process, was refused by the confinement itself.
     fn denied<T>(operation: &str, result: std::io::Result<T>) {
+        refused_with(operation, result, &[]);
+    }
+    /// [`denied`], where the system may also report the refusal as one of `also`.
+    fn refused_with<T>(operation: &str, result: std::io::Result<T>, also: &[i32]) {
         let Err(error) = result else {
             panic!("{operation}: ambient operation unexpectedly allowed");
         };
         assert!(
-            matches!(error.raw_os_error(), Some(1 | 13)),
+            matches!(error.raw_os_error(), Some(1 | 13))
+                || error
+                    .raw_os_error()
+                    .is_some_and(|errno| also.contains(&errno)),
             "{operation}: must be enforcement, not an absent fixture: {error} (errno {:?})",
             error.raw_os_error()
         );
@@ -369,9 +376,13 @@ mod vector {
             );
             denied("connect over TCP", TcpStream::connect(&args[3]));
             denied("bind a TCP listener", TcpListener::bind("127.0.0.1:0"));
-            denied(
+            // The program is this process's own executable, which exists: macOS 15 reports
+            // the sandbox's refusal to start it as ENOENT (the profile denies even the
+            // lookup), later systems as EPERM. Either is the refusal; it never ran.
+            refused_with(
                 "start a program",
                 Command::new(own_program()).arg(NOOP).status(),
+                &[libc::ENOENT],
             );
             let fixture = root.join("fixture");
             std::thread::spawn(move || denied("read a file on another thread", fs::read(fixture)))
