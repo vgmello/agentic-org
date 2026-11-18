@@ -34,6 +34,7 @@ mod custody;
 pub(crate) mod memory;
 mod sweep;
 
+pub(crate) use custody::RELEASE_ITEM_STORE;
 pub(crate) use sweep::sweep_orphans;
 
 use std::fmt;

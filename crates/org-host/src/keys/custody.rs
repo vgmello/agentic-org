@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use org_office_launch::is_storage_id;
 use org_platform_host::credentials::{
     credentials, CredentialError, CredentialLocation, Credentials, DirectoryStore, ItemName,
-    ReleaseItems, ReleaseRoot, Secret, Sharing,
+    ItemStore, ReleaseItems, ReleaseRoot, Secret, Sharing,
 };
 use org_proto::{DbKey, DB_KEY_BYTES};
 
@@ -51,6 +51,15 @@ const RELEASE_ITEMS: ReleaseItems<'static> = ReleaseItems {
     directory: "office-keys",
     suffix: DEV_SUFFIX,
     sharing: Sharing::Exclusive,
+};
+
+/// The same item store as the host declares it when it opens the release directory
+/// (`release_store`): its directory, its suffix, and this view's name rule, so that only
+/// what this view would list is counted as a key there.
+pub(crate) const RELEASE_ITEM_STORE: ItemStore<'static> = ItemStore {
+    directory: RELEASE_ITEMS.directory,
+    suffix: RELEASE_ITEMS.suffix,
+    is_item: is_storage_id,
 };
 
 /// What the Keychain store's predecessor (`security_framework::passwords`) reported for a reply

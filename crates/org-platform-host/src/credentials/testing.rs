@@ -11,18 +11,29 @@ use std::collections::VecDeque;
 use std::io;
 use std::path::Path;
 
-/// [`release_directory`](super::release_directory) with its walk started at the
-/// directory `base` instead of at `/`, for a test whose temporary directory is below
-/// one that is writable by others (`/tmp`, `/var/tmp`), which the ancestor rule refuses
-/// on purpose. `base` and every directory below it is opened and judged exactly as a
-/// host's walk judges them, and every other check is the host's; only the directories
-/// above `base` are not looked at. `location.path` must be `base` or below it.
-/// A system without a release directory refuses, as its host entry does.
+/// [`release_directory_with_stores`](super::release_directory_with_stores) with its
+/// walk started at the directory `base` instead of at `/`, for a test whose temporary
+/// directory is below one that is writable by others (`/tmp`, `/var/tmp`), which the
+/// ancestor rule refuses on purpose. `base` and every directory below it is opened and
+/// judged exactly as a host's walk judges them, and every other check is the host's;
+/// only the directories above `base` are not looked at. `location.path` must be `base`
+/// or below it. A system without a release directory refuses, as its host entry does.
+pub fn release_directory_below_with_stores(
+    base: &Path,
+    location: super::ReleaseDirectory<'_>,
+    item_stores: &[super::ItemStore<'_>],
+) -> Result<super::ReleaseRoot, super::CredentialError> {
+    super::native::release_directory_below(base, &location, item_stores)
+        .map(|root| super::ReleaseRoot { root })
+}
+
+/// [`release_directory`](super::release_directory), which declares no item store,
+/// with its walk started at `base` as above.
 pub fn release_directory_below(
     base: &Path,
     location: super::ReleaseDirectory<'_>,
 ) -> Result<super::ReleaseRoot, super::CredentialError> {
-    super::native::release_directory_below(base, &location).map(|root| super::ReleaseRoot { root })
+    release_directory_below_with_stores(base, location, &[])
 }
 
 /// One hook: run once, with the store's directory.

@@ -22,8 +22,8 @@ use std::{fmt, io};
 
 use org_platform::Refused;
 use org_platform_host::credentials::{
-    credentials, CredentialError, CredentialLocation, Credentials, ItemName, KeychainItems,
-    ProtectedStore, ReleaseItems, ReleaseRoot, Sharing,
+    credentials, CredentialError, CredentialLocation, Credentials, ItemName, ItemStore,
+    KeychainItems, ProtectedStore, ReleaseItems, ReleaseRoot, Sharing,
 };
 
 pub(crate) const MAX_BYTES: usize = 16 * 1024;
@@ -43,6 +43,19 @@ const RELEASE_ITEMS: ReleaseItems<'static> = ReleaseItems {
     suffix: "",
     sharing: Sharing::Exclusive,
 };
+
+/// The same item store as the host declares it when it opens the release directory
+/// (`release_store`): its directory, its suffix, and this view's name rule, so that only
+/// what this view would list is counted as a host secret there.
+pub(crate) const RELEASE_ITEM_STORE: ItemStore<'static> = ItemStore {
+    directory: RELEASE_ITEMS.directory,
+    suffix: RELEASE_ITEMS.suffix,
+    is_item: is_name,
+};
+
+fn is_name(name: &str) -> bool {
+    Name::parse(name).is_ok()
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Name(String);

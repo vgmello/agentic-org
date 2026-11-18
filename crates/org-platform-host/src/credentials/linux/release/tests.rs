@@ -28,7 +28,8 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::credentials::{
-    release_directory as contract, Credentials, FilesystemClass, ItemName, Sharing, MAX_ITEM_BYTES,
+    release_directory_with_stores as contract, Credentials, FilesystemClass, ItemName, Sharing,
+    MAX_ITEM_BYTES,
 };
 // The contract's handle: what a host holds. The tests wrap the adapter's own.
 use crate::credentials::ReleaseRoot as Opened;
@@ -44,6 +45,29 @@ const HOST_SECRETS: ReleaseItems<'static> = ReleaseItems {
     suffix: "",
     sharing: Sharing::Exclusive,
 };
+
+/// The host's own name rules stand in here as two simple ones: an office key's name is
+/// anything but `not-an-office`, a host secret's anything but `README`.
+fn is_office(name: &str) -> bool {
+    name != "not-an-office"
+}
+fn is_host_secret(name: &str) -> bool {
+    name != "README"
+}
+
+/// The two item stores as the host declares them when it opens the directory.
+const STORES: [ItemStore<'static>; 2] = [
+    ItemStore {
+        directory: "office-keys",
+        suffix: ".key",
+        is_item: is_office,
+    },
+    ItemStore {
+        directory: "host-secrets",
+        suffix: "",
+        is_item: is_host_secret,
+    },
+];
 
 fn euid() -> u32 {
     // SAFETY: no arguments and no side effects; it cannot fail.
@@ -205,6 +229,27 @@ impl Tree {
                 mount_point_required,
                 expect_items,
             },
+            &STORES,
+        )
+        .map(|root| Opened { root })
+    }
+
+    /// Opens the release directory at `path` for a host with the item stores `stores`.
+    fn open_for(
+        &self,
+        path: &Path,
+        stores: &[ItemStore<'_>],
+        expect_items: bool,
+    ) -> Result<Opened, CredentialError> {
+        release_directory_below(
+            &self.base,
+            &ReleaseDirectory {
+                path,
+                data_root: self.data_root().as_fd(),
+                mount_point_required: false,
+                expect_items,
+            },
+            stores,
         )
         .map(|root| Opened { root })
     }
@@ -224,12 +269,15 @@ fn from_filesystem_root(
     data_root: &File,
     expect_items: bool,
 ) -> Result<Opened, CredentialError> {
-    contract(ReleaseDirectory {
-        path,
-        data_root: data_root.as_fd(),
-        mount_point_required: false,
-        expect_items,
-    })
+    contract(
+        ReleaseDirectory {
+            path,
+            data_root: data_root.as_fd(),
+            mount_point_required: false,
+            expect_items,
+        },
+        &STORES,
+    )
 }
 
 /// A directory for a test from `/` that needs the store accepted: a fresh directory in
@@ -1069,25 +1117,36 @@ fn a_store_found_empty_when_records_say_keys_exist_is_refused_and_nothing_is_mad
     );
     assert_eq!(refusal(tree.open_expecting_items(&store)), missing);
 
-    // What is not an item does not make the store hold one: a temporary file, a
-    // directory and a link inside a view; a file next to the views; a directory that
-    // cannot be a view (another mode) with a file in it; an unreadable directory.
-    fs::write(
-        store.join("office-keys/.put.0123456789abcdef"),
-        b"temporary",
-    )
-    .unwrap();
+    // What is not an item does not make the store hold one. In an item store: a
+    // temporary file, a file without the store's suffix, a file whose name the host's
+    // own rule refuses, a name that is no item name. Outside the item stores: a file,
+    // a directory that looks like a store, and a volume's `lost+found`, which this
+    // user cannot even read. None is opened, and none is counted.
+    let plain = |path: PathBuf| {
+        fs::write(&path, b"not an item").unwrap();
+        chmod(&path, 0o600);
+    };
+    plain(store.join("office-keys/.put.0123456789abcdef"));
+    plain(store.join("office-keys/README"));
+    plain(store.join("office-keys/office-a.key.bak"));
+    plain(store.join("office-keys/not-an-office.key"));
+    plain(store.join("office-keys/a b.key"));
+    plain(store.join("host-secrets/README"));
+    plain(store.join("host-secrets/.hidden"));
     mkdir(&store.join("office-keys/a-directory"), 0o700);
-    symlink("/etc/hostname", store.join("host-secrets/a-link")).unwrap();
-    fs::write(store.join("stray-file"), b"stray").unwrap();
-    mkdir(&store.join("open-directory"), 0o755);
-    fs::write(store.join("open-directory/looks-like-an-item"), b"x").unwrap();
+    plain(store.join("stray-file"));
+    plain(store.join("office-a.key"));
+    mkdir(&store.join("backup"), 0o700);
+    plain(store.join("backup/office-a.key"));
+    plain(store.join("backup/registry"));
     mkdir(&store.join("lost+found"), 0o700);
-    fs::write(store.join("lost+found/x"), b"x").unwrap();
+    plain(store.join("lost+found/office-a.key"));
     chmod(&store.join("lost+found"), 0o000);
+    symlink(&tree.data, store.join("a-link")).unwrap();
     assert_eq!(refusal(tree.open_expecting_items(&store)), missing);
+    // Without records the same directory opens with all of that in it.
+    drop(tree.open(&store).unwrap());
     chmod(&store.join("lost+found"), 0o700);
-    fs::remove_file(store.join("lost+found/x")).unwrap();
 
     // One view empty and the other not, both ways: the store holds an item.
     for (view, file) in [
@@ -1125,6 +1184,7 @@ fn a_second_host_on_the_same_store_is_refused_until_the_first_has_dropped_every_
                 mount_point_required: false,
                 expect_items: false,
             },
+            &STORES,
         )
         .map(|root| Opened { root });
         assert_eq!(refusal(second), (RootRule::InUse, store));
@@ -1168,18 +1228,9 @@ fn a_lock_that_is_not_an_owner_only_regular_file_is_refused_and_left_as_it_is() 
     fs::write(&lock, b"").unwrap();
     for wrong in [0o644, 0o660, 0o400, 0o700] {
         chmod(&lock, wrong);
-        if wrong & 0o200 == 0 && !is_root() {
-            // Not writable by its owner: it cannot be opened for the lock at all.
-            assert_eq!(
-                refusal(tree.open(&store)),
-                (
-                    RootRule::Unavailable(ErrorKind::PermissionDenied),
-                    store.clone()
-                )
-            );
-        } else {
-            assert_eq!(refusal(tree.open(&store)), refused, "{wrong:o}");
-        }
+        // One this user cannot open for the lock at all (`0400`) is refused by the
+        // lock's rule as well, not as a part of the path that could not be opened.
+        assert_eq!(refusal(tree.open(&store)), refused, "{wrong:o}");
         assert_eq!(mode(&lock), wrong, "the lock's mode was changed");
     }
     // A second link.
@@ -1213,6 +1264,91 @@ fn a_lock_that_is_not_an_owner_only_regular_file_is_refused_and_left_as_it_is() 
         assert_eq!(refusal(tree.open(&store)), refused);
         fs::remove_file(&lock).unwrap();
     }
+    drop(tree.open(&store).unwrap());
+    // The texts are the lock's own.
+    let text = RootRule::LockFile.to_string();
+    assert!(text.contains("lock file (.lock)"), "{text}");
+    let text = RootRule::LockUnavailable(ErrorKind::ReadOnlyFilesystem).to_string();
+    assert!(
+        text.contains("lock file (.lock) could not be opened"),
+        "{text}"
+    );
+}
+
+/// A process whose file-creation mask takes the owner's own bits away (`0277`) makes
+/// every file `0400` and every directory `0500`. What an open makes gets its mode set
+/// explicitly, so such a host works; what already exists with such a mode was not made
+/// by this open, and is refused and never repaired.
+#[test]
+fn a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_is_not_repaired() {
+    const MARKER: &str = "ORG_RELEASE_DIRECTORY_UMASK_CHILD";
+    const TEST: &str = "credentials::linux::release::tests::\
+         a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_is_not_repaired";
+    if let Some(base) = std::env::var_os(MARKER) {
+        // A process of its own: the mask belongs to the whole process, and this
+        // test's other threads make files too.
+        let base = PathBuf::from(base);
+        let (store, data) = (base.join("credentials"), base.join("data"));
+        let data_root = File::open(&data).unwrap();
+        let location = ReleaseDirectory {
+            path: &store,
+            data_root: data_root.as_fd(),
+            mount_point_required: false,
+            expect_items: false,
+        };
+        // SAFETY: this exact-test child runs nothing else.
+        unsafe { libc::umask(0o277) };
+        // Everything this open makes gets its mode set, whatever the mask is: the
+        // root's lock, the item stores' directories and their locks, and an item.
+        let opened = release_directory_below(&base, &location, &STORES)
+            .map(|root| Opened { root })
+            .unwrap();
+        let keys = opened.store(OFFICE_KEYS).unwrap();
+        keys.add(&name("office-a"), b"key").unwrap();
+        drop((keys, opened));
+        // The next host, under the same mask, finds every one of them as it must be.
+        let again = release_directory_below(
+            &base,
+            &ReleaseDirectory {
+                expect_items: true,
+                ..location
+            },
+            &STORES,
+        )
+        .map(|root| Opened { root })
+        .unwrap();
+        assert_eq!(
+            loaded(&again.store(OFFICE_KEYS).unwrap(), "office-a").unwrap(),
+            b"key"
+        );
+        return;
+    }
+    let Some(tree) = Tree::accepted() else { return };
+    let store = tree.dir("credentials", 0o700);
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST, "--nocapture"])
+        .env(MARKER, &tree.base)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    for (path, expected) in [
+        (".lock", 0o600),
+        ("office-keys", 0o700),
+        ("office-keys/.lock", 0o600),
+        ("office-keys/office-a.key", 0o600),
+    ] {
+        assert_eq!(mode(&store.join(path)), expected, "{path}");
+    }
+    // A lock that exists with such a mode was not made by this open: refused by the
+    // lock's rule, and left exactly as it is.
+    let lock = store.join(".lock");
+    chmod(&lock, 0o400);
+    assert_eq!(
+        refusal(tree.open(&store)),
+        (RootRule::LockFile, store.clone())
+    );
+    assert_eq!(mode(&lock), 0o400);
+    chmod(&lock, 0o600);
     drop(tree.open(&store).unwrap());
 }
 
@@ -1315,41 +1451,78 @@ fn an_item_store_is_a_single_checked_directory_below_the_root() {
         suffix,
         sharing: Sharing::Exclusive,
     };
-    // Not a single plain name, or a suffix that is none: refused, and nothing is made.
-    for directory in [
-        "",
-        ".",
-        "..",
-        ".hidden",
-        "a/b",
-        "../outside",
-        "a b",
-        ".lock",
+    // Not a single plain name, a suffix that is none, a store the directory was not
+    // opened for, or one of its stores under another suffix: refused, and nothing is
+    // made.
+    for (directory, suffix) in [
+        ("", ""),
+        (".", ""),
+        ("..", ""),
+        (".hidden", ""),
+        ("a/b", ""),
+        ("../outside", ""),
+        ("a b", ""),
+        (".lock", ""),
+        ("keys", "/x"),
+        ("backup", ""),
+        ("office-keys", ""),
+        ("office-keys", ".bak"),
+        ("host-secrets", ".key"),
     ] {
         assert_eq!(
-            opened.store(items(directory, "")).unwrap_err(),
+            opened.store(items(directory, suffix)).unwrap_err(),
             CredentialError::InvalidName,
-            "{directory:?}"
+            "{directory:?} {suffix:?}"
         );
     }
-    assert_eq!(
-        opened.store(items("keys", "/x")).unwrap_err(),
-        CredentialError::InvalidName
-    );
     assert_eq!(listing(&store), [".lock"]);
     assert!(!tree.base.join("outside").exists());
-
-    // An item store's directory that exists with another mode, or is a link.
-    mkdir(&store.join("open"), 0o755);
+    // A declaration that is no item store's is refused before anything is opened.
+    drop(opened);
+    for bad in [
+        ItemStore {
+            directory: "a/b",
+            ..STORES[0]
+        },
+        ItemStore {
+            directory: ".lock",
+            ..STORES[0]
+        },
+        ItemStore {
+            suffix: "/x",
+            ..STORES[0]
+        },
+        // The same directory twice.
+        ItemStore {
+            suffix: "",
+            ..STORES[0]
+        },
+    ] {
+        let error = tree.open_for(&store, &[STORES[0], bad], false).err();
+        assert_eq!(error, Some(CredentialError::InvalidName));
+    }
+    // A host that declares no item store opens the directory and nothing below it.
+    let bare = tree.open_for(&store, &[], false).unwrap();
     assert_eq!(
-        opened.store(items("open", "")).unwrap_err(),
+        bare.store(OFFICE_KEYS).unwrap_err(),
+        CredentialError::InvalidName
+    );
+    drop(bare);
+    assert_eq!(
+        refusal(tree.open_for(&store, &[], true)),
+        (RootRule::CredentialsMissing, store.clone())
+    );
+    let opened = tree.open(&store).unwrap();
+
+    // An item store that is replaced by a wrong one after the directory was opened is
+    // still refused when it is opened: the engine checks it again.
+    mkdir(&store.join("office-keys"), 0o755);
+    assert_eq!(
+        opened.store(OFFICE_KEYS).unwrap_err(),
         CredentialError::Unsafe
     );
-    assert_eq!(mode(&store.join("open")), 0o755);
-    let elsewhere = tree.dir("elsewhere", 0o700);
-    symlink(&elsewhere, store.join("linked")).unwrap();
-    assert!(opened.store(items("linked", "")).is_err());
-    assert!(listing(&elsewhere).is_empty());
+    assert_eq!(mode(&store.join("office-keys")), 0o755);
+    chmod(&store.join("office-keys"), 0o700);
 
     // Each view holds its own item store alone or shares it, as it asks.
     let exclusive = opened.store(HOST_SECRETS).unwrap();
@@ -1423,4 +1596,505 @@ fn a_refusal_names_the_directory_and_the_rule_and_a_location_prints_no_path() {
         !printed.contains("credentials") && !printed.contains('/'),
         "{printed}"
     );
+}
+
+// ---------------------------------------------------------------------------------
+// The host's item stores, judged when the directory opens.
+// ---------------------------------------------------------------------------------
+
+/// A store restored without its modes is reported as that: the item store is named
+/// with its own rule, whether or not items are expected, and never as "credentials
+/// missing".
+#[test]
+fn an_item_store_that_breaks_its_rule_is_named_before_the_store_is_called_empty() {
+    let Some(tree) = Tree::accepted() else { return };
+    let store = tree.dir("credentials", 0o700);
+    let opened = tree.open(&store).unwrap();
+    opened
+        .store(OFFICE_KEYS)
+        .unwrap()
+        .add(&name("office-a"), b"key")
+        .unwrap();
+    drop(opened);
+    let keys = store.join("office-keys");
+    for wrong in [0o750, 0o755, 0o777, 0o500, 0o000] {
+        chmod(&keys, wrong);
+        for expect_items in [true, false] {
+            assert_eq!(
+                refusal(tree.open_for(&store, &STORES, expect_items)),
+                (RootRule::ItemStoreMode, keys.clone()),
+                "{wrong:o} {expect_items}"
+            );
+        }
+        assert_eq!(mode(&keys), wrong, "the mode was repaired");
+    }
+    chmod(&keys, 0o700);
+    drop(tree.open_expecting_items(&store).unwrap());
+    let text = RootRule::ItemStoreMode.to_string();
+    assert!(
+        text.contains("item store") && text.contains("0700"),
+        "{text}"
+    );
+    assert!(!text.contains("missing"), "{text}");
+
+    // The other item store: a link, and a file, where its directory goes.
+    let secrets = store.join("host-secrets");
+    let elsewhere = tree.dir("elsewhere", 0o700);
+    symlink(&elsewhere, &secrets).unwrap();
+    assert_eq!(
+        refusal(tree.open_expecting_items(&store)),
+        (RootRule::ItemStoreNotADirectory, secrets.clone())
+    );
+    assert_eq!(
+        refusal(tree.open(&store)),
+        (RootRule::ItemStoreNotADirectory, secrets.clone())
+    );
+    assert!(listing(&elsewhere).is_empty());
+    fs::remove_file(&secrets).unwrap();
+    fs::write(&secrets, b"").unwrap();
+    assert_eq!(
+        refusal(tree.open(&store)),
+        (RootRule::ItemStoreNotADirectory, secrets.clone())
+    );
+    fs::remove_file(&secrets).unwrap();
+    // Another owner: only root can make such a directory.
+    if is_root() {
+        std::os::unix::fs::chown(&keys, Some(65534), Some(65534)).unwrap();
+        assert_eq!(
+            refusal(tree.open_expecting_items(&store)),
+            (RootRule::ItemStoreOwner, keys.clone())
+        );
+        std::os::unix::fs::chown(&keys, Some(0), Some(0)).unwrap();
+    }
+    // Only the declared item stores are judged: the same directory is nothing to a
+    // host that does not declare it.
+    chmod(&keys, 0o755);
+    drop(tree.open_for(&store, &STORES[1..], false).unwrap());
+}
+
+/// A file that is named like an item and is not what an item must be is not counted
+/// as missing either: it refuses by its own rule, with its item store's path and
+/// without its name.
+#[test]
+fn a_file_named_like_an_item_that_is_no_item_refuses_by_its_own_rule() {
+    let Some(tree) = Tree::accepted() else { return };
+    let store = tree.dir("credentials", 0o700);
+    let opened = tree.open(&store).unwrap();
+    drop((
+        opened.store(OFFICE_KEYS).unwrap(),
+        opened.store(HOST_SECRETS).unwrap(),
+    ));
+    drop(opened);
+    let keys = store.join("office-keys");
+    let secrets = store.join("host-secrets");
+    let key = keys.join("office-a.key");
+    let unsafe_keys = (RootRule::ItemUnsafe, keys.clone());
+
+    // A key restored with another mode: the only item there is.
+    fs::write(&key, b"key").unwrap();
+    for wrong in [0o644, 0o640, 0o400, 0o700] {
+        chmod(&key, wrong);
+        assert_eq!(
+            refusal(tree.open_expecting_items(&store)),
+            unsafe_keys,
+            "{wrong:o}"
+        );
+        assert_eq!(mode(&key), wrong, "the mode was repaired");
+    }
+    // A second link.
+    chmod(&key, 0o600);
+    drop(tree.open_expecting_items(&store).unwrap());
+    fs::hard_link(&key, tree.base.join("second-name")).unwrap();
+    assert_eq!(refusal(tree.open_expecting_items(&store)), unsafe_keys);
+    fs::remove_file(tree.base.join("second-name")).unwrap();
+    // A good item next to a bad one does not excuse the bad one.
+    let other = keys.join("office-b.key");
+    fs::write(&other, b"key").unwrap();
+    chmod(&other, 0o644);
+    assert_eq!(refusal(tree.open_expecting_items(&store)), unsafe_keys);
+    fs::remove_file(&other).unwrap();
+    fs::remove_file(&key).unwrap();
+    // A link and a directory named like an item, in the other store.
+    let victim = tree.base.join("victim");
+    fs::write(&victim, b"keep").unwrap();
+    chmod(&victim, 0o600);
+    symlink(&victim, secrets.join("registry")).unwrap();
+    assert_eq!(
+        refusal(tree.open_expecting_items(&store)),
+        (RootRule::ItemUnsafe, secrets.clone())
+    );
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    fs::remove_file(secrets.join("registry")).unwrap();
+    mkdir(&secrets.join("writer-device"), 0o700);
+    assert_eq!(
+        refusal(tree.open_expecting_items(&store)),
+        (RootRule::ItemUnsafe, secrets.clone())
+    );
+    fs::remove_dir(secrets.join("writer-device")).unwrap();
+    // The same file under a name that is no item's is nothing to the store.
+    fs::write(keys.join("not-an-office.key"), b"x").unwrap();
+    chmod(&keys.join("not-an-office.key"), 0o644);
+    fs::write(secrets.join("README"), b"x").unwrap();
+    assert_eq!(
+        refusal(tree.open_expecting_items(&store)),
+        (RootRule::CredentialsMissing, store.clone())
+    );
+    // The refusal names the item store and the rule, and no item.
+    let error = {
+        fs::write(&key, b"key").unwrap();
+        chmod(&key, 0o644);
+        tree.open_expecting_items(&store).err().unwrap().to_string()
+    };
+    assert!(
+        error.starts_with(&format!("{}: ", keys.display())),
+        "{error}"
+    );
+    assert!(!error.contains("office-a"), "{error}");
+    // Without records nothing is counted, and the engine refuses the item at its use.
+    let opened = tree.open(&store).unwrap();
+    assert_eq!(
+        opened
+            .store(OFFICE_KEYS)
+            .unwrap()
+            .load(&name("office-a"))
+            .unwrap_err(),
+        CredentialError::Unsafe
+    );
+}
+
+// ---------------------------------------------------------------------------------
+// Access control lists on a directory admitted by a group-write exception.
+// ---------------------------------------------------------------------------------
+
+/// A directory above the store that its group can write is admitted only under the
+/// private group (or, for root, sticky), and then only without an access ACL: an ACL
+/// entry for another user makes that user a writer, and the mode shows it only as the
+/// group's bits. The ACL is set with the attribute itself, as its owner may.
+#[test]
+fn a_group_writable_ancestor_with_an_access_acl_is_refused() {
+    let Some(tree) = Tree::accepted() else { return };
+    let parent = tree.dir("parent", 0o755);
+    let store = parent.join("credentials");
+    mkdir(&store, 0o700);
+    let group = fs::symlink_metadata(&parent).unwrap().gid();
+    if account::private_group_of(euid()).unwrap() != Some(group) {
+        println!(
+            "skipped: this user's group {group} is not its private group, so no \
+             group-writable directory of it is admitted to begin with"
+        );
+        return;
+    }
+    // Another user, in no group of this one, gets write access by an ACL entry. The
+    // mask is what the mode then shows for the group: the directory reads 0775.
+    if let Err(error) = account::set_access_acl_for_test(&parent, 65534, 7) {
+        println!("skipped: this filesystem takes no ACL: {error}");
+        return;
+    }
+    assert_eq!(mode(&parent), 0o775);
+    assert_eq!(
+        refusal(tree.open(&store)),
+        (RootRule::AncestorAcl, parent.clone())
+    );
+    assert!(listing(&store).is_empty());
+    let text = RootRule::AncestorAcl.to_string();
+    assert!(text.contains("access control list"), "{text}");
+    // With a mask that denies writing, no entry of the ACL can write: the mode reads
+    // 0755 again, the directory needs no exception, and the ACL is not looked at.
+    account::set_access_acl_for_test(&parent, 65534, 5).unwrap();
+    assert_eq!(mode(&parent), 0o755);
+    drop(tree.open(&store).unwrap());
+    // A plain group-writable directory in the private group, without an ACL.
+    let plain = tree.dir("plain", 0o775);
+    mkdir(&plain.join("credentials"), 0o700);
+    drop(tree.open(&plain.join("credentials")).unwrap());
+    // The store's own mode is exact, so an ACL on it cannot grant anything: with one,
+    // its mode is no longer 0700 unless the mask is empty.
+    account::set_access_acl_for_test(&plain.join("credentials"), 65534, 7).unwrap();
+    assert_eq!(
+        refusal(tree.open(&plain.join("credentials"))),
+        (RootRule::StoreMode, plain.join("credentials"))
+    );
+}
+
+// ---------------------------------------------------------------------------------
+// Where a directory is inside its filesystem: bind mounts.
+// ---------------------------------------------------------------------------------
+
+/// The live probes of the mount check on this machine's real mount table, as any
+/// user: a directory is placed by its mount and its path, a directory below it is
+/// placed below it, another filesystem is another filesystem, and a directory that
+/// was deleted has no place.
+#[test]
+fn a_directory_is_placed_in_its_filesystem_by_the_real_mount_table() {
+    let table = mount_table().unwrap();
+    assert!(!table.is_empty());
+    let tree = Tree::new();
+    mkdir(&tree.base.join("a"), 0o700);
+    mkdir(&tree.base.join("a/b with space"), 0o700);
+    let at = |path: &Path| place(File::open(path).unwrap().as_fd(), &table);
+    let base = at(&tree.base).unwrap();
+    let below = at(&tree.base.join("a/b with space")).unwrap();
+    assert_eq!(below.filesystem, base.filesystem);
+    let mut expected = base.path.clone();
+    expected.push(b"a".to_vec());
+    expected.push(b"b with space".to_vec());
+    assert_eq!(below.path, expected);
+    assert_eq!(
+        mounts::disjoint(&below, &base),
+        Err(RootRule::InsideDataRoot)
+    );
+    // A descriptor opened for passing through only is placed the same.
+    let passing = open_absolute(&tree.base).unwrap();
+    assert_eq!(place(passing.as_fd(), &table).unwrap(), base);
+    // `/proc` is another filesystem than the disk the tree is on.
+    let proc_place = at(Path::new("/proc")).unwrap();
+    assert_ne!(proc_place.filesystem, base.filesystem);
+    assert!(proc_place.path.is_empty());
+    assert_eq!(mounts::disjoint(&proc_place, &base), Ok(()));
+    // A directory that is deleted while it is held has no path that names it.
+    let doomed = tree.base.join("doomed");
+    mkdir(&doomed, 0o700);
+    let held = File::open(&doomed).unwrap();
+    fs::remove_dir(&doomed).unwrap();
+    assert_eq!(
+        place(held.as_fd(), &table),
+        Err(MountDoubt::PathOutsideMount)
+    );
+    // And one that was renamed is placed where it is now.
+    let moved = tree.base.join("moved");
+    let held = File::open(tree.base.join("a")).unwrap();
+    fs::rename(tree.base.join("a"), &moved).unwrap();
+    let mut expected = base.path.clone();
+    expected.push(b"moved".to_vec());
+    assert_eq!(place(held.as_fd(), &table).unwrap().path, expected);
+}
+
+/// A bind mount, unmounted when it goes out of scope, so that a failed assertion
+/// leaves none behind.
+struct Bind(CString);
+
+impl Drop for Bind {
+    fn drop(&mut self) {
+        // SAFETY: a NUL-terminated path; `MNT_DETACH` cannot block on a busy mount.
+        unsafe { libc::umount2(self.0.as_ptr(), libc::MNT_DETACH) };
+    }
+}
+
+/// Bind-mounts the directory `source` at `target`, or says why it could not.
+fn bind(source: &Path, target: &Path) -> Result<Bind, std::io::Error> {
+    let from = CString::new(source.as_os_str().as_bytes()).unwrap();
+    let to = CString::new(target.as_os_str().as_bytes()).unwrap();
+    // SAFETY: NUL-terminated paths that outlive the call; a bind mount reads no
+    // filesystem type and no data.
+    let mounted = unsafe {
+        libc::mount(
+            from.as_ptr(),
+            to.as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND,
+            std::ptr::null(),
+        )
+    };
+    if mounted != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(Bind(to))
+}
+
+/// The reviewer's case on a real kernel, and its neighbours. A bind mount shows a
+/// directory somewhere else, and its `..` leads out through the mount point: a store
+/// that is a bind of a directory of the data root is nowhere near the data root by
+/// the walk, and its keys would be in the data root. It is found inside the
+/// filesystem, from the mount table. Making a mount takes root.
+#[test]
+fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
+    if !is_root() {
+        println!(
+            "skipped: only root can make a bind mount; the decision over mount records \
+             (mounts.rs) covers the cases on every target"
+        );
+        return;
+    }
+    let Some(tree) = Tree::accepted() else { return };
+    let mounted = |source: &Path, target: &Path| match bind(source, target) {
+        Ok(bind) => Some(bind),
+        Err(error) => {
+            println!("skipped: this environment refuses a bind mount: {error}");
+            None
+        }
+    };
+
+    // 1. `mkdir data data/inner alias2; mount --bind data/inner alias2`: the store is
+    //    `alias2`, the data root is `data`.
+    let inner = tree.data.join("inner");
+    mkdir(&inner, 0o700);
+    let alias = tree.dir("alias2", 0o700);
+    let Some(first) = mounted(&inner, &alias) else {
+        return;
+    };
+    // The walk through `..` alone sees two unrelated directories.
+    assert_eq!(
+        rules::disjoint(
+            &chain(File::open(&alias).unwrap().as_fd()).unwrap(),
+            &chain(tree.data_root().as_fd()).unwrap()
+        ),
+        Ok(())
+    );
+    for mount_point_required in [false, true] {
+        assert_eq!(
+            refusal(tree.open_with(&alias, &tree.data_root(), mount_point_required, false)),
+            (RootRule::InsideDataRoot, alias.clone())
+        );
+    }
+    assert!(
+        listing(&inner).is_empty(),
+        "something was made in the data root"
+    );
+    // A directory below such a bind.
+    mkdir(&inner.join("deeper"), 0o700);
+    assert_eq!(
+        refusal(tree.open(&alias.join("deeper"))),
+        (RootRule::InsideDataRoot, alias.join("deeper"))
+    );
+    fs::remove_dir(inner.join("deeper")).unwrap();
+    drop(first);
+
+    // 2. The reverse: the data root is a bind of a directory of the store.
+    let store = tree.dir("credentials", 0o700);
+    mkdir(&store.join("sub"), 0o700);
+    let data_bind = tree.dir("data2", 0o700);
+    let Some(second) = mounted(&store.join("sub"), &data_bind) else {
+        return;
+    };
+    let through = File::open(&data_bind).unwrap();
+    assert_eq!(
+        refusal(tree.open_with(&store, &through, false, false)),
+        (RootRule::ContainsDataRoot, store.clone())
+    );
+    assert_eq!(listing(&store), ["sub"]);
+    drop((through, second));
+    fs::remove_dir(store.join("sub")).unwrap();
+
+    // 3. The same directory twice, once through a bind; and a store inside a data
+    //    root that is given through a bind alias. The walk refuses both already.
+    let again = tree.dir("again", 0o700);
+    let Some(third) = mounted(&store, &again) else {
+        return;
+    };
+    let through = File::open(&again).unwrap();
+    assert_eq!(
+        refusal(tree.open_with(&store, &through, false, false)),
+        (RootRule::IsDataRoot, store.clone())
+    );
+    drop((through, third));
+    let data_alias = tree.dir("data-alias", 0o700);
+    let Some(fourth) = mounted(&tree.data, &data_alias) else {
+        return;
+    };
+    let inside = tree.data.join("credentials");
+    mkdir(&inside, 0o700);
+    let through = File::open(&data_alias).unwrap();
+    assert_eq!(
+        refusal(tree.open_with(&inside, &through, false, false)),
+        (RootRule::InsideDataRoot, inside.clone())
+    );
+    // And the store reached through the alias, with the data root by its own path.
+    assert_eq!(
+        refusal(tree.open(&data_alias.join("credentials"))),
+        (RootRule::InsideDataRoot, data_alias.join("credentials"))
+    );
+    drop((through, fourth));
+    assert!(listing(&inside).is_empty());
+
+    // 4. A bind of a directory that shares nothing with the data root is a store:
+    //    a container's mounted secrets volume.
+    let volume = tree.dir("volume", 0o700);
+    let secrets = tree.dir("secrets", 0o700);
+    let Some(fifth) = mounted(&volume, &secrets) else {
+        return;
+    };
+    let opened = tree
+        .open_with(&secrets, &tree.data_root(), true, false)
+        .unwrap();
+    opened
+        .store(OFFICE_KEYS)
+        .unwrap()
+        .add(&name("office-a"), b"key")
+        .unwrap();
+    drop(opened);
+    assert_eq!(
+        fs::read(volume.join("office-keys/office-a.key")).unwrap(),
+        b"key"
+    );
+    assert!(listing(&tree.data)
+        .iter()
+        .all(|entry| !entry.ends_with(".key")));
+    drop(fifth);
+
+    // 5. A mount whose directory was deleted: where it is cannot be said, so it is
+    //    refused, not assumed to be elsewhere.
+    let gone = tree.dir("gone", 0o700);
+    let gone_mount = tree.dir("gone-mount", 0o700);
+    let Some(sixth) = mounted(&gone, &gone_mount) else {
+        return;
+    };
+    match fs::remove_dir(&gone) {
+        Ok(()) => assert_eq!(
+            refusal(tree.open(&gone_mount)),
+            (
+                RootRule::Undetermined(MountDoubt::DeletedRoot),
+                gone_mount.clone()
+            )
+        ),
+        Err(error) => println!("skipped: a mounted directory cannot be deleted here: {error}"),
+    }
+    drop(sixth);
+    println!(
+        "bind mounts judged on a real kernel: inside, reverse, alias, unrelated, deleted ({})",
+        tree.base.display()
+    );
+}
+
+/// A store on a read-only mount: the lock cannot be made, and the refusal says so
+/// with the lock's own text, not as a part of the path that could not be opened.
+/// Making a mount takes root.
+#[test]
+fn a_store_whose_lock_cannot_be_made_reports_the_lock() {
+    if !is_root() {
+        println!("skipped: only root can make a read-only mount");
+        return;
+    }
+    let Some(tree) = Tree::accepted() else { return };
+    let store = tree.dir("credentials", 0o700);
+    let Ok(mount) = bind(&store, &store) else {
+        println!("skipped: this environment refuses a bind mount");
+        return;
+    };
+    // SAFETY: a NUL-terminated path; the flags remount this one bind read-only.
+    let remounted = unsafe {
+        libc::mount(
+            std::ptr::null(),
+            mount.0.as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+            std::ptr::null(),
+        )
+    };
+    if remounted != 0 {
+        println!(
+            "skipped: this environment refuses a read-only remount: {}",
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+    let refused = tree.open(&store);
+    drop(mount);
+    assert_eq!(
+        refusal(refused),
+        (
+            RootRule::LockUnavailable(ErrorKind::ReadOnlyFilesystem),
+            store.clone()
+        )
+    );
+    assert!(listing(&store).is_empty());
 }

@@ -697,13 +697,21 @@ fn a_release_directory_is_refused_and_nothing_is_made() {
         (dir.clone(), true, true),
         (std::path::PathBuf::from("relative/../path"), false, true),
     ] {
-        let refused = release_directory(&ReleaseDirectory {
+        let location = ReleaseDirectory {
             path: &path,
             data_root: std::os::fd::AsFd::as_fd(&data_root),
             mount_point_required,
             expect_items,
-        });
-        assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
+        };
+        let stores = [ItemStore {
+            directory: "office-keys",
+            suffix: ".key",
+            is_item: |_| true,
+        }];
+        for item_stores in [&stores[..], &[]] {
+            let refused = release_directory(&location, item_stores);
+            assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
+        }
     }
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
 }

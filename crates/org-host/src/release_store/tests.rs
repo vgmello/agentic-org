@@ -7,6 +7,11 @@
 //! opens it as a host does, from `/`, where this machine has a directory that passes.
 //! On a system whose protected store is not a release directory these tests assert that
 //! none is opened, and stop.
+//!
+//! A credential directory that is a bind mount of a directory in the data root (the
+//! container mistake `-v ./agentic:/data -v ./agentic/secrets:/secrets`) is tested on a real
+//! kernel in the platform crate, where the mount calls are (`credentials/linux/release/tests.rs`,
+//! as root); the host gives the platform the same held root descriptor in every case here.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -14,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use org_platform_host::credentials::{protected_store, ProtectedStore, ReleaseRoot};
-use org_platform_host::testing::credentials::release_directory_below;
+use org_platform_host::testing::credentials::release_directory_below_with_stores;
 use org_proto::DbKey;
 
 use super::*;
@@ -112,7 +117,7 @@ impl World {
             true,
             Ok(ProtectedStore::ReleaseDirectory),
             self.facts(expect_items),
-            |location| release_directory_below(&self.base, location),
+            |location| release_directory_below_with_stores(&self.base, location, &ITEM_STORES),
         )
         .map(|root| root.expect("a release host on a release directory system opens one"))
     }
@@ -488,7 +493,7 @@ fn a_store_that_breaks_a_rule_stops_the_start_with_the_directory_and_the_rule() 
             recorded: Some(&inside),
             ..world.facts(false)
         },
-        |location| release_directory_below(&world.base, location),
+        |location| release_directory_below_with_stores(&world.base, location, &ITEM_STORES),
     )
     .err()
     .unwrap();
@@ -508,7 +513,7 @@ fn a_store_that_breaks_a_rule_stops_the_start_with_the_directory_and_the_rule() 
             recorded: Some(world.instance.root()),
             ..world.facts(false)
         },
-        |location| release_directory_below(&world.base, location),
+        |location| release_directory_below_with_stores(&world.base, location, &ITEM_STORES),
     )
     .err()
     .unwrap();
@@ -552,7 +557,7 @@ fn a_store_on_a_memory_filesystem_stops_the_start() {
             recorded: Some(&store),
             ..world.facts(false)
         },
-        |location| release_directory_below(&base, location),
+        |location| release_directory_below_with_stores(&base, location, &ITEM_STORES),
     )
     .err()
     .unwrap();
@@ -650,4 +655,73 @@ fn the_hosts_own_entry_walks_from_the_filesystem_root() {
         }
         Err(refused) => panic!("{refused}"),
     }
+}
+
+/// A store restored without its modes: the host is told which item store to fix, not that
+/// its credentials are missing; and only what the two views would list counts as a key.
+#[test]
+fn an_item_store_with_a_wrong_mode_stops_the_start_by_its_own_rule_and_strays_are_no_keys() {
+    if !release_directory_system() {
+        return;
+    }
+    let world = World::new();
+    {
+        let root = world.open(false).unwrap();
+        world
+            .keys(&root)
+            .create(OFFICE, &DbKey::from_bytes(key_bytes()))
+            .unwrap();
+        drop(world.secrets(&root));
+    }
+    directory(&world.office_folder());
+    drop(world.open_as_the_host_decides().unwrap());
+    let keys = world.credentials.join("office-keys");
+    fs::set_permissions(&keys, fs::Permissions::from_mode(0o750)).unwrap();
+    let refused = world.open_as_the_host_decides().err().unwrap();
+    assert!(
+        refused.starts_with(&format!("{}: the mode of this item store", keys.display())),
+        "{refused}"
+    );
+    assert!(!refused.contains("credentials missing"), "{refused}");
+    assert_eq!(
+        fs::symlink_metadata(&keys).unwrap().mode() & 0o7777,
+        0o750,
+        "the mode was repaired"
+    );
+    fs::set_permissions(&keys, fs::Permissions::from_mode(0o700)).unwrap();
+    // The key itself restored with another mode.
+    let key = keys.join(format!("{OFFICE}.key"));
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
+    let refused = world.open_as_the_host_decides().err().unwrap();
+    assert!(
+        refused.starts_with(&format!("{}: an item in this item store", keys.display())),
+        "{refused}"
+    );
+    assert!(!refused.contains(OFFICE), "{refused}");
+    fs::remove_file(&key).unwrap();
+    // No key is left. Files that neither view would list are no keys: a note next to the
+    // keys, a name that is no office's, a name that is no host secret's, a directory of
+    // someone's backup. The store is one that was lost.
+    for stray in [
+        "office-keys/notes.txt",
+        "office-keys/not an office.key",
+        "host-secrets/README",
+        "host-secrets/tls.short",
+        "stray.key",
+    ] {
+        let path = world.credentials.join(stray);
+        fs::write(&path, b"x").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    directory(&world.credentials.join("backup"));
+    fs::write(
+        world
+            .credentials
+            .join("backup")
+            .join(format!("{OFFICE}.key")),
+        b"x",
+    )
+    .unwrap();
+    let refused = world.open_as_the_host_decides().err().unwrap();
+    assert!(refused.contains("credentials missing"), "{refused}");
 }

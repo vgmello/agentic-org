@@ -30,8 +30,10 @@
 //!   link. A missing one is created with `mkdirat` when the location says so, and its
 //!   parent is then flushed.
 //! - `.lock` is opened relative to the store's directory without following a link,
-//!   created if missing, and must be a regular file of this user with mode exactly
-//!   `0600` and one link.
+//!   and must be a regular file of this user with mode exactly `0600` and one link. A
+//!   missing one is made, and so is a missing directory when the location says so;
+//!   what this open makes gets its mode set explicitly (`0600`, `0700`), whatever the
+//!   process's file-creation mask is. What exists is never changed.
 //! - The lock: an exclusive handle takes an exclusive `flock` and holds it for its
 //!   life; a second handle is refused. A shared handle holds a shared `flock` for its
 //!   life, so shared handles admit each other and an exclusive one is refused while any
@@ -182,11 +184,7 @@ impl Store {
             directory = child(&directory, name, create)?;
             path.push(name);
         }
-        let lock = at(
-            &directory,
-            LOCK,
-            libc::O_RDWR | libc::O_CREAT | libc::O_NONBLOCK,
-        )?;
+        let lock = open_lock(&directory)?;
         check(&lock, Kind::File)?;
         let alone = match lock.try_lock() {
             Ok(()) => true,
@@ -264,8 +262,8 @@ impl Store {
                 continue;
             }
             let item = raw.to_str().and_then(|file| {
-                let name = file.strip_suffix(self.suffix.as_str())?;
-                (super::valid_name(name) && is_item(name)).then_some((file, name))
+                let name = item_name(file, &self.suffix)?;
+                is_item(name).then_some((file, name))
             });
             let Some((file, name)) = item else {
                 listing.ignored += 1;
@@ -409,13 +407,7 @@ impl Store {
         }) {
             return Err(CredentialError::CaseAlias);
         }
-        let file = match at(&self.directory, name, libc::O_RDONLY | libc::O_NONBLOCK) {
-            Ok(file) => file,
-            Err(CredentialError::Io(io::ErrorKind::NotFound)) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        check(&file, Kind::File)?;
-        Ok(Some(file))
+        open_item(&self.directory, name)
     }
 
     fn remove(&self, name: &str) -> Result<(), CredentialError> {
@@ -440,6 +432,44 @@ impl Store {
         }
         self.directory.sync_all()?;
         Ok(())
+    }
+}
+
+/// The item name in `file`, the name of a file in a store whose items end in `suffix`:
+/// what is left without the suffix, if that is an item name. Any other file is no item
+/// of the store, whatever it is.
+pub(super) fn item_name<'a>(file: &'a str, suffix: &str) -> Option<&'a str> {
+    file.strip_suffix(suffix)
+        .filter(|name| super::valid_name(name))
+}
+
+/// The file `name` of `directory`, opened as an item and checked: never followed if it
+/// is a link, and a regular file of this user with mode exactly `0600` and one link,
+/// or [`CredentialError::Unsafe`]. `None` if there is no such file.
+pub(super) fn open_item(directory: &File, name: &str) -> Result<Option<File>, CredentialError> {
+    let file = match at(directory, name, libc::O_RDONLY | libc::O_NONBLOCK) {
+        Ok(file) => file,
+        Err(CredentialError::Io(io::ErrorKind::NotFound)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    check(&file, Kind::File)?;
+    Ok(Some(file))
+}
+
+/// The lock file of the store in `directory`, opened and not yet checked. A missing
+/// one is made by this call alone (`O_EXCL`), and its mode is then set on the
+/// descriptor that made it: the process's mask may have taken the owner's own bits
+/// away, and a lock made unusable would refuse the store for good. An existing one is
+/// opened as it is and never changed; the caller's check refuses a wrong one.
+fn open_lock(directory: &File) -> Result<File, CredentialError> {
+    let flags = libc::O_RDWR | libc::O_NONBLOCK;
+    match at(directory, LOCK, flags | libc::O_CREAT | libc::O_EXCL) {
+        Ok(lock) => {
+            lock.set_permissions(Permissions::from_mode(0o600))?;
+            Ok(lock)
+        }
+        Err(CredentialError::Io(io::ErrorKind::AlreadyExists)) => at(directory, LOCK, flags),
+        Err(e) => Err(e),
     }
 }
 
@@ -470,7 +500,7 @@ fn share(lock: &File) -> Result<(), CredentialError> {
     Err(CredentialError::InUse)
 }
 
-fn valid_suffix(suffix: &str) -> bool {
+pub(super) fn valid_suffix(suffix: &str) -> bool {
     suffix.len() <= MAX_SUFFIX_BYTES
         && suffix
             .bytes()
@@ -538,6 +568,12 @@ fn child(parent: &File, name: &str, create: bool) -> Result<File, CredentialErro
                 return Err(e.into());
             }
         } else {
+            // Made by this call: the process's mask may have taken the owner's own
+            // bits away. An existing directory is never changed.
+            // SAFETY: retained parent fd and the checked leaf this call just made.
+            if unsafe { libc::fchmodat(parent.as_raw_fd(), name_c.as_ptr(), 0o700, 0) } != 0 {
+                return Err(io::Error::last_os_error().into());
+            }
             parent.sync_all()?;
         }
     }

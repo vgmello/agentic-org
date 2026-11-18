@@ -17,8 +17,8 @@
 //! entitlement can use the real store, so it is checked on a signed build.
 
 use super::{
-    directory, refusal, CredentialError, CredentialLocation, ItemName, KeychainItems, Listing,
-    ProtectedStore, ReleaseDirectory, ReleaseItems, Secret, WriteError, MAX_ITEM_BYTES,
+    directory, refusal, CredentialError, CredentialLocation, ItemName, ItemStore, KeychainItems,
+    Listing, ProtectedStore, ReleaseDirectory, ReleaseItems, Secret, WriteError, MAX_ITEM_BYTES,
 };
 use core_foundation::{
     array::CFArray,
@@ -90,6 +90,7 @@ pub(super) enum ReleaseRoot {}
 /// Refused before the location is read: nothing is opened, checked, locked or made.
 pub(super) fn release_directory(
     _location: &ReleaseDirectory<'_>,
+    _item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     Err(refusal().into())
 }
@@ -99,6 +100,7 @@ pub(super) fn release_directory(
 pub(super) fn release_directory_below(
     _base: &std::path::Path,
     _location: &ReleaseDirectory<'_>,
+    _item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     Err(refusal().into())
 }

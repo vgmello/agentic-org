@@ -6,7 +6,7 @@
 use org_platform::Refused;
 
 use super::{
-    refusal, CredentialError, CredentialLocation, ItemName, Listing, ProtectedStore,
+    refusal, CredentialError, CredentialLocation, ItemName, ItemStore, Listing, ProtectedStore,
     ReleaseDirectory, ReleaseItems, Secret, WriteError,
 };
 
@@ -25,6 +25,7 @@ pub(super) fn protected_store() -> Result<ProtectedStore, Refused> {
 
 pub(super) fn release_directory(
     _location: &ReleaseDirectory<'_>,
+    _item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     Err(refusal().into())
 }
@@ -34,6 +35,7 @@ pub(super) fn release_directory(
 pub(super) fn release_directory_below(
     _base: &std::path::Path,
     _location: &ReleaseDirectory<'_>,
+    _item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     Err(refusal().into())
 }
@@ -111,13 +113,23 @@ mod tests {
             (anchor.clone(), true, true),
             (std::path::PathBuf::from("relative/../path"), false, true),
         ] {
-            let refused = release_directory(&ReleaseDirectory {
+            let location = ReleaseDirectory {
                 path: &path,
                 data_root: std::os::fd::AsFd::as_fd(&data_root),
                 mount_point_required,
                 expect_items,
-            });
-            assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
+            };
+            let stores = [ItemStore {
+                directory: "office-keys",
+                suffix: ".key",
+                is_item: |_| true,
+            }];
+            for item_stores in [&stores[..], &[]] {
+                let refused = release_directory(&location, item_stores);
+                assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
+                let refused = release_directory_below(&anchor, &location, item_stores);
+                assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
+            }
         }
         assert_eq!(std::fs::read_dir(&anchor).unwrap().count(), 0);
         let Refused::Unsupported { capability, os } = refusal();
