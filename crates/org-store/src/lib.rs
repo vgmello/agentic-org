@@ -13,6 +13,7 @@ mod engine;
 mod error;
 mod files;
 mod journal;
+mod receipts;
 mod sequences;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
@@ -30,4 +31,5 @@ pub use journal::{
     Journal, JournalError, JournalPoint, OperationRecord, Predecessor, Recovered, MAX_ENTRY_BYTES,
     SEGMENT_BYTES,
 };
+pub use receipts::{decode_receipt, encode_receipt, receipt_path, ReceiptProjector, RECEIPTS};
 pub use sequences::{FeedPosition, HighWaters, Sequences, Stream, MAX_POSITION};
