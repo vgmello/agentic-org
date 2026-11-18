@@ -155,7 +155,7 @@ mod tests {
         .unwrap();
         assert_eq!(vectors["schema_version"], 1);
         let cases = vectors["cases"].as_array().unwrap();
-        assert_eq!(cases.len(), 16);
+        assert_eq!(cases.len(), 17);
         for case in cases {
             let name = &case["name"];
             let expect = &case["expect"];

@@ -88,6 +88,33 @@
       }
     },
     {
+      "name": "a path key is refused, whatever the kind",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git",
+            "path": "/tmp/acme"
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "organization_repository",
+        "rule": "remote_required"
+      }
+    },
+    {
       "name": "a file URL is not a remote",
       "category": "create_request",
       "wire": {

@@ -435,6 +435,13 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         )
         .map_err(error)?;
     if !signed.admin {
+        // The sign-in made a session; it ends before the refusal is returned.
+        let _ = wire.call::<ops::SessionEnd>(
+            &ops::SessionParams {
+                session: session(&signed.session),
+            },
+            None,
+        );
         return Err("instance administrator required".into());
     }
     // A name is resolved among the organizations this account is linked to, after it

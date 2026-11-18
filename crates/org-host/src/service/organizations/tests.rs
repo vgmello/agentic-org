@@ -1117,6 +1117,16 @@ fn a_registry_that_cannot_be_read_fails_the_list_instead_of_hiding_organizations
         code(host.call::<List>(true, &ListParams { auth: auth.clone() })),
         ErrorCode::Unavailable
     );
+    // A terminal sign-in names each linked organization from the same registry: it is
+    // refused too, and never answers with an empty name.
+    assert_eq!(
+        code(host.authentication.verify(
+            &crate::service::listener::Connection::for_test(),
+            "Owner",
+            &Password::new(PASSWORD.into()).unwrap(),
+        )),
+        ErrorCode::Unavailable
+    );
 }
 
 #[test]
