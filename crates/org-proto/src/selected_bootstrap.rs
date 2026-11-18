@@ -27,7 +27,10 @@ pub const HR_HANDLE: &str = "hr";
 
 /// Handles no employee may hold: `here` addresses a channel's members, and `owner` and
 /// `office` are addresses of the office itself.
-const RESERVED_HANDLES: [&str; 3] = ["here", "owner", "office"];
+const RESERVED_HANDLES: [&str; 3] = [HERE_HANDLE, crate::OWNER_HANDLE, crate::OFFICE_HANDLE];
+
+/// The word that addresses every member of a channel; never one employee's handle.
+pub const HERE_HANDLE: &str = "here";
 
 /// The longest handle, in bytes.
 pub const HANDLE_MAX: usize = 64;

@@ -286,20 +286,8 @@ impl Offices {
     }
 
     /// One organization with its offices on this Mac (HQ first), if the catalog holds it.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "read by the browser calls once service/mod.rs hooks their dispatch"
-        )
-    )]
     pub(crate) fn organization_by_id(&self, id: &str) -> Option<Organization> {
         self.organizations().into_iter().find(|o| o.id == id)
-    }
-
-    /// The broadcast this host's events and snapshots are ordered by.
-    pub(crate) fn broadcast(&self) -> &Broadcast {
-        &self.broadcast
     }
 
     /// Every office on this Mac, in the order of [`Offices::organizations`].

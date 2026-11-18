@@ -13,12 +13,10 @@ use crate::{
     writer::Writers,
 };
 use org_host_control::{
-    journal,
     ops::RecoveryState,
     organization::{
         AccountChanged, AccountChangedData, CreatingOrganization, ListResult, OrganizationView,
     },
-    provision::{Params, Provisioned, RemoteReadiness},
     HostOpResult,
 };
 use org_office_launch::writer::Admission;
@@ -46,12 +44,17 @@ pub(crate) struct Provisioning {
     /// Held for admission only, never while an organization is being created.
     gate: Mutex<()>,
     hq: std::sync::OnceLock<Arc<dyn Hq>>,
+    /// The admitted web connections. `account.changed` goes to these and to nothing else,
+    /// in order with the answers that report a create's state.
+    web: Broadcast,
     /// The operations a creation is running for right now.
     driving: Arc<Mutex<std::collections::BTreeSet<String>>>,
     #[cfg(test)]
     drives_started: std::sync::atomic::AtomicUsize,
+    /// 1: the next reservation commit fails; 2: the host is lost between staging the code
+    /// and the commit, so the staged entry stays.
     #[cfg(test)]
-    fail_reservation: std::sync::atomic::AtomicBool,
+    reservation_fault: std::sync::atomic::AtomicU8,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +104,9 @@ fn unavailable() -> ApiError {
         "HQ preparation is unresolved; retry the original operation",
     )
 }
+fn not_administrator() -> ApiError {
+    ApiError::new(ErrorCode::NotAuthorized, "instance administrator required")
+}
 fn storage<T>(_: T) -> ApiError {
     unavailable()
 }
@@ -111,6 +117,7 @@ fn lookup_error(error: crate::hostdb::Error) -> ApiError {
         Error::Expired => ErrorCode::Expired,
         Error::ClockSkew => ErrorCode::ClockSkew,
         Error::InvalidId => ErrorCode::InvalidRequest,
+        Error::NotAdministrator => return not_administrator(),
         _ => return unavailable(),
     };
     ApiError::new(code, "provisioning operation not admissible")
@@ -161,38 +168,18 @@ impl Provisioning {
             driving: Arc::default(),
             #[cfg(test)]
             drives_started: std::sync::atomic::AtomicUsize::new(0),
+            web: Broadcast::default(),
             #[cfg(test)]
-            fail_reservation: std::sync::atomic::AtomicBool::new(false),
+            reservation_fault: std::sync::atomic::AtomicU8::new(0),
         }
     }
-    /// The legacy native entry, kept until its dispatch is deleted: admit and create in one
-    /// call. It shares the admission, the creation and the one-creator-per-operation claim
-    /// with `organization.create`.
-    pub(crate) fn run(
-        &self,
-        account: &Account,
-        p: &Params,
-        offices: &Offices,
-    ) -> Result<HostOpResult<Provisioned>, ApiError> {
-        let fp = journal::fingerprint(p).map_err(storage)?;
-        let r = self.admit(account, &p.operation_id, &p.plan, fp)?;
-        if r.linked {
-            self.verify_owner(&r)?;
-            return Ok(HostOpResult::Completed { result: result(&r) });
-        }
-        let Some(_claim) = self.claim(&r.operation_id)? else {
-            return Ok(HostOpResult::Accepted);
-        };
-        self.drive(&r, offices)?;
-        Ok(HostOpResult::Completed { result: result(&r) })
-    }
-
     /// Installs the offices this host creates in and continues every create that reserved
     /// its identity before the host last stopped. No client has to ask.
     pub(crate) fn start(self: &Arc<Self>, hq: Arc<dyn Hq>) {
         if self.hq.set(hq).is_err() {
             return;
         }
+        self.sweep_unreserved();
         match self.db.provisioning_reserved() {
             Ok(reserved) => {
                 for r in reserved {
@@ -202,6 +189,34 @@ impl Provisioning {
                 }
             }
             Err(_) => crate::host_log::log("reserved organization creates could not be read"),
+        }
+    }
+
+    /// The admitted web connections: the service adds each one when its hello completes.
+    pub(crate) fn web(&self) -> &Broadcast {
+        &self.web
+    }
+
+    /// Removes every staged recovery code no reservation names: an admission the host lost
+    /// between staging the code and committing the reservation. Runs before any admission.
+    fn sweep_unreserved(&self) {
+        let Ok(_gate) = self.gate.lock() else {
+            return;
+        };
+        let Ok(names) = self.custody.list() else {
+            crate::host_log::log("staged recovery codes could not be listed");
+            return;
+        };
+        for name in names {
+            let Some(operation) = name.as_str().strip_prefix("recovery.") else {
+                continue;
+            };
+            // Only a successful read that finds no reservation removes an entry.
+            if matches!(self.db.provisioning_known(operation), Ok(false))
+                && self.custody.delete(&name).is_err()
+            {
+                crate::host_log::log("a staged recovery code without a reservation remains");
+            }
         }
     }
 
@@ -224,7 +239,20 @@ impl Provisioning {
             .name("organization-create".into())
             .spawn(move || {
                 let _claim = claim;
-                let outcome = this.drive(&r, &*hq);
+                // The caller read its row before this attempt held the claim; an earlier
+                // attempt may have linked the organization since. Only the row read under
+                // the claim decides, and only it is created from.
+                let fresh = match this.db.provisioning_lookup(&r.account, &r.operation_id) {
+                    Ok(Some(fresh)) => fresh,
+                    _ => {
+                        crate::host_log::log("an organization create could not be read");
+                        return;
+                    }
+                };
+                if fresh.linked {
+                    return;
+                }
+                let outcome = this.drive(&fresh, &*hq);
                 if outcome.is_err() {
                     // The reservation, the key and the code stay; a poll or a restart
                     // continues the same operation.
@@ -266,8 +294,23 @@ impl Provisioning {
     /// The next reservation commit fails after its code was staged.
     #[cfg(test)]
     pub(crate) fn fail_next_reservation(&self) {
-        self.fail_reservation
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.reservation_fault
+            .store(1, std::sync::atomic::Ordering::Release);
+    }
+    /// The next admission stops as a lost host does: code staged, no reservation.
+    #[cfg(test)]
+    pub(crate) fn lose_next_reservation(&self) {
+        self.reservation_fault
+            .store(2, std::sync::atomic::Ordering::Release);
+    }
+    /// Starts a creation from `r` as a poll that read `r` earlier would.
+    #[cfg(test)]
+    pub(crate) fn continue_from(self: &Arc<Self>, r: &Reservation) {
+        self.ensure_driving(r).unwrap();
+    }
+    #[cfg(test)]
+    pub(crate) fn sweep_for_test(&self) {
+        self.sweep_unreserved();
     }
 
     /// Admission: the only step that holds the gate. A known operation is read before the
@@ -283,10 +326,7 @@ impl Provisioning {
         fp: [u8; 32],
     ) -> Result<Reservation, ApiError> {
         if !account.admin() || account.revoked_at_ms().is_some() {
-            return Err(ApiError::new(
-                ErrorCode::NotAuthorized,
-                "instance administrator required",
-            ));
+            return Err(not_administrator());
         }
         let known = || {
             let wall = std::time::SystemTime::now()
@@ -364,15 +404,25 @@ impl Provisioning {
             },
         };
         #[cfg(test)]
-        if self
-            .fail_reservation
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        match self
+            .reservation_fault
+            .swap(0, std::sync::atomic::Ordering::AcqRel)
         {
-            return Err(taken(fresh).unwrap_or_else(unavailable));
+            1 => return Err(taken(fresh).unwrap_or_else(unavailable)),
+            2 => return Err(unavailable()),
+            _ => {}
         }
         self.db
             .reserve_provisioning(account, &pending.reservation)
-            .map_err(|_| taken(fresh).unwrap_or_else(unavailable))
+            .map_err(|error| {
+                if matches!(error, crate::hostdb::Error::NotAdministrator) {
+                    // The account lost its authority after the first check: no reservation
+                    // will ever name this entry.
+                    let _ = self.custody.delete(&handle);
+                    return not_administrator();
+                }
+                taken(fresh).unwrap_or_else(unavailable)
+            })
     }
 
     /// Creation, outside the admission gate. The account's authority is read again here:
@@ -384,9 +434,7 @@ impl Provisioning {
             .account_authority(&id)
             .map_err(storage)?
             .filter(|a| a.admin() && a.revoked_at_ms().is_none())
-            .ok_or_else(|| {
-                ApiError::new(ErrorCode::NotAuthorized, "instance administrator required")
-            })?;
+            .ok_or_else(not_administrator)?;
         let account = &account;
         let handle = Name::parse(&r.recovery_handle).map_err(storage)?;
         let pending: Pending = serde_json::from_slice(
@@ -431,9 +479,10 @@ impl Provisioning {
             }),
         };
         hq.provision_hq(first, pending.code)?;
-        // The link and its announcement are one broadcast critical section: a reader that
-        // sees the organization linked has `account.changed` queued before its answer.
-        hq.broadcast().critical(|held| {
+        // The link and its announcement are one critical section of the web connections'
+        // broadcast: a reader that sees the organization linked has `account.changed`
+        // queued on its connection before its answer.
+        self.web.critical(|held| {
             self.db.provision_linked(r).map_err(storage)?;
             held.publish::<AccountChanged>(&AccountChangedData {
                 account_id: r.account.clone(),
@@ -587,13 +636,6 @@ impl Provisioning {
     }
 }
 /// What a signed-in browser asks: create, look up, list.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "called by service/organizations.rs once service/mod.rs hooks its dispatch"
-    )
-)]
 impl Provisioning {
     /// `organization.create`: admit a new create or find the one this id names, then report.
     pub(crate) fn create(
@@ -625,17 +667,27 @@ impl Provisioning {
     /// still in flight.
     pub(crate) fn list(&self, account: &Account) -> Result<ListResult, ApiError> {
         let hq = self.hq.get().ok_or_else(unavailable)?;
-        hq.broadcast().snapshot(|| {
+        self.web.snapshot(|| {
             let mut organizations = Vec::new();
             for link in account.links() {
                 // An organization this host did not create through a reservation has no
                 // view here; nothing but a reservation links an account today.
-                let Ok(r) = self.db.recovery_source(link.org_id()) else {
+                let Some(r) = self
+                    .db
+                    .provisioning_linked_to(link.org_id())
+                    .map_err(storage)?
+                else {
                     continue;
                 };
-                if r.account == account.account_id() && r.owner_member == link.member_id() {
-                    organizations.push(self.view(&r, &**hq)?);
+                if r.account != account.account_id() || r.owner_member != link.member_id() {
+                    continue;
                 }
+                // One organization this host cannot describe does not hide the others.
+                let Some(organization) = hq.organization(&r.prepared.organization_id) else {
+                    crate::host_log::log("a linked organization is missing from the catalog");
+                    continue;
+                };
+                organizations.push(self.view(&r, organization)?);
             }
             let creating = self
                 .db
@@ -663,25 +715,30 @@ impl Provisioning {
         r: &Reservation,
     ) -> Result<HostOpResult<OrganizationView>, ApiError> {
         let hq = self.hq.get().ok_or_else(unavailable)?;
-        let current = hq
-            .broadcast()
+        let current = self
+            .web
             .snapshot(|| self.db.provisioning_lookup(&r.account, &r.operation_id))
             .map_err(storage)?
             .ok_or_else(unavailable)?;
         if current.linked {
             self.verify_owner(&current)?;
             return Ok(HostOpResult::Completed {
-                result: self.view(&current, &**hq)?,
+                result: self.view(
+                    &current,
+                    hq.organization(&current.prepared.organization_id)
+                        .ok_or_else(unavailable)?,
+                )?,
             });
         }
         self.ensure_driving(&current)?;
         Ok(HostOpResult::Accepted)
     }
 
-    fn view(&self, r: &Reservation, hq: &dyn Hq) -> Result<OrganizationView, ApiError> {
-        let organization = hq
-            .organization(&r.prepared.organization_id)
-            .ok_or_else(unavailable)?;
+    fn view(
+        &self,
+        r: &Reservation,
+        organization: org_proto::Organization,
+    ) -> Result<OrganizationView, ApiError> {
         use crate::hostdb::recovery::State;
         let recovery = match self.db.recovery_state(&r.operation_id).map_err(storage)? {
             None | Some(State::Pending) => RecoveryState::Pending,
@@ -749,15 +806,7 @@ pub(crate) trait Hq: Send + Sync {
         recovery: RecoveryCode,
     ) -> Result<(), ApiError>;
     /// The organization with its offices on this host, HQ first.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "read by the browser calls once service/mod.rs hooks their dispatch"
-        )
-    )]
     fn organization(&self, id: &str) -> Option<org_proto::Organization>;
-    fn broadcast(&self) -> &Broadcast;
 }
 impl Hq for Offices {
     fn provision_hq(
@@ -769,9 +818,6 @@ impl Hq for Offices {
     }
     fn organization(&self, id: &str) -> Option<org_proto::Organization> {
         self.organization_by_id(id)
-    }
-    fn broadcast(&self) -> &Broadcast {
-        Offices::broadcast(self)
     }
 }
 
@@ -787,27 +833,6 @@ impl Drop for Claim {
         }
     }
 }
-
-fn result(r: &Reservation) -> Provisioned {
-    Provisioned {
-        organization_id: r.prepared.organization_id.clone(),
-        office_id: r.prepared.office_id.clone(),
-        home_team_id: r.prepared.home_team_id.clone(),
-        remote_readiness: RemoteReadiness::Unverified,
-    }
-}
-
-// Declared here until `service/mod.rs` (owned by another writer in this increment) takes
-// `mod organizations;` and the dispatch hook; the file already lives in its final place.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "hooked into the request path by service/mod.rs at the file handover"
-    )
-)]
-#[path = "service/organizations.rs"]
-pub(crate) mod organizations;
 
 #[cfg(test)]
 mod tests;

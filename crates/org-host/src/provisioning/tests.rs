@@ -7,7 +7,6 @@ use crate::{
     supervisor::{Supervisor, SupervisorConfig},
     Timings,
 };
-use org_host_control::SessionHandle;
 use org_proto::selected_bootstrap::PlanV1;
 use std::os::unix::fs::PermissionsExt;
 
@@ -20,12 +19,42 @@ fn plan() -> PlanV1 {
         state_branch: "org/state".into(),
     }
 }
+/// One `organization.create` as the service hands it over.
+struct Params {
+    operation_id: String,
+    plan: PlanV1,
+}
 fn params() -> Params {
     Params {
-        session: SessionHandle::new("unused-by-storage-fixture".into()).unwrap(),
         operation_id: crate::ids::generate().unwrap(),
         plan: plan(),
     }
+}
+fn fp(p: &Params) -> [u8; 32] {
+    Sha256::digest(serde_json::to_vec(&p.plan).unwrap()).into()
+}
+/// Asks for the create, waits for the attempt it started to end and says whether the
+/// organization is linked.
+fn creates(controller: &Arc<Provisioning>, actor: &Account, p: &Params) -> bool {
+    if controller
+        .create(actor, &p.operation_id, &p.plan, fp(p))
+        .is_err()
+    {
+        return false;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while controller.driving_now() != 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a creation never ended"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    controller
+        .db
+        .provisioning_lookup(actor.account_id(), &p.operation_id)
+        .unwrap()
+        .is_some_and(|r| r.linked)
 }
 fn account(db: &HostDb) -> Account {
     let c = db
@@ -88,7 +117,7 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
         ServerCheck::Refuse,
         root.join("absent"),
     );
-    let controller = Provisioning::new(
+    let controller = Arc::new(Provisioning::new(
         db.clone(),
         custody.clone(),
         keys.clone(),
@@ -96,11 +125,12 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
         &instance,
         &root,
         &office_home,
-    );
+    ));
+    controller.start(offices.clone());
     let p = params();
     let actor = account(&db);
-    assert!(controller.run(&actor, &p, &offices).is_err());
-    let fp = journal::fingerprint(&p).unwrap();
+    assert!(!creates(&controller, &actor, &p));
+    let fp = fp(&p);
     let wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -128,7 +158,7 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
         .is_empty());
     let handle = Name::parse(&r.recovery_handle).unwrap();
     let staged = custody.load(&handle).unwrap().unwrap();
-    assert!(controller.run(&actor, &p, &offices).is_err());
+    assert!(!creates(&controller, &actor, &p));
     assert_eq!(
         custody.load(&handle).unwrap().unwrap().expose(),
         staged.expose()
@@ -138,13 +168,13 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
         before
     );
     keys.delete(&r.prepared.office_id).unwrap();
-    assert!(controller.run(&actor, &p, &offices).is_err());
+    assert!(!creates(&controller, &actor, &p));
     assert!(keys.load(&r.prepared.office_id).unwrap().is_none());
     // Another plan never attaches to the original code/IDs.
     let mut other = params();
     other.operation_id = p.operation_id.clone();
     other.plan.slug = "different".into();
-    assert!(controller.run(&actor, &other, &offices).is_err());
+    assert!(!creates(&controller, &actor, &other));
     assert_eq!(
         db.provisioning_offices().unwrap(),
         [r.prepared.office_id].into()
@@ -243,13 +273,7 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
         // Stop at the actual production phase after custody/SQL reservation,
         // before reserve_writer can allocate any writer or device identity.
         let pending = controller
-            .new_pending(
-                &actor,
-                &p.operation_id,
-                &p.plan,
-                journal::fingerprint(&p).unwrap(),
-                &handle,
-            )
+            .new_pending(&actor, &p.operation_id, &p.plan, fp(&p), &handle)
             .unwrap();
         let reservation = db
             .reserve_provisioning(&actor, &pending.reservation)
@@ -338,7 +362,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
             ServerCheck::Refuse,
             root.join("absent"),
         );
-        let controller = Provisioning::new(
+        let controller = Arc::new(Provisioning::new(
             db.clone(),
             custody.clone(),
             keys.clone(),
@@ -346,11 +370,12 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
             &instance,
             &root,
             &home,
-        );
+        ));
+        controller.start(offices.clone());
         let p = params();
         let actor = account(&db);
-        assert!(controller.run(&actor, &p, &offices).is_err());
-        let fp = journal::fingerprint(&p).unwrap();
+        assert!(!creates(&controller, &actor, &p));
+        let fp = fp(&p);
         let wall = org_proto::ulid_time_ms(&p.operation_id).unwrap() as i64;
         let reservation = db
             .provisioning(&actor, &p.operation_id, &fp, wall)
@@ -391,7 +416,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
         }
         let before = custody_snapshot(&*custody);
         let key_before = fingerprint(&keys.load(office).unwrap().unwrap());
-        assert!(controller.run(&actor, &p, &offices).is_err());
+        assert!(!creates(&controller, &actor, &p));
         assert!(
             custody.load(&credential).unwrap().is_none(),
             "lost writer was recreated"
@@ -425,7 +450,7 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
     let (db, _) = auth.provisioning_storage();
     let actor = account(&db);
     let p = params();
-    let fp = journal::fingerprint(&p).unwrap();
+    let fp = fp(&p);
     let owner_member = crate::ids::uuid_v7().unwrap();
     let prepared = PreparedV1 {
         plan: p.plan.clone(),
@@ -478,29 +503,19 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
     .unwrap();
     assert!(matches!(
         db.reserve_provisioning(&actor, &r),
-        Err(crate::hostdb::Error::Unsafe)
+        Err(crate::hostdb::Error::NotAdministrator)
     ));
 }
 
 #[test]
 #[cfg(target_os = "macos")]
 #[ignore = "root runs with ORG_TEST_OFFICE_BIN; actual worker rendezvous requires permitted local bind"]
-fn actual_selected_hq_provisioning_native_route_and_exact_retry() {
-    use crate::service::{
-        listener::{Listener, ListenerConfig},
-        Service,
-    };
-    use org_proto::{frame, Call, Hello, HelloParams};
-    use std::{
-        io::BufReader,
-        os::unix::net::UnixStream,
-        time::{Duration, Instant},
-    };
+fn actual_selected_hq_creation_and_exact_retry() {
+    use std::time::{Duration, Instant};
     let binary = std::env::var_os("ORG_TEST_OFFICE_BIN").expect("explicit built office binary");
     let instance = crate::ids::uuid_v7().unwrap();
     let (_account_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
     let (db, custody) = auth.provisioning_storage();
-    let auth = Arc::new(auth);
     let dir = tempfile::tempdir_in("/private/tmp").unwrap();
     let root = dir.path().canonicalize().unwrap();
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -525,93 +540,41 @@ fn actual_selected_hq_provisioning_native_route_and_exact_retry() {
         &root,
         &office_home,
     ));
-    let service = Arc::new(
-        Service::new(
-            offices.clone(),
-            Arc::new(Broadcast::default()),
-            Some(instance.clone()),
-        )
-        .with_authentication(Some(auth))
-        .with_provisioning(Some(controller)),
-    );
-    let socket = root.join("host.sock");
-    let bound = crate::service::listener::bind(&socket).unwrap();
-    let listener = Listener::start(
-        bound,
-        ListenerConfig {
-            max_connections: 4,
-            max_in_flight: 4,
-            expected_uid: crate::home::euid(),
-        },
-        service,
-    )
-    .unwrap();
-    struct Cleanup(Option<Listener>, Arc<Offices>);
+    controller.start(offices.clone());
+    struct Cleanup(Arc<Offices>);
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            if let Some(mut l) = self.0.take() {
-                l.close();
-                l.join();
-            }
-            self.1.shutdown();
+            self.0.shutdown();
         }
     }
-    let _cleanup = Cleanup(Some(listener), offices.clone());
-    let stream = UnixStream::connect(&socket).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .unwrap();
-    let mut wire = BufReader::new(stream);
-    fn call<C: Call>(wire: &mut BufReader<UnixStream>, id: u64, p: &C::Params) -> C::Result {
-        frame::write_message(
-            wire.get_mut(),
-            &org_proto::Request::new::<C>(id, p).unwrap(),
-        )
-        .unwrap();
-        let response: org_proto::Response = frame::read_message(wire).unwrap().unwrap();
-        assert_eq!(response.id, id);
-        response.into_result::<C>().unwrap()
-    }
-    let _: org_proto::HelloResult = call::<Hello>(&mut wire, 1, &HelloParams::default());
-    let login = call::<org_host_control::ops::AccountVerify>(
-        &mut wire,
-        2,
-        &org_host_control::ops::AccountVerifyParams {
-            login: "Owner".into(),
-            password: org_host_control::Password::new("synthetic test password".into()).unwrap(),
-        },
-    );
-    assert!(login.admin);
-    assert!(login.orgs.is_empty());
-    let mut p = params();
-    p.session = login.session;
+    let _cleanup = Cleanup(offices.clone());
+    let actor = account(&db);
+    assert!(actor.links().is_empty());
+    let p = params();
     let deadline = Instant::now() + Duration::from_secs(25);
-    let mut id = 3;
     let result = loop {
-        let answer = call::<org_host_control::provision::OrganizationProvision>(&mut wire, id, &p);
-        id += 1;
-        match answer {
+        match controller
+            .create(&actor, &p.operation_id, &p.plan, fp(&p))
+            .unwrap()
+        {
             HostOpResult::Completed { result } => break result,
             HostOpResult::Accepted => {
                 assert!(Instant::now() < deadline);
                 std::thread::sleep(Duration::from_millis(50));
             }
-            _ => panic!("unexpected provisioning result"),
+            _ => panic!("unexpected create result"),
         }
     };
-    assert_eq!(result.remote_readiness, RemoteReadiness::Unverified);
-    let state = root.join("durable/state").join(&result.organization_id);
+    let state = root.join("durable/state").join(&result.id);
     let initial = std::fs::read(state.join("organization.yaml")).unwrap();
     assert!(!initial.is_empty());
-    let replay = call::<org_host_control::provision::OrganizationProvision>(&mut wire, id, &p);
-    assert!(matches!(replay,HostOpResult::Completed{result:r} if r==result));
-    let inspection = call::<org_host_control::ops::SessionInspect>(
-        &mut wire,
-        id + 1,
-        &org_host_control::ops::SessionParams { session: p.session },
-    );
-    assert_eq!(inspection.orgs.len(), 1);
-    assert!(!inspection.orgs[0].employee_id.is_empty());
+    let replay = controller
+        .create(&actor, &p.operation_id, &p.plan, fp(&p))
+        .unwrap();
+    assert!(matches!(replay, HostOpResult::Completed { result: r } if r == result));
+    let linked = account(&db);
+    assert_eq!(linked.links().len(), 1);
+    assert_eq!(linked.links()[0].member_id(), result.employee_id);
     // Exact public bytes and identities, no optional owner employee or credentials.
     assert_eq!(
         std::fs::read(state.join("organization.yaml")).unwrap(),

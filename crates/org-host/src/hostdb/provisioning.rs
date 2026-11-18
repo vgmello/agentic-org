@@ -25,7 +25,7 @@ pub(crate) struct Reservation {
 fn administrator(db: &rusqlite::Connection, account: &str) -> Result<(), Error> {
     let allowed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 AND admin=1 AND revoked_at_ms IS NULL)",[account],|r|r.get(0))?;
     if !allowed {
-        return Err(Error::Unsafe);
+        return Err(Error::NotAdministrator);
     }
     Ok(())
 }
@@ -99,6 +99,30 @@ impl HostDb {
     ) -> Result<Option<Taken>, Error> {
         let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         taken(&db, name, slug)
+    }
+    /// Whether a reservation exists for the operation, whoever made it.
+    pub(crate) fn provisioning_known(&self, operation: &str) -> Result<bool, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE operation_id=?1)",
+            [operation],
+            |r| r.get(0),
+        )?)
+    }
+    /// The linked create that made the organization; `None` when no reservation did.
+    pub(crate) fn provisioning_linked_to(&self, org: &str) -> Result<Option<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let operation: Option<String> = db
+            .query_row(
+                "SELECT operation_id FROM selected_provisioning WHERE linked=1 AND json_extract(prepared,'$.organization_id')=?1 ORDER BY operation_id LIMIT 1",
+                [org],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match operation {
+            Some(operation) => read(&db, &operation),
+            None => Ok(None),
+        }
     }
     /// Every create that reserved its identity and has not been linked: what a starting host
     /// continues without waiting for a client.

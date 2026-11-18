@@ -242,13 +242,6 @@ impl Authentication {
     /// The account a browser pair acts for, from current registry authority: the same
     /// check as `session.validate` (the session is touched; a session whose account is gone
     /// or revoked ends), returning the account record instead of its view.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called by service/organizations.rs once service/mod.rs hooks its dispatch"
-        )
-    )]
     pub(crate) fn browser_account(
         &self,
         params: &SessionValidateParams,

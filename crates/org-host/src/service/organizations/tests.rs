@@ -2,7 +2,7 @@
 //! custody, writer authority and key store in a temporary directory. Only the office worker
 //! is replaced, through the creation's own `Hq` contract.
 use super::*;
-use crate::broadcast::{Broadcast, Subscriber};
+use crate::broadcast::Subscriber;
 use crate::host_secrets::HostSecrets;
 use crate::hostdb::HostDb;
 use crate::provisioning::Hq;
@@ -32,7 +32,6 @@ enum Worker {
 }
 /// The office side of a create: records what it was asked and answers as told.
 struct FakeHq {
-    broadcast: Broadcast,
     worker: Mutex<Worker>,
     changed: Condvar,
     calls: AtomicUsize,
@@ -41,7 +40,6 @@ struct FakeHq {
 impl FakeHq {
     fn new(worker: Worker) -> Arc<Self> {
         Arc::new(Self {
-            broadcast: Broadcast::default(),
             worker: Mutex::new(worker),
             changed: Condvar::new(),
             calls: AtomicUsize::new(0),
@@ -92,9 +90,6 @@ impl Hq for FakeHq {
     fn organization(&self, id: &str) -> Option<org_proto::Organization> {
         self.created.lock().unwrap().get(id).cloned()
     }
-    fn broadcast(&self) -> &Broadcast {
-        &self.broadcast
-    }
 }
 
 /// What a subscribed web connection would be sent, in order.
@@ -109,7 +104,7 @@ impl Subscriber for Events {
 struct Host {
     _root: tempfile::TempDir,
     _state: tempfile::TempDir,
-    authentication: Authentication,
+    authentication: Arc<Authentication>,
     db: Arc<HostDb>,
     custody: Arc<dyn HostSecrets>,
     provisioning: Arc<Provisioning>,
@@ -138,10 +133,12 @@ impl Parts {
         ))
     }
 }
-fn subscribe(hq: &FakeHq) -> Arc<Events> {
+fn subscribe(provisioning: &Provisioning) -> Arc<Events> {
     let events = Arc::new(Events::default());
     let subscriber: Arc<dyn Subscriber> = events.clone();
-    hq.broadcast.subscribe(Arc::downgrade(&subscriber), || true);
+    provisioning
+        .web()
+        .subscribe(Arc::downgrade(&subscriber), || true);
     events
 }
 fn host(worker: Worker) -> Host {
@@ -174,12 +171,12 @@ fn host(worker: Worker) -> Host {
     };
     let provisioning = parts.provisioning(&db, &custody);
     let hq = FakeHq::new(worker);
-    let events = subscribe(&hq);
+    let events = subscribe(&provisioning);
     provisioning.start(hq.clone());
     Host {
         _root: root,
         _state: state,
-        authentication,
+        authentication: Arc::new(authentication),
         db,
         custody,
         provisioning,
@@ -236,7 +233,7 @@ impl Host {
         let response = dispatch(
             &request,
             web,
-            Some(&self.authentication),
+            Some(&*self.authentication),
             Some(&self.provisioning),
             &mut |_, _| {},
         )
@@ -346,7 +343,7 @@ fn another_method_is_not_this_modules_and_every_call_is_refused_off_the_web_conn
     assert!(dispatch(
         &other,
         true,
-        Some(&host.authentication),
+        Some(&*host.authentication),
         Some(&host.provisioning),
         &mut |_, _| {}
     )
@@ -386,7 +383,7 @@ fn another_method_is_not_this_modules_and_every_call_is_refused_off_the_web_conn
     let no_provisioning = dispatch(
         &request,
         true,
-        Some(&host.authentication),
+        Some(&*host.authentication),
         None,
         &mut |_, _| {},
     );
@@ -452,7 +449,7 @@ fn only_a_live_administrator_session_from_its_own_origin_creates() {
     let refused = dispatch(
         &request,
         true,
-        Some(&host.authentication),
+        Some(&*host.authentication),
         Some(&host.provisioning),
         &mut |name, _| pushed.push(name),
     )
@@ -633,27 +630,30 @@ fn polls_never_wait_for_a_creation_or_an_admission_and_start_one_creation() {
     );
     // Another create's admission is in progress: it holds the gate.
     let admitting = host.provisioning.hold_admission();
-    let polls: Vec<_> = (0..8)
-        .map(|n| {
-            let (host, auth, id, example) =
-                (host.clone(), auth.clone(), id.clone(), example.clone());
-            std::thread::spawn(move || {
-                let started = Instant::now();
-                let answer = if n % 2 == 0 {
-                    host.lookup(&auth, &id)
-                } else {
-                    host.create(&auth, &id, &example)
-                };
-                (answer.unwrap(), started.elapsed())
-            })
-        })
+    let (answers, answered) = std::sync::mpsc::channel();
+    for n in 0..8 {
+        let (host, auth, id, example) = (host.clone(), auth.clone(), id.clone(), example.clone());
+        let answers = answers.clone();
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            let answer = if n % 2 == 0 {
+                host.lookup(&auth, &id)
+            } else {
+                host.create(&auth, &id, &example)
+            };
+            let _ = answers.send((answer, started.elapsed()));
+        });
+    }
+    // A poll that waited for the gate fails this test here; it is never joined.
+    let polled: Vec<_> = (0..8)
+        .map(|_| answered.recv_timeout(Duration::from_secs(5)))
         .collect();
-    for poll in polls {
-        let (answer, took) = poll.join().unwrap();
-        assert_eq!(answer, HostOpResult::Accepted);
+    drop(admitting);
+    for poll in polled {
+        let (answer, took) = poll.expect("a poll waited for another create's admission");
+        assert_eq!(answer.unwrap(), HostOpResult::Accepted);
         assert!(took < Duration::from_secs(1), "a poll took {took:?}");
     }
-    drop(admitting);
     assert_eq!(
         host.provisioning.drives_started(),
         1,
@@ -734,6 +734,7 @@ fn a_create_adopted_before_the_host_stopped_completes_with_the_same_identity() {
     // The host starts again over the same registry, custody, keys and offices.
     host.hq.set(Worker::Creates);
     let restarted = host.parts.provisioning(&host.db, &host.custody);
+    let events = subscribe(&restarted);
     restarted.start(host.hq.clone());
     let deadline = Instant::now() + Duration::from_secs(20);
     while host.reserved() != 0 || restarted.driving_now() != 0 {
@@ -752,11 +753,8 @@ fn a_create_adopted_before_the_host_stopped_completes_with_the_same_identity() {
         custody,
         "no second code, key or device"
     );
-    assert_eq!(
-        host.events.0.lock().unwrap().len(),
-        1,
-        "account.changed once"
-    );
+    assert_eq!(events.0.lock().unwrap().len(), 1, "account.changed once");
+    assert!(host.events.0.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -800,7 +798,7 @@ fn a_restarted_host_finishes_a_reserved_create_with_no_client_poll() {
     // The host stops mid-create. A new process opens the same registry, custody and keys.
     let restarted = host.parts.provisioning(&host.db, &host.custody);
     let hq = FakeHq::new(Worker::Creates);
-    let events = subscribe(&hq);
+    let events = subscribe(&restarted);
     restarted.start(hq.clone());
     let deadline = Instant::now() + Duration::from_secs(20);
     // The link commits before its event is queued; the creation has ended after both.
@@ -818,7 +816,7 @@ fn a_restarted_host_finishes_a_reserved_create_with_no_client_poll() {
     let listed = dispatch(
         &request,
         true,
-        Some(&host.authentication),
+        Some(&*host.authentication),
         Some(&restarted),
         &mut |_, _| {},
     )
@@ -857,4 +855,299 @@ fn an_administrator_revoked_after_admission_creates_nothing_more() {
     }
     assert_eq!(hq.calls.load(Ordering::Acquire), 0);
     assert_eq!(host.reserved(), 1);
+}
+
+fn staged(host: &Host, operation: &str) -> Option<Value> {
+    let name = crate::host_secrets::Name::parse(&format!("recovery.{operation}")).unwrap();
+    host.custody
+        .load(&name)
+        .unwrap()
+        .map(|bytes| serde_json::from_slice(bytes.expose()).unwrap())
+}
+
+#[test]
+fn a_poll_that_read_its_row_before_the_link_starts_no_second_creation() {
+    let host = host(Worker::Blocks);
+    let auth = host.sign_in("Owner", 1);
+    let id = op();
+    assert_eq!(
+        host.create(&auth, &id, &plan("Example", "example"))
+            .unwrap(),
+        HostOpResult::Accepted
+    );
+    host.asked(1);
+    // What a poll read while the first creation was still running.
+    let stale = host.db.provisioning_reserved().unwrap().remove(0);
+    assert!(!stale.linked);
+    host.hq.set(Worker::Creates);
+    host.completed(&auth, &id);
+    host.idle();
+    // That poll takes the claim only now, after the organization was linked.
+    host.provisioning.continue_from(&stale);
+    host.idle();
+    assert_eq!(
+        host.hq.calls.load(Ordering::Acquire),
+        1,
+        "a linked organization is never created again"
+    );
+    assert_eq!(
+        host.events.0.lock().unwrap().len(),
+        1,
+        "one account.changed"
+    );
+}
+
+#[test]
+fn an_organization_missing_from_the_catalog_does_not_hide_the_others() {
+    let host = host(Worker::Creates);
+    let auth = host.sign_in("Owner", 1);
+    let (first, second) = (op(), op());
+    host.create(&auth, &first, &plan("Example", "example"))
+        .unwrap();
+    let gone = host.completed(&auth, &first);
+    host.create(&auth, &second, &plan("Other", "other"))
+        .unwrap();
+    let kept = host.completed(&auth, &second);
+    host.idle();
+    assert_eq!(host.list(&auth).organizations.len(), 2);
+    host.hq.created.lock().unwrap().remove(&gone.id);
+    let listed = host.list(&auth);
+    assert_eq!(listed.organizations, [kept]);
+    assert!(listed.creating.is_empty());
+}
+
+#[test]
+fn an_administrator_revoked_before_the_reservation_is_not_authorized_and_stores_nothing() {
+    let host = host(Worker::Creates);
+    let clean = host.custody_names();
+    let credentials = host
+        .db
+        .account_credentials(&crate::accounts::identity::LoginKey::new("Owner").unwrap())
+        .unwrap()
+        .unwrap();
+    let id =
+        crate::accounts::identity::AccountId::parse(credentials.account().account_id()).unwrap();
+    // The record the request was authorized with, read before the revocation.
+    let stale = host.db.account_authority(&id).unwrap().unwrap();
+    assert!(stale.admin() && stale.revoked_at_ms().is_none());
+    host.db.change_authority_fixture(&id, true).unwrap();
+    let refused = host
+        .provisioning
+        .create(&stale, &op(), &plan("Example", "example"), [7; 32])
+        .expect_err("a refusal");
+    assert_eq!(refused.code, ErrorCode::NotAuthorized);
+    assert_eq!(host.custody_names(), clean);
+    assert_eq!(host.reserved(), 0);
+    assert_eq!(host.hq.calls.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn a_code_staged_by_a_lost_admission_continues_only_for_the_same_request() {
+    let host = host(Worker::Creates);
+    let auth = host.sign_in("Owner", 1);
+    host.seed("Second", true);
+    let second = host.sign_in("Second", 2);
+    let example = plan("Example", "example");
+    let id = op();
+    host.provisioning.lose_next_reservation();
+    assert_eq!(
+        code(host.create(&auth, &id, &example)),
+        ErrorCode::Unavailable
+    );
+    assert_eq!(host.reserved(), 0);
+    let lost = staged(&host, &id).expect("the code was staged before the host was lost");
+    let organization = lost["reservation"]["prepared"]["organization_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Another account, or another plan, never attaches to the staged code and ids.
+    assert_eq!(
+        code(host.create(&second, &id, &example)),
+        ErrorCode::OperationReused
+    );
+    assert_eq!(
+        code(host.create(&auth, &id, &plan("Example", "different"))),
+        ErrorCode::OperationReused
+    );
+    assert_eq!(staged(&host, &id), Some(lost));
+    assert_eq!(host.reserved(), 0);
+    // The same request continues with the ids it staged.
+    assert_eq!(
+        host.create(&auth, &id, &example).unwrap(),
+        HostOpResult::Accepted
+    );
+    assert_eq!(host.completed(&auth, &id).id, organization);
+}
+
+#[test]
+fn a_staged_code_whose_name_was_taken_or_that_no_reservation_names_is_removed() {
+    let host = host(Worker::Creates);
+    let auth = host.sign_in("Owner", 1);
+    let other = plan("Other", "other");
+    let lost = op();
+    host.provisioning.lose_next_reservation();
+    assert_eq!(
+        code(host.create(&auth, &lost, &other)),
+        ErrorCode::Unavailable
+    );
+    assert!(staged(&host, &lost).is_some());
+    // Another create takes the name while the lost one is only staged.
+    let winner = op();
+    host.create(&auth, &winner, &plan("OTHER", "another"))
+        .unwrap();
+    host.completed(&auth, &winner);
+    host.idle();
+    let refused = host.create(&auth, &lost, &other).expect_err("a refusal");
+    assert_eq!(refused.code, ErrorCode::AlreadyExists);
+    assert_eq!(refused.field.as_deref(), Some("name"));
+    assert!(staged(&host, &lost).is_none(), "the staged code is removed");
+
+    // A staged code nobody retries is removed when the host starts; reserved ones stay.
+    let abandoned = op();
+    host.provisioning.lose_next_reservation();
+    assert_eq!(
+        code(host.create(&auth, &abandoned, &plan("Third", "third"))),
+        ErrorCode::Unavailable
+    );
+    let before = host.custody_names();
+    assert!(before.contains(&format!("recovery.{abandoned}")));
+    let restarted = host.parts.provisioning(&host.db, &host.custody);
+    restarted.start(FakeHq::new(Worker::Creates));
+    let mut expected = before.clone();
+    expected.retain(|name| name != &format!("recovery.{abandoned}"));
+    assert_eq!(host.custody_names(), expected);
+    host.provisioning.sweep_for_test();
+    assert_eq!(
+        host.custody_names(),
+        expected,
+        "a second sweep removes nothing"
+    );
+    assert_eq!(host.list(&auth).organizations.len(), 1);
+}
+
+/// One frame from a control connection: a response (`id`) or an event (`event`).
+fn frame(peer: &mut std::io::BufReader<std::os::unix::net::UnixStream>) -> Value {
+    org_proto::frame::read_message(peer).unwrap().unwrap()
+}
+fn send<C: Call>(
+    peer: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
+    id: u64,
+    params: &C::Params,
+) {
+    org_proto::frame::write_message(peer.get_mut(), &Request::new::<C>(id, params).unwrap())
+        .unwrap();
+}
+
+/// Through the real request path: `host.sock` connections, signed in or not, reach no
+/// handler and store nothing; the admitted web connection creates, and `account.changed`
+/// is written there, before the completed answer, and nowhere else.
+#[test]
+fn the_service_serves_these_calls_only_on_the_web_connection_and_pushes_account_changed_there() {
+    use crate::service::listener::{LocalConnection, WebConnection};
+    use org_host_control::ops::{AccountVerify, AccountVerifyParams};
+    use std::os::unix::net::{UnixDatagram, UnixStream};
+    let host = host(Worker::Creates);
+    let auth = host.sign_in("Owner", 1);
+    let home = tempfile::tempdir().unwrap();
+    let mut service = crate::service::tests::service(home.path())
+        .with_authentication(Some(host.authentication.clone()))
+        .with_provisioning(Some(host.provisioning.clone()));
+    service.instance_id = Some(host.parts.instance.clone());
+    let offices = service.offices.clone();
+    // What a `host.sock` subscriber of the host's own broadcast is sent.
+    let native_events = Arc::new(Events::default());
+    let native_subscriber: Arc<dyn Subscriber> = native_events.clone();
+    service
+        .broadcast
+        .subscribe(Arc::downgrade(&native_subscriber), || true);
+    let service = Arc::new(service);
+    let connect = || {
+        let (near, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        (near, std::io::BufReader::new(peer))
+    };
+    let create = CreateParams {
+        auth: auth.clone(),
+        operation_id: op(),
+        plan: plan("Example", "example"),
+    };
+    let lookup = OperationLookupParams {
+        auth: auth.clone(),
+        operation_id: create.operation_id.clone(),
+    };
+    let list = ListParams { auth: auth.clone() };
+    let clean = host.custody_names();
+    let refused = |frame: Value| frame["error"]["code"] == "not_authorized";
+
+    // host.sock: before any sign-in, then with a native session of the same administrator.
+    let (near, mut native) = connect();
+    let local = LocalConnection::start(near, service.clone()).unwrap();
+    send::<org_proto::Hello>(&mut native, 1, &Default::default());
+    assert!(frame(&mut native)["result"].is_object());
+    for signed_in in [false, true] {
+        if signed_in {
+            send::<AccountVerify>(
+                &mut native,
+                2,
+                &AccountVerifyParams {
+                    login: "Owner".into(),
+                    password: Password::new(PASSWORD.into()).unwrap(),
+                },
+            );
+            assert_eq!(frame(&mut native)["result"]["admin"], true);
+        }
+        send::<Create>(&mut native, 10, &create);
+        assert!(refused(frame(&mut native)));
+        send::<List>(&mut native, 11, &list);
+        assert!(refused(frame(&mut native)));
+        send::<OperationLookup>(&mut native, 12, &lookup);
+        assert!(refused(frame(&mut native)));
+    }
+    assert_eq!(host.reserved(), 0);
+    assert_eq!(host.custody_names(), clean);
+    assert_eq!(host.hq.calls.load(Ordering::Acquire), 0);
+
+    // The admitted web connection.
+    let (near, mut web_peer) = connect();
+    let (transfer, _child) = UnixDatagram::pair().unwrap();
+    let listen = serde_json::from_str(
+        r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+    )
+    .unwrap();
+    let web = WebConnection::start(near, transfer, listen, service.clone()).unwrap();
+    send::<org_proto::Hello>(&mut web_peer, 1, &Default::default());
+    assert!(frame(&mut web_peer)["result"].is_object());
+    send::<Create>(&mut web_peer, 2, &create);
+    let mut frames = vec![frame(&mut web_peer)];
+    let mut id = 3;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while frames.last().unwrap()["result"]["status"] != "completed" {
+        assert!(Instant::now() < deadline, "the create never completed");
+        if frames.last().unwrap().get("id").is_some() {
+            std::thread::sleep(Duration::from_millis(10));
+            send::<OperationLookup>(&mut web_peer, id, &lookup);
+            id += 1;
+        }
+        frames.push(frame(&mut web_peer));
+    }
+    let events: Vec<&Value> = frames.iter().filter(|f| f.get("event").is_some()).collect();
+    assert_eq!(events.len(), 1, "{frames:?}");
+    assert_eq!(events[0]["event"], "account.changed");
+    assert_eq!(events[0]["data"]["account_id"].as_str().unwrap().len(), 26);
+    send::<List>(&mut web_peer, id, &list);
+    let listed = frame(&mut web_peer);
+    assert_eq!(listed["result"]["organizations"][0]["name"], "Example");
+
+    // The native connection was sent no event: its next frame is its own answer.
+    send::<List>(&mut native, 20, &list);
+    let next = frame(&mut native);
+    assert_eq!(next["id"], 20);
+    assert!(refused(next));
+    assert!(
+        native_events.0.lock().unwrap().is_empty(),
+        "account.changed never reaches the host.sock broadcast"
+    );
+    drop((local, web));
+    offices.shutdown();
 }

@@ -4,6 +4,7 @@
 
 pub(crate) mod authentication;
 pub(crate) mod listener;
+pub(crate) mod organizations;
 use authentication::Authentication;
 mod request;
 
@@ -611,25 +612,20 @@ impl Handler for Service {
             }));
             return;
         }
-        if request.is::<org_host_control::provision::OrganizationProvision>() {
-            connection.send_response(
-                answer::<org_host_control::provision::OrganizationProvision>(&request, |params| {
-                    let authentication = self.authentication.as_ref().ok_or_else(|| {
-                        ApiError::new(ErrorCode::Unavailable, "protected registry unavailable")
-                    })?;
-                    let account = authentication.authorize(connection, &params.session)?;
-                    let provisioning = self.provisioning.as_ref().ok_or_else(|| {
-                        ApiError::new(ErrorCode::Unavailable, "selected provisioning unavailable")
-                    })?;
-                    provisioning.run(&account, &params, &self.offices)
-                }),
-            );
-            return;
-        }
         if self.administer(&request, connection, received) {
             return;
         }
         if self.recover(&request, connection, received) {
+            return;
+        }
+        if let Some(reply) = organizations::dispatch(
+            &request,
+            connection.gateway_listen().is_some(),
+            self.authentication.as_deref(),
+            self.provisioning.as_ref(),
+            &mut |name, data| connection.send_event(name, data),
+        ) {
+            connection.send_response(reply);
             return;
         }
         if self.browser_op(&request, connection) {
@@ -662,6 +658,22 @@ impl Handler for Service {
                 let mut result = hello(instance_id);
                 result.api_version = org_host_control::API_VERSION;
                 connection.complete_hello();
+                // `account.changed` goes to the admitted web connection and to no other.
+                // The hello answer is queued under the same lock that adds the connection,
+                // so no event is written ahead of it.
+                if let (true, Some(provisioning)) = (
+                    connection.gateway_listen().is_some(),
+                    self.provisioning.as_ref(),
+                ) {
+                    let subscriber: Arc<dyn crate::broadcast::Subscriber> = connection.clone();
+                    provisioning
+                        .web()
+                        .subscribe(Arc::downgrade(&subscriber), || {
+                            connection.send_response(ok::<Hello>(request.id, &result));
+                            true
+                        });
+                    return;
+                }
                 connection.send_response(ok::<Hello>(request.id, &result));
             }
             OpenOperation::InstanceStatus => {
