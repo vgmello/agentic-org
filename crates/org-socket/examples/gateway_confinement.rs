@@ -376,9 +376,9 @@ mod vector {
             );
             denied("connect over TCP", TcpStream::connect(&args[3]));
             denied("bind a TCP listener", TcpListener::bind("127.0.0.1:0"));
-            // The program is this process's own executable, which exists: macOS 15 reports
-            // the sandbox's refusal to start it as ENOENT (the profile denies even the
-            // lookup), later systems as EPERM. Either is the refusal; it never ran.
+            // The program is this process's own executable, which the parent starts
+            // unconfined before and after (`starts_unconfined`): macOS 15 reports the
+            // sandbox's refusal as ENOENT, later systems as EPERM. It never ran.
             refused_with(
                 "start a program",
                 Command::new(own_program()).arg(NOOP).status(),
@@ -487,6 +487,16 @@ mod vector {
         let unrelated = UnixListener::bind(root.0.join("unrelated")).unwrap();
         let outbound = TcpListener::bind("127.0.0.1:0").unwrap();
         let outbound_address = outbound.local_addr().unwrap().to_string();
+        // The program a confined child must not start, started here unconfined: an ENOENT
+        // there is the refusal, not a program that went missing.
+        let starts_unconfined = || {
+            let started = Command::new(std::env::current_exe().unwrap())
+                .arg(NOOP)
+                .status()
+                .unwrap();
+            assert!(started.success(), "the unconfined start: {started}");
+        };
+        starts_unconfined();
         let mut kills = false;
         let mut confined_by = None;
         for name in ["r", "r\"\\\né"] {
@@ -582,6 +592,7 @@ mod vector {
             }
             other => panic!("a process that had a thread: {other:?}"),
         };
+        starts_unconfined();
         drop((unrelated, outbound, joined_listener));
         assert_eq!(fs::read(root.0.join("fixture")).unwrap(), b"retained");
         let confined_by = confined_by.expect("two children were confined");
