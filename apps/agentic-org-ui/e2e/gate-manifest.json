@@ -602,9 +602,9 @@
 			"why": "Opens Projects to check the Agents views navigation leaves the roster."
 		},
 		{
-			"from": "src/lib/modules/teams/features/browse-teams/TeamsIndex.svelte",
-			"to": "src/lib/components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog,DeleteTeamDialog}.svelte",
-			"why": "The Teams index reuses the org chart's team dialogs (new, move, rename, delete) without owning them; the org-chart specs cover those dialogs."
+			"from": "src/lib/modules/teams/features/{team-actions/TeamDialogs,team-page/AddPersonToTeam}.svelte",
+			"to": "src/lib/components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog,DeleteTeamDialog,AddPersonSheet}.svelte",
+			"why": "The Teams index and a team's page reuse the org chart's team dialogs (new, move, rename, delete) through TeamDialogs, and a team's page opens the existing add-a-person flow as the top-bar New does, without owning them; the org-chart specs cover those dialogs and flows."
 		},
 		{
 			"from": "src/routes/(shell)/settings/offices/+page.svelte",

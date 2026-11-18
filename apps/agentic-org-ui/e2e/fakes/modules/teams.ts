@@ -1,6 +1,7 @@
 // Mock for src/lib/modules/teams/api.ts under `bun run dev:mock`. Teams, members and projects come from the org
 // mock; the team number, purpose and member limit are JSON in e2e/fakes/data/teams. A team's counts are of the
-// employees whose home team it is (TEAM-2). `?mock=slow|fails|empty` exercises the page states.
+// employees whose home team it is (TEAM-2). `?mock=slow|fails|empty` exercises the page states; on a team's
+// page `?mock=unavailable` answers as the production adapter does and `?mock=archived` shows the team archived.
 import type { TeamsApi } from '../../../src/lib/modules/teams/api';
 import type { TeamDetail, TeamProjectRow, TeamRow } from '../../../src/lib/modules/teams/types';
 import type { OrgSnapshot } from '$lib/proto';
@@ -60,6 +61,8 @@ async function teamRows(organizationId: string): Promise<TeamRow[]> {
 }
 
 async function found(organizationId: string, teamId: string) {
+	if (scenario() === 'unavailable')
+		throw fail('unavailable', "This server doesn't serve teams in the browser yet.");
 	const s = await snapshotFor(organizationId);
 	if (!s.teams.some((t) => t.id === teamId))
 		throw fail('not_found', "That team isn't in this organization. It may have been deleted.");
@@ -75,6 +78,7 @@ export const teamsApi: TeamsApi = {
 		await gate();
 		const s = await found(organizationId, teamId);
 		const team = (await teamRows(organizationId)).find((t) => t.id === teamId)!;
+		if (scenario() === 'archived') team.status = 'archived';
 		const path: TeamDetail['path'] = [];
 		const seen = new Set<string>();
 		for (
