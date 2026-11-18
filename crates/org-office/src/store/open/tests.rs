@@ -312,3 +312,71 @@ fn memory_and_sqlite_agree_on_every_scripted_command() {
         );
     }
 }
+
+/// How long the SQLite projection's log is, in bytes.
+fn log_bytes(place: &Place) -> u64 {
+    let config = place.config(EngineChoice::Sqlite, Opening::Existing);
+    let mut log = config.projection_path().into_os_string();
+    log.push("-wal");
+    std::fs::metadata(log).expect("the log").len()
+}
+
+/// A read that stays open until it is told to end.
+struct HeldRead {
+    began: std::sync::mpsc::Sender<()>,
+    end: std::sync::mpsc::Receiver<()>,
+}
+
+impl ReadOp for HeldRead {
+    type Out = u64;
+
+    fn read<S: OrganizationRead>(self, snapshot: &S) -> Result<u64, StoreError> {
+        let generation = snapshot.generation()?;
+        self.began.send(()).expect("the test is waiting");
+        self.end.recv().expect("the test ends the read");
+        Ok(generation)
+    }
+}
+
+/// The log of a store that stays open does not grow with what is written: each round of
+/// the flusher folds it into the file, and the writer starts it again from its beginning.
+/// A read that stays open keeps the log from being started again only until it ends.
+#[test]
+fn the_sqlite_log_stops_growing_while_the_store_stays_open_and_a_long_read_only_delays_it() {
+    use std::sync::mpsc::channel;
+
+    let place = Place::new();
+    let store = place.create(EngineChoice::Sqlite);
+    create_organization(&store, 1).unwrap();
+    store.sync().unwrap();
+    // One committed write, then a round of the flusher.
+    let round = |n: u64| {
+        let team = create_team(&store, 0x1000 + n, 0x2000 + n).unwrap();
+        assert_eq!(team.outcome, Outcome::Completed);
+        store.sync().unwrap();
+        log_bytes(&place)
+    };
+    let settled = round(0);
+    let sizes: Vec<u64> = (1..12).map(round).collect();
+    assert!(sizes.iter().all(|size| *size == settled), "{sizes:?}");
+
+    // A read open across many rounds: the log cannot be started again under it.
+    let (began, has_begun) = channel();
+    let (end, ended) = channel();
+    let held = std::thread::scope(|scope| {
+        let read = scope.spawn(|| store.read(HeldRead { began, end: ended }));
+        has_begun.recv().expect("the read began");
+        let held = (12..24).map(round).last().expect("rounds");
+        end.send(()).expect("the read is waiting");
+        assert_eq!(read.join().unwrap().unwrap().0, 13);
+        held
+    });
+    assert!(held > settled, "{held} after {settled}");
+    // It ended: the next rounds fold everything in, and the log is no longer added to.
+    round(24);
+    let after = round(25);
+    let sizes: Vec<u64> = (26..36).map(round).collect();
+    assert!(sizes.iter().all(|size| *size == after), "{sizes:?}");
+    assert_eq!(directory(&store).teams.len(), 37);
+    store.close().unwrap();
+}

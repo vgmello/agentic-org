@@ -350,7 +350,10 @@ fn on_sqlite_reads_answer_with_the_disk_failing_and_the_host_gone() {
     assert!(office.place.faults.log().is_empty());
 }
 
-/// STORE-8 on SQLite, the flush half.
+/// STORE-8 on SQLite, the flush half. `org-store`'s own test of it also asserts, per
+/// case, whether the durable request was already answered when the flush failed (its
+/// `answered` column); this one cannot, because every operation of the organization
+/// family is of the committed class and is answered before any flush.
 #[test]
 fn on_sqlite_a_flush_error_stops_the_store_and_reopening_holds_what_the_journal_holds() {
     let cases = [

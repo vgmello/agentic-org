@@ -80,9 +80,10 @@ fn stopped_at(path: String, reason: String) -> StoreError {
     }
 }
 
-/// One round: flush, confirm, answer, write files, mark, release. Any error is fatal: a
-/// failed flush is never retried in this process, and a head the host did not confirm
-/// answers no durable request (the caller stops the store, which fails them).
+/// One round: flush, confirm, answer, write files, mark, engine upkeep, release. Any
+/// error is fatal: a failed flush is never retried in this process, and a head the host
+/// did not confirm answers no durable request (the caller stops the store, which fails
+/// them).
 fn cycle<E: Engine>(core: &Core<E>) -> Result<(), StoreError> {
     if core.flow().dead {
         return Ok(());
@@ -135,6 +136,8 @@ fn cycle<E: Engine>(core: &Core<E>) -> Result<(), StoreError> {
         return Ok(());
     }
     core.journal.set_materialized(through)?;
+    // The engine's upkeep, on this thread: the writer never waits for it.
+    core.engine.after_round();
     {
         let mut flow = core.flow();
         flow.materialized_through(through);

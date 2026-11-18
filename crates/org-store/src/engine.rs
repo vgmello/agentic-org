@@ -43,6 +43,15 @@ pub trait Engine: Send + Sync + 'static {
         &self,
         build: &mut dyn FnMut(&mut Self::Tx) -> Result<Cursor, StoreError>,
     ) -> Result<(), StoreError>;
+    /// The engine's own upkeep, for what would otherwise grow for as long as the store
+    /// stays open (a write-ahead log to fold into its file). The flusher calls it after
+    /// each round that wrote files and set the mark, before anyone waiting for that round
+    /// is told: never on the writer's thread and never inside a transaction, though the
+    /// writer may hold one meanwhile. It must not wait for a reader or for the writer.
+    ///
+    /// The store depends on nothing it does, so it returns nothing: an engine whose
+    /// upkeep fails leaves it for the next round. The default does nothing.
+    fn after_round(&self) {}
 }
 
 /// The store's own rows: the applied cursor, the hash of every source file, the receipts.

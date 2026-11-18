@@ -7,7 +7,8 @@
 //! engine, and an operation is a [`StoreOp`] or a [`ReadOp`], generic over the engine and
 //! compiled once per arm.
 //!
-//! - Adding an operation: one `StoreOp`; no shared file changes.
+//! - Adding an operation: one `StoreOp` in `open/operations.rs`; this file and the
+//!   engines do not change.
 //! - Adding a family: one bound on [`OfficeEngine`] and one projector in `open_on`.
 //! - Adding an engine: one arm of [`EngineChoice`] and of [`OfficeStore`].
 

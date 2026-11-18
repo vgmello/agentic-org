@@ -8,7 +8,8 @@
 //!   SQLite's count of unresolved references before anything is appended.
 //! - Read connections are `query_only`, pooled, one read transaction per snapshot.
 //! - No connection checkpoints on its own or when it closes: dropping the engine does no
-//!   durable work. [`SqliteEngine::checkpoint`] is the one place the log is folded in.
+//!   durable work. [`SqliteEngine::checkpoint`] is the one place the log is folded in:
+//!   the flusher calls it after each round ([`Engine::after_round`]), on its own thread.
 //!
 //! This module and its children are the only code of the new office store that names
 //! `rusqlite`.
@@ -318,7 +319,8 @@ impl SqliteEngine {
     }
 
     /// Folds as much of the write-ahead log into the database file as readers allow,
-    /// without waiting for any of them. For the flusher, after it has materialized files.
+    /// without waiting for any of them. For the flusher, after it has materialized files,
+    /// and for the orderly close.
     pub fn checkpoint(&self) -> Result<(), EngineError> {
         let mut slot = lock(&self.checkpointer);
         let db = match slot.take() {
@@ -468,6 +470,15 @@ impl Engine for SqliteEngine {
             .map_err(|error| refused("beginning a read", error))?;
         snapshot.db = Some(db);
         Ok(snapshot)
+    }
+
+    /// Folds the log into the file after every round of the flusher, so the log does not
+    /// grow for as long as the store runs: once it is all folded in and no read is on
+    /// it, the writer's next transaction starts it from its beginning. A long read only
+    /// delays that. A checkpoint that fails leaves the log for the next round; the
+    /// orderly close reports its own.
+    fn after_round(&self) {
+        let _ = self.checkpoint();
     }
 
     fn replace(
