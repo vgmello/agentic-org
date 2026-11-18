@@ -121,6 +121,21 @@ impl std::error::Error for ControlEof {}
 /// standard error of a child that ended before it reported ready, and only shows its
 /// reason. Nothing else a child writes there is kept, and the reason decides nothing.
 const REFUSAL_PREFIX: &str = "agentic-org-web: startup refused: confinement: ";
+/// What a web process that confined itself without Landlock, where its adapter has
+/// that layer, writes to its standard error before its ready line
+/// (`agentic-org-web`'s `process::LANDLOCK_NOT_APPLIED_PREFIX`):
+///
+/// ```text
+/// line   = "agentic-org-web: confinement: landlock not applied: " reason LF
+/// reason = 1*240 ( %x20-7E )
+/// ```
+///
+/// The ready line cannot carry a reason, so it travels here. The host looks for
+/// this one line in the first [`STDERR_KEPT`] bytes of the standard error of a child
+/// whose report it has verified, and only when the platform contract says the
+/// report lacks a Landlock layer. It shows the reason once per start and decides
+/// nothing by it: whether the child is confined is what the host observed.
+const LANDLOCK_NOT_APPLIED_PREFIX: &str = "agentic-org-web: confinement: landlock not applied: ";
 /// How much of a child's standard error is kept; the rest is read and dropped.
 const STDERR_KEPT: usize = 1024;
 /// How long a child whose control stream ended may take to exit by itself, so that
@@ -132,11 +147,17 @@ const STDERR_GRACE: Duration = Duration::from_millis(250);
 /// The reason of the first well-formed refusal line in `captured`, if there is one.
 /// A line that is cut off, empty, too long or not printable ASCII is no refusal line.
 fn refusal_reason(captured: &[u8]) -> Option<&str> {
+    line_reason(captured, REFUSAL_PREFIX)
+}
+
+/// The reason of the first line in `captured` that starts with `prefix`, if that
+/// line is whole and its reason is 1 to [`REASON_BYTES`] bytes of printable ASCII.
+fn line_reason<'a>(captured: &'a [u8], prefix: &str) -> Option<&'a str> {
     let mut rest = captured;
     while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
         let (line, after) = rest.split_at(end);
         rest = &after[1..];
-        let Some(reason) = line.strip_prefix(REFUSAL_PREFIX.as_bytes()) else {
+        let Some(reason) = line.strip_prefix(prefix.as_bytes()) else {
             continue;
         };
         let printable = reason.iter().all(|byte| (0x20..=0x7e).contains(byte));
@@ -149,10 +170,10 @@ fn refusal_reason(captured: &[u8]) -> Option<&str> {
 }
 
 /// The start of a child's standard error, read by its own thread until the child's
-/// end closes it.
+/// end closes it. `changed` is notified when bytes are kept and when it has ended.
 struct Stderr {
     kept: Mutex<(Vec<u8>, bool)>,
-    ended: Condvar,
+    changed: Condvar,
 }
 impl Stderr {
     /// Reads `stderr` to its end on a new thread, keeping its first [`STDERR_KEPT`]
@@ -160,7 +181,7 @@ impl Stderr {
     fn capture(mut stderr: impl Read + Send + 'static) -> io::Result<Arc<Self>> {
         let captured = Arc::new(Self {
             kept: Mutex::new((Vec::new(), false)),
-            ended: Condvar::new(),
+            changed: Condvar::new(),
         });
         let filling = Arc::clone(&captured);
         thread::Builder::new()
@@ -171,9 +192,11 @@ impl Stderr {
                     let mut kept = lock(&filling.kept);
                     let room = STDERR_KEPT - kept.0.len();
                     kept.0.extend_from_slice(&bytes[..read.min(room)]);
+                    drop(kept);
+                    filling.changed.notify_all();
                 }
                 lock(&filling.kept).1 = true;
-                filling.ended.notify_all();
+                filling.changed.notify_all();
             })?;
         Ok(captured)
     }
@@ -182,10 +205,44 @@ impl Stderr {
     /// `wait` has passed.
     fn refusal(&self, wait: Duration) -> Option<String> {
         let (kept, _) = self
-            .ended
+            .changed
             .wait_timeout_while(lock(&self.kept), wait, |kept| !kept.1)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         refusal_reason(&kept.0).map(shown)
+    }
+
+    /// The reason of the child's "landlock not applied" line, as soon as the line is
+    /// among the kept bytes. The child wrote it before its ready line, so it is
+    /// there once this reader has caught up; without it this returns when the
+    /// standard error has ended, the kept bytes are full or `wait` has passed.
+    fn landlock_not_applied(&self, wait: Duration) -> Option<String> {
+        let found = |kept: &[u8]| line_reason(kept, LANDLOCK_NOT_APPLIED_PREFIX).map(shown);
+        let (kept, _) = self
+            .changed
+            .wait_timeout_while(lock(&self.kept), wait, |kept| {
+                !kept.1 && kept.0.len() < STDERR_KEPT && found(&kept.0).is_none()
+            })
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        found(&kept.0)
+    }
+}
+
+/// What the host logs of a started web process's confinement: the layers the
+/// platform contract names for its verified report, and, where a Landlock layer is
+/// missing from them, the reason the web process gave (`reason` is asked only then).
+fn confined_by(
+    layers: &org_platform::confinement::Layers,
+    reason: impl FnOnce() -> Option<String>,
+) -> String {
+    let by = &layers.description;
+    if !layers.landlock_missing {
+        return format!("confined by {by}");
+    }
+    match reason() {
+        Some(reason) => format!("confined by {by}: Landlock was not applied: {reason}"),
+        None => format!(
+            "confined by {by}: Landlock was not applied, and the web process gave no reason"
+        ),
     }
 }
 
@@ -363,6 +420,8 @@ trait Serving {
     fn reported(&mut self) -> bool;
     /// Why it stopped serving: fixed, secret-free text for the host log.
     fn ended(&mut self) -> String;
+    /// What it is confined by, for the one line the host logs of each start.
+    fn confined(&mut self) -> String;
 }
 
 /// Starts the web process once `eligible`. It stays `Starting` until the admitted
@@ -371,7 +430,8 @@ trait Serving {
 /// publishes `Failed` and stops/reaps the child, before any bounded restart.
 /// Only consecutive failed starts count toward [`MAX_STARTS`]: a web process that
 /// stayed `Running` for `timing.stable` resets the count. No backoff follows
-/// the final failed start. Every failed start and every exit is passed to `log`
+/// the final failed start. Every start is passed to `log` once with what the web
+/// process is confined by. Every failed start and every exit is passed to `log`
 /// with its cause, escaped, together with the restart it leads to. When `eligible`
 /// ends while the web process runs, it is stopped with a logged reason and starts
 /// again only once eligible, without counting a failure or waiting a backoff.
@@ -399,6 +459,12 @@ fn supervise<S: Serving>(
         let mut stable = false;
         let reason = match start() {
             Ok(mut child) => {
+                // Once per start: the layers the host verified, and why one is
+                // missing where the web process said so.
+                log(&format!(
+                    "authenticated browser web process started, {}",
+                    crate::host_log::untrusted(&child.confined())
+                ));
                 // HTTP initialization is still pending until the child reports it.
                 let until = Instant::now() + timing.serving;
                 while !stopping.load(Ordering::SeqCst)
@@ -537,6 +603,10 @@ struct Running {
     control: WebConnection,
     process: Child,
     _stdin: fs::File,
+    /// The layers of the report the host verified.
+    layers: org_platform::confinement::Layers,
+    /// The child's standard error, for the reason a layer is missing.
+    captured: Arc<Stderr>,
 }
 impl Serving for Running {
     fn serving(&mut self) -> bool {
@@ -549,6 +619,11 @@ impl Serving for Running {
         let refused = self.control.serving_refused();
         let exit = matches!(self.process.try_wait(), Ok(true)).then(|| exited(&self.process));
         ended_cause(refused, exit, self.control.live())
+    }
+    fn confined(&mut self) -> String {
+        confined_by(&self.layers, || {
+            self.captured.landlock_not_applied(STDERR_GRACE)
+        })
     }
 }
 /// Why a running web process ended, pure: a refused `web.serving` wins over the EOF it
@@ -676,6 +751,13 @@ impl Running {
         })?;
         // The child is held unreaped across that check; it must not have exited since.
         still_running(&mut spawned.child)?;
+        // What the verified report says the child is confined by, for the log.
+        let layers = org_platform::confinement::layers(&enforcement).map_err(|error| {
+            failed(&format!(
+                "name the web process sandbox: {}",
+                shown(&error.to_string())
+            ))
+        })?;
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)
             .map_err(os_failed("send the descriptor handoff"))?;
@@ -693,6 +775,8 @@ impl Running {
             control,
             process: spawned.child,
             _stdin: spawned.stdin,
+            layers,
+            captured,
         })
     }
 }

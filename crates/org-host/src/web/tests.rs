@@ -118,7 +118,16 @@ impl Serving for Fake {
     fn ended(&mut self) -> String {
         "the fake exited".to_owned()
     }
+    fn confined(&mut self) -> String {
+        // A line break, as a reason from a web process's standard error could
+        // never have, but the log must not depend on that.
+        "confined by a fake\nforged line".to_owned()
+    }
 }
+
+/// What the supervisor logs once for each start of a [`Fake`].
+const FAKE_STARTED: &str =
+    "authenticated browser web process started, confined by a fake\\nforged line";
 impl Drop for Fake {
     fn drop(&mut self) {
         self.dropped.store(true, Ordering::SeqCst);
@@ -320,9 +329,14 @@ fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
     supervisor.thread().unpark();
     supervisor.join().unwrap();
     let logged = lock(&logged).clone();
+    // Each of the two starts is logged once; no failure or backoff is.
     assert_eq!(
         logged,
-        ["authenticated browser stopped because the host is no longer eligible; it starts again once eligible"],
+        [
+            FAKE_STARTED,
+            "authenticated browser stopped because the host is no longer eligible; it starts again once eligible",
+            FAKE_STARTED,
+        ],
         "no failure or backoff was logged"
     );
 }
@@ -441,6 +455,9 @@ impl Serving for Brief {
     }
     fn ended(&mut self) -> String {
         "the brief run ended".to_owned()
+    }
+    fn confined(&mut self) -> String {
+        "confined by a brief run".to_owned()
     }
 }
 
@@ -867,14 +884,18 @@ fn the_exit_of_a_running_web_is_logged_with_its_reason_and_restart() {
     };
     wait_for("running", || *lock(&state) == GatewayState::Running);
     live.store(false, Ordering::SeqCst);
-    wait_for("restart logged", || !lock(&lines).is_empty());
+    wait_for("restart logged", || lock(&lines).len() >= 2);
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
     let logged = lock(&lines).clone();
+    // The start is logged once, with what the web process is confined by, escaped.
     assert_eq!(
         logged,
-        ["authenticated browser restarting in 1s because the running web process stopped: the fake exited"],
+        [
+            FAKE_STARTED,
+            "authenticated browser restarting in 1s because the running web process stopped: the fake exited"
+        ],
     );
 }
 
@@ -907,7 +928,15 @@ fn every_failed_start_is_logged_escaped_with_its_restart_until_the_limit() {
             _ => Err(io::Error::other("refused\nforged line")),
         }
     });
-    let logged = lock(&lines).clone();
+    // The two starts that succeeded are each logged once, before their failure; a
+    // failed start logs no such line.
+    let (started, logged): (Vec<String>, Vec<String>) = lock(&lines)
+        .clone()
+        .into_iter()
+        .partition(|line| line.contains("web process started"));
+    assert_eq!(started, [FAKE_STARTED, FAKE_STARTED]);
+    assert_eq!(lock(&lines)[0], FAKE_STARTED);
+    assert_eq!(lock(&lines)[2], FAKE_STARTED);
     assert_eq!(logged.len(), MAX_STARTS, "{logged:?}");
     assert!(logged[0].ends_with("because it did not report web.serving before the deadline"));
     assert!(logged[1].ends_with("because it stopped before serving: the fake exited"));
@@ -1434,6 +1463,11 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
             control,
             process: spawned.child,
             _stdin: spawned.stdin,
+            layers: org_platform::confinement::Layers {
+                description: "nothing: a test's own child".to_owned(),
+                landlock_missing: false,
+            },
+            captured: Stderr::capture(spawned.stderr).unwrap(),
         };
         (running, io::BufReader::new(peer))
     };
@@ -1781,6 +1815,104 @@ fn only_the_start_of_a_childs_standard_error_is_kept() {
     assert!(lock(&captured.kept).1, "read to its end");
 }
 
+#[test]
+fn a_landlock_line_is_found_only_whole_printable_and_bounded() {
+    let reason =
+        "landlock_create_ruleset failed with EPERM: the Landlock version query was refused";
+    let line = format!("{LANDLOCK_NOT_APPLIED_PREFIX}{reason}\n");
+    fn found(text: &str) -> Option<&str> {
+        line_reason(text.as_bytes(), LANDLOCK_NOT_APPLIED_PREFIX)
+    }
+    assert_eq!(found(&line), Some(reason));
+    let noisy = format!("agentic-org-web: explicit debug unpinned fixture preload\n{line}more\n");
+    assert_eq!(found(&noisy), Some(reason));
+    for not_one in [
+        String::new(),
+        format!("{LANDLOCK_NOT_APPLIED_PREFIX}{reason}"),
+        format!("x{line}"),
+        format!("{LANDLOCK_NOT_APPLIED_PREFIX}\n"),
+        format!(
+            "{LANDLOCK_NOT_APPLIED_PREFIX}{}\n",
+            "r".repeat(REASON_BYTES + 1)
+        ),
+        format!("{LANDLOCK_NOT_APPLIED_PREFIX}a\u{1b}[31mb\n"),
+        // A refusal line is not this line, and this line is no refusal.
+        format!("{REFUSAL_PREFIX}{reason}\n"),
+    ] {
+        assert_eq!(found(&not_one), None, "{not_one:?}");
+    }
+    assert_eq!(refusal_reason(line.as_bytes()), None);
+    assert_eq!(
+        LANDLOCK_NOT_APPLIED_PREFIX,
+        "agentic-org-web: confinement: landlock not applied: "
+    );
+}
+
+#[test]
+fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standard_error() {
+    let line = format!("{LANDLOCK_NOT_APPLIED_PREFIX}landlock_restrict_self failed with EPERM");
+    // The child stays alive, as a web process that serves does: the line is found
+    // as soon as it is read, long before the wait ends.
+    let (mut child, captured, _stdin) = shell(&format!(
+        "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; sleep 30"
+    ));
+    let asked = Instant::now();
+    assert_eq!(
+        captured.landlock_not_applied(WAIT).as_deref(),
+        Some("landlock_restrict_self failed with EPERM")
+    );
+    assert!(asked.elapsed() < WAIT);
+    assert!(matches!(child.try_wait(), Ok(false)));
+    // A child that says nothing: the wait passes, and no longer.
+    let (mut silent, captured, _stdin) = shell("sleep 30");
+    let asked = Instant::now();
+    assert_eq!(captured.landlock_not_applied(STDERR_GRACE), None);
+    assert!(asked.elapsed() >= STDERR_GRACE);
+    assert!(asked.elapsed() < WAIT);
+    assert!(matches!(silent.try_wait(), Ok(false)));
+    // Ended, or with its kept bytes full: nothing more can come, and nothing is
+    // waited for.
+    let ended = Stderr::capture(io::Cursor::new(b"something else\n".to_vec())).unwrap();
+    let full = Stderr::capture(io::Cursor::new(vec![b'x'; 10 * STDERR_KEPT])).unwrap();
+    let late = format!("{}\n{line}\n", "x".repeat(STDERR_KEPT));
+    let late = Stderr::capture(io::Cursor::new(late.into_bytes())).unwrap();
+    let asked = Instant::now();
+    for captured in [ended, full, late] {
+        assert_eq!(captured.landlock_not_applied(WAIT), None);
+    }
+    assert!(asked.elapsed() < WAIT);
+}
+
+#[test]
+fn the_start_line_names_the_layers_and_why_landlock_is_missing() {
+    use org_platform::confinement::Layers;
+    let both = Layers {
+        description: "the seccomp filter and Landlock ABI 7".to_owned(),
+        landlock_missing: false,
+    };
+    // No reason is asked for where no layer is missing.
+    assert_eq!(
+        confined_by(&both, || panic!("no reason is read")),
+        "confined by the seccomp filter and Landlock ABI 7"
+    );
+    let alone = Layers {
+        description: "the seccomp filter alone".to_owned(),
+        landlock_missing: true,
+    };
+    assert_eq!(
+        confined_by(&alone, || Some(
+            "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock".to_owned()
+        )),
+        "confined by the seccomp filter alone: Landlock was not applied: \
+         landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock"
+    );
+    assert_eq!(
+        confined_by(&alone, || None),
+        "confined by the seccomp filter alone: Landlock was not applied, and the web process \
+         gave no reason"
+    );
+}
+
 /// A real child of `/bin/sh` that runs `script`, with its captured standard error.
 fn shell(script: &str) -> (Child, Arc<Stderr>, fs::File) {
     // The shell's own file: an admission does not follow a link to its program.
@@ -1964,12 +2096,22 @@ fn real_web() -> RealWeb {
 
 /// The production path as far as this module reaches: the host's own start of the
 /// real web process. It is treated as started only once it is confined, and then
-/// serves its listener.
+/// serves its listener. The same holds under a profile that refuses Landlock at each
+/// of its three calls: the web process is confined by its filter alone, serves the
+/// same way, and the host's log line for the start says so with the reason.
 #[test]
 #[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
 fn the_real_web_process_is_started_only_confined_and_then_serves() {
+    use org_platform::confinement::testing::RefusedCall;
+    const NAME: &str = "web::tests::the_real_web_process_is_started_only_confined_and_then_serves";
+    const STARTED: &str = "authenticated browser web process started, ";
     let web = real_web();
     let mut running = Running::start(&web.config, web.handler.clone()).unwrap();
+    // What the host verified it is confined by, as its log line says it.
+    let confined = running.confined();
+    assert!(confined.starts_with("confined by "), "{confined}");
+    assert!(!confined.contains("gave no reason"), "{confined}");
+    println!("\nconfined: {confined}");
     wait_for("web.serving", || running.reported());
     assert!(running.serving());
     let address = (web.config.listen.address(), web.config.listen.port());
@@ -2050,6 +2192,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
         control,
         mut process,
         _stdin,
+        ..
     } = running;
     drop(_stdin);
     wait_for("the web process exits", || {
@@ -2057,7 +2200,91 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
     });
     assert_eq!(process.ended().as_deref(), Some("exit code 0"));
     drop(control);
+    // The supervisor's own start of it: logged once, with the same words, and it
+    // serves.
+    let stopping = AtomicBool::new(false);
+    let state = Mutex::new(GatewayState::NotConfigured);
+    let (lines, log) = recording();
+    thread::scope(|scope| {
+        let supervisor = scope.spawn(|| {
+            supervise(
+                &stopping,
+                &state,
+                &|| true,
+                Timing::PRODUCTION,
+                &log,
+                || Running::start(&web.config, web.handler.clone()),
+            )
+        });
+        wait_for("the supervised web process serves", || {
+            *lock(&state) == GatewayState::Running
+        });
+        let mut browser = std::net::TcpStream::connect(address).unwrap();
+        browser.set_read_timeout(Some(WAIT)).unwrap();
+        write!(
+            browser,
+            "GET /api/v1/version HTTP/1.1\r\n{host}Connection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut reply = String::new();
+        browser.read_to_string(&mut reply).unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200 "), "{reply}");
+        stopping.store(true, Ordering::SeqCst);
+        supervisor.thread().unpark();
+    });
+    let logged = lock(&lines).clone();
+    assert_eq!(logged, [format!("{STARTED}{confined}")]);
+    println!("log: {}", logged[0]);
     web.offices.shutdown();
+    if std::env::var_os(UNDER_PROFILE).is_some() {
+        return;
+    }
+    // All of the above again in a host under a profile that refuses Landlock.
+    let not_permitted = "EPERM (Operation not permitted (os error 1))";
+    for (call, reason) in [
+        (
+            RefusedCall::LandlockCreateRuleset,
+            "landlock_create_ruleset failed with EPERM: the Landlock version query was refused"
+                .to_owned(),
+        ),
+        (
+            RefusedCall::LandlockRuleset,
+            format!("landlock_create_ruleset failed with {not_permitted}"),
+        ),
+        (
+            RefusedCall::LandlockRestrictSelf,
+            format!("landlock_restrict_self failed with {not_permitted}"),
+        ),
+    ] {
+        let Some(printed) = under_profile(NAME, call) else {
+            return;
+        };
+        const ALONE: &str = "confined by the seccomp filter alone: Landlock was not applied: ";
+        // A kernel without Landlock gives its own reason before a profile can.
+        let said = |line: &str, prefix: &str| {
+            line.strip_prefix(prefix)
+                .and_then(|rest| rest.strip_prefix(ALONE))
+                .is_some_and(|given| {
+                    given == reason
+                        || given.contains("this kernel has no Landlock")
+                        || given.contains("is not an enabled security module")
+                })
+        };
+        assert!(
+            printed.lines().any(|line| said(line, "confined: ")),
+            "{call:?}: {printed}"
+        );
+        assert!(
+            printed
+                .lines()
+                .any(|line| said(line, &format!("log: {STARTED}"))),
+            "{call:?}: {printed}"
+        );
+        // For whoever reads this test's output: what that host logged.
+        for line in printed.lines().filter(|line| line.starts_with("log: ")) {
+            println!("under a profile that refuses {call:?}: {line}");
+        }
+    }
 }
 
 /// ADR-0017 LNX-3 for the web process's own refusal: where the host's question
