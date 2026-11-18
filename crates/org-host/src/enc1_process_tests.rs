@@ -209,7 +209,13 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
         if path.starts_with(base.join("bin")) {
             continue;
         }
-        let Ok(bytes) = fs::read(path) else { continue };
+        // A file removed since the listing (for example a WAL checkpointed away) is skipped;
+        // any other read failure fails the test so an unreadable file can't hide a leak.
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => panic!("can't read {path:?} for the leak scan: {e}"),
+        };
         scanned += 1;
         for form in &key_forms {
             assert!(!contains(&bytes, form), "office secrets key in {path:?}");
