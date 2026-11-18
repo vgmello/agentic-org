@@ -10,6 +10,8 @@ Generate a new stable ID before submitting a creation. An ID is not an increment
 
  Slugs/handles are explicit identity fields. `key` columns are generated from stored fields, using `TEAM-`, `P-`, `T-`, `F-`, `R-` and `M-`. Numbered records use positive integers. Every numbered record has its number from the moment it exists, except a feature created while HQ is unreachable, whose number is null until HQ registers it. Resolve slugs and handles by their documented scope rather than by display names.
 
+**Handles.** A handle is at most 64 bytes: the limit of an agent's messaging name (`org_proto::org::AGENT_MESSAGING_NAME_MAX_CHARS`), so every handle is also a valid messaging name. It starts with a letter or digit, has dots only between other characters and never two together, and is neither a reserved word (`here`, the owner's handle, the office's handle) nor shaped like an address.
+
 There are two ways a number is given.
 
 **Numbers given by HQ.** Counter rows identify `(organization_id, scope_kind, scope_id, entity_kind)`:
