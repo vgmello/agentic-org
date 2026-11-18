@@ -631,7 +631,9 @@ no longer reads are refused by path, because nothing has shipped to keep.
 ## 7. Reading
 
 **The reader pool.** SQLite read connections in WAL mode, opened `query_only`, up to four
-kept idle (today's `MAX_IDLE_READERS`) and more opened under load. Each `Store::read` call
+kept idle (today's `MAX_IDLE_READERS`) and more opened under load. A read transaction
+is short: a reader that holds one open keeps the log from being checkpointed (section
+8). Each `Store::read` call
 runs in one read transaction. The memory engine hands out an immutable snapshot.
 
 **What a caller can rely on.**
@@ -676,7 +678,15 @@ store's share must stay in tens of microseconds.
 
 **Settings.** The projection runs WAL with `synchronous=NORMAL`: it is a cache, so a
 power cut may lose its tail, which the cursor check at opening replays or rebuilds. No
-projection commit flushes the drive; only the journal is flushed. `foreign_keys` and
+projection commit flushes the drive; only the journal is flushed.
+
+**Checkpoints stay off the reply path.** With write-ahead logging an automatic
+checkpoint runs on the committing connection and flushes the database file, which would
+put a drive flush on the writer thread. So automatic checkpoints are off
+(`wal_autocheckpoint=0`), and the flusher runs a passive checkpoint on its own
+connection after each materialization round. The log is bounded at 64 MiB; when a
+passive checkpoint cannot bring it under that (a long-lived reader holds it), the
+writer's back-pressure of section 4 applies until it can. `foreign_keys` and
 `recursive_triggers` are on for every write connection, as the data contract requires.
 Today every connection sets `synchronous=FULL` and `fullfsync=ON`
 (`connect` in `crates/org-office/src/store.rs`), so every commit waits for the drive and
@@ -688,8 +698,8 @@ re-reads every materialized file on every read and write (`verify_authority`,
 `confirm` and `verify_artifacts` in `crates/org-office/src/store/acceptance.rs`). Here the
 host is called once per flush, and reads touch only the projection.
 
-**First numbers** (Linux build container, 1 KiB entries, Python harness, 2026-11-18;
-not the reference Mac): appending to an open segment took a median of 0.65 µs against
+**First indications** (Linux build container, 1 KiB entries, a Python harness,
+2026-11-18; not the reference Mac and not a measurement of the store): appending to an open segment took a median of 0.65 µs against
 16 µs for writing a file per entry; with a flush, 228 µs against 580 µs. ADR-0014
 measured a WAL commit at 0.013 ms without a flush. These support the segment journal;
 they are not the measurement B1c owes.
@@ -700,8 +710,9 @@ percentiles over at least 10,000 operations of: a committed write alone and besi
 continuous durable load; a durable write and the group size per flush; the inbox read
 over 10,000 messages and 100 recipients; task create and update including the YAML
 codec in the projector; the largest gap between a commit and its flush under continuous
-committed load (ACK-5); materialization throughput; and rebuild time for 10,000 and
-100,000 files. The results are recorded on Linux CI and the reference Mac in ADR-0014's
+committed load (ACK-5); the 99th percentile of a committed write while a checkpoint
+runs; materialization throughput; how often back-pressure engages under sustained load;
+and rebuild time for 10,000 and 100,000 files. The results are recorded on Linux CI and the reference Mac in ADR-0014's
 measurement section (its decision 7), and CI fails a store benchmark that regresses past
 twice its recorded value.
 
