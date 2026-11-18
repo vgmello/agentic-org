@@ -141,8 +141,9 @@ impl Host {
 }
 
 /// The message a start refuses with when the registry it once created is gone.
-pub(crate) const REGISTRY_MISSING: &str =
-    "host registry missing; restore it or reset this instance through setup";
+pub(crate) const REGISTRY_MISSING: &str = "host registry missing: restore host-registry.db \
+     from a backup of this instance; starting over without one needs the instance removed, \
+     which uninstall does not offer yet (FC-022)";
 
 #[derive(Debug, PartialEq, Eq)]
 enum RegistryState {

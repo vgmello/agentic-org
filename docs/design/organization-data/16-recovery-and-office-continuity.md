@@ -158,7 +158,8 @@ promotion or a reset of either allocator. Recreating a missing host registry mus
 not sweep existing writer authority. The host never recreates a registry it once
 created: after the first creation it records a marker in the instance root, and a
 later start that finds the marker without the registry refuses until the registry
-is restored or the instance is reset through setup (ADR-0022).
+is restored from a backup; removing the instance (uninstall, FC-022) must clear the
+marker with the registry (ADR-0022).
 The protected initial binding records its canonical provisioning
 operation ID. An exact authenticated replay may finish marker publication while
 retaining its original incarnation, epoch, device and acknowledged checkpoint.

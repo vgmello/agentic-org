@@ -58,6 +58,22 @@ impl Drop for Resetting<'_> {
     }
 }
 
+/// Admission order: only the local channel may administer, whatever the signing
+/// policy would say; the policy is consulted only for a local caller.
+pub(crate) fn admit_with(
+    channel: org_office_launch::v3::ChannelKind,
+    policy_allows: impl FnOnce() -> bool,
+) -> Result<(), ApiError> {
+    if channel != org_office_launch::v3::ChannelKind::Local {
+        return Err(denied());
+    }
+    if policy_allows() {
+        Ok(())
+    } else {
+        Err(denied())
+    }
+}
+
 fn denied() -> ApiError {
     ApiError::new(
         ErrorCode::NotAuthorized,
@@ -103,20 +119,21 @@ impl Admin {
 
     /// The caller is a local `host.sock` client that passes the host's signing check.
     fn admit(&self, c: &Connection, received: Received) -> Result<(), ApiError> {
-        if c.channel_kind() != org_office_launch::v3::ChannelKind::Local {
-            return Err(denied());
-        }
-        #[cfg(target_os = "macos")]
-        if self.policy.allows(&crate::app_auth::SocketPeer {
-            stream: c.socket(),
-            accepted: c.accepted(),
-            received,
-        }) {
-            return Ok(());
-        }
-        #[cfg(not(target_os = "macos"))]
-        let _ = (&self.policy, received);
-        Err(denied())
+        admit_with(c.channel_kind(), || {
+            #[cfg(target_os = "macos")]
+            {
+                self.policy.allows(&crate::app_auth::SocketPeer {
+                    stream: c.socket(),
+                    accepted: c.accepted(),
+                    received,
+                })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (&self.policy, received);
+                false
+            }
+        })
     }
 
     pub(crate) fn initial(

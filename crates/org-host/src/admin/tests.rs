@@ -265,3 +265,25 @@ fn issue_unless_administrator_checks_and_writes_together() {
         .expect("unchanged");
     assert_eq!(pending.link_id, second.link_id);
 }
+
+#[test]
+fn only_the_local_channel_may_administer_even_when_the_policy_would_allow() {
+    use org_office_launch::v3::ChannelKind;
+    let mut consulted = false;
+    let refused = super::admit_with(ChannelKind::Gateway, || {
+        consulted = true;
+        true
+    });
+    assert_eq!(refused.unwrap_err().code, ErrorCode::NotAuthorized);
+    assert!(
+        !consulted,
+        "the signing policy is never consulted off the local channel"
+    );
+    assert!(super::admit_with(ChannelKind::Local, || true).is_ok());
+    assert_eq!(
+        super::admit_with(ChannelKind::Local, || false)
+            .unwrap_err()
+            .code,
+        ErrorCode::NotAuthorized
+    );
+}
