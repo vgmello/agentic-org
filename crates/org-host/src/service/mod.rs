@@ -920,8 +920,8 @@ pub(crate) mod tests {
         service.instance_id = Some(crate::ids::generate().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
-        // A setup connection and a host.sock connection are both `Local`.
-        let local = listener::SetupConnection::start(host, Arc::new(service)).unwrap();
+        // Every host.sock connection is `Local`.
+        let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
         peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .unwrap();
         let mut peer = std::io::BufReader::new(peer);

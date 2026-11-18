@@ -1,10 +1,11 @@
 use super::*;
+use crate::host_secrets::{Name, Value};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::Mutex;
 
-pub(in crate::hostdb) mod first_account;
+pub(in crate::hostdb) mod admin_fixture;
 mod lockout;
 
 #[cfg(test)]
@@ -83,35 +84,17 @@ fn home() -> tempfile::TempDir {
     fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
     home
 }
-pub(in crate::hostdb) fn init(tls: bool) -> HostDbInit {
+pub(in crate::hostdb) fn init() -> HostDbInit {
     HostDbInit {
         instance_id: "01J00000000000000000000000".into(),
         clock_high_ms: 123,
-        bootstrap: BootstrapRecord {
-            operation_id: "01J00000000000000000000001".into(),
-            hq_operation_id: "01J00000000000000000000002".into(),
-            fingerprint: "ab".repeat(32),
-            account: "01J00000000000000000000003".into(),
-            finished: false,
-        },
-        first_account: FirstAccount::new(
-            "01J00000000000000000000003",
-            "Sage",
-            journal::Verifier::new(first_account::PHC.into()).unwrap(),
-        )
-        .unwrap(),
-        tls_pair: tls.then(|| TlsPair {
-            cert_pem: "test certificate".into(),
-            pair_fp: [0xab; 32],
-            set_at_ms: 123,
-            key: Value::new(b"test private key".to_vec()).unwrap(),
-        }),
     }
 }
 pub(in crate::hostdb) fn fixture() -> (tempfile::TempDir, Secrets, HostDb) {
     let home = home();
     let secrets = Secrets::default();
-    let db = HostDb::create(home.path(), &secrets, &init(true)).unwrap();
+    let db = HostDb::create(home.path(), &secrets, &init()).unwrap();
+    admin_fixture::seed(&db);
     (home, secrets, db)
 }
 fn bytes(home: &Path) -> BTreeMap<String, Vec<u8>> {
@@ -125,10 +108,28 @@ fn scalar(db: &Connection, pragma: &str) -> i64 {
 }
 
 #[test]
-fn plain_schema_metadata_tls_and_pragmas_survive_reopen() {
+fn open_refuses_a_stored_instance_id_that_is_not_valid() {
+    let (home, secrets, db) = fixture();
+    db.connection
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE meta SET value='not an id' WHERE key='instance_id'",
+            [],
+        )
+        .unwrap();
+    drop(db);
+    assert!(matches!(
+        HostDb::open(home.path(), &secrets),
+        Err(Error::InvalidId)
+    ));
+}
+
+#[test]
+fn plain_schema_metadata_and_pragmas_survive_reopen() {
     let (home, secrets, db) = fixture();
     let c = db.connection.lock().unwrap();
-    assert_eq!(scalar(&c, "user_version"), 3);
+    assert_eq!(scalar(&c, "user_version"), SCHEMA_VERSION);
     assert_eq!(scalar(&c, "synchronous"), 2);
     assert_eq!(scalar(&c, "fullfsync"), 1);
     assert_eq!(scalar(&c, "checkpoint_fullfsync"), 1);
@@ -144,12 +145,8 @@ fn plain_schema_metadata_tls_and_pragmas_survive_reopen() {
     assert_eq!(c.query_row("SELECT count(*) FROM pragma_table_list WHERE name IN ('meta','op_journal','op_verifiers','org_create_staging','tls_pair','org_owners') AND wr=1",[],|r|r.get::<_,i64>(0)).unwrap(),5);
     assert_eq!(c.query_row("SELECT count(*) FROM sqlite_schema WHERE type='index' AND name IN ('op_journal_expiry','op_verifiers_account')",[],|r|r.get::<_,i64>(0)).unwrap(),2);
     for (name, value) in [
-        ("instance_id", init(false).instance_id),
+        ("instance_id", init().instance_id),
         ("clock_high_ms", "123".into()),
-        (
-            "bootstrap",
-            serde_json::to_string(&init(false).bootstrap).unwrap(),
-        ),
     ] {
         assert_eq!(
             c.query_row("SELECT value FROM meta WHERE key=?1", [name], |r| r
@@ -158,17 +155,6 @@ fn plain_schema_metadata_tls_and_pragmas_survive_reopen() {
             value
         );
     }
-    assert_eq!(
-        c.query_row("SELECT cert_pem,pair_fp,set_at_ms FROM tls_pair", [], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, Vec<u8>>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
-        })
-        .unwrap(),
-        ("test certificate".into(), vec![0xab; 32], 123)
-    );
     for path in [DB, "host-registry.db-wal", "host-registry.db-shm"] {
         assert_eq!(
             fs::metadata(home.path().join(path)).unwrap().mode() & 0o7777,
@@ -182,14 +168,6 @@ fn plain_schema_metadata_tls_and_pragmas_survive_reopen() {
         .load(&Name::parse("registry").unwrap())
         .unwrap()
         .is_none());
-    assert_eq!(
-        secrets
-            .load(&Name::parse(&format!("tls.{}", "ab".repeat(32))).unwrap())
-            .unwrap()
-            .unwrap()
-            .expose(),
-        b"test private key"
-    );
     drop(c);
     drop(db);
     let db = HostDb::open(home.path(), &secrets).unwrap();
@@ -199,14 +177,14 @@ fn plain_schema_metadata_tls_and_pragmas_survive_reopen() {
             .unwrap()
             .query_row("SELECT count(*) FROM meta", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        3
+        2
     );
     // Independently opens as plain SQLite with no key.
     let c = connection_for_test(home.path().join(DB), OpenFlags::default()).unwrap();
-    assert_eq!(scalar(&c, "user_version"), 3);
+    assert_eq!(scalar(&c, "user_version"), SCHEMA_VERSION);
 }
 #[test]
-fn create_replaces_leftover_secrets_and_temps_without_tls() {
+fn create_replaces_leftover_secrets_and_temps() {
     let home = home();
     let secrets = Secrets::default();
     for n in ["registry", &format!("tls.{}", "cd".repeat(32))] {
@@ -217,7 +195,7 @@ fn create_replaces_leftover_secrets_and_temps_without_tls() {
     for n in [TMP, "host-registry.db.tmp-journal"] {
         fs::write(home.path().join(n), b"stale").unwrap();
     }
-    let db = HostDb::create(home.path(), &secrets, &init(false)).unwrap();
+    let db = HostDb::create(home.path(), &secrets, &init()).unwrap();
     // Leftovers, including a retired registry key, are removed and none is stored.
     assert!(secrets.list().unwrap().is_empty());
     assert!(!home.path().join(TMP).exists());
@@ -271,7 +249,7 @@ fn retained_opaque_recovery_custody_refuses_create_before_any_cleanup() {
         })
         .collect();
         assert!(matches!(
-            HostDb::create(home.path(), &secrets, &init(false)),
+            HostDb::create(home.path(), &secrets, &init()),
             Err(Error::Unsafe)
         ));
         assert!(!home.path().join(DB).exists());
@@ -299,7 +277,7 @@ fn existing_file_and_dangling_symlink_create_have_no_effect() {
         }
         fs::write(home.path().join(TMP), b"preserve tmp").unwrap();
         assert!(matches!(
-            HostDb::create(home.path(), &secrets, &init(true)),
+            HostDb::create(home.path(), &secrets, &init()),
             Err(Error::Exists)
         ));
         assert_eq!(fs::read(home.path().join(TMP)).unwrap(), b"preserve tmp");
@@ -469,7 +447,7 @@ fn failures_at_every_checkpoint_are_recoverable_and_precommit_is_atomic() {
         let secrets = Secrets::default();
         FAIL.with(|f| *f.borrow_mut() = Some(step));
         assert!(matches!(
-            HostDb::create(home.path(), &secrets, &init(true)),
+            HostDb::create(home.path(), &secrets, &init()),
             Err(Error::Io(io::ErrorKind::Interrupted))
         ));
         FAIL.with(|f| *f.borrow_mut() = None);
@@ -486,9 +464,9 @@ fn failures_at_every_checkpoint_are_recoverable_and_precommit_is_atomic() {
         let recovered = if home.path().join(DB).exists() {
             HostDb::open(home.path(), &secrets).unwrap()
         } else {
-            HostDb::create(home.path(), &secrets, &init(false)).unwrap()
+            HostDb::create(home.path(), &secrets, &init()).unwrap()
         };
-        first_account::assert_first_account(&recovered);
+        admin_fixture::assert_new_registry(&recovered);
     }
 }
 #[test]
@@ -519,10 +497,7 @@ fn exclusive_install_never_overwrites_even_a_late_symlink() {
     assert!(!from.exists());
 }
 #[test]
-fn bootstrap_json_is_strict_and_errors_do_not_expose_secrets() {
-    let mut record = serde_json::to_value(&init(false).bootstrap).unwrap();
-    record["extra"] = serde_json::json!(1);
-    assert!(serde_json::from_value::<BootstrapRecord>(record).is_err());
+fn version_errors_do_not_expose_paths_or_sql() {
     let (home, secrets, db) = fixture();
     db.connection
         .lock()
@@ -546,11 +521,11 @@ fn real_process_death_at_every_create_checkpoint_recovers() {
         let store = crate::host_secrets::dev::DevSecrets::open(
             Path::new(&base),
             Path::new(&home),
-            &init(false).instance_id,
+            &init().instance_id,
         )
         .unwrap();
         CRASH.with(|c| c.set(Some(step.parse().unwrap())));
-        let _ = HostDb::create(Path::new(&home), &store, &init(true));
+        let _ = HostDb::create(Path::new(&home), &store, &init());
         panic!("crash point was not reached");
     }
     for step in [1, 2, 3, 4, 5, 6, 7, 9, 10u8] {
@@ -579,7 +554,7 @@ fn real_process_death_at_every_create_checkpoint_recovers() {
         let secrets = crate::host_secrets::dev::DevSecrets::open(
             base.path(),
             home.path(),
-            &init(false).instance_id,
+            &init().instance_id,
         )
         .unwrap();
         assert_eq!(home.path().join(DB).exists(), matches!(step, 5 | 6 | 10));
@@ -590,9 +565,9 @@ fn real_process_death_at_every_create_checkpoint_recovers() {
         let recovered = if matches!(step, 5 | 6 | 10) {
             HostDb::open(home.path(), &secrets).unwrap()
         } else {
-            HostDb::create(home.path(), &secrets, &init(false)).unwrap()
+            HostDb::create(home.path(), &secrets, &init()).unwrap()
         };
-        first_account::assert_first_account(&recovered);
+        admin_fixture::assert_new_registry(&recovered);
     }
 }
 
@@ -761,10 +736,17 @@ fn schema_checks_foreign_keys_update_delete_conflict_rollback_and_reopen() {
                 [&[1u8; 32][..]]
             )
             .is_err());
+        c.execute(
+            "INSERT INTO tls_pair VALUES (1,'cert',?1,0)",
+            [&[1u8; 32][..]],
+        )
+        .unwrap();
         assert!(c
             .execute("UPDATE tls_pair SET pair_fp=?1", [&[1u8; 31][..]])
             .is_err());
-        assert!(c.execute("UPDATE meta SET value=1.5", []).is_ok()); // STRICT TEXT accepts lossless text coercion.
+        assert!(c
+            .execute("UPDATE meta SET value=1.5 WHERE key='clock_high_ms'", [])
+            .is_ok()); // STRICT TEXT accepts lossless text coercion.
         assert!(c
             .execute("UPDATE op_journal SET expires_at_ms='not-an-integer'", [])
             .is_err());
@@ -878,7 +860,7 @@ fn sqlite_drop_releases_locks_while_a_forked_child_retains_its_fds() {
 fn registry_is_plain_sqlite_that_opens_without_any_key() {
     let home = home();
     let secrets = Secrets::default();
-    drop(HostDb::create(home.path(), &secrets, &init(false)).unwrap());
+    drop(HostDb::create(home.path(), &secrets, &init()).unwrap());
     let header = fs::read(home.path().join(DB)).unwrap();
     assert_eq!(&header[..16], b"SQLite format 3\0");
     assert!(secrets.list().unwrap().is_empty(), "no registry secret");
@@ -887,11 +869,11 @@ fn registry_is_plain_sqlite_that_opens_without_any_key() {
         OpenFlags::default(),
     )
     .unwrap();
-    assert_eq!(scalar(&c, "user_version"), 3);
+    assert_eq!(scalar(&c, "user_version"), SCHEMA_VERSION);
     assert_eq!(
         c.query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        1
+        0
     );
 }
 
@@ -929,8 +911,9 @@ fn every_secret_provider_error_propagates_and_remains_recoverable() {
             self.inner.list()
         }
     }
-    // list, delete the retired registry key, put TLS; open loads nothing.
-    for at in 1..=3 {
+    // list, delete the retired registry key; create stores no TLS key and
+    // open loads nothing.
+    for at in 1..=2 {
         let home = home();
         let inner = Secrets::default();
         inner
@@ -945,13 +928,13 @@ fn every_secret_provider_error_propagates_and_remains_recoverable() {
             calls: std::sync::atomic::AtomicUsize::new(0),
         };
         assert!(matches!(
-            HostDb::create(home.path(), &secrets, &init(true)),
+            HostDb::create(home.path(), &secrets, &init()),
             Err(Error::Secret(crate::host_secrets::Error::Io(
                 io::ErrorKind::Interrupted
             )))
         ));
         assert!(!home.path().join(DB).exists());
-        HostDb::create(home.path(), &secrets, &init(false)).unwrap();
+        HostDb::create(home.path(), &secrets, &init()).unwrap();
         assert!(secrets.inner.list().unwrap().is_empty());
     }
 }
@@ -976,7 +959,7 @@ fn ownership_guards_accept_ours_and_refuse_foreign_linux_root_fixtures() {
 
 #[test]
 fn schema_refusal_is_read_only_even_when_it_is_the_last_wal_connection() {
-    for version in [0, 4, -1] {
+    for version in [0, 2, 3, 4, -1] {
         let (home, secrets, db) = fixture();
         {
             let c = db.connection.lock().unwrap();
@@ -1057,7 +1040,7 @@ fn creation_publishes_wal_before_first_open_and_cleans_temp_sidecars() {
     let home = home();
     let secrets = Secrets::default();
     FAIL.with(|f| *f.borrow_mut() = Some(5));
-    let result = HostDb::create(home.path(), &secrets, &init(false));
+    let result = HostDb::create(home.path(), &secrets, &init());
     FAIL.with(|f| *f.borrow_mut() = None);
     assert!(matches!(result, Err(Error::Io(io::ErrorKind::Interrupted))));
     for name in ["host-registry.db.tmp-wal", "host-registry.db.tmp-shm"] {
@@ -1088,7 +1071,7 @@ fn retry_removes_both_temporary_wal_sidecars_before_sqlite() {
         fs::write(home.path().join(name), b"crashed create").unwrap();
     }
     FAIL.with(|f| *f.borrow_mut() = Some(1));
-    let result = HostDb::create(home.path(), &Secrets::default(), &init(false));
+    let result = HostDb::create(home.path(), &Secrets::default(), &init());
     FAIL.with(|f| *f.borrow_mut() = None);
     assert!(matches!(result, Err(Error::Io(io::ErrorKind::Interrupted))));
     for name in names {
@@ -1163,7 +1146,7 @@ fn creation_refuses_to_publish_if_either_temp_sidecar_survives_close() {
         RESIDUAL.with(|r| *r.borrow_mut() = Some(home.path().join(name)));
         assert!(
             matches!(
-                HostDb::create(home.path(), &secrets, &init(false)),
+                HostDb::create(home.path(), &secrets, &init()),
                 Err(Error::Unsafe)
             ),
             "{name}"
@@ -1173,7 +1156,7 @@ fn creation_refuses_to_publish_if_either_temp_sidecar_survives_close() {
             fs::read(home.path().join(name)).unwrap(),
             b"uncheckpointed temp"
         );
-        HostDb::create(home.path(), &secrets, &init(false)).unwrap();
+        HostDb::create(home.path(), &secrets, &init()).unwrap();
         assert!(!home.path().join(name).exists());
     }
 }
@@ -1185,8 +1168,13 @@ fn committed_wal_recovers_after_real_process_death() {
         let c = connection_for_test(Path::new(&path), OpenFlags::default()).unwrap();
         c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
             .unwrap();
-        c.execute_batch(schema::DDL).unwrap();
-        c.pragma_update(None, "user_version", 1).unwrap();
+        for ddl in [schema::DDL, provisioning::DDL, recovery::DDL, links::DDL] {
+            c.execute_batch(ddl).unwrap();
+        }
+        c.execute_batch("INSERT INTO meta VALUES ('instance_id','01J00000000000000000000000')")
+            .unwrap();
+        c.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .unwrap();
         c.execute(
             "INSERT INTO org_owners VALUES ('org','committed','owner')",
             [],
@@ -1366,7 +1354,7 @@ fn restrictive_umask_still_creates_private_usable_database_and_sidecars() {
     let secrets = Secrets::default();
     // SAFETY: isolated child test process; restore before assertions and temporary cleanup.
     let previous = unsafe { libc::umask(0o777) };
-    let result = HostDb::create(home.path(), &secrets, &init(false));
+    let result = HostDb::create(home.path(), &secrets, &init());
     // SAFETY: restores the child's original process mask.
     unsafe { libc::umask(previous) };
     let db = result.unwrap();
@@ -1485,14 +1473,14 @@ fn owned_orphan_is_cleaned(suffix: &str) {
             inner: Secrets::default(),
             sidecar: path,
         };
-        let db = HostDb::create(home.path(), &secrets, &init(false)).unwrap();
+        let db = HostDb::create(home.path(), &secrets, &init()).unwrap();
         assert_eq!(
             db.connection
                 .lock()
                 .unwrap()
                 .query_row("SELECT count(*) FROM meta", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            3
+            2
         );
         drop(db);
         let db = HostDb::open(home.path(), &secrets).unwrap();
@@ -1502,7 +1490,7 @@ fn owned_orphan_is_cleaned(suffix: &str) {
                 .unwrap()
                 .query_row("SELECT count(*) FROM meta", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            3
+            2
         );
     }
 }
@@ -1549,7 +1537,7 @@ fn retained_writer_custody_prevents_orphan_cleanup_and_any_secret_reset() {
                 .unwrap();
             let before = secrets.inner.0.lock().unwrap().clone();
             assert!(matches!(
-                HostDb::create(home.path(), &secrets, &init(false)),
+                HostDb::create(home.path(), &secrets, &init()),
                 Err(Error::Unsafe)
             ));
             assert_eq!(*secrets.inner.0.lock().unwrap(), before);
@@ -1584,7 +1572,7 @@ fn unsafe_orphan_sidecars_refuse_create_before_secrets_and_stay_untouched() {
             let inode = fs::symlink_metadata(&path).unwrap().ino();
             assert!(
                 matches!(
-                    HostDb::create(home.path(), &secrets, &init(false)),
+                    HostDb::create(home.path(), &secrets, &init()),
                     Err(Error::Unsafe)
                 ),
                 "{suffix} {kind}"
@@ -1614,7 +1602,7 @@ fn foreign_owned_orphans_refuse_create_before_secrets_when_root() {
         std::os::unix::fs::chown(&path, Some(1), None).unwrap();
         let inode = fs::symlink_metadata(&path).unwrap().ino();
         assert!(matches!(
-            HostDb::create(home.path(), &secrets, &init(false)),
+            HostDb::create(home.path(), &secrets, &init()),
             Err(Error::Unsafe)
         ));
         assert_eq!(fs::symlink_metadata(&path).unwrap().uid(), 1);
@@ -1636,7 +1624,7 @@ fn orphan_cleanup_logs_only_the_fixed_sidecar_names() {
             )
             .unwrap();
         }
-        let _db = HostDb::create(home.path(), &Secrets::default(), &init(false)).unwrap();
+        let _db = HostDb::create(home.path(), &Secrets::default(), &init()).unwrap();
         return;
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1666,14 +1654,6 @@ fn delete_mode_fixture(version: i64) -> (tempfile::TempDir, Secrets) {
         .pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))
         .unwrap();
     assert_eq!(mode, "delete");
-    if version == 1 || version == 2 {
-        raw.execute_batch("DROP TABLE selected_recovery_audit; DROP TABLE selected_recovery")
-            .unwrap();
-    }
-    if version == 1 {
-        raw.execute_batch("DROP TABLE selected_provisioning")
-            .unwrap();
-    }
     raw.pragma_update(None, "user_version", version).unwrap();
     raw.close().unwrap();
     assert!(!home.path().join("host-registry.db-journal").exists());
@@ -1692,75 +1672,7 @@ fn open_enters_wal_for_a_valid_delete_mode_registry() {
 }
 
 #[test]
-fn provisioning_migration_retains_legacy_accounts_links_journal_and_unknown_text() {
-    let (home, secrets) = delete_mode_fixture(1);
-    let raw = connect(&home.path().canonicalize().unwrap().join(DB)).unwrap();
-    let account = init(false).bootstrap.account;
-    let operation = "01J00000000000000000000009";
-    raw.execute(
-        "INSERT INTO account_links VALUES (?1,'legacy-org','01J00000000000000000000008')",
-        [&account],
-    )
-    .unwrap();
-    raw.execute(
-        "INSERT INTO org_owners VALUES ('legacy-org',?1,'01J00000000000000000000008')",
-        [&account],
-    )
-    .unwrap();
-    raw.execute(
-        "INSERT INTO op_journal VALUES (?1,'office.restart',?2,?3,'completed',?4,9999999999999)",
-        (operation, [3u8; 32], &account, r#"{"kept":1e+000123}"#),
-    )
-    .unwrap();
-    raw.execute_batch("CREATE TABLE retained_extension (payload TEXT NOT NULL) STRICT")
-        .unwrap();
-    let extension = r#"{"unknown":123456789012345678901234567890.0000e+0042}"#;
-    raw.execute("INSERT INTO retained_extension VALUES (?1)", [extension])
-        .unwrap();
-    let before: (String,String) = raw.query_row("SELECT password_phc,(SELECT value FROM meta WHERE key='bootstrap') FROM accounts WHERE account_id=?1",[&account],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
-    raw.close().unwrap();
-    let db = HostDb::open(home.path(), &secrets).unwrap();
-    {
-        let c = db.connection.lock().unwrap();
-        assert_eq!(
-            c.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
-                .unwrap(),
-            3
-        );
-        let after:(String,String)=c.query_row("SELECT password_phc,(SELECT value FROM meta WHERE key='bootstrap') FROM accounts WHERE account_id=?1",[&account],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
-        assert_eq!(before, after);
-        assert_eq!(
-            c.query_row("SELECT payload FROM retained_extension", [], |r| r
-                .get::<_, String>(0))
-                .unwrap(),
-            extension
-        );
-        assert_eq!(
-            c.query_row(
-                "SELECT result FROM op_journal WHERE operation_id=?1",
-                [operation],
-                |r| r.get::<_, String>(0)
-            )
-            .unwrap(),
-            r#"{"kept":1e+000123}"#
-        );
-        assert_eq!(
-            c.query_row(
-                "SELECT count(*) FROM account_links JOIN org_owners USING(org_id)",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-            1
-        );
-    }
-    drop(db);
-    let db = HostDb::open(home.path(), &secrets).unwrap();
-    assert!(db.provisioning_offices().unwrap().is_empty());
-}
-
-#[test]
-fn malformed_version_one_schema_is_refused_before_migration_publication() {
+fn malformed_current_schema_is_refused_without_writing() {
     let (home, secrets) = delete_mode_fixture(1);
     let raw = connect(&home.path().canonicalize().unwrap().join(DB)).unwrap();
     raw.execute_batch("DROP INDEX op_verifiers_account")
@@ -1777,7 +1689,8 @@ fn malformed_version_one_schema_is_refused_before_migration_publication() {
 
 #[test]
 fn incompatible_delete_mode_versions_refuse_without_changing_bytes() {
-    for version in [0, 4, -1] {
+    // Earlier registries (versions 2 and 3) are refused: there is no migration.
+    for version in [0, 2, 3, 4, -1] {
         let (home, secrets) = delete_mode_fixture(version);
         let before = fs::read(home.path().join(DB)).unwrap();
         assert!(
@@ -1806,7 +1719,7 @@ fn temp_symlink_planted_after_key_storage_cannot_clobber_its_target() {
     let target = home.path().join("precious");
     fs::write(&target, b"keep these bytes").unwrap();
     TEMP_SYMLINK.with(|r| *r.borrow_mut() = Some((home.path().join(TMP), target.clone())));
-    let result = HostDb::create(home.path(), &secrets, &init(false));
+    let result = HostDb::create(home.path(), &secrets, &init());
     TEMP_SYMLINK.with(|r| *r.borrow_mut() = None);
     assert!(matches!(
         result,

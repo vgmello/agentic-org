@@ -1,27 +1,39 @@
-//! F4 production-path proof (GW-01 falsification): the real host, composed through
-//! the protected reverse bootstrap that creates the administrator and HQ, spawns
-//! the real built `agentic-org-web`, which serves `/api/v1/version` over loopback
+//! F4 production-path proof (GW-01 falsification): the real host, started for a
+//! registered instance whose registry holds a seeded administrator, spawns the
+//! real built `agentic-org-web`, which serves `/api/v1/version` over loopback
 //! HTTP. Browser sign-in waits for stored sessions (FC-159): the session routes
 //! are JSON 404 and sign in nobody.
+//! The administrator is seeded directly (A2 D1: the reverse bootstrap is gone and
+//! A3 creates administrators through a one-time link); HQ is provisioned over
+//! `host.sock` exactly as before.
 //! Only disposable `/private/tmp` roots and debug development custody are used;
 //! debug `ServerCheck::Skip` establishes no release-signing evidence.
-use crate::bootstrap::BootstrapHost;
-use org_host_control::{
-    ops::{Bootstrap, BootstrapOutcome, BootstrapParams, Exit},
-    provision::{OrganizationProvision, Params},
-    HostOpResult, Password,
+use crate::{
+    home::{HostLock, Layout},
+    hostdb::{HostDb, HostDbInit},
+    instance::registry::Registry,
+    service::authentication::hash_password,
+    Config, Host,
 };
-use org_proto::{frame, selected_bootstrap::PlanV1, ApiError, Call, Empty, HelloParams, Request};
+use org_host_control::{
+    ops::{AccountVerify, AccountVerifyParams},
+    provision::{OrganizationProvision, Params, Provisioned},
+    HostOpResult, Password, SessionHandle,
+};
+use org_proto::{frame, selected_bootstrap::PlanV1, ApiError, Call, HelloParams, Request};
 use std::{
     fs,
     io::{BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    os::unix::{fs::PermissionsExt, net::UnixListener, net::UnixStream},
-    path::Path,
+    os::unix::{fs::PermissionsExt, net::UnixStream},
+    path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+mod recovery_custody;
 
 const WAIT: Duration = Duration::from_secs(60);
 const PASSWORD: &str = "synthetic first password";
@@ -34,12 +46,14 @@ struct Reply {
 fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str) -> Reply {
     let mut stream = TcpStream::connect(address).expect("web process listener");
     stream.set_read_timeout(Some(WAIT)).unwrap();
-    write!(
-        stream,
+    // One write for head and body: a split write can leave late body bytes unread
+    // when the web process answers early, and its close then resets the socket
+    // (a known transport limit tracked for A3, not what this test proves).
+    let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}",
         body.len()
-    )
-    .unwrap();
+    );
+    stream.write_all(request.as_bytes()).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     let (headers, body) = response.split_once("\r\n\r\n").expect("HTTP response");
@@ -118,9 +132,8 @@ fn answer<C: Call>(
     })
 }
 
-fn web_ready(host: &BootstrapHost) -> bool {
-    let state = host.state.state.lock().unwrap();
-    state.host.as_ref().is_some_and(crate::Host::web_ready)
+fn web_ready(host: &Host) -> bool {
+    host.web_ready()
 }
 
 /// Every live process executing exactly `program` (a unique temp path).
@@ -144,9 +157,74 @@ fn web_pid(program: &Path) -> String {
     pids.into_iter().next().unwrap()
 }
 
-#[test]
-#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
-fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
+/// A registered instance as the service host will find it after setup and the
+/// administrator's registration: the instance reserved with its browser address,
+/// its registry created under the host and instance locks, one administrator.
+/// Returns the started host and its `host.sock` path.
+fn start_registered_host(
+    mut config: Config,
+    base: &Path,
+    listen: &org_host_control::listen::ListenConfig,
+) -> (Host, PathBuf) {
+    config.admit_runtime().unwrap();
+    let registry = Registry::open(&base.join("locator"), &base.join("temp")).unwrap();
+    let instance = registry.reserve(None, &base.join("instance")).unwrap();
+    instance.set_browser(listen).unwrap();
+    let paths = instance.prepare_layout().unwrap();
+    let layout = Layout::with_runtime(&paths.office_home, instance.temp_folder());
+    layout.check_socket_paths().unwrap();
+    layout.prepare().unwrap();
+    let lock = HostLock::acquire(&layout).unwrap();
+    let custody = crate::host_secrets::store_for(
+        config.dev_key_dir.as_deref(),
+        instance.root(),
+        instance.id(),
+        crate::code_signing::own_signing,
+    )
+    .unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let init = HostDbInit {
+        instance_id: instance.id().to_owned(),
+        clock_high_ms: now,
+    };
+    let db = HostDb::create(&paths.office_home, &*custody, &init).unwrap();
+    let verifier = hash_password(&Password::new(PASSWORD.into()).unwrap()).unwrap();
+    db.seed_account(
+        &crate::ids::generate().unwrap(),
+        "Owner",
+        &verifier,
+        true,
+        now,
+    )
+    .unwrap();
+    drop(db);
+    let socket = layout.host_socket.clone();
+    let host =
+        Host::start_prepared(config, Some(instance), Some((lock, Arc::clone(&custody)))).unwrap();
+    (host, socket)
+}
+
+/// A started registered host running copies of the real worker and web images,
+/// with `wire` signed in as the seeded administrator `session` over `host.sock`.
+/// `temp` is declared last so a whole `Started` drops it after the host; a
+/// destructuring caller binds `temp` first for the same reason (bindings drop
+/// in reverse order).
+pub(super) struct Started {
+    pub(super) address: SocketAddr,
+    pub(super) program: PathBuf,
+    pub(super) host: Host,
+    pub(super) socket: PathBuf,
+    pub(super) wire: BufReader<UnixStream>,
+    pub(super) session: SessionHandle,
+    pub(super) temp: tempfile::TempDir,
+}
+
+/// Starts [`Started`] from `ORG_TEST_OFFICE_BIN` and `ORG_TEST_WEB_BIN` under a
+/// disposable `/private/tmp` root. Uses request IDs 1 and 2.
+pub(super) fn start_signed_in() -> Started {
     let office = std::env::var_os("ORG_TEST_OFFICE_BIN")
         .expect("ORG_TEST_OFFICE_BIN must name the built agentic-org-office");
     let web = std::env::var_os("ORG_TEST_WEB_BIN")
@@ -180,39 +258,83 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     }))
     .unwrap();
 
-    let socket = base.join("setup.sock");
-    let listening = UnixListener::bind(&socket).unwrap();
-    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
     let mut config = crate::Config::new(base.join("unused-home"), worker);
     config.dev_key_dir = Some(base.join("keys"));
     config.dev_app_path = Some(std::env::current_exe().unwrap());
-    let host = BootstrapHost::start(
-        config,
-        &base.join("locator"),
-        &base.join("temp"),
-        None,
-        &base.join("instance"),
-        listen,
-        &socket,
-    )
-    .unwrap();
-    let (stream, _) = listening.accept().unwrap();
+    let (host, socket) = start_registered_host(config, &base, &listen);
+    let stream = UnixStream::connect(&socket).unwrap();
     stream.set_read_timeout(Some(WAIT)).unwrap();
     let mut wire = BufReader::new(stream);
     answer::<org_host_control::Hello>(&mut wire, 1, &HelloParams::default()).unwrap();
-    let p = BootstrapParams {
+    let first = answer::<AccountVerify>(
+        &mut wire,
+        2,
+        &AccountVerifyParams {
+            login: "Owner".into(),
+            password: Password::new(PASSWORD.into()).unwrap(),
+        },
+    )
+    .unwrap();
+    assert!(first.admin);
+    Started {
+        address,
+        program,
+        host,
+        socket,
+        wire,
+        session: first.session,
+        temp,
+    }
+}
+
+/// Provisions HQ over `wire` as `session`, polling until it completes, and
+/// returns the request and its result. `id` is the next request ID.
+pub(super) fn provision_hq(
+    wire: &mut BufReader<UnixStream>,
+    id: &mut u64,
+    session: SessionHandle,
+) -> (Params, Provisioned) {
+    let prepared = Params {
+        session,
         operation_id: crate::ids::generate().unwrap(),
-        hq_operation_id: crate::ids::generate().unwrap(),
-        login: "Owner".into(),
-        password: Password::new(PASSWORD.into()).unwrap(),
-        tls: None,
+        plan: PlanV1 {
+            version: 1,
+            name: "Example".into(),
+            slug: "example".into(),
+            repository_remote_url: "https://example.test/organization.git".into(),
+            state_branch: "org/state".into(),
+            home_team_name: "Core".into(),
+        },
     };
-    let BootstrapOutcome::Completed { result: first } =
-        answer::<Bootstrap>(&mut wire, 2, &p).unwrap()
-    else {
-        panic!("bootstrap refused")
-    };
-    // Authenticated but HQ is not Active yet: the web process is not serving.
+    let until = Instant::now() + WAIT;
+    loop {
+        let result = answer::<OrganizationProvision>(wire, *id, &prepared).unwrap();
+        *id += 1;
+        match result {
+            HostOpResult::Completed { result } => return (prepared, result),
+            HostOpResult::Accepted => {
+                assert!(Instant::now() < until, "HQ provisioning deadline");
+                thread::sleep(Duration::from_millis(50));
+            }
+            _ => panic!("unexpected provisioning result"),
+        }
+    }
+}
+
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
+    // `_temp` is bound first so it drops last, after the host and its children.
+    let Started {
+        temp: _temp,
+        address,
+        program,
+        host,
+        socket: _,
+        mut wire,
+        session,
+    } = start_signed_in();
+    // Authenticated but no HQ yet: the web process is not serving.
     assert!(!web_ready(&host));
     // The wired start-eligibility gate holds the supervisor before any spawn or bind:
     // across several supervisor polls no agentic-org-web child runs and the browser
@@ -231,32 +353,8 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(!web_ready(&host));
-    let prepared = Params {
-        session: first.session,
-        operation_id: p.hq_operation_id.clone(),
-        plan: PlanV1 {
-            version: 1,
-            name: "Example".into(),
-            slug: "example".into(),
-            repository_remote_url: "https://example.test/organization.git".into(),
-            state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
-        },
-    };
     let mut id = 3;
-    let until = Instant::now() + WAIT;
-    loop {
-        let result = answer::<OrganizationProvision>(&mut wire, id, &prepared).unwrap();
-        id += 1;
-        match result {
-            HostOpResult::Completed { .. } => break,
-            HostOpResult::Accepted => {
-                assert!(Instant::now() < until, "HQ provisioning deadline");
-                thread::sleep(Duration::from_millis(50));
-            }
-            _ => panic!("unexpected provisioning result"),
-        }
-    }
+    provision_hq(&mut wire, &mut id, session);
 
     // 1. Admission after HQ: the supervisor spawns and admits the real web image.
     wait_until("web_ready", || web_ready(&host));
@@ -272,7 +370,7 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
         .headers
         .to_ascii_lowercase()
         .contains("cache-control: no-store"));
-    // 2. No browser sign-in yet: even the bootstrap administrator's correct
+    // 2. No browser sign-in yet: even the administrator's correct
     //    credentials reach no host account.verify.
     assert_no_sign_in(address);
 
@@ -291,9 +389,9 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     assert_eq!(http(address, "GET", "/api/v1/version", "", "").status, 200);
     assert_no_sign_in(address);
 
-    answer::<Exit>(&mut wire, id, &Empty {}).unwrap();
-    host.shutdown();
+    let _ = id;
     drop(wire);
+    drop(host);
     // Host shutdown drops the web process first: no web process survives.
     let left = Command::new("/usr/bin/pgrep")
         .arg("-f")
@@ -304,4 +402,40 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
         left.stdout.is_empty(),
         "web process reaped on host shutdown"
     );
+}
+
+/// Ported from the deleted bootstrap release gate: a registered-instance host with
+/// neither a pinned runtime release nor explicit development custody refuses before
+/// it creates a registry, a custody namespace or any credential.
+#[test]
+fn registered_host_without_release_or_development_custody_refuses_before_registry_or_credentials() {
+    let temp = tempfile::tempdir_in("/private/tmp").unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    fs::create_dir(base.join("temp")).unwrap();
+    fs::set_permissions(base.join("temp"), fs::Permissions::from_mode(0o700)).unwrap();
+    let registry = Registry::open(&base.join("locator"), &base.join("temp")).unwrap();
+    let instance = registry
+        .reserve(Some("fresh"), &base.join("instance"))
+        .unwrap();
+    let before = tree(&base);
+    let config = Config::new(base.join("unused-home"), base.join("agentic-org-office"));
+    assert!(Host::start_prepared(config, Some(instance), None).is_err());
+    assert_eq!(tree(&base), before, "nothing written after the refusal");
+    assert!(!before.iter().any(|p| p.ends_with("host-registry.db")));
+}
+
+fn tree(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if fs::symlink_metadata(&path).unwrap().is_dir() {
+                stack.push(path.clone());
+            }
+            out.push(path);
+        }
+    }
+    out.sort();
+    out
 }

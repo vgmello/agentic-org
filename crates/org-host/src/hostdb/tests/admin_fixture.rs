@@ -1,9 +1,23 @@
+//! The registry is created with no account (D1). Tests that need an
+//! administrator seed one the way a redeemed registration link will (A3).
 use super::*;
 
 // Opaque, structurally valid PHC fixture; the registry never hashes a password.
 pub(in crate::hostdb) const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+pub(in crate::hostdb) const ACCOUNT: &str = "01J00000000000000000000003";
 
-pub(super) fn assert_first_account(db: &HostDb) {
+pub(in crate::hostdb) fn seed(db: &HostDb) {
+    db.seed_account(
+        ACCOUNT,
+        "Sage",
+        &journal::Verifier::new(PHC.into()).unwrap(),
+        true,
+        123,
+    )
+    .unwrap();
+}
+
+pub(super) fn assert_seeded_admin(db: &HostDb) {
     let c = db.connection.lock().unwrap();
     let row = c
         .query_row(
@@ -15,7 +29,7 @@ pub(super) fn assert_first_account(db: &HostDb) {
     assert_eq!(
         row,
         (
-            init(false).bootstrap.account,
+            ACCOUNT.into(),
             "sage".into(),
             "Sage".into(),
             PHC.into(),
@@ -32,12 +46,110 @@ pub(super) fn assert_first_account(db: &HostDb) {
     );
 }
 
+/// A newly created registry: its instance and clock, and nothing else.
+pub(super) fn assert_new_registry(db: &HostDb) {
+    let c = db.connection.lock().unwrap();
+    let meta: Vec<(String, String)> = c
+        .prepare("SELECT key,value FROM meta ORDER BY key")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        meta,
+        vec![
+            ("clock_high_ms".into(), "123".into()),
+            ("instance_id".into(), init().instance_id)
+        ]
+    );
+    for table in ["accounts", "one_time_links", "tls_pair", "op_journal"] {
+        let rows: i64 = c
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "{table}");
+    }
+}
+
 #[test]
-fn created_registry_publishes_its_first_administrator_and_reopens() {
-    let (home, secrets, db) = fixture();
-    assert_first_account(&db);
+fn a_created_registry_holds_no_account_and_reopens_empty() {
+    let home = home();
+    let secrets = Secrets::default();
+    let db = HostDb::create(home.path(), &secrets, &init()).unwrap();
+    assert_new_registry(&db);
     drop(db);
-    assert_first_account(&HostDb::open(home.path(), &secrets).unwrap());
+    assert_new_registry(&HostDb::open(home.path(), &secrets).unwrap());
+}
+
+#[test]
+fn create_refuses_an_invalid_instance_id_before_any_write() {
+    let home = home();
+    let secrets = Secrets::default();
+    for id in ["", "not-an-id", "01J00000000000000000000000x"] {
+        let value = HostDbInit {
+            instance_id: id.into(),
+            clock_high_ms: 123,
+        };
+        assert_eq!(
+            HostDb::create(home.path(), &secrets, &value).err(),
+            Some(Error::InvalidId)
+        );
+        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn seeded_administrator_reopens() {
+    let (home, secrets, db) = fixture();
+    assert_seeded_admin(&db);
+    drop(db);
+    assert_seeded_admin(&HostDb::open(home.path(), &secrets).unwrap());
+}
+
+#[test]
+fn repeat_create_never_replaces_the_original_registry() {
+    let (home, secrets, db) = fixture();
+    drop(db);
+    let before = bytes(home.path());
+    assert!(matches!(
+        HostDb::create(home.path(), &secrets, &init()),
+        Err(Error::Exists)
+    ));
+    assert_eq!(bytes(home.path()), before);
+    assert_seeded_admin(&HostDb::open(home.path(), &secrets).unwrap());
+}
+
+#[test]
+fn seed_refuses_invalid_identity_and_derives_the_login_key() {
+    let (_home, _secrets, db) = fixture();
+    let verifier = journal::Verifier::new(PHC.into()).unwrap();
+    assert_eq!(
+        db.seed_account("invalid", "Other", &verifier, false, 1),
+        Err(Error::InvalidId)
+    );
+    assert_eq!(
+        db.seed_account("01J00000000000000000000004", "", &verifier, false, 1),
+        Err(Error::Unsafe)
+    );
+    db.seed_account(
+        "01J00000000000000000000004",
+        "E\u{301}",
+        &verifier,
+        false,
+        1,
+    )
+    .unwrap();
+    let key: String = db
+        .connection
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT login_key FROM accounts WHERE account_id='01J00000000000000000000004'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(key, "é");
 }
 
 #[test]
@@ -141,7 +253,7 @@ fn schema_has_pinned_columns_storage_flags_link_index_and_foreign_key() {
             "NO ACTION".into()
         )
     );
-    assert_eq!(scalar(&c, "user_version"), 3);
+    assert_eq!(scalar(&c, "user_version"), SCHEMA_VERSION);
 }
 
 fn constraint(c: &Connection, sql: &str) {
@@ -172,11 +284,8 @@ fn account_constraints_accept_boundaries_and_reject_invalid_or_duplicate_rows() 
     // A different 26-byte identity is valid before it has any links.
     c.execute("UPDATE accounts SET account_id=?1", ["B".repeat(26)])
         .unwrap();
-    c.execute(
-        "UPDATE accounts SET account_id=?1",
-        [init(false).bootstrap.account],
-    )
-    .unwrap();
+    c.execute("UPDATE accounts SET account_id=?1", [ACCOUNT.to_string()])
+        .unwrap();
     for value in [-1, 2] {
         constraint(&c, &format!("UPDATE accounts SET admin={value}"));
     }
@@ -204,14 +313,14 @@ fn account_constraints_accept_boundaries_and_reject_invalid_or_duplicate_rows() 
     c.execute("UPDATE accounts SET revoked_at_ms=NULL", [])
         .unwrap();
     drop(c);
-    assert_first_account(&db);
+    assert_seeded_admin(&db);
 }
 
 #[test]
 fn link_and_lockout_keys_constraints_and_socket_isolation_are_enforced() {
     let (_home, _secrets, db) = fixture();
     let c = db.connection.lock().unwrap();
-    let account = init(false).bootstrap.account;
+    let account = ACCOUNT.to_string();
     c.execute(
         "INSERT INTO account_links VALUES (?1,'ORG','MEMBER')",
         [&account],
@@ -360,7 +469,7 @@ fn new_tables_commit_rollback_update_delete_replace_and_reopen() {
     }
     drop(db);
     let db = HostDb::open(home.path(), &secrets).unwrap();
-    assert_first_account(&db);
+    assert_seeded_admin(&db);
     let c = db.connection.lock().unwrap();
     assert_eq!(
         c.query_row("SELECT count(*) FROM account_links", [], |r| r
@@ -386,82 +495,6 @@ fn new_tables_commit_rollback_update_delete_replace_and_reopen() {
 }
 
 #[test]
-fn mismatched_first_account_refuses_before_any_registry_or_secret_write() {
-    for change_bootstrap in [false, true] {
-        let home = home();
-        let secrets = Secrets::default();
-        let mut value = init(true);
-        if change_bootstrap {
-            value.bootstrap.account.push('x');
-        } else {
-            value.first_account = FirstAccount::new(
-                "01J00000000000000000000004",
-                "Sage",
-                journal::Verifier::new(PHC.into()).unwrap(),
-            )
-            .unwrap();
-        }
-        assert!(matches!(
-            HostDb::create(home.path(), &secrets, &value),
-            Err(Error::Unsafe)
-        ));
-        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
-        assert!(secrets.0.lock().unwrap().is_empty());
-    }
-}
-
-#[test]
-fn failed_first_account_insert_rolls_back_schema_metadata_and_tls_and_retries() {
-    for length in [25, 27] {
-        let home = home();
-        let secrets = Secrets::default();
-        let value = init(true);
-        INSERT_FAILURE.with(|slot| slot.set(true));
-        assert!(FirstAccount::new(
-            &"A".repeat(length),
-            "Sage",
-            journal::Verifier::new(PHC.into()).unwrap()
-        )
-        .is_err());
-        let error = HostDb::create(home.path(), &secrets, &value).err().unwrap();
-        assert_eq!(error, Error::Sql(rusqlite::ErrorCode::ConstraintViolation));
-        assert!(!format!("{error:?}").contains(PHC));
-        assert!(!home.path().join(DB).exists());
-        let c = connect(&home.path().canonicalize().unwrap().join(TMP)).unwrap();
-        assert_eq!(scalar(&c, "user_version"), 0);
-        assert_eq!(
-            c.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r
-                .get::<_, i64>(0))
-                .unwrap(),
-            0
-        );
-        drop(c);
-        let db = HostDb::create(home.path(), &secrets, &init(false)).unwrap();
-        assert_first_account(&db);
-    }
-}
-
-#[test]
-fn repeat_create_never_replaces_the_original_account_or_registry() {
-    let (home, secrets, db) = fixture();
-    drop(db);
-    let before = bytes(home.path());
-    let mut value = init(false);
-    value.first_account = FirstAccount::new(
-        "01J00000000000000000000003",
-        "Replacement",
-        journal::Verifier::new(PHC.replace("$AAAAAAAA", "$BAAAAAAA")).unwrap(),
-    )
-    .unwrap();
-    assert!(matches!(
-        HostDb::create(home.path(), &secrets, &value),
-        Err(Error::Exists)
-    ));
-    assert_eq!(bytes(home.path()), before);
-    assert_first_account(&HostDb::open(home.path(), &secrets).unwrap());
-}
-
-#[test]
 fn login_key_binary_collation_allows_distinct_case_keys() {
     let (_home, _secrets, db) = fixture();
     let c = db.connection.lock().unwrap();
@@ -480,33 +513,4 @@ fn login_key_binary_collation_allows_distinct_case_keys() {
             .unwrap(),
         2
     );
-}
-
-thread_local! { static INSERT_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
-pub(in crate::hostdb) fn before_insert(tx: &rusqlite::Transaction<'_>) -> Result<(), Error> {
-    if INSERT_FAILURE.with(|slot| slot.replace(false)) {
-        tx.execute_batch("CREATE TEMP TRIGGER fail_first_account BEFORE INSERT ON accounts BEGIN SELECT RAISE(ABORT,'account constraint fault'); END;")?;
-    }
-    Ok(())
-}
-
-#[test]
-fn checked_first_account_derives_display_key_and_refuses_invalid_identity_before_io() {
-    let home = home();
-    let secrets = Secrets::default();
-    for (id, login) in [("invalid", "Sage"), ("01J00000000000000000000003", "")] {
-        assert!(FirstAccount::new(id, login, journal::Verifier::new(PHC.into()).unwrap()).is_err());
-        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
-        assert!(secrets.0.lock().unwrap().is_empty());
-    }
-    let value = FirstAccount::new(
-        "01J00000000000000000000003",
-        "E\u{301}",
-        journal::Verifier::new(PHC.into()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(value.account_id(), "01J00000000000000000000003");
-    assert_eq!(value.login(), "E\u{301}");
-    assert_eq!(value.login_key(), "é");
-    assert_eq!(value.verifier().expose(), PHC);
 }

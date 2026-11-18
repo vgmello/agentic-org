@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    accounts::identity::AccountId,
-    hostdb::{BootstrapRecord, FirstAccount, HostDbInit},
-};
+use crate::{accounts::identity::AccountId, hostdb::HostDbInit};
 use org_proto::work::WriterIdentity;
 use std::os::unix::fs::PermissionsExt;
 
@@ -26,22 +23,16 @@ fn fixture() -> (tempfile::TempDir, Arc<Writers>, Admission) {
     let init = HostDbInit {
         instance_id: instance.clone(),
         clock_high_ms: 1,
-        bootstrap: BootstrapRecord {
-            operation_id: crate::ids::generate().unwrap(),
-            hq_operation_id: crate::ids::generate().unwrap(),
-            fingerprint: "fixture".into(),
-            account: account.clone(),
-            finished: false,
-        },
-        first_account: FirstAccount::new(
-            &account,
-            "Owner",
-            crate::service::authentication::hash_password(&password).unwrap(),
-        )
-        .unwrap(),
-        tls_pair: None,
     };
     let db = Arc::new(HostDb::create(&home, &*custody, &init).unwrap());
+    db.seed_account(
+        &account,
+        "Owner",
+        &crate::service::authentication::hash_password(&password).unwrap(),
+        true,
+        1,
+    )
+    .unwrap();
     let admin = db
         .account_authority(&AccountId::parse(&account).unwrap())
         .unwrap()
@@ -192,31 +183,6 @@ fn missing_registry_cannot_sweep_retained_writer_custody() {
     let init = HostDbInit {
         instance_id: writers.instance.clone(),
         clock_high_ms: 1,
-        bootstrap: BootstrapRecord {
-            operation_id: crate::ids::generate().unwrap(),
-            hq_operation_id: crate::ids::generate().unwrap(),
-            fingerprint: "reset-attempt".into(),
-            account: crate::ids::generate().unwrap(),
-            finished: false,
-        },
-        first_account: FirstAccount::new(
-            &crate::ids::generate().unwrap(),
-            "Other",
-            crate::service::authentication::hash_password(
-                &org_host_control::Password::new("synthetic other password".into()).unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap(),
-        tls_pair: None,
-    };
-    // Use the same first-account identity so the writer guard is the refusal.
-    let init = HostDbInit {
-        bootstrap: BootstrapRecord {
-            account: init.first_account.account_id().into(),
-            ..init.bootstrap
-        },
-        ..init
     };
     assert!(matches!(
         HostDb::create(&home, &*writers.custody, &init),

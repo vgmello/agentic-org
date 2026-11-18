@@ -124,12 +124,13 @@ Three things to know about the order:
   FC-012.
 - **Code today:**
   - `apps/agentic-org/src/lib.rs` refuses setup.
-  - `crates/org-host/src/instance` (registry and the setup continuation) and
-    `crates/org-host/src/bootstrap.rs` (the protected setup connection) exist and are
-    reached only from tests.
+  - `crates/org-host/src/instance` (registry and the setup continuation) exists and is
+    reached only from tests. The protected setup connection and the typed-password
+    first account were removed in A2 B2.
   - `crates/org-host/src/hostdb` holds the account and registry storage and is unused
-    outside tests. `hostdb/first_account.rs` creates the first account from a typed
-    password, which the link replaces.
+    outside tests. `HostDb::create` makes the registry with no account (D1).
+    `crates/org-host/src/links.rs` and `hostdb/links.rs` store one-time links as
+    digests only (D4); nothing issues one yet.
 - **Done when:** the single-machine SRV criteria for a fresh install pass on macOS; a second run of
   setup changes nothing; a used or replaced link is refused; ENC-3 passes.
 - **Needs:** nothing. It is where Track A starts.
@@ -812,7 +813,7 @@ half of LNX-6 run).
   [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
 - **Code today:** 44 source files and 35 test files outside any adapter name a
   platform target. The source files are 29 in `org-host` (among them `spawn.rs`,
-  `server_check.rs`, `code_signing.rs`, `peer.rs`, `app_auth.rs`, `bootstrap.rs`,
+  `server_check.rs`, `code_signing.rs`, `peer.rs`, `app_auth.rs`, `bootstrap.rs` (since removed),
   `human.rs`, `offices.rs`, `recovery.rs`, `release.rs`, `writer.rs`, `hostdb.rs`,
   `lib.rs`, `keys/mod.rs`, `host_secrets.rs`, `supervisor/mod.rs`,
   `supervisor/child.rs`, `supervisor/channels.rs`, `instance/directory.rs`,

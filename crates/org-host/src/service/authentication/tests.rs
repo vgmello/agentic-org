@@ -1,6 +1,6 @@
 use super::*;
 use crate::host_secrets::{Name, Value};
-use crate::hostdb::{BootstrapRecord, FirstAccount, HostDbInit};
+use crate::hostdb::HostDbInit;
 use std::os::unix::fs::PermissionsExt;
 
 // These behavioral tests use production Argon2 parameters in a parallel debug
@@ -45,22 +45,13 @@ pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication,
     let init = HostDbInit {
         instance_id: instance.into(),
         clock_high_ms: wall_ms().unwrap() as i64,
-        bootstrap: BootstrapRecord {
-            operation_id: crate::ids::generate().unwrap(),
-            hq_operation_id: crate::ids::generate().unwrap(),
-            fingerprint: "fixture".into(),
-            account: account.clone(),
-            finished: false,
-        },
-        first_account: FirstAccount::new(
-            &account,
-            "Owner",
-            hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap(),
-        )
-        .unwrap(),
-        tls_pair: None,
     };
-    drop(HostDb::create(root.path(), &*custody, &init).unwrap());
+    let db = HostDb::create(root.path(), &*custody, &init).unwrap();
+    let verifier =
+        hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
+    db.seed_account(&account, "Owner", &verifier, true, init.clock_high_ms)
+        .unwrap();
+    drop(db);
     let auth = Authentication::open(root.path(), custody, instance).unwrap();
     (root, auth, Connection::for_test())
 }

@@ -178,21 +178,23 @@ impl Drop for WebConnection {
     }
 }
 
-/// Reverse control connection made by bootstrap mode to setup's listener. It
-/// has no gateway descriptor privilege and is never accepted on host.sock.
-pub(crate) struct SetupConnection {
+/// A served `Local` connection for tests, built like an accepted host.sock
+/// connection. It has no web process privilege.
+#[cfg(test)]
+pub(crate) struct LocalConnection {
     connection: Arc<Connection>,
     thread: Option<JoinHandle<()>>,
 }
-impl SetupConnection {
+#[cfg(test)]
+impl LocalConnection {
     pub(crate) fn start(stream: UnixStream, handler: Arc<dyn Handler>) -> io::Result<Self> {
         if !org_socket::peer_allowed(&stream, org_socket::effective_uid()) {
-            return Err(io::Error::other("setup peer refused"));
+            return Err(io::Error::other("local peer refused"));
         }
         let (connection, queue) = Connection::new(stream.try_clone()?, Accepted::sample(&stream));
         let serving = Arc::clone(&connection);
         let thread = thread::Builder::new()
-            .name("setup-control".into())
+            .name("local-control".into())
             .spawn(move || serve(stream, serving, queue, handler, 1))?;
         Ok(Self {
             connection,
@@ -203,7 +205,8 @@ impl SetupConnection {
         !self.connection.closed.load(Ordering::SeqCst)
     }
 }
-impl Drop for SetupConnection {
+#[cfg(test)]
+impl Drop for LocalConnection {
     fn drop(&mut self) {
         self.connection.close();
         if let Some(thread) = self.thread.take() {
@@ -1308,15 +1311,6 @@ mod tests {
         );
         assert!(web.connection.gateway_listen().is_some());
         assert!(web.live());
-
-        // A setup reverse connection never gets web process privilege.
-        let (setup_host, _setup_peer) = UnixStream::pair().unwrap();
-        let setup = SetupConnection::start(setup_host, Arc::new(Echo)).unwrap();
-        assert_eq!(
-            setup.connection.channel_kind(),
-            org_office_launch::v3::ChannelKind::Local
-        );
-        assert!(setup.connection.gateway_listen().is_none());
 
         // Every connection the host.sock listener accepts is built by `Connection::new`,
         // which carries no web process.
