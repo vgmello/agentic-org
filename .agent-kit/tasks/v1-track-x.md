@@ -1218,3 +1218,60 @@ approves it. What must be true of the one commit that is merged:
    told what changed under them (the platform crates, the rule against platform
    predicates and its CI check, the admission and credential contracts, the root
    refusal, the runner's test user).
+
+### Where it stands (end of the session of 2026-11-18)
+
+- **The target moved.** The owner merged `v1-integration` into `v1` (PR #16, `c88c56c2`)
+  and deleted `v1-integration`. Owner's decision, asked and answered: Track X merges
+  **directly into `v1`** (`git merge --no-ff`, push `v1`), once the gates below pass.
+  `AGENTS.md` and `docs/processes/branch-and-merge.md` still name `v1-integration`;
+  updating them is the owner's call, not this track's.
+- **Three final reviewers accepted** Track X at `1b21c71f` (A: merges,
+  ACCEPT_WITH_FOLLOW_UPS; B: confinement and web host, ACCEPT; C: X2/X3 repairs,
+  ACCEPT); `e31b1d67` corrected three sentences of design 3.2 (documentation only).
+- **`45daf87a` merges `origin/v1` (`c88c56c2`, 42 commits past `1b260dee`) into
+  Track X.** Nine conflicts; how each was resolved is in the commit message. Points a
+  reviewer must check: Track A's new supervisor shutdown test lost its
+  `cfg(target_os = "macos")` and runs on Linux; `web::Stderr::capture` copies into
+  Track A's test-only `CAPTURED_STDERR`; `provision.v1` is gone, so the LNX-3 hosts
+  create HQ through the browser API when the web process serves and through
+  `Provisioning::create` in the host's process (test-only `account_for_test`) when it
+  never starts; one Argon2 dev profile; checklist totals recounted (188: 9 / 67 / 67 /
+  1 / 44).
+- **Checks on `45daf87a`, by the lead (Opus 5.5):** fmt; Linux
+  `cargo clippy --locked --workspace --all-targets -D warnings` clean; macOS
+  cross-lint of the workspace clean; `platform_conditionals` and `libc_only` pass.
+  The whole-workspace test run (unprivileged) and one fresh read-only review of the
+  merge itself (Opus 5.5 subagent) were started and had not reported when the session
+  ended: **both must be run again in the next session.**
+
+**Pending, in order:**
+
+1. On `45daf87a` (or the branch tip): the whole workspace's tests as an unprivileged
+   user (expected failures only: `agentic-org-web` `dependency_closure` without
+   network, the two `org-socket` IPv6 cases now skip), and the LNX-3 tests
+   (`org-host` `web_process_tests::lnx_3_*`) five times, since their HQ creation
+   changed. Fix anything red.
+2. A fresh read-only review of the merge `45daf87a` (scope: the conflict
+   resolutions above, and semantic conflicts with Track A's 42 commits). ACCEPT
+   required; repairs are reviewed again.
+3. Confirm `origin/v1` has not moved; if it has, merge it in and repeat 1–2 for the
+   new merge only. Then `git merge --no-ff` the branch into `v1` and push `v1`. Tell
+   the Track A lead what changed under them (reviewer A's list: the platform crates,
+   the rule against platform predicates and its CI job, the admission and credential
+   contracts, the root refusal, the runner's test user, the macOS behaviour changes).
+4. macOS CI on the merged commit: no failure `v1` does not already have. Mac
+   signed-build checks are still owed.
+5. **X5** (systemd unit, container): local branch `x/x5-service` at `6d94deaf` (17
+   commits past `e31b1d67`; last commit is work in progress). It needs: merging the
+   new Track X tip, the container checks (`deploy/container/lnx2.sh` three times,
+   with Docker), a fresh review, then its own merge into `v1`.
+6. X6 (CI matrix and container job, the 16 allowlisted files), X7 (HTTPS with the
+   instance's own certificate, with Track A).
+7. Housekeeping the owner may do: the stray remote branch `x/x2-linux-admission`.
+
+Tooling used in this session lived in the session's scratch directory and is gone with
+it: a runner that builds tests as root and runs each test binary as uid 1000 (CI runs
+unprivileged); a macOS cross-lint (`cargo clippy --target aarch64-apple-darwin` with C
+build steps stubbed); a catalog hash refresher (`kit_skills.py validate` reports what
+to refresh). Recreate them as needed.
