@@ -856,3 +856,25 @@ fn actual_duplicate_misordered_or_post_close_lifecycle_receipts_fail_endpoint() 
         assert!(!witness.is_live());
     }
 }
+
+/// Darwin answers `EINVAL` to a timeout change once the peer has closed. A worker that reports
+/// its failure and exits before the host changes the timeout must still have that report read,
+/// then EOF, rather than the change failing as an I/O error (a crash and a restart).
+#[test]
+fn a_timeout_change_after_the_worker_closed_keeps_its_buffered_report() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    v3::write_rendezvous_event(
+        &mut worker,
+        &v3::RendezvousEvent::Server(ServerEvent::Discarded),
+    )
+    .unwrap();
+    drop(worker);
+    set_timeout_unless_peer_closed(&host, Some(Duration::from_secs(3))).unwrap();
+    set_timeout_unless_peer_closed(&host, None).unwrap();
+    let mut reader = BufReader::new(host);
+    assert!(matches!(
+        v3::read_server_event(&mut reader).unwrap(),
+        Some(v3::RendezvousEvent::Server(ServerEvent::Discarded))
+    ));
+    assert!(v3::read_server_event(&mut reader).unwrap().is_none());
+}
