@@ -1,24 +1,29 @@
-//! The owner's organization commands through the real worker, started under v3. Persons and the
+//! The owner's organization commands through the real worker, started by the host. Persons and the
 //! owner act only through grants on host channels: each case opens a local host channel over the
 //! transfer socket and signs a grant for the owner with the test grant key. Agents bind on the
 //! office socket by handle, with no token.
 use super::*;
 use agentic_org_office::test_support::{signed_grant, ChannelCaller};
-use org_office_launch::v3::{ChannelKind, TransferRecord};
+use org_office_launch::{ChannelKind, TransferRecord};
 use org_proto::org::{
     AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
 };
 use org_proto::{ApiError, Call};
 
-/// A worker started under v3 (it adopts the library-stored office on its first start).
+/// A worker started by the host (it adopts the library-stored office on its first start).
 pub(super) struct Live {
     pub(super) session: Session,
     channels: u32,
 }
 
-/// Starts the stored office under v3 and waits for `ready`.
+/// Starts the stored office through the launch contract and waits for `ready`.
 pub(super) fn live(world: &World) -> Live {
-    let mut session = handshake(world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let mut session = handshake(
+        world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     let ready = session.event();
     assert_eq!(ready["event"], "ready", "{ready}");
     Live {
@@ -34,7 +39,7 @@ impl Live {
         let id = format!("channel-{}", self.channels);
         let (source, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(WAIT)).unwrap();
-        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: OFFICE.into(),
             channel_id: id.clone(),
@@ -52,7 +57,7 @@ impl Live {
                 break event;
             }
         };
-        assert_eq!(received, json!({"v":3,"event":"fds_received","of":id}));
+        assert_eq!(received, json!({"v":1,"event":"fds_received","of":id}));
         drop(source);
         let mut caller = ChannelCaller::new(peer);
         assert_eq!(caller.hello()["result"]["api_version"], 2);
@@ -88,9 +93,11 @@ impl Caller {
 /// Stores the office with the library and returns its owner's member id.
 fn seeded(world: &World) -> String {
     seed(world);
-    let office =
-        org_office::Office::open(world.folder(OFFICE), org_office::Key::from_db_key(db_key()))
-            .unwrap();
+    let office = org_office::Office::open(
+        world.folder(OFFICE),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
+    )
+    .unwrap();
     let owner = office
         .org_snapshot()
         .unwrap()
@@ -168,7 +175,7 @@ fn initial_replica_refuses_the_snapshot_to_an_unbound_connection_and_to_an_owner
             org_id: ORG.into(),
             org_name: "Acme".into(),
         },
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
     )
     .unwrap();
     source
@@ -176,9 +183,11 @@ fn initial_replica_refuses_the_snapshot_to_an_unbound_connection_and_to_an_owner
         .unwrap();
     let pin = source.replication_checkpoint().unwrap();
     drop(source);
-    let office =
-        org_office::Office::open(world.folder(OFFICE), org_office::Key::from_db_key(db_key()))
-            .unwrap();
+    let office = org_office::Office::open(
+        world.folder(OFFICE),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
+    )
+    .unwrap();
     office
         .bind_replication_satellite(pin.hq_office, pin.ca, pin.highest_epoch, Default::default())
         .unwrap();

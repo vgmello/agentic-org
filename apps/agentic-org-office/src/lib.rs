@@ -6,7 +6,7 @@
 //! agentic-org-office --office <id>   # first stdin line: the start message; serves the office
 //! agentic-org-office --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
-//! Launch v3 only: events travel on the authenticated rendezvous; its EOF closes the databases
+//! One launch version: events travel on the authenticated rendezvous; its EOF closes the databases
 //! and exits 0. stdin is drained unparsed after the first line and is not a lifetime signal;
 //! stdout carries nothing. Logs go to stderr.
 //! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
@@ -197,6 +197,13 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             "missing HQ creation binding",
         );
     };
+    let Some(recovery) = create.recovery else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "missing recovery code",
+        );
+    };
     let binding = org_office::hq_creation::Binding {
         operation_id: context.operation_id,
         owner_member_id: create.owner_member_id,
@@ -209,7 +216,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         Some(create.key),
         &create.instance,
         &binding,
-        create.recovery,
+        recovery,
     );
     let office = match created {
         Ok(office) => office,
@@ -516,8 +523,8 @@ fn serve_office(
             let mut channels = transfer::Channels::new(
                 Arc::clone(&shared),
                 Arc::clone(&office),
-                instance.expect("verified v3 instance"),
-                control.writer().expect("v3 rendezvous writer"),
+                instance.expect("verified launch instance"),
+                control.writer().expect("launch rendezvous writer"),
                 Arc::clone(&revocations),
             );
             transfer::Service::start(transport, revocations, move |channel| {
@@ -820,7 +827,7 @@ mod tests {
                     org_id: "ORG1".into(),
                     org_name: "Acme".into(),
                 },
-                Key::from_db_key(org_proto::DbKey::from_bytes([4; 32])),
+                Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([4; 32])),
             )
             .unwrap(),
         );

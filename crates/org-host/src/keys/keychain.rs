@@ -17,6 +17,8 @@
 //! Only a signed host with the entitlement can use this store, so it's checked on a signed
 //! build (see the host-keys runbook).
 
+// The macOS adapter: compiled for macOS only (`keys::platform` selects it).
+#![cfg(target_os = "macos")]
 // Debug builds never choose this store (`keys::store_for`); its tests still run there.
 #![cfg_attr(debug_assertions, allow(dead_code))]
 
@@ -26,7 +28,7 @@ use core_foundation::data::CFData;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::string::{CFString, CFStringRef};
 use org_office_launch::is_storage_id;
-use org_proto::{DbKey, DB_KEY_BYTES};
+use org_proto::{OfficeSecretsKey, OFFICE_SECRETS_KEY_BYTES};
 use security_framework::passwords::{self, PasswordOptions};
 use security_framework_sys::access_control::kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
 use security_framework_sys::base::{errSecDuplicateItem, errSecItemNotFound, errSecSuccess};
@@ -36,7 +38,7 @@ use security_framework_sys::item::{
 };
 use security_framework_sys::keychain_item::SecItemAdd;
 
-use super::{KeyStore, KeyStoreError};
+use super::{KeyStoreError, OfficeSecretsKeys};
 use crate::secrets::zero;
 
 /// The service every office key is filed under (ADR-0002); the account is the office id. It is
@@ -148,8 +150,8 @@ fn item_attributes_for(office_id: &str, group: &str, service: &str) -> Vec<(CFSt
     attributes
 }
 
-impl KeyStore for Keychain {
-    fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError> {
+impl OfficeSecretsKeys for Keychain {
+    fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError> {
         if !is_storage_id(office_id) {
             return Err(KeyStoreError::NotPlainId);
         }
@@ -174,16 +176,16 @@ impl KeyStore for Keychain {
         }
     }
 
-    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError> {
+    fn load(&self, office_id: &str) -> Result<Option<OfficeSecretsKey>, KeyStoreError> {
         if !is_storage_id(office_id) {
             return Err(KeyStoreError::NotPlainId);
         }
         match passwords::generic_password(self.options(office_id)) {
             Ok(mut data) => {
-                let key = <&[u8; DB_KEY_BYTES]>::try_from(data.as_slice())
+                let key = <&[u8; OFFICE_SECRETS_KEY_BYTES]>::try_from(data.as_slice())
                     .map(|bytes| {
                         let mut array = *bytes;
-                        let key = DbKey::from_bytes(array);
+                        let key = OfficeSecretsKey::from_bytes(array);
                         zero(&mut array);
                         key
                     })
@@ -370,7 +372,7 @@ mod tests {
     #[test]
     fn ids_that_arent_plain_are_refused_before_the_keychain() {
         let store = Keychain::new(GROUP);
-        let key = DbKey::from_bytes([1; 32]);
+        let key = OfficeSecretsKey::from_bytes([1; 32]);
         for id in ["", "../x", "a b"] {
             assert!(matches!(
                 store.create(id, &key),

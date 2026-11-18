@@ -3,7 +3,7 @@
 use crate::{
     host_secrets::{HostSecrets, Name, Value},
     hostdb::{accounts::Account, provisioning::Reservation, HostDb},
-    keys::KeyStore,
+    keys::OfficeSecretsKeys,
     offices::Offices,
     writer::Writers,
 };
@@ -12,7 +12,7 @@ use org_host_control::{
     provision::{Params, Provisioned, RemoteReadiness},
     HostOpResult,
 };
-use org_office_launch::{v3, writer::Admission};
+use org_office_launch::writer::Admission;
 use org_proto::{
     selected_bootstrap::PreparedV1, work::WriterIdentity, ApiError, ErrorCode, RecoveryCode,
 };
@@ -27,7 +27,7 @@ use std::{
 pub(crate) struct Provisioning {
     db: Arc<HostDb>,
     custody: Arc<dyn HostSecrets>,
-    keys: Arc<dyn KeyStore>,
+    keys: Arc<dyn OfficeSecretsKeys>,
     writers: Arc<Writers>,
     instance: String,
     root: PathBuf,
@@ -96,7 +96,7 @@ fn lookup_error(error: crate::hostdb::Error) -> ApiError {
     };
     ApiError::new(code, "provisioning operation not admissible")
 }
-fn fingerprint(key: &org_proto::DbKey) -> String {
+fn fingerprint(key: &org_proto::OfficeSecretsKey) -> String {
     Sha256::digest(key.expose_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -123,7 +123,7 @@ impl Provisioning {
     pub(crate) fn new(
         db: Arc<HostDb>,
         custody: Arc<dyn HostSecrets>,
-        keys: Arc<dyn KeyStore>,
+        keys: Arc<dyn OfficeSecretsKeys>,
         writers: Arc<Writers>,
         instance: &str,
         root: &Path,
@@ -205,9 +205,9 @@ impl Provisioning {
         let folder = org_office_launch::office_dir(&self.office_home, &r.prepared.office_id)
             .ok_or_else(unavailable)?;
         let public = self.reserve_writer(account, &r, &folder)?;
-        let first = v3::CreateLine {
-            office: v3::OfficeLine {
-                id_profile: Some(v3::IdProfile::SelectedV1),
+        let first = org_office_launch::CreateLine {
+            office: org_office_launch::OfficeLine {
+                id_profile: Some(org_office_launch::IdProfile::SelectedV1),
                 selected_writer_required: true,
                 instance_id: self.instance.clone(),
                 office_id: r.prepared.office_id.clone(),
@@ -218,7 +218,7 @@ impl Provisioning {
             office_name: "HQ".into(),
             role: org_proto::OfficeRole::Hq,
             owner_member_id: r.owner_member.clone(),
-            hq_creation: Some(v3::HqCreationV1 {
+            hq_creation: Some(org_office_launch::HqCreationV1 {
                 version: 1,
                 operation_id: r.operation_id.clone(),
                 escrow_profile: 1,
@@ -243,7 +243,7 @@ impl Provisioning {
             None if r.key_fingerprint.is_none()
                 && matches!(std::fs::symlink_metadata(folder),Err(e) if e.kind()==std::io::ErrorKind::NotFound) =>
             {
-                let key = crate::secrets::generate_db_key().map_err(storage)?;
+                let key = crate::secrets::generate_office_secrets_key().map_err(storage)?;
                 self.keys
                     .create(&r.prepared.office_id, &key)
                     .map_err(storage)?;
@@ -335,7 +335,7 @@ impl Provisioning {
             key_fingerprint: None,
             linked: false,
         };
-        let random = crate::secrets::generate_db_key().map_err(storage)?;
+        let random = crate::secrets::generate_office_secrets_key().map_err(storage)?;
         use std::fmt::Write as _;
         let mut formatted = String::with_capacity(49);
         for (index, bytes) in random.expose_bytes()[..20]

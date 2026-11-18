@@ -42,7 +42,7 @@ fn made() -> (tempfile::TempDir, Office) {
         org_name: "Acme".into(),
     };
     let folder = dir.path().join("offices").join("OFFICE1");
-    let key = Key::from_db_key(org_proto::DbKey::from_bytes([5; 32]));
+    let key = Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([5; 32]));
     (dir, Office::create(folder, &new, key).unwrap())
 }
 

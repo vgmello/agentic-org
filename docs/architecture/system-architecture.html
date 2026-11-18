@@ -315,7 +315,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
       <tr><td class="k">Agent runtime</td><td>Child of the office worker through <code>org-supervise</code>. One main process slot per employee; a warm idle process is reused when its launch digest matches.</td><td>The vendor CLI's native conversation context.</td><td>The runtime's own sandbox plus a permission policy with fixed denies. Explicit environment allowlist. Separate OS users or containers are v2.</td></tr>
     </tbody>
   </table></div>
-  <p><strong>Naming.</strong> This page says <em>web</em> for <code>agentic-org-web</code>. The design documents now say web too (the browser API design is <code>web-api-v1.md</code>). Some code identifiers still say gateway, for example <code>ChannelKind::Gateway</code>; renaming them is decided and still to do. There is no model gateway.</p>
+  <p><strong>Naming.</strong> This page says <em>web</em> for <code>agentic-org-web</code>. The design documents now say web too (the browser API design is <code>web-api-v1.md</code>). The launch contract says web as well (<code>ChannelKind::Web</code>); some host and control-protocol identifiers still say gateway, for example <code>GatewayState</code> and <code>GatewayHandoff</code>. There is no model gateway.</p>
   <p><strong>agent-os speed.</strong> ADR-0003 section 5 targets a same-office send at p50 under 15 ms: about 2 ms to start the process, 0.5 ms to connect, and 6 to 10 ms waiting for a full flush to disk. Measured on a Linux build machine, starting a do-nothing program takes about 1.1 ms and <code>agent-os --version</code> about 1.5 ms, so a 1 to 2 ms budget cannot include a process start. A database commit measured 0.013 ms without waiting for the drive and 0.29 ms with it. Decided (ADR-0014): messaging and non-critical task activity are acknowledged once the database commits, with the flush following; the class is declared in the domain crate and honoured by the store adapter, so it does not depend on the engine; and <code>agent-os</code> gains a long-running mode per agent session; target median 1 ms. The Linux binary is 1.56 MB against a 1 MB target.</p>
   <div class="note warn"><p><b>Same user is not isolation.</b> Every process runs as one OS user. The design says so explicitly and relies on code-signature checks, sandbox profiles and file-descriptor handoff instead of user separation. The host can only spawn workers on macOS today; other platforms return "office servers run only on macOS".</p></div>
 </section>
@@ -364,7 +364,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
       <tbody>
         <tr><td class="k">org-proto</td><td>Local socket contract: request, response, event, frames, organization, work, messaging, directory, inbox, browser API DTOs, principal and grant types</td><td class="n">18.3k</td><td>none</td></tr>
         <tr><td class="k">org-host-control</td><td>Host private contract: account, session, TLS, bootstrap and recovery operations; web-process rendezvous lines</td><td class="n">4.5k</td><td class="k">org-proto</td></tr>
-        <tr><td class="k">org-office-launch</td><td>Host to worker launch contract (v2 and v3), <code>office.json</code></td><td class="n">4.4k</td><td class="k">org-proto</td></tr>
+        <tr><td class="k">org-office-launch</td><td>Host to worker launch contract (one contract, version 1), <code>office.json</code></td><td class="n">4.4k</td><td class="k">org-proto</td></tr>
         <tr><td class="k">org-sync-proto</td><td>Replication values: position, epoch, digest, work acknowledgement. No framing or I/O.</td><td class="n">0.8k</td><td>none</td></tr>
         <tr><td class="k">org-socket</td><td>Unix socket primitives: ticked reads, peer checks, fd passing, process confinement, image hashing</td><td class="n">4.0k</td><td>none</td></tr>
         <tr><td class="k">org-work</td><td>Task, bug and checklist rules behind storage and clock ports</td><td class="n">14.2k</td><td class="k">org-proto</td></tr>
@@ -469,7 +469,7 @@ offices/
       <tr><td>Private task notes</td><td>Separate SQLite database, 4 tables, HQ only</td><td>HQ service</td><td>Never</td><td><span class="st target">Designed</span></td></tr>
       <tr><td>Receipts, origin streams, checkpoints, process cleanup</td><td>Records under <code>recovery/</code></td><td>Office writer</td><td>No</td><td><span class="st part">Built, not reachable</span> in part</td></tr>
       <tr><td>Credentials</td><td>Vault or keychain reference, or a private auth directory (0700)</td><td>Office-local</td><td>Never</td><td><span class="st target">Designed</span></td></tr>
-      <tr><td>Office database keys</td><td>macOS Data Protection keychain, this device only. Debug builds use a key file.</td><td>Host</td><td>Never</td><td><span class="st ok">Runs today</span> to be removed under ADR-0016</td></tr>
+      <tr><td>Office secrets keys</td><td>macOS Data Protection keychain, this device only. Debug builds use a key file; other operating systems refuse (no adapter yet).</td><td>Host</td><td>Never</td><td><span class="st ok">Runs today</span> wraps an office's private keys only (ADR-0016)</td></tr>
     </tbody>
   </table></div>
 
@@ -522,7 +522,7 @@ offices/
     <li>SQLite through <code>rusqlite</code>. WAL, <code>synchronous=FULL</code>, full fsync. No application-level encryption (ADR-0016); today the build still bundles SQLCipher with a raw key, which the plan removes.</li>
     <li>One write connection on one thread per database, batching with savepoints. Readers use a small pool.</li>
     <li>Schemas are versioned in code by <code>user_version</code>. There are no SQL migration files.</li>
-    <li>The host creates each office key once and never recreates it. A missing key is an error, <code>key_missing</code>.</li>
+    <li>The host creates each office secrets key once and never recreates it. A start without one proceeds: the office serves its data and only its CA is unavailable. There is no <code>key_missing</code> status.</li>
     <li>The draft target schema is 77 tables and 10 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
   </ul>
 </section>
@@ -571,7 +571,7 @@ offices/
     <li><span class="hop">Browser <i>→</i> web</span><code>POST /api/v1/session/sign-in</code>. The web process asks the host to verify the account. The response sets the cookie and returns the session proof.</li>
     <li><span class="hop">Browser <i>→</i> web</span>A mutation carries a ULID <code>operation_id</code>, a scope, typed parameters, the cookie and the proof header.</li>
     <li><span class="hop">Web</span>Validates the cookie and proof pair, origin, path and scope. Decodes strictly. Maps the one operation ID to the native command ID.</li>
-    <li><span class="hop">Web <i>→</i> office</span>Sends the command on its host-granted channel with the human principal and grant. The web process never sees a database key.</li>
+    <li><span class="hop">Web <i>→</i> office</span>Sends the command on its host-granted channel with the human principal and grant. The web process never sees an office secrets key.</li>
     <li><span class="hop">Office</span>Authorizes against its own rules and commits through the single writer.</li>
     <li><span class="hop">Web <i>→</i> browser</span>Classifies the outcome: completed (200), accepted (202), rejected, or unknown (504).</li>
     <li><span class="hop">Browser <i>→</i> web</span>An unknown outcome is resolved by <code>GET /api/v1/operations/{kind}/{id}</code> with the same ID. A fresh ID is never minted for a retry.</li>
@@ -763,7 +763,7 @@ offices/
   <div class="tbl wide"><table>
     <thead><tr><th>Secret</th><th>Held by</th><th>Handed to</th><th>Never seen by</th></tr></thead>
     <tbody>
-      <tr><td>Office secrets key (today the database key; under ADR-0016 it only wraps an office's private keys)</td><td>Host key store</td><td>The office worker, on its launch channel</td><td>Web process, agents, <code>agent-os</code>, Git</td></tr>
+      <tr><td>Office secrets key (it only wraps an office's private keys, ADR-0016)</td><td>Host key store</td><td>The office worker, on its launch channel</td><td>Web process, agents, <code>agent-os</code>, Git</td></tr>
       <tr><td>Registration and reset links</td><td>Host database, as a digest of the token; single use, expiring</td><td>Whoever is handed the link</td><td>Logs, the office worker, agents</td></tr>
       <tr><td>Account credentials and sessions</td><td>Host database</td><td>Nobody; the web process asks the host to verify</td><td>Office worker, agents</td></tr>
       <tr><td>Browser session proof</td><td>Browser (IndexedDB or memory) and the web process in memory</td><td></td><td>Disk on the server</td></tr>
@@ -789,7 +789,7 @@ offices/
 
   <h3>Boundary rules</h3>
   <ul>
-    <li>The web process and <code>agent-os</code> get scoped capabilities only. Neither gets host key access or a database key.</li>
+    <li>The web process and <code>agent-os</code> get scoped capabilities only. Neither gets host key access or an office secrets key.</li>
     <li>An employee token is not host administration authority.</li>
     <li>Browser authentication and federation TLS are separate boundaries.</li>
     <li>A SQL row is a projection. It is never launch authority, and raw SQL access on a replica establishes no authority.</li>
@@ -865,7 +865,7 @@ offices/
       <tr><td>agent-os messaging</td><td><span class="st ok">Runs today</span></td><td>Spool by default; office when bound</td><td>The office path for every call; the long-running mode of ADR-0014</td></tr>
       <tr><td>HQ setup and service registration</td><td><span class="st part">Built, not reachable</span></td><td>Creation persistence, admitted bootstrap, CA escrow, release verifier, journal foundations</td><td>Wire <code>setup</code>; import setup journal and launchd adapter from the reservoir branch</td></tr>
       <tr><td>Host accounts and sessions</td><td><span class="st part">Built, not reachable</span></td><td><code>host-registry.db</code> with accounts, lockout, journal, TLS pair</td><td>Dispatch the operations on <code>host.sock</code> and the web control channel</td></tr>
-      <tr><td>Web server for the browser</td><td><span class="st part">Built, not reachable</span></td><td>hyper + rustls server, CSP, route table, sandbox entry</td><td>A real backend, host spawn and handoff, launch v3 in the host</td></tr>
+      <tr><td>Web server for the browser</td><td><span class="st part">Built, not reachable</span></td><td>hyper + rustls server, CSP, route table, sandbox entry</td><td>A real backend, host spawn and handoff</td></tr>
       <tr><td>UI domain screens</td><td><span class="st part">Built, not reachable</span></td><td>Routes for chat, agents, org chart, projects, work, processes, offices; auth controller; 50 browser specs against fakes</td><td>Production adapters per feature against <code>/api/v1</code></td></tr>
       <tr><td>Durable acceptance journal</td><td><span class="st part">Built, not reachable</span></td><td>Journal, native replay, legacy capture</td><td>Selected-task routes and assignment pair</td></tr>
       <tr><td>Replication policy</td><td><span class="st part">Built, not reachable</span></td><td><code>org-sync</code> apply, snapshot, outbox; SQL adapter</td><td>Transport, enrollment, certificates</td></tr>

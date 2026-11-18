@@ -363,7 +363,7 @@ impl Writers {
             {
                 return Err(refused());
             }
-            let random = crate::secrets::generate_db_key()?;
+            let random = crate::secrets::generate_office_secrets_key()?;
             let value: String = random
                 .expose_bytes()
                 .iter()

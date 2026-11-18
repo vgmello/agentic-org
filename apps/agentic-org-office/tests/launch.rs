@@ -1,6 +1,6 @@
-//! The real `agentic-org-office` binary, driven the way the host drives it: arguments, the v3
+//! The real `agentic-org-office` binary, driven the way the host drives it: arguments, the launch
 //! first line on stdin, the authenticated rendezvous (keys, events, lifetime) and the office
-//! socket. stdout is untrusted and must stay empty. The host holds the database key and hands it
+//! socket. stdout is untrusted and must stay empty. The host holds the office secrets key and hands it
 //! over on the rendezvous (key custody), so there is no key store here and no test can touch a
 //! Keychain: the server has no Keychain code.
 
@@ -18,7 +18,7 @@ mod test_teardown;
 use joined_client::Client;
 use org_office_launch::{office_dir, OfficeFile};
 use org_proto::location::office_socket_path;
-use org_proto::{frame, AppToken, DbKey, OfficeRole};
+use org_proto::{frame, AppToken, OfficeRole, OfficeSecretsKey};
 use tempfile::TempDir;
 
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
@@ -136,14 +136,14 @@ impl Drop for Run {
     }
 }
 
-/// An app token: v3 has none, so a person's bind carrying one is refused like any other.
+/// An app token: launch has none, so a person's bind carrying one is refused like any other.
 fn token() -> AppToken {
     AppToken::from_bytes([0xA7; 32])
 }
 
-/// The database key the host would hold for the office.
-fn db_key() -> DbKey {
-    DbKey::from_bytes([0xB3; 32])
+/// The office secrets key the host would hold for the office.
+fn office_secrets_key() -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes([0xB3; 32])
 }
 
 /// The key as the handoff carries it, to look for in logs.
@@ -154,12 +154,17 @@ fn socket(world: &World) -> PathBuf {
 }
 
 /// Stores the office with the library, as an HQ creation leaves it, then starts its server the
-/// way the host does (v3 start, handoff, ready on the rendezvous) and returns the session. The
-/// worker creates offices only through HQ creation-v1 (`v3_activation`); every other case starts
+/// way the host does (start, handoff, ready on the rendezvous) and returns the session. The
+/// worker creates offices only through HQ creation-v1 (`activation`); every other case starts
 /// an existing office.
 fn started(world: &World) -> Session {
     seed(world);
-    let mut session = handshake(world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let mut session = handshake(
+        world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     let ready = session.event();
     assert_eq!(ready["event"], "ready", "{ready}");
     assert_eq!(
@@ -184,7 +189,7 @@ fn seed(world: &World) {
             org_office::Office::create(
                 world.folder(OFFICE),
                 &new,
-                org_office::Key::from_db_key(db_key()),
+                org_office::Key::from_office_secrets_key(office_secrets_key()),
             )
             .unwrap(),
         );
@@ -407,11 +412,8 @@ fn the_first_line_must_match_the_flag() {
     listener.set_nonblocking(true).unwrap();
     let line = |op: FirstLine| {
         let mut bytes = Vec::new();
-        org_office_launch::v3::write_first_line(
-            &mut bytes,
-            &v3_activation::first_line(op, &rendezvous),
-        )
-        .unwrap();
+        org_office_launch::write_first_line(&mut bytes, &activation::first_line(op, &rendezvous))
+            .unwrap();
         bytes
     };
     // The worker refuses before it connects: no trusted channel exists, so nothing is reported
@@ -435,7 +437,7 @@ fn the_first_line_must_match_the_flag() {
             "{args:?} dialled the rendezvous"
         );
     };
-    // --create given a start line, --office a create line, and lines that aren't v3 at all.
+    // --create given a start line, --office a create line, and lines that aren't launch lines.
     refused(&["--create"], &line(FirstLine::Start));
     refused(&["--office", OFFICE], &line(FirstLine::Create));
     refused(&["--office", OFFICE], b"not json at all\n");
@@ -466,7 +468,7 @@ fn the_host_going_away_before_the_first_line_is_a_clean_exit_with_no_line() {
 }
 
 #[test]
-fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_deletes_nothing() {
+fn discard_without_office_json_finds_the_organization_and_deletes_nothing() {
     let _process = process_isolation();
     let world = World::new();
     let mut first = started(&world);
@@ -474,23 +476,39 @@ fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_del
     // Lose office.json, as a crash or a person might: the databases are all that is left.
     std::fs::remove_file(world.folder(OFFICE).join("office.json")).unwrap();
 
-    // The databases are plain SQLite (ADR-0016): with no key, a wrong key or the right one the
+    // The databases are plain SQLite (ADR-0016) and the discard handoff carries no secret: the
     // organization is found, so the discard is refused and nothing is deleted.
-    for key in [None, Some(DbKey::from_bytes([0xC4; 32])), Some(db_key())] {
-        let mut session = handshake(&world, FirstLine::Discard, INSTANCE, key);
-        let failed = session.event();
-        assert_eq!(failed["code"], "already_exists", "{failed}");
-        assert!(!session.run.wait().success());
-        session.no_stdout();
-        assert!(
-            world.folder(OFFICE).join("org.db").exists(),
-            "a database was deleted"
-        );
-        assert!(
-            !session.run.stderr().contains(DB_KEY_HEX),
-            "the key reached the log of a failed discard"
-        );
-    }
+    let mut session = handshake(&world, FirstLine::Discard, INSTANCE, None);
+    let failed = session.event();
+    assert_eq!(failed["code"], "already_exists", "{failed}");
+    assert!(!session.run.wait().success());
+    session.no_stdout();
+    assert!(
+        world.folder(OFFICE).join("org.db").exists(),
+        "a database was deleted"
+    );
+}
+
+#[test]
+fn a_start_without_the_office_secrets_key_serves_the_office() {
+    let _process = process_isolation();
+    let world = World::new();
+    let mut first = started(&world);
+    assert!(first.host_goes_away().success());
+
+    // The host has no key for the office: its start handoff carries `null` and the office
+    // still opens and serves its plain databases; only the CA is unavailable.
+    let mut session = handshake(&world, FirstLine::Start, INSTANCE, None);
+    assert_eq!(session.event()["event"], "ready");
+    assert_eq!(hello(&world).office.id, OFFICE);
+    assert!(session.host_goes_away().success());
+    assert!(
+        !session.run.stderr().contains(DB_KEY_HEX),
+        "the key reached the log"
+    );
+
+    let mut again = started(&world);
+    assert!(again.host_goes_away().success());
 }
 
 #[test]
@@ -506,7 +524,7 @@ fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
         &world,
         FirstLine::Start,
         INSTANCE,
-        Some(DbKey::from_bytes([0xC4; 32])),
+        Some(OfficeSecretsKey::from_bytes([0xC4; 32])),
     );
     assert_eq!(session.event()["event"], "ready");
     assert!(session.host_goes_away().success());
@@ -628,7 +646,12 @@ fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
 
     // A regular file is not ours to remove.
     std::fs::write(socket(&world), b"mine").unwrap();
-    let refused = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let refused = handshake(
+        &world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     assert_eq!(failed_code(refused), "storage_error");
     assert_eq!(std::fs::read(socket(&world)).unwrap(), b"mine");
 }
@@ -639,7 +662,7 @@ fn what_the_host_writes_on_stdin_never_stops_the_server_and_rendezvous_eof_does(
     let world = World::new();
     let mut session = started(&world);
     // Lines of any shape, and a lot of them: read and thrown away, unparsed. Then stdin ends:
-    // in v3 that is not the host going away, the rendezvous is.
+    // in this contract that is not the host going away, the rendezvous is.
     let mut stdin = session.run.stdin.take().unwrap();
     std::io::Write::write_all(&mut stdin, b"garbage\n{\"op\":\"nonsense\"}\n").unwrap();
     std::io::Write::write_all(&mut stdin, &vec![b'x'; 3 * 1024 * 1024]).unwrap();
@@ -675,11 +698,11 @@ fn the_keys_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     }
     assert!(session.host_goes_away().success());
     let log = session.run.stderr();
-    // The handoff's grant key is [7; 32] (`v3_activation::handshake`).
+    // The handoff's grant key is [7; 32] (`activation::handshake`).
     assert!(!log.contains("07070707"), "the grant key reached the log");
     assert!(
         !log.contains(DB_KEY_HEX),
-        "the database key reached the log"
+        "the office secrets key reached the log"
     );
 }
 
@@ -776,10 +799,10 @@ fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_offic
     panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
 }
 
-#[path = "launch/v3_activation.rs"]
-mod v3_activation;
+#[path = "launch/activation.rs"]
+mod activation;
+use activation::{handshake, Session, INSTANCE};
 use org_office_launch::FirstLine;
-use v3_activation::{handshake, Session, INSTANCE};
 
 #[path = "launch/inbox_hint.rs"]
 mod inbox_hint;

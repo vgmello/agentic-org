@@ -1,4 +1,4 @@
-//! The fake office server speaks only launch v3, as the real one does: these tests drive it as the host does
+//! The fake office server speaks only the launch contract, as the real one does: these tests drive it as the host does
 //! (first line on stdin, then `ready_for_secrets`, the handoff header and, for create and start,
 //! the transfer socket on its marker byte over the rendezvous socket), so the app's tests can
 //! move to the rendezvous. Everything runs in a temporary home.
@@ -11,10 +11,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use org_office_launch::v3::{self, HostFirstLine, RendezvousEvent};
 use org_office_launch::{FailCode, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
+use org_office_launch::{HostFirstLine, RendezvousEvent};
 use org_proto::location::{OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
-use org_proto::{DbKey, GrantKey, RecoveryCode};
+use org_proto::{GrantKey, OfficeSecretsKey, RecoveryCode};
 use serde_json::json;
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
@@ -78,7 +78,7 @@ impl Home {
             .spawn()
             .unwrap();
         let mut line = line.clone();
-        line["v"] = json!(3);
+        line["v"] = json!(org_office_launch::LAUNCH_VERSION);
         if line.get("instance_id").is_none() {
             line["instance_id"] = json!(INSTANCE);
         }
@@ -87,7 +87,7 @@ impl Home {
         if typed {
             // Through the typed writer, so the line is one the host could send.
             let typed: HostFirstLine = serde_json::from_value(line).unwrap();
-            v3::write_first_line(stdin, &typed).unwrap();
+            org_office_launch::write_first_line(stdin, &typed).unwrap();
         } else {
             stdin.write_all(format!("{line}\n").as_bytes()).unwrap();
         }
@@ -100,7 +100,7 @@ fn accept_ready(listener: &UnixListener) -> BufReader<UnixStream> {
     let (stream, _) = listener.accept().unwrap();
     stream.set_read_timeout(Some(WAIT)).unwrap();
     let mut reader = BufReader::new(stream);
-    let _: v3::ReadyForSecrets = org_proto::frame::read_message(&mut reader)
+    let _: org_office_launch::ReadyForSecrets = org_proto::frame::read_message(&mut reader)
         .unwrap()
         .expect("ready_for_secrets");
     reader
@@ -113,13 +113,13 @@ fn hand_off(reader: &mut BufReader<UnixStream>, header: Vec<u8>) -> UnixDatagram
     let (host, worker) = UnixDatagram::pair().unwrap();
     org_socket::rights::send(
         reader.get_ref().as_fd(),
-        &[v3::FD_MARKER],
+        &[org_office_launch::FD_MARKER],
         &[worker.as_fd()],
         Instant::now() + WAIT,
     )
     .unwrap();
     assert_eq!(
-        v3::read_server_event(reader).unwrap(),
+        org_office_launch::read_server_event(reader).unwrap(),
         Some(RendezvousEvent::FdsReceived {
             of: "handoff".into()
         })
@@ -128,7 +128,7 @@ fn hand_off(reader: &mut BufReader<UnixStream>, header: Vec<u8>) -> UnixDatagram
 }
 
 fn event(reader: &mut BufReader<UnixStream>) -> Option<RendezvousEvent> {
-    v3::read_server_event(reader).unwrap()
+    org_office_launch::read_server_event(reader).unwrap()
 }
 
 fn wait_exit(child: &mut Child) -> i32 {
@@ -171,8 +171,8 @@ fn create(home: &Home) {
         }),
     );
     let mut reader = accept_ready(&listener);
-    let header = v3::encode_create_handoff(
-        &DbKey::from_bytes([7; 32]),
+    let header = org_office_launch::encode_create_handoff(
+        &OfficeSecretsKey::from_bytes([7; 32]),
         &GrantKey::from_bytes([9; 32]),
         &RecoveryCode::new("a recovery code".into()).unwrap(),
     )
@@ -191,11 +191,15 @@ fn create(home: &Home) {
     // The rendezvous stream's end is the host's end too: stdin stays open.
     drop(reader);
     assert_eq!(wait_exit(&mut child), 0);
-    assert_eq!(stdout_of(&mut child), "", "v3 events never go to stdout");
+    assert_eq!(
+        stdout_of(&mut child),
+        "",
+        "launch events never go to stdout"
+    );
     let pid = child.id();
     let log = home.log();
     for line in [
-        format!("launch create {pid} v3"),
+        format!("launch create {pid} v1"),
         format!("instance create {pid} {INSTANCE}"),
         format!("grant create {pid} "),
         format!("recovery create {pid} present"),
@@ -217,9 +221,11 @@ fn the_fake_creates_and_starts_an_office_over_the_rendezvous() {
         &json!({"op": "start", "office_id": OFFICE}),
     );
     let mut reader = accept_ready(&listener);
-    let header =
-        v3::encode_start_handoff(&DbKey::from_bytes([7; 32]), &GrantKey::from_bytes([10; 32]))
-            .unwrap();
+    let header = org_office_launch::encode_start_handoff(
+        Some(&OfficeSecretsKey::from_bytes([7; 32])),
+        &GrantKey::from_bytes([10; 32]),
+    )
+    .unwrap();
     let _transfer = hand_off(&mut reader, header);
     match event(&mut reader) {
         Some(RendezvousEvent::Server(ServerEvent::Ready { socket, .. })) => {
@@ -236,7 +242,7 @@ fn the_fake_creates_and_starts_an_office_over_the_rendezvous() {
     drop(reader);
     let pid = child.id();
     let log = home.log();
-    assert!(log_has(&log, &format!("launch {OFFICE} {pid} v3")), "{log}");
+    assert!(log_has(&log, &format!("launch {OFFICE} {pid} v1")), "{log}");
     assert!(
         log_has(&log, &format!("transfer {OFFICE} {pid} received")),
         "{log}"
@@ -252,7 +258,7 @@ fn the_fake_discards_over_the_rendezvous_without_a_transfer_socket() {
         &json!({"op": "discard", "office_id": OFFICE}),
     );
     let mut reader = accept_ready(&listener);
-    // An unfinished office's folder holding databases: a v3 discard removes it without a key.
+    // An unfinished office's folder holding databases: a launch discard removes it without a key.
     let dir = home
         .home
         .join(org_office_launch::OFFICES_DIR_NAME)
@@ -260,7 +266,7 @@ fn the_fake_discards_over_the_rendezvous_without_a_transfer_socket() {
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("db"), b"databases").unwrap();
     // The host never sends a key with a discard now.
-    let header = v3::encode_discard_handoff(None).unwrap();
+    let header = org_office_launch::encode_discard_handoff().unwrap();
     reader.get_mut().write_all(&header).unwrap();
     // No marker is sent and no receipt comes: the first event is the report.
     assert_eq!(
@@ -271,7 +277,7 @@ fn the_fake_discards_over_the_rendezvous_without_a_transfer_socket() {
     assert!(!dir.exists(), "the discard left the office folder");
     let pid = child.id();
     let log = home.log();
-    assert!(log_has(&log, &format!("launch discard {pid} v3")), "{log}");
+    assert!(log_has(&log, &format!("launch discard {pid} v1")), "{log}");
     assert!(!log.contains("transfer discard"), "{log}");
 }
 
@@ -312,7 +318,7 @@ fn the_fake_refuses_a_start_line_naming_another_office_before_connecting() {
 /// The instance id is canonical lowercase UUIDv7 text. A ULID (the earlier form) or uppercase
 /// UUIDv7 is refused before connecting, as the real server refuses it.
 #[test]
-fn the_fake_refuses_a_v3_line_naming_a_ulid_instance() {
+fn the_fake_refuses_a_launch_line_naming_a_ulid_instance() {
     for instance in [
         "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071C0",
@@ -341,13 +347,13 @@ fn the_fake_refuses_a_v3_line_naming_a_ulid_instance() {
 
 #[test]
 fn the_fake_refuses_a_handoff_whose_op_is_not_the_start_lines() {
-    let create = v3::encode_create_handoff(
-        &DbKey::from_bytes([7; 32]),
+    let create = org_office_launch::encode_create_handoff(
+        &OfficeSecretsKey::from_bytes([7; 32]),
         &GrantKey::from_bytes([9; 32]),
         &RecoveryCode::new("a recovery code".into()).unwrap(),
     )
     .unwrap();
-    let discard = v3::encode_discard_handoff(None).unwrap();
+    let discard = org_office_launch::encode_discard_handoff().unwrap();
     for header in [create, discard] {
         let home = Home::new();
         let (mut child, listener) = home.launch(
@@ -359,7 +365,11 @@ fn the_fake_refuses_a_handoff_whose_op_is_not_the_start_lines() {
         // The first event is the refusal: no `fds_received` precedes it.
         assert_eq!(failed_then_end(&mut reader), FailCode::InvalidRequest);
         assert_eq!(wait_exit(&mut child), 1);
-        assert_eq!(stdout_of(&mut child), "", "v3 events never go to stdout");
+        assert_eq!(
+            stdout_of(&mut child),
+            "",
+            "launch events never go to stdout"
+        );
         let pid = child.id();
         let log = home.log();
         assert!(
@@ -377,7 +387,10 @@ fn the_fake_fails_a_bad_header_on_the_stream_not_stdout() {
     let oversized: Send = |stream| {
         let mut stream = stream;
         stream
-            .write_all(&vec![b'a'; v3::TRANSFER_HEADER_MAX_BYTES + 1])
+            .write_all(&vec![
+                b'a';
+                org_office_launch::TRANSFER_HEADER_MAX_BYTES + 1
+            ])
             .unwrap();
     };
     let fd_on_header: Send = |stream| {
@@ -401,7 +414,11 @@ fn the_fake_fails_a_bad_header_on_the_stream_not_stdout() {
         // A whole `failed` event: `bail` made the stream blocking again before writing it.
         assert_eq!(failed_then_end(&mut reader), FailCode::InvalidRequest);
         assert_eq!(wait_exit(&mut child), 1);
-        assert_eq!(stdout_of(&mut child), "", "v3 events never go to stdout");
+        assert_eq!(
+            stdout_of(&mut child),
+            "",
+            "launch events never go to stdout"
+        );
         let pid = child.id();
         assert!(!log_has(&home.log(), &format!("transfer {OFFICE} {pid}")));
     }

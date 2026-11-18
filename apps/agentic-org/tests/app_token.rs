@@ -1,6 +1,6 @@
-//! Launch secrets on the v3 rendezvous, against the fake office server: every start's handoff
+//! Launch secrets on the launch rendezvous, against the fake office server: every start's handoff
 //! carries a grant key of its own (a fresh one per run), and a worker that refuses its first line
-//! never gets one. v3 hands off no app token.
+//! never gets one. The handoff carries no app token.
 //!
 //! The tests never see a key: the fake records a fingerprint of each one it gets.
 
@@ -67,7 +67,7 @@ fn every_start_gets_a_grant_key_of_its_own() {
     host.shutdown();
 }
 
-/// Under v3 the worker can report on the rendezvous only once it has read a valid first line
+/// The worker can report on the rendezvous only once it has read a valid first line
 /// naming it; a refusal before that goes to stdout, which the host does not read. So a worker
 /// that refuses its first line and exits is a crash: restarted with backoff, never given a key,
 /// and noticed when it exits rather than at the end of the rendezvous wait.
@@ -110,7 +110,7 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
         assert_ne!(status(&host, A), OfficeStatus::Unavailable, "{name}");
         assert_ne!(status(&host, A), OfficeStatus::Active, "{name}");
         assert!(home.grant_fingerprints(A).is_empty(), "{name}");
-        assert!(home.db_key_fingerprints(A).is_empty(), "{name}");
+        assert!(home.office_secrets_key_fingerprints(A).is_empty(), "{name}");
         host.shutdown();
     }
 }
@@ -141,7 +141,7 @@ fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
     assert_eq!(home.runs(A), 3);
     assert_eq!(status(&host, A), OfficeStatus::Unavailable);
     assert!(home.grant_fingerprints(A).is_empty());
-    assert!(home.db_key_fingerprints(A).is_empty());
+    assert!(home.office_secrets_key_fingerprints(A).is_empty());
     host.shutdown();
 }
 

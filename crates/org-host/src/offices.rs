@@ -297,7 +297,7 @@ impl Offices {
     /// retains all intent, data and custody; no legacy discard or key sweep runs.
     pub(crate) fn provision_hq(
         &self,
-        first: org_office_launch::v3::CreateLine,
+        first: org_office_launch::CreateLine,
         recovery: org_proto::RecoveryCode,
     ) -> Result<bool, ApiError> {
         let deadline = Instant::now() + self.create_wait;
@@ -674,8 +674,8 @@ mod tests {
     /// is only marked, and a key whose folder exists is always kept.
     #[test]
     fn the_startup_sweeps_orphan_keys_only_when_allowed() {
-        use crate::keys::KeyStore;
-        use org_proto::DbKey;
+        use crate::keys::OfficeSecretsKeys;
+        use org_proto::OfficeSecretsKey;
         const ORPHAN: &str = "01ORPHANORPHANORPHANORPHAN";
         const NEW_ORPHAN: &str = "01NEWORPHANNEWORPHANNEWORP";
         for sweep in [false, true] {
@@ -692,7 +692,8 @@ mod tests {
                 fs::create_dir_all(home.join("offices").join(id)).unwrap();
             }
             for id in LIVE.into_iter().chain([ORPHAN, NEW_ORPHAN]) {
-                keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
+                keys.create(id, &OfficeSecretsKey::from_bytes([1; 32]))
+                    .unwrap();
             }
             // ORPHAN was marked long ago; NEW_ORPHAN never was.
             let record = home.join("orphan-keys.json");
@@ -706,7 +707,7 @@ mod tests {
                     logs_dir: home.join("logs"),
                     log_max_bytes: 1024,
                     timings: Timings::default(),
-                    keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+                    keys: Arc::clone(&keys) as Arc<dyn OfficeSecretsKeys>,
                     server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                     sweep_orphans: sweep,
                 },

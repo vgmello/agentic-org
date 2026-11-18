@@ -1,5 +1,5 @@
 //! The app token: the per-office secret that lets the desktop app act for people (ADR-0003 §2.1),
-//! [`DbKey`], an office's database key, and the grant secrets of X-02 §4.1 ([`GrantMac`] and
+//! [`OfficeSecretsKey`], an office's secrets key, and the grant secrets of X-02 §4.1 ([`GrantMac`] and
 //! [`GrantKey`]), which share the same guards.
 //!
 //! The host makes a fresh token for each office every time it starts and keeps it only in
@@ -17,7 +17,7 @@
 //!
 //! It decodes from JSON only (it uses `deserialize_any`, which needs a self-describing format).
 //!
-//! [`DbKey`], an office's database key, gets the same treatment (see its docs). It travels only
+//! [`OfficeSecretsKey`], an office's secrets key, gets the same treatment (see its docs). It travels only
 //! on the launch pipe from the host to the office's server (`org-office-launch`), never on a
 //! socket. It lives here, next to the app token, so the two share one implementation of their
 //! guards (`org-office-launch` re-exports it).
@@ -45,14 +45,14 @@ use std::marker::PhantomData;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
-/// The length in bytes of every secret here: an [`AppToken`] or a [`DbKey`].
+/// The length in bytes of every secret here: an [`AppToken`] or an [`OfficeSecretsKey`].
 const SECRET_BYTES: usize = 32;
 
 /// An app token's length in bytes (64 hex digits on the wire).
 pub const APP_TOKEN_BYTES: usize = SECRET_BYTES;
 
-/// A database key's length in bytes (64 hex digits on the wire).
-pub const DB_KEY_BYTES: usize = SECRET_BYTES;
+/// An office secrets key's length in bytes (64 hex digits on the wire).
+pub const OFFICE_SECRETS_KEY_BYTES: usize = SECRET_BYTES;
 
 /// A per-office app token. See the module docs.
 ///
@@ -149,38 +149,39 @@ impl Secret for AppToken {
     }
 }
 
-/// An office's database key: the 32-byte raw key of its SQLCipher databases.
+/// An office's secrets key: 32 random bytes that wrap the office's private keys
+/// (`org_pki::wrap`). It never encrypts a database (ADR-0016).
 ///
 /// The host creates each office's key from a secure random source, stores it in its own key
 /// store, and sends it to the office's server on the launch pipe (`org-office-launch`) on every
-/// create, start and discard. The server never creates, stores or deletes one. It never reaches
-/// argv, the environment, a log or the office's folder.
+/// create and start (a discard carries none). The server never creates, stores or deletes one.
+/// It never reaches argv, the environment, a log or the office's folder.
 ///
 /// It has the same guards as [`AppToken`]:
 /// - On the wire it is 64 lowercase hex digits; decode errors never echo the input, and it
 ///   decodes from JSON only.
-/// - `Debug` prints `DbKey(<redacted>)`. There is no `Display`.
+/// - `Debug` prints `OfficeSecretsKey(<redacted>)`. There is no `Display`.
 /// - Equality is constant-time.
 /// - The bytes are zeroed when it's dropped. Share it by reference.
 ///
 /// Zeroing is defence in depth: it covers this key's own bytes only. The copies listed in the
-/// module docs for the app token (the array passed to [`DbKey::from_bytes`], line, reader and
+/// module docs for the app token (the array passed to [`OfficeSecretsKey::from_bytes`], line, reader and
 /// writer buffers, serde's buffering) survive it, and so does any copy made from
-/// [`DbKey::expose_bytes`]. Serializing it zeroes its own hex buffer.
+/// [`OfficeSecretsKey::expose_bytes`]. Serializing it zeroes its own hex buffer.
 ///
 /// It isn't `Clone`:
 ///
 /// ```compile_fail,E0599
-/// let key = org_proto::DbKey::from_bytes([0; org_proto::DB_KEY_BYTES]);
+/// let key = org_proto::OfficeSecretsKey::from_bytes([0; org_proto::OFFICE_SECRETS_KEY_BYTES]);
 /// let _copy = key.clone();
 /// ```
-pub struct DbKey(Box<[u8; DB_KEY_BYTES]>);
+pub struct OfficeSecretsKey(Box<[u8; OFFICE_SECRETS_KEY_BYTES]>);
 
-impl DbKey {
+impl OfficeSecretsKey {
     /// Wrap 32 random bytes. The caller makes them with a secure random source and zeroes its
     /// own array afterwards: this only zeroes its own copy. This crate does no I/O.
-    pub fn from_bytes(bytes: [u8; DB_KEY_BYTES]) -> Self {
-        DbKey(Box::new(bytes))
+    pub fn from_bytes(bytes: [u8; OFFICE_SECRETS_KEY_BYTES]) -> Self {
+        OfficeSecretsKey(Box::new(bytes))
     }
 
     /// The raw key, only for storing it in the host's key store and for keying SQLCipher,
@@ -188,21 +189,21 @@ impl DbKey {
     /// call that needs them.
     /// `*key.expose_bytes()` copies the array, and any copy (or a hex form made for SQLCipher's
     /// `x'…'` key syntax) is the caller's to zero. Never log or format it.
-    pub fn expose_bytes(&self) -> &[u8; DB_KEY_BYTES] {
+    pub fn expose_bytes(&self) -> &[u8; OFFICE_SECRETS_KEY_BYTES] {
         &self.0
     }
 }
 
-impl PartialEq for DbKey {
+impl PartialEq for OfficeSecretsKey {
     /// Constant-time: how long a comparison takes doesn't depend on where the keys differ.
     fn eq(&self, other: &Self) -> bool {
         constant_time_eq(&self.0, &other.0)
     }
 }
 
-impl Eq for DbKey {}
+impl Eq for OfficeSecretsKey {}
 
-impl DbKey {
+impl OfficeSecretsKey {
     /// Zero the bytes in place (what `Drop` does; tests call it to check the bytes).
     fn wipe(&mut self) {
         #[cfg(test)]
@@ -211,40 +212,40 @@ impl DbKey {
     }
 }
 
-impl Drop for DbKey {
+impl Drop for OfficeSecretsKey {
     fn drop(&mut self) {
         self.wipe();
     }
 }
 
-impl fmt::Debug for DbKey {
+impl fmt::Debug for OfficeSecretsKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("DbKey(<redacted>)")
+        f.write_str("OfficeSecretsKey(<redacted>)")
     }
 }
 
-impl Serialize for DbKey {
+impl Serialize for OfficeSecretsKey {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         serialize_hex(&self.0, s)
     }
 }
 
-impl<'de> Deserialize<'de> for DbKey {
+impl<'de> Deserialize<'de> for OfficeSecretsKey {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         // `deserialize_any`, for the reason given on `AppToken`'s decoder.
-        d.deserialize_any(SecretVisitor::<DbKey>(PhantomData))
+        d.deserialize_any(SecretVisitor::<OfficeSecretsKey>(PhantomData))
     }
 }
 
 /// The one decode error. It never contains the input.
-const BAD_DB_KEY: &str = "a database key must be 64 lowercase hex digits";
+const BAD_DB_KEY: &str = "an office secrets key must be 64 lowercase hex digits";
 
-impl Secret for DbKey {
-    const EXPECTING: &'static str = "a database key";
+impl Secret for OfficeSecretsKey {
+    const EXPECTING: &'static str = "an office secrets key";
     const BAD: &'static str = BAD_DB_KEY;
 
     fn zeroed() -> Self {
-        DbKey(Box::new([0u8; SECRET_BYTES]))
+        OfficeSecretsKey(Box::new([0u8; SECRET_BYTES]))
     }
     fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES] {
         &mut self.0
@@ -262,7 +263,7 @@ pub const GRANT_KEY_BYTES: usize = SECRET_BYTES;
 /// no cryptography.
 ///
 /// On the wire it is exactly 64 lowercase hex digits; anything else is refused, and decode
-/// errors never echo the input. It has the guards of [`DbKey`]: `Debug` prints
+/// errors never echo the input. It has the guards of [`OfficeSecretsKey`]: `Debug` prints
 /// `GrantMac(<redacted>)`, there is no `Display`, and equality is constant-time. Worker verification
 /// uses the HMAC implementation's constant-time tag verifier. The bytes are zeroed on drop,
 /// and it isn't `Clone`:
@@ -289,7 +290,7 @@ impl GrantMac {
 /// random source at every worker start and sends it over the rendezvous connection, never on the
 /// launch pipe; a new key invalidates every older grant.
 ///
-/// It has the guards of [`DbKey`]: 64 lowercase hex digits on the wire, decode errors that never
+/// It has the guards of [`OfficeSecretsKey`]: 64 lowercase hex digits on the wire, decode errors that never
 /// echo the input, `Debug` printing `GrantKey(<redacted>)`, no `Display`, constant-time equality,
 /// zeroed on drop, and no `Clone`:
 ///
@@ -313,7 +314,7 @@ impl GrantKey {
     }
 }
 
-/// The guards [`GrantMac`] and [`GrantKey`] share with [`DbKey`]: constant-time equality,
+/// The guards [`GrantMac`] and [`GrantKey`] share with [`OfficeSecretsKey`]: constant-time equality,
 /// zeroing on drop, a redacted `Debug`, hex encoding and the one decoding visitor.
 macro_rules! hex_secret {
     ($ty:ident, $expecting:literal, $bad:literal) => {
@@ -378,7 +379,7 @@ hex_secret!(
     "a grant key must be 64 lowercase hex digits"
 );
 
-/// What every fixed-size secret here ([`AppToken`], [`DbKey`], [`GrantMac`], [`GrantKey`]) shares,
+/// What every fixed-size secret here ([`AppToken`], [`OfficeSecretsKey`], [`GrantMac`], [`GrantKey`]) shares,
 /// so they decode through one visitor. Each type zeroes itself on drop.
 trait Secret: Sized {
     /// What the visitor expects, for serde's messages.
@@ -476,7 +477,7 @@ fn nibble(c: u8) -> Option<u8> {
     }
 }
 
-/// Overwrite with zeros in a way the optimizer can't remove. Used for [`AppToken`] and [`DbKey`],
+/// Overwrite with zeros in a way the optimizer can't remove. Used for [`AppToken`] and [`OfficeSecretsKey`],
 /// and re-exported as [`crate::zero_bytes`] for other crates' secret buffers.
 // The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes
 // that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
@@ -506,10 +507,12 @@ mod tests {
         let before = wipes();
         drop(AppToken::from_bytes([0xa5; APP_TOKEN_BYTES]));
         assert_eq!(wipes(), before + 1);
-        drop(DbKey::from_bytes([0x5a; DB_KEY_BYTES]));
+        drop(OfficeSecretsKey::from_bytes(
+            [0x5a; OFFICE_SECRETS_KEY_BYTES],
+        ));
         assert_eq!(wipes(), before + 2);
         // Moved, not copied: one wipe, when the one value is dropped.
-        let key = DbKey::from_bytes([1; DB_KEY_BYTES]);
+        let key = OfficeSecretsKey::from_bytes([1; OFFICE_SECRETS_KEY_BYTES]);
         let moved = key;
         assert_eq!(wipes(), before + 2);
         drop(moved);
@@ -760,15 +763,15 @@ mod tests {
         assert_eq!(*t.0, [0u8; APP_TOKEN_BYTES]);
     }
 
-    fn db_key() -> DbKey {
-        let mut bytes = [0u8; DB_KEY_BYTES];
+    fn office_secrets_key() -> OfficeSecretsKey {
+        let mut bytes = [0u8; OFFICE_SECRETS_KEY_BYTES];
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(53).wrapping_add(0x3c);
         }
-        DbKey::from_bytes(bytes)
+        OfficeSecretsKey::from_bytes(bytes)
     }
 
-    fn key_hex(k: &DbKey) -> String {
+    fn key_hex(k: &OfficeSecretsKey) -> String {
         k.expose_bytes()
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -776,23 +779,26 @@ mod tests {
     }
 
     #[test]
-    fn a_db_key_is_64_lowercase_hex_and_round_trips() {
-        let k = db_key();
+    fn an_office_secrets_key_is_64_lowercase_hex_and_round_trips() {
+        let k = office_secrets_key();
         let json = serde_json::to_string(&k).unwrap();
         assert_eq!(json, format!("\"{}\"", key_hex(&k)));
         assert_eq!(json.len(), 66);
         assert!(json[1..65]
             .bytes()
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
-        let back = serde_json::from_str::<DbKey>(&json).unwrap();
+        let back = serde_json::from_str::<OfficeSecretsKey>(&json).unwrap();
         assert_eq!(back, k);
         assert_eq!(back.expose_bytes(), k.expose_bytes());
-        assert_eq!(serde_json::from_str::<Option<DbKey>>("null").unwrap(), None);
+        assert_eq!(
+            serde_json::from_str::<Option<OfficeSecretsKey>>("null").unwrap(),
+            None
+        );
     }
 
     #[test]
-    fn a_db_key_of_the_wrong_length_or_not_hex_is_refused_without_echoing() {
-        let secret = key_hex(&db_key());
+    fn an_office_secrets_key_of_the_wrong_length_or_not_hex_is_refused_without_echoing() {
+        let secret = key_hex(&office_secrets_key());
         let cases = [
             secret.to_uppercase(),         // uppercase isn't accepted
             format!("{}g", &secret[..63]), // a non-hex digit
@@ -801,26 +807,30 @@ mod tests {
             format!("{}é", &secret[..62]), // non-ASCII
         ];
         for bad in cases {
-            let err = serde_json::from_str::<DbKey>(&serde_json::to_string(&bad).unwrap())
-                .unwrap_err()
-                .to_string();
+            let err =
+                serde_json::from_str::<OfficeSecretsKey>(&serde_json::to_string(&bad).unwrap())
+                    .unwrap_err()
+                    .to_string();
             assert!(!err.contains(&bad[..20]), "echoed: {err}");
             assert!(err.contains(BAD_DB_KEY), "{err}");
         }
         for other in ["5", "-5", "1.5", "true", "31415926535897932384"] {
-            let err = serde_json::from_str::<DbKey>(other)
+            let err = serde_json::from_str::<OfficeSecretsKey>(other)
                 .unwrap_err()
                 .to_string();
             assert!(err.contains(BAD_DB_KEY), "{other}: {err}");
         }
         for other in ["null", "[1]", "{\"a\":1}", "\"\""] {
-            assert!(serde_json::from_str::<DbKey>(other).is_err(), "{other}");
+            assert!(
+                serde_json::from_str::<OfficeSecretsKey>(other).is_err(),
+                "{other}"
+            );
         }
     }
 
     #[test]
-    fn a_db_key_is_redacted_in_debug() {
-        let k = db_key();
+    fn an_office_secrets_key_is_redacted_in_debug() {
+        let k = office_secrets_key();
         let secret = key_hex(&k);
         for shown in [
             format!("{k:?}"),
@@ -828,27 +838,27 @@ mod tests {
             format!("{k:#?}"),
         ] {
             assert!(!shown.contains(&secret[..8]), "{shown}");
-            assert!(shown.contains("DbKey(<redacted>)"), "{shown}");
+            assert!(shown.contains("OfficeSecretsKey(<redacted>)"), "{shown}");
         }
     }
 
     #[test]
-    fn db_key_equality_compares_every_byte() {
-        let a = db_key();
-        assert_eq!(a, db_key());
+    fn office_secrets_key_equality_compares_every_byte() {
+        let a = office_secrets_key();
+        assert_eq!(a, office_secrets_key());
         for i in [0, 15, 31] {
             let mut bytes = *a.expose_bytes();
             bytes[i] ^= 1;
-            assert_ne!(a, DbKey::from_bytes(bytes), "byte {i}");
+            assert_ne!(a, OfficeSecretsKey::from_bytes(bytes), "byte {i}");
         }
     }
 
     /// As for the app token: `Drop` calls `wipe`.
     #[test]
-    fn drop_zeroes_the_db_key() {
-        let mut k = DbKey::from_bytes([0x5a; DB_KEY_BYTES]);
+    fn drop_zeroes_the_office_secrets_key() {
+        let mut k = OfficeSecretsKey::from_bytes([0x5a; OFFICE_SECRETS_KEY_BYTES]);
         k.wipe();
-        assert_eq!(*k.0, [0u8; DB_KEY_BYTES]);
+        assert_eq!(*k.0, [0u8; OFFICE_SECRETS_KEY_BYTES]);
     }
 
     #[test]

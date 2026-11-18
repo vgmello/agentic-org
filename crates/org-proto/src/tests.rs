@@ -541,16 +541,15 @@ fn office_status_reason_and_next_restart_round_trip_and_are_omitted_when_absent(
         offline_hq()
     );
 
-    // A fatal reason (until the key is restored and `office.restart` retries), with no
-    // restart pending.
+    // A fatal reason (until `office.restart`), with no restart pending.
     let fatal = OfficeInfo {
         status: OfficeStatus::Unavailable,
-        status_reason: Some(OfficeStatusReason::KeyMissing),
+        status_reason: Some(OfficeStatusReason::RestartsExhausted),
         next_restart_at: None,
         ..hq()
     };
     let v = serde_json::to_value(&fatal).unwrap();
-    assert_eq!(v["status_reason"], "key_missing");
+    assert_eq!(v["status_reason"], "restarts_exhausted");
     assert!(v.get("next_restart_at").is_none(), "{v}");
     assert_eq!(serde_json::from_value::<OfficeInfo>(v).unwrap(), fatal);
 }
@@ -576,7 +575,6 @@ fn an_office_from_an_older_server_without_the_new_fields_still_decodes() {
 #[test]
 fn office_status_reasons_are_pinned_and_unknown_ones_decode_as_unknown() {
     for (reason, name) in [
-        (OfficeStatusReason::KeyMissing, "key_missing"),
         (OfficeStatusReason::InUse, "in_use"),
         (OfficeStatusReason::StorageError, "storage_error"),
         (OfficeStatusReason::InvalidRequest, "invalid_request"),
@@ -597,6 +595,11 @@ fn office_status_reasons_are_pinned_and_unknown_ones_decode_as_unknown() {
         );
     }
     assert_eq!(OfficeStatusReason::default(), OfficeStatusReason::Unknown);
+    // The retired `key_missing` (an office without its key now starts) is no longer a reason.
+    assert_eq!(
+        serde_json::from_value::<OfficeStatusReason>("key_missing".into()).unwrap(),
+        OfficeStatusReason::Unknown
+    );
 
     // A reason from a newer server never stops the office record decoding.
     let newer = json!({"id": "o", "organization_id": "g", "name": "HQ", "host": "h",

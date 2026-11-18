@@ -1,6 +1,6 @@
 //! Strict transfer/revocation service and real rendezvous reset cleanup.
 use super::*;
-use org_office_launch::v3::{ChannelKind, TransferRecord};
+use org_office_launch::{ChannelKind, TransferRecord};
 fn assert_transfer_fatal(run: &mut Run, case: &str) {
     let status = run.wait();
     let stderr = run.stderr();
@@ -163,7 +163,12 @@ fn sender_retries_injected_eintr_but_refuses_other_errors_without_sending() {
 fn unread_created_and_ready_host_close_has_normal_cleanup_including_linux_reset() {
     let _process = process_isolation();
     let world = World::new();
-    let session = handshake(&world, FirstLine::Create, INSTANCE, Some(db_key()));
+    let session = handshake(
+        &world,
+        FirstLine::Create,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     assert!(
         session.reader.buffer().is_empty(),
         "reset probe must not prefetch events"
@@ -210,7 +215,7 @@ fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live
     for phase in 0..2 {
         let (source, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: OFFICE.into(),
             channel_id: "opaque/Exact:id".into(),
@@ -223,7 +228,7 @@ fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live
         );
         assert_eq!(
             session.event(),
-            json!({"v":3,"event":"fds_received","of":"opaque/Exact:id"})
+            json!({"v":1,"event":"fds_received","of":"opaque/Exact:id"})
         );
         // The fake host retains its sender copy until this record's own ACK.
         drop(source);
@@ -242,7 +247,7 @@ fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live
             drop(peer);
             assert_eq!(
                 session.event(),
-                json!({"v":3,"event":"channel_closed","of":"opaque/Exact:id"})
+                json!({"v":1,"event":"channel_closed","of":"opaque/Exact:id"})
             );
         } else {
             frame::write_message(peer.get_mut(), &json!({"id":42,"method":"hello","params":{"api":{"min":1,"max":3}},"principal":{"malformed":"ignored-on-hello"}})).unwrap();
@@ -323,7 +328,7 @@ fn malformed_and_wrong_rights_records_are_fatal_without_any_revoked_ack() {
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         let (source, _peer) = UnixStream::pair().unwrap();
-        let revoked = v3::encode_transfer_record(&TransferRecord::Revoked {
+        let revoked = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
             session_ids: vec![],
         })
         .unwrap();
@@ -362,15 +367,17 @@ fn valid_revocations_have_no_ack_and_overflow_is_fatal_after_fifo_application() 
     let mut session = ready_create(&world);
     let ids: Vec<String> = (0..4096).map(|n| format!("opaque-{n}")).collect();
     for chunk in ids.chunks(64) {
-        let body = v3::encode_transfer_record(&TransferRecord::Revoked {
+        let body = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
             session_ids: chunk.to_vec(),
         })
         .unwrap();
         send_record(session.transfer.as_ref().unwrap(), &body, &[]);
     }
     for ids in [vec![], ids[..64].to_vec()] {
-        let body =
-            v3::encode_transfer_record(&TransferRecord::Revoked { session_ids: ids }).unwrap();
+        let body = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
+            session_ids: ids,
+        })
+        .unwrap();
         send_record(session.transfer.as_ref().unwrap(), &body, &[]);
     }
     assert_eq!(hello(&world).organization_name, "Acme");
@@ -393,7 +400,7 @@ fn valid_revocations_have_no_ack_and_overflow_is_fatal_after_fifo_application() 
         error.raw_os_error()
     );
     assert_eq!(hello(&world).organization_name, "Acme");
-    let overflow = v3::encode_transfer_record(&TransferRecord::Revoked {
+    let overflow = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
         session_ids: vec!["overflow".into()],
     })
     .unwrap();
@@ -414,24 +421,24 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     let path = world.home.join("r.sock");
     let listener = UnixListener::bind(&path).unwrap();
     let mut run = world.spawn(&["--create"]);
-    v3::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path)).unwrap();
+    org_office_launch::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path)).unwrap();
     let mut stream = accepted(&listener, &mut run);
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
     let handoff = Handoff::Create {
-        db_key: db_key(),
+        office_secrets_key: office_secrets_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
-        recovery_code: recovery_code(),
+        recovery_code: Some(recovery_code()),
         fds: vec![HandoffFd::Transfer],
     };
-    let mut header = v3::encode_handoff(&handoff).unwrap();
+    let mut header = org_office_launch::encode_handoff(&handoff).unwrap();
     stream.write_all(&header).unwrap();
     header.fill(0);
     let (mut host, child) = UnixStream::pair().unwrap();
     let mut body = Vec::new();
     for id in ["prefix", "tail"] {
         body.extend(
-            v3::encode_transfer_record(&TransferRecord::Revoked {
+            org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
                 session_ids: vec![id.into()],
             })
             .unwrap(),
@@ -444,7 +451,7 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     pass_fd(&stream, child.as_raw_fd());
     assert_eq!(
         line(&mut reader),
-        json!({"v":3,"event":"fds_received","of":"handoff"})
+        json!({"v":1,"event":"fds_received","of":"handoff"})
     );
     drop(child);
     assert_eq!(line(&mut reader)["event"], "created");
@@ -603,7 +610,7 @@ fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db(
 fn open_live_channel(session: &mut Session, kind: ChannelKind, id: &str) -> BufReader<UnixStream> {
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    let record = v3::encode_transfer_record(&TransferRecord::Channel {
+    let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind,
         office_id: OFFICE.into(),
         channel_id: id.into(),
@@ -616,7 +623,7 @@ fn open_live_channel(session: &mut Session, kind: ChannelKind, id: &str) -> BufR
     );
     assert_eq!(
         session.event(),
-        json!({"v":3,"event":"fds_received","of":id})
+        json!({"v":1,"event":"fds_received","of":id})
     );
     drop(source);
     BufReader::with_capacity(1, peer)
@@ -637,7 +644,7 @@ fn assert_channel_hello(peer: &mut BufReader<UnixStream>) {
 fn assert_capacity_refused(session: &mut Session, kind: ChannelKind) {
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    let record = v3::encode_transfer_record(&TransferRecord::Channel {
+    let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind,
         office_id: OFFICE.into(),
         channel_id: "over-limit".into(),
@@ -650,7 +657,7 @@ fn assert_capacity_refused(session: &mut Session, kind: ChannelKind) {
     );
     assert_eq!(
         session.event(),
-        json!({"v":3,"event":"fds_refused","of":"over-limit","reason":"capacity"})
+        json!({"v":1,"event":"fds_refused","of":"over-limit","reason":"capacity"})
     );
     // The refusal proves worker disposal. Only then release the sender copy.
     drop(source);
@@ -666,19 +673,14 @@ fn close_live_channel(session: &mut Session, id: &str, peer: BufReader<UnixStrea
     drop(peer);
     assert_eq!(
         session.event(),
-        json!({"v":3,"event":"channel_closed","of":id})
+        json!({"v":1,"event":"channel_closed","of":id})
     );
 }
 
 #[test]
 fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
     let _process = process_isolation();
-    for case in [
-        "eighth-gateway",
-        "ninth-local",
-        "ninth-gateway",
-        "ninth-all-local",
-    ] {
+    for case in ["eighth-web", "ninth-local", "ninth-web", "ninth-all-local"] {
         let world = World::new();
         let mut session = ready_create(&world);
         let mut peers = Vec::new();
@@ -689,7 +691,7 @@ fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
                 if case == "ninth-all-local" {
                     ChannelKind::Local
                 } else {
-                    ChannelKind::Gateway
+                    ChannelKind::Web
                 },
                 &id,
             );
@@ -701,8 +703,8 @@ fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
                 open_live_channel(&mut session, ChannelKind::Local, "eighth-local"),
             ));
         }
-        let refused_kind = if case.ends_with("gateway") {
-            ChannelKind::Gateway
+        let refused_kind = if case.ends_with("web") {
+            ChannelKind::Web
         } else {
             ChannelKind::Local
         };
@@ -744,10 +746,10 @@ fn duplicate_live_channel_remains_fatal_without_ack_and_reaps_every_peer() {
     let _process = process_isolation();
     let world = World::new();
     let mut session = ready_create(&world);
-    let mut existing = open_live_channel(&mut session, ChannelKind::Gateway, "live-0");
+    let mut existing = open_live_channel(&mut session, ChannelKind::Web, "live-0");
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    let record = v3::encode_transfer_record(&TransferRecord::Channel {
+    let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind: ChannelKind::Local,
         office_id: OFFICE.into(),
         channel_id: "live-0".into(),
@@ -779,7 +781,7 @@ fn real_channel_admission_rejects_each_reserved_identity_and_wrong_descriptor_wi
     for case in ["empty-id", "handoff-id", "wrong-office", "datagram", "file"] {
         let world = World::new();
         let mut session = ready_create(&world);
-        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: if case == "wrong-office" {
                 "other-office"
@@ -825,7 +827,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     ready_create(&world).stop();
     let office = org_office::Office::open_for_instance(
         world.folder(OFFICE),
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(office_secrets_key()),
         INSTANCE,
     )
     .unwrap();
@@ -838,11 +840,16 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
         .unwrap()
         .id;
     drop(office);
-    let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    let mut session = handshake(
+        &world,
+        FirstLine::Start,
+        INSTANCE,
+        Some(office_secrets_key()),
+    );
     assert_eq!(session.event()["event"], "ready");
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
-    let body = v3::encode_transfer_record(&TransferRecord::Channel {
+    let body = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind: ChannelKind::Local,
         office_id: OFFICE.into(),
         channel_id: "grant-proof".into(),
@@ -855,7 +862,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     );
     assert_eq!(
         session.event(),
-        json!({"v":3,"event":"fds_received","of":"grant-proof"})
+        json!({"v":1,"event":"fds_received","of":"grant-proof"})
     );
     drop(source);
     let mut peer = BufReader::with_capacity(1, peer);
@@ -869,7 +876,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
         )["result"]["api_version"],
         2
     );
-    // Sign for the actual stored owner; v3 owner_member_id activation is a later slice.
+    // Sign for the actual stored owner; owner_member_id activation is a later slice.
     let mut grant = json!({"account":"test-account","member":owner,"org_id":ORG,"office_id":OFFICE,
         "channel_id":"grant-proof","session_id":"grant-session","exp":u64::MAX,"mac":"fa1316830c08b2d2648ec24d6d852e06524879c028e5f90cdfe691482adae01d"});
     sign_test_grant(&mut grant);
@@ -890,14 +897,14 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     let refused =
         call(json!({"id":4,"method":"session.open","params":{},"principal":{"grant":grant}}));
     assert_eq!(refused["error"]["code"], "not_authorized");
-    let revoke = v3::encode_transfer_record(&TransferRecord::Revoked {
+    let revoke = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
         session_ids: vec!["grant-session".into()],
     })
     .unwrap();
     send_record(session.transfer.as_ref().unwrap(), &revoke, &[]);
     // Same FIFO's next channel ACK is a barrier after apply_batch returns; no sleeps.
     let (barrier_source, barrier_peer) = UnixStream::pair().unwrap();
-    let barrier = v3::encode_transfer_record(&TransferRecord::Channel {
+    let barrier = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind: ChannelKind::Local,
         office_id: OFFICE.into(),
         channel_id: "revocation-barrier".into(),
@@ -910,7 +917,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     );
     assert_eq!(
         session.event(),
-        json!({"v":3,"event":"fds_received","of":"revocation-barrier"})
+        json!({"v":1,"event":"fds_received","of":"revocation-barrier"})
     );
     drop(barrier_source);
     let revoked =

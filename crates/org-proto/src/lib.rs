@@ -138,8 +138,8 @@ pub use recovery::RecoveryCode;
 pub use retired::Retired;
 pub use token::zero as zero_bytes;
 pub use token::{
-    AppToken, DbKey, GrantKey, GrantMac, APP_TOKEN_BYTES, DB_KEY_BYTES, GRANT_KEY_BYTES,
-    GRANT_MAC_BYTES,
+    AppToken, GrantKey, GrantMac, OfficeSecretsKey, APP_TOKEN_BYTES, GRANT_KEY_BYTES,
+    GRANT_MAC_BYTES, OFFICE_SECRETS_KEY_BYTES,
 };
 pub use types::{
     OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization,

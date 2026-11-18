@@ -1,11 +1,11 @@
 use super::*;
-use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
-use org_proto::{DbKey, GrantKey};
+use org_office_launch::{CreateLine, HandoffFd, OfficeLine};
+use org_proto::{GrantKey, OfficeSecretsKey};
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
-fn db_key() -> DbKey {
-    DbKey::from_bytes([0xb3; 32])
+fn office_secrets_key() -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes([0xb3; 32])
 }
 fn grant() -> GrantKey {
     GrantKey::from_bytes([7; 32])
@@ -32,34 +32,31 @@ fn create() -> CreateLine {
 }
 fn request(op: u8, key: bool) -> Request {
     match op {
-        0 => Request::V3 {
+        0 => Request::Launch {
             line: HostFirstLine::Create(create()),
             handoff: Handoff::Create {
-                db_key: db_key(),
+                office_secrets_key: office_secrets_key(),
                 grant_key: grant(),
-                recovery_code: RecoveryCode::new("RECOVERY-TEST".into()).unwrap(),
+                recovery_code: key.then(|| RecoveryCode::new("RECOVERY-TEST".into()).unwrap()),
                 fds: vec![HandoffFd::Transfer],
             },
         },
-        1 => Request::V3 {
+        1 => Request::Launch {
             line: HostFirstLine::Start(office()),
             handoff: Handoff::Start {
-                db_key: db_key(),
+                office_secrets_key: key.then(office_secrets_key),
                 grant_key: grant(),
                 fds: vec![HandoffFd::Transfer],
             },
         },
-        _ => Request::V3 {
+        _ => Request::Launch {
             line: HostFirstLine::Discard(office()),
-            handoff: Handoff::Discard {
-                db_key: key.then(db_key),
-                fds: vec![],
-            },
+            handoff: Handoff::Discard { fds: vec![] },
         },
     }
 }
 #[test]
-fn v3_create_preserves_identity_keys_and_typed_recovery() {
+fn launch_create_preserves_identity_keys_and_typed_recovery() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let Launch::Create(c) = Launch::from_request(request(0, true)).unwrap() else {
         panic!("not create")
@@ -70,11 +67,16 @@ fn v3_create_preserves_identity_keys_and_typed_recovery() {
     assert_eq!(c.office.org_name, "Acme");
     assert_eq!(c.office.role, org_office::OfficeRole::Hq);
     assert_eq!(c.role, OfficeRole::Hq);
-    assert!(c.key == Key::from_db_key(db_key()));
+    assert!(c.key == Key::from_office_secrets_key(office_secrets_key()));
     assert_eq!(c.auth.grant_key(), &grant());
     assert_eq!(c.instance, INSTANCE);
     assert_eq!(c.owner_member_id, OWNER);
-    assert_eq!(c.recovery.expose(), "RECOVERY-TEST");
+    assert_eq!(c.recovery.unwrap().expose(), "RECOVERY-TEST");
+    // A create handoff without a recovery code reaches the workflow as `None`, which refuses it.
+    let Launch::Create(c) = Launch::from_request(request(0, false)).unwrap() else {
+        panic!("not create")
+    };
+    assert!(c.recovery.is_none());
 }
 #[test]
 fn start_preserves_keys_authority_and_instance() {
@@ -83,7 +85,7 @@ fn start_preserves_keys_authority_and_instance() {
     else {
         panic!("not start")
     };
-    assert!(key == Key::from_db_key(db_key()));
+    assert!(key == Some(Key::from_office_secrets_key(office_secrets_key())));
     assert_eq!(auth.grant_key(), &grant());
     assert_eq!(
         office,
@@ -94,20 +96,29 @@ fn start_preserves_keys_authority_and_instance() {
     );
 }
 #[test]
-fn discard_accepts_a_null_or_present_key_and_carries_none() {
+fn a_start_without_the_office_secrets_key_proceeds_with_none() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for present in [false, true] {
-        let Launch::Discard { office } = Launch::from_request(request(2, present)).unwrap() else {
-            panic!("not discard")
-        };
-        assert_eq!(
-            office,
-            OfficeIdentity {
-                office_id: "OFFICE1".into(),
-                instance_id: INSTANCE.into(),
-            }
-        );
-    }
+    let Launch::Start { key, auth, office } = Launch::from_request(request(1, false)).unwrap()
+    else {
+        panic!("not start")
+    };
+    assert!(key.is_none());
+    assert_eq!(auth.grant_key(), &grant());
+    assert_eq!(office.office_id, "OFFICE1");
+}
+#[test]
+fn discard_carries_no_secret() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let Launch::Discard { office } = Launch::from_request(request(2, false)).unwrap() else {
+        panic!("not discard")
+    };
+    assert_eq!(
+        office,
+        OfficeIdentity {
+            office_id: "OFFICE1".into(),
+            instance_id: INSTANCE.into(),
+        }
+    );
 }
 #[test]
 fn unknown_or_mismatched_requests_never_normalize() {
@@ -117,12 +128,9 @@ fn unknown_or_mismatched_requests_never_normalize() {
         HostFirstLine::Start(office()),
         HostFirstLine::Unknown,
     ] {
-        let request = Request::V3 {
+        let request = Request::Launch {
             line,
-            handoff: Handoff::Discard {
-                db_key: None,
-                fds: vec![],
-            },
+            handoff: Handoff::Discard { fds: vec![] },
         };
         assert!(matches!(
             Launch::from_request(request),
@@ -132,16 +140,16 @@ fn unknown_or_mismatched_requests_never_normalize() {
 }
 
 #[test]
-fn every_mismatched_v3_pair_is_refused() {
+fn every_mismatched_launch_pair_is_refused() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     for first_op in 0..3 {
         for handoff_op in 0..3 {
             if first_op == handoff_op {
                 continue;
             }
-            let Request::V3 { line, .. } = request(first_op, true);
-            let Request::V3 { handoff, .. } = request(handoff_op, true);
-            assert!(Launch::from_request(Request::V3 { line, handoff }).is_err());
+            let Request::Launch { line, .. } = request(first_op, true);
+            let Request::Launch { handoff, .. } = request(handoff_op, true);
+            assert!(Launch::from_request(Request::Launch { line, handoff }).is_err());
         }
     }
 }
@@ -153,7 +161,7 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
         for role in [OfficeRole::Satellite, OfficeRole::Unknown] {
             let mut request = request(0, true);
             match &mut request {
-                Request::V3 {
+                Request::Launch {
                     line: HostFirstLine::Create(c),
                     ..
                 } => c.role = role,
@@ -168,12 +176,12 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
 }
 
 #[test]
-fn distinct_v3_identities_are_preserved_on_every_operation() {
+fn distinct_launch_identities_are_preserved_on_every_operation() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184";
     const OTHER_OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
     for op in 0..3 {
-        let Request::V3 { mut line, handoff } = request(op, true);
+        let Request::Launch { mut line, handoff } = request(op, true);
         let office = match &mut line {
             HostFirstLine::Create(c) => {
                 c.owner_member_id = OTHER_OWNER.into();
@@ -184,7 +192,7 @@ fn distinct_v3_identities_are_preserved_on_every_operation() {
         };
         office.office_id = "OFFICE2".into();
         office.instance_id = OTHER_INSTANCE.into();
-        match Launch::from_request(Request::V3 { line, handoff }).unwrap() {
+        match Launch::from_request(Request::Launch { line, handoff }).unwrap() {
             Launch::Create(c) => {
                 assert_eq!(c.office.office_id, "OFFICE2");
                 assert_eq!(c.instance, OTHER_INSTANCE);

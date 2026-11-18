@@ -20,15 +20,15 @@ use std::time::{Duration, Instant};
 
 use agentic_org_office::test_support::{grant_key, signed_grant, ChannelCaller};
 use org_office::rules::OrgCommand;
-use org_office_launch::v3::{
+use org_office_launch::ServerEvent;
+use org_office_launch::{
     self, ChannelKind, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
     TransferRecord,
 };
-use org_office_launch::ServerEvent;
 use org_proto::org::{
     AgentProfile, AgentRuntime, AgentStatus, MemberAddAgentParams, MemberOffboardParams,
 };
-use org_proto::DbKey;
+use org_proto::OfficeSecretsKey;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -39,7 +39,7 @@ const ORG: &str = "01ORG0000000000000000ACME1";
 const PIXEL: &str = "AGENT00000000000000000PIXL";
 const NOVA: &str = "AGENT00000000000000000NOVA";
 const WAIT: Duration = Duration::from_secs(30);
-/// The instance the host starts the office as (v3 adopts the library-stored office into it).
+/// The instance the host starts the office as (the worker adopts the library-stored office into it).
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 
 fn main() {
@@ -217,7 +217,7 @@ impl World {
 
     /// Stores the office with the library and hires pixel and nova into it there (the worker
     /// creates only through HQ creation-v1, and no app or person binds on the office socket),
-    /// then starts it the way the host does (v3: the first line on stdin, the keys and the
+    /// then starts it the way the host does (the first line on stdin, the keys and the
     /// transfer socket over the rendezvous) and returns the running server.
     fn office(&self) -> Server {
         let office = org_office::Office::create(
@@ -229,7 +229,7 @@ impl World {
                 org_id: ORG.into(),
                 org_name: "Acme".into(),
             },
-            org_office::Key::from_db_key(db_key()),
+            org_office::Key::from_office_secrets_key(office_secrets_key()),
         )
         .unwrap();
         for (n, id, handle) in [(1, PIXEL, "pixel"), (2, NOVA, "nova")] {
@@ -280,7 +280,7 @@ impl World {
             .spawn()
             .unwrap();
         let mut stdin = child.stdin.take();
-        v3::write_first_line(
+        org_office_launch::write_first_line(
             stdin.as_mut().unwrap(),
             &HostFirstLine::Start(OfficeLine {
                 id_profile: None,
@@ -308,8 +308,8 @@ impl World {
         )
         .unwrap();
         assert_eq!(ready_for_secrets["event"], "ready_for_secrets");
-        let mut handoff = v3::encode_handoff(&Handoff::Start {
-            db_key: db_key(),
+        let mut handoff = org_office_launch::encode_handoff(&Handoff::Start {
+            office_secrets_key: Some(office_secrets_key()),
             grant_key: grant_key(),
             fds: vec![HandoffFd::Transfer],
         })
@@ -318,7 +318,7 @@ impl World {
         handoff.fill(0);
         let (transfer, host_end) = UnixDatagram::pair().unwrap();
         transfer.shutdown(std::net::Shutdown::Write).unwrap();
-        send_fds(&server.stream, &[v3::FD_MARKER], &transfer);
+        send_fds(&server.stream, &[org_office_launch::FD_MARKER], &transfer);
         server.expect_received("handoff");
         drop(transfer);
         server.transfer = Some(host_end);
@@ -423,7 +423,7 @@ struct Server {
 
 impl Server {
     fn event(&mut self) -> RendezvousEvent {
-        v3::read_server_event(&mut self.reader)
+        org_office_launch::read_server_event(&mut self.reader)
             .unwrap()
             .expect("the rendezvous closed")
     }
@@ -442,7 +442,7 @@ impl Server {
         let id = format!("owner-{}", self.channels);
         let (source, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(WAIT)).unwrap();
-        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: OFFICE.into(),
             channel_id: id.clone(),
@@ -508,8 +508,8 @@ impl Run {
 }
 
 /// The database key the host would hold for the office.
-fn db_key() -> DbKey {
-    DbKey::from_bytes([0xB3; 32])
+fn office_secrets_key() -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes([0xB3; 32])
 }
 
 /// A ULID made now (the command ids the office accepts), distinct for each `n`.

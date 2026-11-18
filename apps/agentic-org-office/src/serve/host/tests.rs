@@ -6,7 +6,7 @@ fn context() -> HostChannel {
     hello.api_version = 2;
     HostChannel {
         _channel_id: "opaque-channel".into(),
-        _kind: org_office_launch::v3::ChannelKind::Local,
+        _kind: org_office_launch::ChannelKind::Local,
         hello,
         _revocations: Arc::default(),
     }

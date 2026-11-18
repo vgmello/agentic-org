@@ -490,7 +490,7 @@
         ".agent-kit/tasks/v1-hq-creation-provider-contract.md",
         ".agent-kit/tasks/v1-creation-admission-interface.md",
         "crates/org-proto/src/location.rs",
-        "apps/agentic-org-office/tests/launch/v3_activation.rs"
+        "apps/agentic-org-office/tests/launch/activation.rs"
       ],
       "risks": [],
       "implementation": [

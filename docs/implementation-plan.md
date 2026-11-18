@@ -94,7 +94,7 @@ Three things to know about the order:
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [ADR-0012](adr/0012-office-channel-lifecycle.md). Checklist rows FC-017, FC-162.
 - **Code today:** `crates/org-host/src/supervisor/child.rs` implements both launch forms;
-  `crates/org-office-launch/src/v3.rs` is the rendezvous form;
+  `crates/org-office-launch/src/contract.rs` is the rendezvous form;
   `apps/agentic-org-office/src/launch.rs` receives a grant key and does not use it; the
   CA key sits in the encrypted `office.db` (`crates/org-office/src/store/hq_creation.rs`);
   `crates/org-pki` seals with the recovery code; SQLCipher is a workspace dependency
@@ -186,7 +186,7 @@ Three things to know about the order:
     `hello` and `instance.status`.
   - The web process has its own rendezvous lines (`GatewayFirstLine`,
     `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from
-    the office worker's in `crates/org-office-launch/src/v3.rs`.
+    the office worker's in `crates/org-office-launch/src/contract.rs`.
   - To delete with the stored sessions of ADR-0013: the absolute session lifetime
     (`ABSOLUTE` in `crates/org-host/src/service/authentication.rs`) and the per-account
     session cap. The wire no longer carries it: A3 B2 removed `absolute_expires_at` from

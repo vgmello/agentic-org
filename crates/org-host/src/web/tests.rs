@@ -16,11 +16,17 @@ fn loopback() -> ListenConfig {
     .unwrap()
 }
 
+/// The rendezvous-through-ACK bound for tests that start a real child. Production
+/// uses `WAIT` (5 s); a parallel workspace test run can delay a child's start past
+/// that, so tests allow far longer. Tests of the deadline itself pass their own.
+const START_WAIT: Duration = Duration::from_secs(60);
+
 /// A supervisor log sink for tests that do not read the log.
 fn quiet(_: &str) {}
 
+/// Waits for `done`; the bound is generous so a loaded test run cannot fail it.
 fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
-    let until = Instant::now() + Duration::from_secs(5);
+    let until = Instant::now() + Duration::from_secs(30);
     while !done() {
         assert!(Instant::now() < until, "timed out waiting for {what}");
         thread::sleep(Duration::from_millis(5));
@@ -69,7 +75,7 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         critical_paths: vec![],
         release: None,
     };
-    let Err(error) = Running::start(&config, Arc::new(NoOps)) else {
+    let Err(error) = Running::start(&config, Arc::new(NoOps), START_WAIT) else {
         panic!("a release build without a team never spawns")
     };
     // The supervisor logs this text, so the refusal cause must survive.
@@ -248,7 +254,7 @@ fn readiness_turns_false_when_the_web_exits_or_its_control_reaches_eof() {
 
 /// HQ leaving Active or authentication going away while the web process runs stops it
 /// with a logged reason. It starts again once eligible: no failure is counted and no
-/// backoff is waited (the 30-second backoff would exceed `wait_for`'s deadline).
+/// backoff is waited (the 300-second backoff would exceed `wait_for`'s deadline).
 #[test]
 fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
     let stopping = Arc::new(AtomicBool::new(false));
@@ -274,7 +280,7 @@ fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
                 &state,
                 &|| eligible.load(Ordering::SeqCst),
                 Timing {
-                    backoff: Duration::from_secs(30),
+                    backoff: Duration::from_secs(300),
                     ..Timing::PRODUCTION
                 },
                 &|line| lock(&logged).push(line.to_owned()),
@@ -626,7 +632,7 @@ fn start_scripted(
 #[cfg(target_os = "macos")]
 /// Starts `config`, which must be refused, and returns the refusal.
 fn start_error(config: &Configuration) -> io::Error {
-    match Running::start(config, Arc::new(NoOps)) {
+    match Running::start(config, Arc::new(NoOps), START_WAIT) {
         Err(error) => error,
         Ok(_) => panic!("this start must be refused"),
     }
@@ -1462,7 +1468,7 @@ fn a_started_web_serves_but_is_not_reported_before_web_serving() {
     let (_dir, config) = confined_config(
         "print -r -u $REPLY '{\"v\":1,\"event\":\"fds.received\",\"of\":\"handoff\"}'\nsleep 20\n",
     );
-    let mut running = Running::start(&config, Arc::new(NoOps)).unwrap();
+    let mut running = Running::start(&config, Arc::new(NoOps), START_WAIT).unwrap();
     assert!(running.serving());
     assert!(
         !running.reported(),

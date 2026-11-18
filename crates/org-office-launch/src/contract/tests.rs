@@ -198,7 +198,7 @@ fn set(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|s| (*s).to_owned()).collect()
 }
 
-/// X-02 §4.1: the v3 first-line types hold no secret. Every secret type is non-`Clone`, so a
+/// X-02 §4.1: the launch first-line types hold no secret. Every secret type is non-`Clone`, so a
 /// `Clone` first line can't hold one; and the lines carry exactly these keys.
 #[test]
 fn first_lines_have_no_secret_fields() {
@@ -211,7 +211,7 @@ fn first_lines_have_no_secret_fields() {
     assert_eq!(
         create_wire,
         json!({
-            "v": 3, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
+            "v": 1, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
             "rendezvous": RENDEZVOUS, "org_id": ORG, "org_name": "Acme", "office_name": "HQ",
             "role": "hq", "owner_member_id": OWNER
         })
@@ -273,25 +273,27 @@ fn first_lines_round_trip_and_match_the_flag() {
 }
 
 #[test]
-fn the_v3_reader_refuses_a_v2_line() {
-    // Launch v2 is gone (A1.5): the only reader refuses a retired v2 start line, keys included,
-    // as another version.
-    let v2 = format!(
-        "{{\"v\":2,\"op\":\"start\",\"app_token\":\"{}\",\"db_key\":\"{}\"}}\n",
-        "01".repeat(32),
-        "02".repeat(32)
-    )
-    .into_bytes();
-    let err = read_first_line(&mut Cursor::new(v2), FirstLine::Start).unwrap_err();
-    assert!(matches!(
-        err,
-        LaunchError::UnsupportedVersion { found: 2, .. }
-    ));
-    // The reader names the version it speaks.
-    assert_eq!(
-        err.to_string(),
-        "launch version 2 isn't supported (this build speaks 3)"
-    );
+fn the_reader_refuses_retired_launch_versions() {
+    // Launch v2 (secrets on stdin) and the numbered v3 are gone (A1.5, A1.6): the only reader
+    // refuses either line, keys included, as another version.
+    for retired in [2, 3] {
+        let line = format!(
+            "{{\"v\":{retired},\"op\":\"start\",\"app_token\":\"{}\",\"db_key\":\"{}\"}}\n",
+            "01".repeat(32),
+            "02".repeat(32)
+        )
+        .into_bytes();
+        let err = read_first_line(&mut Cursor::new(line), FirstLine::Start).unwrap_err();
+        assert!(matches!(
+            err,
+            LaunchError::UnsupportedVersion { found, .. } if found == retired
+        ));
+        // The reader names the version it speaks.
+        assert_eq!(
+            err.to_string(),
+            format!("launch version {retired} isn't supported (this build speaks 1)")
+        );
+    }
 }
 
 #[test]
@@ -327,24 +329,24 @@ fn first_lines_check_their_rules_both_ways() {
     }
     // The same rules on the way in.
     for wire in [
-        json!({"v": 3, "op": "start", "instance_id": INSTANCE, "office_id": "a/b", "rendezvous": RENDEZVOUS}),
-        json!({"v": 3, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE, "rendezvous": "rel"}),
-        json!({"v": 3, "op": "start", "office_id": OFFICE, "rendezvous": RENDEZVOUS}),
-        json!({"v": 3, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
+        json!({"v": 1, "op": "start", "instance_id": INSTANCE, "office_id": "a/b", "rendezvous": RENDEZVOUS}),
+        json!({"v": 1, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE, "rendezvous": "rel"}),
+        json!({"v": 1, "op": "start", "office_id": OFFICE, "rendezvous": RENDEZVOUS}),
+        json!({"v": 1, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
                "rendezvous": RENDEZVOUS, "org_id": ORG, "org_name": "Acme", "office_name": "HQ",
                "role": "satellite", "owner_member_id": OWNER}),
-        json!({"v": 3, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
+        json!({"v": 1, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
                "rendezvous": RENDEZVOUS, "org_id": ORG, "org_name": "Acme", "office_name": "HQ",
                "role": "hq"}),
         // A field the line doesn't define, a v2 key above all: the first line holds no secret.
-        json!({"v": 3, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE,
+        json!({"v": 1, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE,
                "rendezvous": RENDEZVOUS, "db_key": "01".repeat(32)}),
-        json!({"v": 3, "op": "discard", "instance_id": INSTANCE, "office_id": OFFICE,
+        json!({"v": 1, "op": "discard", "instance_id": INSTANCE, "office_id": OFFICE,
                "rendezvous": RENDEZVOUS, "db_key": null}),
-        json!({"v": 3, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
+        json!({"v": 1, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
                "rendezvous": RENDEZVOUS, "org_id": ORG, "org_name": "Acme", "office_name": "HQ",
                "role": "hq", "owner_member_id": OWNER, "db_key": "01".repeat(32)}),
-        json!({"v": 3, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE,
+        json!({"v": 1, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE,
                "rendezvous": RENDEZVOUS, "extra": 1}),
     ] {
         let mut line = serde_json::to_vec(&wire).unwrap();
@@ -359,7 +361,7 @@ fn first_lines_check_their_rules_both_ways() {
             "{wire}"
         );
     }
-    let unknown = b"{\"v\":3,\"op\":\"join\"}\n".to_vec();
+    let unknown = b"{\"v\":1,\"op\":\"join\"}\n".to_vec();
     assert!(matches!(
         read_first_line(&mut Cursor::new(unknown), FirstLine::Create),
         Err(LaunchError::Invalid(_))
@@ -371,7 +373,7 @@ fn ready_for_secrets_has_its_wire_shape() {
     let wire = serde_json::to_value(ReadyForSecrets).unwrap();
     assert_eq!(
         wire,
-        json!({"v": 3, "event": "ready_for_secrets", "channel_profile": CHANNEL_PROFILE})
+        json!({"v": 1, "event": "ready_for_secrets", "channel_profile": CHANNEL_PROFILE})
     );
     assert_eq!(
         serde_json::from_value::<ReadyForSecrets>(wire).unwrap(),
@@ -379,9 +381,9 @@ fn ready_for_secrets_has_its_wire_shape() {
     );
     for bad in [
         json!({"v": 2, "event": "ready_for_secrets"}),
-        json!({"v": 3, "event": "ready"}),
+        json!({"v": 1, "event": "ready"}),
         json!({"event": "ready_for_secrets"}),
-        json!({"v": 3, "event": "ready_for_secrets", "db_key": "01"}),
+        json!({"v": 1, "event": "ready_for_secrets", "db_key": "01"}),
     ] {
         assert!(serde_json::from_value::<ReadyForSecrets>(bad).is_err());
     }
@@ -395,8 +397,7 @@ fn transfer_records_refuse_unknown_fields() {
     let mut extra = revoked;
     extra["fd"] = json!(1);
     assert!(serde_json::from_value::<TransferRecord>(extra).is_err());
-    let channel =
-        json!({"type": "channel", "kind": "gateway", "office_id": "o", "channel_id": "c"});
+    let channel = json!({"type": "channel", "kind": "web", "office_id": "o", "channel_id": "c"});
     serde_json::from_value::<TransferRecord>(channel.clone()).unwrap();
     let mut extra = channel;
     extra["grant_key"] = json!("secret");
@@ -414,102 +415,154 @@ fn line_value(bytes: &[u8]) -> Value {
 #[test]
 fn handoffs_carry_the_keys_and_name_their_descriptors() {
     let create = Handoff::Create {
-        db_key: DbKey::from_bytes([0xcd; 32]),
+        office_secrets_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
         grant_key: GrantKey::from_bytes([0xef; 32]),
-        recovery_code: RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap(),
+        recovery_code: Some(RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()),
         fds: vec![HandoffFd::Transfer],
     };
     let bytes = encode_handoff(&create).unwrap();
     assert_eq!(
         line_value(&bytes),
-        json!({"v": 3, "op": "create", "db_key": KEY_HEX, "grant_key": GRANT_HEX,
+        json!({"v": 1, "op": "create", "office_secrets_key": KEY_HEX, "grant_key": GRANT_HEX,
                "recovery_code": "ABCD-EFGH-IJKL", "fds": ["transfer"]})
     );
     let back = decode_handoff(&bytes[..bytes.len() - 1]).unwrap();
     assert_eq!(back.fds(), &[HandoffFd::Transfer]);
     let Handoff::Create {
+        office_secrets_key,
         grant_key,
-        recovery_code,
+        recovery_code: Some(recovery_code),
         ..
     } = &back
     else {
         panic!("{back:?}");
     };
+    assert_eq!(office_secrets_key.expose_bytes(), &[0xcd; 32]);
     assert_eq!(grant_key.expose_bytes(), &[0xef; 32]);
     assert_eq!(recovery_code.expose(), "ABCD-EFGH-IJKL");
     // Debug shows no secret.
     let printed = format!("{back:?}");
     assert!(!printed.contains("cdcd") && !printed.contains("efef") && !printed.contains("ABCD"));
 
+    // A create without a recovery code leaves the field out (never `null`) and decodes back.
+    let bare = Handoff::Create {
+        office_secrets_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
+        grant_key: GrantKey::from_bytes([0xef; 32]),
+        recovery_code: None,
+        fds: vec![HandoffFd::Transfer],
+    };
+    let bytes = encode_handoff(&bare).unwrap();
+    assert_eq!(
+        line_value(&bytes),
+        json!({"v": 1, "op": "create", "office_secrets_key": KEY_HEX, "grant_key": GRANT_HEX,
+               "fds": ["transfer"]})
+    );
+    assert!(matches!(
+        decode_handoff(&bytes[..bytes.len() - 1]).unwrap(),
+        Handoff::Create {
+            recovery_code: None,
+            ..
+        }
+    ));
+
     let start = Handoff::Start {
-        db_key: DbKey::from_bytes([0xcd; 32]),
+        office_secrets_key: Some(OfficeSecretsKey::from_bytes([0xcd; 32])),
         grant_key: GrantKey::from_bytes([0xef; 32]),
         fds: vec![HandoffFd::Transfer],
     };
     assert_eq!(
         line_value(&encode_handoff(&start).unwrap()),
-        json!({"v": 3, "op": "start", "db_key": KEY_HEX, "grant_key": GRANT_HEX, "fds": ["transfer"]})
+        json!({"v": 1, "op": "start", "office_secrets_key": KEY_HEX, "grant_key": GRANT_HEX,
+               "fds": ["transfer"]})
     );
-
-    // A discard gets no transfer socket, and its key may be null but not missing.
-    let discard = Handoff::Discard {
-        db_key: None,
-        fds: vec![],
+    // A start without the key carries `null` (present, not missing) and proceeds.
+    let keyless = Handoff::Start {
+        office_secrets_key: None,
+        grant_key: GrantKey::from_bytes([0xef; 32]),
+        fds: vec![HandoffFd::Transfer],
     };
+    let bytes = encode_handoff(&keyless).unwrap();
+    assert_eq!(
+        line_value(&bytes),
+        json!({"v": 1, "op": "start", "office_secrets_key": null, "grant_key": GRANT_HEX,
+               "fds": ["transfer"]})
+    );
+    assert!(matches!(
+        decode_handoff(&bytes[..bytes.len() - 1]).unwrap(),
+        Handoff::Start {
+            office_secrets_key: None,
+            ..
+        }
+    ));
+    let missing = format!(r#"{{"v":1,"op":"start","grant_key":"{GRANT_HEX}","fds":["transfer"]}}"#);
+    assert!(decode_handoff(missing.as_bytes()).is_err());
+
+    // A discard gets no transfer socket and no secret.
+    let discard = Handoff::Discard { fds: vec![] };
     assert_eq!(
         line_value(&encode_handoff(&discard).unwrap()),
-        json!({"v": 3, "op": "discard", "db_key": null, "fds": []})
+        json!({"v": 1, "op": "discard", "fds": []})
     );
-    assert!(decode_handoff(br#"{"v":3,"op":"discard","fds":[]}"#).is_err());
-    assert!(decode_handoff(br#"{"v":3,"op":"discard","db_key":null,"fds":[]}"#).is_ok());
+    assert!(decode_handoff(br#"{"v":1,"op":"discard","fds":[]}"#).is_ok());
+    assert!(
+        decode_handoff(br#"{"v":1,"op":"discard","office_secrets_key":null,"fds":[]}"#).is_err()
+    );
 }
 
 #[test]
-fn the_borrowing_discard_encoder_matches_the_owned_handoff() {
-    // Without a key: `null`, present, and no descriptors.
-    let none = encode_discard_handoff(None).unwrap();
+fn the_borrowing_encoders_match_the_owned_handoffs() {
+    let discard = encode_discard_handoff().unwrap();
     assert_eq!(
-        line_value(&none),
-        json!({"v": 3, "op": "discard", "db_key": null, "fds": []})
+        line_value(&discard),
+        json!({"v": 1, "op": "discard", "fds": []})
     );
     assert_eq!(
-        none,
-        encode_handoff(&Handoff::Discard {
-            db_key: None,
-            fds: vec![],
+        discard,
+        encode_handoff(&Handoff::Discard { fds: vec![] }).unwrap()
+    );
+
+    let key = OfficeSecretsKey::from_bytes([0xcd; 32]);
+    let grant = GrantKey::from_bytes([0xef; 32]);
+    for borrowed in [Some(&key), None] {
+        let line = encode_start_handoff(borrowed, &grant).unwrap();
+        assert_eq!(
+            line,
+            encode_handoff(&Handoff::Start {
+                office_secrets_key: borrowed.map(|_| OfficeSecretsKey::from_bytes([0xcd; 32])),
+                grant_key: GrantKey::from_bytes([0xef; 32]),
+                fds: vec![HandoffFd::Transfer],
+            })
+            .unwrap()
+        );
+        let Handoff::Start {
+            office_secrets_key, ..
+        } = decode_handoff(&line[..line.len() - 1]).unwrap()
+        else {
+            panic!("not a start");
+        };
+        assert_eq!(
+            office_secrets_key.map(|k| *k.expose_bytes()),
+            borrowed.map(|k| *k.expose_bytes())
+        );
+    }
+
+    let code = RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+    assert_eq!(
+        encode_create_handoff(&key, &grant, &code).unwrap(),
+        encode_handoff(&Handoff::Create {
+            office_secrets_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
+            grant_key: GrantKey::from_bytes([0xef; 32]),
+            recovery_code: Some(RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()),
+            fds: vec![HandoffFd::Transfer],
         })
         .unwrap()
     );
-    // With a borrowed key: byte for byte the owned encoding, and it decodes back.
-    let key = DbKey::from_bytes([0xcd; 32]);
-    let some = encode_discard_handoff(Some(&key)).unwrap();
-    assert_eq!(
-        line_value(&some),
-        json!({"v": 3, "op": "discard", "db_key": KEY_HEX, "fds": []})
-    );
-    assert_eq!(
-        some,
-        encode_handoff(&Handoff::Discard {
-            db_key: Some(DbKey::from_bytes([0xcd; 32])),
-            fds: vec![],
-        })
-        .unwrap()
-    );
-    let Handoff::Discard {
-        db_key: Some(back),
-        fds,
-    } = decode_handoff(&some[..some.len() - 1]).unwrap()
-    else {
-        panic!("not a keyed discard");
-    };
-    assert!(fds.is_empty());
-    assert_eq!(back.expose_bytes(), &[0xcd; 32]);
 }
 
 #[test]
 fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
     let wrong = Handoff::Start {
-        db_key: DbKey::from_bytes([1; 32]),
+        office_secrets_key: Some(OfficeSecretsKey::from_bytes([1; 32])),
         grant_key: GrantKey::from_bytes([2; 32]),
         fds: vec![],
     };
@@ -520,24 +573,24 @@ fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
     let k = "01".repeat(32);
     for (line, version) in [
         (
-            r#"{"v":3,"op":"discard","db_key":null,"fds":["transfer"]}"#.to_owned(),
+            r#"{"v":1,"op":"discard","fds":["transfer"]}"#.to_owned(),
             false,
         ),
         (
             format!(
-                r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer","transfer"]}}"#
+                r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer","transfer"]}}"#
             ),
             false,
         ),
         (
             format!(
-                r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["listener"]}}"#
+                r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["listener"]}}"#
             ),
             false,
         ),
         (
             format!(
-                r#"{{"v":2,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
+                r#"{{"v":2,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
             ),
             true,
         ),
@@ -552,12 +605,30 @@ fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
             assert!(result.is_err(), "{line}");
         }
     }
+    // The retired contract version 3, in its own shape or this one, is refused as a version.
+    for line in [
+        format!(r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#),
+        format!(
+            r#"{{"v":3,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
+        ),
+        r#"{"v":3,"op":"discard","fds":[]}"#.to_owned(),
+    ] {
+        assert!(
+            matches!(
+                decode_handoff(line.as_bytes()),
+                Err(LaunchError::UnsupportedVersion { found: 3, .. })
+            ),
+            "{line}"
+        );
+    }
 }
 
 #[test]
 fn transfer_records_match_the_vectors_and_the_cap() {
-    let doc: Value =
-        serde_json::from_str(include_str!("../../test-vectors/v3/transfer-records.json")).unwrap();
+    let doc: Value = serde_json::from_str(include_str!(
+        "../../test-vectors/launch/transfer-records.json"
+    ))
+    .unwrap();
     assert_eq!(doc["header_max_bytes"], TRANSFER_HEADER_MAX_BYTES);
     for case in doc["records"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
@@ -602,8 +673,8 @@ fn transfer_records_match_the_vectors_and_the_cap() {
 }
 
 #[test]
-fn the_v3_constants() {
-    assert_eq!(LAUNCH_VERSION, 3);
+fn the_launch_constants() {
+    assert_eq!(LAUNCH_VERSION, 1);
     assert_eq!(TRANSFER_HEADER_MAX_BYTES, 1024);
     assert_eq!(TRANSFER_SOCKET_BUFFER_BYTES, 64 * 1024);
 }
@@ -612,51 +683,68 @@ fn the_v3_constants() {
 fn a_handoff_carries_exactly_the_keys_of_its_op() {
     let k = "01".repeat(32);
     for line in [
-        // A start with a recovery code, a create without one, a discard with a grant key,
-        // a start whose key is null, an unknown op.
+        // A start with a recovery code, a discard with any secret, an unknown op.
         format!(
-            r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
         ),
-        // A key the op doesn't carry is refused even as null.
+        // A field the op doesn't carry is refused even as null.
         format!(
-            r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
         ),
-        r#"{"v":3,"op":"discard","db_key":null,"grant_key":null,"fds":[]}"#.to_owned(),
-        format!(r#"{{"v":3,"op":"discard","db_key":"{k}","recovery_code":null,"fds":[]}}"#),
-        // A key the op carries can't be null either.
+        r#"{"v":1,"op":"discard","grant_key":null,"fds":[]}"#.to_owned(),
+        r#"{"v":1,"op":"discard","recovery_code":null,"fds":[]}"#.to_owned(),
+        format!(r#"{{"v":1,"op":"discard","office_secrets_key":"{k}","fds":[]}}"#),
+        format!(r#"{{"v":1,"op":"discard","grant_key":"{k}","fds":[]}}"#),
+        // A secret the op requires can't be null or missing; an optional recovery code is
+        // left out, never null.
         format!(
-            r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":null,"recovery_code":"c","fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":null,"recovery_code":"c","fds":["transfer"]}}"#
         ),
         format!(
-            r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"create","office_secrets_key":null,"grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
         ),
-        format!(r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#),
-        format!(r#"{{"v":3,"op":"discard","db_key":null,"grant_key":"{k}","fds":[]}}"#),
-        format!(r#"{{"v":3,"op":"start","db_key":null,"grant_key":"{k}","fds":["transfer"]}}"#),
-        format!(r#"{{"v":3,"op":"join","db_key":"{k}","fds":[]}}"#),
-        // A field the handoff doesn't define, a v2 key above all.
         format!(
-            r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"],"app_token":"{k}"}}"#
+            r#"{{"v":1,"op":"create","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
         ),
-        format!(r#"{{"v":3,"op":"discard","db_key":null,"fds":[],"app_token":"{k}"}}"#),
         format!(
-            r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"],"extra":1}}"#
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+        ),
+        format!(
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":null,"fds":["transfer"]}}"#
+        ),
+        format!(r#"{{"v":1,"op":"start","office_secrets_key":"{k}","fds":["transfer"]}}"#),
+        format!(r#"{{"v":1,"op":"join","office_secrets_key":"{k}","fds":[]}}"#),
+        // A field the handoff doesn't define, a retired one above all.
+        format!(
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"],"app_token":"{k}"}}"#
+        ),
+        format!(r#"{{"v":1,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#),
+        r#"{"v":1,"op":"discard","db_key":null,"fds":[]}"#.to_owned(),
+        format!(r#"{{"v":1,"op":"discard","fds":[],"app_token":"{k}"}}"#),
+        format!(
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"],"extra":1}}"#
         ),
     ] {
         let error = decode_handoff(line.as_bytes()).unwrap_err().to_string();
         assert!(!error.contains("0101"), "{error}");
     }
-    let ok = format!(
-        r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
-    );
-    assert!(matches!(
-        decode_handoff(ok.as_bytes()).unwrap(),
-        Handoff::Create { .. }
-    ));
+    for ok in [
+        format!(
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
+        ),
+        format!(
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
+        ),
+    ] {
+        assert!(matches!(
+            decode_handoff(ok.as_bytes()).unwrap(),
+            Handoff::Create { .. }
+        ));
+    }
 }
 
 #[test]
-fn worker_events_on_the_rendezvous_are_v3_lines() {
+fn worker_events_on_the_rendezvous_are_launch_lines() {
     let ready = ServerEvent::Ready {
         socket: "/run/o.sock".into(),
         pid: 42,
@@ -665,7 +753,7 @@ fn worker_events_on_the_rendezvous_are_v3_lines() {
     write_server_event(&mut out, &ready).unwrap();
     assert_eq!(
         line_value(&out),
-        json!({"v": 3, "event": "ready", "socket": "/run/o.sock", "pid": 42})
+        json!({"v": 1, "event": "ready", "socket": "/run/o.sock", "pid": 42})
     );
     assert_eq!(
         read_server_event(&mut Cursor::new(out)).unwrap(),
@@ -688,12 +776,12 @@ fn worker_events_refuse_unknown_fields() {
     };
     for (good, field) in [
         (
-            json!({"v": 3, "event": "ready", "socket": "/s", "pid": 1}),
+            json!({"v": 1, "event": "ready", "socket": "/s", "pid": 1}),
             "db_key",
         ),
-        (json!({"v": 3, "event": "discarded"}), "extra"),
+        (json!({"v": 1, "event": "discarded"}), "extra"),
         (
-            json!({"v": 3, "event": "failed", "code": "invalid_request", "message": "m"}),
+            json!({"v": 1, "event": "failed", "code": "invalid_request", "message": "m"}),
             "extra",
         ),
     ] {
@@ -735,15 +823,15 @@ fn worker_events_refuse_unknown_fields() {
     ));
     // An unknown event name is still ignorable, whatever it carries.
     assert_eq!(
-        read(json!({"v": 3, "event": "later", "anything": 1})).unwrap(),
+        read(json!({"v": 1, "event": "later", "anything": 1})).unwrap(),
         Some(RendezvousEvent::Server(ServerEvent::Unknown))
     );
-    // `v` is required on a v3 line.
+    // `v` is required on a launch line.
     assert!(read(json!({"event": "discarded"})).is_err());
 }
 
 #[test]
-fn the_v3_reader_refuses_any_v2_line_as_a_version() {
+fn the_launch_reader_refuses_any_v2_line_as_a_version() {
     // Whatever its op or shape, a v2 line is a version mismatch, not a bad request.
     for line in [
         b"{\"v\":2,\"op\":\"discard\",\"db_key\":null}\n".to_vec(),
@@ -758,9 +846,9 @@ fn the_v3_reader_refuses_any_v2_line_as_a_version() {
 }
 
 #[test]
-fn fd_receipts_are_recognized_as_v3_events() {
+fn fd_receipts_are_recognized_as_launch_events() {
     for of in ["handoff", "01ARZ3NDEKTSV4RRFFQ69G5FAV"] {
-        let wire = format!("{{\"v\":3,\"event\":\"fds_received\",\"of\":\"{of}\"}}\n");
+        let wire = format!("{{\"v\":1,\"event\":\"fds_received\",\"of\":\"{of}\"}}\n");
         let decoded = read_server_event(&mut Cursor::new(wire)).unwrap().unwrap();
         assert_eq!(
             serde_json::to_value(decoded).ok(),
@@ -773,7 +861,7 @@ fn fd_receipts_are_recognized_as_v3_events() {
 #[test]
 fn rendezvous_receipt_vectors_pin_encoding_decoding_and_strict_fields() {
     let vectors: Value =
-        serde_json::from_str(include_str!("../../test-vectors/v3/worker-events.json")).unwrap();
+        serde_json::from_str(include_str!("../../test-vectors/launch/worker-events.json")).unwrap();
     assert_eq!(vectors["schema_version"], 1);
     let events = vectors["events"].as_array().unwrap();
     let invalid = vectors["invalid"].as_array().unwrap();
@@ -815,6 +903,16 @@ fn rendezvous_receipt_vectors_pin_encoding_decoding_and_strict_fields() {
         )),
         Err(LaunchError::UnsupportedVersion { found: 4, .. })
     ));
+    // The retired contract version 3 is refused as a version, whatever the event.
+    for wire in [
+        &b"{\"v\":3,\"event\":\"fds_received\",\"of\":\"handoff\"}\n"[..],
+        &b"{\"v\":3,\"event\":\"ready\",\"socket\":\"/run/o.sock\",\"pid\":42}\n"[..],
+    ] {
+        assert!(matches!(
+            read_server_event(&mut Cursor::new(wire)),
+            Err(LaunchError::UnsupportedVersion { found: 3, .. })
+        ));
+    }
 }
 
 #[test]
@@ -870,7 +968,7 @@ fn rendezvous_receipts_keep_the_frame_size_limit() {
         Err(LaunchError::Frame(FrameError::TooLargeToSend))
     ));
     assert!(encoded.is_empty());
-    let wire = format!("{{\"v\":3,\"event\":\"fds_received\",\"of\":\"{of}\"}}\n");
+    let wire = format!("{{\"v\":1,\"event\":\"fds_received\",\"of\":\"{of}\"}}\n");
     assert!(matches!(
         read_server_event(&mut Cursor::new(wire)),
         Err(LaunchError::Frame(FrameError::TooLarge))
@@ -903,7 +1001,7 @@ fn rendezvous_events_keep_the_office_file_size_limit() {
         let event = RendezvousEvent::Server(ServerEvent::Created { office: padded });
         let mut encoded = Vec::new();
         let written = write_rendezvous_event(&mut encoded, &event);
-        let wire = json!({"v":3, "event":"created", "office":value}).to_string() + "\n";
+        let wire = json!({"v":1, "event":"created", "office":value}).to_string() + "\n";
         let read = read_server_event(&mut Cursor::new(wire));
         if size == crate::MAX_OFFICE_FILE_BYTES {
             assert!(written.is_ok());
@@ -980,9 +1078,9 @@ fn channel_profile_is_required_before_secret_handoff() {
     let ready = serde_json::to_value(ReadyForSecrets).unwrap();
     assert_eq!(ready["channel_profile"], "office-channels/1");
     for raw in [
-        r#"{"v":3,"event":"ready_for_secrets"}"#,
-        r#"{"v":3,"event":"ready_for_secrets","channel_profile":"other"}"#,
-        r#"{"v":3,"event":"ready_for_secrets","channel_profile":"office-channels/1","channel_profile":"office-channels/1"}"#,
+        r#"{"v":1,"event":"ready_for_secrets"}"#,
+        r#"{"v":1,"event":"ready_for_secrets","channel_profile":"other"}"#,
+        r#"{"v":1,"event":"ready_for_secrets","channel_profile":"office-channels/1","channel_profile":"office-channels/1"}"#,
     ] {
         assert!(serde_json::from_str::<ReadyForSecrets>(raw).is_err());
     }
@@ -1005,11 +1103,11 @@ fn lifecycle_events_keep_exact_strict_fields_and_refusal_reason() {
         );
     }
     for wire in [
-        r#"{"v":3,"event":"channel_closed","of":"c","reason":"capacity"}"#,
-        r#"{"v":3,"event":"channel_closed","of":"c","of":"d"}"#,
-        r#"{"v":3,"event":"fds_refused","of":"c"}"#,
-        r#"{"v":3,"event":"fds_refused","of":"c","reason":"unknown"}"#,
-        r#"{"v":3,"event":"fds_refused","of":"c","reason":"capacity","extra":0}"#,
+        r#"{"v":1,"event":"channel_closed","of":"c","reason":"capacity"}"#,
+        r#"{"v":1,"event":"channel_closed","of":"c","of":"d"}"#,
+        r#"{"v":1,"event":"fds_refused","of":"c"}"#,
+        r#"{"v":1,"event":"fds_refused","of":"c","reason":"unknown"}"#,
+        r#"{"v":1,"event":"fds_refused","of":"c","reason":"capacity","extra":0}"#,
     ] {
         assert!(
             read_server_event(&mut Cursor::new(format!("{wire}\n"))).is_err(),
@@ -1035,7 +1133,7 @@ fn first_lines_refuse_a_ulid_or_uppercase_instance() {
             ),
             "{instance}"
         );
-        let wire = json!({"v": 3, "op": "start", "instance_id": instance,
+        let wire = json!({"v": 1, "op": "start", "instance_id": instance,
             "office_id": OFFICE, "rendezvous": RENDEZVOUS});
         let bytes = format!("{wire}\n");
         assert!(

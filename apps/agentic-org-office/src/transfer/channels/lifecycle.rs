@@ -1,7 +1,7 @@
 //! The start gate separates descriptor ownership ACK from serving and closure.
 use super::{invalid, Registered};
 use crate::startup;
-use org_office_launch::v3::RendezvousEvent;
+use org_office_launch::RendezvousEvent;
 use std::{io, net::Shutdown, sync::mpsc::Receiver};
 
 pub(super) fn write(out: &startup::EventWriter, event: &RendezvousEvent) -> io::Result<()> {

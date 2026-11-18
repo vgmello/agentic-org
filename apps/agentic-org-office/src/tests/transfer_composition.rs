@@ -3,11 +3,11 @@
 //! BEFORE that child's process exit can mask a forgotten service or database.
 use super::super::*;
 use org_office::{Key, NewOffice};
-use org_office_launch::v3::{
+use org_office_launch::{
     self, ChannelKind, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
     TransferRecord,
 };
-use org_proto::{DbKey, GrantKey};
+use org_proto::{GrantKey, OfficeSecretsKey};
 use std::io::{BufReader, Read, Seek, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
@@ -72,13 +72,13 @@ fn probe(failure: bool) {
         org_id: ID.into(),
         org_name: "Acme".into(),
     };
-    let key = || Key::from_db_key(DbKey::from_bytes([4; 32]));
+    let key = || Key::from_office_secrets_key(OfficeSecretsKey::from_bytes([4; 32]));
     let office = Office::create_for_instance(&folder, &info, key(), INSTANCE).unwrap();
     let path = dir.path().join("rv.sock");
     let listener = UnixListener::bind(&path).unwrap();
     listener.set_nonblocking(true).unwrap();
     let mut input = tempfile::tempfile().unwrap();
-    v3::write_first_line(
+    org_office_launch::write_first_line(
         &mut input,
         &HostFirstLine::Start(OfficeLine {
             id_profile: None,
@@ -121,23 +121,23 @@ fn probe(failure: bool) {
         assert_eq!(ready["event"], "ready_for_secrets");
         let (worker, transfer) = UnixDatagram::pair().unwrap();
         let handoff = Handoff::Start {
-            db_key: DbKey::from_bytes([4; 32]),
+            office_secrets_key: Some(OfficeSecretsKey::from_bytes([4; 32])),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         };
         stream
-            .write_all(&v3::encode_handoff(&handoff).unwrap())
+            .write_all(&org_office_launch::encode_handoff(&handoff).unwrap())
             .unwrap();
         pass_marker(&stream, worker.as_raw_fd());
         assert_eq!(
-            v3::read_server_event(&mut reader).unwrap(),
+            org_office_launch::read_server_event(&mut reader).unwrap(),
             Some(RendezvousEvent::FdsReceived {
                 of: "handoff".into()
             })
         );
         drop(worker);
         let Some(RendezvousEvent::Server(ServerEvent::Ready { socket, .. })) =
-            v3::read_server_event(&mut reader).unwrap()
+            org_office_launch::read_server_event(&mut reader).unwrap()
         else {
             panic!("host did not receive Ready");
         };
@@ -148,12 +148,14 @@ fn probe(failure: bool) {
             assert!(expected_socket.exists(), "Ready socket was never bound");
         }
         if failure {
-            assert!(v3::read_server_event(&mut reader).unwrap().is_none());
+            assert!(org_office_launch::read_server_event(&mut reader)
+                .unwrap()
+                .is_none());
             return (transfer, None);
         }
         let (source, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let header = v3::encode_transfer_record(&TransferRecord::Channel {
+        let header = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: ID.into(),
             channel_id: "root-owned".into(),
@@ -161,7 +163,7 @@ fn probe(failure: bool) {
         .unwrap();
         transfer::tests::send_rights(&transfer, &header, &[source.as_raw_fd()]);
         assert_eq!(
-            v3::read_server_event(&mut reader).unwrap(),
+            org_office_launch::read_server_event(&mut reader).unwrap(),
             Some(RendezvousEvent::FdsReceived {
                 of: "root-owned".into()
             })
@@ -169,7 +171,7 @@ fn probe(failure: bool) {
         drop(source);
         transfer
             .send(
-                &v3::encode_transfer_record(&TransferRecord::Revoked {
+                &org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
                     session_ids: vec!["queued-at-shutdown".into()],
                 })
                 .unwrap(),
@@ -182,7 +184,7 @@ fn probe(failure: bool) {
     });
     assert!(matches!(
         control.read_for_office(FirstLine::Start, Some(ID)).unwrap(),
-        Some(startup::Request::V3 { .. })
+        Some(startup::Request::Launch { .. })
     ));
     let lifetime = control.lifetime().unwrap();
     if failure {
@@ -235,7 +237,7 @@ fn probe(failure: bool) {
     );
 }
 fn pass_marker(stream: &UnixStream, fd: std::os::fd::RawFd) {
-    let mut marker = [v3::FD_MARKER];
+    let mut marker = [org_office_launch::FD_MARKER];
     let mut data = libc::iovec {
         iov_base: marker.as_mut_ptr().cast(),
         iov_len: 1,
