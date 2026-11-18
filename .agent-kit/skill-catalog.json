@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "9c56303f0cb84fe80f986963fe14621db76615e5baa7183d814e2ba4d45e1bed"
+      "sha256": "ceca4ce54eacb559fe79293170b9d806b6d2f5848628c7ffb6cf946f36d4b80f"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "bc2d81cbf0ec85359f846c21f8e51111a4abb2273ab339ae605699ec0bb8bd8b"
+      "sha256": "7acdfe9d7de32c7475ecdedb33c250b38daa2a9aface14007712c509c8bd0b04"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "13e7acfe81cc8df1214261b653bc3801c8f3584a3f101f04f660b267cd4101ce"
+      "sha256": "1409a7ec881cc1e520e6efec00677357f87ca56ebb5413ef7e0cb20f34364443"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",

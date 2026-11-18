@@ -754,6 +754,13 @@ half of LNX-6 run).
   each to its contract. Milestone-one work in those files adds no new conditional.
   CI lints `org-host` and `agentic-org` on Linux with `dead_code` and
   `unused_imports` allowed and runs none of their tests there.
+- **Code today (2026-11-18):** A2 B0 created `crates/org-platform` with the `Refused`
+  type and the `service`, `disk` (disk-encryption state for ENC-3, a new capability)
+  and `dirs` (the application base only) modules, each with its macOS and refusing
+  adapters and one non-conditional constructor, so that A2 never added a platform
+  predicate outside the crate. X1a adds the CI check, the allowlist and the remaining
+  module layout, and reviews the `service` contract as built (section 3.4 of the
+  design).
 - **Done when:** the crate builds on macOS and Linux; the check runs in CI on both and
   fails on a new predicate; the A2 lead has accepted the `service` contract. Merged on
   the first day of Track X.
@@ -897,8 +904,11 @@ half of LNX-6 run).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.4 and 3.5,
   [standalone server design](design/standalone-server.md) (service, non-interactive
   setup). LNX-2.
-- **Code today:** nothing registers a service on any system; `org-host/src/signals.rs`
-  stops on `SIGTERM` and `SIGINT`; a supplied TLS pair is refused until the host
+- **Code today:** `org_platform::service` holds the contract and the macOS launchd
+  adapter (A2 B0); Linux and every other system get the refusing adapter, so setup
+  there refuses before it changes anything (A2 decision D7). SRV-34's "a missing
+  service manager reports foreground instructions" waits for this increment.
+  `org-host/src/signals.rs` stops on `SIGTERM` and `SIGINT`; a supplied TLS pair is refused until the host
   certificate verifier exists.
 - **Done when:** LNX-2 passes, including after the container is replaced with the same
   volumes; in the container on a Mac, the administrator registers from the link

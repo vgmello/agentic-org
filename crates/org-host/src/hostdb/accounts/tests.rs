@@ -201,12 +201,8 @@ fn every_read_observes_demotion_revocation_display_and_link_changes() {
 #[test]
 fn row_and_links_share_one_snapshot_even_if_another_writer_commits_between_them() {
     for credentials in [false, true] {
-        let (home, secrets, db) = fixture();
-        let key = secrets
-            .load(&Name::parse("registry").unwrap())
-            .unwrap()
-            .unwrap();
-        let writer = connect(&home.path().canonicalize().unwrap().join(DB), &key).unwrap();
+        let (home, _secrets, db) = fixture();
+        let writer = connect(&home.path().canonicalize().unwrap().join(DB)).unwrap();
         ROW_HOOK.with(|cell| *cell.borrow_mut()=Some(Box::new(move || {
             writer.execute_batch("BEGIN IMMEDIATE; UPDATE accounts SET login='After',admin=0,revoked_at_ms=789; INSERT INTO account_links SELECT account_id,'ORG','MEMBER' FROM accounts; COMMIT;").unwrap();
         })));

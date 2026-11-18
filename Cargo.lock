@@ -649,6 +649,7 @@ dependencies = [
  "libc",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-release",
  "org-socket",
@@ -722,6 +723,14 @@ dependencies = [
  "argon2",
  "ring",
  "zeroize",
+]
+
+[[package]]
+name = "org-platform"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "tempfile",
 ]
 
 [[package]]

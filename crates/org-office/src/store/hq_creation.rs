@@ -2,7 +2,6 @@
 use super::Store;
 use crate::{hq_creation::LocalRecord, OfficeError};
 use rusqlite::{params, OptionalExtension};
-use zeroize::Zeroizing;
 fn invalid() -> OfficeError {
     OfficeError::Invalid("HQ provisioning requires recovery")
 }
@@ -14,7 +13,7 @@ pub(crate) fn create_table(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<(
         profile INTEGER NOT NULL CHECK(profile=1),
         public_key BLOB NOT NULL CHECK(length(public_key)=65),
         escrow_package BLOB NOT NULL CHECK(length(escrow_package) BETWEEN 1 AND 4475),
-        private_pkcs8 BLOB NOT NULL CHECK(length(private_pkcs8) BETWEEN 1 AND 4096),
+        wrapped_ca_key BLOB NOT NULL CHECK(length(wrapped_ca_key) BETWEEN 30 AND 4125),
         complete INTEGER NOT NULL CHECK(complete=1)
     ) STRICT;
     CREATE TRIGGER local_hq_creation_update BEFORE UPDATE ON local_hq_creation BEGIN SELECT RAISE(ABORT,'HQ creation material is immutable'); END;
@@ -22,10 +21,10 @@ pub(crate) fn create_table(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<(
     CREATE TRIGGER local_hq_creation_replace BEFORE INSERT ON local_hq_creation WHEN EXISTS(SELECT 1 FROM local_hq_creation) BEGIN SELECT RAISE(ABORT,'HQ creation material already exists'); END;")
 }
 pub(crate) fn read(db: &rusqlite::Connection) -> Result<Option<LocalRecord>, OfficeError> {
-    let raw=db.query_row("SELECT version,organization_id,operation_id,profile,public_key,escrow_package,private_pkcs8,complete FROM local_hq_creation WHERE singleton=1",[],|r| {
+    let raw=db.query_row("SELECT version,organization_id,operation_id,profile,public_key,escrow_package,wrapped_ca_key,complete FROM local_hq_creation WHERE singleton=1",[],|r| {
         let key=r.get_ref(4)?.as_blob()?;let package=r.get_ref(5)?.as_blob()?;let private=r.get_ref(6)?.as_blob()?;
-        if key.len()!=65||package.is_empty()||package.len()>4475||private.is_empty()||private.len()>4096 {return Err(rusqlite::Error::InvalidQuery);}
-        Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?,key.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?,package.to_vec(),Zeroizing::new(private.to_vec()),r.get::<_,i64>(7)?))
+        if key.len()!=65||package.is_empty()||package.len()>4475||private.len()<crate::hq_creation::MIN_WRAPPED_CA_KEY||private.len()>crate::hq_creation::MAX_WRAPPED_CA_KEY {return Err(rusqlite::Error::InvalidQuery);}
+        Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?,key.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?,package.to_vec(),private.to_vec(),r.get::<_,i64>(7)?))
     }).optional().map_err(OfficeError::storage)?;
     let Some((version, org, operation, profile, key, package, private, complete)) = raw else {
         return Ok(None);
@@ -40,7 +39,7 @@ fn same(a: &LocalRecord, b: &LocalRecord) -> bool {
         && a.operation_id == b.operation_id
         && a.public_key == b.public_key
         && a.package == b.package
-        && a.private_der == b.private_der
+        && a.wrapped_ca_key == b.wrapped_ca_key
 }
 pub(crate) fn read_public(
     db: &rusqlite::Connection,
@@ -101,7 +100,7 @@ pub(crate) fn initialize(store: &Store, record: LocalRecord) -> Result<(), Offic
                 record.operation_id,
                 record.public_key.as_slice(),
                 record.package,
-                record.local_der()
+                record.wrapped_ca_key()
             ],
         )
         .map_err(OfficeError::storage)?;
@@ -259,7 +258,7 @@ pub(crate) fn initialize_bound(
         if let Some(prior)=current {return if same(&prior,&record) {Ok(((),None))} else {Err(invalid())};}
         let occupied:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM selected_journal_cursor) OR EXISTS(SELECT 1 FROM work_feed)",[],|r|r.get(0)).map_err(OfficeError::storage)?;
         if occupied {return Err(invalid());}
-        db.execute("INSERT INTO local_hq_creation VALUES(1,1,?1,?2,1,?3,?4,?5,1)",params![record.organization_id,record.operation_id,record.public_key.as_slice(),record.package,record.local_der()]).map_err(OfficeError::storage)?;
+        db.execute("INSERT INTO local_hq_creation VALUES(1,1,?1,?2,1,?3,?4,?5,1)",params![record.organization_id,record.operation_id,record.public_key.as_slice(),record.package,record.wrapped_ca_key()]).map_err(OfficeError::storage)?;
         Ok(((),None))
     })
 }

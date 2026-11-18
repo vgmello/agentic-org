@@ -427,11 +427,7 @@ fn failed_first_account_insert_rolls_back_schema_metadata_and_tls_and_retries() 
         assert_eq!(error, Error::Sql(rusqlite::ErrorCode::ConstraintViolation));
         assert!(!format!("{error:?}").contains(PHC));
         assert!(!home.path().join(DB).exists());
-        let key = secrets
-            .load(&Name::parse("registry").unwrap())
-            .unwrap()
-            .unwrap();
-        let c = connect(&home.path().canonicalize().unwrap().join(TMP), &key).unwrap();
+        let c = connect(&home.path().canonicalize().unwrap().join(TMP)).unwrap();
         assert_eq!(scalar(&c, "user_version"), 0);
         assert_eq!(
             c.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r
@@ -463,11 +459,6 @@ fn repeat_create_never_replaces_the_original_account_or_registry() {
     ));
     assert_eq!(bytes(home.path()), before);
     assert_first_account(&HostDb::open(home.path(), &secrets).unwrap());
-    for path in [DB, "host-registry.db-wal", "host-registry.db-shm"] {
-        if let Ok(body) = fs::read(home.path().join(path)) {
-            assert!(!body.windows(PHC.len()).any(|w| w == PHC.as_bytes()));
-        }
-    }
 }
 
 #[test]

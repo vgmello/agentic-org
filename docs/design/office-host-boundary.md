@@ -169,8 +169,9 @@ and duplicates fail before any change.
 
 The worker freezes the nonsecret request identity in `hq-creation.v1.json` under the
 office lock before preparing anything. One local transaction then stores the operation
-and owner binding, the CA private key wrapped with the office secrets key, the public
-envelope and the completion version. That record is excluded from replication and
+and owner binding, the CA private key wrapped with the office secrets key (an
+`org_pki::wrap` record bound to the organization, the office and the CA purpose;
+ADR-0016 decision 3), the public envelope and the completion version. That record is excluded from replication and
 journal capture. An interrupted preparation resumes only the identical intent and
 verifies retained material instead of generating it again; foreign data, missing
 committed material or changed input stay intact and need recovery
