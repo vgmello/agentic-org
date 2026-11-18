@@ -30,6 +30,23 @@ pub(crate) fn fake_web() -> PathBuf {
         .clone()
 }
 
+/// A program cargo built for another package of the workspace (`agentic-org-web`,
+/// `agentic-org-office`), found in the folder cargo built this crate's tests into. Cargo
+/// names no path for another package's program: `cargo test --workspace` builds them all
+/// before any test runs, and a narrower run must build `name`'s package first.
+pub(crate) fn sibling_program(name: &str) -> PathBuf {
+    let test_binary = std::env::current_exe().unwrap();
+    let profile = test_binary.parent().and_then(Path::parent).unwrap();
+    let built = profile.join(name);
+    assert!(
+        built.is_file(),
+        "{} is not built: run `cargo test --workspace`, or `cargo build -p {name}` before \
+         `cargo test -p org-host`",
+        built.display()
+    );
+    built
+}
+
 /// What the recording worker's runs in the office home `home` read from standard input, in
 /// order (empty when none started or none was given anything).
 pub(crate) fn recorded_stdin(home: &Path) -> Vec<u8> {

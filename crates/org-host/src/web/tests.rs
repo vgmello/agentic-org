@@ -1,8 +1,10 @@
-//! Supervisor and handoff unit tests. The real-process test (the host spawning the
-//! real `agentic-org-web`) needs the built web binary and is added separately.
+//! Supervisor and handoff unit tests. A test that must start a child starts a compiled
+//! one through the system's real admission: the fake web process of
+//! `examples/fake_web.rs`, or the real `agentic-org-web` built beside these tests. The
+//! tests of a whole host starting the real web process are in `web_process_tests.rs`.
 use super::*;
 use crate::service::listener::Connection;
-use crate::test_programs::{fake_web, image_identity};
+use crate::test_programs::{fake_web, image_identity, sibling_program};
 use org_platform_host::admission::ImageIdentity;
 use std::os::fd::OwnedFd;
 
@@ -2224,9 +2226,10 @@ fn the_web_process_gets_nothing_of_the_hosts_environment() {
     });
 }
 
-/// The real web process for the two tests below: the built `agentic-org-web` that
-/// `ORG_TEST_WEB_BIN` names, copied beside a one-file `ui` build, with a handler that
-/// answers its control calls, on a free loopback port.
+/// The real web process for the two tests below: the `agentic-org-web` cargo built beside
+/// this crate's tests (`cargo test --workspace` builds it before any test runs), copied
+/// beside a one-file `ui` build, with a handler that answers its control calls, on a free
+/// loopback port.
 struct RealWeb {
     config: Configuration,
     handler: Arc<crate::service::Service>,
@@ -2237,8 +2240,7 @@ struct RealWeb {
 fn real_web() -> RealWeb {
     use org_proto::frame;
     use std::os::unix::fs::PermissionsExt;
-    let built = std::env::var_os("ORG_TEST_WEB_BIN")
-        .expect("ORG_TEST_WEB_BIN must name the built agentic-org-web");
+    let built = sibling_program("agentic-org-web");
     let dir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(dir.path()).unwrap();
     for name in ["bin", "bin/ui", "runtime", "critical", "home"] {
@@ -2289,7 +2291,6 @@ fn real_web() -> RealWeb {
 /// of its three calls: the web process is confined by its filter alone, serves the
 /// same way, and the host's log line for the start says so with the reason.
 #[test]
-#[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
 fn the_real_web_process_is_started_only_confined_and_then_serves() {
     use org_platform::confinement::testing::RefusedCall;
     const NAME: &str = "web::tests::the_real_web_process_is_started_only_confined_and_then_serves";
@@ -2482,7 +2483,6 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
 /// before it reports ready, and every failed start is logged with the call and the
 /// error it named. Nothing is handed to it.
 #[test]
-#[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
 fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reason() {
     use org_platform::confinement::testing::RefusedCall;
     const NAME: &str =
