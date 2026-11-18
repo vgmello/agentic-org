@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 struct State {
     loaded: bool,
     pid: Option<u32>,
+    /// The file the job was bootstrapped from, as `print` reports it.
+    path: String,
     calls: Vec<Vec<String>>,
 }
 
@@ -37,11 +39,12 @@ impl Launchctl for Fake {
         match args[0].as_str() {
             "print" if !s.loaded => Ok(Outcome { code: NO_SUCH_SERVICE, stdout: String::new() }),
             "print" => ok(match s.pid {
-                Some(pid) => format!("{}= {{\n\tactive count = 1\n\tstate = running\n\n\tpid = {pid}\n\tendpoints = {{\n\t\tpid = 9\n\t}}\n}}\n", args[1]),
-                None => format!("{} = {{\n\tstate = not running\n}}\n", args[1]),
+                Some(pid) => format!("{}= {{\n\tactive count = 1\n\tpath = {}\n\tstate = running\n\n\tpid = {pid}\n\tendpoints = {{\n\t\tpid = 9\n\t\tpath = /x\n\t}}\n}}\n", args[1], s.path),
+                None => format!("{} = {{\n\tpath = {}\n\tstate = not running\n}}\n", args[1], s.path),
             }),
             "bootstrap" => {
                 s.loaded = true;
+                s.path = args[2].clone();
                 s.pid = Some(42);
                 ok(String::new())
             }
@@ -94,6 +97,17 @@ fn the_definition_restarts_only_after_a_failure_and_escapes_every_value() {
     assert!(text.contains("<key>RunAtLoad</key>\n\t<true/>"));
     assert!(text.contains("<key>HOME</key>\n\t\t<string>/Users/a</string>"));
     assert!(text.contains("<key>Umask</key>\n\t<integer>63</integer>"));
+    assert!(
+        !text.contains("ProcessType"),
+        "no Background throttling of the host"
+    );
+    let cr = Unit {
+        args: vec!["a\rb".into()],
+        ..unit()
+    };
+    assert!(String::from_utf8(render(LABEL, &cr))
+        .unwrap()
+        .contains("<string>a&#13;b</string>"));
     assert_eq!(
         render(LABEL, &unit()),
         render(LABEL, &unit()),
@@ -169,15 +183,78 @@ fn another_definition_or_job_under_the_label_is_never_taken_over() {
 }
 
 #[test]
-fn a_definition_left_unloaded_is_loaded_again_without_rewriting_it() {
+fn a_job_loaded_from_another_file_under_the_label_is_never_taken_over() {
+    let temp = tempfile::tempdir().unwrap();
+    let (launchd, fake) = launchd(temp.path());
+    launchd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+    fake.0.lock().unwrap().path = "/Users/a/Library/LaunchAgents/elsewhere.plist".into();
+    fake.clear();
+    assert!(matches!(
+        launchd.register(&unit()),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert!(matches!(launchd.start(ID), Err(ServiceError::Conflict(_))));
+    assert!(matches!(launchd.stop(ID), Err(ServiceError::Conflict(_))));
+    assert!(matches!(
+        launchd.unregister(ID),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert!(matches!(launchd.status(ID), Err(ServiceError::Conflict(_))));
+    assert_eq!(fake.verbs(), ["print", "print", "print", "print", "print"]);
+    assert_eq!(fs::read(&file).unwrap(), render(LABEL, &unit()));
+
+    // The same file reached through a symlinked directory is ours.
+    let linked = temp.path().join("linked");
+    std::os::unix::fs::symlink(temp.path().join("LaunchAgents"), &linked).unwrap();
+    fake.0.lock().unwrap().path = linked.join(format!("{LABEL}.plist")).display().to_string();
+    assert_eq!(launchd.register(&unit()).unwrap(), Registration::Unchanged);
+}
+
+#[test]
+fn a_definition_left_unloaded_is_loaded_again_only_by_register() {
     let temp = tempfile::tempdir().unwrap();
     let (launchd, fake) = launchd(temp.path());
     launchd.register(&unit()).unwrap();
     fake.0.lock().unwrap().loaded = false;
     assert_eq!(launchd.status(ID).unwrap(), ServiceStatus::Unloaded);
+    // Whatever now sits at the definition path is not loaded by start.
+    let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+    fs::write(&file, b"replaced").unwrap();
+    fake.clear();
+    assert!(matches!(launchd.start(ID), Err(ServiceError::Invalid(_))));
+    assert!(!fake.verbs().contains(&"bootstrap".to_string()));
+    assert!(matches!(
+        launchd.register(&unit()),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert!(!fake.verbs().contains(&"bootstrap".to_string()));
+    fs::write(&file, render(LABEL, &unit())).unwrap();
     fake.clear();
     assert_eq!(launchd.register(&unit()).unwrap(), Registration::Loaded);
     assert_eq!(fake.verbs(), ["print", "bootstrap"]);
+}
+
+#[test]
+fn publishing_never_replaces_a_definition_that_appeared_meanwhile() {
+    let temp = tempfile::tempdir().unwrap();
+    let (launchd, _fake) = launchd(temp.path());
+    let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+    launchd.write_definition(&file, b"first").unwrap();
+    assert!(matches!(
+        launchd.write_definition(&file, b"second"),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert_eq!(fs::read(&file).unwrap(), b"first");
+    let leftovers: Vec<_> = fs::read_dir(temp.path().join("LaunchAgents"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        leftovers.len(),
+        1,
+        "no temporary file remains: {leftovers:?}"
+    );
 }
 
 #[test]
@@ -225,7 +302,12 @@ fn unregister_boots_out_and_removes_the_definition_and_is_repeatable() {
 }
 
 #[test]
-fn print_parsing_reads_only_the_top_level_state_and_pid() {
+fn print_parsing_reads_only_the_top_level_state_pid_and_path() {
+    assert_eq!(
+        parse_path("x = {\n\t\tpath = /inner\n\tpath = /a b/c.plist\n}").as_deref(),
+        Some("/a b/c.plist")
+    );
+    assert_eq!(parse_path("x = {\n\t\tpath = /inner\n}"), None);
     assert_eq!(
         parse_print("x = {\n\tstate = running\n\tpid = 7\n}"),
         ServiceStatus::Running { pid: 7 }
@@ -262,14 +344,35 @@ fn real_launchd() {
             let _ = self.0.unregister(&self.1);
         }
     }
+    let wait_for = |manager: &dyn ServiceManager, id: &str, running: bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let status = manager.status(id).unwrap();
+            if matches!(status, ServiceStatus::Running { .. }) == running {
+                return status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "still {status:?} after 10 s"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    };
     let temp = tempfile::tempdir().unwrap();
+    let mut random = [0u8; 16];
+    io::Read::read_exact(&mut fs::File::open("/dev/urandom").unwrap(), &mut random).unwrap();
+    let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
     let id = format!(
-        "t{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    );
+    println!(
+        "label com.ellosoft.agentic-org.test.{id} in {}",
+        temp.path().display()
     );
     let manager = registered(Placement {
         prefix: "com.ellosoft.agentic-org.test.".into(),
@@ -277,26 +380,33 @@ fn real_launchd() {
     })
     .unwrap();
     let _guard = Guard(manager.as_ref(), id.clone());
+    // Exits 0 on SIGTERM, as the host does, so launchd does not restart it.
     let unit = Unit {
         instance_id: id.clone(),
-        program: "/bin/sleep".into(),
-        args: vec!["300".into()],
+        program: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            "trap 'exit 0' TERM; while :; do /bin/sleep 1; done".into(),
+        ],
         env: vec![],
     };
     assert_eq!(manager.register(&unit).unwrap(), Registration::Loaded);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !matches!(manager.status(&id).unwrap(), ServiceStatus::Running { .. }) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the job did not start"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    println!("registered: {:?}", wait_for(manager.as_ref(), &id, true));
+    // The real `print` names our file, so an identical registration is left alone.
     assert_eq!(manager.register(&unit).unwrap(), Registration::Unchanged);
     manager.stop(&id).unwrap();
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    // `sleep` exits on SIGTERM by signal, which launchd treats as a failure and restarts;
-    // the host exits 0 on SIGTERM. This checks only that stop reaches the job.
+    println!("stopped: {:?}", wait_for(manager.as_ref(), &id, false));
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(
+            manager.status(&id).unwrap(),
+            ServiceStatus::Stopped,
+            "a clean exit is not restarted"
+        );
+    }
+    manager.start(&id).unwrap();
+    println!("started: {:?}", wait_for(manager.as_ref(), &id, true));
     manager.unregister(&id).unwrap();
     assert_eq!(manager.status(&id).unwrap(), ServiceStatus::NotRegistered);
+    assert!(fs::read_dir(temp.path()).unwrap().next().is_none());
 }

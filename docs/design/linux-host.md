@@ -478,7 +478,18 @@ exits 0 within 8 s, inside a container runtime's default 10-second grace.
 `RunAtLoad`, `KeepAlive { SuccessfulExit = false }`, `Umask` 0077 and an explicit
 environment, loaded with `launchctl bootstrap gui/<uid>`. An identical loaded job is
 left alone; a different file or a job loaded from elsewhere under the label is a
-conflict. `stop` sends `SIGTERM`, so the clean exit is not restarted.
+conflict. "Elsewhere" is decided by the top-level `path` of `launchctl print`, which
+must name our definition file; `register`, `start`, `stop`, `status` and `unregister`
+all refuse such a job. The definition is published by hard-linking a complete temporary
+file, so a file that appears meanwhile is never replaced (a conflict). `start` never
+loads a definition: on `Unloaded` it refuses, and the caller runs `register` again,
+which loads the file only when its bytes equal the rendered unit. `unregister` waits
+up to 15 s for launchd to drop the job after `bootout`. The plist has no
+`ProcessType`, so the host is not throttled as a background job. Program, arguments
+and environment must be valid XML text (no NUL or other C0 control except tab, line
+feed and carriage return). `stop` sends `SIGTERM`, so the clean exit is not restarted.
+Disk encryption reads `diskutil info -plist` for the mount point (`statfs`) of the
+nearest existing ancestor of the root.
 
 **Linux adapter, `Registered`.** A systemd user unit,
 `~/.config/systemd/user/agentic-org-<instance-id>.service`, with

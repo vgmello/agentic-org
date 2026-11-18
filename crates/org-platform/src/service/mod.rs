@@ -102,10 +102,12 @@ pub trait ServiceManager: Send + Sync {
     /// Idempotent. An identical, loaded registration is left alone so a healthy service
     /// is not restarted. A different definition under the same name is a conflict.
     fn register(&self, unit: &Unit) -> Result<Registration, ServiceError>;
-    /// Starts a registered service; a running one is left alone.
+    /// Starts a loaded service; a running one is left alone. A definition the manager has
+    /// not loaded is refused: only `register`, which compares it with the unit, loads it.
     fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
     /// Asks the service to stop. A clean exit is not restarted by the manager.
     fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
+    /// A job under the service name that is not ours is a conflict, never a status.
     fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>;
     /// Unloads the service and removes its definition.
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
@@ -131,18 +133,25 @@ pub fn service_in(
 /// a relative program, or loader variables.
 pub(crate) fn validate(unit: &Unit) -> Result<(), ServiceError> {
     valid_instance_id(&unit.instance_id)?;
-    if !unit.program.is_absolute() || unit.program.to_str().is_none() {
+    if !unit.program.is_absolute() || !unit.program.to_str().is_some_and(xml_text) {
         return Err(ServiceError::Invalid(
-            "the program must be an absolute UTF-8 path",
+            "the program must be an absolute UTF-8 path without control characters",
         ));
     }
-    if unit.args.iter().any(|a| a.to_str().is_none()) {
-        return Err(ServiceError::Invalid("arguments must be UTF-8"));
+    if !unit.args.iter().all(|a| a.to_str().is_some_and(xml_text)) {
+        return Err(ServiceError::Invalid(
+            "arguments must be UTF-8 without control characters",
+        ));
     }
     for (key, value) in &unit.env {
-        let (Some(key), Some(_)) = (key.to_str(), value.to_str()) else {
+        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
             return Err(ServiceError::Invalid("the environment must be UTF-8"));
         };
+        if !xml_text(key) || !xml_text(value) {
+            return Err(ServiceError::Invalid(
+                "the environment must not contain control characters",
+            ));
+        }
         if key.is_empty()
             || key.contains('=')
             || key.starts_with("DYLD_")
@@ -160,6 +169,14 @@ pub(crate) fn validate(unit: &Unit) -> Result<(), ServiceError> {
         return Err(ServiceError::Invalid("the environment repeats a variable"));
     }
     Ok(())
+}
+
+/// Text every definition format can carry: XML 1.0 has no NUL, no C0 control other than
+/// tab, line feed and carriage return, and no U+FFFE or U+FFFF.
+fn xml_text(text: &str) -> bool {
+    !text.chars().any(|c| {
+        (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '\u{FFFE}' | '\u{FFFF}')
+    })
 }
 
 pub(crate) fn valid_instance_id(id: &str) -> Result<(), ServiceError> {
@@ -192,6 +209,15 @@ mod tests {
     #[test]
     fn units_with_unsafe_names_programs_or_environments_are_refused() {
         assert!(validate(&unit()).is_ok());
+        assert!(
+            validate(&Unit {
+                args: vec!["a\tb\nc\rd".into()],
+                env: vec![("A".into(), "multi\nline".into())],
+                ..unit()
+            })
+            .is_ok(),
+            "tab, line feed and carriage return are valid XML text"
+        );
         for broken in [
             Unit {
                 instance_id: "../x".into(),
@@ -223,6 +249,30 @@ mod tests {
             },
             Unit {
                 env: vec![("A".into(), "1".into()), ("A".into(), "2".into())],
+                ..unit()
+            },
+            Unit {
+                program: "/opt/a\0b".into(),
+                ..unit()
+            },
+            Unit {
+                program: "/opt/a\u{1b}b".into(),
+                ..unit()
+            },
+            Unit {
+                args: vec!["serve".into(), "a\u{1}".into()],
+                ..unit()
+            },
+            Unit {
+                args: vec!["\u{FFFF}".into()],
+                ..unit()
+            },
+            Unit {
+                env: vec![("A\u{7}".into(), "x".into())],
+                ..unit()
+            },
+            Unit {
+                env: vec![("A".into(), "x\0".into())],
                 ..unit()
             },
         ] {

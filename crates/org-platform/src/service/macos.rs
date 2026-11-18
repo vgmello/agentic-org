@@ -2,8 +2,9 @@
 //!
 //! The job runs `KeepAlive { SuccessfulExit = false }` and `RunAtLoad`: launchd restarts
 //! the host after a crash and starts it at login, and an explicit stop (`SIGTERM`, a clean
-//! exit) stays stopped. A definition with the same label but different bytes, or a loaded
-//! job with no definition of ours, is someone else's and is never taken over.
+//! exit) stays stopped. A definition with the same label but different bytes, or a job
+//! loaded under the label from any file other than our definition, is someone else's and is
+//! never taken over: register, start, stop and unregister refuse it as a conflict.
 use super::{
     valid_instance_id, validate, Placement, Registration, ServiceError, ServiceManager,
     ServiceStatus, Unit,
@@ -21,6 +22,9 @@ use std::{
 const LAUNCHCTL: &str = "/bin/launchctl";
 /// `launchctl print` and `bootout` for a label launchd does not know.
 const NO_SUCH_SERVICE: i32 = 113;
+/// How long unregister waits for launchd to drop a job after `bootout`; the host exits
+/// within 8 s of `SIGTERM`.
+const UNLOAD_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 pub(super) const USER_PREFIX: &str = "com.ellosoft.agentic-org.instance.";
 
 pub(super) fn user_placement(home: &Path) -> Result<Placement, Refused> {
@@ -125,6 +129,30 @@ impl Launchd {
         }
     }
 
+    /// The loaded job's `launchctl print`, `None` when nothing is loaded under the label,
+    /// or a conflict when the job was loaded from a file other than our definition.
+    fn print_ours(&self, label: &str) -> Result<Option<String>, ServiceError> {
+        let Some(printed) = self.print(label)? else {
+            return Ok(None);
+        };
+        let file = self.file(label);
+        let ours = match parse_path(&printed) {
+            Some(loaded) => {
+                let loaded = Path::new(&loaded);
+                loaded == file
+                    || canonical(&file).is_some_and(|f| canonical(loaded).as_ref() == Some(&f))
+            }
+            None => false,
+        };
+        if !ours {
+            return Err(ServiceError::Conflict(format!(
+                "launchd runs {label} from a definition other than {}",
+                file.display()
+            )));
+        }
+        Ok(Some(printed))
+    }
+
     fn read_definition(&self, file: &Path) -> Result<Option<Vec<u8>>, ServiceError> {
         match fs::symlink_metadata(file) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -152,6 +180,16 @@ impl Launchd {
             |e: io::Error| ServiceError::System(format!("cannot write {}: {e}", file.display()));
         fs::create_dir_all(&self.placement.directory).map_err(system)?;
         let temporary = file.with_extension(format!("plist.{}.tmp", std::process::id()));
+        let conflict = |e: io::Error| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                ServiceError::Conflict(format!(
+                    "{} appeared while registering; it is left untouched",
+                    file.display()
+                ))
+            } else {
+                system(e)
+            }
+        };
         let _ = fs::remove_file(&temporary);
         let mut f = fs::OpenOptions::new()
             .write(true)
@@ -163,12 +201,14 @@ impl Launchd {
         let written = f
             .write_all(bytes)
             .and_then(|()| f.sync_all())
-            .and_then(|()| fs::set_permissions(&temporary, fs::Permissions::from_mode(0o644)))
-            .and_then(|()| fs::rename(&temporary, file));
-        if written.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        written.map_err(system)
+            .and_then(|()| fs::set_permissions(&temporary, fs::Permissions::from_mode(0o644)));
+        // A hard link publishes the complete file and, unlike rename, never replaces a
+        // definition another writer placed meanwhile.
+        let published = written
+            .map_err(system)
+            .and_then(|()| fs::hard_link(&temporary, file).map_err(conflict));
+        let _ = fs::remove_file(&temporary);
+        published
     }
 
     fn bootstrap(&self, file: &Path) -> Result<(), ServiceError> {
@@ -183,7 +223,7 @@ impl ServiceManager for Launchd {
         let label = self.label(&unit.instance_id)?;
         let file = self.file(&label);
         let bytes = render(&label, unit);
-        let loaded = self.print(&label)?.is_some();
+        let loaded = self.print_ours(&label)?.is_some();
         match self.read_definition(&file)? {
             Some(existing) if existing != bytes => Err(ServiceError::Conflict(format!(
                 "{} already defines {label} differently; it is left untouched",
@@ -208,7 +248,11 @@ impl ServiceManager for Launchd {
             ServiceStatus::NotRegistered => {
                 Err(ServiceError::Invalid("the service is not registered"))
             }
-            ServiceStatus::Unloaded => self.bootstrap(&self.file(&label)),
+            // The file at the definition path is not known to be ours until register has
+            // compared it with the unit; start never loads it unchecked.
+            ServiceStatus::Unloaded => Err(ServiceError::Invalid(
+                "the service is not loaded; register it again",
+            )),
             // Without -k: kickstart never restarts a running job.
             ServiceStatus::Stopped => self
                 .expect_ok(&["kickstart".into(), self.target(&label)])
@@ -228,7 +272,9 @@ impl ServiceManager for Launchd {
 
     fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError> {
         let label = self.label(instance_id)?;
-        match self.print(&label)? {
+        // A job under the label loaded from another file is reported as a conflict, so
+        // start and stop never act on it.
+        match self.print_ours(&label)? {
             Some(printed) => Ok(parse_print(&printed)),
             None if self.read_definition(&self.file(&label))?.is_some() => {
                 Ok(ServiceStatus::Unloaded)
@@ -240,13 +286,24 @@ impl ServiceManager for Launchd {
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError> {
         let label = self.label(instance_id)?;
         let file = self.file(&label);
-        if self.print(&label)?.is_some() {
+        if self.print_ours(&label)?.is_some() {
             let out = self.run(&["bootout".into(), self.target(&label)])?;
             if out.code != 0 && out.code != NO_SUCH_SERVICE {
                 return Err(ServiceError::System(format!(
                     "launchctl bootout exited with {}",
                     out.code
                 )));
+            }
+            // bootout can return while launchd still tears the job down.
+            let deadline = std::time::Instant::now() + UNLOAD_WAIT;
+            while self.print(&label)?.is_some() {
+                if std::time::Instant::now() >= deadline {
+                    return Err(ServiceError::System(format!(
+                        "launchd still lists {label} {} s after bootout",
+                        UNLOAD_WAIT.as_secs()
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
         match fs::remove_file(&file) {
@@ -280,6 +337,23 @@ fn parse_print(printed: &str) -> ServiceStatus {
     }
 }
 
+/// The top-level `path = ...`: the file launchd loaded the job from.
+fn parse_path(printed: &str) -> Option<String> {
+    printed.lines().find_map(|line| {
+        line.strip_prefix('\t')
+            .filter(|l| !l.starts_with('\t'))
+            .and_then(|l| l.strip_prefix("path = "))
+            .map(|p| p.trim_end().to_owned())
+    })
+}
+
+fn canonical(path: &Path) -> Option<PathBuf> {
+    match path.parent() {
+        Some(parent) => Some(fs::canonicalize(parent).ok()?.join(path.file_name()?)),
+        None => None,
+    }
+}
+
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -289,6 +363,8 @@ fn escape(text: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
+            // A literal carriage return would be read back as a line feed.
+            '\r' => out.push_str("&#13;"),
             c => out.push(c),
         }
     }
@@ -327,7 +403,6 @@ fn render(label: &str, unit: &Unit) -> Vec<u8> {
         "\t</dict>\n",
         "\t<key>RunAtLoad</key>\n\t<true/>\n",
         "\t<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>\n\t</dict>\n",
-        "\t<key>ProcessType</key>\n\t<string>Background</string>\n",
         "\t<key>Umask</key>\n\t<integer>63</integer>\n",
         "</dict>\n</plist>\n",
     ));

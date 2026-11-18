@@ -150,11 +150,18 @@ fn strict_input_and_replaced_setup_lock_refuse_without_secrets() {
     bad = original.clone();
     bad.version = 2;
     assert!(bad.validate().is_err());
+    // Plain HTTP on a non-loopback address cannot even be decoded into the record.
+    let mut raw = serde_json::to_value(&original).unwrap();
+    raw["listen"]["address"] = serde_json::json!("0.0.0.0");
+    assert!(
+        serde_json::from_value::<Input>(raw).is_err(),
+        "plain HTTP stays on loopback"
+    );
+    // A valid HTTPS listener on every address decodes, and this setup adapter refuses it.
     bad = original.clone();
-    bad.listen = serde_json::from_str(r#"{"address":"0.0.0.0","port":7420,"scheme":"http_loopback","origin":"http://127.0.0.1:7420","hsts":"off"}"#).unwrap_or_else(|_| listen(7420));
-    if bad.listen.address().is_unspecified() {
-        assert!(bad.validate().is_err(), "plain HTTP stays on loopback");
-    }
+    bad.listen = serde_json::from_str(r#"{"address":"0.0.0.0","port":7420,"scheme":"https","origin":"https://office.example:7420","hsts":"off"}"#).unwrap();
+    assert!(bad.listen.address().is_unspecified());
+    assert!(bad.validate().is_err(), "HTTPS setup is unavailable");
     let journal = Journal::open(&base, None).unwrap();
     let r = journal.freeze(original, true, pin()).unwrap();
     let lock = base.join("setup/default/setup.lock");
