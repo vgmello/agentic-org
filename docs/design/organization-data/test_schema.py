@@ -115,6 +115,15 @@ def assignment_change(team="platform", assignee="ana"):
     }
 
 
+def assert_refused(test, connection, message, statement, parameters=()):
+    """Assert that a statement (SQL text or a callable) fails with this rule's own message, then
+    roll back. Naming the message keeps the case tied to one trigger or index: another rule that
+    happens to refuse the same write does not satisfy it."""
+    with test.assertRaisesRegex(sqlite3.IntegrityError, re.escape(message)):
+        statement() if callable(statement) else connection.execute(statement, parameters)
+    connection.rollback()
+
+
 class DraftSchemaTests(unittest.TestCase):
     def setUp(self):
         self.db = database()
@@ -479,6 +488,147 @@ class DraftSchemaTests(unittest.TestCase):
                 insert(self.db, "task_events", **fields)
             self.db.rollback()
 
+    def test_a_task_event_retry_is_refused_before_its_key_is_checked(self):
+        project_event(self.db, event(1, {"type": "created"}))
+        self.db.commit()
+        assert_refused(self, self.db, "task events are immutable",
+                       lambda: project_event(self.db, event(1, {"type": "created"})))
+        project_event(self.db, event(2, {"type": "future_event"}))
+        self.db.commit()
+
+    def test_the_organization_repository_stays_remote(self):
+        message = "organization repository must be remote"
+        insert(self.db, "repositories", organization_id="org", id="spare", schema_version=1, revision=1,
+               kind="local")
+        self.db.commit()  # a local repository that is not the organization's is allowed
+        assert_refused(self, self.db, message,
+                       "UPDATE repositories SET kind='local',remote_url=NULL WHERE id='org-repository'")
+        assert_refused(self, self.db, message, "UPDATE organizations SET organization_repository_id='spare'")
+        self.db.execute("UPDATE repositories SET kind='remote',remote_url='https://example.com/spare.git' WHERE id='spare'")
+        self.db.execute("UPDATE organizations SET organization_repository_id='spare'")
+        self.db.commit()
+        # A new organization, written before its repository or (with every key deferred) after it.
+        new = dict(id="new", slug="new", schema_version=1, revision=1, name="New", state_branch="main")
+        repository = dict(organization_id="new", schema_version=1, revision=1)
+        insert(self.db, "organizations", **new, organization_repository_id="later")
+        assert_refused(self, self.db, message,
+                       lambda: insert(self.db, "repositories", **repository, id="later", kind="local"))
+        self.db.execute("PRAGMA defer_foreign_keys=ON")
+        insert(self.db, "repositories", **repository, id="early", kind="local")
+        assert_refused(self, self.db, message,
+                       lambda: insert(self.db, "organizations", **new, organization_repository_id="early"))
+        insert(self.db, "organizations", **new, organization_repository_id="later")
+        insert(self.db, "repositories", **repository, id="later", kind="remote",
+               remote_url="https://example.com/new.git")
+        self.db.commit()
+
+    def test_team_tree_has_no_cycle_on_insert_or_update(self):
+        self.db.execute("UPDATE teams SET parent_team_id='platform' WHERE id='payments'")
+        insert(self.db, "teams", organization_id="org", id="child", schema_version=1, revision=1,
+               name="Child", parent_team_id="payments")
+        self.db.commit()
+        assert_refused(self, self.db, "team cycle", "UPDATE teams SET parent_team_id='child' WHERE id='platform'")
+        insert(self.db, "teams", organization_id="org", id="x", schema_version=1, revision=1, name="X",
+               parent_team_id="y")  # the parent is written later in the same transaction
+        assert_refused(self, self.db, "team cycle", lambda: insert(
+            self.db, "teams", organization_id="org", id="y", schema_version=1, revision=1, name="Y",
+            parent_team_id="x"))
+
+    def test_task_dependencies_have_no_cycle_on_insert_or_update(self):
+        seed_task(self.db, task="b")
+        seed_task(self.db, task="c")
+
+        def link(identity, source, target, kind="depends_on"):
+            insert(self.db, "links", organization_id="org", source_kind="task", source_id=source, id=identity,
+                   kind=kind, target_kind="task", target_id=target)
+
+        link("1", "task", "b")
+        link("2", "b", "c")
+        self.db.commit()
+        assert_refused(self, self.db, "task dependency cycle", lambda: link("3", "c", "task"))
+        link("3", "c", "task", kind="relates_to")
+        self.db.commit()
+        assert_refused(self, self.db, "task dependency cycle", "UPDATE links SET kind='depends_on' WHERE id='3'")
+        self.db.execute("UPDATE links SET target_id='c' WHERE id='1'")  # task -> c, b -> c: no cycle
+        self.db.commit()
+
+    def seed_execution(self):
+        self.seed_pool()
+        for office, role in (("hq", "hq"), ("east", "satellite")):
+            insert(self.db, "offices", organization_id="org", id=office, slug=office, schema_version=1,
+                   revision=1, name=office, role=role)
+        insert(self.db, "agent_execution_configs", organization_id="org", employee_id="ana", schema_version=1,
+               revision=1, model_profile_id="pool", model_id="target-model", system_prompt_markdown="Instructions")
+        insert(self.db, "agent_placements", organization_id="org", employee_id="ana", office_id="hq")
+        self.db.commit()
+
+    def process(self, identity, state="planned", office="hq"):
+        insert(self.db, "agent_process_instances", organization_id="org", id=identity, employee_id="ana",
+               office_id=office, placement_generation=1, connection_id="connection-1",
+               runtime_driver="example-driver", driver_version="1", model_id="target-model",
+               resolved_model_id="target-model", connection_revision=1, workspace_key="workspace",
+               launch_digest="a" * 64, binding_revision=1, session_mark=identity, state=state,
+               updated_at="2026-11-15T12:00:00Z")
+
+    def turn(self, identity, status="running", **fields):
+        insert(self.db, "agent_execution_turns", **(dict(
+            organization_id="org", id=identity, employee_id="ana", office_id="hq", placement_generation=1,
+            revision=1, workspace_key="workspace", input_ref="input", input_sha256="a" * 64,
+            agent_config_revision=1, model_profile_id="pool", profile_revision=1, model_id="target-model",
+            pool_snapshot_json="[]", status=status, created_at="2026-11-15T12:00:00Z") | fields))
+
+    def test_an_agent_has_one_open_turn_and_one_live_main_process(self):
+        self.seed_execution()
+        self.turn("open")
+        self.turn("finished", "succeeded")
+        self.turn("resumed", "failed", started_by_kind="resume")
+        self.process("old", "gone")
+        self.process("live", "starting")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed: agent_execution_turns",
+                       lambda: self.turn("second", "blocked"))
+        assert_refused(self, self.db, "CHECK constraint failed",
+                       lambda: self.turn("unknown-start", "succeeded", started_by_kind="restart"))
+        assert_refused(self, self.db, "UNIQUE constraint failed: agent_process_instances",
+                       lambda: self.process("another"))
+
+    def test_execution_config_and_placement_belong_to_an_agent(self):
+        self.seed_execution()
+        assert_refused(self, self.db, "execution config requires an agent employee",
+                       "UPDATE agent_execution_configs SET employee_id='reporter'")
+        assert_refused(self, self.db, "configured employee must remain an agent",
+                       "UPDATE employees SET kind='person' WHERE id='ana'")
+        assert_refused(self, self.db, "only an agent is placed in an office", lambda: insert(
+            self.db, "agent_placements", organization_id="org", employee_id="reporter", office_id="hq"))
+        assert_refused(self, self.db, "only an agent is placed in an office",
+                       "UPDATE agent_placements SET employee_id='reporter'")
+        insert(self.db, "employees", organization_id="org", id="bo", handle="bo", schema_version=1,
+               revision=1, kind="agent", name="Bo", home_team_id="payments")
+        self.db.execute("UPDATE agent_execution_configs SET employee_id='bo'")
+        insert(self.db, "agent_placements", organization_id="org", employee_id="bo", office_id="east")
+        insert(self.db, "employees", organization_id="org", id="cy", handle="cy", schema_version=1,
+               revision=1, kind="agent", name="Cy", home_team_id="payments")
+        self.db.execute("UPDATE employees SET kind='person' WHERE id='cy'")  # unconfigured: may change
+        self.db.commit()
+
+    def test_a_cleanup_record_is_in_its_process_office(self):
+        self.seed_execution()
+        self.process("process")
+        self.db.commit()
+        message = "cleanup record and its process are in different offices"
+        record = dict(organization_id="org", id="cleanup", office_id="hq", execution_process_id="process",
+                      generation=1, ownership_mark="mark", machine_id="machine", inventory_json="{}",
+                      state="owned", updated_at="2026-11-15T12:00:00Z")
+        assert_refused(self, self.db, message,
+                       lambda: insert(self.db, "process_cleanup_records", **(record | {"office_id": "east"})))
+        insert(self.db, "process_cleanup_records", **record)
+        insert(self.db, "process_cleanup_records", **(record | dict(id="other", office_id="east",
+                                                                    execution_process_id=None)))
+        self.db.commit()
+        assert_refused(self, self.db, message, "UPDATE process_cleanup_records SET office_id='east' WHERE id='cleanup'")
+        assert_refused(self, self.db, message,
+                       "UPDATE process_cleanup_records SET execution_process_id='process' WHERE id='other'")
+
     def test_relative_document_links_exist(self):
         for path in ROOT.glob("*.md"):
             for target in re.findall(r"\]\(([^)]+)\)", path.read_text()):
@@ -601,6 +751,82 @@ class IntegrityAuditTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("UPDATE employees SET kind='person' WHERE id='ana'")
         self.db.rollback()
+
+    def flag(self, identity="flag"):
+        insert(self.db, "feature_flags", organization_id="org", id=identity, schema_version=1, revision=1,
+               project_id="project", key=identity, value_type="boolean", default_value_json="false")
+
+    def test_flag_settings_must_match_an_existing_flag_type_on_insert_and_update(self):
+        self.delivery()
+        self.flag()
+        self.db.commit()
+        for table, scope in (("release_flag_settings", dict(release_id="release", environment="production",
+                                                             target="primary")),
+                             ("deployment_flag_settings", dict(deployment_id="deploy"))):
+            with self.subTest(table=table):
+                setting = dict(organization_id="org", project_id="project", flag_id="flag", **scope)
+                assert_refused(self, self.db, "flag value type mismatch",
+                               lambda: insert(self.db, table, **setting, value_json='"on"'))
+                insert(self.db, table, **setting, value_json="true")
+                self.db.commit()
+                assert_refused(self, self.db, "flag value type mismatch", f"UPDATE {table} SET value_json='\"on\"'")
+                self.db.execute(f"UPDATE {table} SET value_json='false'")
+                self.db.commit()
+
+    def test_a_used_flag_keeps_its_identity(self):
+        self.delivery()
+        self.flag()
+        self.flag("unused")
+        insert(self.db, "deployment_flag_settings", organization_id="org", deployment_id="deploy",
+               project_id="project", flag_id="flag", value_json="true")
+        self.db.commit()
+        self.db.execute("UPDATE feature_flags SET key='renamed' WHERE id='unused'")
+        self.db.commit()
+        assert_refused(self, self.db, "used flag identity is immutable",
+                       "UPDATE feature_flags SET key='renamed-again' WHERE id='flag'")
+
+    def usage(self, identity, sequence, **overrides):
+        """Another record from the accounting fixture's producer, copied from its first record."""
+        record = dict(self.db.execute("SELECT * FROM usage_records WHERE id='usage'").fetchone())
+        record.update(id=identity, source_event_id=f"event-{identity}", source_sequence=sequence, **overrides)
+        insert(self.db, "usage_records", **record)
+
+    def test_usage_records_and_used_prices_are_immutable(self):
+        self.accounting()
+        assert_refused(self, self.db, "usage records are immutable", "UPDATE usage_records SET runtime='other'")
+        assert_refused(self, self.db, "used price versions are immutable",
+                       "UPDATE model_prices SET input_micro_usd_per_million=2 WHERE id='rate'")
+        insert(self.db, "model_prices", organization_id="org", id="later", schema_version=1, provider="example",
+               model="model", effective_from="2027-01-01T00:00:00Z", created_at="2026-01-01T00:00:00Z",
+               created_by_kind="system")
+        self.db.execute("UPDATE model_prices SET input_micro_usd_per_million=2 WHERE id='later'")  # unused
+        self.db.commit()
+
+    def test_agent_usage_belongs_to_an_agent_even_one_written_first(self):
+        self.accounting()
+        assert_refused(self, self.db, "usage actor must be an agent",
+                       lambda: self.usage("person", 2, employee_id="reporter"))
+        self.usage("second", 2)
+        self.db.commit()
+        employee = dict(organization_id="org", id="newcomer", handle="newcomer", schema_version=1, revision=1,
+                        name="Newcomer", home_team_id="payments")
+        self.usage("early", 3, employee_id="newcomer")  # the employee row arrives later
+        assert_refused(self, self.db, "historical usage consumer must remain an agent",
+                       lambda: insert(self.db, "employees", **employee, kind="person"))
+        self.usage("early", 3, employee_id="newcomer")
+        insert(self.db, "employees", **employee, kind="agent")
+        self.db.commit()
+
+    def test_a_correction_needs_its_parent_and_an_attribution_correction_keeps_the_facts(self):
+        self.accounting()
+        correction = dict(correction_kind="attribution", correction_reason="Wrong team")
+        assert_refused(self, self.db, "correction parent must already exist",
+                       lambda: self.usage("orphan", 2, supersedes_id="missing", **correction))
+        assert_refused(self, self.db, "attribution correction cannot change consumption or valuation",
+                       lambda: self.usage("moved", 2, supersedes_id="usage", input_tokens=2, **correction))
+        self.usage("moved", 2, supersedes_id="usage", scope_kind="team", team_id="platform",
+                   attribution_basis="manual_correction", **correction)
+        self.db.commit()
 
 
 class PrivateNoteSchemaTests(unittest.TestCase):
@@ -773,6 +999,14 @@ class ActorAndAddresseeTests(unittest.TestCase):
             insert(self.db, "watchers", organization_id="org", target_kind="task", target_id="task", id="w-bad",
                    watcher_kind="owner", watcher_id="reporter")
         self.db.rollback()
+
+    def test_an_employee_watches_a_task_once(self):
+        watcher = dict(organization_id="org", target_kind="task", target_id="task", watcher_kind="employee")
+        insert(self.db, "watchers", **watcher, id="w-ana", watcher_id="ana")
+        insert(self.db, "watchers", **watcher, id="w-reporter", watcher_id="reporter")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed: watchers",
+                       lambda: insert(self.db, "watchers", **watcher, id="w-ana-2", watcher_id="ana"))
 
 
 class GapPreservationTests(unittest.TestCase):
@@ -1018,6 +1252,131 @@ class GapPreservationTests(unittest.TestCase):
             with self.subTest(sql=sql), self.assertRaises(sqlite3.IntegrityError): self.db.execute(sql)
             self.db.rollback()
 
+    def test_receipt_stream_and_checkpoint_are_registered_once_and_kept(self):
+        insert(self.db, "mutation_receipts", organization_id="org", command_id="command", origin_office_id="hq",
+               actor_kind="system", command_kind="task.create", request_sha256="a"*64, state="reserved",
+               created_at="2026-11-15T12:00:00Z", updated_at="2026-11-15T12:00:00Z")
+        stream = dict(organization_id="org", office_id="hq", incarnation="i", high_water_sequence=0,
+                      journal_ref="journal", state="open")
+        for kind in ("organization", "work", "message"):
+            insert(self.db, "office_origin_streams", **stream, stream_kind=kind)
+        insert(self.db, "office_recovery_checkpoints", organization_id="org", office_id="hq", hq_office_id="hq",
+               authority_epoch=1, highest_seen_epoch=1, applied_sequence=5, digest_sha256="a"*64, base_sequence=0,
+               base_digest_sha256="a"*64, protocol_level=1, restore_pending=0, awaiting_snapshot=0,
+               native_sequence=0, journal_ref="journal", updated_at="2026-11-15T12:00:00Z")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "office_origin_streams", **stream, stream_kind="chat")
+        self.db.rollback()
+        for table, message in (("mutation_receipts", "receipt command already registered"),
+                               ("office_origin_streams", "origin identity already registered"),
+                               ("office_recovery_checkpoints", "checkpoint identity already registered")):
+            for verb in ("INSERT", "INSERT OR REPLACE"):
+                with self.subTest(table=table, verb=verb):
+                    assert_refused(self, self.db, message, f"{verb} INTO {table} SELECT * FROM {table}")
+        assert_refused(self, self.db, "origin watermark must be retained", "DELETE FROM office_origin_streams")
+        assert_refused(self, self.db, "authority checkpoint must be retained", "DELETE FROM office_recovery_checkpoints")
+        # A checkpoint only moves forward and never forks at the same position.
+        self.db.execute("UPDATE office_recovery_checkpoints SET applied_sequence=6,digest_sha256=?", ("b"*64,))
+        self.db.commit()
+        for change in ("applied_sequence=5", "digest_sha256='" + "c"*64 + "'", "office_id='numbering-a'"):
+            with self.subTest(change=change):
+                assert_refused(self, self.db, "recovery checkpoint regressed or forked",
+                               f"UPDATE office_recovery_checkpoints SET {change}")
+
+    def test_one_automatic_channel_per_organization_team_and_project(self):
+        def channel(identity, scope, **target):
+            insert(self.db, "conversations", organization_id="org", id=identity, kind="channel", auto_scope=scope,
+                   created_at="2026-11-15T12:00:00Z", **target)
+        channel("everyone", "organization")
+        channel("payments", "team", team_id="payments")
+        channel("platform", "team", team_id="platform")
+        channel("project", "project", project_id="project")
+        self.db.commit()
+        for identity, scope, target in (("everyone-2", "organization", {}), ("payments-2", "team", {"team_id": "payments"}),
+                                        ("project-2", "project", {"project_id": "project"})):
+            with self.subTest(scope=scope):
+                assert_refused(self, self.db, "UNIQUE constraint failed: conversations",
+                               lambda: channel(identity, scope, **target))
+
+    def test_an_organization_has_one_hq(self):
+        insert(self.db, "offices", organization_id="org", id="east", slug="east", schema_version=1, revision=1,
+               name="East", role="satellite")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed: offices", lambda: insert(
+            self.db, "offices", organization_id="org", id="hq-2", slug="hq-2", schema_version=1, revision=1,
+            name="Second HQ", role="hq"))
+        assert_refused(self, self.db, "UNIQUE constraint failed: offices", "UPDATE offices SET role='hq' WHERE id='east'")
+
+    def test_the_built_in_hr_lead_is_one_agent_without_the_hiring_permission(self):
+        hr = dict(organization_id="org", schema_version=1, revision=1, kind="agent", home_team_id="payments",
+                  builtin_key="hr", may_hire=0)
+        for bad in (dict(kind="person"), dict(may_hire=1), dict(builtin_key="ceo")):
+            with self.subTest(bad=bad):
+                assert_refused(self, self.db, "CHECK constraint failed", lambda: insert(
+                    self.db, "employees", **(hr | bad), id="bad", handle="bad", name="Bad"))
+        insert(self.db, "employees", **hr, id="hr", handle="hr", name="HR")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed: employees", lambda: insert(
+            self.db, "employees", **hr, id="hr-2", handle="hr-2", name="HR 2"))
+
+    def test_an_affected_feature_is_in_the_task_project(self):
+        feature = dict(organization_id="org", schema_version=1, revision=1, title="F", status="planned")
+        insert(self.db, "features", **feature, id="here", project_id="project", local_slug="here")
+        insert(self.db, "projects", organization_id="org", id="second", schema_version=1, revision=1,
+               slug="second", name="Second", owner_team_id="payments")
+        insert(self.db, "features", **feature, id="elsewhere", project_id="second", local_slug="elsewhere")
+        self.db.commit()
+        message = "affected feature belongs to another project"
+        assert_refused(self, self.db, message, lambda: insert(
+            self.db, "task_details", organization_id="org", task_id="task", affects_feature_id="elsewhere"))
+        insert(self.db, "task_details", organization_id="org", task_id="task", affects_feature_id="here")
+        self.db.commit()
+        assert_refused(self, self.db, message, "UPDATE task_details SET affects_feature_id='elsewhere'")
+        # The task keeps the feature's project while the feature is named.
+        for project in ("'second'", "NULL"):
+            with self.subTest(project=project):
+                assert_refused(self, self.db, message, f"UPDATE tasks SET project_id={project} WHERE id='task'")
+        self.db.execute("UPDATE task_details SET affects_feature_id=NULL")
+        self.db.execute("UPDATE tasks SET project_id='second' WHERE id='task'")
+        self.db.execute("UPDATE task_details SET affects_feature_id='elsewhere'")
+        self.db.commit()
+        # Details may be written before their task in one transaction; the rule applies once both exist.
+        insert(self.db, "task_details", organization_id="org", task_id="later", affects_feature_id="here")
+        seed_task(self.db, task="later")  # in "project", like the feature; seed_task commits
+
+    def test_feature_status_is_a_closed_list(self):
+        insert(self.db, "features", organization_id="org", id="f", schema_version=1, revision=1, project_id="project",
+               local_slug="f", title="F", status="live", owner_employee_id="reporter")
+        self.db.commit()
+        for status in ("planned", "in_progress", "retired"):
+            self.db.execute("UPDATE features SET status=?", (status,))
+        self.db.commit()
+        assert_refused(self, self.db, "CHECK constraint failed", "UPDATE features SET status='shipped'")
+
+    def test_a_tombstoned_task_can_still_be_named_as_a_duplicate_or_a_linked_step(self):
+        seed_task(self.db, task="original")
+        seed_task(self.db, task="copy")
+        insert(self.db, "task_details", organization_id="org", task_id="copy", duplicate_of_task_id="original",
+               closed_reason="duplicate")
+        insert(self.db, "checklist_steps", organization_id="org", target_kind="task", target_id="task", id="step",
+               position=0, text="Fix the original", required=1, done=0, linked_task_id="original")
+        self.db.commit()
+        insert(self.db, "tombstones", organization_id="org", kind="task", id="original", schema_version=1,
+               revision=1, terminal_state="done")
+        self.db.execute("UPDATE record_refs SET is_deleted=1 WHERE id='original'")
+        self.db.execute("DELETE FROM tasks WHERE id='original'")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT duplicate_of_task_id FROM task_details").fetchone()[0], "original")
+        self.assertEqual(self.db.execute("SELECT linked_task_id FROM checklist_steps").fetchone()[0], "original")
+        # A task that never existed still cannot be named.
+        for statement in ("UPDATE task_details SET merged_into_task_id='missing'",
+                          "UPDATE checklist_steps SET linked_task_id='missing'"):
+            with self.subTest(statement=statement), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(statement)
+                self.db.commit()
+            self.db.rollback()
+
 
 class BudgetSchemaTests(unittest.TestCase):
     def setUp(self):
@@ -1026,18 +1385,97 @@ class BudgetSchemaTests(unittest.TestCase):
         seed_organization(self.db)
         seed_task(self.db)
 
-    def budget(self, identity="budget", scope="task", period="lifetime", **overrides):
+    def budget(self, identity="budget", scope="task", period="lifetime", commit=True, **overrides):
         target={"task":"task_id", "agent":"agent_id", "release":"release_id"}[scope]
         value={"task":"task", "agent":"ana", "release":"release"}[scope]
         insert(self.db,"budgets",**(dict(organization_id="org",id=identity,current_revision=1,scope_kind=scope,
                period_kind=period,time_zone="UTC",time_zone_source="hq",created_at="2026-11-15T00:00:00Z",**{target:value}) | overrides))
         insert(self.db,"budget_policy_versions",organization_id="org",budget_id=identity,revision=1,state="active",unit="tokens",limit_amount=100,
                changed_by_id="reporter",changed_at="2026-11-15T00:00:00Z")
-        self.db.commit()
+        if commit:
+            self.db.commit()
 
     def period(self, budget="budget", identity="period"):
         insert(self.db,"budget_periods",organization_id="org",budget_id=budget,id=identity,policy_revision=1,period_key="lifetime",state="open")
         self.db.commit()
+
+    def hold(self, budget="budget", period="period"):
+        insert(self.db,"budget_holds",organization_id="org",budget_id=budget,period_id=period,policy_revision=1,stage="base",state="held",
+               created_at="2026-11-15T00:00:00Z",updated_at="2026-11-15T00:00:00Z")
+
+    def release(self):
+        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release")
+        self.db.commit()
+
+    def test_one_budget_per_task_and_per_release(self):
+        self.release()
+        seed_task(self.db, task="second")
+        self.budget()
+        self.budget("second", task_id="second")
+        self.budget("cap", scope="release")
+        assert_refused(self, self.db, "UNIQUE constraint failed: budgets", lambda: self.budget("again"))
+        assert_refused(self, self.db, "UNIQUE constraint failed: budgets", lambda: self.budget("cap-again", scope="release"))
+
+    def test_a_budget_keeps_its_scope_and_never_lowers_its_revision(self):
+        seed_task(self.db, task="second")
+        self.budget()
+        message = "budget scope or revision changed unsafely"
+        for change in ("task_id='second'", "time_zone='Europe/Paris'", "time_zone_source='owner_account',time_zone_subject_ref='owner'"):
+            with self.subTest(change=change):
+                assert_refused(self, self.db, message, f"UPDATE budgets SET {change}")
+        insert(self.db,"budget_policy_versions",organization_id="org",budget_id="budget",revision=2,state="active",unit="tokens",limit_amount=200,
+               changed_by_id="reporter",changed_at="2026-11-15T01:00:00Z")
+        self.db.execute("UPDATE budgets SET current_revision=2")
+        self.db.commit()
+        assert_refused(self, self.db, message, "UPDATE budgets SET current_revision=1")
+
+    def test_budget_history_is_never_deleted_and_events_never_change(self):
+        self.budget();self.period()
+        insert(self.db,"budget_events",organization_id="org",id="event",budget_id="budget",period_id="period",operation_id="operation",
+               kind="evaluated",policy_revision=1,actor_kind="system",occurred_at="2026-11-15T00:00:00Z",payload_json="{}")
+        insert(self.db,"budget_notices",organization_id="org",id="notice",budget_id="budget",period_id="period",policy_revision=1,stage="base",
+               threshold=100,recipient_kind="owner",kind="budget_reached",delivery_state="pending",created_at="2026-11-15T00:00:00Z")
+        self.hold()
+        self.db.commit()
+        self.db.execute("UPDATE budget_holds SET state='released',release_reason='Extended'")  # a task hold may change
+        self.db.commit()
+        assert_refused(self, self.db, "budget history is immutable", "UPDATE budget_events SET kind='warning'")
+        for table in ("budget_holds", "budget_notices", "budget_events", "budget_periods", "budgets"):
+            with self.subTest(table=table):
+                assert_refused(self, self.db, "budget identity/history must be retained", f"DELETE FROM {table}")
+
+    def test_a_hold_cannot_be_moved_onto_a_release_cap(self):
+        self.release()
+        self.budget()
+        self.budget("cap", scope="release")
+        self.period()
+        self.period("cap", "cap-period")
+        self.hold()
+        self.db.commit()
+        assert_refused(self, self.db, "release caps do not stop work",
+                       "UPDATE budget_holds SET budget_id='cap',period_id='cap-period'")
+
+    def test_an_agent_budget_keeps_its_employee_an_agent(self):
+        self.budget("daily","agent","day")
+        assert_refused(self, self.db, "budgeted employee must remain an agent", "UPDATE employees SET kind='person' WHERE id='ana'")
+        employee = dict(organization_id="org", id="newcomer", handle="newcomer", schema_version=1, revision=1,
+                        name="Newcomer", home_team_id="payments")
+        # A budget may be written before its employee in one transaction; the employee must be an agent.
+        self.budget("early","agent","day",commit=False,agent_id="newcomer")
+        assert_refused(self, self.db, "budgeted employee must be an agent",
+                       lambda: insert(self.db, "employees", **employee, kind="person"))
+        self.budget("early","agent","day",commit=False,agent_id="newcomer")
+        insert(self.db, "employees", **employee, kind="agent")
+        self.db.commit()
+
+    def test_an_early_warning_is_only_for_the_base_limit(self):
+        self.budget();self.period()
+        fields=dict(organization_id="org",budget_id="budget",period_id="period",policy_revision=1,threshold=80,
+                    recipient_kind="owner",kind="neutral",delivery_state="pending",created_at="2026-11-15T00:00:00Z")
+        insert(self.db,"budget_notices",**fields,id="warning",stage="base")
+        self.db.commit()
+        assert_refused(self, self.db, "CHECK constraint failed",
+                       lambda: insert(self.db,"budget_notices",**fields,id="late",stage="extended"))
 
     def test_daily_and_monthly_agent_limits_coexist_but_duplicate_scope_does_not(self):
         self.budget("daily","agent","day")
@@ -1322,6 +1760,23 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
                                     schema_version=1, revision=1, project_id="project",
                                     feature_id="feature", kind="design", title="Scoped",
                                     path="designs/scoped.md"))
+
+    def test_a_release_or_deployment_has_one_changelog(self):
+        common = dict(organization_id="org", schema_version=1, revision=1, project_id="project")
+        for release in ("r1", "r2"):
+            insert(self.db, "releases", **common, id=release, title=release)
+        insert(self.db, "deployments", **common, id="d1", release_id="r1", environment="production",
+               target="primary", operation="deploy", status="queued")
+        changelog = dict(common, kind="changelog", title="Changes")
+        insert(self.db, "documents", **changelog, id="r1-log", release_id="r1")
+        insert(self.db, "documents", **changelog, id="r2-log", release_id="r2")
+        insert(self.db, "documents", **changelog, id="d1-log", deployment_id="d1")
+        insert(self.db, "documents", **dict(changelog, kind="report"), id="r1-report", release_id="r1")
+        self.db.commit()
+        for scope in (dict(release_id="r1"), dict(deployment_id="d1")):
+            with self.subTest(scope=scope):
+                assert_refused(self, self.db, "UNIQUE constraint failed: documents",
+                               lambda: insert(self.db, "documents", **changelog, id="again", **scope))
 
     def test_only_an_issued_tree_document_carries_a_version(self):
         issued = dict(status="current", owner_employee_id="reporter", revision=3, version=1,
