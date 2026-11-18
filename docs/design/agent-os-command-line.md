@@ -50,8 +50,8 @@ not own what a command means: each row of section 3 names the contract that does
 agent-os <resource> <verb> [--flag <value>]...
 ```
 
-- A resource and a verb are lower-case words; a hyphen joins two words
-  (`inspect-role`).
+- A resource and a verb are single lower-case words. A hyphen may join two words where
+  one will not do; no command needs it today.
 - **No positional arguments.** A bare word after the verb is refused with
   `invalid_request` and a hint naming the flag that was probably meant.
 - A flag is `--kebab-case`, followed by its value as the next argument or as
@@ -311,12 +311,12 @@ outcome of a required ask, and the office performs both steps (ADR-0020 decision
 | --- | --- | --- | --- |
 | `org inspect` | The organization, its offices and its top team | [Organization](organization-data/01-organization-structure.md) | B2 |
 | `team list`, `team inspect` | The teams; one team (default: the caller's home team) with its lead, its members and their presence | [Organization](organization-data/01-organization-structure.md), ADR-0003 decision 14 | B2 |
-| `agent inspect` | One employee's card, for an agent or a person: team, role, lead, status | [Employees](organization-data/04-agent-structure.md) | B2 |
+| `agent inspect`, `person inspect` | One employee's card: team, role, lead, status. The two are one call under the name that fits; each answers for either kind and says which it is | [Employees](organization-data/04-agent-structure.md) | B2 |
 | `status set`, `status clear` | The caller's own status line (`status.set`, committed) | ADR-0003 decision 14 | B6 |
 | `project list`, `project inspect` | The projects the caller can see; one project with its team, repositories and processes | [Projects](organization-data/02-project-structure.md) | B3 |
 | `team create`, `team update`, `person add` and the like | A person's commands: the owner changes structure. B2 names them under this grammar | [Who may change what](organization-data/04-agent-structure.md) | B2 |
 | `project create` | A person's command: the owner | [Who may change what](organization-data/04-agent-structure.md) | B3 |
-| `hr list-roles`, `hr inspect-role` | The organization's roles; one role's body and requirements | [Roles UX](../specs/roles-ux.md) | C2 |
+| `role list`, `role inspect` | The organization's roles; one role's body and requirements. Reading only: no command writes a role in v1 | [Roles UX](../specs/roles-ux.md) | C2 |
 | `hr hire` | Asks for a new agent, in words or with the fields filled in. Returns `gate_required` with the request and, when the caller named the home team, who approves; otherwise the approver is known once the HR lead has drafted the proposal. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields or ask the owner. Nothing is provisioned before a person approves | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
 
 ### 3.3 Messages, questions and approvals
@@ -363,12 +363,13 @@ yes-or-no question with `msg ask`; that is a question, not a recorded approval.
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `process list` | The processes that apply to the caller's current work, or to a named task, with where each comes from and which must be followed | [Processes design](processes.md) (`process.effective`), PROC-8 | C5 |
-| `process inspect` | One process's full text by key; with `--why`, the chain from organization to team to project and which level won | The same (`process.show`, `process.why`) | C5 |
-| `policy list`, `policy inspect` | The same two reads for documents of kind `standard` | The same | C5 |
+| `process list` | The processes and standards that apply to the caller's current work, or to a named task, with where each comes from and which must be followed. `--kind process` or `--kind standard` keeps one kind | [Processes design](processes.md) (`process.effective`), PROC-8 | C5 |
+| `process inspect` | One document's full text by key, process or standard; with `--why`, the chain from organization to team to project and which level won | The same (`process.show`, `process.why`) | C5 |
 | `skill list`, `skill read` | The product's built-in guidance on its own commands | Processes design, decision 4 | C5 |
 
-`process apply` and `policy check` are in section 6.
+Processes and standards are the same kind of document, inherited the same way and
+read through the same calls, so they share one resource. `process apply` and
+`policy check` are in section 6.
 
 ### 3.6 Repositories and worktrees
 
@@ -391,7 +392,7 @@ of each repository's worktree.
 | --- | --- |
 | `msg send`, `msg ask`, `msg reply`, `msg inbox`, `msg read`, `msg done`, `msg defer`, `msg wait` | The same names, in the grammar of section 2: named flags only, the envelope, the office for every call |
 | `whoami` | `session inspect` |
-| `who` | `team inspect`, `agent inspect` |
+| `who` | `team inspect`, `agent inspect`, `person inspect` |
 | `status` | `status set`, `status clear` |
 | `profile set`, `msg register`, `msg deregister` | Deleted. An agent exists only through a hire |
 | `msg notify`, `msg due`, `relay`, the file queue, `--as`, `$ORG_AGENT`, `--office` | Deleted with the file queue (B6) |
@@ -401,14 +402,15 @@ Nothing is kept beside its replacement
 
 ### 3.8 Names that differ from the requirement
 
-The requirement's own rule is one uniform grammar. Six of its names are changed to keep
-that rule, and for no other reason.
+The requirement's own rule is one uniform grammar. These names are changed to keep that
+rule, and for no other reason.
 
 | Requirement | Here | Why |
 | --- | --- | --- |
 | `channel post`, `channel ask`, `consult ask`, `thread list`, `thread reply` | `msg send`, `msg ask`, `msg inbox`, `msg reply` | Owner, 2026-11-18: keep `msg`. One record, one family; the addressee decides where it goes. `channel` stays for the channels themselves |
 | `team roster` | `team inspect` | `roster` is not a verb; `inspect` is the verb an agent guesses |
-| `hr roles` | `hr list-roles` | The same |
+| `hr roles`, `hr inspect-role` | `role list`, `role inspect` | The same, and the thing read is a role. `hr hire` stays |
+| `policy list` | `process list --kind standard` | A standard is a document of the same model as a process, so it is read through the same two commands |
 | `process catalog` | `process list` | The same. `catalog` is left free for a catalogue of Process Packages |
 | `session suspend`, `session resume`, `grant check`, `worktree create`, `worktree cleanup`, `gate open`, `gate status` | Not commands | Sections 3.1, 3.3, 3.6 and 6 |
 
@@ -421,10 +423,10 @@ the table.
 | --- | --- | --- |
 | 1 | **K1** (new) | The shared library: the command table, the parser, the three ways to give input, the envelope and its three formats, `--fields`, `--limit` and `--cursor`, `--help`, `--schema`, exit codes, and the contract tests of section 8, run against a test office that is a stub inside the test process. No command of today is converted |
 | 1 | A5 | `agentic-org` uses the library for a signed-in person, with the first two rows on the real path: `org inspect` and one of the owner's writes, served by today's office |
-| 2 | B2, B3 | On the new store: `org inspect`, `team list`, `team inspect`, `agent inspect`, the owner's commands for teams and people, `project list`, `project inspect`, `project create`. With the first write: `--dry-run`, `--idempotency-key`, `--if-match`, `--durable` |
-| 3 | C2 | `hr list-roles`, `hr inspect-role`, `hr hire` and the `gate_required` outcome |
+| 2 | B2, B3 | On the new store: `org inspect`, `team list`, `team inspect`, `agent inspect`, `person inspect`, the owner's commands for teams and people, `project list`, `project inspect`, `project create`. With the first write: `--dry-run`, `--idempotency-key`, `--if-match`, `--durable` |
+| 3 | C2 | `role list`, `role inspect`, `hr hire` and the `gate_required` outcome |
 | 3 | C3 | The binding and the launch variables of 2.8; `agent-os` refuses to run without a binding; `session inspect`, `grant list`; the short catalogue in the agent's instructions; the empty MCP configuration |
-| 3 | C5 | `process list`, `process inspect`, `policy list`, `policy inspect`, `skill list`, `skill read` |
+| 3 | C5 | `process list`, `process inspect`, for processes and standards alike; `skill list`, `skill read` |
 | 4 | B6 | `msg send`, `reply`, `accept`, `inbox`, `read`, `done`, `defer`, `wait`; `channel list`, `join`, `leave`; `status set`, `clear`; `session attach`. Every `msg` command goes to the office; the file queue and the relay are deleted |
 | 4 | B7 | `msg ask`, answering with `msg reply`, `msg withdraw`, and the `timed_out` and `withdrawn` outcomes |
 | 4 | C6 | The `suspended` outcome of a required ask |
