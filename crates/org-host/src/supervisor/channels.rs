@@ -46,6 +46,25 @@ pub(super) struct Broker {
     runtime: PathBuf,
     endpoints: Mutex<BTreeMap<String, Weak<Endpoint>>>,
     pub(super) writers: Option<Arc<crate::writer::Writers>>,
+    /// Set when the host stops ([`Broker::stop`]): no launch handshake waits any more.
+    stopping: AtomicBool,
+    /// The launch handshakes under way, by a number of their own: each one's connection to
+    /// its worker, which [`Broker::stop`] shuts down.
+    handshakes: Mutex<(u64, BTreeMap<u64, UnixStream>)>,
+}
+
+/// A launch handshake under way, registered with its broker until it is dropped.
+struct Handshake<'a> {
+    broker: &'a Broker,
+    key: u64,
+}
+impl Drop for Handshake<'_> {
+    fn drop(&mut self) {
+        lock(&self.broker.handshakes).1.remove(&self.key);
+    }
+}
+fn host_stopping() -> io::Error {
+    io::Error::other("the host is stopping")
 }
 /// What a create or start handoff carries, borrowed from its holder (never copied).
 #[derive(Clone, Copy)]
@@ -108,6 +127,18 @@ impl Broker {
             runtime,
             endpoints: Mutex::default(),
             writers: None,
+            stopping: AtomicBool::new(false),
+            handshakes: Mutex::default(),
+        }
+    }
+    /// The host is stopping: every launch handshake ends now, as one that failed (its
+    /// worker is killed by its owner, which is told the launch failed), and none waits from
+    /// here on. A worker still in its handshake would otherwise hold its owner for up to
+    /// [`DEADLINE`], past the host's stop.
+    pub fn stop(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        for stream in lock(&self.handshakes).1.values() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
         }
     }
     pub fn writer_required(&self, office: &str) -> io::Result<bool> {
@@ -159,9 +190,10 @@ impl Broker {
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<Arc<Endpoint>> {
-        let (stream, deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, &mut || {
-            child.try_wait().unwrap_or(false)
-        })?;
+        let (stream, deadline, _handshake) =
+            self.connect(rendezvous, Instant::now() + DEADLINE, &mut || {
+                child.try_wait().unwrap_or(false)
+            })?;
         self.handoff(
             stream, office, admission, child, secrets, generation, signals, deadline,
         )
@@ -169,14 +201,20 @@ impl Broker {
     /// The one connection to a bound rendezvous, by `deadline`, with blocking I/O bounded by
     /// what is left of it. The wait ends early when `exited` says the worker is gone: a worker
     /// that refuses its first line (or crashes) before connecting never will, and its refusal
-    /// went to stdout, which the host does not read. That is a crash, not a fatal code.
+    /// went to stdout, which the host does not read. That is a crash, not a fatal code. It
+    /// also ends when the host stops; the handshake that follows is registered until the
+    /// returned [`Handshake`] is dropped, so a stop ends it too.
     fn connect(
+        &self,
         rendezvous: Rendezvous,
         deadline: Instant,
         exited: &mut dyn FnMut() -> bool,
-    ) -> io::Result<(UnixStream, Instant)> {
+    ) -> io::Result<(UnixStream, Instant, Handshake<'_>)> {
         let mut gone = false;
         let stream = loop {
+            if self.stopping.load(Ordering::SeqCst) {
+                return phase("rendezvous accept", Err(host_stopping()));
+            }
             match rendezvous.listener.accept() {
                 Ok((stream, _)) => break stream,
                 // One more accept after the exit was seen: a worker may connect and then exit.
@@ -216,7 +254,18 @@ impl Broker {
         stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(left))?;
         stream.set_write_timeout(Some(left))?;
-        Ok((stream, deadline))
+        let handshake = {
+            let mut handshakes = lock(&self.handshakes);
+            let key = handshakes.0;
+            handshakes.0 += 1;
+            handshakes.1.insert(key, stream.try_clone()?);
+            Handshake { broker: self, key }
+        };
+        // Registered first: a stop that came meanwhile either finds it or is seen here.
+        if self.stopping.load(Ordering::SeqCst) {
+            return phase("rendezvous accept", Err(host_stopping()));
+        }
+        Ok((stream, deadline, handshake))
     }
     /// Authenticate the socket's reader, read its `ready_for_secrets` and check its image again:
     /// the steps before any secret goes out, shared by every op.
@@ -256,14 +305,15 @@ impl Broker {
     /// [`Signal::Event`]; the stream's end (or any other event) is [`Signal::Closed`]. No
     /// endpoint is registered: a discard serves no channels.
     pub fn discard(
+        &self,
         rendezvous: Rendezvous,
         admission: &Admission,
         child: &mut Child,
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<()> {
-        let (stream, _deadline) =
-            Self::connect(rendezvous, Instant::now() + DEADLINE, &mut || {
+        let (stream, _deadline, _handshake) =
+            self.connect(rendezvous, Instant::now() + DEADLINE, &mut || {
                 child.try_wait().unwrap_or(false)
             })?;
         Self::discard_handoff(stream, admission, child, generation, signals)

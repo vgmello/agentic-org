@@ -540,6 +540,10 @@ impl Supervisor {
         let threads: Vec<JoinHandle<()>> = {
             let mut state = lock(&self.state);
             state.stopping = true;
+            // A server still in its launch handshake is killed by its owner at once.
+            if let Some(spawner) = &self.spawner {
+                spawner.broker.stop();
+            }
             for sender in state.runs.values() {
                 let _ = sender.send(Signal::Stop { deadline });
             }
@@ -1580,6 +1584,54 @@ pub(crate) mod tests {
             unsafe { libc::kill(pid, 0) } != 0,
             "the run's server outlived its owner"
         );
+    }
+
+    /// X5 review V2: a create whose worker has not connected to its launch rendezvous yet
+    /// does not hold the host's stop for the handshake's own 5 s: the shutdown ends the
+    /// handshake at once, the create fails, and its worker is killed before its owner returns.
+    #[test]
+    fn a_shutdown_ends_a_launch_handshake_at_once_and_kills_its_worker() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
+        let pid_file = dir.path().join("pid");
+        // It never connects to the rendezvous.
+        let program = script(
+            dir.path(),
+            "server",
+            &format!("echo $$ > '{}'; exec sleep 60", pid_file.display()),
+        );
+        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
+        thread::scope(|scope| {
+            let creating = scope.spawn(|| {
+                let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+                let begun = supervisor.begin_hq_create(hq_create_line(), recovery);
+                (begun.is_err(), Instant::now())
+            });
+            let until = Instant::now() + Duration::from_secs(10);
+            let pid: libc::pid_t = loop {
+                if let Some(pid) = fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|text| text.trim().parse().ok())
+                {
+                    break pid;
+                }
+                assert!(Instant::now() < until, "the worker never started");
+                thread::sleep(Duration::from_millis(5));
+            };
+            let asked = Instant::now();
+            supervisor.shutdown_by(asked + Duration::from_millis(200));
+            let (failed, returned) = creating.join().unwrap();
+            assert!(failed, "the create did not fail");
+            let took = returned.duration_since(asked);
+            assert!(took < Duration::from_secs(1), "{took:?}");
+            // SAFETY: signal 0 only checks the pid.
+            assert!(
+                unsafe { libc::kill(pid, 0) } != 0,
+                "the worker outlived its handshake"
+            );
+        });
     }
 
     #[test]

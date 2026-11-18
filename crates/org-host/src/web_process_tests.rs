@@ -1169,10 +1169,10 @@ fn lnx_3_a_filter_that_cannot_be_installed_is_logged_five_times_and_the_real_hos
 /// X5 review V2: a host's stop is bounded from the moment it is asked for, whatever its
 /// web process and a create in flight do. Here the web process's start waits for a child
 /// that never connects, and a create waits for a worker that never connects to its launch
-/// rendezvous, so neither the create's thread nor its run takes the stop before its own
-/// deadline of 5 s. The host stops within 2.5 s of being asked (Docker Desktop kills a
-/// container 3 s after `SIGTERM`), after waiting for the create as long as its bound allows,
-/// and no web process is left. Both stand-ins are the compiled fake web process.
+/// rendezvous (a handshake with a deadline of its own, 5 s). The host stops within 2.5 s of
+/// being asked (Docker Desktop kills a container 3 s after `SIGTERM`), and neither the web
+/// process nor the create's worker is left when it has stopped. Both stand-ins are the
+/// compiled fake web process.
 #[test]
 fn a_host_stops_within_its_bound_while_its_web_start_and_a_create_wait() {
     let launched = launch_placing(Seed::Administrator, false, |bin| {
@@ -1214,7 +1214,7 @@ fn a_host_stops_within_its_bound_while_its_web_start_and_a_create_wait() {
     // Both wait: the create's worker runs, and so does a web process (between two failed
     // starts none does, so this waits for the next start).
     wait_until("the create's worker and a web process", || {
-        !web_pids(&worker).is_empty() && !web_pids(&program).is_empty()
+        !own_pids(&worker).is_empty() && !own_pids(&program).is_empty()
     });
     let asked = Instant::now();
     host.shutdown();
@@ -1222,17 +1222,31 @@ fn a_host_stops_within_its_bound_while_its_web_start_and_a_create_wait() {
     println!("the host stopped {took:?} after it was asked");
     assert!(took < Duration::from_millis(2500), "{took:?}");
     assert!(
-        took >= crate::Timings::default().shutdown_grace,
-        "the create was not waited for: {took:?}"
-    );
-    assert!(
-        web_pids(&program).is_empty(),
+        own_pids(&program).is_empty(),
         "a web process outlived the host"
     );
-    // The create's thread, left to itself, ends at its launch deadline with its worker.
-    wait_until("the create's worker to end", || {
-        web_pids(&worker).is_empty()
-    });
+    assert!(
+        own_pids(&worker).is_empty(),
+        "the create's worker outlived the host"
+    );
+}
+
+/// Every live child of this process executing exactly `program`. Only children: macOS runs
+/// its own checks of a new program (`codesign --check-notarization <path>`), which name the
+/// same path.
+fn own_pids(program: &Path) -> Vec<String> {
+    let out = Command::new("/usr/bin/pgrep")
+        .arg("-P")
+        .arg(std::process::id().to_string())
+        .arg("-f")
+        .arg(program)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Ported from the deleted bootstrap release gate: a registered-instance host with

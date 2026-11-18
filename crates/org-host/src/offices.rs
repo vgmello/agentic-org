@@ -405,21 +405,21 @@ impl Offices {
     /// the next start).
     pub(crate) fn shutdown(&self) {
         self.supervisor.shutdown();
-        self.startup_stopped();
+        if let Some(startup) = lock(&self.startup).take() {
+            let _ = startup.join();
+        }
     }
 
     /// [`Offices::shutdown`] with the servers' grace period ending at `deadline`
-    /// ([`Supervisor::shutdown_by`]).
-    pub(crate) fn shutdown_by(&self, deadline: Instant) {
+    /// ([`Supervisor::shutdown_by`]), waiting for the startup discards until `until` at the
+    /// latest: the supervisor stopped their runs and starts no other, and one left still
+    /// running (its key store slow to answer, say) is logged.
+    pub(crate) fn shutdown_by(&self, deadline: Instant, until: Instant) {
         self.supervisor.shutdown_by(deadline);
-        self.startup_stopped();
-    }
-
-    /// Waits for the startup discards: the supervisor stopped their runs and starts no
-    /// other.
-    fn startup_stopped(&self) {
         if let Some(startup) = lock(&self.startup).take() {
-            let _ = startup.join();
+            if !crate::sync::join_by(startup, until) {
+                host_log::log("the startup discards did not end with the host");
+            }
         }
     }
 

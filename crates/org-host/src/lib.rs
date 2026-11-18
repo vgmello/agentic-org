@@ -921,7 +921,7 @@ impl Host {
         }
         // Before joining the listener and the web process's connection: a create still
         // running answers as soon as the supervisor stops its server.
-        self.offices.shutdown_by(deadline);
+        self.offices.shutdown_by(deadline, until);
         if let Some(web) = self.web.take() {
             if !web.join_by(until) {
                 host_log::log("the browser web process's connection did not end with the host");
@@ -935,7 +935,11 @@ impl Host {
         if let Some(creating) = self.creating.take() {
             creating.stop_by(deadline);
         }
-        self.authentication_lifecycle.take();
+        if let Some(lifecycle) = self.authentication_lifecycle.take() {
+            if !lifecycle.join_by(until) {
+                host_log::log("the session expiry did not end with the host");
+            }
+        }
         if let Ok(meta) = fs::symlink_metadata(&self.layout.host_socket) {
             if meta.file_type().is_socket() {
                 let _ = fs::remove_file(&self.layout.host_socket);

@@ -171,8 +171,8 @@ target/linux/debug) ;;
 target/linux/release) profile=(--release) ;;
 *) fail "LNX2_BIN is target/linux/debug or target/linux/release" ;;
 esac
-{ "$here/build.sh" "${profile[@]}" &&
-    "$here/build.sh" "${profile[@]}" -p agentic-org --example lnx2-office; } >"$scratch/cargo.log" 2>&1 ||
+{ "$here/build.sh" ${profile[@]+"${profile[@]}"} &&
+    "$here/build.sh" ${profile[@]+"${profile[@]}"} -p agentic-org --example lnx2-office; } >"$scratch/cargo.log" 2>&1 ||
     fail "the Linux build failed: $(tail -n 5 "$scratch/cargo.log")"
 for program in agentic-org agentic-org-office agentic-org-web agent-os examples/lnx2-office; do
     [ -x "$repo/$bin/$program" ] || fail "$bin/$program is not built"
