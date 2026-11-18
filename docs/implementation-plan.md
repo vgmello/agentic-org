@@ -410,7 +410,7 @@ onto it and deletes the old store; B1c measures and guards it.
   writes `meta` rows; `office/hq_creation.rs` and `store/hq_creation.rs` hold the
   creation record; `apps/agentic-org-office/src/transfer/writer.rs` is the host custody
   channel, called twice per write and once per read today; `apps/agentic-org-office/src/lib.rs`
-  wires the mailbox to the old tables.
+  wired the mailbox to the old tables until B1b's first merge, which unplugged it (`unsupported`).
 - **Done when:** with an organization created through the host, deleting
   `runtime/<office-id>/` and restarting rebuilds the projection with no loss; a
   committed organization write survives killing the office right after its answer; the

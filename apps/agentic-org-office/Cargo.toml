@@ -27,7 +27,6 @@ org-office = { path = "../../crates/org-office" }
 org-work = { path = "../../crates/org-work" }
 org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
-org-supervise = { path = "../../crates/org-supervise" }
 # The default office home and the socket path limit of the build target.
 org-platform = { path = "../../crates/org-platform" }
 libc.workspace = true

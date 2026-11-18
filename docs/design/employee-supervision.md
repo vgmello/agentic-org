@@ -174,6 +174,6 @@ real organization.
 
 `crates/org-supervise` starts, stops and cleans up processes with ownership marks, and
 `crates/org-runtime` defines the runtime contract. The office does not use `org-supervise`:
-B1b removed its startup recovery of owned processes, which returns with C3;
-nothing launches an agent, and there is no permit or placement code
+B1b deleted the worker's owned-process recovery adapter, which only tests invoked;
+C3 wires production recovery. Nothing launches an agent, and there is no permit or placement code
 (implementation plan C3).
