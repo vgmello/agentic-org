@@ -749,6 +749,7 @@ dependencies = [
  "libc",
  "org-platform",
  "security-framework",
+ "sha2",
  "tempfile",
 ]
 

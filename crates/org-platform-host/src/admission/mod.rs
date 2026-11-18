@@ -30,9 +30,15 @@
 //!   the Security framework against the requirement and the signing rule, optionally
 //!   pinned to a CodeDirectory hash, and only then continued. A native client is
 //!   identified by the audit token of its connection.
-//! - GNU/Linux: no adapter yet (increment X2 writes it: a sealed copy of the verified
-//!   bytes, a pidfd and `SO_PEERCRED`). Every entry refuses, so no child starts and no
-//!   client is identified.
+//! - GNU/Linux: the image is checked before any child exists. When the admission is
+//!   built, the pinned executable is copied once into a sealed, execute-only memory
+//!   file and its SHA-256 compared with the expected digest; every child is started
+//!   from that copy (`execveat`), is held by a pidfd, and is recognized on a
+//!   connection by `SO_PEERCRED`. There is no suspended child: a held child runs
+//!   already, from the verified bytes. A native client is identified by its user and
+//!   its PID only; no system fact names its image. The host's own image is checked by
+//!   the digest of its executable. Code signatures do not exist: no peer satisfies a
+//!   requirement and no static image check is made.
 //! - Every other Unix target: every entry refuses.
 
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -59,9 +65,12 @@ mod linux;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use linux as native;
 
-// Unused in a build for macOS, where only its tests call it. The Linux adapter is
-// this one until increment X2 writes its own.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+// Unused in a build for macOS or GNU/Linux, where only its tests call it and the
+// Linux adapter takes from it the entries that refuse there too.
+#[cfg_attr(
+    any(target_os = "macos", all(target_os = "linux", target_env = "gnu")),
+    allow(dead_code)
+)]
 mod refused;
 #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
 use refused as native;
@@ -85,7 +94,9 @@ pub struct ExpectedImage {
     /// The pinned path of the executable.
     pub program: PathBuf,
     /// The SHA-256 of the executable's bytes, from the verified release manifest.
-    /// The Linux rule (increment X2); macOS does not read it.
+    /// The Linux rule: the bytes a child executes must have it, and the host's own
+    /// executable too ([`own_image`]). `None` is admitted only with `development`,
+    /// and never for the host's own image. macOS does not read it.
     pub sha256: Option<[u8; 32]>,
     /// macOS: the CodeDirectory hash the loaded image must have, from the verified
     /// release manifest. `None` pins nothing.
@@ -97,8 +108,8 @@ pub struct ExpectedImage {
     /// code object as the requirement. Read only when `macos_requirement` is set.
     pub macos_signing: SigningRule,
     /// A debug build's own build output: the publisher check is skipped when no
-    /// requirement is given. A pin still applies, and refuses an image the system
-    /// cannot identify.
+    /// requirement (macOS) or digest (Linux) is given. A pin still applies, and
+    /// refuses an image the system cannot identify.
     pub development: bool,
 }
 
@@ -349,7 +360,9 @@ pub struct Started {
 
 /// A child that passed its check and has not been let run yet. On macOS it is still
 /// suspended: not one instruction of its image has run unless another process of the
-/// same user continued it. Dropping it kills and reaps the child.
+/// same user continued it. On GNU/Linux the check was made before the child existed,
+/// so the child runs already, from the verified bytes: nothing unchecked can be met
+/// between the start and the release. Dropping it kills and reaps the child.
 pub struct Held(Started);
 
 impl Held {
@@ -358,7 +371,8 @@ impl Held {
         &self.0.child
     }
 
-    /// Let the child run. On an error the child is killed and reaped.
+    /// Let the child run (on GNU/Linux it does already: nothing is done). On an error
+    /// the child is killed and reaped.
     pub fn release(self) -> io::Result<Started> {
         self.0.child.0.release()?;
         Ok(self.0)
@@ -435,6 +449,8 @@ impl From<AdmissionError> for io::Error {
 /// macOS reads nothing here: a child's image is checked when the child is started. A
 /// system that executes verified bytes (GNU/Linux) reads and checks the image here,
 /// once: every child of the admission then runs exactly the bytes read now.
+// The conversion is the identity on a system whose adapter reports this error itself.
+#[allow(clippy::useless_conversion)]
 pub fn admission(expected: ExpectedImage) -> Result<Admission, AdmissionError> {
     native::Admission::new(expected)
         .map(Admission)
@@ -477,19 +493,27 @@ impl Admission {
     /// Whether `child` is still the image that was admitted, and still the pinned
     /// one. A child admitted without an identity (a development image) passes unless
     /// the image is pinned.
+    ///
+    /// GNU/Linux: whether the child has not exited and the sealed image is still the
+    /// object that was sealed. The kernel does not report whether a process replaced
+    /// its own image, so this does not show that it has not; the verified image is
+    /// trusted not to.
     pub fn recheck(&self, child: &Child) -> Result<(), ImageRefusal> {
         self.0.recheck(&child.0)
     }
 
     /// Check `child`'s image again from the start, as when it was admitted, and
-    /// require the same identity ([`ImageRefusal::Readmitted`] otherwise).
+    /// require the same identity ([`ImageRefusal::Readmitted`] otherwise). On
+    /// GNU/Linux the bytes were verified before the child existed and cannot change,
+    /// so this is [`Self::recheck`].
     pub fn readmit(&self, child: &Child) -> Result<(), ImageRefusal> {
         self.0.readmit(&child.0)
     }
 
     /// Whether the process at the other end of `stream` is `child`, as the image that
     /// was admitted. A mismatch is an error whose source is [`NotTheChild`]; a failed
-    /// query is the system's error.
+    /// query is the system's error. On GNU/Linux a child that has exited is a
+    /// mismatch, reaped or not.
     pub fn verify_reader(&self, child: &Child, stream: &UnixStream) -> io::Result<()> {
         self.0.verify_reader(&child.0, stream)
     }
@@ -547,16 +571,16 @@ impl Peer {
     }
 }
 
-/// Who is at the other end of `stream` now, or the `peer identity` refusal (as an
-/// [`io::ErrorKind::Unsupported`] error) on a system that cannot identify a peer's
-/// image.
+/// Who is at the other end of `stream` (on GNU/Linux: who connected it), or the
+/// `peer identity` refusal (as an [`io::ErrorKind::Unsupported`] error) on a system
+/// that cannot identify a peer.
 pub fn peer(stream: &UnixStream) -> io::Result<Peer> {
     native::peer(stream)
 }
 
-/// Whether this system can identify the image of a native client at all ([`peer`]).
-/// A consumer that admits clients only by their image refuses to serve them where
-/// this refuses.
+/// Whether this system identifies a native client at all ([`peer`]): by its image
+/// on macOS, by its user and PID only on GNU/Linux, where [`Peer::satisfies`] is
+/// always `false`. A consumer refuses to serve native clients where this refuses.
 pub fn native_peers() -> Result<(), Refused> {
     native::native_peers()
 }
@@ -602,8 +626,9 @@ impl std::error::Error for OwnImageError {
 }
 
 /// Whether this running process is the image `expected` pins. macOS compares the
-/// kernel's CodeDirectory hash of the loaded image with `macos_cdhash`. An image
-/// with no pin is a mismatch on every system, never a pass.
+/// kernel's CodeDirectory hash of the loaded image with `macos_cdhash`; GNU/Linux
+/// compares the SHA-256 of this process's executable with `sha256`. An image with no
+/// pin is a mismatch on every system, never a pass, development image or not.
 pub fn own_image(expected: &ExpectedImage) -> Result<(), OwnImageError> {
     native::own_image(expected)
 }
@@ -707,6 +732,8 @@ pub(crate) mod test_support {
     /// An admission whose image check is answered by `script` instead of the system.
     /// It still starts real children as the adapter does (held until released), and a
     /// pin in `expected` is still checked against the real loaded image.
+    // The conversion is the identity on a system whose adapter reports this error itself.
+    #[allow(clippy::useless_conversion)]
     pub fn scripted_admission(
         expected: ExpectedImage,
         script: Script,
@@ -731,6 +758,8 @@ pub(crate) mod test_support {
     ///   adapter's check of the connection (the child's PID, this user, still alive).
     ///
     /// Never part of a production composition: it exists only with `test-support`.
+    // The conversion is the identity on a system whose adapter reports this error itself.
+    #[allow(clippy::useless_conversion)]
     pub fn path_admission(expected: ExpectedImage) -> Result<Admission, AdmissionError> {
         native::Admission::by_path(expected)
             .map(Admission)
@@ -746,6 +775,8 @@ pub(crate) mod test_support {
     /// never signalled and never waited for, and dropping it does nothing. For
     /// [`Admission::verify_reader`] and [`Admission::recheck`] against a process the
     /// test chose (itself, usually).
+    // The conversion is the identity on a system whose adapter reports this error itself.
+    #[allow(clippy::useless_conversion)]
     pub fn unowned_child(pid: u32, admitted: Option<Peer>) -> io::Result<Child> {
         native::Child::unowned(pid, admitted)
             .map(Child)

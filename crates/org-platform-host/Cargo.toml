@@ -13,6 +13,7 @@ test-support = []
 [dependencies]
 org-platform = { path = "../org-platform" }
 libc.workspace = true
+sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
@@ -24,3 +25,7 @@ tempfile.workspace = true
 [build-dependencies]
 # build.rs compiles the recovery presence bridge (src/presence/bridge.m) for macOS targets.
 cc = "=1.11.1"
+
+# The compiled worker the admission adapter's tests start (`cargo test` builds it).
+[[example]]
+name = "admission_fixture"
