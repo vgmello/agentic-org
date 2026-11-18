@@ -40,10 +40,10 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
-| X1d `credentials` | In work: one worker | |
-| X2 first worker on Linux (LNX-1) | In work: the Linux admission adapter first, then the host composition | |
+| X1d `credentials` | Integrated at `f2ef6ba6`; its review was interrupted and is owed | See below |
+| X2 first worker on Linux (LNX-1) | The Linux admission adapter is written on `x/x2-linux-admission` (`17c9ae02`), not yet verified by the lead, reviewed or integrated; the host composition is not started | See below |
 | X3 host secrets on Linux (LNX-4) | Not started | |
-| X4 web process confined on Linux (LNX-3) | Not started | |
+| X4 web process confined on Linux (LNX-3) | Brief written; no code yet | See below |
 | X5 service and container (LNX-2) | Not started | |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
 
@@ -404,3 +404,76 @@ the `opener_build*` test modules. `crates/org-office/src/store/tests/opener_buil
 build-script fence they held runs nowhere. X1c moved the presence bridge out of
 `crates/org-host/build.rs`; those files still pin the old script and were left
 untouched. Delete them, or re-attach the fence and re-pin it.
+
+## X1d · Credentials behind the crate
+
+**Outcome.** An internal foundation; nothing a person can see. Both host stores sit
+on one `Credentials` contract in `org_platform_host::credentials`.
+
+**Built** by one worker in `x/x1d-credentials` (`ea3e3900`), integrated at `f2ef6ba6`:
+the Data Protection Keychain as the macOS adapter (the two former `keychain.rs`
+files; attributes and add/update sequences reported unchanged), one directory engine
+that replaces the two development stores (the stricter of the two for both),
+`keys::KeyStore` and `host_secrets::HostSecrets` as typed views with their name and
+add-only rules. `org-host` no longer depends on an Apple framework crate. A Linux
+release build keeps refusing until X3.
+
+**Decisions.**
+
+1. The contract is an enum, `CredentialLocation { Keychain, Directory }`: exactly one
+   store is chosen. `data_root` and `expect_items` of the design belong to X3's
+   release store.
+2. The two development layouts on disk are unchanged
+   (`<dir>/[<instance>/]<office>.key`; `<base>/host-secrets/<instance>/<name>`),
+   because the macOS integration tests in `apps/agentic-org/tests/` pin them. X3
+   chooses the release layout.
+3. The office-keys view takes a shared lifetime lock and opens at first use (a debug
+   key folder may be shared by several homes); host secrets take an exclusive one.
+4. An add publishes by exclusive rename, as the design says, not by link and unlink.
+5. The development office-keys folder gets the stricter checks: a wrong owner or
+   mode is refused, never repaired.
+
+**Checks.** After the integration, on Linux x86-64 as an unprivileged user: the whole
+workspace's tests, 3,164 passed, the same 22 known failures and no other. `cargo fmt
+--check`, the CI lint commands, the macOS-target lint of the whole workspace and the
+refusing-target lint and tests of both platform crates pass. The list is at 37 files
+and 221 predicates.
+
+**Owed.** The fresh read-only review of `fb171f20..f2ef6ba6` was started and
+interrupted by a usage limit before it reported; X1d is not accepted until it has
+run. From a Mac, on a signed and entitled build: the 16 Keychain adapter tests and
+the engine's tests on APFS, `cargo test -p agentic-org` (`tests/keys.rs`,
+`instances.rs`, `host_control.rs`), creating an organization and restarting the
+host with the same key, and that items written before this change are still found.
+
+## X2 · The first office worker on Linux (in work)
+
+**Split.** Two slices in order: the Linux admission adapter
+(`crates/org-platform-host/src/admission/linux*`, `testing.rs`,
+`crates/org-platform/src/image/linux.rs`), then the host composition (the admission
+built once per host lifetime with the manifest digest, native clients by UID, the
+host's own image, the Linux release rule, the root refusal, the script-worker tests
+on the by-path test admission, the host's tests on Linux, the LNX-1 test with
+`agent-os`).
+
+**State.** The adapter slice is on branch `x/x2-linux-admission`, three commits on
+`61acd21a` ending at `17c9ae02` (the contract's surface for an adapter that executes
+verified bytes; the adapter; a test fix). Its worker was stopped by a usage limit
+during its final verification and returned no receipt. Before it is integrated: the
+lead runs its checks (the adapter's tests 20 times, the host's failing set against
+the baseline, the three lint targets), reads its diff, and a fresh reviewer reads
+it. Two small code repairs from the X1c admission review are held until then,
+because they are in the same files (the pin-after-admit composition as a pure
+function tested on every system; the error class of an unreachable guard), with two
+nits (`Peer::satisfies` documentation; the presence adapter reading the peer token
+through the contract's `peer` instead of `pub(crate) mod macos`).
+
+## X4 · The web process confined on Linux (not started)
+
+The brief for the Linux confinement adapter (Landlock and a seccomp allowlist in
+`crates/org-platform/src/confinement/linux.rs`, raw system calls through `libc`
+only, proved with the confinement example process) is written; its worker was
+stopped by the same limit before writing code. Decision already taken for it: the
+ready line carries the Landlock status only, so on Linux the host observes seccomp
+on the process (`/proc/<pid>/status`) in `verify_web`, and `verify_ready_report`
+requires a Landlock ABI of 3 or higher.
