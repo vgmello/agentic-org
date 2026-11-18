@@ -27,7 +27,7 @@ use org_proto::{
     OfficeStatus, OfficeStatusChanged, OfficeStatusReason,
 };
 use serde_json::{json, Value};
-use support::{eventually, fingerprint, hq, office_info, rfc3339, Client, TestHome};
+use support::{eventually, hq, office_info, rfc3339, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -100,13 +100,16 @@ fn wait_for_state(
 #[cfg(debug_assertions)]
 #[cfg(target_os = "macos")]
 #[test]
-fn native_fixture_gets_the_token_its_office_was_started_with() {
+fn native_fixture_gets_a_token_for_a_running_office_and_the_v3_worker_gets_none() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
-    let token = app_token(&host, A).unwrap();
-    assert_eq!(home.token_fingerprints(A), [fingerprint(&token)]);
+    app_token(&host, A).unwrap();
+    // The v3 handoff carries the database and grant keys only: the worker is handed no app
+    // token, so nothing it was started with can be compared with this one.
+    assert!(home.token_fingerprints(A).is_empty());
+    assert_eq!(home.grant_fingerprints(A).len(), 1);
     home.assert_no_secret_in_home();
     host.shutdown();
 }
@@ -148,13 +151,12 @@ fn retired_calls_are_refused_under_each_non_app_policy() {
 fn native_token_errors_follow_the_runtime_contract() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
-    // An unfinished folder whose discard is slow, and a slow create.
+    // An unfinished folder whose discard is slow.
     let unfinished = "01UNFINISHEDUNFINISHEDUNFI";
     fs::create_dir_all(home.office_dir(unfinished)).unwrap();
     home.script(json!({
         A: {"do": "fail", "code": "key_missing"},
-        "discard": {"do": "ready", "delay_ms": 3000},
-        "create": {"do": "ready", "delay_ms": 3000}
+        "discard": {"do": "ready", "delay_ms": 3000}
     }));
     let mut config = app_config(&home);
     config.timings.create_wait = Duration::from_millis(300);
@@ -176,27 +178,11 @@ fn native_token_errors_follow_the_runtime_contract() {
     let err = app_token(&host, A).unwrap_err();
     assert_eq!(err.code, ErrorCode::Unavailable);
 
-    // Still being created: `not_ready`. (Creates wait for the startup discards first.)
-    // Wait for the startup discard to be over (the host itself says so: the folder is no
-    // longer being discarded, so it's simply `not_found`), so the create doesn't wait for it.
+    // Once the startup discard is over the folder is simply gone: `not_found`. (`not_ready`
+    // for an office still being created is the HQ create's, tested in org-host.)
     eventually(WAIT, "the startup discard to finish", || {
         app_token(&host, unfinished).is_err_and(|e| e.code == ErrorCode::NotFound)
     });
-    let creating = {
-        let mut client = Client::for_host(&host);
-        thread::spawn(move || {
-            client.call::<org_proto::OrganizationCreate>(&org_proto::OrganizationCreateParams {
-                name: "Beta".into(),
-            })
-        })
-    };
-    eventually(WAIT, "the create's folder", || {
-        home.office_folders().iter().any(|f| f != A)
-    });
-    let new_id = home.office_folders().into_iter().find(|f| f != A).unwrap();
-    let err = app_token(&host, &new_id).unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotReady);
-    creating.join().unwrap().unwrap();
     host.shutdown();
 }
 

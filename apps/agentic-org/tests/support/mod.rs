@@ -337,15 +337,6 @@ impl TestHome {
             .collect()
     }
 
-    /// The `--discard` runs that read their first line, in order: the office id and the
-    /// fingerprint of the key the line carried (`null` for none).
-    pub fn discard_keys(&self) -> Vec<(String, String)> {
-        self.log_fields("dbkey", "discard")
-            .iter()
-            .map(|f| (f[4].clone(), f[3].clone()))
-            .collect()
-    }
-
     /// Kills the `sleep`s the fake left holding its stdout (`orphan_stdout_ms`).
     pub fn kill_orphans(&self) {
         for fields in fs::read_to_string(self.path().join("fake.log"))

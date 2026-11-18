@@ -17,8 +17,7 @@ use std::time::{Duration, Instant};
 use org_host::{Host, HostError};
 use org_office_launch::OfficeFile;
 use org_proto::{
-    Empty, ErrorCode, Hello, HelloParams, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
-    OrganizationCreateParams, OrganizationList,
+    Empty, Hello, HelloParams, OfficeList, OfficeRole, OfficeStatus, OrganizationList,
 };
 use serde_json::json;
 use support::{alive, eventually, hq, Client, TestHome};
@@ -480,7 +479,7 @@ fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() 
 
 #[cfg(target_os = "macos")]
 #[test]
-fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for_it() {
+fn the_host_answers_at_once_during_a_slow_startup_discard_which_then_finishes() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     let unfinished = home.office_dir("01UNFINISHEDUNFINISHEDUNFI");
@@ -499,38 +498,10 @@ fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for
         "the host waited for the discard before answering"
     );
     assert!(unfinished.exists());
-    // A create waits for the discard, then goes ahead.
-    client
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Beta".into(),
-        })
-        .unwrap();
-    assert!(
-        !unfinished.exists(),
-        "the create didn't wait for the discard"
-    );
+    // The discard still finishes: the unfinished folder goes once the slow discard reports.
+    eventually(Duration::from_secs(10), "the startup discard", || {
+        !unfinished.exists()
+    });
     assert!(started.elapsed() >= Duration::from_secs(2));
-    host.shutdown();
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_create_during_a_too_slow_startup_gets_not_ready() {
-    let home = TestHome::registered();
-    fs::create_dir_all(home.office_dir("01UNFINISHEDUNFINISHEDUNFI")).unwrap();
-    home.script(json!({"discard": {"do": "ready", "delay_ms": 2000}}));
-    let mut config = home.config();
-    config.timings.create_wait = Duration::from_millis(500);
-    let host = home.start(config).unwrap();
-    let started = Instant::now();
-    let err = Client::for_host(&host)
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Acme".into(),
-        })
-        .unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotReady);
-    assert_eq!(err.message, "host starting");
-    assert!(started.elapsed() >= Duration::from_millis(500));
-    assert_eq!(home.runs("create"), 0);
     host.shutdown();
 }
