@@ -51,25 +51,40 @@ const STABLE_RUNNING: Duration = Duration::from_secs(60);
 /// First restart delay; each further consecutive failure doubles it.
 const RESTART_BACKOFF: Duration = Duration::from_secs(1);
 
-/// What each instance's web processes wrote to stderr, and how many of their readers
-/// are still draining it. The host keeps none of it; a real-process test reads it to
-/// prove what the web process never prints.
+/// What one instance's web processes wrote to stderr, for a test.
 #[cfg(test)]
-static CAPTURED_STDERR: Mutex<std::collections::BTreeMap<String, (Vec<u8>, usize)>> =
+#[derive(Clone, Default)]
+struct Captured {
+    bytes: Vec<u8>,
+    /// Readers that have not reached the end of their pipe yet.
+    reading: usize,
+    /// Why a reader stopped before the end of its pipe.
+    failed: Option<String>,
+}
+/// What each instance's web processes wrote to stderr. The host keeps none of it; a
+/// real-process test reads it to prove what the web process never prints.
+#[cfg(test)]
+static CAPTURED_STDERR: Mutex<std::collections::BTreeMap<String, Captured>> =
     Mutex::new(std::collections::BTreeMap::new());
-/// What `instance`'s web processes wrote to stderr, once every reader has reached the
-/// end of its pipe (or after ten seconds, with what was read by then).
+/// Everything `instance`'s web processes wrote to stderr, once every reader has read its
+/// pipe to the end. A reader that failed, or one still reading after ten seconds, fails
+/// the test: a partial capture would prove nothing about what was never printed.
 #[cfg(test)]
 pub(crate) fn captured_stderr(instance: &str) -> Option<Vec<u8>> {
     let until = std::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let captured = lock(&CAPTURED_STDERR).get(instance).cloned();
-        match captured {
-            Some((bytes, 0)) => return Some(bytes),
-            Some((bytes, _)) if std::time::Instant::now() >= until => return Some(bytes),
-            None => return None,
-            Some(_) => thread::sleep(Duration::from_millis(10)),
+        let captured = lock(&CAPTURED_STDERR).get(instance).cloned()?;
+        if let Some(failed) = captured.failed {
+            panic!("a reader of {instance}'s web stderr failed: {failed}");
         }
+        if captured.reading == 0 {
+            return Some(captured.bytes);
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "{instance}'s web stderr was still being read after ten seconds"
+        );
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -221,14 +236,15 @@ impl Stderr {
             lock(&CAPTURED_STDERR)
                 .entry(instance.clone())
                 .or_default()
-                .1 += 1;
+                .reading += 1;
         }
         #[cfg(test)]
         let ended = {
             let instance = instance.clone();
-            move || {
+            move |failed: Option<String>| {
                 if let Some(entry) = lock(&CAPTURED_STDERR).get_mut(&instance) {
-                    entry.1 -= 1;
+                    entry.reading -= 1;
+                    entry.failed = entry.failed.take().or(failed);
                 }
             }
         };
@@ -238,27 +254,35 @@ impl Stderr {
             .name("web-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
-                while let Ok(read @ 1..) = stderr.read(&mut bytes) {
+                // Reads until the end of the pipe or an error, which also ends it.
+                let stopped = loop {
+                    let read = match stderr.read(&mut bytes) {
+                        Ok(0) => break None,
+                        Ok(read) => read,
+                        Err(error) => break Some(error),
+                    };
                     #[cfg(test)]
                     lock(&CAPTURED_STDERR)
                         .entry(instance.clone())
                         .or_default()
-                        .0
+                        .bytes
                         .extend_from_slice(&bytes[..read]);
                     let mut kept = lock(&filling.kept);
                     let room = STDERR_KEPT - kept.0.len();
                     kept.0.extend_from_slice(&bytes[..read.min(room)]);
                     drop(kept);
                     filling.changed.notify_all();
-                }
+                };
                 lock(&filling.kept).1 = true;
                 filling.changed.notify_all();
                 #[cfg(test)]
-                ended();
+                ended(stopped.map(|error| error.to_string()));
+                #[cfg(not(test))]
+                let _ = stopped;
             });
         #[cfg(test)]
-        if spawned.is_err() {
-            on_spawn_failure();
+        if let Err(error) = &spawned {
+            on_spawn_failure(Some(format!("the reader did not start: {error}")));
         }
         spawned?;
         Ok(captured)

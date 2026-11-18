@@ -6,160 +6,73 @@
 //! office worker and `agent-os`. A capability that needs one belongs in
 //! `crates/org-platform-host`, which only the host links.
 
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::Command;
 
-/// The dependency names in every `[dependencies]`, `[build-dependencies]` and
-/// `[target.….dependencies]` table of a manifest. `[dev-dependencies]` are not linked
-/// into an executable and are left out.
-/// A dependency table's own name and a package it renames (`package = "…"`) are both
-/// listed, so a dependency in its own table (`[dependencies.name]`) or under another
-/// name is found.
-fn linked_dependencies(manifest: &str) -> Vec<String> {
-    /// Which table the reader is in.
-    enum Table {
-        /// One dependency per line.
-        List,
-        /// The keys of one dependency.
-        One,
-        Other,
-    }
-    let linked = |table: &str| {
-        (table == "dependencies"
-            || table == "build-dependencies"
-            || table.ends_with(".dependencies")
-            || table.ends_with(".build-dependencies"))
-            && !table.ends_with("dev-dependencies")
-    };
-    let mut found = Vec::new();
-    let mut table = Table::Other;
-    for line in manifest.lines().map(str::trim) {
-        if let Some(header) = line.strip_prefix('[') {
-            let header = header.trim_end_matches(']');
-            table = if linked(header) {
-                Table::List
-            } else if let Some((_, name)) =
-                header.rsplit_once('.').filter(|(owner, _)| linked(owner))
-            {
-                found.push(name.trim_matches('"').to_owned());
-                Table::One
-            } else {
-                Table::Other
-            };
-            continue;
-        }
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        match table {
-            Table::List => {
-                let name = line.split(['=', '.', ' ']).next().unwrap_or(line);
-                found.push(name.trim_matches('"').to_owned());
-                found.extend(renamed_package(line));
-            }
-            Table::One if line.starts_with("package") => found.extend(renamed_package(line)),
-            Table::One | Table::Other => {}
-        }
-    }
-    found
-}
-
-/// The value of a `package = "…"` key in `line`, as a dependency's own table or an
-/// inline table writes it.
-fn renamed_package(line: &str) -> Option<String> {
-    let (_, after) = line.split_once("package")?;
-    let after = after.trim_start().strip_prefix('=')?.trim_start();
-    let value = after.strip_prefix('"')?;
-    value.split_once('"').map(|(name, _)| name.to_owned())
-}
-
-fn manifest(relative: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
-}
-
-#[test]
-fn the_manifest_reader_sees_every_linked_table_and_no_dev_dependency() {
-    let text = r#"
-[package]
-name = "x"
-[dependencies]
-libc.workspace = true
-serde = { version = "1" }
-[target.'cfg(target_os = "macos")'.dependencies]
-core-foundation.workspace = true
-"security-framework" = "3"
-[target.'cfg(unix)'.build-dependencies]
-cc = "1"
-[build-dependencies]
-bindgen = "0.7"
-[dev-dependencies]
-tempfile.workspace = true
-[target.'cfg(unix)'.dev-dependencies]
-proptest = "1"
-[features]
-x = []
-[dependencies.hostish]
-path = "../org-platform-host"
-package = "org-platform-host"
-[target.'cfg(unix)'.dependencies.cf]
-package = "core-foundation"
-version = "0.10"
-[dependencies]
-alias = { package = "org-host", path = "../org-host" }
-[dev-dependencies.only-in-tests]
-package = "security-framework"
-"#;
-    assert_eq!(
-        linked_dependencies(text),
-        [
-            "libc",
-            "serde",
-            "core-foundation",
-            "security-framework",
-            "cc",
-            "bindgen",
-            "hostish",
-            "org-platform-host",
-            "cf",
-            "core-foundation",
-            "alias",
-            "org-host",
-        ]
+/// Each workspace member's package name and the package names of its normal and build
+/// dependencies, under every target, as Cargo reads the manifests: a dependency in its
+/// own table, renamed with `package` or inherited from the workspace is named by the
+/// package it is. `[dev-dependencies]` are not linked into an executable and are left
+/// out. `--no-deps` reads only the workspace's manifests: no registry is needed.
+fn linked_dependencies() -> BTreeMap<String, Vec<String>> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let output = Command::new(cargo)
+        .args([
+            "metadata",
+            "--no-deps",
+            "--offline",
+            "--format-version",
+            "1",
+        ])
+        .arg("--manifest-path")
+        .arg(&root)
+        .output()
+        .expect("cargo runs");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata prints JSON");
+    let packages = metadata["packages"].as_array().expect("a package list");
+    packages
+        .iter()
+        .map(|package| {
+            let name = package["name"].as_str().expect("a package name").to_owned();
+            let linked = package["dependencies"]
+                .as_array()
+                .expect("a dependency list")
+                .iter()
+                .filter(|dependency| dependency["kind"].as_str() != Some("dev"))
+                .map(|dependency| {
+                    dependency["name"]
+                        .as_str()
+                        .expect("a dependency's package name")
+                        .to_owned()
+                })
+                .collect();
+            (name, linked)
+        })
+        .collect()
 }
 
 #[test]
 fn org_platform_links_the_c_library_only() {
+    let workspace = linked_dependencies();
     assert_eq!(
-        linked_dependencies(&manifest("Cargo.toml")),
+        workspace["org-platform"],
         ["libc"],
         "org-platform is linked by every executable; a capability that needs more than \
          libc goes into crates/org-platform-host"
     );
 }
 
-/// The workspace's members, as the root manifest's `members` list names them.
-fn workspace_members() -> Vec<String> {
-    let root = manifest("../../Cargo.toml");
-    let list = root
-        .split_once("\nmembers = [")
-        .and_then(|(_, rest)| rest.split_once(']'))
-        .map(|(list, _)| list)
-        .expect("the root manifest has a members list");
-    list.lines()
-        .map(|line| line.trim().trim_end_matches(','))
-        .filter(|line| line.starts_with('"'))
-        .map(|line| line.trim_matches('"').to_owned())
-        .collect()
-}
-
 /// The host executable, the host library and the host-only platform crate: the only
 /// members that may link the host's own capabilities.
-const HOST_ONLY: [&str; 3] = [
-    "apps/agentic-org",
-    "crates/org-host",
-    "crates/org-platform-host",
-];
+const HOST_ONLY: [&str; 3] = ["agentic-org", "org-host", "org-platform-host"];
 
 #[test]
 fn only_the_host_links_org_platform_host() {
@@ -167,26 +80,30 @@ fn only_the_host_links_org_platform_host() {
     // agent-os. A dependency on org-platform-host in any of them would put Apple
     // frameworks into an executable that must not load them. A new member is checked
     // without being added here.
-    let members = workspace_members();
+    let workspace = linked_dependencies();
     for host in HOST_ONLY {
         assert!(
-            members.iter().any(|member| member == host),
+            workspace.contains_key(host),
             "{host} is no longer a workspace member"
         );
     }
-    let checked: Vec<&String> = members
+    // The packages each executable outside the host is built from are among the
+    // checked ones.
+    for checked in [
+        "agentic-org-office",
+        "agentic-org-web",
+        "agent-os",
+        "org-store",
+    ] {
+        assert!(
+            workspace.contains_key(checked) && !HOST_ONLY.contains(&checked),
+            "{checked} is among the checked members"
+        );
+    }
+    for (member, linked) in workspace
         .iter()
-        .filter(|member| !HOST_ONLY.contains(&member.as_str()))
-        .collect();
-    assert!(
-        checked
-            .iter()
-            .any(|member| *member == "apps/agentic-org-office"),
-        "the worker is among the checked members"
-    );
-    for member in checked {
-        let crate_manifest = format!("../../{member}/Cargo.toml");
-        let linked = linked_dependencies(&manifest(&crate_manifest));
+        .filter(|(member, _)| !HOST_ONLY.contains(&member.as_str()))
+    {
         for forbidden in [
             "org-platform-host",
             "org-host",

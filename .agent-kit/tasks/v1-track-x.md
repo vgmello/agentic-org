@@ -1307,3 +1307,23 @@ read-only, effort xhigh) at the owner's request, after two Claude Opus 5.5 revie
   files that may be reused, and falls back to `pkill -f <root>`. Running that suite on
   Linux needs a portable PTY launcher and a teardown bound to the run's own directory
   and processes.
+- **Later in the session.** `04a006e4` showed one load flake on Linux (the confinement
+  test read the child's answer under a 10 s timeout; ten runs alone passed), repaired
+  in `eb5b750b` with the review's follow-ups. GPT 6.2 Sol rejected `eb5b750b`: the
+  test-only stderr capture returned partial bytes after a timeout and treated a read
+  error as the end; the manifest reader still missed valid TOML. The next commit makes
+  the capture fail a test on a timeout or read error, reads linked dependencies from
+  `cargo metadata --no-deps` (tried: a dependency in its own table with a comment, and
+  a single-quoted rename, both fail the check), and aligns X4's build, acceptance and
+  code-today text with decision 9.
+- **The ignored real-process run on Linux** (`cargo test -p org-host --lib --
+  --ignored`): 12 passed. Two cannot pass there as written. One needs
+  `ORG_TEST_OFFICE_BIN` (its setup, as on macOS). The other, Track A's
+  `actual_host_stop_leaves_no_create_worker_that_ignores_its_closed_stdin` (29cf70b8),
+  fails three of three times on Linux ("timed out waiting for the create's worker to
+  start"): it replaces the worker with a `#!/bin/sh` stand-in, and the Linux host
+  starts a worker only from a sealed, execute-only, close-on-exec memory copy of the
+  pinned image, which no interpreter can open. The real worker starts (the other
+  real-process creates pass on Linux), and the behaviour is covered at supervisor level
+  on Linux by the shutdown test this merge enabled there. Follow-up (Track X with
+  Track A): a compiled stand-in program, so the end-to-end test runs on Linux too.

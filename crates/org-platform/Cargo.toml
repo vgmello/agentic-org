@@ -15,6 +15,8 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The linked-dependency check (libc_only) reads `cargo metadata`.
+serde_json.workspace = true
 # The platform-conditional check (ADR-0017 LNX-5) reads the workspace's sources.
 syn = { version = "=2.0.119", default-features = false, features = ["full", "parsing"] }
 proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
