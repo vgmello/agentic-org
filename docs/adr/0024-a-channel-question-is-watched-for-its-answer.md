@@ -163,8 +163,10 @@ The design:
       an instruction.
     - Its cost is the caller's, as an ordinary agent usage record.
 
-    `msg list` remains for reading a few messages exactly. Sub-agents inside an agent's
-    own run stay out of v1.
+    `msg list` remains for reading a few messages exactly. An agent can also hand
+    reading to a sub-agent ([ADR-0025](0025-agents-start-sub-agents.md)), which keeps
+    its context clean but runs on the agent's own model; `channel summarize` is the
+    cheaper way to get something out of a channel.
 19. **Proved before it is trusted.** The first step of C9 is a measurement: at least
     50 labelled channel excerpts, run through the chosen watching model, with the
     share of confident matches that are right and the share of real responses found

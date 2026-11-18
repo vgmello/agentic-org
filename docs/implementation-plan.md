@@ -572,7 +572,10 @@ on the offers of design section 10.
 ### C1 · The sign-in spike
 
 - **Outcome:** a written result: for each vendor tool, how it is pointed at a private
-  home, where its sign-in is stored, and whether it resumes a session from there.
+  home, where its sign-in is stored, whether it resumes a session from there, and how
+  it starts sub-agents under the isolation switches: that they inherit the sandbox, the
+  tools and the environment, and where their conversation is kept
+  ([ADR-0025](adr/0025-agents-start-sub-agents.md) decision 10).
 - **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
   [agent runtimes research](research/agent-runtimes-control.md).
 - **Done when:** the result is recorded and the first adapter to build is chosen.
@@ -619,9 +622,14 @@ on the offers of design section 10.
   sections 2.5, 2.8, 2.10 and 3.1; CLI-9, 10 and 12). The check that the caller
   descends from the started process uses `org-platform` and passes on Linux in the same
   change.
+- **Sub-agents:** the adapter enables the runtime's own sub-agent tool, inside the
+  parent's sandbox, tools and policy; the office writes the sub-agent definition; a
+  sub-agent's commands and cost are the employee's; nothing outlives the turn
+  ([ADR-0025](adr/0025-agents-start-sub-agents.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
+  the sub-agent's conversation in the session view, is finished with C4. Row FC-172.
 - **Instructions:** the built-in agent instructions are the first part of what an
   agent receives, with the sections for what this build has, and their scenarios run
-  ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12 and 15). Row
+  ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
   FC-171.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
@@ -645,6 +653,8 @@ on the offers of design section 10.
 - **Build:** first a proof of concept in the UI against sample Claude and Codex
   conversation files; then the parsing and redaction in the office, served to authorized
   people.
+- **Sub-agents:** a sub-agent's conversation is shown under the turn that started it
+  (SUB-6).
 - **Read:** [REQ-05](specs/req-05-virtual-console-conversation-log-viewer.md). Row FC-150.
 - **The proof of concept needs nothing else and can start at any time.** The rest
   needs C3.

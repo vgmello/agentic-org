@@ -188,13 +188,15 @@ The decisions this design applies:
        `sandboxPolicy` has no read deny, so Codex is not office-run until the profile
        holds every fixed deny in live turns.
    - **Claude's tools are an explicit allowlist:** `Read`, `Edit`, `Write`, `Glob`,
-     `Grep`, `Bash` (sandboxed) and the tools of the connectors the office granted
-     this agent, nothing else. No product command is an MCP tool, and milestones one
+     `Grep`, `Bash` (sandboxed), the tool that starts a sub-agent, and the tools of the
+     connectors the office granted this agent, nothing else. A sub-agent is part of
+     the turn and has the parent's sandbox, tools and policy, never more
+     ([ADR-0025](../adr/0025-agents-start-sub-agents.md)). No product command is an MCP tool, and milestones one
      and two grant no connector, so the MCP configuration is empty
      ([agent command line](agent-os-command-line.md), section 2.10). Claude's
      other tools act outside the office or the sandbox (cross-session messaging,
-     scheduling and remote triggers, background and sub-agent work, worktrees, web
-     access). The adapter passes the built-in names as `--tools`, the whole list as the
+     scheduling and remote triggers, work that continues in the background after a
+     result, worktrees, web access). The adapter passes the built-in names as `--tools`, the whole list as the
      inline agent's `tools`, and every other known tool in `--disallowedTools`.
      `ToolSearch` is disallowed and `ENABLE_TOOL_SEARCH=false`, so a granted
      connector's tools are never deferred. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` turns off Bash's

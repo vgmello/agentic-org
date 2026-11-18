@@ -132,7 +132,7 @@ model turn.
 - RUN-12 · Not in v1: one-off agents started from a job.
 - RUN-13 · Not in v1: run-mode history and cost summary in a How it runs panel. Cost visibility rules apply wherever turn costs appear.
 - RUN-14 · Each placed runnable agent has office-owned execution state independent of its model conversation. People have no execution controller; monitoring an idle or paused agent uses no model turns. Pause, offboarding and transfer reconcile owned main processes and their descendants before replacement, keep independent holds and keep task workspaces.
-- RUN-15 · Not in v1: internal delegates and memory forks inside an employee's run.
+- RUN-15 · An agent can start sub-agents inside its turn with its runtime's own tool; they share its limits, are recorded and costed as the employee, and end with the turn (ADR-0025, SUB-1 to SUB-7). Not in v1: memory forks.
 
 ## 5. Not in v1
 
@@ -144,7 +144,8 @@ model turn.
   A scheduler would use the same execution admission and recovery service.
 - **One-off agents:** a run of a role, not an employee, started from a job and shown
   on it as "Reviewer (one-off run)".
-- **Internal delegates and memory forks** inside an employee's run.
+- **Memory forks** inside an employee's run. Sub-agents inside a turn are in v1
+  ([ADR-0025](../adr/0025-agents-start-sub-agents.md)).
 - **A model policy per slot** (main session, helpers, hard problems, reviews) with
   Organization → Role → Agent inheritance. Until then an agent's model is the one in
   its execution configuration; an unavailable model launches nothing and is never

@@ -29,11 +29,11 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | --- | ---: |
 | Done | 9 |
 | In progress | 63 |
-| Planned | 56 |
+| Planned | 57 |
 | Blocked | 1 |
 | Deferred | 42 |
 | Needs verification | 0 |
-| **Total** | **171** |
+| **Total** | **172** |
 
 ## Feature tables
 
@@ -235,6 +235,7 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 | [ ] | FC-168 | [The agent command line: one grammar, one answer envelope, one table of commands](design/agent-os-command-line.md) | Planned | Owner requirement [REQ-08](specs/req-08-agent-os-cli-and-kernel-primitives.md), 2026-11-18. `apps/agent-os/src/main.rs` parses by hand with positional arguments, prints text unless `--json` is given and has no schema, dry run or structured error hint. Remaining: the shared command library and its contract tests (K1, CLI-1 to CLI-14; `gate`, `worktree create` and `cleanup`, and `grant check` are not commands, for the reasons in the design), then each domain's commands with the increment that builds the domain, on macOS and Linux. Process packages, the information architecture index, artifacts and the event bus wait for the owner's baseline requirements. |
 | [ ] | FC-169 | [An agent's ask or hand-off starts a turn for an idle agent](adr/0023-an-agents-ask-starts-a-turn.md) | Planned | Owner decision 2026-11-18. No agent can be launched today, and a message starts no turn. Remaining: the office starts one ordinary turn for an idle recipient of another agent's ask, hand-off or mention, or of an answer to its own question, under the hourly limit, with what started it recorded (C8, WAKE-1 to WAKE-7). Scheduled and always-on modes stay deferred (FC-104). |
 | [ ] | FC-171 | [The built-in agent instructions and their scenarios](design/agent-instructions.md) | Planned | Owner request 2026-11-18: one text, the same for every agent, on how to work in the product. A first version is written in the design, with the turn-start inputs, the skills and twenty scenarios (INSTR-1 to INSTR-20), and reviewed once against the contracts. No agent has run, so none of it is tested. Remaining: shipped with C3 as the first part of an agent's instructions; each later increment adds its section and makes its scenario pass on every supported runtime. |
+| [ ] | FC-172 | [Sub-agents inside an agent's turn](adr/0025-agents-start-sub-agents.md) | Planned | Owner decision 2026-11-18: an agent can start sub-agents; it is a primitive of every harness. The session design had left the sub-agent tool out of the allowlist. Remaining: each adapter enables its runtime's sub-agent tool inside the parent's sandbox, tools and policy; the office writes the sub-agent definition; commands and cost are the employee's; nothing outlives the turn; the session view shows the sub-agent's conversation (C1, C3, C4; SUB-1 to SUB-7). Private specialists and process-chosen delegation stay deferred (FC-107). |
 
 ### Roles, processes and retrospectives
 
