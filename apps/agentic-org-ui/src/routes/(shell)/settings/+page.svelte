@@ -1,5 +1,10 @@
 <script lang="ts">
-	import NotBuilt from '$lib/components/NotBuilt.svelte';
+	import { pageTitle } from '$lib/nav';
+	import GeneralPanel from '$lib/modules/settings/features/general/GeneralPanel.svelte';
+
+	let { data } = $props();
 </script>
 
-<NotBuilt title="General" place="General" area="Organization settings" />
+<svelte:head><title>{pageTitle('General', 'Organization settings')}</title></svelte:head>
+
+{#key data.connection.organization.id}<GeneralPanel organizationId={data.connection.organization.id} />{/key}
