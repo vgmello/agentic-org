@@ -207,7 +207,9 @@ impl HostControl {
     pub fn live(&self) -> bool {
         self.live.load(Ordering::SeqCst)
     }
-    fn close(&self) {
+    /// Ends the connection: [`live`](Self::live) turns false, which ends serving.
+    /// Also called when the host's stdin pipe closes (the host is gone).
+    pub(crate) fn close(&self) {
         self.live.store(false, Ordering::SeqCst);
         let _ = self.socket.shutdown(Shutdown::Both);
     }

@@ -130,6 +130,37 @@ fn handoff(mut stream: UnixStream) -> io::Result<(OwnedFd, OwnedFd, TcpListener)
     Ok((stream.into(), transfer.into(), listener))
 }
 
+/// The host holds the write end of stdin for the web process's whole life and
+/// never writes after the first line. Its EOF (or a read error) means the host is
+/// gone: the connection is closed, so serving ends and the listener closes, even
+/// if the control connection's EOF were never observed. Later bytes are ignored,
+/// so nothing can swap the launch input mid-life.
+fn watch_stdin(mut input: impl Read + Send + 'static, host: Arc<HostControl>) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("web-host-stdin".into())
+        .spawn(move || {
+            let mut sink = [0u8; 256];
+            loop {
+                match input.read(&mut sink) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            host.close();
+        })
+        .map(drop)
+}
+
+/// Resolves once the host connection is gone (control EOF, a failed call or
+/// stdin EOF): serving stops and the listener closes with the process.
+async fn host_lost(host: Arc<HostControl>) {
+    while host.live() {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// Called only by the thin executable before any application concurrency.
 /// The immutable verified release owns `assets`; no request can pick this path.
 pub fn serve(assets: &Path) -> io::Result<()> {
@@ -172,6 +203,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         http: HttpLimits::default(),
         api: ApiLimits::default(),
     };
+    watch_stdin(io::stdin(), Arc::clone(&host))?;
     let reporting = Arc::clone(&host);
     // Sent exactly once, after HTTP initialization and before the first accept,
     // on the runtime's driving thread while no request is served yet.
@@ -183,12 +215,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         move || {
             // Browser sign-in waits for stored sessions (FC-159, ADR-0013).
             let backend = VersionApi;
-            let shutdown = async move {
-                while host.live() {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            };
-            Ok((backend, shutdown))
+            Ok((backend, host_lost(host)))
         },
         serving,
     )
@@ -224,6 +251,70 @@ mod tests {
             "EOF is not a full frame"
         );
         assert!(first_line(&mut std::io::Cursor::new(vec![b' '; HEADER + 1])).is_err());
+    }
+
+    /// A host answering hello for `INSTANCE` until its connection ends.
+    fn connected() -> (Arc<HostControl>, UnixStream) {
+        const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let (web, peer) = UnixStream::pair().unwrap();
+        let stop = peer.try_clone().unwrap();
+        std::thread::spawn(move || {
+            let mut reader = io::BufReader::new(peer);
+            while let Ok(Some(request)) =
+                org_proto::frame::read_message::<serde_json::Value>(&mut reader)
+            {
+                let result =
+                    org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE);
+                let reply = serde_json::json!({"id":request["id"],"result":result});
+                if org_proto::frame::write_message(reader.get_mut(), &reply).is_err() {
+                    break;
+                }
+            }
+        });
+        let control = HostControl::from_handoff(
+            web.into(),
+            transfer(),
+            INSTANCE.into(),
+            Arc::new(|| panic!("unexpected ancillary failure")),
+        )
+        .unwrap();
+        (control, stop)
+    }
+    /// Whether serving's shutdown future resolves within two seconds.
+    fn ends_serving(host: &Arc<HostControl>) -> bool {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(2), host_lost(Arc::clone(host)))
+                    .await
+                    .is_ok()
+            })
+    }
+
+    #[test]
+    fn the_host_closing_stdin_ends_serving() {
+        let (host, _control) = connected();
+        let (input, from_host) = UnixStream::pair().unwrap();
+        watch_stdin(input, Arc::clone(&host)).unwrap();
+        // Later lines are ignored; the open pipe keeps the host connection.
+        (&from_host).write_all(b"{\"v\":1}\n").unwrap();
+        assert!(!ends_serving(&host), "an open stdin is not a lost host");
+        drop(from_host);
+        assert!(ends_serving(&host), "stdin EOF is a lost host");
+        assert!(host.fetch_listener().is_err());
+    }
+
+    #[test]
+    fn control_eof_ends_serving() {
+        let (host, control) = connected();
+        assert!(
+            !ends_serving(&host),
+            "a live control connection keeps serving"
+        );
+        control.shutdown(std::net::Shutdown::Both).unwrap();
+        assert!(ends_serving(&host), "control EOF is a lost host");
     }
 
     fn transfer() -> OwnedFd {

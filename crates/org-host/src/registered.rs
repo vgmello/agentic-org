@@ -68,7 +68,19 @@ impl Host {
         }
         let instance = registry
             .reserve(name, &record.input.root)
-            .map_err(|e| refused("reopening the reserved instance", e))?;
+            .map_err(|e| match e {
+                // Another process holds the instance's state lock: its service host, setup or
+                // `admin reset`. Name that, not the lock file.
+                crate::instance::Error::Busy(_) => refused(
+                    "reopening the reserved instance",
+                    format!(
+                        "instance {} is in use by another agentic-org process (a running service, \
+                         setup or admin reset); stop it first",
+                        name.unwrap_or("default")
+                    ),
+                ),
+                e => refused("reopening the reserved instance", e),
+            })?;
         if instance.id() != id {
             return Err(refused(
                 "reopening the reserved instance",

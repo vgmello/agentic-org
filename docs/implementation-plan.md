@@ -114,7 +114,9 @@ Three things to know about the order:
   - Setup asks for no username and no password. It prints one registration link to
     the instance's own address. The link works once, expires, and is stored only as a
     digest. `agentic-org admin reset` on the server machine issues a new link, which
-    cancels the previous one.
+    cancels the previous one. A2 owns the command, the presence check and its
+    registration branch while no administrator exists; A3 adds the set-new-password
+    branch.
   - Setup reports the state of disk encryption and the file permissions it set.
   - Setup creates no account, no organization and no office (A3, A4).
 - **Read:** [standalone server design](design/standalone-server.md),
@@ -122,15 +124,19 @@ Three things to know about the order:
   criteria for a single machine; the satellite ones belong to S1),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-3). Rows FC-011,
   FC-012.
-- **Code today:**
-  - `apps/agentic-org/src/lib.rs` refuses setup.
-  - `crates/org-host/src/instance` (registry and the setup continuation) exists and is
-    reached only from tests. The protected setup connection and the typed-password
-    first account were removed in A2 B2.
-  - `crates/org-host/src/hostdb` holds the account and registry storage and is unused
-    outside tests. `HostDb::create` makes the registry with no account (D1).
-    `crates/org-host/src/links.rs` and `hostdb/links.rs` store one-time links as
-    digests only (D4); nothing issues one yet.
+- **Code today (A2 built, macOS):**
+  - `agentic-org setup [--name N] [--port P]` (`crates/org-host/src/setup_flow.rs`)
+    freezes the setup record, reserves the instance, reports ENC-3, registers and
+    starts the launchd user service (`crates/org-platform/src/service`), waits for
+    readiness and prints the initial registration link only to a terminal.
+  - `agentic-org serve --name N` starts the registered instance; the host creates its
+    registry at first start with no account (D1, ADR-0022). `admin.link.initial` and
+    `admin.reset` on `host.sock` issue links (`crates/org-host/src/admin.rs`), stored
+    as digests only (D4, `crates/org-host/src/links.rs`).
+  - `agentic-org admin reset` and `agentic-org service start|stop|status` exist.
+  - Not built: SIGN-34's SSH-first refusal, the registration-link reason in the
+    system dialog, noninteractive `--config` setup, release staging (SRV-1, SRV-34)
+    and the `dedicated-user` offer (L6). Rows FC-011 and FC-012 list the evidence.
 - **Done when:** the single-machine SRV criteria for a fresh install pass on macOS; a second run of
   setup changes nothing; a used or replaced link is refused; ENC-3 passes.
 - **Needs:** nothing. It is where Track A starts.
@@ -152,7 +158,9 @@ Three things to know about the order:
     ever typed in a terminal.
   - `agentic-org admin reset` always concerns the administrator account: it prints a
     one-time link that registers the account if none exists, and otherwise sets a new
-    password. It is the only account command.
+    password. It is the only account command. A2 built the command and its
+    registration branch; A3 adds the set-new-password branch, which answers
+    `unavailable` until then.
   - Sign-in and sign-out. Sessions are stored at the host as digests, cached in the web
     process, and survive a restart of either.
   - Every request made for a person reaches the office with that person's principal and

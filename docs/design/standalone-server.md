@@ -663,9 +663,15 @@ Linux, including a container, and confirms no production mock fallback.
 
 ## What the code does today
 
-- `agentic-org` implements `serve`, help and version; `setup` refuses without
-  changing state. There is no bootstrap, download, installer, updater or service
-  registration; the executables are built from source and started by hand.
+- On macOS, `agentic-org setup [--name N]` creates the instance, registers and
+  starts its launchd user service, and prints one registration link to a terminal;
+  `admin reset` issues a new registration link after local presence (its
+  set-new-password branch waits for A3), and `service start|stop|status` wrap the
+  service adapter. `serve --name N` runs the registered instance and creates its
+  registry at first start (ADR-0022). Other systems refuse setup before any change.
+  There is no download, installer, updater or release staging: the executables are
+  built from source, and a release build of setup refuses until it carries a pinned
+  runtime release (SRV-1).
 - Release verification exists as the `org-release` library, linked into `org-host`,
   and no command calls it.
 - Protected HQ creation (`crates/org-host/src/provisioning.rs`, the office's

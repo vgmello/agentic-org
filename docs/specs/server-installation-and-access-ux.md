@@ -72,9 +72,18 @@ For a new instance the wizard establishes, in order:
 4. Agent isolation ([ADR-0015](../adr/0015-agent-isolation-modes.md)): setup offers
    the isolation mode and, for `dedicated-user`, performs the one administrator step
    that creates the agent account and installs its launcher; without administrator
-   rights it continues in `same-user` and says so. Setup also reports whether
-   operating-system disk encryption is on and which file permissions it set
-   ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)).
+   rights it continues in `same-user` and says so. Until `dedicated-user` is offered
+   (implementation plan L6), setup records `same-user` and states the reduced
+   protection: "Agents run as alex (same-user mode): only the tool sandbox separates
+   agents from the server's data." Setup also reports whether operating-system disk
+   encryption is on and which file permissions it set, reading the modes back from
+   disk ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)). On a Mac:
+   "Disk encryption (FileVault): on." When it is off: "Disk encryption is off.
+   Agentic Org does not encrypt its data; turn on FileVault in System Settings ›
+   Privacy & Security." When it can't be determined, setup says so with the reason.
+   Off and unknown warn and never refuse. The permissions line reads "File
+   permissions: the instance folder and everything in it are readable only by alex
+   (folders 700, files 600)." or lists the paths that are not private.
 5. Local prerequisites for running agents: Git and the supported harnesses (§3).
    Model profiles and provider connections belong to an organization and are set
    up after it exists; offline setup performs no provider auth/model probe.
@@ -404,7 +413,10 @@ It works once and expires in 24 hours (at 14:02 tomorrow):
   administrator account." The link's own lines are setup's.
 - A new link cancels the previous one. Issuing it changes nothing else: the old
   password works until the new one is set.
-- On a Mac the system dialog reads "reset the administrator's password". Over
+- On a Mac the system dialog reads "reset the administrator's password", or, while
+  no administrator exists, "create a new administrator registration link": the same
+  presence check and dialog apply to a registration link. Setup's initial link needs
+  no dialog. Over
   SSH, or with no session at the Mac's screen, it stops before anything (the
   table below).
 - **On Linux,** run it with `sudo` as the Linux user who runs the instance. It
