@@ -16,12 +16,15 @@ cargo deny --locked check
 gitleaks git --redact
 ```
 
-On Linux, CI runs workspace Clippy and tests with `--exclude org-host --exclude
-agentic-org`, lints those two packages separately with `dead_code` and
-`unused_imports` allowed, and runs only `cargo test -p agentic-org --lib --test cli`
-for them (`.github/workflows/ci.yml`). The host runs office workers only on macOS
-today; increment X1 of the [implementation plan](docs/implementation-plan.md) brings
-it to Linux and containers.
+CI runs the same workspace Clippy and tests on macOS and Linux, with no package
+excluded (`.github/workflows/ci.yml`). On Linux the host starts office workers since
+increment X2 of the [implementation plan](docs/implementation-plan.md), keeps a
+release build's secrets in a checked directory since X3 and confines the web process
+since X4; the systemd service and the container follow in X5. `agentic-org serve` and
+`setup` refuse to run as root, so run the tests as an ordinary user. A development
+host admits a worker executable that its group can write only when that group is the
+user's own private group (the default of an Ubuntu account with a umask of `002`);
+the integration tests copy the programs they start into a private folder.
 
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, for example through Homebrew.
 CI pins the cargo-deny action by commit and verifies the Gitleaks binary checksum.

@@ -78,11 +78,9 @@ flusher, the file materializer, rebuild, the change stream, the `Engine` and
 property harness. It exists because every family crate (`org-work`, `org-mailbox`) and
 the office's own families must name `Change` and `Ack` (ADR-0014 decision 8 puts each
 operation's class in the crate that owns it), and they cannot depend on `org-office`.
-It depends on no family. Its full flush and exclusive rename are today's primitives
-from `store/acceptance/durable.rs`, carried into `files.rs` as they are: one small
-platform-conditional function (`F_FULLFSYNC` on macOS), listed on the Linux track's
-check allowlist in place of `durable.rs`. When X1b lands, `org-platform`'s `fs` takes
-that function over and `org-store` gains that dependency; B1a does not wait for it.
+It depends on no family. Its full flush and its open flags come from `org-platform`'s
+`fs` (`full_sync`, with `F_FULLFSYNC` on macOS, and `O_NOFOLLOW`, `O_NONBLOCK`), so the
+crate has no platform conditional and does not link the C library itself (ADR-0017).
 
 **No adapter crate.** The SQLite engine is the module `org-office/src/store/sqlite/`, the
 only office module that names `rusqlite`. A separate crate would have to depend on

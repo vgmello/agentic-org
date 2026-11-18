@@ -49,7 +49,7 @@ use org_office_launch::{
     DISCARD_FLAG, OFFICE_FLAG,
 };
 use org_proto::location::{
-    check_socket_path, default_office_home, office_socket_in, OFFICE_RUNTIME_DIR_ENV,
+    check_socket_path, office_home_from, office_socket_in, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
 };
 use org_proto::{ApiError, OfficeRole};
 use startup::{Control, Lifetime};
@@ -91,7 +91,8 @@ pub fn run(args: &[String], control: ControlPipe) -> i32 {
         Ok(mode) => mode,
         Err(usage) => return fail(&mut control, FailCode::InvalidRequest, usage),
     };
-    let Some(home) = default_office_home() else {
+    let Some(home) = office_home(std::env::var_os(OFFICE_HOME_ENV), std::env::var_os("HOME"))
+    else {
         return fail(&mut control, FailCode::InvalidRequest, "no office home");
     };
     let runtime = match runtime_dir_from(
@@ -673,6 +674,20 @@ impl follow::OrgFeed for OfficeFeed {
     }
 }
 
+/// The office home: `ORG_OFFICE_HOME` when it is an absolute path, else this system's
+/// application base for the user whose home folder `HOME` names (`org_platform::dirs`), the
+/// rule the host and every client use. `None` if neither gives one.
+fn office_home(
+    override_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let base = home
+        .map(std::path::PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .and_then(|home| org_platform::dirs::application_base(&home).ok());
+    office_home_from(override_home, base)
+}
+
 /// The runtime directory comes from the host's clean environment. No invalid override falls back.
 fn runtime_dir_from(
     home: &Path,
@@ -697,7 +712,9 @@ fn socket_path(runtime: &Path, office_id: &str) -> Result<std::path::PathBuf, &'
         office_socket_in(runtime, office_id)
     }
     .ok_or("not a plain office id")?;
-    check_socket_path(&socket).map_err(|_| "the socket path is too long")?;
+    let limit = org_platform::dirs::socket_path_limit()
+        .map_err(|_| "office sockets are not available on this system in this release")?;
+    check_socket_path(&socket, limit).map_err(|_| "the socket path is too long")?;
     Ok(socket)
 }
 
@@ -788,6 +805,25 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_office_home_is_the_override_or_the_systems_base_for_an_absolute_home() {
+        let home = "/Users/me";
+        let base = org_platform::dirs::application_base(Path::new(home)).ok();
+        assert!(base.is_some());
+        assert_eq!(
+            office_home(Some("/tmp/o1".into()), Some(home.into())),
+            Some("/tmp/o1".into())
+        );
+        assert_eq!(office_home(None, Some(home.into())), base);
+        for ignored in ["", "tmp/o1"] {
+            assert_eq!(office_home(Some(ignored.into()), Some(home.into())), base);
+        }
+        for no_home in [None, Some(""), Some("me")] {
+            assert_eq!(office_home(None, no_home.map(Into::into)), None);
+        }
+        assert_eq!(office_home(Some("o1".into()), Some("me".into())), None);
     }
 
     #[test]

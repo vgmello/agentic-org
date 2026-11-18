@@ -1,13 +1,7 @@
 //! The one place the store changes the file system. Publication and the journal call this
 //! seam; the testkit wraps it to inject errors, short writes and crashes, so the logic
 //! carries no test hook.
-//!
-//! The macOS branch of [`full_flush`] is the crate's only platform conditional. X1b moves
-//! it to `org-platform`'s `fs`.
-#![allow(unsafe_code)]
 
-#[cfg(target_os = "macos")]
-use std::os::unix::io::AsRawFd;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
@@ -62,7 +56,7 @@ impl Disk for RealDisk {
             .append(true)
             .create(true)
             .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
+            .custom_flags(org_platform::fs::O_NOFOLLOW)
             .open(path)?;
         Ok(Arc::new(RealFile(file)))
     }
@@ -72,7 +66,7 @@ impl Disk for RealDisk {
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
+            .custom_flags(org_platform::fs::O_NOFOLLOW)
             .open(path)?;
         Ok(Arc::new(RealFile(file)))
     }
@@ -113,14 +107,6 @@ impl DiskFile for RealFile {
 }
 
 fn full_flush(file: &File) -> io::Result<()> {
-    file.sync_all()?;
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: a live descriptor and a no-argument fcntl command. Failure is returned,
-        // never downgraded to an ordinary fsync.
-        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
+    // The device flush, with macOS's drive-cache flush, is the platform's (ADR-0017).
+    org_platform::fs::full_sync(file)
 }

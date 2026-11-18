@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "d7c915c5b1c7a4dfb60f2918da94b37b4172a24245a44f30a5fea2b542965f84"
+      "sha256": "28f7f045c1d802def5fb97bf0b915aa81cfc1dae6e170a6e4fa4cd0e5a384bf3"
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
@@ -74,7 +74,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "b134a25f8bfa76bc73615ad5184d0a525e5775ae5afb9a066ddb1c9bd5ab095a"
+      "sha256": "79ba00c826c2dd5b4ceb3623fe686c598f2be8969000f5566f6dd7b008b05a6c"
     },
     {
       "path": "AGENTS.md",
@@ -82,15 +82,15 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "d08256c52c9e026601d763cb30dbe91a0c4fdd50be2e0d1550a45323d82965dd"
+      "sha256": "1e1f0be80ed60f44ae88ffa83678f22186f725e96b379b2d9aadf094ffd7037e"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "c13c73847a64a80a097ac0d9743e84517f26fcce5a6bc654323a637cbbd3690a"
+      "sha256": "8263b161ef70997e168ab09ff8074ae276869044ff62957e9946be184d34c1da"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "0ba014aa1c5573c5fa869780df78170ecc40971892e3769f0779594ec0bd3c29"
+      "sha256": "71cb02acead594e652f4206234557d202ee139ba9e112d830eaa9a4714918241"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -106,11 +106,11 @@
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
-      "sha256": "ec630df1177affde52308916108ba2dd7805c06a03ee1be4f74ff6fb5cd9edd4"
+      "sha256": "85f2e117614a29a575165c575fda70c34e5422d7e6ad2fadac6f56507d1af7a0"
     },
     {
       "path": "crates/org-client/Cargo.toml",
-      "sha256": "b413e712066ea48dd9bdebc854ac9d08b52cbfb2a8b6e6c1025c8958af293ac2"
+      "sha256": "5ddc9717ca0440e21eaf85e68d8e1ab85e4658dc099b2bf27d30045c96e74949"
     },
     {
       "path": "crates/org-host-control/Cargo.toml",
@@ -118,7 +118,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "7fb190e5f9bd74d021763947f85dccc37bdd10a2f4f93a56f73812eaad9b5d7b"
+      "sha256": "658a01df9a0297c3826f0297584053c4fb0596fb71f779dcc6420aab58c03b05"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
@@ -126,7 +126,7 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "03d722e695c9cfbbe54bb592d029d05bc212c127d4986e43e3e71ee76df4a204"
+      "sha256": "c07d04241dc7d05649b37a5dd8cd48a20dde55b83d2d5f34859c2c960fd46729"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
@@ -138,7 +138,7 @@
     },
     {
       "path": "crates/org-socket/Cargo.toml",
-      "sha256": "4818938dc204365e6240f6d202d134327d9283486fe1d2e135c1f7d6dcebbbc2"
+      "sha256": "0635ffe4bc3e4fa4787249bb719ee437f7d7042d18e1e71cceb6c884e14a9297"
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
@@ -154,7 +154,7 @@
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "7232430004e71136763a26f7c20208e5fdfccbd1cc5790f04343da3781dce813"
+      "sha256": "1d8c8d5106fdbc033b652533023a70953377e034fd23443bcf7c143b61bfc130"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",
@@ -166,7 +166,7 @@
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "0e57cc2fc10f35ba36c2de9c4ae21a4d8cd92d6d3d02f68d1daaf0857cc1e076"
+      "sha256": "f71bfc1c52530058f8e86a3db8dd8e1209bb583eecdd4b26114e27823a9e7560"
     },
     {
       "path": "docs/architecture-rules.md",
@@ -190,7 +190,7 @@
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "0dc331c337857e46229fda1e7ef2ce47ed3b9b8880cdda0995c7bd6efe99d700"
+      "sha256": "c857c6e75485c6a303389e8df3501f09e1fb22fe0cc2d4265c83cc771f8d660c"
     },
     {
       "path": "docs/independent-delivery.md",
@@ -300,7 +300,10 @@
         "apps/agentic-org-web",
         "crates/org-pki",
         "crates/org-socket",
-        "crates/org-release"
+        "crates/org-release",
+        "crates/org-platform",
+        "crates/org-platform-host",
+        "crates/org-store"
       ],
       "risks": [],
       "implementation": [

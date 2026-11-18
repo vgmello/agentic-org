@@ -8,6 +8,7 @@ mod runtime;
 pub use runtime::RuntimeRelease;
 mod store;
 pub use archive::ArchiveBundle;
+use org_platform::image::{ReleaseArchitecture, ReleasePlatform};
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, VerifiedManifest};
 use std::{
     io::{self, Read, Write},
@@ -107,19 +108,16 @@ fn policy() -> Result<(TrustedPolicy, TrustedKeys), Error> {
     if RELEASE_REGISTRY.is_empty() || RELEASE_MIN_SEQUENCE == 0 {
         return Err(Error::MissingBuildTrust);
     }
-    let platform = if cfg!(target_os = "macos") {
-        Platform::Macos
-    } else if cfg!(target_os = "linux") {
-        Platform::Linux
-    } else {
-        return Err(Error::UnsupportedTarget);
+    // The platform names the release this build belongs to; a target without one refuses.
+    let target =
+        org_platform::image::release_target().map_err(|_refused| Error::UnsupportedTarget)?;
+    let platform = match target.platform {
+        ReleasePlatform::Macos => Platform::Macos,
+        ReleasePlatform::Linux => Platform::Linux,
     };
-    let architecture = if cfg!(target_arch = "aarch64") {
-        Architecture::Aarch64
-    } else if cfg!(target_arch = "x86_64") {
-        Architecture::X86_64
-    } else {
-        return Err(Error::UnsupportedTarget);
+    let architecture = match target.architecture {
+        ReleaseArchitecture::Aarch64 => Architecture::Aarch64,
+        ReleaseArchitecture::X86_64 => Architecture::X86_64,
     };
     Ok((
         TrustedPolicy::new(platform, architecture, 1, RELEASE_MIN_SEQUENCE).map_err(invalid)?,

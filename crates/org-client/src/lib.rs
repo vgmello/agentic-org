@@ -50,7 +50,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use org_proto::frame;
-use org_proto::location::{self, check_socket_path};
+use org_proto::location;
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
     salvage_id, ApiRange, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
@@ -214,10 +214,40 @@ pub struct Client {
     _writer: Option<Helper>,
 }
 
+/// The office home on this machine, found the way the server finds it: `ORG_OFFICE_HOME` when
+/// it is an absolute path, else this system's application base for the user whose home folder
+/// `HOME` names (`org_platform::dirs`). `None` if neither gives one: `HOME` is unset or
+/// relative too, or this system has no base.
+pub fn default_office_home() -> Option<PathBuf> {
+    office_home(
+        std::env::var_os(location::OFFICE_HOME_ENV),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The rule of [`default_office_home`] on the two variables' values.
+fn office_home(
+    override_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let base = home
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .and_then(|home| org_platform::dirs::application_base(&home).ok());
+    location::office_home_from(override_home, base)
+}
+
 /// The socket of this machine's host: `<office home>/host.sock`, with the office home found
-/// the way the server finds it (`ORG_OFFICE_HOME`, else the user's Application Support).
+/// the way the server finds it ([`default_office_home`]).
 pub fn default_host_socket_path() -> Result<PathBuf, ClientError> {
-    host_socket_in(&location::default_office_home().ok_or(ClientError::NoOfficeHome)?)
+    host_socket_in(&default_office_home().ok_or(ClientError::NoOfficeHome)?)
+}
+
+/// Checks `socket` against this system's limit on the length of a socket path.
+fn check_socket_path(socket: &Path) -> Result<(), ClientError> {
+    let limit = org_platform::dirs::socket_path_limit()
+        .map_err(|refused| ClientError::Io(refused.into()))?;
+    location::check_socket_path(socket, limit).map_err(ClientError::SocketPathTooLong)
 }
 
 fn host_socket_in(home: &Path) -> Result<PathBuf, ClientError> {
@@ -226,7 +256,7 @@ fn host_socket_in(home: &Path) -> Result<PathBuf, ClientError> {
         return Err(ClientError::NoOfficeHome);
     }
     let socket = location::host_socket_path(home);
-    check_socket_path(&socket).map_err(ClientError::SocketPathTooLong)?;
+    check_socket_path(&socket)?;
     Ok(socket)
 }
 
@@ -247,7 +277,7 @@ fn office_socket(office: &OfficeInfo, home: &Path) -> Result<PathBuf, ClientErro
         }
         None => return office_socket_by_id(home, &office.id),
     };
-    check_socket_path(&socket).map_err(ClientError::SocketPathTooLong)?;
+    check_socket_path(&socket)?;
     check_not_redirected(&run, &socket)?;
     Ok(socket)
 }
@@ -261,7 +291,7 @@ fn office_socket_by_id(home: &Path, office_id: &str) -> Result<PathBuf, ClientEr
     }
     let socket =
         location::office_socket_path(home, office_id).ok_or(ClientError::OfficeNotReachable)?;
-    check_socket_path(&socket).map_err(ClientError::SocketPathTooLong)?;
+    check_socket_path(&socket)?;
     check_not_redirected(&home.join("run"), &socket)?;
     Ok(socket)
 }
@@ -326,7 +356,7 @@ impl Client {
     /// Connects to the server listening on `socket`.
     pub fn connect(socket: impl AsRef<Path>) -> Result<Self, ClientError> {
         let socket = socket.as_ref();
-        check_socket_path(socket).map_err(ClientError::SocketPathTooLong)?;
+        check_socket_path(socket)?;
         let stream = UnixStream::connect(socket).map_err(|e| match e.kind() {
             ErrorKind::NotFound | ErrorKind::ConnectionRefused => ClientError::NotRunning(e),
             _ => ClientError::Io(e),
@@ -1035,6 +1065,32 @@ mod tests {
         const METHOD: &'static str = "test.named";
         type Params = NamedParams;
         type Result = Organization;
+    }
+
+    #[test]
+    fn the_office_home_is_the_override_or_the_systems_base_for_an_absolute_home() {
+        let home = "/Users/me";
+        let base = org_platform::dirs::application_base(Path::new(home)).ok();
+        assert!(base.is_some());
+        assert_eq!(
+            office_home(Some("/tmp/o1".into()), Some(home.into())),
+            Some(PathBuf::from("/tmp/o1"))
+        );
+        // No override, or one that is empty or relative: the system's base for HOME.
+        assert_eq!(office_home(None, Some(home.into())), base);
+        for ignored in ["", "tmp/o1"] {
+            assert_eq!(office_home(Some(ignored.into()), Some(home.into())), base);
+        }
+        // A HOME that is unset, empty or relative gives no base.
+        assert_eq!(office_home(None, None), None);
+        assert_eq!(office_home(None, Some("".into())), None);
+        assert_eq!(office_home(None, Some("me".into())), None);
+        assert_eq!(office_home(Some("o1".into()), Some("me".into())), None);
+        // The override does not need a HOME.
+        assert_eq!(
+            office_home(Some("/tmp/o1".into()), None),
+            Some(PathBuf::from("/tmp/o1"))
+        );
     }
 
     #[test]

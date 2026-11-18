@@ -44,7 +44,7 @@ impl RequestIssuer {
         inventory: &'a mut dyn TargetCheckpoint,
     ) -> io::Result<ScanRequest<'a>> {
         let mut nonce = [0; 32];
-        entropy(&mut nonce)?;
+        org_platform::process::entropy(&mut nonce)?;
         Ok(ScanRequest {
             mark: mark.into(),
             nonce,
@@ -53,52 +53,6 @@ impl RequestIssuer {
             tool_sessions: tool_sessions.into(),
             inventory,
         })
-    }
-}
-
-fn entropy(bytes: &mut [u8; 32]) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        loop {
-            // SAFETY: getentropy accepts this writable buffer, which is below its 256-byte limit.
-            if unsafe { libc::getentropy(bytes.as_mut_ptr().cast(), bytes.len()) } == 0 {
-                return Ok(());
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::Interrupted {
-                return Err(error);
-            }
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let mut offset = 0;
-        while offset < bytes.len() {
-            // SAFETY: this is the remaining initialized writable slice. Refuse an
-            // uninitialized entropy pool instead of blocking past the recovery deadline.
-            let count = unsafe {
-                libc::getrandom(
-                    bytes[offset..].as_mut_ptr().cast(),
-                    bytes.len() - offset,
-                    libc::GRND_NONBLOCK,
-                )
-            };
-            if count < 0 {
-                let error = io::Error::last_os_error();
-                if error.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(error);
-            }
-            if count == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "empty entropy read",
-                ));
-            }
-            offset += count as usize;
-        }
-        Ok(())
     }
 }
 

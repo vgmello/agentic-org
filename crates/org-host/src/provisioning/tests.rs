@@ -523,7 +523,6 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
 #[ignore = "root runs with ORG_TEST_OFFICE_BIN; actual worker rendezvous requires permitted local bind"]
 fn actual_selected_hq_creation_and_exact_retry() {
     use std::time::{Duration, Instant};
@@ -531,7 +530,8 @@ fn actual_selected_hq_creation_and_exact_retry() {
     let instance = crate::ids::uuid_v7().unwrap();
     let (_account_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
     let (db, custody) = auth.provisioning_storage();
-    let dir = tempfile::tempdir_in("/private/tmp").unwrap();
+    let dir =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let root = dir.path().canonicalize().unwrap();
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let keys = Arc::new(crate::keys::memory::MemoryKeys::default());

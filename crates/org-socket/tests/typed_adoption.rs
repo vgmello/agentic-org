@@ -6,6 +6,24 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixDatagram, UnixStream};
 use std::time::Duration;
 
+/// Whether this machine has an IPv6 loopback to bind. A machine without one (a sandbox
+/// or a container with IPv6 switched off) answers "address family not supported" or
+/// "address not available": the IPv6 case is then skipped, with the reason printed, and
+/// the IPv4 case still runs. Any other failure to bind is a failure of the test.
+fn ipv6_loopback() -> bool {
+    match TcpListener::bind("[::1]:0") {
+        Ok(_) => true,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AddrNotAvailable
+                || error.raw_os_error() == Some(libc::EAFNOSUPPORT) =>
+        {
+            eprintln!("skipped the IPv6 case: this machine has no IPv6 loopback ({error})");
+            false
+        }
+        Err(error) => panic!("binding the IPv6 loopback: {error}"),
+    }
+}
+
 #[test]
 fn public_unix_datagram_adoption_preserves_descriptor_and_traffic() {
     let (source, peer) = UnixDatagram::pair().unwrap();
@@ -26,6 +44,9 @@ fn public_unix_datagram_adoption_preserves_descriptor_and_traffic() {
 #[test]
 fn public_tcp_listener_adoption_preserves_both_families_and_accepts_traffic() {
     for address in ["127.0.0.1:0", "[::1]:0"] {
+        if address.starts_with('[') && !ipv6_loopback() {
+            continue;
+        }
         let source = TcpListener::bind(address).unwrap();
         let raw = source.as_raw_fd();
         let adopted = tcp_listener(source.into()).unwrap();

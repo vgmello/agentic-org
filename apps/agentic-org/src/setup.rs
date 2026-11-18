@@ -16,6 +16,15 @@ agentic-org setup [--name <instance>] [--port <port>]\nWithout --name the instan
 \"default\" on port 7420; a named instance takes the first free port from 7421.";
 
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
+    run_as(arguments, org_host::Config::refuse_root)
+}
+
+/// [`run`], with the check of who may own an instance and its service given by the caller
+/// (the composition passes the host's root refusal; a test passes its own).
+fn run_as(
+    arguments: &[String],
+    may_run_the_service: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     // Never write a fake HQ or enroll a satellite from here.
     if arguments.iter().any(|arg| {
         matches!(arg.as_str(), "--hq" | "--satellite" | "--invitation")
@@ -28,6 +37,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         println!("{HELP}");
         return Ok(());
     }
+    // Setup reserves the instance, makes its custody and registers a service that runs as
+    // the user who ran it, and the service refuses root (ADR-0017 decision 10). So root is
+    // refused here, before anything is read or made, with the service's own words. Nothing
+    // above reads more than the arguments. (`admin reset` run by root for the service user
+    // is another command and is not judged here.)
+    may_run_the_service()?;
     let options = crate::options(arguments, &["--name", "--port"])?;
     let port = options
         .get("--port")
@@ -125,6 +140,8 @@ pub(crate) fn platform() -> Result<Platform, String> {
         return Ok(Platform {
             service: Box::new(ChildServiceManager::new(dir)),
             disk: Box::new(FakeDiskEncryption(state)),
+            // A development build keeps its secrets in its development key folder.
+            credentials: setup_flow::CredentialDirectory::Unused,
         });
     }
     #[cfg(not(all(debug_assertions, feature = "test-support")))]
@@ -137,4 +154,48 @@ pub(crate) fn platform() -> Result<Platform, String> {
         );
     }
     setup_flow::platform()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// A user who may not own a service is refused before setup reads or makes anything:
+    /// before its options are even parsed, so no instance is reserved, no custody is made
+    /// and no service is registered. Help and the satellite refusal read nothing and are
+    /// answered to anyone.
+    #[test]
+    fn a_user_who_may_not_run_the_service_is_refused_before_setup_reads_anything() {
+        let refusal = || Err("the service does not run as this user".to_owned());
+        for list in [
+            vec![],
+            vec!["--name", "lab"],
+            vec!["--port", "7420"],
+            // Refused as the user, not as a bad option: nothing was parsed yet.
+            vec!["--frobnicate"],
+            vec!["--port", "not-a-port"],
+        ] {
+            assert_eq!(
+                run_as(&args(&list), refusal),
+                Err("the service does not run as this user".into()),
+                "{list:?}"
+            );
+        }
+        let unasked = || -> Result<(), String> { panic!("asked who runs a help query") };
+        assert_eq!(run_as(&args(&["--help"]), unasked), Ok(()));
+        let unasked = || -> Result<(), String> { panic!("asked before the satellite refusal") };
+        assert!(run_as(&args(&["--satellite"]), unasked)
+            .unwrap_err()
+            .contains("setup creates HQ only"));
+        // The composition's own check is the host's rule for this process's user.
+        // SAFETY: no arguments and no side effects; it cannot fail.
+        assert_eq!(
+            org_host::Config::refuse_root().is_err(),
+            unsafe { libc::geteuid() } == 0
+        );
+    }
 }

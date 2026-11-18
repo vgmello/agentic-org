@@ -174,7 +174,7 @@ library.
 | `org-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
 | `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
 | `org-platform` | Holds every operating-system difference: the platform contracts of ADR-0017 with macOS, Linux and refusing adapters ([Linux host design](linux-host.md)) | New in X1a; the only crate with platform conditionals | Track X, from X1a (the first day) |
-| `org-store` | The office store's engine-neutral foundation ([office store design](office-store.md)) | New in B1a; depends on no family and not on `org-proto`: it checks only that an ID is one safe path component, and families validate UUIDv7 (on `org-platform` once X1b moves its flush there) | B1a |
+| `org-store` | The office store's engine-neutral foundation ([office store design](office-store.md)) | New in B1a; depends on no family and not on `org-proto`: it checks only that an ID is one safe path component, and families validate UUIDv7; its full flush and open flags are `org-platform`'s | B1a |
 | `org-spool` | File queue `agent-os` uses when no office is named | Deleted, with the route through it | With conversations and messages (implementation plan B6) |
 
 ## 4. Svelte and TypeScript layout

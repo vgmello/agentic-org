@@ -29,19 +29,22 @@ follows "For every increment" in that plan and the workflow in
 
 ## State
 
-No increment has started. Work done before the plan was written is not carried over as
-a task; what the code does today is in
-[executable migration](../../docs/design/executable-migration.md) and in the "Code
-today" line of each increment.
+Work done before the plan was written is not carried over as a task; what the code
+does today is in [executable migration](../../docs/design/executable-migration.md)
+and in the "Code today" line of each increment.
 
 | Increment | Lead | Branch | State |
 | --- | --- | --- | --- |
-| (none started) | | | |
+| X1a to X6 (Track X, Linux) | Track X lead agent | `claude/hopeful-noether-lsmbac` | Plan and per-increment state: [v1-track-x.md](v1-track-x.md) |
 
 ## Known facts that affect the first increments
 
-- `crates/org-host` compiles on Linux but refuses to start an office worker there: the
-  check that a started worker is the intended program exists only for macOS, and the
-  version for every other system refuses (`supervisor/channels.rs`). CI lints the host
-  on Linux and excludes its tests from the Linux workspace run. Increment X2 brings
-  the host to Linux.
+- `crates/org-platform` exists (A2 B0), and from X1a no file outside it gains a platform predicate:
+  `crates/org-platform/tests/platform_conditionals.rs` fails on one, and CI fails a
+  change that adds a file to `.github/platform-conditionals.allow` or raises a count. A new operating-system need goes
+  into that crate, with its macOS adapter and a refusing one, and a note for Track X.
+- Since Track X's increments X2 to X4 (2026-11-18) `crates/org-host` starts office
+  workers on GNU/Linux as well (`org_platform_host::admission`), keeps a release
+  build's secrets in a checked directory there, and confines the web process with a
+  seccomp filter. CI runs the whole workspace's lint and tests on macOS and Linux with
+  no package excluded. The record is `.agent-kit/tasks/v1-track-x.md`.

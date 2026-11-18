@@ -437,7 +437,7 @@ fn read_file(full: &Path) -> Result<Option<Vec<u8>>, FilesError> {
     let file = match OpenOptions::new()
         .read(true)
         // Never follows a link, and never waits on a FIFO someone put there.
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .custom_flags(org_platform::fs::O_NOFOLLOW | org_platform::fs::O_NONBLOCK)
         .open(full)
     {
         Ok(file) => file,

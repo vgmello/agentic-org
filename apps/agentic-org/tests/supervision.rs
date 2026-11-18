@@ -3,9 +3,6 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -44,7 +41,6 @@ fn wait_for(host: &Host, office_id: &str, want: OfficeStatus) {
     });
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_crashed_server_is_restarted_with_growing_backoff() {
     let home = TestHome::registered();
@@ -63,7 +59,6 @@ fn a_crashed_server_is_restarted_with_growing_backoff() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn in_use_and_unknown_failures_are_retried() {
     let home = TestHome::registered();
@@ -79,7 +74,6 @@ fn in_use_and_unknown_failures_are_retried() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_fatal_failure_makes_the_office_unavailable_without_restarts() {
     let home = TestHome::registered();
@@ -100,7 +94,6 @@ fn a_fatal_failure_makes_the_office_unavailable_without_restarts() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_server_that_is_never_ready_is_killed_and_restarted() {
     let home = TestHome::registered();
@@ -117,7 +110,6 @@ fn a_server_that_is_never_ready_is_killed_and_restarted() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn startup_serves_stored_offices_cleans_unfinished_ones_and_skips_bad_ones() {
     let home = TestHome::registered();
@@ -223,7 +215,6 @@ fn a_second_host_on_the_same_home_fails_fast() {
     first.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn shutdown_closes_stdins_so_servers_exit_cleanly_and_releases_the_home() {
     let home = TestHome::registered();
@@ -244,7 +235,6 @@ fn shutdown_closes_stdins_so_servers_exit_cleanly_and_releases_the_home() {
     support::restart_host(&home, &home.config()).shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_server_that_ignores_eof_is_killed_after_the_grace_period() {
     let home = TestHome::registered();
@@ -267,15 +257,20 @@ fn a_server_that_ignores_eof_is_killed_after_the_grace_period() {
 #[test]
 fn a_home_too_long_for_its_sockets_refuses_to_start() {
     let home = TestHome::new();
-    // run/<12 chars>.sock adds 22 bytes: make that exceed 103.
+    // run/<12 chars>.sock adds 22 bytes: make that exceed this system's limit.
+    let limit = org_platform::dirs::socket_path_limit().unwrap();
     let base = home.path();
-    let pad = 103 - 22 - base.as_os_str().len();
+    let pad = limit - 22 - base.as_os_str().len();
     let long = base.join("x".repeat(pad));
     let mut config = org_host::Config::new(&long, support::fake_server());
     config.dev_key_dir = Some(home.keys_dir());
     match home.start(config) {
         Err(e @ HostError::SocketPathTooLong { .. }) => {
-            assert!(e.to_string().contains("macOS allows at most 103"), "{e}");
+            assert!(
+                e.to_string()
+                    .contains(&format!("this system allows at most {limit}")),
+                "{e}"
+            );
         }
         Err(other) => panic!("{other}"),
         Ok(_) => panic!(
@@ -286,7 +281,6 @@ fn a_home_too_long_for_its_sockets_refuses_to_start() {
     assert!(!long.exists(), "it touched the home before refusing");
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn server_stderr_goes_to_an_owner_only_log_rotated_at_the_cap() {
     let home = TestHome::registered();
@@ -312,7 +306,6 @@ fn server_stderr_goes_to_an_owner_only_log_rotated_at_the_cap() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_discard_refused_with_already_exists_or_storage_error_is_left_alone() {
     // The server finds an organization committed in the folder's databases (already_exists),
@@ -342,7 +335,6 @@ fn a_discard_refused_with_already_exists_or_storage_error_is_left_alone() {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_folder_holding_another_offices_file_is_moved_aside_never_started_or_discarded() {
     const MISPLACED: &str = "01MISPLACEDMISPLACEDMISPLA";
@@ -380,7 +372,6 @@ fn a_folder_holding_another_offices_file_is_moved_aside_never_started_or_discard
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_failed_discard_is_logged_not_retried_and_the_host_still_starts() {
     let home = TestHome::registered();
@@ -403,7 +394,6 @@ fn a_failed_discard_is_logged_not_retried_and_the_host_still_starts() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_server_that_exits_while_a_descendant_holds_its_stdout_is_restarted() {
     let home = TestHome::registered();
@@ -425,7 +415,6 @@ fn a_server_that_exits_while_a_descendant_holds_its_stdout_is_restarted() {
     home.kill_orphans();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_late_close_from_a_killed_server_doesnt_end_its_replacement() {
     let home = TestHome::registered();
@@ -455,7 +444,6 @@ fn a_late_close_from_a_killed_server_doesnt_end_its_replacement() {
     home.kill_orphans();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() {
     let home = TestHome::registered();
@@ -477,7 +465,6 @@ fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() 
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn the_host_answers_at_once_during_a_slow_startup_discard_which_then_finishes() {
     let home = TestHome::registered();
@@ -510,11 +497,9 @@ fn the_host_answers_at_once_during_a_slow_startup_discard_which_then_finishes() 
 /// connecting to `host.sock` (so the host keeps accepting while it spawns) reports `-` for the
 /// descriptors it inherited above 2. Once the runs are over, the host keeps no office log open
 /// that nothing writes.
-#[cfg(target_os = "macos")]
 #[test]
 fn servers_inherit_no_host_fds_while_clients_connect() {
     use std::os::unix::net::UnixStream;
-    use std::process::Command;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -569,21 +554,12 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
     // The host runs in this process: count the office logs of this home it holds open. Three
     // active offices may each keep theirs; 39 finished runs must not leave 39 open.
     let base = home.fixture_base();
-    let pid = std::process::id().to_string();
-    let out = Command::new("/usr/sbin/lsof")
-        .args(["-n", "-P", "-Fn", "-p", &pid])
-        .output()
-        .expect("lsof runs");
-    assert!(out.status.success(), "lsof failed: {out:?}");
-    let listing = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        listing.lines().any(|l| l == format!("p{pid}")),
-        "lsof didn't list this process"
-    );
-    let open_logs = listing
-        .lines()
-        .filter(|l| {
-            l.starts_with('n') && l.contains(base.to_str().unwrap()) && l.contains("/logs/")
+    let open = org_platform::process::testing::open_paths().expect("this process's open files");
+    let open_logs = open
+        .iter()
+        .filter(|path| {
+            let path = path.to_string_lossy();
+            path.contains(base.to_str().unwrap()) && path.contains("/logs/")
         })
         .count();
     assert!(
@@ -607,7 +583,6 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
 /// plus its office home and runtime folder. The test process has names outside the allowlist
 /// (cargo's `CARGO_*` at least), so the check is not vacuous. The exact filter, with a canary
 /// and the development key folder, is `org-host`'s `a_server_gets_only_the_allowed_environment`.
-#[cfg(target_os = "macos")]
 #[test]
 fn servers_get_only_the_allowed_environment() {
     let allowed = [

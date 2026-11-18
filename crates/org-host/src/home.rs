@@ -51,10 +51,15 @@ impl Layout {
         let sample_id = "X".repeat(OFFICE_SOCKET_HANDLE_CHARS);
         let sample =
             location::office_socket_in(&self.run, &sample_id).expect("the sample id is plain");
+        let limit = socket_path_limit().map_err(|source| HostError::Io {
+            context: "finding this system's socket path limit",
+            source,
+        })?;
         for path in [&self.host_socket, &sample] {
-            location::check_socket_path(path).map_err(|e| HostError::SocketPathTooLong {
+            location::check_socket_path(path, limit).map_err(|e| HostError::SocketPathTooLong {
                 path: path.clone(),
                 len: e.len,
+                limit: e.limit,
             })?;
         }
         Ok(())
@@ -109,8 +114,57 @@ pub(crate) fn euid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-/// Where the office home is inside an account's home folder (the shared rule's default).
-const OFFICE_HOME_IN_ACCOUNT: &str = "Library/Application Support/agentic.org";
+/// The longest socket path this system takes, in bytes (`org_platform::dirs`).
+pub(crate) fn socket_path_limit() -> io::Result<usize> {
+    Ok(org_platform::dirs::socket_path_limit()?)
+}
+
+/// Where the office home of the account whose home folder is `dir` is, from the system's
+/// defaults alone (`org_platform::dirs::account_application_base`): nothing in this process's
+/// environment moves it. It is what a release host pins to. `None` on a system this release
+/// has no locations for.
+pub(crate) fn office_home_in(dir: &Path) -> Option<PathBuf> {
+    org_platform::dirs::account_application_base(dir).ok()
+}
+
+/// Where the shared rule puts the office home for the home folder `dir` in this process's
+/// environment (`org_platform::dirs::application_base`). It is [`office_home_in`] unless a
+/// variable of the system moves it ([`moving_variables`]).
+fn shared_home_in(dir: &Path) -> Option<PathBuf> {
+    org_platform::dirs::application_base(dir).ok()
+}
+
+/// The environment variables that can move the shared rule's office home away from the
+/// account's own: `ORG_OFFICE_HOME` and the system's (`XDG_DATA_HOME` on Linux), joined for
+/// a message.
+fn moving_variables() -> String {
+    let mut names = vec![location::OFFICE_HOME_ENV];
+    names.extend(org_platform::dirs::application_base_variables().unwrap_or(&[]));
+    names.join(" and ")
+}
+
+/// The office home the shared rule gives in this process's environment, the one the app and
+/// `agent-os` also use to find `host.sock`: `ORG_OFFICE_HOME` when it is an absolute path,
+/// else the system's application base for the home folder `HOME` names. `None` if neither
+/// gives one.
+pub(crate) fn default_office_home() -> Option<PathBuf> {
+    default_office_home_from(
+        std::env::var_os(location::OFFICE_HOME_ENV),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The rule of [`default_office_home`] on the two variables' values.
+fn default_office_home_from(
+    override_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let base = home
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .and_then(|home| shared_home_in(&home));
+    location::office_home_from(override_home, base)
+}
 
 /// This process's account home folder (`pw_dir`), if it is absolute.
 pub(crate) fn account_dir() -> Option<PathBuf> {
@@ -118,26 +172,31 @@ pub(crate) fn account_dir() -> Option<PathBuf> {
 }
 
 /// The office home a release host may serve: the one the shared rule
-/// (`org_proto::location::default_office_home`, which the app and `agent-os` also use to find
-/// `host.sock`) gives in this process's environment, `shared`, but only when it is the account's
-/// own office home, `<account_dir>/Library/Application Support/agentic.org`. So:
-/// `ORG_OFFICE_HOME` is unset (or not absolute, which the rule ignores) or names that home, and
-/// `HOME` (`home_env`) is the account's home folder. Anything else is refused with why, so a
-/// release host's home can't be moved by its environment, and the app and the host can't
-/// silently look in different places.
+/// ([`default_office_home`], which the app and `agent-os` also use to find `host.sock`) gives
+/// in this process's environment, `shared`, but only when it is the account's own office home,
+/// `office_home_in(account_dir)`. So: `ORG_OFFICE_HOME` is unset (or not absolute, which the
+/// rule ignores) or names that home, `HOME` (`home_env`) is the account's home folder, and no
+/// variable of the system (`XDG_DATA_HOME` on Linux) points the shared rule elsewhere.
+/// Anything else is refused with why, so a release host's home can't be moved by its
+/// environment, and the app and the host can't silently look in different places.
 ///
-/// Pure: `same` compares two paths (the host compares them canonically where they exist,
-/// lexically otherwise: [`same_path`]).
+/// Pure: `office_home_in` is the system's rule for an account's home folder with the
+/// environment left out ([`office_home_in`]), and
+/// `same` compares two paths (the host compares them canonically where they exist, lexically
+/// otherwise: [`same_path`]).
 pub(crate) fn pinned_office_home(
     shared: Option<&Path>,
     home_env: Option<&Path>,
     account_dir: Option<&Path>,
+    office_home_in: impl Fn(&Path) -> Option<PathBuf>,
     same: impl Fn(&Path, &Path) -> bool,
 ) -> Result<PathBuf, String> {
     let Some(account_dir) = account_dir.filter(|dir| dir.is_absolute()) else {
         return Err("this account has no home folder, so it has no office home".into());
     };
-    let account_home = account_dir.join(OFFICE_HOME_IN_ACCOUNT);
+    let Some(account_home) = office_home_in(account_dir) else {
+        return Err("this release has no office home location on this system".into());
+    };
     match home_env {
         // Absolute only, as the shared rule reads it.
         Some(home) if home.is_absolute() && same(home, account_dir) => {}
@@ -160,15 +219,17 @@ pub(crate) fn pinned_office_home(
     match shared {
         // Through HOME too (the same folder by now), since the home may not exist yet.
         Some(shared)
-            if same(shared, &account_home) || same(shared, &home.join(OFFICE_HOME_IN_ACCOUNT)) =>
+            if same(shared, &account_home)
+                || office_home_in(home).is_some_and(|through| same(shared, &through)) =>
         {
             Ok(account_home)
         }
         Some(shared) => Err(format!(
-            "the office home is {} (from ORG_OFFICE_HOME), but a release host serves only this \
-             account's office home {}: unset ORG_OFFICE_HOME",
+            "the office home is {} (from this environment), but a release host serves only \
+             this account's office home {}: unset {}",
             shared.display(),
-            account_home.display()
+            account_home.display(),
+            moving_variables()
         )),
         None => Err(format!(
             "no office home: a release host serves only this account's office home {}",
@@ -261,13 +322,25 @@ impl Drop for HostLock {
 mod tests {
     use super::*;
 
+    /// A system's rule for the office home in a home folder, as data for the pure rules.
+    const OFFICE_HOME_IN_ACCOUNT: &str = "Library/Application Support/agentic.org";
+    fn in_account(dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(OFFICE_HOME_IN_ACCOUNT))
+    }
+
     #[test]
     fn a_release_home_must_be_the_accounts_own_office_home() {
         let lexical = |a: &Path, b: &Path| a == b;
         let account = Path::new("/Users/me");
         let pinned = Path::new("/Users/me/Library/Application Support/agentic.org");
         let pin = |shared: Option<&str>, home: Option<&str>, account: Option<&Path>| {
-            pinned_office_home(shared.map(Path::new), home.map(Path::new), account, lexical)
+            pinned_office_home(
+                shared.map(Path::new),
+                home.map(Path::new),
+                account,
+                in_account,
+                lexical,
+            )
         };
         // ORG_OFFICE_HOME unset (the rule falls back to HOME) or naming the account's home.
         let ok = pin(
@@ -332,6 +405,7 @@ mod tests {
             Some(&link.join(OFFICE_HOME_IN_ACCOUNT)),
             Some(&link),
             Some(&real),
+            in_account,
             same_path,
         );
         assert_eq!(pinned.unwrap(), real.join(OFFICE_HOME_IN_ACCOUNT));
@@ -341,6 +415,7 @@ mod tests {
             Some(&link.join(OFFICE_HOME_IN_ACCOUNT)),
             Some(&link),
             Some(&real),
+            in_account,
             same_path,
         );
         assert_eq!(pinned.unwrap(), real.join(OFFICE_HOME_IN_ACCOUNT));
@@ -348,24 +423,120 @@ mod tests {
 
     #[test]
     fn the_account_office_home_comes_from_the_account_database() {
-        let Some(home) = account_dir().map(|dir| dir.join(OFFICE_HOME_IN_ACCOUNT)) else {
+        let Some(home) = account_dir().and_then(|dir| office_home_in(&dir)) else {
             // A uid with no account entry (some CI containers): nothing to compare.
             assert!(account_home(euid()).is_none());
             eprintln!("skipped: this uid has no account home folder");
             return;
         };
         assert!(home.is_absolute(), "{}", home.display());
-        assert!(
-            home.ends_with("Library/Application Support/agentic.org"),
-            "{}",
-            home.display()
-        );
-        // Built from the account's `pw_dir`.
+        // This system's base, built from the account's `pw_dir`.
+        let account = account_home(euid()).expect("an account with an office home has a folder");
         assert_eq!(
-            home.parent().and_then(Path::parent).and_then(Path::parent),
-            account_home(euid()).as_deref()
+            Some(home),
+            org_platform::dirs::account_application_base(&account).ok()
         );
         assert_eq!(account_home(u32::MAX - 7), None);
+    }
+
+    #[test]
+    fn a_home_the_environment_moved_is_not_the_accounts_and_is_refused() {
+        // What the pin sees when a variable of the system (XDG_DATA_HOME on Linux) points
+        // the shared rule somewhere else: HOME is right, ORG_OFFICE_HOME is unset, and the
+        // shared home still is not the account's own.
+        let account = Path::new("/home/me");
+        let own = |dir: &Path| Some(dir.join(".local/share/agentic-org"));
+        let refused = pinned_office_home(
+            Some(Path::new("/srv/elsewhere/agentic-org")),
+            Some(account),
+            Some(account),
+            own,
+            |a, b| a == b,
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("/srv/elsewhere/agentic-org")
+                && refused.contains("/home/me/.local/share/agentic-org")
+                && refused.contains(location::OFFICE_HOME_ENV),
+            "{refused}"
+        );
+        for variable in org_platform::dirs::application_base_variables().unwrap() {
+            assert!(refused.contains(variable), "{refused}");
+        }
+        // The account's own home, reached through the same rule, is served.
+        let served = pinned_office_home(
+            Some(Path::new("/home/me/.local/share/agentic-org")),
+            Some(account),
+            Some(account),
+            own,
+            |a, b| a == b,
+        );
+        assert_eq!(
+            served.unwrap(),
+            Path::new("/home/me/.local/share/agentic-org")
+        );
+    }
+
+    #[test]
+    fn the_account_home_is_the_systems_default_whatever_the_environment_says() {
+        let account = Path::new("/home/me");
+        assert_eq!(
+            office_home_in(account),
+            org_platform::dirs::account_application_base(account).ok()
+        );
+        // Where the system has a variable that moves the shared rule, the two can differ;
+        // where it has none, they are the same path.
+        if org_platform::dirs::application_base_variables()
+            .unwrap()
+            .is_empty()
+        {
+            assert_eq!(office_home_in(account), shared_home_in(account));
+        }
+    }
+
+    #[test]
+    fn a_system_without_locations_pins_no_office_home() {
+        let account = Path::new("/Users/me");
+        let refused = pinned_office_home(
+            Some(Path::new("/Users/me/anything")),
+            Some(account),
+            Some(account),
+            |_| None,
+            |a, b| a == b,
+        );
+        assert!(refused.unwrap_err().contains("no office home location"));
+    }
+
+    #[test]
+    fn the_shared_rule_is_the_override_or_the_systems_base_for_an_absolute_home() {
+        let home = "/Users/me";
+        let base = shared_home_in(Path::new(home));
+        assert_eq!(
+            base,
+            org_platform::dirs::application_base(Path::new(home)).ok()
+        );
+        assert!(base.is_some());
+        assert_eq!(
+            default_office_home_from(Some("/tmp/o1".into()), Some(home.into())),
+            Some(PathBuf::from("/tmp/o1"))
+        );
+        assert_eq!(default_office_home_from(None, Some(home.into())), base);
+        for ignored in ["", "tmp/o1"] {
+            assert_eq!(
+                default_office_home_from(Some(ignored.into()), Some(home.into())),
+                base
+            );
+        }
+        for no_home in [None, Some(""), Some("me")] {
+            assert_eq!(
+                default_office_home_from(None, no_home.map(Into::into)),
+                None
+            );
+        }
+        assert_eq!(
+            default_office_home_from(Some("o1".into()), Some("me".into())),
+            None
+        );
     }
 
     #[test]
@@ -467,13 +638,20 @@ mod tests {
     }
 
     #[test]
-    fn socket_paths_are_checked_against_the_macos_limit() {
-        // 103 bytes is the limit; run/<12>.sock adds 22 bytes to the home.
-        let ok = PathBuf::from(format!("/{}", "a".repeat(80)));
+    fn socket_paths_are_checked_against_the_systems_limit() {
+        // The limit is 103 bytes on macOS and 107 on Linux; run/<12>.sock adds 22 bytes to
+        // the home.
+        let limit = socket_path_limit().unwrap();
+        let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 23)));
         assert!(Layout::new(&ok).check_socket_paths().is_ok());
-        let long = PathBuf::from(format!("/{}", "a".repeat(81)));
+        let long = PathBuf::from(format!("/{}", "a".repeat(limit - 22)));
         match Layout::new(&long).check_socket_paths() {
-            Err(HostError::SocketPathTooLong { len, .. }) => assert_eq!(len, 104),
+            Err(HostError::SocketPathTooLong {
+                len, limit: told, ..
+            }) => {
+                assert_eq!(len, limit + 1);
+                assert_eq!(told, limit);
+            }
             other => panic!("{other:?}"),
         }
     }

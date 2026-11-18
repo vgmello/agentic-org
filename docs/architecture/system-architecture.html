@@ -368,7 +368,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
         <tr><td class="k">org-host-control</td><td>Host private contract: account, session, TLS, bootstrap and recovery operations; web-process rendezvous lines</td><td class="n">4.5k</td><td class="k">org-proto</td></tr>
         <tr><td class="k">org-office-launch</td><td>Host to worker launch contract, launch version 1 only, over the verified rendezvous; <code>office.json</code></td><td class="n">4.4k</td><td class="k">org-proto</td></tr>
         <tr><td class="k">org-sync-proto</td><td>Replication values: position, epoch, digest, work acknowledgement. No framing or I/O.</td><td class="n">0.8k</td><td>none</td></tr>
-        <tr><td class="k">org-socket</td><td>Unix socket primitives: ticked reads, peer checks, fd passing, process confinement, image hashing</td><td class="n">4.0k</td><td>none</td></tr>
+        <tr><td class="k">org-socket</td><td>Unix socket primitives: ticked reads, peer checks, fd passing</td><td class="n">4.0k</td><td>none</td></tr>
         <tr><td class="k">org-work</td><td>Task, bug and checklist rules behind storage and clock ports</td><td class="n">14.2k</td><td class="k">org-proto</td></tr>
         <tr><td class="k">org-mailbox</td><td>Messaging rules behind store, directory and session ports</td><td class="n">8.3k</td><td class="k">org-proto</td></tr>
         <tr><td class="k">org-sync</td><td>Replication policy: apply, append at HQ, install snapshot, work outbox, message queue</td><td class="n">7.7k</td><td class="k">org-sync-proto</td></tr>
@@ -384,7 +384,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
         <tr><td class="k">org-client</td><td>Blocking client for the office socket and spool</td><td class="n">2.9k</td><td class="k">org-socket, org-proto, org-office-launch</td></tr>
         <tr><td class="k">org-spool</td><td>Maildir-style file spool and envelopes; deleted in increment B6</td><td class="n">4.9k</td><td>none</td></tr>
         <tr><td class="k">org-command</td><td>The command contract of <code>agent-os</code> and <code>agentic-org</code>: command table, parser, answer envelope (K1). No executable uses it yet.</td><td class="n">5.2k</td><td class="k">org-proto, org-docs</td></tr>
-        <tr><td class="k">org-platform</td><td>Every operating-system difference behind one contract per capability; macOS today, refusing adapters elsewhere</td><td class="n">1.8k</td><td>none</td></tr>
+        <tr><td class="k">org-platform</td><td>Every operating-system difference the four executables share, behind one contract per capability; macOS and GNU/Linux adapters, refusing adapters elsewhere (what only the host links is in org-platform-host)</td><td class="n">1.8k</td><td>none</td></tr>
         <tr><td class="k">agentic-org</td><td>Human CLI; composes the host; <code>setup</code>, <code>admin reset</code>, <code>service</code>, <code>serve</code></td><td class="n">6.6k</td><td class="k">org-host, org-proto, org-platform, org-office-launch, org-socket</td></tr>
         <tr><td class="k">agentic-org-office</td><td>Office worker process: dispatch, serve loop, launch handling</td><td class="n">17.9k</td><td class="k">org-office, org-work, org-mailbox, org-proto, org-office-launch, org-socket, org-supervise, org-pki</td></tr>
         <tr><td class="k">agentic-org-web</td><td>Web server library and binary</td><td class="n">4.4k</td><td class="k">org-proto, org-host-control, org-socket, org-release</td></tr>

@@ -13,6 +13,9 @@ testkit = []
 [dependencies]
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }
+# Durable flush and exclusive rename of the agent spool; the default office home and the
+# socket path limit.
+org-platform = { path = "../org-platform" }
 # `office.json`, which an agent's CLI reads to find its office (`agent::find_office`).
 org-office-launch = { path = "../org-office-launch" }
 libc.workspace = true

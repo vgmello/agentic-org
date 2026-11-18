@@ -68,10 +68,11 @@ struct Account {
 
 impl Account {
     fn new() -> Self {
-        // Short, so socket paths stay under 103 bytes.
+        // Short, so socket paths stay under the system's limit, and on a disk: an instance
+        // root is refused on a memory filesystem.
         let temp = tempfile::Builder::new()
             .prefix("a2s")
-            .tempdir_in("/private/tmp")
+            .tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())
             .unwrap();
         let base = temp.path().canonicalize().unwrap();
         std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();

@@ -15,8 +15,8 @@ testkit = ["dep:tempfile"]
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-# `O_NOFOLLOW` and the macOS full flush (`F_FULLFSYNC`) in `disk.rs`.
-libc.workspace = true
+# `O_NOFOLLOW`, `O_NONBLOCK` and the full flush to the device (ADR-0017).
+org-platform = { path = "../org-platform" }
 tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]

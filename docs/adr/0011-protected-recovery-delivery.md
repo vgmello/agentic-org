@@ -33,7 +33,8 @@ caller-supplied presence flag, SSH environment variable, terminal string, bare P
 or account cookie proves presence. Web and agent peers cannot invoke these methods,
 including package export.
 
-**macOS.** A private `org-host` adapter, backed by a small Objective-C (ARC, blocks)
+**macOS.** The macOS adapter of `org_platform_host::presence` (in `org-host` until
+increment X1c), backed by a small Objective-C (ARC, blocks)
 translation unit compiled by `cc` only on macOS, links Foundation,
 LocalAuthentication, Security, SystemConfiguration and the system `libbsm` (for
 `audit_token_to_asid`, `audit_token_to_pid` and `audit_token_to_euid`). It uses
@@ -202,7 +203,8 @@ browser shows the exact command to run on the HQ machine.
 
 ## Dependencies
 
-The only new direct edge is `org-host` build → `cc`, plus the listed macOS SDK
+The only new direct edge is `org-platform-host` build → `cc` (the bridge moved there
+from `org-host` in increment X1c), plus the listed macOS SDK
 frameworks and `libbsm`. Existing edges stay acyclic: no host → office or host → pki,
 and no web → host.
 

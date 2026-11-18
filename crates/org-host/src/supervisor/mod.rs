@@ -219,11 +219,14 @@ impl Supervisor {
             .clone()
             .unwrap_or_else(|| config.home.join("run"));
         let spawner = Spawner {
-            program: config.program.clone(),
             home: config.home.clone(),
             runtime_dir: config.runtime_dir.clone(),
             check: Arc::clone(&config.server_check),
+            // Built from here on, once for this host's lifetime: every server starts from it.
+            images: child::Images::new(Arc::clone(&config.server_check), config.program.clone()),
             broker: Arc::new(channels::Broker::new(instance.into(), runtime)),
+            #[cfg(test)]
+            extra_env: Vec::new(),
         };
         Self::with_spawner(config, Some(spawner))
     }
@@ -717,10 +720,10 @@ pub(crate) mod tests {
     use org_proto::OfficeSecretsKey;
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
-    #[cfg(target_os = "macos")]
     use crate::peer::AuditToken;
-    #[cfg(target_os = "macos")]
-    use crate::server_check::{Scripted, Step};
+    use crate::server_check::{NoAdmission, Pin, Scripted, Step};
+    use crate::test_programs::{image_identity, recorded_starts, recorded_stdin, recording_worker};
+    use org_platform_host::admission::ImageIdentity;
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -810,7 +813,7 @@ pub(crate) mod tests {
             &format!("echo \"$@\" >> '{}'", ran.display()),
         );
         let keys = Arc::new(MemoryKeys::default());
-        let supervisor = supervisor(dir.path(), program, &keys);
+        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
         let spawned = |id: &str| {
             fs::read_to_string(&ran)
                 .unwrap_or_default()
@@ -851,11 +854,12 @@ pub(crate) mod tests {
     }
 
     /// H1: a server that isn't the signed one (this unsigned script, against a release
-    /// requirement) is spawned suspended, checked, killed and reaped before it runs anything,
-    /// and gets no line: no key. With no
+    /// requirement) gets no line: no key. Where the loaded image is checked it is spawned
+    /// suspended, checked, killed and reaped before it runs anything; where the verified
+    /// bytes are executed, a release check without a selected release has no admission, so
+    /// nothing is spawned at all. With no
     /// team id, nothing is even spawned. A start ends as `storage_error`, retried; a discard
     /// fails and keeps the key.
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_server_that_isnt_the_signed_one_gets_nothing() {
         const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
@@ -881,7 +885,8 @@ pub(crate) mod tests {
         });
         checked.shutdown();
         // They got no line: nothing reached `got` (it isn't even there: they were stopped while
-        // still suspended; that suspension holds is `spawn`'s own test).
+        // still suspended, or never started; that suspension holds is the admission adapter's
+        // own test).
         assert!(!got.exists(), "a server that isn't the signed one ran");
         assert!(keys.has(OFFICE) && keys.has(B));
 
@@ -904,54 +909,71 @@ pub(crate) mod tests {
     }
 
     /// A check scripted by the test: `admit` and `still` answer as `script` says.
-    #[cfg(target_os = "macos")]
     fn scripted(
         script: impl Fn(Step, u32) -> Result<Option<AuditToken>, String> + Send + Sync + 'static,
     ) -> ServerCheck {
         ServerCheck::Scripted(Scripted(Arc::new(script)))
     }
 
-    /// L2: the check runs while the child is still suspended: at the admission, the child is
-    /// stopped (`ps` state `T`, the kernel's `SSTOP`), so not one instruction of its image has
-    /// run, and once refused it never does.
-    #[cfg(target_os = "macos")]
+    /// L2: the check is asked once, when the child is admitted, and a child it refuses gets
+    /// nothing. What else holds is the one outcome of this system's kind of admission
+    /// (`org_platform_host::admission::image_identity`, the platform's fact):
+    ///
+    /// - A code signature is checked on the started child: the check runs while the child is
+    ///   still suspended. At the admission the child is stopped (`ps` state `T`, the
+    ///   kernel's `SSTOP`), so not one instruction of its image has run, and once refused it
+    ///   never does: the worker never records a start.
+    /// - The executed bytes are checked: there is no suspended child. The image was checked
+    ///   before the child existed (the admission names its digest), so the child may have
+    ///   started, and still receives nothing.
     #[test]
-    fn the_check_runs_while_the_child_is_still_suspended() {
+    fn the_check_runs_before_the_child_gets_anything() {
         let dir = short_tempdir();
-        let ran = dir.path().join("ran");
-        let program = script(dir.path(), "server", &format!("touch '{}'", ran.display()));
+        let program = recording_worker();
         let keys = Arc::new(MemoryKeys::default());
         let states = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = Arc::clone(&states);
         let check = scripted(move |step, pid| {
             assert_eq!(step, Step::Admit);
-            let out = std::process::Command::new("/bin/ps")
+            let state = std::process::Command::new("/bin/ps")
                 .args(["-o", "state=", "-p", &pid.to_string()])
                 .output()
-                .unwrap();
-            lock(&seen).push(String::from_utf8_lossy(&out.stdout).trim().to_owned());
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+                .unwrap_or_default();
+            lock(&seen).push(state);
             Err("refused by the test".into())
         });
+        let verified_digest = check.admission(&program).unwrap().image_sha256();
         let supervisor = checked_supervisor(dir.path(), program, &keys, check);
-        assert!(supervisor.discard(OFFICE).is_err());
+        let err = supervisor.discard(OFFICE).unwrap_err();
+        assert!(err.to_string().contains("refused by the test"), "{err}");
         let states = lock(&states).clone();
         assert_eq!(states.len(), 1, "{states:?}");
-        assert!(
-            states[0].starts_with('T'),
-            "not stopped at the check: {states:?}"
-        );
         thread::sleep(Duration::from_millis(200));
-        assert!(!ran.exists(), "the child ran");
+        match image_identity() {
+            ImageIdentity::CodeSignature => {
+                assert!(
+                    states[0].starts_with('T'),
+                    "not stopped at the check: {states:?}"
+                );
+                assert_eq!(recorded_starts(dir.path()), 0, "the child ran");
+                assert_eq!(verified_digest, None);
+            }
+            ImageIdentity::VerifiedBytes => {
+                assert!(
+                    verified_digest.is_some(),
+                    "the image was not verified before the child existed"
+                );
+            }
+        }
+        assert_eq!(recorded_stdin(dir.path()), b"", "it got a line");
     }
 
     /// L3a: a child whose token changed between the admission and its first line (an exec) is
     /// refused at the re-check: it gets no line.
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_child_whose_token_changed_before_its_line_gets_nothing() {
         let dir = short_tempdir();
-        let got = dir.path().join("got");
-        let program = script(dir.path(), "server", &format!("cat > '{}'", got.display()));
         let keys = Arc::new(MemoryKeys::default());
         keys.create(OFFICE, &OfficeSecretsKey::from_bytes([6; 32]))
             .unwrap();
@@ -959,12 +981,253 @@ pub(crate) mod tests {
             Step::Admit => Ok(Some([1; 32])),
             Step::Still => Ok(Some([2; 32])),
         });
-        let supervisor = checked_supervisor(dir.path(), program, &keys, check);
+        let supervisor = checked_supervisor(dir.path(), recording_worker(), &keys, check);
         let err = supervisor.discard(OFFICE).unwrap_err();
         assert!(err.to_string().contains("changed"), "{err}");
         thread::sleep(Duration::from_millis(200));
-        assert_eq!(fs::read(&got).unwrap_or_default(), b"", "it got a line");
+        assert_eq!(recorded_stdin(dir.path()), b"", "it got a line");
         assert!(keys.has(OFFICE));
+    }
+
+    /// A unit of what a supervisor's spawner does for one `--discard`: the outcome, and what
+    /// the host logged on this thread.
+    fn spawn_discard(supervisor: &Supervisor) -> (Result<(), child::SpawnError>, Vec<String>) {
+        let (sender, _signals) = mpsc::channel();
+        let log = supervisor.log_for(OFFICE);
+        host_log::capture(|| {
+            supervisor
+                .spawner()
+                .unwrap()
+                .spawn(Mode::Discard(OFFICE), 0, sender, log)
+                .map(drop)
+        })
+    }
+
+    /// The host builds its admission once, with its supervisor, and every start goes through
+    /// that one: a discard and an office start do not build another.
+    #[test]
+    fn one_admission_serves_every_start_of_a_host() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([4; 32]))
+            .unwrap();
+        let supervisor = supervisor(dir.path(), recording_worker(), &keys);
+        let images = Arc::clone(&supervisor.spawner().unwrap().images);
+        let built = images.admission().expect("built with the supervisor");
+        // The recording worker speaks no launch protocol: each run reads its first line and
+        // exits, which ends the run as a crash. What matters here is which admission ran it.
+        assert!(supervisor.discard(OFFICE).is_err());
+        supervisor.start_office(OFFICE).unwrap();
+        wait_for_state(&supervisor, OFFICE, |s| s.status == OfficeStatus::Offline);
+        supervisor.shutdown();
+        assert!(recorded_starts(dir.path()) >= 2, "the worker never ran");
+        assert!(Arc::ptr_eq(&built, &images.admission().unwrap()));
+        // Every office's runner holds the same one.
+        assert!(Arc::ptr_eq(
+            &images,
+            &supervisor.spawner().unwrap().clone().images
+        ));
+    }
+
+    /// A host whose admission cannot be built yet (its program is not there) starts no
+    /// server, says why, and asks again at the next start; once built, the admission is kept.
+    /// Where nothing of the image is read until a child is started, the admission exists at
+    /// once and the missing program fails each start instead.
+    #[test]
+    fn an_admission_that_could_not_be_built_is_asked_for_again() {
+        let dir = short_tempdir();
+        let program = dir.path().join("worker");
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([4; 32]))
+            .unwrap();
+        let supervisor = supervisor(dir.path(), program.clone(), &keys);
+        let images = Arc::clone(&supervisor.spawner().unwrap().images);
+        let before = match (image_identity(), images.admission()) {
+            // Nothing is read until a child is started: the admission exists at once.
+            (ImageIdentity::CodeSignature, Ok(admission)) => Some(admission),
+            // The image is read when the admission is built: there is none yet.
+            (ImageIdentity::VerifiedBytes, Err(NoAdmission::Unavailable(error))) => {
+                assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error:?}");
+                None
+            }
+            (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
+        };
+        // No server starts, whichever step notices: the host keeps serving and reports it.
+        assert!(supervisor.discard(OFFICE).is_err());
+        assert_eq!(recorded_starts(dir.path()), 0);
+        fs::copy(recording_worker(), &program).unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        let built = images.admission().expect("the program is there now");
+        if let Some(before) = before {
+            assert!(Arc::ptr_eq(&before, &built), "an admission was built twice");
+        }
+        assert!(Arc::ptr_eq(&built, &images.admission().unwrap()));
+        // The next start runs it (and fails later: the worker speaks no launch protocol).
+        assert!(supervisor.discard(OFFICE).is_err());
+        assert_eq!(recorded_starts(dir.path()), 1);
+    }
+
+    /// A check that may start no server at all is a refusal, in the check's words, not an
+    /// I/O failure: nothing is spawned and nothing is made for a child.
+    #[test]
+    fn a_check_that_may_not_start_a_server_is_a_refusal() {
+        for check in [
+            ServerCheck::Refuse,
+            ServerCheck::WebRefused("refused by the test"),
+            ServerCheck::Refuse.pinned(Pin {
+                sha256: [7; 32],
+                macos_cdhash: Some([7; 20]),
+            }),
+        ] {
+            let dir = short_tempdir();
+            let keys = Arc::new(MemoryKeys::default());
+            let words = check.may_spawn().unwrap_err();
+            let supervisor = checked_supervisor(dir.path(), recording_worker(), &keys, check);
+            let (outcome, logged) = spawn_discard(&supervisor);
+            match outcome {
+                Err(child::SpawnError::Untrusted(why)) => assert_eq!(why, words),
+                Err(other) => panic!("not a refusal: {other}"),
+                Ok(()) => panic!("a server was started"),
+            }
+            assert!(
+                logged.iter().any(|line| line.contains(&words)),
+                "{logged:?}"
+            );
+            assert_eq!(recorded_starts(dir.path()), 0);
+            assert!(!dir.path().join("run/r").exists(), "a rendezvous was made");
+        }
+    }
+
+    /// LNX-1 refusal: a worker image that is not the image the selected release names (the
+    /// release's digest is of a file that differs from this program in one byte) receives no
+    /// first line and no secret, and the host log names the refusal. Where the verified bytes
+    /// are executed the digest differs when the host builds its admission, so no child ever
+    /// exists; where the loaded image is checked, a development image under a pin cannot be
+    /// identified and is killed before it runs. Both are a refusal in the check's words. A
+    /// program that is the pinned image is started and gets its first line.
+    #[test]
+    fn a_worker_image_that_differs_from_the_pinned_one_gets_nothing() {
+        use sha2::{Digest, Sha256};
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([5; 32]))
+            .unwrap();
+        let program = recording_worker();
+        let image = fs::read(&program).unwrap();
+        // What the release names: this program with its last byte changed.
+        let mut released = image.clone();
+        *released.last_mut().unwrap() ^= 1;
+        let check = ServerCheck::Skip.pinned(Pin {
+            sha256: Sha256::digest(&released).into(),
+            macos_cdhash: Some([7; 20]),
+        });
+        // The one refusal of this system's kind of admission.
+        let refusal = check.why(&match image_identity() {
+            ImageIdentity::VerifiedBytes => {
+                org_platform_host::admission::ImageRefusal::DigestMismatch
+            }
+            ImageIdentity::CodeSignature => {
+                org_platform_host::admission::ImageRefusal::Unidentified
+            }
+        });
+        let supervisor = checked_supervisor(dir.path(), program.clone(), &keys, check);
+        let (outcome, logged) = spawn_discard(&supervisor);
+        let why = match outcome {
+            Err(child::SpawnError::Untrusted(why)) => why,
+            Err(other) => panic!("not a refusal: {other}"),
+            Ok(()) => panic!("an image that is not the pinned one was started"),
+        };
+        assert_eq!(why, refusal);
+        assert!(
+            logged
+                .iter()
+                .any(|line| line.contains(&why) && line.contains("office server")),
+            "{logged:?}"
+        );
+        // An office start ends the same way: a storage error, retried, and nothing received.
+        supervisor.start_office(OFFICE).unwrap();
+        wait_for_state(&supervisor, OFFICE, |s| {
+            s.status == OfficeStatus::Offline && s.reason == Some(OfficeStatusReason::StorageError)
+        });
+        supervisor.shutdown();
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(recorded_stdin(dir.path()), b"", "the image got a line");
+        assert!(keys.has(OFFICE));
+
+        // The control: the same program under the digest of its own bytes is started and
+        // receives the first line.
+        let exact = ServerCheck::Skip.pinned(Pin {
+            sha256: Sha256::digest(&image).into(),
+            macos_cdhash: None,
+        });
+        let supervisor = checked_supervisor(dir.path(), program, &keys, exact);
+        let _ = supervisor.discard(OFFICE);
+        let line = String::from_utf8(recorded_stdin(dir.path())).unwrap();
+        assert!(line.contains(OFFICE) && line.ends_with('\n'), "{line:?}");
+    }
+
+    /// LNX-1 refusal: a server whose environment would carry a variable that changes how the
+    /// loader runs its image is never started, on any system: no child exists, so nothing
+    /// receives a first line or a secret, and the host log names the variable (never its
+    /// value). An office start ends as a storage error, as every refused server does.
+    #[test]
+    fn a_server_environment_with_a_loader_variable_starts_nothing() {
+        for name in [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+            "GLIBC_TUNABLES",
+            "GCONV_PATH",
+        ] {
+            let dir = short_tempdir();
+            let keys = Arc::new(MemoryKeys::default());
+            keys.create(OFFICE, &OfficeSecretsKey::from_bytes([9; 32]))
+                .unwrap();
+            let mut supervisor = supervisor(dir.path(), recording_worker(), &keys);
+            supervisor
+                .spawner
+                .as_mut()
+                .unwrap()
+                .extra_env
+                .push((name.into(), "/tmp/injected-value.so".into()));
+            let (outcome, logged) = spawn_discard(&supervisor);
+            match outcome {
+                Err(child::SpawnError::Untrusted(why)) => {
+                    assert!(
+                        why.contains("loader variable") && why.contains(name),
+                        "{why}"
+                    );
+                }
+                Err(other) => panic!("{name}: not a refusal: {other}"),
+                Ok(()) => panic!("{name}: a server was started"),
+            }
+            assert!(
+                logged
+                    .iter()
+                    .any(|line| line.contains("loader variable") && line.contains(name)),
+                "{name}: {logged:?}"
+            );
+            assert!(
+                !logged.iter().any(|line| line.contains("injected-value")),
+                "{name}: the value was logged: {logged:?}"
+            );
+            supervisor.start_office(OFFICE).unwrap();
+            wait_for_state(&supervisor, OFFICE, |s| {
+                s.status == OfficeStatus::Offline
+                    && s.reason == Some(OfficeStatusReason::StorageError)
+            });
+            supervisor.shutdown();
+            assert_eq!(recorded_starts(dir.path()), 0, "{name}: a server ran");
+            assert_eq!(recorded_stdin(dir.path()), b"", "{name}");
+            assert!(keys.has(OFFICE));
+        }
+        // The same worker without such a variable is started and gets its first line.
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        let supervisor = supervisor(dir.path(), recording_worker(), &keys);
+        let _ = supervisor.discard(OFFICE);
+        assert_eq!(recorded_starts(dir.path()), 1);
+        assert!(!recorded_stdin(dir.path()).is_empty());
     }
 
     /// Names the file where this test binary, run again as a launch `--discard` server by
@@ -1014,8 +1277,8 @@ pub(crate) mod tests {
     /// The whole discard path: the spawner binds a rendezvous, writes the discard line, the
     /// broker hands off a header with no secret although the key store holds the
     /// office's key, the worker's `discarded` arrives on the stream, and only then is the key
-    /// deleted.
-    #[cfg(target_os = "macos")]
+    /// deleted. The server is a `#!` script that runs this test binary, so it is started by
+    /// its path (the test admission): a system that executes verified bytes starts no script.
     #[test]
     fn a_discard_hands_off_no_key_and_deletes_it_only_after_discarded() {
         // Under /tmp: the rendezvous path must fit a socket address.
@@ -1039,7 +1302,7 @@ pub(crate) mod tests {
                 std::env::current_exe().unwrap().display()
             ),
         );
-        let supervisor = supervisor(dir.path(), program, &keys);
+        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
         assert_eq!(
             supervisor.discard(OFFICE).unwrap(),
             DiscardOutcome::Discarded
@@ -1193,8 +1456,8 @@ pub(crate) mod tests {
 
     /// An HQ create whose server reports `created` after shutdown began is stopped, not
     /// adopted: the supervisor never starts supervising it, its server is gone, and its key
-    /// (the HQ's original key, installed before the create) stays.
-    #[cfg(target_os = "macos")]
+    /// (the HQ's original key, installed before the create) stays. Its server is a `#!`
+    /// script too, started by its path.
     #[test]
     fn an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted() {
         let dir = short_tempdir();
@@ -1204,7 +1467,7 @@ pub(crate) mod tests {
         let pid_file = dir.path().join("pid");
         let program = dir.path().join("server");
         write_create_server(&program, &pid_file, false);
-        let supervisor = supervisor(dir.path(), program, &keys);
+        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
         let first = hq_create_line();
         let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
         let pending = supervisor.begin_hq_create(first, recovery).unwrap();
@@ -1230,7 +1493,6 @@ pub(crate) mod tests {
     /// its closed stdin, is killed at the end of the grace period and reaped, and no process
     /// of it is left the moment `shutdown` returns (the create's own thread has not been
     /// joined yet).
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_shutdown_returns_only_after_a_create_in_flight_has_no_server_left() {
         let dir = short_tempdir();
@@ -1240,7 +1502,7 @@ pub(crate) mod tests {
         let pid_file = dir.path().join("pid");
         let program = dir.path().join("server");
         write_create_server(&program, &pid_file, true);
-        let supervisor = supervisor(dir.path(), program, &keys);
+        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
         let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
         let pending = supervisor
             .begin_hq_create(hq_create_line(), recovery)
