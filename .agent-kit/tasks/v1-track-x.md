@@ -46,7 +46,7 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
 | X2 first worker on Linux (LNX-1) | The Linux admission adapter is integrated, reviewed (ACCEPT) and repaired; the host composition is in work | See below |
 | X3 host secrets on Linux (LNX-4) | Not started | |
-| X4 web process confined on Linux (LNX-3) | Brief written; no code yet | See below |
+| X4 web process confined on Linux (LNX-3) | The Linux confinement adapter is integrated (`458ed8b1`) and under fresh review; the host slice is in work | See below |
 | X5 service and container (LNX-2) | Not started | |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
 
@@ -547,15 +547,78 @@ the host), 8 need service registration on Linux (X5), 2 need Linux confinement (
 and the rest are the sandbox's (no IPv6, no network) and the pre-existing release
 store tests.
 
-## X4 · The web process confined on Linux (not started)
+## X4 · The web process confined on Linux (in work)
 
-The brief for the Linux confinement adapter (Landlock and a seccomp allowlist in
-`crates/org-platform/src/confinement/linux.rs`, raw system calls through `libc`
-only, proved with the confinement example process) is written; its worker was
-stopped by the same limit before writing code. Decision already taken for it: the
-ready line carries the Landlock status only, so on Linux the host observes seccomp
-on the process (`/proc/<pid>/status`) in `verify_web`, and `verify_ready_report`
-requires a Landlock ABI of 3 or higher.
+**Split.** The adapter (`crates/org-platform/src/confinement/linux*`, proved with the
+confinement example and with the real web process under a stand-in host), then the
+host slice (`org-host/src/web.rs` and its tests, the web process's refusal channel).
+
+**Slice 1, the adapter: integrated at `458ed8b1`** (branch `x/x4-confinement`, six
+commits ending at `def7ca7a`). `confine_web` on GNU/Linux, in order: one allocator
+arena (`mallopt(M_ARENA_MAX, 1)`); no core dumps and a non-dumpable process; one
+thread and exactly descriptors 0 to 2, or it refuses with nothing changed; connect to
+the rendezvous; no-new-privileges; a Landlock ruleset that handles every right of the
+kernel's ABI (3 or higher) with no rule; a seccomp filter that kills the process on
+any call outside its list. A failed step drops the stream and refuses with the call
+and the error's name. The host side: `web_confinement_supported()` (an `io::Result`
+with the reason), `verify_ready_report` (Landlock ABI 3 or higher), `verify_web`
+(`NoNewPrivs: 1`, `Seccomp: 2` and more filters than the host itself has, read from
+`/proc/<pid>/status`).
+
+What the kernel and glibc taught the worker, beyond the design text:
+
+- glibc opens `/proc/sys/vm/overcommit_memory` the first time a heap of a non-main
+  allocator arena shrinks. Under the filter that is a kill: the real web process died
+  in 3 of 3 runs of 224 concurrent requests. Hence the single arena. It holds only
+  when `confine_web` runs before the process ever had a second thread (the contract);
+  otherwise the result is the kill, never an unconfined process. Cost: one allocator
+  lock for all threads; the per-thread caches remain.
+- Calls the design's list lacked: `getpeername` (the web process checks its control
+  connection), `getpid` (glibc's `abort`), `restart_syscall` (the kernel, after a
+  stop and continue during a timed `poll`).
+- Three rules stricter than the design, each one table entry: `fcntl` only with
+  `F_GETFD`, `F_GETFL` or `F_DUPFD_CLOEXEC` (with `F_SETOWN`, `F_SETSIG` and `O_ASYNC`
+  a process makes the kernel signal any process of its user; a probe killed one;
+  Landlock closes that only from ABI 6); `clone` only with glibc's exact thread flags;
+  no `mmap` or `mprotect` with `PROT_EXEC`.
+- `clone3` answers `ENOSYS`, so glibc falls back to `clone`, whose flags can be read.
+- Landlock alone does not deny `chmod`, `socket()` or connecting to a named Unix
+  socket on the ABI floor: the two layers are needed together.
+- `Seccomp_filters` counts inherited filters, so under a container profile "one
+  filter" proves nothing; `verify_web` compares with the host's own count.
+- `verify_web` keeps a PID (the admission's child type is in the host-only crate);
+  the caller holds the child across the call and checks afterwards that it lives.
+- aarch64's table is derived and checked against `libc` at build time, never run.
+
+Lead's decisions on the worker's six questions: all accepted as proposed (single
+arena by `mallopt`; the reason in an `io::Error`; the three stricter rules; the
+example runs in macOS CI through a new `org-socket` test; the PID stays; the filter
+count rule).
+
+Lead's checks at integration: lint for Linux (whole workspace), macOS and the
+refusing target; `platform_conditionals`, `libc_only`; unprivileged tests of
+`org-platform`, `org-socket`, `org-host` and `agentic-org-web`: 892 passed; against
+the merged tree's baseline one test now passes
+(`web::tests::refused_web_start_never_becomes_ready`) and one now fails
+(`the_supervisor_refuses_a_platform_without_a_confinement_adapter`, whose premise
+ended; it changes in the host slice). The worker reports the real, unmodified web
+process serving HTTPS under the filter with a stand-in host (TLS 1.3 and 1.2, a
+3 MiB asset, 224 concurrent requests, timeouts, stop and continue, clean exit), 3 of
+3 runs; its harness and logs were in its worktree and were deleted with it by the
+lead's cleanup, so that evidence is the worker's receipt only. The reviewer was told
+so and re-derives what it can.
+
+**Review of slice 1:** a fresh read-only reviewer is attacking the filter and the
+order on this kernel (result recorded here when it reports).
+
+**Slice 2, the host:** in work in worktree `x/x4-host` (the adapter's author): the
+refusal's reason from the adapter and from the web process to the host log and the
+web service's status (LNX-3 "reports the reason" holds today in the adapter and the
+example, not through the host); liveness of the child around `verify_web`; an explicit
+environment for the web process; the web tests on both systems. The real-host test
+of LNX-3 follows the integration of X2's host slice.
+
+Not run anywhere yet: a release build, the container image's glibc, aarch64.
 
 ## Merges with v1-integration
 
