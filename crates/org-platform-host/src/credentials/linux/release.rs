@@ -14,7 +14,7 @@
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::{File, TryLockError};
 use std::io;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -101,7 +101,7 @@ struct Walk<'a> {
     /// The path of the directory the walk starts at.
     start: &'a Path,
     /// That directory, open.
-    root: OwnedFd,
+    root: File,
     /// The names from there down to the release directory, which is the last.
     names: Vec<&'a OsStr>,
 }
@@ -115,12 +115,12 @@ fn open(walk: Walk<'_>, location: &ReleaseDirectory<'_>) -> Result<ReleaseRoot, 
     let directory = match walk.names.split_last() {
         Some((store, above)) => {
             for name in above {
-                judge_ancestor(current.as_fd(), &path, service_user, &mut private_group)?;
+                judge_ancestor(&current, &path, service_user, &mut private_group)?;
                 path.push(name);
                 current = open_at(current.as_fd(), name, libc::O_PATH)
                     .map_err(|error| refused(component_rule(&error), &path))?;
             }
-            judge_ancestor(current.as_fd(), &path, service_user, &mut private_group)?;
+            judge_ancestor(&current, &path, service_user, &mut private_group)?;
             path.push(store);
             open_at(current.as_fd(), store, libc::O_RDONLY)
         }
@@ -128,12 +128,11 @@ fn open(walk: Walk<'_>, location: &ReleaseDirectory<'_>) -> Result<ReleaseRoot, 
         None => open_at(current.as_fd(), OsStr::new("."), libc::O_RDONLY),
     }
     .map_err(|error| refused(component_rule(&error), &path))?;
-    let directory = File::from(directory);
     let refuse = |rule| refused(rule, &path);
     let unavailable = |error: io::Error| refused(RootRule::Unavailable(error.kind()), &path);
 
-    let stat = status(directory.as_fd()).map_err(unavailable)?;
-    rules::store(stat.st_uid, stat.st_mode, service_user).map_err(refuse)?;
+    let found = directory.metadata().map_err(unavailable)?;
+    rules::store(found.uid(), found.mode(), service_user).map_err(refuse)?;
     rules::filesystem(filesystem_kind(directory.as_fd()).map_err(unavailable)?).map_err(refuse)?;
     let store_chain = chain(directory.as_fd()).map_err(unavailable)?;
     let data_chain = chain(location.data_root)
@@ -224,14 +223,15 @@ enum PrivateGroup {
 /// Judges the directory `ancestor`, at `path`, as a directory above the release
 /// directory.
 fn judge_ancestor(
-    ancestor: BorrowedFd<'_>,
+    ancestor: &File,
     path: &Path,
     service_user: libc::uid_t,
     private_group: &mut PrivateGroup,
 ) -> Result<(), CredentialError> {
-    let stat =
-        status(ancestor).map_err(|error| refused(RootRule::Unavailable(error.kind()), path))?;
-    let group = if rules::needs_private_group(stat.st_uid, stat.st_mode, service_user) {
+    let found = ancestor
+        .metadata()
+        .map_err(|error| refused(RootRule::Unavailable(error.kind()), path))?;
+    let group = if rules::needs_private_group(found.uid(), found.mode(), service_user) {
         if let PrivateGroup::NotAsked = private_group {
             // An account database that cannot be read vouches for no group.
             *private_group =
@@ -245,21 +245,21 @@ fn judge_ancestor(
         None
     };
     rules::ancestor(&Ancestor {
-        owner: stat.st_uid,
-        group: stat.st_gid,
-        mode: stat.st_mode,
+        owner: found.uid(),
+        group: found.gid(),
+        mode: found.mode(),
         service_user,
         private_group: group,
     })
     .map_err(|rule| refused(rule, path))
 }
 
-fn owned(fd: libc::c_int) -> io::Result<OwnedFd> {
+fn owned(fd: libc::c_int) -> io::Result<File> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: a new descriptor that nothing else owns.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    Ok(unsafe { File::from_raw_fd(fd) })
 }
 
 fn c_name(name: &OsStr) -> io::Result<CString> {
@@ -268,7 +268,7 @@ fn c_name(name: &OsStr) -> io::Result<CString> {
 
 /// Opens the directory at the absolute path `path` for passing through. Only the
 /// start of a walk is opened by path.
-fn open_absolute(path: &Path) -> io::Result<OwnedFd> {
+fn open_absolute(path: &Path) -> io::Result<File> {
     let path = c_name(path.as_os_str())?;
     let flags = libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     // SAFETY: a NUL-terminated path that outlives the call, which keeps nothing.
@@ -277,22 +277,12 @@ fn open_absolute(path: &Path) -> io::Result<OwnedFd> {
 
 /// Opens the directory `name` in `parent`, never following a link: `access` is
 /// `O_PATH` to pass through it or `O_RDONLY` to read it.
-fn open_at(parent: BorrowedFd<'_>, name: &OsStr, access: libc::c_int) -> io::Result<OwnedFd> {
+fn open_at(parent: BorrowedFd<'_>, name: &OsStr, access: libc::c_int) -> io::Result<File> {
     let name = c_name(name)?;
     let flags = access | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     // SAFETY: a valid directory descriptor and a NUL-terminated name that outlives
     // the call, which keeps nothing.
     owned(unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) })
-}
-
-fn status(fd: BorrowedFd<'_>) -> io::Result<libc::stat> {
-    // SAFETY: an all-zero `stat` is a valid value for the call to overwrite.
-    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: a valid descriptor and a valid out-pointer.
-    if unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(stat)
 }
 
 /// The type number of the filesystem `fd` is on, as `fstatfs` gives it.
@@ -308,22 +298,23 @@ fn filesystem_kind(fd: BorrowedFd<'_>) -> io::Result<u64> {
     Ok(stat.f_type as u64 & 0xffff_ffff)
 }
 
-fn identity(stat: &libc::stat) -> Identity {
-    (stat.st_dev, stat.st_ino)
+fn identity(found: &std::fs::Metadata) -> Identity {
+    (found.dev(), found.ino())
 }
 
 /// The directory `fd` and every directory above it up to `/`, each identified through
 /// a held descriptor: `..` is opened relative to the one before, until a directory is
 /// its own parent.
 fn chain(fd: BorrowedFd<'_>) -> io::Result<Vec<Identity>> {
-    let first = status(fd)?;
-    if first.st_mode & libc::S_IFMT != libc::S_IFDIR {
+    // A descriptor of this function's own for the same open directory.
+    let first = File::from(fd.try_clone_to_owned()?).metadata()?;
+    if !first.is_dir() {
         return Err(io::ErrorKind::NotADirectory.into());
     }
     let mut chain = vec![identity(&first)];
     let mut above = open_at(fd, OsStr::new(".."), libc::O_PATH)?;
     loop {
-        let next = identity(&status(above.as_fd())?);
+        let next = identity(&above.metadata()?);
         if chain.last() == Some(&next) {
             return Ok(chain);
         }
@@ -378,8 +369,8 @@ fn count_items(root: BorrowedFd<'_>, service_user: libc::uid_t) -> io::Result<us
             }
             Err(error) => return Err(error),
         };
-        let stat = status(directory.as_fd())?;
-        if rules::store(stat.st_uid, stat.st_mode, service_user).is_err() {
+        let found = directory.metadata()?;
+        if rules::store(found.uid(), found.mode(), service_user).is_err() {
             continue;
         }
         for entry in entries(directory.as_fd())? {
@@ -471,7 +462,7 @@ fn open_lock(directory: BorrowedFd<'_>) -> io::Result<File> {
     // SAFETY: a valid directory descriptor and a NUL-terminated name; the mode is
     // read because `O_CREAT` is set.
     let fd = unsafe { libc::openat(directory.as_raw_fd(), LOCK.as_ptr(), flags, 0o600) };
-    owned(fd).map(File::from)
+    owned(fd)
 }
 
 #[cfg(test)]

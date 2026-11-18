@@ -14,7 +14,8 @@
 //! host's registry in SQLCipher; organization databases remain in office servers.
 //!
 //! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
-//! (the Data Protection keychain in release builds, a development folder in debug builds) and
+//! (in release builds the system's protected store: the Data Protection keychain on macOS, the
+//! credential directory setup recorded on Linux; a development folder in debug builds) and
 //! hands it to the office's server on the launch pipe. Its servers never touch a key store.
 //!
 //! The agentic-org serve composition parses arguments, waits for shutdown and calls [`Host`].
