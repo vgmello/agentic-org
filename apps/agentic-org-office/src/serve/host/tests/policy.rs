@@ -40,6 +40,7 @@ fn shared() -> Shared {
         crate::inbox::Hq {
             sources: vec![],
             clock: crate::inbox::Clock::new("host-test".into()),
+            list_office: None,
         },
         Ok(true),
     );

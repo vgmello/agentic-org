@@ -110,6 +110,7 @@ impl Fixture {
             Hq {
                 sources: vec![counts.clone()],
                 clock: Clock::new("acceptance".into()),
+                list_office: None,
             },
             Ok(true),
         );

@@ -106,6 +106,7 @@ fn fixture() -> (Feed, Arc<Counts>, Hq, LiveEvents, Hint) {
     let hq = Hq {
         sources: vec![counts.clone()],
         clock: Clock::new("instance".into()),
+        list_office: None,
     };
     let live = LiveEvents::new(Box::new(|| {}));
     let hint = Hint::new(feed.head().unwrap(), live.mailbox_head());
@@ -223,6 +224,7 @@ fn hint_samples_as_of_before_a_source_read_that_observes_a_later_change() {
     let hq = Arc::new(Hq {
         sources: vec![source.clone()],
         clock: Clock::new("instance".into()),
+        list_office: None,
     });
     assert!(source.0.set(Arc::downgrade(&hq)).is_ok());
     let live = LiveEvents::new(Box::new(|| {}));

@@ -492,9 +492,10 @@ fn the_owner_hires_an_agent_into_the_office_and_it_survives_a_restart() {
 #[test]
 fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_connection() {
     let _process = process_isolation();
-    use org_proto::directory::{Who, WhoParams};
+    use org_proto::directory::{MemberPresence, Who, WhoParams};
     use org_proto::org::{
-        MemberKind, MemberOffboard, MemberOffboardParams, TeamAddMember, TeamAddMemberParams,
+        MemberKind, MemberOffboard, MemberOffboardParams, RunMode, TeamAddMember,
+        TeamAddMemberParams,
     };
     let world = World::new();
     let owner_id = seeded(&world);
@@ -519,6 +520,7 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
     let agent_id = "AGENT00000000000000000000A";
     let mut add = hire(2, agent_id, "Pixel the engineer", "pixel");
     add.profile.title = "Senior Engineer".into();
+    add.profile.run_mode = Some(RunMode::OnCall);
     owner.call::<MemberAddAgent>(&add).unwrap();
     owner
         .call::<TeamAddMember>(&TeamAddMemberParams {
@@ -541,6 +543,8 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
     };
     assert_eq!(pixel.id, agent_id);
     assert_eq!(pixel.kind, MemberKind::Agent);
+    assert_eq!(pixel.presence, MemberPresence::Offline);
+    assert_eq!(pixel.status, None);
     assert_eq!(pixel.role_title.as_deref(), Some("Senior Engineer"));
     assert_eq!(pixel.office.as_ref().map(|o| o.name.as_str()), Some("HQ"));
     assert_eq!(pixel.teams[0].name, "Platform");

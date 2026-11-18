@@ -422,11 +422,17 @@ fn serve_office(
             who: {
                 let office = Arc::clone(&office);
                 Box::new(move |params| {
-                    // Nothing reports presence and no status lines are kept yet (B6): everyone
-                    // is offline, with no status line.
-                    office
+                    // Status lines and runtime presence are unavailable until B6.
+                    let result = office
                         .who(params, &org_office::directory::NothingLive)
-                        .map_err(|e| logged("who", &e))
+                        .map_err(|e| logged("who", &e))?;
+                    Ok(result.map(|mut directory| {
+                        // The directory can derive Asleep from run mode alone.
+                        for member in &mut directory.members {
+                            member.presence = org_proto::directory::MemberPresence::Offline;
+                        }
+                        directory
+                    }))
                 })
             },
             status: Box::new(|_, _| Ok(Err(unsupported("status lines", "B6")))),

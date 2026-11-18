@@ -1,4 +1,4 @@
-use super::{read, Hq, Keyset, Query, Source};
+use super::{collect, Hq, Keyset, Query, Source};
 use org_proto::inbox::{InboxKind, InboxListParams, InboxListResult, InboxState};
 use org_proto::{ApiError, ErrorCode};
 
@@ -35,7 +35,13 @@ impl Hq {
             after: after.as_ref(),
             limit: limit as usize + 1,
         };
-        let (as_of, mut result) = read(&self.clock, &sources, &query);
+        let mut as_of = self.clock.as_of();
+        // The M1 worker has only the org source and its feed is disabled. Sample the
+        // office's change token before the snapshot so a concurrent commit can't be missed.
+        if let Some(office) = &self.list_office {
+            as_of.seq = office.org_change_token();
+        }
+        let mut result = collect(&sources, &query);
         let more = result.items.len() > limit as usize;
         result.items.truncate(limit as usize);
         let next_cursor = if more {

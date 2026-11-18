@@ -44,6 +44,66 @@ fn source(snapshot: OrgSnapshot) -> OrgSource {
 }
 
 #[test]
+fn inbox_list_position_advances_after_offboarding_without_hints() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use org_office::{rules::OrgCommand, NewOffice, Office, OfficeRole};
+    use org_proto::inbox::InboxListParams;
+    use org_proto::org::MemberOffboardParams;
+
+    let root = tempfile::tempdir().unwrap();
+    let office = Arc::new(
+        Office::create(
+            root.path().join("HQ"),
+            &NewOffice {
+                office_id: "HQ".into(),
+                office_name: "HQ".into(),
+                role: OfficeRole::Hq,
+                org_id: "ORG".into(),
+                org_name: "Acme".into(),
+            },
+            None,
+        )
+        .unwrap(),
+    );
+    let mut snapshot = office.org_snapshot().unwrap();
+    let agent_id = org_mailbox::testkit::fixture::ADA_ID;
+    snapshot.members.push(member(agent_id, "agent", None));
+    office.seed_organization_for_test(&snapshot.members, snapshot.position);
+    let inbox = super::super::Hq::for_office(Arc::clone(&office)).unwrap();
+    let list = || {
+        inbox
+            .list(InboxListParams {
+                state: InboxState::Open,
+                kinds: None,
+                project: None,
+                team: None,
+                cursor: None,
+                limit: None,
+            })
+            .unwrap()
+    };
+
+    let before = list();
+    assert_eq!(before.counts.problems, 1);
+    assert_eq!(before.items.len(), 1);
+    let now_ms = std::time::UNIX_EPOCH.elapsed().unwrap().as_millis() as u64;
+    office
+        .submit_org(OrgCommand::MemberOffboard(MemberOffboardParams {
+            command_id: org_work::ulid_from_parts(now_ms, 1),
+            member_id: agent_id.into(),
+            expected_version: 1,
+        }))
+        .unwrap()
+        .unwrap();
+    let after = list();
+    assert_eq!(after.counts.problems, 0);
+    assert!(after.items.is_empty());
+    assert_eq!(after.as_of.epoch, before.as_of.epoch);
+    assert!(after.as_of.seq > before.as_of.seq);
+    assert_eq!(list().as_of, after.as_of);
+}
+
+#[test]
 fn d26_unplaced_mapping_uses_only_authoritative_absence_not_foreign_office_ids() {
     let mut view = snapshot();
     view.members = vec![
