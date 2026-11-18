@@ -846,3 +846,55 @@ fn full_http_stack_completes_a_slow_but_continuously_read_response() {
         assert_eq!(body(&response), &[b'x'; 8192]);
     });
 }
+
+/// A3 B1: a client that keeps sending after an early reply holds its
+/// connection, and the only permit, for no longer than the linger bound.
+#[test]
+fn a3_b1_a_client_that_keeps_sending_is_cut_off_within_the_linger_bound() {
+    use super::super::linger::LINGER_TIME;
+    let server = Running::start(
+        ListenMode::HttpLoopback,
+        HttpLimits {
+            connections: 1,
+            ..HttpLimits::default()
+        },
+    );
+    let mut flooding = server.connect();
+    // The handler answers without reading the declared 10 MiB body.
+    flooding
+        .write_all(b"POST / HTTP/1.1\r\nHost: gateway.test\r\nContent-Length: 10485760\r\n\r\n")
+        .unwrap();
+    let mut sender = flooding.try_clone().unwrap();
+    let sending = thread::spawn(move || {
+        let chunk = [b'x'; 1024];
+        let mut sent = 0_usize;
+        while sender.write_all(&chunk).is_ok() {
+            sent += chunk.len();
+            thread::sleep(Duration::from_millis(1));
+        }
+        sent
+    });
+    let mut response = Vec::new();
+    let mut byte = [0; 1];
+    while !response.ends_with(b"{}") {
+        assert_eq!(flooding.read(&mut byte).unwrap(), 1, "reply ended early");
+        response.push(byte[0]);
+    }
+    let replied = Instant::now();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    // EOF (the half-close) or a reset once the linger bound cuts the sender.
+    let _ = flooding.read_to_end(&mut Vec::new());
+    let sent = sending.join().unwrap();
+    let held = replied.elapsed();
+    assert!(
+        held < LINGER_TIME + Duration::from_millis(500),
+        "connection held {held:?} after the reply"
+    );
+    assert!(
+        sent < 10 * 1024 * 1024,
+        "the server must stop accepting the body"
+    );
+    // The only permit is free again.
+    assert!(server.request(REQUEST).starts_with(b"HTTP/1.1 200"));
+    assert_eq!(server.calls.load(Ordering::Acquire), 2);
+}
