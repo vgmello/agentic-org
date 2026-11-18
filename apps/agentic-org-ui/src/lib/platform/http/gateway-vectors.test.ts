@@ -7,7 +7,7 @@ import { NotDispatchedError } from './errors';
 
 const root = new URL('../../../../../../crates/org-proto/test-vectors/v2/', import.meta.url);
 const counts = {
-	'gateway-envelopes': 17, 'gateway-idempotency': 4, 'gateway-lookup-query': 18, 'gateway-lookups': 26,
+	'gateway-envelopes': 18, 'gateway-idempotency': 4, 'gateway-lookup-query': 18, 'gateway-lookups': 26,
 	'gateway-mutation-results': 44, 'gateway-outcomes': 38, 'gateway-paths': 17, 'gateway-resource-errors': 3,
 	'gateway-session': 10, 'gateway-stream': 15, 'gateway-views': 18
 } as const;
@@ -45,8 +45,8 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 		throw new Error('Unsupported gateway fixture contract_revision');
 	}
 	const pinned = revision === 2
-		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 211 }
-		: { counts, total: 210 };
+		? { counts: { ...counts, 'gateway-lookup-query': 20 }, total: 213 }
+		: { counts, total: 211 };
 	for (const name of Object.keys(counts) as Name[]) {
 		expect(data[name].schema_version, `${name} schema_version`).toBe(1);
 		expect(data[name].cases, `${name} main cases`).toHaveLength(pinned.counts[name]);
@@ -55,7 +55,7 @@ function assertCoreCounts(data: Record<Name, Fixture>): void {
 }
 
 it('pins core main cases and every landed gateway file', () => {
-	// gateway-organizations is read by the Rust contract only until the create page lands its readers (A4.5); its count is pinned here.
+	// gateway-organizations is read by platform/organizations/readers.test.ts (organization and list cases); its count is pinned here.
 	const landed = { ...counts, 'gateway-organizations': 18 };
 	expect(readdirSync(root).filter((name) => /^gateway-.*\.json$/.test(name)).sort()).toEqual(Object.keys(landed).map((name) => `${name}.json`).sort());
 	expect(JSON.parse(readFileSync(new URL('gateway-organizations.json', root), 'utf8')).cases).toHaveLength(landed['gateway-organizations']);
@@ -74,14 +74,14 @@ function revisionFixtures(revision: unknown, queryCount: number): Record<Name, F
 }
 describe('core fixture revision count gate', () => {
 	it.each([
-		['legacy', undefined, 18], ['revision 1', 1, 18], ['revision 2', 2, 19]
+		['legacy', undefined, 18], ['revision 1', 1, 18], ['revision 2', 2, 20]
 	] as const)('accepts the fixed %s case set', (_, revision, queryCount) => {
 		expect(() => assertCoreCounts(revisionFixtures(revision, queryCount))).not.toThrow();
 	});
 	it.each([0, 3, '2', null])('refuses unsupported test revision %j', (revision) => {
 		expect(() => assertCoreCounts(revisionFixtures(revision, 18))).toThrow('Unsupported gateway fixture contract_revision');
 	});
-	it.each([[undefined, 19], [1, 19], [2, 18], [2, 20]] as const)(
+	it.each([[undefined, 19], [1, 19], [2, 18], [2, 19], [2, 21]] as const)(
 		'refuses revision %j with %i query cases', (revision, queryCount) => {
 			expect(() => assertCoreCounts(revisionFixtures(revision, queryCount))).toThrow('gateway-lookup-query main cases');
 		}
@@ -92,7 +92,7 @@ describe('core fixture revision count gate', () => {
 		expect(() => assertCoreCounts(data)).toThrow('gateway-lookup-query main cases');
 	});
 	it('keeps schema_version pinned to 1 independently of contract_revision', () => {
-		const data = revisionFixtures(2, 19);
+		const data = revisionFixtures(2, 20);
 		data['gateway-lookup-query'].schema_version = 2;
 		expect(() => assertCoreCounts(data)).toThrow('gateway-lookup-query schema_version');
 	});

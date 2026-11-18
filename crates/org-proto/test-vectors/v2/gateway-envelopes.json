@@ -379,6 +379,28 @@
       "expect": {
         "valid": false
       }
+    },
+    {
+      "name": "an extra top-level key is refused, not ignored",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme"
+        },
+        "command_id": "01M72N8MG00000000000000006"
+      },
+      "route_scope": {
+        "kind": "instance",
+        "instance_id": "01M72N8MG00000000000000001"
+      },
+      "expect": {
+        "valid": false
+      }
     }
   ]
 }

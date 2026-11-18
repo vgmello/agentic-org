@@ -221,7 +221,7 @@ fn typed_core_commands_and_cancellation_do_not_accept_another_operation_identity
 fn shared_envelopes_have_one_native_id_unchanged_versions_and_explicit_scope() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-envelopes.json"),
-        17,
+        18,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let result: Result<CommandEnvelope<Value>, _> = parse(&case["wire"]);
@@ -750,7 +750,7 @@ fn a_lookup_query_names_canonical_uuid_ids() {
 fn shared_lookup_query_fields_are_strict_and_bound_to_the_session_instance() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-lookup-query.json"),
-        19,
+        20,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let kind: OperationKind = serde_json::from_value(case["kind"].clone()).unwrap();

@@ -113,6 +113,8 @@ export function readCommandEnvelope<P>(value: unknown, params: Reader<P>): Comma
 export function readCommandEnvelope<P = JsonObject>(value: unknown, params: Reader<P> = readJsonObject as Reader<P>): CommandEnvelope<P> {
 	return checked((value) => {
 		const input = fields(value);
+		// The envelope has three keys. Any other top-level key is refused, not ignored, as the server does.
+		if (Object.keys(input).some((key) => !['operation_id', 'scope', 'params'].includes(key))) return invalid();
 		return { operation_id: operationId(field(input, 'operation_id')), scope: readScope(field(input, 'scope')), params: params(businessParams(field(input, 'params'))) };
 	})(value);
 }
@@ -124,7 +126,8 @@ export const readRestartRequest = (value: unknown) => readCommandEnvelope(value,
 export const readCancelRequest = checked((value) => Object.keys(fields(value)).length === 0 ? {} : invalid());
 
 export interface LookupQuery { instance_id: string; org_id?: string; office_id?: string }
-const lookupId: Reader<string> = (value) => /^[A-Za-z0-9]{1,64}$/.test(text(value)) ? value as string : invalid();
+// Instance, organization and office IDs are canonical UUID text: letters, digits and the hyphen.
+const lookupId: Reader<string> = (value) => /^[A-Za-z0-9-]{1,64}$/.test(text(value)) ? value as string : invalid();
 const queryReader = object({ instance_id: lookupId, org_id: optional(lookupId), office_id: optional(lookupId) });
 export function readLookupQuery(pairs: Iterable<readonly [string, string]>): LookupQuery {
 	return checked(() => {
