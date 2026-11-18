@@ -155,7 +155,8 @@ plain text, and `--format compact` prints `data` on success, without the envelop
   missing field, so the drop is a guard, not a way to ship one. An office leaves out
   an optional field that has no value; `null` is a value only in a field of open JSON.
 - **`meta`** carries what is about the call, not the record: `status` on every
-  answer with `ok: true`; `operation_id` and `ack` (`committed` or `durable`) for a write; `revision`
+  answer with `ok: true`; the recipient's `presence` on a send or an ask
+  ([ADR-0028](../adr/0028-an-agent-is-always-available.md) decision 6); `operation_id` and `ack` (`committed` or `durable`) for a write; `revision`
   when the write produced one; `next_cursor` for a list; `dry_run: true` for a dry run.
 - **`meta.status`** is one of:
 
@@ -165,7 +166,7 @@ plain text, and `--format compact` prints `data` on success, without the envelop
   | `timed_out` | An ask that is not required got no answer within its wait. `data.default` holds the ask's default when it has one | Continue with the default, or without the answer |
   | `withdrawn` | The ask was withdrawn or cancelled | Continue without it |
   | `suspended` | A required ask waited its time and no answer came: a required answer is pending ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 5). `data` names what is awaited and from whom | Close out background work and end the turn. The office stops the agent and starts it again, in the same session, with the answer |
-  | `gate_required` | The change needs a person's approval before it takes effect. `data` names the request and, once it is known, who approves | Continue with other work; the outcome arrives as a message |
+  | `gate_required` | The change needs an approval before it takes effect. `data` names the request and, once it is known, who approves | Continue with other work; the outcome arrives as a message |
 
   These are the requirement's `SUSPENDED` and `GATE_REQUIRED`, and the four results of
   an ask in ADR-0020.
@@ -384,7 +385,7 @@ office accepts only from a person in the stated position; an agent that calls it
 | --- | --- | --- | --- |
 | `session inspect` | The organization, office, employee, home team and the leads above it, the project and task of this run, the session and its state, and what it is waiting on | [Agent sessions](agent-sessions.md) | C3 |
 | `session attach` | The long-running mode (2.9) | ADR-0014 decision 5 | B6 |
-| `grant list` | What the office holds about this run's reach: the teams the employee leads, the project and task, the worktrees and other writable places, the isolation mode, the tools and connectors of its execution configuration | [Employees](organization-data/04-agent-structure.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [execution](organization-data/11-model-profiles-and-agent-execution.md) | C3 |
+| `grant list` | What the office holds about this run's reach: the teams the employee leads and whether it may approve hires, the project and task, the worktrees and other writable places, the isolation mode, the tools and connectors of its execution configuration | [Employees](organization-data/04-agent-structure.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [execution](organization-data/11-model-profiles-and-agent-execution.md) | C3 |
 
 `session suspend` and `session resume` are not commands. Suspension is the `suspended`
 outcome of a required ask, and the office performs both steps (ADR-0020 decisions 6 and
@@ -402,7 +403,7 @@ outcome of a required ask, and the office performs both steps (ADR-0020 decision
 | `team create`, `team update`, `person add` and the like | A person's commands: the owner changes structure. B2 names them under this grammar | [Who may change what](organization-data/04-agent-structure.md) | B2 |
 | `project create` | A person's command: the owner | [Who may change what](organization-data/04-agent-structure.md) | B3 |
 | `role list`, `role inspect` | The organization's roles; one role's body and requirements. Reading only: no command writes a role in v1 | [Roles UX](../specs/roles-ux.md) | C2 |
-| `hr hire` | Asks for a new agent, in words or with the fields filled in. Returns `gate_required` with the request and, when the caller named the home team, who approves; otherwise the approver is known once the HR lead has drafted the proposal. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields or ask the owner. Nothing is provisioned before a person approves | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
+| `hr hire` | Asks for a new agent, in words or with the fields filled in. Returns `gate_required` with the request and, when the caller named the home team, who approves; otherwise the approver is known once the HR lead has drafted the proposal. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields or ask the owner. The request goes up the lead chain to the first lead with hiring power, a person or an agent ([ADR-0027](../adr/0027-a-lead-approves-a-hire.md)); a lead who has it and hires into its own team is approved by the request itself. Nothing is provisioned before that approval | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
 
 ### 3.3 Messages, questions and approvals
 
@@ -426,13 +427,13 @@ command is used. The names are the ones the office's calls already have (`msg.se
 | `channel list`, `channel join`, `channel leave` | The channels the caller may see; joining and leaving a manual channel | Chat UX (CHAT-19) | B6 |
 | `channel summarize` | `--channel <channel> --about "<what is needed>"`: answers a question about a channel's recent messages with a short text and the IDs of the messages it rests on, so that the agent does not load the channel into its context. It reads exactly what `msg list` would return to the caller, at most the latest 200 messages, and its answer is marked as derived from channel content | [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) decision 16 | C9 |
 
-**Approvals in milestone one.** An approval here is a record with its own rules: who
-approves is derived from that person's position, never named by the requester, and a
-rejection needs a reason ([the hire flow](../specs/our-org-in-the-app.md), section
-7.1). Milestone one has one approval, the hire, and `hr hire` answers `gate_required`
-for it. For anything else an agent that needs a person's go-ahead asks a required
-yes-or-no question with `msg ask`; that is a question, not a recorded approval.
-`gate open` and `gate status` are in section 6.
+**Approvals in milestone one.** An approval here is a record with its own rules.
+Milestone one has one, the hire: who approves is derived from the lead chain and the
+permission to hire, never named by the requester
+([ADR-0027](../adr/0027-a-lead-approves-a-hire.md)), and `hr hire` answers
+`gate_required` for it. For anything else an agent that needs a go-ahead asks a
+required yes-or-no question with `msg ask`; that is a question, not a recorded
+approval. `gate open` and `gate status` are in section 6.
 
 **How an agent gets the answer to a channel question.** It does not read the channel.
 It asks with `msg ask --to <channel>` and keeps the ID. A reply in the question's thread
@@ -540,7 +541,7 @@ The rules:
 | --- | --- | --- | --- |
 | `process list` | The processes and standards that apply to the caller's current work, or to a named task, with where each comes from and which must be followed. `--kind process` or `--kind standard` keeps one kind | [Processes design](processes.md) (`process.effective`), PROC-8 | C5 |
 | `process inspect` | One document's full text by key, process or standard; with `--why`, the chain from organization to team to project and which level won | The same (`process.show`, `process.why`) | C5 |
-| `skill list`, `skill read` | The product's built-in guidance on its own commands, and the skills of the caller's project's development process for the caller's role; each names its source | Processes design, decision 4; [development processes](development-processes.md#6-how-skills-reach-an-agent) | C5; L12 for a development process's skills |
+| `skill list`, `skill read` | `skill read --name <key>`: the product's built-in guidance on its own commands, and the skills of the caller's project's development process for the caller's role; each names its source | Processes design, decision 4; [development processes](development-processes.md#6-how-skills-reach-an-agent) | C5; L12 for a development process's skills |
 | `process create`, `process update` | Add an organization process or standard at the scope of a project of the caller's own team, or change one of that project's. Never at team or organization scope, never non-overridable, never a key inherited from above | [Processes design](processes.md#5-changing-processes), decision 8 (PROC-36) | L12 |
 | `dev-process inspect` | The development process of the caller's project: its summary, stages and tabs, and the caller's role in it. Reading only: a person creates, edits and imports one in the browser | [Development processes](development-processes.md) | L12 |
 
@@ -632,6 +633,7 @@ the table.
 | 4 | B7 | `msg ask`, answering with `msg reply`, `msg withdraw`, and the `timed_out` and `withdrawn` outcomes |
 | 4 | C6 | The `suspended` outcome of a required ask |
 | 4 | C8 | No new command: an ask, a hand-off or a mention from an agent, and an answer to the agent's own question, start a turn for an idle agent, and `meta` says whether one started |
+| 4 | C10 | No new command: a person's message or mention, and a task assigned to the agent, start it too; the answer to a send or an ask carries the recipient's `presence` |
 | 4 | C9 | `channel summarize`; a channel question opens a watch for its asker, and responses arrive in the inbox as `answer_candidate` |
 | 5 | B5 | `task` and `checklist` |
 | 5 | C7 | `repo list`, `repo attach`, `worktree list`, `repo push` |
@@ -666,8 +668,8 @@ capability of `org-platform`, on both systems.
 | `ia`, `fs`, `link` | They are `doc index`, the `doc` commands and `doc link-code` (3.5a), from REQ-06 and REQ-07 | L11 and L13 |
 | `process apply`, `block run` | A development process is content that agents read, with no engine: nothing applies a process or runs a block ([ADR-0026](../adr/0026-development-processes-are-content.md)). Its role-bound skills are read with `skill list` and `skill read` (3.5) | Not commands |
 | `artifact publish`, `artifact drift` | They are `doc issue` and `doc status`: an issued version of a document, and whether the tasks that realize it are finished (3.5a) | L13 |
-| `event emit`, `event subscribe` | The office has one change stream, for its own readers. Agents publishing events and packages subscribing to them is new | After the owner's answer |
-| `gate open`, `gate status` | An approval is a record with its own rules (3.3), and what declares a gate is a Process Package | After the owner's answer. Until then: `hr hire` for a hire, a required yes-or-no ask for anything else |
+| `event emit`, `event subscribe` | A development process is content with no engine: nothing in the product acts on a stage or on an event ([ADR-0026](../adr/0026-development-processes-are-content.md) decision 2). An agent acts because it was addressed or assigned a task | Not commands |
+| `gate open`, `gate status` | An approval is a record with its own rules (3.3). A development process names no approver and grants nothing (ADR-0026 decision 1), so nothing declares a gate | Not commands. `hr hire` for a hire, a required yes-or-no ask for anything else |
 | `worktree create`, `worktree cleanup` | The office does both, at task start and after closure (3.6) | Not commands |
 | `grant check` | It is `--dry-run` (2.6) | Not a command |
 | `session suspend`, `session resume` | They are outcomes the office performs (3.1) | Not commands |

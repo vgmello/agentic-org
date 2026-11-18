@@ -271,7 +271,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 **Templates (TPL)**
 - TPL-1 · Every kind has a built-in template (fields with type, required flag, allowed values and hint, plus sections with hints), and New fills a document from it.
 - TPL-2 · The editor's Details panel is generated from the template's fields, and the Source toggle edits the YAML directly, with both kept in sync.
-- TPL-3 · `agent-os doc schema <kind>` prints a kind's fields and sections, and `doc validate` reports each front-matter problem by field, with the same rules as the app.
+- TPL-3 · `agent-os doc schema --kind <kind>` prints a kind's fields and sections, and `doc validate` reports each front-matter problem by field, with the same rules as the app.
 - TPL-4 · Not in v1: editing templates in Settings.
 - TPL-5 · Not in v1: adding document kinds.
 - TPL-6 · Not in v1: template changes and their effect on existing documents.
