@@ -919,12 +919,16 @@ mod suite {
         let bench = Bench::created(open);
         let by = Actor::Employee(id(CREATOR));
         let (store, decisions, by) = (&bench.store, &bench.decisions, &by);
+        // Every thread is ready before any submits: the submits start together.
+        let start = std::sync::Barrier::new(TEAMS as usize);
+        let start = &start;
         let created: Vec<TeamCreated> = std::thread::scope(|scope| {
             let submit = |n: u64| {
                 move || {
                     let command = team_command(0x20 + n, TEAM);
                     let decide = decisions.create_team(by, &command);
                     let operation = command.operation(id(100 + n), by);
+                    start.wait();
                     let reply = store.submit(Some(operation), false, decide);
                     let reply = reply.expect("a created team");
                     assert_eq!(reply.outcome, Outcome::Completed);

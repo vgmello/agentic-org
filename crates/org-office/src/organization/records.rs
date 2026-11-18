@@ -25,6 +25,12 @@ pub const MAX_HANDLE_BYTES: usize = org_proto::org::AGENT_MESSAGING_NAME_MAX_CHA
 /// channel's members (ADR-0024), the others are the owner and the office in messaging.
 const RESERVED_HANDLES: [&str; 3] = ["here", org_proto::OWNER_HANDLE, org_proto::OFFICE_HANDLE];
 
+/// Whether `key`, a handle in lowercase, is a word nobody may have. The one list for the
+/// records and for the policy that admits a name.
+pub fn is_reserved_handle(key: &str) -> bool {
+    RESERVED_HANDLES.contains(&key)
+}
+
 macro_rules! text_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
         $(#[$meta])*
@@ -210,7 +216,7 @@ pub fn is_handle(text: &str) -> bool {
         && !text.bytes().any(|b| b.is_ascii_uppercase())
         && !text.ends_with('.')
         && !text.contains("..")
-        && !RESERVED_HANDLES.contains(&text)
+        && !is_reserved_handle(text)
         && !org_proto::is_shaped_like_an_address(text)
 }
 
