@@ -288,7 +288,7 @@ write them.
 ```rust
 impl Journal {
     pub fn open(dir: &JournalDir, id: &OfficeIdentity, custody: &dyn WriterAuthority)
-        -> Result<(Journal, Recovered), JournalError>;           // verify chain, truncate a torn tail
+        -> Result<(Journal, Recovered), JournalError>;           // verify chain; torn-tail rule (section 4)
     pub fn append(&mut self, entries: &[Entry]) -> Result<Ordinal, JournalError>; // one write
     pub fn flush(&self) -> Result<Ordinal, JournalError>;        // full flush; flushed through
     pub fn after(&self, ordinal: Ordinal) -> Entries<'_>;         // replay, outbox
