@@ -316,9 +316,11 @@ their results. A decision that panics fails its own operation alone: the writer 
 the panic, undoes to that operation's mark, answers it with an error, and the batch
 continues.
 
-**A decision can be run and discarded.** A dry run asks what a change would do: the
-writer takes the mark, runs `decide`, undoes to the mark and answers what `submit`
-would have answered. Nothing is appended, applied, recorded as a receipt or published.
+**A change can be tried and discarded.** A dry run asks what a change would do: the
+writer takes the mark, runs `decide`, applies the result to the projection as step 4 of
+a batch does, then undoes to the mark and answers. Nothing is framed, appended,
+recorded as a receipt or published, and every number and position the decision took is
+returned by the undo. It skips the receipt lookup of step 1 and takes no operation ID.
 It is the `--dry-run` of the [agent command line](agent-os-command-line.md) (section
 2.6), and the store gains its entry point with the first writing command (B2).
 
@@ -673,7 +675,7 @@ and the client reads again (getting a fresh position) and subscribes from there.
 
 Families turn paths into their events. The work family emits `work.changed` to the web
 process over its office connection (the web process has no database). The messaging
-family wakes the waiters of `agent-os wait` and of an ask when a message or a
+family wakes the waiters of `agent-os thread wait` and of an ask when a message or a
 participant file for that recipient commits. Nothing polls the database.
 
 ## 8. Speed

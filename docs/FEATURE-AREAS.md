@@ -121,7 +121,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Execution, providers and supervision** · [Feature checklist](FEATURES.md#execution-providers-and-supervision)
 
-**Scope:** Native process primitives and runtime adapters, explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation and deferred scheduling/delegation.
+**Scope:** Native process primitives and runtime adapters, the agent command line's contract, explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation and deferred scheduling/delegation.
 
 **Boundary:** Owns running work safely. Employee identity belongs to AREA-03, budget semantics to AREA-07, human session inspection/takeover to AREA-13, and durable recovery evidence to AREA-12. Automatic scheduling and delegate engines remain Deferred.
 

@@ -117,7 +117,7 @@ With one cache per repository, keeping the network credential away from agents c
 - **SSH:** the office sets the SSH command for that invocation through its environment. The command ignores user SSH configuration, runs in batch mode, uses only the office's identity, and verifies the host key strictly against a known-hosts file the office owns. The key is reached through a key file or an agent socket that only the service account can open.
 - **Local repositories** need no credential.
 
-**What an agent's session receives.** Nothing that can authenticate to a remote. Its environment has no credential variable, no SSH agent socket and no askpass program. Git prompting is off (`GIT_TERMINAL_PROMPT=0`). System and global Git configuration are disabled, and `credential.helper` is set to empty through the environment-supplied configuration that [agent sessions](agent-sessions.md) already defines. The cache has no remote, so `git push` in a worktree has no destination and no credential. An agent publishes its work only by asking the office (`agent-os push`).
+**What an agent's session receives.** Nothing that can authenticate to a remote. Its environment has no credential variable, no SSH agent socket and no askpass program. Git prompting is off (`GIT_TERMINAL_PROMPT=0`). System and global Git configuration are disabled, and `credential.helper` is set to empty through the environment-supplied configuration that [agent sessions](agent-sessions.md) already defines. The cache has no remote, so `git push` in a worktree has no destination and no credential. An agent publishes its work only by asking the office (`agent-os repo push`).
 
 **What each isolation mode guarantees.**
 

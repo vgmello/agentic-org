@@ -64,9 +64,13 @@ classes defined here.
    applied.
 4. **A caller may always ask for durable.** An explicit option upgrades a
    committed-class call to durable for a sender that needs certainty.
-5. **`agent-os` gains a session mode.** One long-running `agent-os` process per agent
-   session keeps its office connection open and takes requests in the existing
-   `org-proto` frames. The one-shot command stays for people and scripts.
+5. **`agent-os` gains a session mode.** A long-running `agent-os` process binds once,
+   keeps its office connection open and takes one request after another. Its shape is
+   `agent-os session attach`: one command a line in, one answer envelope a line out
+   ([agent command line](../design/agent-os-command-line.md), section 2.9). An agent
+   reaches it by sending several commands in one shell call, and the target of
+   decision 1 is measured through it. The one-shot command stays for a single call, for
+   people and for scripts.
 6. **Commit first, materialize after.** The point of commitment is the office's
    durable local store: the authoritative office database today, and in the selected
    storage layout a journal under `durable/`. It is never the rebuildable projection
