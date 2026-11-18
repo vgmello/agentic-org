@@ -239,9 +239,28 @@ a worker to start, which X2 brings; 3 that need IPv6 or network access this cont
 lacks); `org-host` and both platform crates were run again after the repairs with the
 same failing set. `cargo fmt --check`, the two CI lint commands, the macOS-target lint
 of the whole workspace, and the refusing-target lint and tests of both platform crates
-pass. The list is at 58 files and 353 predicates. macOS tests have not been run: the
-macOS CI job is their proof, and it is recorded here when a run with `--no-fail-fast`
-finishes.
+pass. The list is at 58 files and 353 predicates.
+
+**macOS, from CI** (the lead cannot run macOS). GitHub Actions `macos-15`, runs for
+`0d970d35` (process and socket), `70760642` (fs and dirs) and `261a7ae9`
+(`org-platform-host`), each with `--no-fail-fast`: every test binary of the moved
+code ran and passed. At `261a7ae9`: `org_platform` 78 passed (2 ignored: the real
+launchd and disk-encryption tests), `platform_conditionals` 24, `libc_only` 3,
+`org_platform_host` 2, `org_supervise` 96 with `lifecycle` 11, `recovery_native` 10
+and `spawn` 15, `org_socket` 61 with `stream_adoption` 4 and `typed_adoption` 3,
+`org_office` 567, `org_client` 39, `org_spool` 14, `org_proto` 214. The LNX-5 step and
+the lint pass. Three test targets fail on macOS, each for a cause that predates X1b
+(they fail identically at `6b7f4336`, before any slice merged) and none in a file
+Track X changed: `agentic-org-web`'s
+`release::tests::held_release_directory_cannot_switch_to_replaced_path` and six
+`org-host` `release::store::tests` (all `PermissionDenied` under the release store's
+temporary directory on the runner), and `agentic-org-web`'s `dependency_closure`
+(an offline `cargo metadata` that needs a crate of the other system; it fails on
+Linux for the mirror-image reason). Before this track's `--no-fail-fast`, the first
+of them stopped the run, so `v1-integration`'s own CI has never run the `org-host`
+tests on macOS. On Linux CI, run for `0d970d35`: all of the moved code's binaries
+pass; the one failure is the same `dependency_closure` test. Linux runs for the
+later commits were still queued when this was written.
 
 **Open, carried forward.**
 
