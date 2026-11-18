@@ -186,9 +186,11 @@ pub(crate) enum DiscardOutcome {
     Stopped,
 }
 
-/// How long past the grace period a shutdown waits for its short runs to end: the time a
-/// run's owner needs to SIGKILL and reap its server at the deadline and drop its entry.
-const RUN_END_MARGIN: Duration = Duration::from_secs(1);
+/// How long past the grace period a shutdown waits for its short runs and the offices'
+/// supervision threads to end: the time a run's owner (or an office's thread) needs to
+/// SIGKILL and reap its server at the deadline and drop its entry. With the host's other
+/// waits it ends inside the host's stop bound of 2.5 s (`Timings`).
+const RUN_END_MARGIN: Duration = Duration::from_millis(500);
 const RUN_END_POLL: Duration = Duration::from_millis(10);
 
 /// A short run's entry in [`State::runs`], removed when dropped: after its server was
@@ -523,11 +525,18 @@ impl Supervisor {
     /// rest, and waits for every supervision thread. Short runs (`--create`, `--discard`) in
     /// flight are stopped too, and this waits for them: a run leaves [`State::runs`] only
     /// after its server was stopped or killed and reaped, so no server of a run is left when
-    /// this returns. That wait ends [`RUN_END_MARGIN`] after the grace period at the latest
-    /// (a run whose owner never takes its stop signal is logged, and its server is killed
-    /// when the owner drops it).
+    /// this returns. These waits end [`RUN_END_MARGIN`] after the grace period at the latest
+    /// (a run whose owner never takes its stop signal, or an office thread still in its
+    /// server's launch handshake, is logged, and kills its server when it takes the stop or
+    /// drops it).
     pub(crate) fn shutdown(&self) {
-        let deadline = Instant::now() + self.config.timings.shutdown_grace;
+        self.shutdown_by(Instant::now() + self.config.timings.shutdown_grace);
+    }
+
+    /// [`Supervisor::shutdown`] with the grace period ending at `deadline`, which a stopping
+    /// host fixes when it is asked to stop: every server is SIGKILLed then, and the wait for
+    /// the short runs ends [`RUN_END_MARGIN`] after it.
+    pub(crate) fn shutdown_by(&self, deadline: Instant) {
         let threads: Vec<JoinHandle<()>> = {
             let mut state = lock(&self.state);
             state.stopping = true;
@@ -543,10 +552,17 @@ impl Supervisor {
                 })
                 .collect()
         };
-        for thread in threads {
-            let _ = thread.join();
-        }
         let until = deadline + RUN_END_MARGIN;
+        // A thread whose server is still in its launch handshake takes its stop only when
+        // the handshake ends (up to its own deadline): it is not waited for past the bound,
+        // and stops that server as soon as it sees the stop.
+        let mut left = false;
+        for thread in threads {
+            left |= !crate::sync::join_by(thread, until);
+        }
+        if left {
+            host_log::log("an office's supervision did not end with the host");
+        }
         while !lock(&self.state).runs.is_empty() {
             if Instant::now() >= until {
                 host_log::log("a create or discard run did not end with the host");
@@ -1527,6 +1543,43 @@ pub(crate) mod tests {
                 org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()
             )
             .is_err());
+    }
+
+    /// X5 review V2: the wait for short runs is bounded from the deadline the stopping host
+    /// fixed, not from when the supervisor's turn came: a run whose owner never takes its
+    /// stop signal is waited for until [`RUN_END_MARGIN`] after that deadline, and then left
+    /// to its owner, which kills its server when it drops it.
+    #[test]
+    fn a_shutdown_waits_for_a_run_until_its_margin_after_the_hosts_deadline() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
+        let pid_file = dir.path().join("pid");
+        let program = dir.path().join("server");
+        write_create_server(&program, &pid_file, true);
+        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
+        let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+        // Its owner (this test) never waits on it, so never takes the stop.
+        let pending = supervisor
+            .begin_hq_create(hq_create_line(), recovery)
+            .unwrap();
+        let pid: libc::pid_t = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        // The host fixed its deadline a grace period ago.
+        let deadline = Instant::now();
+        supervisor.shutdown_by(deadline);
+        let took = deadline.elapsed();
+        assert!(took >= RUN_END_MARGIN, "{took:?}");
+        assert!(
+            took < RUN_END_MARGIN + Duration::from_millis(400),
+            "{took:?}"
+        );
+        drop(pending);
+        // SAFETY: signal 0 only checks the pid.
+        assert!(
+            unsafe { libc::kill(pid, 0) } != 0,
+            "the run's server outlived its owner"
+        );
     }
 
     #[test]

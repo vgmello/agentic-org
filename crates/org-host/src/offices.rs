@@ -405,6 +405,19 @@ impl Offices {
     /// the next start).
     pub(crate) fn shutdown(&self) {
         self.supervisor.shutdown();
+        self.startup_stopped();
+    }
+
+    /// [`Offices::shutdown`] with the servers' grace period ending at `deadline`
+    /// ([`Supervisor::shutdown_by`]).
+    pub(crate) fn shutdown_by(&self, deadline: Instant) {
+        self.supervisor.shutdown_by(deadline);
+        self.startup_stopped();
+    }
+
+    /// Waits for the startup discards: the supervisor stopped their runs and starts no
+    /// other.
+    fn startup_stopped(&self) {
         if let Some(startup) = lock(&self.startup).take() {
             let _ = startup.join();
         }

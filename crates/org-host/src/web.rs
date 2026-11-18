@@ -117,6 +117,10 @@ fn refused(step: &'static str) -> impl FnOnce(String) -> io::Error {
 fn failed(cause: &str) -> io::Error {
     io::Error::other(format!("web process start failed: {cause}"))
 }
+/// A start that ended because the host is stopping.
+fn host_stopping() -> io::Error {
+    failed("the host is stopping")
+}
 /// A failed start step caused by an OS error. Only the error's kind is kept, never
 /// its text, so the cause stays fixed and secret-free.
 fn os_failed(cause: &'static str) -> impl FnOnce(io::Error) -> io::Error {
@@ -558,7 +562,7 @@ impl Supervisor {
                     &*eligible,
                     Timing::PRODUCTION,
                     &|line| crate::host_log::log(line),
-                    || Running::start(&config, &image, Arc::clone(&handler), WAIT),
+                    || Running::start(&config, &image, Arc::clone(&handler), WAIT, &stopping),
                 )
             })
             .map_err(os_failed("start the supervisor thread"))?;
@@ -569,11 +573,40 @@ impl Supervisor {
         })
     }
 }
+impl Supervisor {
+    /// Asks the supervision to stop and returns at once. A start under way ends at its next
+    /// step (within [`POLL`] of a wait for the web process), and the web process is stopped
+    /// as for any failed start; a running one ends its sessions and is killed and reaped.
+    pub(crate) fn stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = &self.thread {
+            thread.thread().unpark();
+        }
+    }
+
+    /// Whether the supervision has ended: it was stopped, or it gave up after its limit of
+    /// failed starts.
+    #[cfg(test)]
+    pub(crate) fn ended(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    /// [`Supervisor::stop`], then waits for the supervision to end until `until` at the
+    /// latest, and says whether it did. It is left running only while a request of the web
+    /// process's control connection still runs (one waiting for a write lock of the
+    /// registry, say): the connection is closed by then, so the web process ends by itself
+    /// when it reads the end of its control stream, or with the host's process.
+    pub(crate) fn join_by(mut self, until: Instant) -> bool {
+        self.stop();
+        self.thread
+            .take()
+            .is_none_or(|thread| crate::sync::join_by(thread, until))
+    }
+}
 impl Drop for Supervisor {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.stop();
         if let Some(thread) = self.thread.take() {
-            thread.thread().unpark();
             let _ = thread.join();
         }
         *lock(&self.state) = GatewayState::Failed;
@@ -725,8 +758,17 @@ impl Rendezvous {
         bound.listener.set_nonblocking(true)?;
         Ok(bound)
     }
-    fn accept(&self, process: &mut Child, until: Instant) -> io::Result<UnixStream> {
+    /// The child's connection, until `until` or until `stop` is set.
+    fn accept(
+        &self,
+        process: &mut Child,
+        until: Instant,
+        stop: &AtomicBool,
+    ) -> io::Result<UnixStream> {
         loop {
+            if stop.load(Ordering::SeqCst) {
+                return Err(host_stopping());
+            }
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     stream
@@ -809,12 +851,14 @@ fn ended_cause(serving_refused: bool, exit: Option<String>, live: bool) -> Strin
 }
 impl Running {
     /// Starts the web process of `config` through `image`, the host's one admission of it.
-    /// `wait` bounds the steps from spawn through the handoff ACK.
+    /// `wait` bounds the steps from spawn through the handoff ACK; a start that waits for
+    /// the web process ends as soon as `stop` is set, as a failed start.
     fn start(
         config: &Configuration,
         image: &Image,
         handler: Arc<dyn Handler>,
         wait: Duration,
+        stop: &AtomicBool,
     ) -> io::Result<Self> {
         config
             .check
@@ -888,7 +932,7 @@ impl Running {
             .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + wait;
         let mut stream = rendezvous
-            .accept(&mut spawned.child, until)
+            .accept(&mut spawned.child, until, stop)
             .map_err(|error| with_refusal(error, &captured, &mut spawned.child))?;
         crate::supervisor::channels::reader_is_child(&checked, &spawned.child, &stream)
             .map_err(|_| not_the_reader(&captured, &mut spawned.child))?;
@@ -897,7 +941,7 @@ impl Running {
                 .try_clone()
                 .map_err(os_failed("clone the control stream"))?,
         );
-        let ready = line(&mut receiver, until, "ready line")
+        let ready = line(&mut receiver, until, stop, "ready line")
             .map_err(|error| with_refusal(error, &captured, &mut spawned.child))?;
         let ready: GatewayReadyForSecrets = serde_json::from_slice(&ready)
             .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
@@ -937,7 +981,7 @@ impl Running {
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)
             .map_err(os_failed("send the descriptor handoff"))?;
-        check_ack(&line(&mut receiver, until, "handoff ACK")?)?;
+        check_ack(&line(&mut receiver, until, stop, "handoff ACK")?)?;
         drop(receiver);
         drop(child);
         drop(listener);
@@ -1023,9 +1067,12 @@ fn send_handoff(
 // recvmsg reads exactly through LF, never consuming a pipelined hello or silently
 // discarding early descriptors. A fatal ancillary frame terminates the host as
 // required by X-02; none of its possibly unreported descriptors may survive.
+//
+// It waits until `until`, and ends as soon as `stop` is set: the host is stopping.
 fn line(
     receiver: &mut org_socket::rights::StreamReceiver,
     until: Instant,
+    stop: &AtomicBool,
     what: &str,
 ) -> io::Result<Vec<u8>> {
     let timed_out = || failed(&format!("the {what} did not arrive before the deadline"));
@@ -1036,14 +1083,19 @@ fn line(
             Ok((b, _)) if bytes.len() < 1023 => bytes.push(b),
             Ok(_) => return Err(failed(&format!("the {what} exceeds 1023 bytes"))),
             Err(org_socket::rights::ReceiveError::WouldBlock) => {
+                if stop.load(Ordering::SeqCst) {
+                    return Err(host_stopping());
+                }
                 let left = until
                     .checked_duration_since(Instant::now())
                     .ok_or_else(timed_out)?;
                 let fd = receiver
                     .fd()
                     .ok_or_else(|| failed(&format!("the {what} stream is closed")))?;
-                if !org_socket::poll_readable(fd.as_raw_fd(), left)
+                // In slices of `POLL`, so a stop is seen while the line is awaited.
+                if !org_socket::poll_readable(fd.as_raw_fd(), left.min(POLL))
                     .map_err(os_failed("poll the control stream"))?
+                    && left <= POLL
                 {
                     return Err(timed_out());
                 }

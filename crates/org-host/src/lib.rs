@@ -138,6 +138,13 @@ pub const SERVER_PROGRAM_NAME: &str = "agentic-org-office";
 /// Requests one connection may have running at once.
 const MAX_IN_FLIGHT_PER_CONNECTION: usize = 16;
 
+/// How long past the servers' grace period a stopping host waits for its own threads: the
+/// requests still running on its connections and the web process's supervision. A request
+/// that waits for a create ends when its server is stopped; one still waiting after this
+/// (for a write lock of the registry, say) is left, its answer dropped, and ends with the
+/// process. With the grace period it bounds the stop (`Timings::shutdown_grace`).
+const THREAD_END_MARGIN: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The team id that signs the desktop app, fixed when the host is built (`ORG_APP_TEAM_ID`).
 /// Without it no signed app can use the app-only calls (logged loudly at startup).
 pub const APP_TEAM_ID: Option<&str> = option_env!("ORG_APP_TEAM_ID");
@@ -376,6 +383,8 @@ pub struct Host {
     service: Arc<Service>,
     /// Organization creation, kept to end its threads when the host stops.
     creating: Option<Arc<provisioning::Provisioning>>,
+    /// How long the servers get to exit when the host stops.
+    shutdown_grace: std::time::Duration,
 }
 
 fn startup_server_check(config: &Config) -> Result<ServerCheck, HostError> {
@@ -613,7 +622,6 @@ fn startup_protected_services(
     supervisor: Supervisor,
     keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
-    timings: &Timings,
 ) -> Result<ProtectedServices, HostError> {
     let io = |context| move |source| HostError::Io { context, source };
     let writers = match (instance, authentication) {
@@ -631,18 +639,15 @@ fn startup_protected_services(
     let provisioning = match (instance, authentication, &writers) {
         (Some(instance), Some(authentication), Some(writers)) => {
             let (db, custody) = authentication.provisioning_storage();
-            Some(Arc::new(
-                provisioning::Provisioning::new(
-                    db,
-                    custody,
-                    Arc::clone(keys),
-                    Arc::clone(writers),
-                    instance.id(),
-                    instance.root(),
-                    &layout.home,
-                )
-                .with_shutdown_grace(timings.shutdown_grace),
-            ))
+            Some(Arc::new(provisioning::Provisioning::new(
+                db,
+                custody,
+                Arc::clone(keys),
+                Arc::clone(writers),
+                instance.id(),
+                instance.root(),
+                &layout.home,
+            )))
         }
         _ => None,
     };
@@ -792,14 +797,7 @@ impl Host {
             writers: _writers,
             supervisor,
             provisioning,
-        } = startup_protected_services(
-            &instance,
-            &authentication,
-            supervisor,
-            &keys,
-            &layout,
-            &config.timings,
-        )?;
+        } = startup_protected_services(&instance, &authentication, supervisor, &keys, &layout)?;
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             &layout.home,
@@ -874,6 +872,7 @@ impl Host {
             web,
             service,
             creating,
+            shutdown_grace: config.timings.shutdown_grace,
         })
     }
 
@@ -895,6 +894,11 @@ impl Host {
 
     /// Stops accepting, stops every office server (stdin closed, then SIGKILL after the grace
     /// period), removes `host.sock` and releases `host.lock`.
+    ///
+    /// The stop is bounded from the moment it is asked for: every wait in it ends by one
+    /// deadline fixed then, the servers' grace period, or a margin after it
+    /// ([`THREAD_END_MARGIN`], the supervisor's for its short runs, provisioning's for its
+    /// creation threads), whatever a server, the web process or a request does.
     pub fn shutdown(mut self) {
         self.stop();
     }
@@ -903,20 +907,33 @@ impl Host {
         let Some(mut listener) = self.listener.take() else {
             return;
         };
+        let deadline = std::time::Instant::now() + self.shutdown_grace;
+        let until = deadline + THREAD_END_MARGIN;
         listener.close();
-        // Ends the web process control connection (and its sessions), then kills/reaps it.
-        self.web.take();
+        // Its start or its run ends at once: the control connection (and its sessions)
+        // closes, and the web process is killed and reaped.
+        if let Some(web) = &self.web {
+            web.stop();
+        }
         // No creation attempt starts from here on, and none records a link.
         if let Some(creating) = &self.creating {
             creating.halt();
         }
-        // Before joining the listener: a create still running answers as soon as the
-        // supervisor stops its server.
-        self.offices.shutdown();
-        listener.join();
-        // Nothing of a create writes custody or the registry after this.
+        // Before joining the listener and the web process's connection: a create still
+        // running answers as soon as the supervisor stops its server.
+        self.offices.shutdown_by(deadline);
+        if let Some(web) = self.web.take() {
+            if !web.join_by(until) {
+                host_log::log("the browser web process's connection did not end with the host");
+            }
+        }
+        if !listener.join_by(until) {
+            host_log::log("a request on host.sock did not end with the host");
+        }
+        // Nothing of a create writes custody or the registry after this, unless it is
+        // logged that a creation did not end.
         if let Some(creating) = self.creating.take() {
-            creating.stop();
+            creating.stop_by(deadline);
         }
         self.authentication_lifecycle.take();
         if let Ok(meta) = fs::symlink_metadata(&self.layout.host_socket) {

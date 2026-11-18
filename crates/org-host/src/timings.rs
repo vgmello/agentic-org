@@ -22,10 +22,11 @@ pub struct Timings {
     pub give_up_window: Duration,
     /// How long servers get to exit after their stdin closes before they're SIGKILLed. It
     /// bounds the host's own stop: every server is asked at once and waited for until one
-    /// shared deadline, so the host exits within this grace plus the moments its own
-    /// threads take. The design's bound is 2.5 s from `SIGTERM` to exit 0 (Linux host
-    /// design, section 3.4), inside the shortest default grace of a container runtime:
-    /// Docker Desktop's 3 s (`default-stop-timeout`; Docker Engine's is 10 s). A worker
+    /// shared deadline, fixed when the host is asked to stop, and every other wait of the
+    /// stop ends 0.5 s after it at the latest, so the host exits within this grace plus
+    /// 0.5 s and the moments its last steps take. The design's bound is 2.5 s from
+    /// `SIGTERM` to exit 0 (Linux host design, section 3.4), inside the shortest default
+    /// grace of a container runtime: Docker Desktop's 3 s (`default-stop-timeout`; Docker Engine's is 10 s). A worker
     /// asked to stop exits well within it; one killed at the deadline loses nothing, since
     /// the office store recovers from a kill at any point.
     pub shutdown_grace: Duration,
