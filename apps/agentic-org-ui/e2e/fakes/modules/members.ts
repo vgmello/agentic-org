@@ -18,9 +18,6 @@ import type {
 	WorkRow,
 	WorkState
 } from '../../../src/lib/modules/members/types';
-import type { SessionLog } from '../../../src/lib/modules/members/features/session-log/entries';
-import { parseClaude } from '../../../src/lib/modules/members/features/session-log/parse-claude';
-import { parseCodex } from '../../../src/lib/modules/members/features/session-log/parse-codex';
 import data from '../data/members/members.json' with { type: 'json' };
 import runsData from '../data/members/runs.json' with { type: 'json' };
 import tasksData from '../data/members/tasks.json' with { type: 'json' };
@@ -86,7 +83,8 @@ const MIN = 60_000;
 const state = {
 	ownerId: undefined as string | undefined,
 	allowHiring: new Map<string, boolean>(),
-	access: new Map<string, boolean>(),
+	/** Sign-in access changed here: an account, or an open invitation until the person registers. */
+	access: new Map<string, { account: boolean; invitedUntil?: string }>(),
 	added: new Map<string, Turn[]>(),
 	assigned: new Map<string, string>()
 };
@@ -128,6 +126,8 @@ export const handleOf = (m: Member) =>
 		? (m.agent?.messaging_name ?? m.id)
 		: (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
 
+const hasAccount = (id: string) => state.access.get(id)?.account ?? extras[id]?.canSignIn ?? false;
+
 const statusOf = (m: Member): MemberRow['status'] =>
 	m.agent?.status === 'paused'
 		? 'paused'
@@ -139,6 +139,9 @@ function presenceOf(m: Member): MemberRow['presence'] {
 	if (statusOf(m) === 'inactive') return undefined;
 	if (statusOf(m) === 'paused') return { id: 'paused' };
 	const p = extras[m.id]?.presence;
+	// Available means able to run (ADR-0028): an agent with a reason it can't start isn't shown as Available.
+	if (p?.id === 'available' && m.kind === 'agent' && extras[m.id]?.execution?.reasons.length)
+		return undefined;
 	return p ? { id: p.id as PresenceId, ...(p.detail ? { detail: p.detail } : {}) } : undefined;
 }
 
@@ -162,7 +165,7 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 				role: m.agent?.title || m.agent?.role || x.title,
 				status: statusOf(m),
 				owner: m.id === ownerId,
-				canSignIn: m.kind === 'person' && (state.access.get(m.id) ?? x.canSignIn ?? false),
+				canSignIn: m.kind === 'person' && hasAccount(m.id),
 				presence: presenceOf(m),
 				homeTeam: teamRef(s, homeTeamId(s, m.id)),
 				office:
@@ -185,6 +188,21 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 				inactiveSince: m.agent?.offboarded_at
 			};
 		});
+}
+
+/** A pause made here has no office confirmation yet: stop pending, and the manual hold named (DEAL-3). */
+function supervisionOf(m: Member, x: Extra): MemberProfile['supervision'] {
+	if (m.kind !== 'agent' || statusOf(m) === 'inactive') return undefined;
+	if (statusOf(m) === 'paused' && !x.supervision?.holds.length)
+		return {
+			health: "Pause requested · the office hasn't confirmed the stop yet",
+			tone: 'waiting',
+			holds: ['Manual pause'],
+			stopPending: true
+		};
+	return x.supervision
+		? { ...x.supervision, tone: x.supervision.tone as 'ok' | 'waiting' | 'problem' | 'unknown' }
+		: undefined;
 }
 
 function execution(m: Member, x: Extra, officeName: string | undefined): ExecutionView | undefined {
@@ -408,13 +426,14 @@ export const membersApi: MembersApi = {
 						: undefined
 			},
 			currentTask: row.workingOn,
-			supervision:
-				m.kind === 'agent' && x.supervision
-					? { ...x.supervision, tone: x.supervision.tone as 'ok' }
-					: undefined,
+			supervision: supervisionOf(m, x),
 			execution: exec,
 			openTurn: open ? { id: open.id, startedAt: open.startedAt } : undefined,
 			cannotStart,
+			invitePending:
+				m.kind === 'person' && !row.canSignIn && state.access.get(memberId)?.invitedUntil
+					? { expiresAt: state.access.get(memberId)!.invitedUntil! }
+					: undefined,
 			viewer: { isSelf: self, isOwnerOrAdmin: isOwner, costVisible: isOwner }
 		} satisfies MemberProfile;
 	},
@@ -438,16 +457,19 @@ export const membersApi: MembersApi = {
 		const s = await snapshotFor(organizationId);
 		return ownerIdOf(s) === viewerId() ? turns : turns.map((t) => ({ ...t, cost: undefined }));
 	},
-	async sessionLog(_organizationId, memberId, runId) {
+	async sessionFile(_organizationId, memberId, runId) {
 		await gate();
-		const fixtures: Record<string, { format: 'claude' | 'codex'; lines: unknown[] }> = {
-			't-n4': { format: 'claude', lines: claudeSession },
-			't-k2': { format: 'codex', lines: codexSession }
+		const fixtures: Record<
+			string,
+			{ member: string; format: 'claude' | 'codex'; lines: unknown[] }
+		> = {
+			't-n4': { member: 'noor', format: 'claude', lines: claudeSession },
+			't-k2': { member: 'kai', format: 'codex', lines: codexSession }
 		};
 		const f = fixtures[runId];
-		if (!f) throw fail('not_found', 'No session log was kept for this run.');
-		const parsed = f.format === 'claude' ? parseClaude(f.lines) : parseCodex(f.lines);
-		return { runId, memberId, format: f.format, ...parsed } satisfies SessionLog;
+		if (!f || f.member !== memberId)
+			throw fail('not_found', 'No session log was kept for this run.');
+		return { runId, memberId, format: f.format, lines: structuredClone(f.lines) };
 	},
 	async processes(organizationId, memberId) {
 		await gate();
@@ -523,18 +545,28 @@ export const membersApi: MembersApi = {
 		await gate();
 		const { m } = await member(organizationId, memberId);
 		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
-		return link('register');
+		if (hasAccount(memberId))
+			throw fail('conflict', `${m.name} can already sign in. Make a new sign-in link instead.`);
+		// Inviting again cancels the previous link: only the newest one is remembered.
+		const issued = link('register');
+		state.access.set(memberId, { account: false, invitedUntil: issued.expiresAt });
+		return issued;
 	},
 	async newSignInLink(organizationId, memberId) {
 		await gate();
-		await member(organizationId, memberId);
+		const { m } = await member(organizationId, memberId);
+		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
+		if (!hasAccount(memberId))
+			throw fail('invalid', `${m.name} has no account yet. Invite ${m.name} to sign in instead.`);
 		return link('reset');
 	},
 	async removeAccess(organizationId, memberId) {
 		await gate();
-		const s = await snapshotFor(organizationId);
+		const { s, m } = await member(organizationId, memberId);
+		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
+		if (!hasAccount(memberId)) throw fail('invalid', `${m.name} has no account to remove.`);
 		if (ownerIdOf(s) === memberId) throw fail('not_authorized', 'Hand over ownership first.');
-		state.access.set(memberId, false);
+		state.access.set(memberId, { account: false });
 	},
 	async handOverOwnership(organizationId, toMemberId, password) {
 		await gate();

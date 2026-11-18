@@ -136,6 +136,8 @@ export interface MemberProfile extends MemberRow {
 	openTurn?: { id: string; startedAt: string };
 	/** Why Run now can't start: paused, not configured, not signed in. */
 	cannotStart?: string;
+	/** People without an account: an invitation that is still open (Inviting again cancels it). */
+	invitePending?: { expiresAt: string };
 	viewer: {
 		isSelf: boolean;
 		/** The owner or the administrator: sign-in access and ownership actions. */
@@ -247,4 +249,16 @@ export interface AssignableTask {
 export interface SignInLink {
 	url: string;
 	expiresAt: string;
+}
+
+/**
+ * A run's conversation file as its runtime wrote it, one JSON value per line (REQ-05). The proof of concept parses it
+ * in the browser with `features/session-log`; in the product the office parses and redacts it, and this read becomes
+ * a read of the parsed entries.
+ */
+export interface SessionFile {
+	runId: string;
+	memberId: string;
+	format: 'claude' | 'codex';
+	lines: unknown[];
 }

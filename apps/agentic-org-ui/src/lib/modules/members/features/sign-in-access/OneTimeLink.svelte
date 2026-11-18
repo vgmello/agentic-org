@@ -1,20 +1,27 @@
 <!--
   @component
-  A one-time link, shown once (offices-and-teams-ux §7.4, SIGN-25, SIGN-37): the link, Copy link, when it expires, and
-  the line that says it is shown only now. The product sends no email.
+  A one-time sign-in link, shown once (offices-and-teams-ux §7.4, SIGN-25, SIGN-37): who to send it to, when it
+  expires, the link with Copy link, and the line that says it is shown only now. The product sends no email.
+  Exported from the members module, so Settings › Members and access shows links the same way.
+  Usage: <OneTimeLink link={{ url, expiresAt, kind: 'invite' }} who="Sam" />
 -->
+<script lang="ts" module>
+	export interface OneTimeLinkValue {
+		url: string;
+		/** RFC 3339. */
+		expiresAt: string;
+		/** A registration link, or a set-new-password link. */
+		kind: 'invite' | 'reset';
+	}
+</script>
+
 <script lang="ts">
 	import CopyButton from '$lib/components/CopyButton.svelte';
-	import type { IssuedLink } from '../../types';
+	import { expiryText } from './expiry';
 
-	let { link, who }: { link: IssuedLink; who: string } = $props();
-	const expires = $derived(
-		new Intl.DateTimeFormat(undefined, {
-			weekday: 'short',
-			hour: '2-digit',
-			minute: '2-digit'
-		}).format(new Date(link.expiresAt))
-	);
+	let { link, who }: { link: OneTimeLinkValue; who: string } = $props();
+	const expires = $derived(expiryText(link.expiresAt));
+	const inputId = $props.id();
 </script>
 
 <div class="space-y-3">
@@ -26,6 +33,7 @@
 	</p>
 	<div class="flex flex-wrap items-center gap-2">
 		<input
+			id={inputId}
 			readonly
 			aria-label={link.kind === 'invite' ? 'Registration link' : 'Set-new-password link'}
 			value={link.url}
