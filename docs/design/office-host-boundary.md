@@ -201,7 +201,7 @@ replacements for missing committed custody. One gate per operation serializes wo
 attempts. The handoff carries the exact prepared plan and IDs, which the worker's
 intent keeps. The host installs writer custody before admitting the office and keeps
 the outcome pending until the worker has written the initial files and is ready. The
-initial canonical files and the directory generation enter the work acceptance journal
+initial canonical files and the directory generation enter the office's acceptance journal
 together. Remote connectivity and publication, and HR execution, are reported as
 unverified.
 

@@ -146,10 +146,10 @@ All write connections must set `foreign_keys=ON` and `recursive_triggers=ON`. Th
 A task event (schema 2, the only version) carries its recorded resource profile and
 its complete event bytes alongside lossless change/provenance text. Codec/hash,
 duplicate, header and coverage validation is admission work, not SQL. The
-work-acceptance journal ordinal/anchor in document 16 is not an event-source stream
+acceptance journal ordinal/anchor in document 16 is not an event-source stream
 sequence. See ADR-0006 for its frozen mapping.
 
-Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, authority journals, and execution transaction envelopes/input/checkpoints/tool receipts have explicit serialization/storage contracts in documents 01, 05, 06, 10 and 11. They are not missing tables merely because their durable source is a file. Accounts, credentials and the link from an account to its person record are host data; private mirrors do not create credentials. Private notes and their command receipts are authoritative in the separate private database defined by document 05; document 13 points to that section.
+Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, the office acceptance journal (16), and execution transaction envelopes/input/checkpoints/tool receipts have explicit serialization/storage contracts in documents 01, 05, 06, 10 and 11. They are not missing tables merely because their durable source is a file. Accounts, credentials and the link from an account to its person record are host data; private mirrors do not create credentials. Private notes and their command receipts are authoritative in the separate private database defined by document 05; document 13 points to that section.
 
 ## Verification and limits
 

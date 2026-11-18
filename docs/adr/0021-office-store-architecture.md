@@ -79,31 +79,6 @@ the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
   data until B6, and adapters written only to be deleted.
 - A host confirmation per write: a host round trip on every acknowledgement.
 
-## Records this needs amended
-
-These are not changed by this record; their owners amend them.
-
-- [Document 16](../design/organization-data/16-recovery-and-office-continuity.md),
-  "Selected immutable work acceptance" and "Office acceptance projection format": the
-  envelope carries file changes, not table mutations with a projection-schema digest;
-  entries are framed in segments and hashed as stored, not one `transactions/<ordinal>.json`
-  in codec 2; the journal kind is `acceptance` for every family, not `work-acceptance`;
-  the host checkpoint advances per flush and recovery admits any verified contiguous
-  suffix after it, not at most one successor.
-- [ADR-0006](0006-selected-task-acceptance.md), "Recoverable acceptance and receipts" step
-  4 and the publication paragraph: freeze file changes rather than projection changes;
-  publish by segment append and group flush.
-- [Document 15](../design/organization-data/15-messaging-and-chat.md), "Storage and
-  durability": a durable-class message is acknowledged at the journal flush, and its file
-  follows, like a committed-class one.
-- [Data contract index](../design/organization-data/README.md), storage tree: the unowned
-  `durable/journal/` is this journal, which lives under `durable/recovery/` as document 16
-  places it; and [document 06](../design/organization-data/06-identity-and-numbering.md):
-  HQ allocations are journaled by HQ's acceptance journal, so `authority/numbering-journal/`
-  is not a separate journal.
-- Document 16, "never reuse acknowledged source sequence IDs": a power cut may take back
-  a committed-class entry with its positions; they were never seen outside the office.
-
 ## Acceptance criteria
 
 | ID | Passing evidence |
@@ -122,4 +97,6 @@ These are not changed by this record; their owners amend them.
 - A second engine implements the projection only; the journal and files carry every
   guarantee and do not change.
 - Until B4 and B6, the office answers work and messaging calls with `unsupported`.
-- The data contract owners have the amendments above to make.
+- The data contract states the journal this record decides: document 16 revision 4,
+  document 15 revision 10, document 06 revision 2.10 and document 08 revision 2.10
+  (set revision 2.16), with ADR-0006 and ADR-0014 decision 8 worded to match.

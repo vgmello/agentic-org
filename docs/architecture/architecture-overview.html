@@ -481,7 +481,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     </tbody>
   </table></div>
   <p>Git publication is hourly and asynchronous. It is a publication target and never the point at which a change is acknowledged. A machine restore needs the unpublished journals too.</p>
-  <p><strong>Numbering is already in Git.</strong> Counters and every allocation are files in the organization repository (<code>identity/counters/</code>, <code>identity/allocations/</code>) and go out with the hourly publish. Only allocations made since the last publish exist solely in the local numbering journal. If that journal is lost, allocation pauses until a safe high-water mark is established; a number is never guessed from the open tasks.</p>
+  <p><strong>Numbering is already in Git.</strong> Counters and every allocation are files in the organization repository (<code>identity/counters/</code>, <code>identity/allocations/</code>) and go out with the hourly publish. Allocations made since the last publish exist only in HQ's <code>durable/</code> (its files and acceptance journal). If those are lost, allocation pauses until a safe high-water mark is established; a number is never guessed from the open tasks.</p>
 
   <h3>File formats</h3>
   <p>The format follows who writes the file and how it changes.</p>
