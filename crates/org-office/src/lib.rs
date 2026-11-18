@@ -17,10 +17,15 @@ mod organization;
 pub use organization::admission::{OwnerAccount, OwnerAuthority};
 pub use organization::{activity, directory};
 /// The organization family on the office store (`docs/design/office-store.md`): its
-/// records and codec, its two ports and its projector.
+/// operations, its records and codec, its two ports and its projector. With the `testkit`
+/// feature: its memory port and `organization_conformance_tests!`.
 pub mod organization_family {
+    pub use crate::organization::features::{
+        self, create_organization, create_team, CreateOrganization, CreateTeam, Creator, Op,
+        OrganizationCreated, TeamCreated, TeamRejected, TeamRejection,
+    };
     pub use crate::organization::ports::{
-        OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
+        OrganizationEngine, OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
     };
     pub use crate::organization::projector::OrganizationFiles;
     pub use crate::organization::records;

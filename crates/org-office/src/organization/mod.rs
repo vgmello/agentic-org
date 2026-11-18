@@ -6,6 +6,7 @@ mod apply;
 mod bootstrap;
 mod canonical_directory;
 pub mod directory;
+pub mod features;
 mod people;
 mod policy;
 pub mod ports;

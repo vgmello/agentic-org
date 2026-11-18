@@ -5,7 +5,7 @@
 //! The ports hold no rule: an engine without constraints (the memory engine) is as valid
 //! as one with them. The rules are in the decisions and in the projector's `validate`.
 
-use org_store::{CoreRead, EngineError, Id};
+use org_store::{CoreRead, Engine, EngineError, Id};
 
 use super::records::{
     Employee, Office, OfficeCode, Organization, Repository, Team, TeamAllocation, TeamCounter,
@@ -101,3 +101,8 @@ pub trait OrganizationWrite: OrganizationRead {
     fn put_team_allocation(&mut self, record: &TeamAllocation) -> Result<(), EngineError>;
     fn remove_team_allocation(&mut self, number: u64) -> Result<(), EngineError>;
 }
+
+/// An engine the organization family runs on: both ports, where the store needs them.
+pub trait OrganizationEngine: Engine<Tx: OrganizationWrite, Snapshot: OrganizationRead> {}
+
+impl<E> OrganizationEngine for E where E: Engine<Tx: OrganizationWrite, Snapshot: OrganizationRead> {}

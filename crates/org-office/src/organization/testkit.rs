@@ -245,3 +245,903 @@ impl OrganizationWrite for MemoryTx {
         Ok(())
     }
 }
+
+// ---- the conformance suite: one office of one organization, on any engine ----
+
+pub use suite::*;
+
+mod suite {
+    use std::{
+        collections::BTreeMap,
+        path::{Path, PathBuf},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    use org_store::{
+        testkit::{
+            id, identity, rebuild_equivalence, Command, Dump, FakeCustody, FamilyScript,
+            FixedClock, Rng,
+        },
+        Actor, AnchorFacts, Change, CoreRead, Engine, EngineError, Id, OfficeIdentity, Opening,
+        Operation, Outcome, Projector, Refusal, Reply, Sha256, Store, StoreError, StoreParts,
+        Stream, Timestamp, UnitOfWork, WriterAuthority,
+    };
+
+    use crate::organization::{
+        features::{
+            create_organization, create_team, CreateOrganization, CreateTeam, Creator, Op,
+            OrganizationCreated, TeamCreated, TeamRejected, TeamRejection,
+        },
+        ports::{OrganizationEngine, OrganizationRead},
+        projector::OrganizationFiles,
+        records::{self, EmployeeKind, EmployeeStatus, OfficeRole, TeamCounter, TeamStatus},
+    };
+
+    /// The instant of every suite operation, and of the golden creation files.
+    pub const CREATION_AT: Timestamp = Timestamp(1_700_000_000_000);
+
+    const REPOSITORY: u64 = 0x10;
+    const TEAM: u64 = 0x11;
+    const CREATOR: u64 = 0x12;
+    const HR: u64 = 0x13;
+
+    /// The creation the golden files are the result of: the organization and office of
+    /// `org_store::testkit::identity`, fixed IDs for the rest, at [`CREATION_AT`].
+    pub fn creation_command() -> CreateOrganization {
+        let here = identity();
+        CreateOrganization {
+            organization_id: here.organization_id,
+            office_id: here.office_id,
+            repository_id: id(REPOSITORY),
+            team_id: id(TEAM),
+            creator: Creator {
+                employee_id: id(CREATOR),
+                name: "Ana".into(),
+                handle: "ana".into(),
+            },
+            hr_employee_id: id(HR),
+            name: "Example".into(),
+            slug: "example".into(),
+            repository_remote_url: "https://example.test/org.git".into(),
+            state_branch: "org/state".into(),
+            office_name: "London HQ".into(),
+        }
+    }
+
+    /// The golden creation files: the exact bytes [`creation_command`] leaves under
+    /// `durable/`, by path. Every way of creating an organization is tested against them.
+    pub fn creation_files() -> BTreeMap<String, Vec<u8>> {
+        macro_rules! golden {
+            ($($path:literal),+ $(,)?) => {
+                [$((
+                    concat!("state/", $path).to_owned(),
+                    include_bytes!(concat!("testdata/creation/", $path)).to_vec(),
+                )),+]
+            };
+        }
+        BTreeMap::from(golden![
+            "organization.yaml",
+            "repositories.yaml",
+            "offices/01900000-0000-7000-8000-0000000000a3.yaml",
+            "identity/office-codes.yaml",
+            "identity/counters/organization/01900000-0000-7000-8000-0000000000a2/team.yaml",
+            "identity/allocations/organization/01900000-0000-7000-8000-0000000000a2/team/1.yaml",
+            "teams/01900000-0000-7000-8000-000000000011/team.yaml",
+            "teams/01900000-0000-7000-8000-000000000011/people/01900000-0000-7000-8000-000000000012/profile.md",
+            "teams/01900000-0000-7000-8000-000000000011/agents/01900000-0000-7000-8000-000000000013/profile.md",
+        ])
+    }
+
+    type Decision<E> = Box<dyn FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send>;
+
+    /// Decisions as a handler composes them, counted so a test can tell a retry that was
+    /// answered from its receipt from one that decided again.
+    #[derive(Clone)]
+    struct Decisions {
+        here: OfficeIdentity,
+        count: Arc<AtomicUsize>,
+    }
+
+    impl Decisions {
+        fn new() -> Self {
+            Self {
+                here: identity(),
+                count: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn count(&self) -> usize {
+            self.count.load(Ordering::SeqCst)
+        }
+
+        fn counted<E: Engine>(
+            &self,
+            mut decide: impl FnMut(&mut UnitOfWork<'_, E>, &OfficeIdentity) -> Result<Change, Refusal>
+                + Send
+                + 'static,
+        ) -> Decision<E> {
+            let (here, count) = (self.here.clone(), Arc::clone(&self.count));
+            Box::new(move |uow| {
+                count.fetch_add(1, Ordering::SeqCst);
+                decide(uow, &here)
+            })
+        }
+
+        fn create_organization<E: OrganizationEngine>(
+            &self,
+            command: &CreateOrganization,
+        ) -> Decision<E> {
+            let command = command.clone();
+            self.counted(move |uow, here| create_organization::decide(uow, here, &command))
+        }
+
+        fn create_team<E: OrganizationEngine>(
+            &self,
+            by: &Actor,
+            command: &CreateTeam,
+        ) -> Decision<E> {
+            let (by, command) = (by.clone(), command.clone());
+            self.counted(move |uow, here| create_team::decide(uow, here, &by, &command))
+        }
+
+        /// Not an operation of the family (archiving arrives with B2): rewrites a team's
+        /// file as archived, as that operation will, so the suite can meet an archived
+        /// parent. Takes a generation like every organization decision.
+        fn archive_team<E: OrganizationEngine>(&self, team: &Id) -> Decision<E> {
+            let team = team.clone();
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, _| {
+                uow.next(Stream::Organization)?;
+                let view = uow.view();
+                let (Some(mut record), Some(chain)) = (view.team(&team)?, view.team_chain(&team)?)
+                else {
+                    return Err(Refusal::invalid("no such team"));
+                };
+                if !record.is_active() {
+                    return Err(Refusal::invalid("already archived"));
+                }
+                record.status = TeamStatus::Archived;
+                record.meta.revision += 1;
+                let bytes = records::encode_team(&record);
+                Ok(Change::new(Op::CreateTeam.ack())
+                    .put(records::team_path(&chain)?, bytes)
+                    .reply(b"archived".to_vec()))
+            })
+        }
+
+        /// Any files at all, with a generation taken: what a faulty or foreign writer
+        /// could leave behind for a rebuild to find.
+        fn write<E: OrganizationEngine>(&self, change: Change) -> Decision<E> {
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, _| {
+                uow.next(Stream::Organization)?;
+                Ok(change.clone())
+            })
+        }
+    }
+
+    /// An operation identity for a decision that is no operation of the family.
+    fn test_operation(n: u64, kind: &'static str, subject: &Id) -> Operation {
+        Operation {
+            id: id(n),
+            kind,
+            actor: Actor::System,
+            fingerprint: Sha256::of(subject.as_str().as_bytes()),
+        }
+    }
+
+    /// One office's store in a temporary directory, on the engine under test.
+    struct Bench<E: Engine, G> {
+        store: Store<E>,
+        decisions: Decisions,
+        root: PathBuf,
+        custody: Arc<FakeCustody>,
+        _engine: G,
+        _dir: tempfile::TempDir,
+    }
+
+    fn open_store<E: OrganizationEngine>(
+        root: &Path,
+        custody: &Arc<FakeCustody>,
+        engine: Arc<E>,
+        opening: Opening,
+    ) -> Result<Store<E>, StoreError> {
+        let here = identity();
+        let files: Arc<dyn Projector<E>> =
+            Arc::new(OrganizationFiles::new(here.organization_id.clone()));
+        let mut parts = StoreParts::new(
+            root.to_owned(),
+            here,
+            Arc::clone(custody) as Arc<dyn WriterAuthority>,
+            engine,
+            vec![files],
+            Arc::new(FixedClock(CREATION_AT)),
+        );
+        parts.opening = opening;
+        Store::open(parts)
+    }
+
+    impl<E: OrganizationEngine, G> Bench<E, G> {
+        /// A new office with an empty journal and no organization.
+        fn new(open: &dyn Fn() -> (Arc<E>, G)) -> Self {
+            let dir = tempfile::tempdir().expect("a temporary directory");
+            let root = dir.path().canonicalize().expect("a real path");
+            let root = root.join("durable");
+            let custody = Arc::new(FakeCustody::new());
+            let (engine, guard) = open();
+            let opening = Opening::Create(AnchorFacts::default());
+            let store = open_store(&root, &custody, engine, opening).expect("a new store");
+            Self {
+                store,
+                decisions: Decisions::new(),
+                root,
+                custody,
+                _engine: guard,
+                _dir: dir,
+            }
+        }
+
+        /// A new office whose organization is [`creation_command`]'s.
+        fn created(open: &dyn Fn() -> (Arc<E>, G)) -> Self {
+            let bench = Self::new(open);
+            let reply = bench.create_organization(1, &creation_command());
+            assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
+            bench
+        }
+
+        fn create_organization(
+            &self,
+            op: u64,
+            command: &CreateOrganization,
+        ) -> Result<Reply, StoreError> {
+            let decide = self.decisions.create_organization(command);
+            self.store
+                .submit(Some(command.operation(id(op))), false, decide)
+        }
+
+        fn create_team(&self, op: u64, team: u64, parent: u64) -> Result<Reply, StoreError> {
+            let command = team_command(team, parent);
+            let by = Actor::Employee(id(CREATOR));
+            let decide = self.decisions.create_team(&by, &command);
+            let operation = command.operation(id(op), &by);
+            self.store.submit(Some(operation), false, decide)
+        }
+
+        /// The team's number and generation, from a completed creation.
+        fn created_team(&self, op: u64, team: u64, parent: u64) -> TeamCreated {
+            let reply = self.create_team(op, team, parent).expect("a created team");
+            assert_eq!(reply.outcome, Outcome::Completed);
+            serde_json::from_slice(&reply.bytes).expect("a team reply")
+        }
+
+        fn archive_team(&self, op: u64, team: u64) {
+            let operation = test_operation(op, "test.archive_team", &id(team));
+            let decide = self.decisions.archive_team(&id(team));
+            let reply = self.store.submit(Some(operation), false, decide);
+            assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
+        }
+
+        fn write(&self, change: Change) {
+            let reply = self.store.submit(None, false, self.decisions.write(change));
+            assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
+        }
+
+        fn read<R>(&self, query: impl FnOnce(&E::Snapshot) -> Result<R, EngineError>) -> R {
+            let read = self.store.read(|snapshot| Ok(query(snapshot)?));
+            read.expect("a read").0
+        }
+
+        fn generation(&self) -> u64 {
+            self.read(|snapshot| snapshot.generation())
+        }
+
+        fn has_receipt(&self, op: u64) -> bool {
+            self.read(|snapshot| snapshot.receipt(&id(op))).is_some()
+        }
+
+        /// Every file under `durable/state`, by its path under `durable/`.
+        fn state_files(&self) -> BTreeMap<String, Vec<u8>> {
+            self.store.sync().expect("files written");
+            let mut files = BTreeMap::new();
+            let mut folders = vec![self.root.join("state")];
+            while let Some(folder) = folders.pop() {
+                // No operation has written a file yet: no folder.
+                let Ok(entries) = std::fs::read_dir(&folder) else {
+                    continue;
+                };
+                for entry in entries {
+                    let path = entry.expect("an entry").path();
+                    if path.is_dir() {
+                        folders.push(path);
+                        continue;
+                    }
+                    let relative = path.strip_prefix(&self.root).expect("under the root");
+                    let name = relative.to_str().expect("a UTF-8 path").replace('\\', "/");
+                    files.insert(name, std::fs::read(&path).expect("a file"));
+                }
+            }
+            files
+        }
+
+        /// Closes the store, deletes its projection (a fresh engine) and opens it again:
+        /// a rebuild from the files and the journal.
+        fn rebuilt(self, open: &dyn Fn() -> (Arc<E>, G)) -> Result<Self, StoreError> {
+            self.store.close().expect("an orderly close");
+            let (engine, guard) = open();
+            let store = open_store(&self.root, &self.custody, engine, Opening::Existing)?;
+            Ok(Self {
+                store,
+                _engine: guard,
+                ..self
+            })
+        }
+    }
+
+    fn team_command(team: u64, parent: u64) -> CreateTeam {
+        CreateTeam {
+            id: id(team),
+            name: format!("Team {team:x}"),
+            parent: id(parent),
+        }
+    }
+
+    /// Files as text, so a failed comparison shows the bytes.
+    fn text(files: &BTreeMap<String, Vec<u8>>) -> BTreeMap<&str, String> {
+        let mut texts = BTreeMap::new();
+        for (path, bytes) in files {
+            texts.insert(path.as_str(), String::from_utf8_lossy(bytes).into_owned());
+        }
+        texts
+    }
+
+    /// Creation writes its nine state files with the golden bytes and its receipt (ten
+    /// files, one entry), at generation 1, with the creator as lead.
+    pub fn creation<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let bench = Bench::new(open);
+        assert_eq!(bench.generation(), 0);
+        let command = creation_command();
+        let reply = bench.create_organization(1, &command).expect("created");
+        assert_eq!(reply.outcome, Outcome::Completed);
+        let created: OrganizationCreated = serde_json::from_slice(&reply.bytes).expect("a reply");
+        let expected = OrganizationCreated {
+            organization_id: command.organization_id.clone(),
+            generation: 1,
+            office_code: "A".into(),
+            team_id: id(TEAM),
+            team_number: 1,
+        };
+        assert_eq!(created, expected);
+        assert_eq!(bench.generation(), 1);
+
+        let golden = creation_files();
+        assert_eq!(text(&bench.state_files()), text(&golden));
+        assert_eq!(golden.len(), 9);
+        let receipts = std::fs::read_dir(bench.root.join("recovery/commands")).expect("receipts");
+        let receipts: Vec<_> = receipts
+            .map(|entry| entry.expect("an entry").file_name())
+            .collect();
+        assert_eq!(receipts, [format!("{}.json", id(1)).as_str()]);
+
+        bench.read(|snapshot| {
+            let organization = snapshot.organization()?.expect("the organization");
+            assert_eq!(organization.id, command.organization_id);
+            assert_eq!(organization.organization_repository_id, id(REPOSITORY));
+            assert_eq!(snapshot.repositories()?.len(), 1);
+            let office = snapshot.office(&command.office_id)?.expect("the office");
+            assert_eq!((office.role, office.slug.as_str()), (OfficeRole::Hq, "hq"));
+            let code = snapshot.office_code(&command.office_id)?.expect("its code");
+            assert_eq!(code.code, "A");
+
+            let team = snapshot.team(&id(TEAM))?.expect("the top-level team");
+            assert_eq!(team.name, "Example");
+            assert_eq!((team.number, team.parent_team_id.clone()), (1, None));
+            assert_eq!(team.lead_employee_id, Some(id(CREATOR)));
+            assert_eq!(snapshot.team_by_number(1)?, Some(team));
+            assert_eq!(snapshot.team_chain(&id(TEAM))?, Some(vec![id(TEAM)]));
+
+            let creator = snapshot.employee(&id(CREATOR))?.expect("the creator");
+            assert_eq!(creator.kind, EmployeeKind::Person);
+            assert_eq!(creator.home_team_id, id(TEAM));
+            assert!(creator.may_hire);
+            let hr = snapshot.employee(&id(HR))?.expect("the HR lead");
+            assert_eq!(
+                (hr.kind, hr.status),
+                (EmployeeKind::Agent, EmployeeStatus::Active)
+            );
+            assert_eq!(hr.home_team_id, id(TEAM));
+            assert!(!hr.may_hire);
+            assert!(snapshot.handle_in_use("ana")? && snapshot.handle_in_use("hr")?);
+            assert!(!snapshot.handle_in_use("bo")?);
+
+            let counter = snapshot.team_counter()?.expect("the team counter");
+            assert_eq!(counter.last_number, 1);
+            let allocations = snapshot.team_allocations()?;
+            assert_eq!(allocations.len(), 1);
+            assert_eq!(
+                (allocations[0].number, &allocations[0].team_id),
+                (1, &id(TEAM))
+            );
+            let refs = snapshot.record_refs()?;
+            let refs: Vec<_> = refs.iter().map(|r| (r.kind.as_str(), &r.id)).collect();
+            let organization_id = &command.organization_id;
+            assert_eq!(
+                refs,
+                [("organization", organization_id), ("team", &id(TEAM))]
+            );
+            Ok(())
+        });
+    }
+
+    /// A retry returns the original reply without deciding again; the same ID with other
+    /// content conflicts.
+    pub fn creation_retry_and_conflict<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let bench = Bench::new(open);
+        let command = creation_command();
+        let first = bench.create_organization(1, &command).expect("created");
+        let decided = bench.decisions.count();
+        assert_eq!(bench.create_organization(1, &command), Ok(first.clone()));
+        assert_eq!(bench.decisions.count(), decided);
+
+        let mut other = command.clone();
+        other.name = "Another".into();
+        assert_eq!(
+            bench.create_organization(1, &other),
+            Err(StoreError::Conflict)
+        );
+        assert_eq!(bench.decisions.count(), decided);
+        assert_eq!(bench.generation(), 1);
+
+        let bench = bench.rebuilt(open).expect("a rebuild");
+        assert_eq!(bench.create_organization(1, &command), Ok(first));
+        assert_eq!(bench.decisions.count(), decided);
+    }
+
+    /// A second creation is refused, and so is one this store cannot hold; nothing is
+    /// recorded, so a retry of a failed creation with the same ID decides afresh.
+    pub fn creation_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let bench = Bench::new(open);
+        let good = creation_command();
+        let refused = |change: &dyn Fn(&mut CreateOrganization)| {
+            let mut command = good.clone();
+            change(&mut command);
+            let reply = bench.create_organization(7, &command);
+            assert!(matches!(reply, Err(StoreError::Invalid(_))), "{reply:?}");
+            assert!(!bench.has_receipt(7));
+            assert_eq!(bench.generation(), 0);
+        };
+        refused(&|c| c.slug = "Not A Slug".into());
+        refused(&|c| c.name = " ".into());
+        refused(&|c| c.office_name = "two\nlines".into());
+        refused(&|c| c.repository_remote_url = String::new());
+        refused(&|c| c.state_branch = "org state".into());
+        refused(&|c| c.creator.name = String::new());
+        refused(&|c| c.creator.handle = "hr".into());
+        refused(&|c| c.creator.handle = "here".into());
+        refused(&|c| c.creator.handle = "Ana".into());
+        refused(&|c| c.hr_employee_id = c.creator.employee_id.clone());
+        refused(&|c| c.team_id = c.organization_id.clone());
+        refused(&|c| c.repository_id = Id::parse("not-a-uuid").expect("a safe component"));
+        // Another organization's or office's creation is not this store's to accept.
+        refused(&|c| c.organization_id = id(0xb2));
+        refused(&|c| c.office_id = id(0xb3));
+        assert!(bench.state_files().is_empty());
+
+        // The failed creation's ID decides afresh, and now succeeds.
+        let decided = bench.decisions.count();
+        let reply = bench.create_organization(7, &good).expect("created");
+        assert_eq!(reply.outcome, Outcome::Completed);
+        assert_eq!(bench.decisions.count(), decided + 1);
+        assert_eq!(bench.generation(), 1);
+
+        // A second creation, under any ID and with any content, is refused unrecorded.
+        let mut second = good.clone();
+        second.team_id = id(0x21);
+        for command in [&good, &second] {
+            let reply = bench.create_organization(8, command);
+            assert!(matches!(reply, Err(StoreError::Invalid(_))), "{reply:?}");
+        }
+        assert!(!bench.has_receipt(8));
+        assert_eq!(bench.generation(), 1);
+        assert_eq!(text(&bench.state_files()), text(&creation_files()));
+    }
+
+    /// Teams take the numbers 2 and 3, each with the counter and its allocation, and one
+    /// generation each.
+    pub fn team_numbers<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let bench = Bench::created(open);
+        let expected = |team: u64, number: u64| TeamCreated {
+            id: id(team),
+            number,
+            generation: number,
+        };
+        assert_eq!(bench.created_team(2, 0x21, TEAM), expected(0x21, 2));
+        assert_eq!(bench.created_team(3, 0x22, TEAM), expected(0x22, 3));
+        assert_eq!(bench.generation(), 3);
+        // A retry is the original reply, and takes no number.
+        assert_eq!(bench.created_team(2, 0x21, TEAM), expected(0x21, 2));
+
+        let organization = identity().organization_id;
+        bench.read(|snapshot| {
+            let counter = snapshot.team_counter()?.expect("the counter");
+            assert_eq!(counter.last_number, 3);
+            let numbered: Vec<_> = snapshot.team_allocations()?;
+            let numbered: Vec<_> = numbered
+                .iter()
+                .map(|a| (a.number, a.team_id.clone()))
+                .collect();
+            assert_eq!(numbered, [(1, id(TEAM)), (2, id(0x21)), (3, id(0x22))]);
+            let team = snapshot.team_by_number(3)?.expect("TEAM-3");
+            assert_eq!(team.id, id(0x22));
+            assert_eq!(team.parent_team_id, Some(id(TEAM)));
+            assert_eq!(team.lead_employee_id, None);
+            assert_eq!(team.meta.created_by.employee(), Some(&id(CREATOR)));
+            assert_eq!(snapshot.record_refs()?.len(), 4);
+            Ok(())
+        });
+        let files = bench.state_files();
+        let counter = TeamCounter {
+            organization_id: organization.clone(),
+            last_number: 3,
+        };
+        let counter_path = records::team_counter_path(&organization);
+        assert_eq!(
+            files[counter_path.as_str()],
+            records::encode_team_counter(&counter)
+        );
+        for (number, team) in [(2, 0x21), (3, 0x22)] {
+            let path = records::team_allocation_path(&organization, number);
+            let allocation = records::decode_team_allocation(&files[path.as_str()]);
+            let allocation = allocation.expect("an allocation");
+            assert_eq!((allocation.number, allocation.team_id), (number, id(team)));
+            assert_eq!(allocation.allocated_at, records::time_text(CREATION_AT));
+        }
+        assert_eq!(files.len(), 9 + 2 * 2);
+    }
+
+    /// An archived parent is a recorded rejection that takes no generation and no number;
+    /// an unknown parent, a used ID and an unknown actor record nothing.
+    pub fn team_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let bench = Bench::created(open);
+        assert_eq!(bench.created_team(2, 0x21, TEAM).number, 2);
+        bench.archive_team(3, 0x21);
+        let generation = bench.generation();
+        assert_eq!(generation, 3);
+        let files = bench.state_files();
+
+        let unrecorded = |op: u64, reply: Result<Reply, StoreError>| {
+            assert!(matches!(reply, Err(StoreError::Invalid(_))), "{reply:?}");
+            assert!(!bench.has_receipt(op));
+            assert_eq!(bench.generation(), generation);
+        };
+        unrecorded(4, bench.create_team(4, 0x22, 0x99));
+        unrecorded(5, bench.create_team(5, 0x21, TEAM));
+        unrecorded(6, bench.create_team(6, TEAM, TEAM));
+        let by = |actor: Actor, command: CreateTeam| {
+            let decide = bench.decisions.create_team(&actor, &command);
+            let operation = command.operation(id(7), &actor);
+            bench.store.submit(Some(operation), false, decide)
+        };
+        unrecorded(7, by(Actor::Employee(id(0x99)), team_command(0x22, TEAM)));
+        let mut unnamed = team_command(0x22, TEAM);
+        unnamed.name = String::new();
+        unrecorded(7, by(Actor::Employee(id(CREATOR)), unnamed));
+
+        let rejected = bench
+            .create_team(8, 0x22, 0x21)
+            .expect("a recorded rejection");
+        assert_eq!(rejected.outcome, Outcome::Rejected);
+        let reason: TeamRejected = serde_json::from_slice(&rejected.bytes).expect("a rejection");
+        assert_eq!(reason.rejected, TeamRejection::ParentArchived);
+        assert!(bench.has_receipt(8));
+        assert_eq!(bench.generation(), generation);
+        // The retry is the same rejection, even once the answer would differ.
+        let decided = bench.decisions.count();
+        assert_eq!(bench.create_team(8, 0x22, 0x21), Ok(rejected));
+        assert_eq!(bench.decisions.count(), decided);
+
+        assert_eq!(text(&bench.state_files()), text(&files));
+        bench.read(|snapshot| {
+            assert_eq!(snapshot.team_counter()?.map(|c| c.last_number), Some(2));
+            assert_eq!(snapshot.team(&id(0x22))?, None);
+            Ok(())
+        });
+        // The next accepted creation takes the next number and the next generation.
+        let next = bench.created_team(9, 0x22, TEAM);
+        assert_eq!((next.number, next.generation), (3, generation + 1));
+        // The system may create a team; its record is attributed to the system.
+        let command = team_command(0x23, TEAM);
+        let decide = bench.decisions.create_team(&Actor::System, &command);
+        let operation = command.operation(id(10), &Actor::System);
+        let reply = bench.store.submit(Some(operation), false, decide);
+        assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
+        let team = bench.read(|snapshot| snapshot.team(&id(0x23)));
+        assert_eq!(team.expect("the team").meta.created_by, records::By::System);
+    }
+
+    /// A team's file is nested in its parent's folder, at every depth, until the tree is
+    /// too deep for a path.
+    pub fn nested_team_path<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let bench = Bench::created(open);
+        bench.created_team(2, 0x21, TEAM);
+        bench.created_team(3, 0x22, 0x21);
+        let chain = [id(TEAM), id(0x21), id(0x22)];
+        let found = bench.read(|snapshot| snapshot.team_chain(&id(0x22)));
+        assert_eq!(found, Some(chain.to_vec()));
+        let path = format!(
+            "state/teams/{}/teams/{}/teams/{}/team.yaml",
+            chain[0], chain[1], chain[2]
+        );
+        let files = bench.state_files();
+        let team = records::decode_team(&files[&path]).expect("the nested team");
+        assert_eq!(team.parent_team_id, Some(id(0x21)));
+        assert_eq!(team.number, 3);
+
+        // Deeper and deeper, until the path would not fit: refused, nothing recorded.
+        let mut parent = 0x22;
+        let refused = loop {
+            let team = parent + 1;
+            match bench.create_team(100 + team, team, parent) {
+                Ok(_) => parent = team,
+                Err(refused) => break refused,
+            }
+            assert!(parent < 0x40, "no depth was refused");
+        };
+        assert!(matches!(refused, StoreError::Invalid(_)), "{refused:?}");
+        let depth = bench.read(|snapshot| snapshot.team_chain(&id(parent)));
+        let depth = depth.expect("the deepest team").len();
+        assert!(
+            (8..=crate::organization::ports::MAX_TEAM_DEPTH).contains(&depth),
+            "{depth}"
+        );
+        let bench = bench.rebuilt(open).expect("the deepest tree rebuilds");
+        let again = bench.read(|snapshot| snapshot.team_chain(&id(parent)));
+        assert_eq!(again.map(|chain| chain.len()), Some(depth));
+    }
+
+    /// The generation is the organization stream's high-water: a read returns its
+    /// snapshot's, a refusal leaves it alone, and a rebuild from the files and the journal
+    /// arrives at the same one with the same rows.
+    pub fn generation_and_rebuild<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let bench = Bench::created(open);
+        bench.created_team(2, 0x21, TEAM);
+        bench.archive_team(3, 0x21);
+        let rejected = bench.create_team(4, 0x22, 0x21).expect("a rejection");
+        assert_eq!(rejected.outcome, Outcome::Rejected);
+        assert!(bench.create_team(5, 0x22, 0x99).is_err());
+        bench.created_team(6, 0x22, TEAM);
+        assert_eq!(bench.generation(), 4);
+
+        let rows = |bench: &Bench<E, G>| {
+            bench.read(|snapshot| {
+                Ok((
+                    snapshot.generation()?,
+                    snapshot.organization()?,
+                    snapshot.repositories()?,
+                    snapshot.offices()?,
+                    snapshot.office_codes()?,
+                    snapshot.teams()?,
+                    snapshot.employees()?,
+                    snapshot.team_counter()?,
+                    snapshot.team_allocations()?,
+                    snapshot.record_refs()?,
+                ))
+            })
+        };
+        let before = rows(&bench);
+        let files = bench.state_files();
+        let bench = bench.rebuilt(open).expect("a rebuild");
+        assert_eq!(rows(&bench), before);
+        assert_eq!(bench.generation(), 4);
+        assert_eq!(text(&bench.state_files()), text(&files));
+        // The rejection is still the answer, and the next creation is generation 5.
+        assert_eq!(bench.create_team(4, 0x22, 0x21), Ok(rejected));
+        let next = bench.created_team(7, 0x23, 0x22);
+        assert_eq!((next.number, next.generation), (4, 5));
+    }
+
+    /// A rebuild refuses files that break a rule spanning files: here a missing
+    /// organization record, and a team led from outside it.
+    pub fn rebuild_validation<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+        let refused = |bench: Bench<E, G>, reason: &str| {
+            let error = bench.rebuilt(open).err().expect("the rebuild is refused");
+            let text = error.to_string();
+            assert!(text.contains(reason), "{text}");
+        };
+
+        let bench = Bench::created(open);
+        bench.write(Change::new(Op::CreateTeam.ack()).remove(records::organization_path()));
+        refused(bench, "the organization record is missing");
+
+        // The creator's home is the top-level team; a child team cannot be led by them.
+        let bench = Bench::created(open);
+        bench.created_team(2, 0x21, TEAM);
+        let chain = [id(TEAM), id(0x21)];
+        let mut team = bench
+            .read(|snapshot| snapshot.team(&id(0x21)))
+            .expect("the team");
+        team.lead_employee_id = Some(id(CREATOR));
+        let path = records::team_path(&chain).expect("a path");
+        bench.write(Change::new(Op::CreateTeam.ack()).put(path, records::encode_team(&team)));
+        refused(bench, "its lead is not an employee of the team");
+
+        // Without the fault, the same files rebuild.
+        let bench = Bench::created(open);
+        bench.created_team(2, 0x21, TEAM);
+        assert!(bench.rebuilt(open).is_ok());
+    }
+
+    // ---- the family's script for the rebuild-equivalence harness ----
+
+    /// Generates the family's commands for `org_store::testkit::rebuild_equivalence`:
+    /// creations (valid, invalid and repeated), teams under known, unknown and archived
+    /// parents with colliding IDs, and archivals.
+    pub struct OrganizationScript {
+        decisions: Decisions,
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum Step {
+        Organization {
+            op: Option<u64>,
+            valid: bool,
+        },
+        Team {
+            op: Option<u64>,
+            team: u64,
+            parent: u64,
+        },
+        Archive {
+            op: Option<u64>,
+            team: u64,
+        },
+    }
+
+    /// The few teams a script creates, so IDs collide and parents exist.
+    const POOL: u64 = 6;
+
+    impl OrganizationScript {
+        pub fn new() -> Self {
+            Self {
+                decisions: Decisions::new(),
+            }
+        }
+    }
+
+    impl Default for OrganizationScript {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<E: OrganizationEngine> FamilyScript<E> for OrganizationScript {
+        type Spec = Step;
+
+        fn projectors(&self, identity: &OfficeIdentity) -> Vec<Arc<dyn Projector<E>>> {
+            vec![Arc::new(OrganizationFiles::new(
+                identity.organization_id.clone(),
+            ))]
+        }
+
+        fn generate(&self, rng: &mut Rng, step: u64) -> Step {
+            let op = (!rng.chance(4)).then_some(step + 1);
+            let pooled = |rng: &mut Rng| 0x100 + rng.below(POOL);
+            // Most sequences begin with the organization; some never have one.
+            if step == 0 && !rng.chance(8) {
+                return Step::Organization { op, valid: true };
+            }
+            match rng.below(12) {
+                0 => Step::Organization {
+                    op,
+                    valid: !rng.chance(3),
+                },
+                1 => Step::Archive {
+                    op,
+                    team: pooled(rng),
+                },
+                kind => {
+                    let parent = match kind {
+                        2 => 0x1ff,
+                        3..=6 => TEAM,
+                        _ => pooled(rng),
+                    };
+                    let team = pooled(rng);
+                    Step::Team { op, team, parent }
+                }
+            }
+        }
+
+        fn command(&self, spec: &Step) -> Command<E> {
+            match spec {
+                Step::Organization { op, valid } => {
+                    let mut command = creation_command();
+                    if !valid {
+                        command.slug = "Not A Slug".into();
+                    }
+                    Command {
+                        op: op.map(|n| command.operation(id(n))),
+                        decide: self.decisions.create_organization(&command),
+                    }
+                }
+                Step::Team { op, team, parent } => {
+                    let command = team_command(*team, *parent);
+                    let by = Actor::Employee(id(CREATOR));
+                    Command {
+                        op: op.map(|n| command.operation(id(n), &by)),
+                        decide: self.decisions.create_team(&by, &command),
+                    }
+                }
+                Step::Archive { op, team } => Command {
+                    op: op.map(|n| test_operation(n, "test.archive_team", &id(*team))),
+                    decide: self.decisions.archive_team(&id(*team)),
+                },
+            }
+        }
+
+        fn decisions(&self) -> usize {
+            self.decisions.count()
+        }
+    }
+
+    /// The projection the write path builds equals the one a rebuild builds from the
+    /// files it left, with and without a crash. Every failure prints its seed.
+    pub fn rebuild_equivalent<E, G>(open: &dyn Fn() -> (Arc<E>, G))
+    where
+        E: OrganizationEngine + Dump,
+    {
+        rebuild_equivalence(open, &OrganizationScript::new(), 0..8);
+    }
+}
+
+/// Declares one test per case of the organization family's suite. `$open` returns a
+/// fresh, empty engine in an `Arc`, and whatever must outlive it.
+#[macro_export]
+macro_rules! organization_conformance_tests {
+    ($open:expr) => {
+        #[test]
+        fn organization_creation_writes_its_ten_files() {
+            $crate::organization_family::testkit::creation(&$open);
+        }
+        #[test]
+        fn organization_creation_retry_and_conflict() {
+            $crate::organization_family::testkit::creation_retry_and_conflict(&$open);
+        }
+        #[test]
+        fn organization_creation_refusals() {
+            $crate::organization_family::testkit::creation_refusals(&$open);
+        }
+        #[test]
+        fn organization_team_numbers() {
+            $crate::organization_family::testkit::team_numbers(&$open);
+        }
+        #[test]
+        fn organization_team_refusals() {
+            $crate::organization_family::testkit::team_refusals(&$open);
+        }
+        #[test]
+        fn organization_nested_team_path() {
+            $crate::organization_family::testkit::nested_team_path(&$open);
+        }
+        #[test]
+        fn organization_generation_and_rebuild() {
+            $crate::organization_family::testkit::generation_and_rebuild(&$open);
+        }
+        #[test]
+        fn organization_rebuild_validation() {
+            $crate::organization_family::testkit::rebuild_validation(&$open);
+        }
+        #[test]
+        fn organization_rebuild_equivalence() {
+            $crate::organization_family::testkit::rebuild_equivalent(&$open);
+        }
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use org_store::testkit::MemoryEngine;
+
+    crate::organization_conformance_tests!(|| (Arc::new(MemoryEngine::new()), ()));
+}

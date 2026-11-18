@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 # `testkit`: the memory ports of the families on the office store and their conformance suites.
-testkit = ["org-store/testkit"]
+testkit = ["org-store/testkit", "dep:tempfile"]
 
 [dependencies]
 org-docs = { path = "../org-docs" }
@@ -24,6 +24,8 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 libc.workspace = true
+# Only the `testkit` suites: each runs its store in a temporary directory.
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 org-work = { path = "../org-work", features = ["testkit"] }
