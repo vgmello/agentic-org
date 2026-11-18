@@ -3,14 +3,13 @@
 //! All errors end the worker process;
 //! particularly, a fatal rights error must never be caught and followed by serving.
 
-use std::fs::File;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
-use org_office_launch::v3::{self, AnyFirstLine, Handoff, HostFirstLine, RendezvousEvent};
-use org_office_launch::{FirstLine, HostMessage, LaunchError, ServerEvent};
+use org_office_launch::{FirstLine, LaunchError, ServerEvent};
+use org_office_launch::{Handoff, HostFirstLine, RendezvousEvent};
 use org_proto::frame::{self, FrameError};
 use org_socket::rights::{ReceiveError, StreamReceiver};
 
@@ -18,11 +17,11 @@ use crate::fdswap::ControlPipe;
 use crate::zeroed::{SecretBuffer, ZeroedReader};
 
 // X-02 §5.1 uses §5.2's header framing, including its 1024-byte limit.
-const HANDOFF_HEADER_MAX_BYTES: usize = v3::TRANSFER_HEADER_MAX_BYTES;
+const HANDOFF_HEADER_MAX_BYTES: usize = org_office_launch::TRANSFER_HEADER_MAX_BYTES;
 
+/// A launch request: the launch first line and its secret handoff. Launch v2 is gone (A1.5).
 pub(super) enum Request {
-    V2(HostMessage),
-    V3 {
+    Launch {
         line: HostFirstLine,
         handoff: Handoff,
     },
@@ -74,7 +73,7 @@ impl Control {
     }
 
     /// Reads only the first stdin line. Its buffered remainder is wiped and discarded.
-    /// V3 header bytes are received exclusively with recvmsg and zero early descriptors.
+    /// Launch header bytes are received exclusively with recvmsg and zero early descriptors.
     #[cfg(test)]
     pub fn read(&mut self, expected: FirstLine) -> Result<Option<Request>, LaunchError> {
         self.read_for_office(expected, None)
@@ -87,10 +86,9 @@ impl Control {
     ) -> Result<Option<Request>, LaunchError> {
         let input = self.pipe.from_host.try_clone().map_err(io_error)?;
         let mut reader = ZeroedReader::new(input);
-        match v3::read_first_line_any(&mut reader, expected)? {
+        match org_office_launch::read_first_line(&mut reader, expected)? {
             None => Ok(None),
-            Some(AnyFirstLine::V2(message)) => Ok(Some(Request::V2(message))),
-            Some(AnyFirstLine::V3(line)) => {
+            Some(line) => {
                 // Drop the pipe reader (and wipe it) before receiving secrets.
                 drop(reader.take_inner());
                 drop(reader);
@@ -128,7 +126,7 @@ impl Control {
                 {
                     hook(stream);
                 }
-                let ready = frame::write_message(stream, &v3::ReadyForSecrets);
+                let ready = frame::write_message(stream, &org_office_launch::ReadyForSecrets);
                 end_on_io(stream, ready.map_err(LaunchError::Frame))?;
                 let receiver = self
                     .receiver
@@ -148,7 +146,11 @@ impl Control {
                         before_marker();
                     }
                     let mut fds = receive(stream, || {
-                        receiver.receive_marker(handoff.fds().len(), v3::FD_MARKER, &self.fence)
+                        receiver.receive_marker(
+                            handoff.fds().len(),
+                            org_office_launch::FD_MARKER,
+                            &self.fence,
+                        )
                     })?;
                     self.transfer = fds.pop();
                     #[cfg(test)]
@@ -158,7 +160,7 @@ impl Control {
                     {
                         hook(stream);
                     }
-                    let received = v3::write_rendezvous_event(
+                    let received = org_office_launch::write_rendezvous_event(
                         stream,
                         &RendezvousEvent::FdsReceived {
                             of: "handoff".into(),
@@ -166,9 +168,8 @@ impl Control {
                     );
                     end_on_io(stream, received)?;
                 }
-                Ok(Some(Request::V3 { line, handoff }))
+                Ok(Some(Request::Launch { line, handoff }))
             }
-            Some(_) => Err(LaunchError::Invalid("unknown launch version")),
         }
     }
 
@@ -205,7 +206,8 @@ impl Control {
 
     pub fn lifetime(&mut self) -> io::Result<Lifetime> {
         let Some(receiver) = self.receiver.take() else {
-            return self.pipe.from_host.try_clone().map(Lifetime::Pipe);
+            // Only a completed launch handshake has a lifetime; stdin is not one.
+            return Err(io::Error::other("no rendezvous lifetime"));
         };
         Ok(Lifetime::Rendezvous {
             receiver,
@@ -226,10 +228,19 @@ impl Control {
         self.rendezvous.as_ref().map(Arc::clone)
     }
 
+    /// Stands in for an authenticated rendezvous, for tests outside this module.
+    #[cfg(test)]
+    pub(crate) fn set_rendezvous_for_test(&mut self, stream: UnixStream) {
+        self.rendezvous = Some(Arc::new(Mutex::new(stream)));
+    }
+
+    /// Reports an event on the authenticated rendezvous. Before the rendezvous exists (a first
+    /// line the worker refused) nothing is written: stdout is untrusted and the host acts on
+    /// nothing there (office-host-boundary.md); the caller has already logged to stderr.
     pub fn emit(&mut self, event: &ServerEvent) -> Result<(), LaunchError> {
         match &self.rendezvous {
             Some(writer) => write_event(writer, &RendezvousEvent::Server(event.clone())),
-            None => org_office_launch::write_server_event(&mut self.pipe.to_host, event),
+            None => Ok(()),
         }
     }
 }
@@ -254,9 +265,9 @@ impl Drop for Control {
     }
 }
 
-/// EOF and genuine connection reset end host lifetime; rights/data faults stay fatal.
+/// The host's lifetime: the authenticated rendezvous. EOF and genuine connection reset end it;
+/// rights/data faults stay fatal.
 pub(super) enum Lifetime {
-    Pipe(File),
     Rendezvous {
         receiver: StreamReceiver,
         fence: Arc<Mutex<()>>,
@@ -269,7 +280,6 @@ impl Read for Lifetime {
             return Ok(0);
         }
         match self {
-            Self::Pipe(pipe) => pipe.read(bytes),
             Self::Rendezvous { receiver, fence } => {
                 let fd = receiver.fd().expect("live lifetime receiver").as_raw_fd();
                 match receive_with_poll(
@@ -298,11 +308,13 @@ fn read_handoff(
     for index in 0..bytes.len() {
         let (byte, _fds) = receive(stream, || receiver.receive_byte(0, fence))?;
         if byte == b'\n' {
-            return v3::decode_handoff(&bytes[..index]).map_err(|error| match error {
-                // serde may quote an unknown tag or field containing misplaced key bytes.
-                LaunchError::Json(_) => LaunchError::Invalid("invalid secret handoff"),
-                other => other,
-            });
+            return org_office_launch::decode_handoff(&bytes[..index]).map_err(
+                |error| match error {
+                    // serde may quote an unknown tag or field containing misplaced key bytes.
+                    LaunchError::Json(_) => LaunchError::Invalid("invalid secret handoff"),
+                    other => other,
+                },
+            );
         }
         bytes[index] = byte;
     }
@@ -376,7 +388,7 @@ fn write_event_within(
         .lock()
         .map_err(|_| LaunchError::Invalid("rendezvous writer poisoned"))?;
     let mut output = crate::bounded::writer(&stream, limit);
-    let result = v3::write_rendezvous_event(&mut output, event);
+    let result = org_office_launch::write_rendezvous_event(&mut output, event);
     end_on_io(&stream, result)
 }
 

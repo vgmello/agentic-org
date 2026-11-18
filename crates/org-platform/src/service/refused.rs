@@ -1,0 +1,11 @@
+use super::{Placement, ServiceManager};
+use crate::Refused;
+use std::path::Path;
+
+pub(super) fn user_placement(_home: &Path) -> Result<Placement, Refused> {
+    Err(Refused::unsupported("service registration"))
+}
+
+pub(super) fn registered(_placement: Placement) -> Result<Box<dyn ServiceManager>, Refused> {
+    Err(Refused::unsupported("service registration"))
+}

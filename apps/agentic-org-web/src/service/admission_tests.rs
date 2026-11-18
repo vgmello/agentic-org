@@ -223,24 +223,36 @@ fn origin_gate_covers_every_api_namespace_and_method_but_no_static_namespace() {
                         .respond(request(method.clone(), path, &[HOST_TEXT], &origins))
                         .await;
                     if api {
-                        let expected_route = usize::from(accepted && path.ends_with("/v1/read"));
+                        // OPTIONS is 405 first; then Origin; then a POST
+                        // without a JSON Content-Type is 415 (this request has none).
+                        let options = method == Method::OPTIONS;
+                        let media = !options && accepted && method == Method::POST;
+                        let expected_route = usize::from(
+                            !options && !media && accepted && path.ends_with("/v1/read"),
+                        );
                         assert_eq!(
                             routed.load(Ordering::SeqCst),
                             expected_route,
                             "{path} {method} {origins:?}"
                         );
-                        let status = if accepted && expected_route == 0 {
-                            StatusCode::NOT_FOUND
+                        let (status, code) = if options {
+                            (StatusCode::METHOD_NOT_ALLOWED, "invalid_request")
+                        } else if !accepted || expected_route == 1 {
+                            (StatusCode::FORBIDDEN, "not_authorized")
+                        } else if media {
+                            (StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_request")
                         } else {
-                            StatusCode::FORBIDDEN
+                            (StatusCode::NOT_FOUND, "not_found")
                         };
-                        let code = if status == StatusCode::NOT_FOUND {
-                            "not_found"
-                        } else {
-                            "not_authorized"
-                        };
+                        if options {
+                            assert_eq!(response.headers()["allow"], "GET, HEAD, POST");
+                        }
+                        assert!(!response
+                            .headers()
+                            .keys()
+                            .any(|name| name.as_str().starts_with("access-control-")));
                         let value = error(response, status, code, method == Method::HEAD).await;
-                        if !accepted && method != Method::HEAD {
+                        if !accepted && !options && method != Method::HEAD {
                             assert_eq!(
                                 value["error"]["message"],
                                 "Request origin is not authorized."

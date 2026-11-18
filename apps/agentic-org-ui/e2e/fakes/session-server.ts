@@ -7,7 +7,6 @@ export const sessionView = {
 	admin: false,
 	organizations: [],
 	server_time_ms: 100,
-	absolute_expires_at: 'later',
 	idle_expires_at: 'sooner'
 };
 /** Instance-specific cookie name, spelled as the gateway does (apps/agentic-org-web/src/sessions.rs `BrowserSessions::new`). */
@@ -40,6 +39,8 @@ function newCase() {
 		/** A 400/403 refused before authentication: the pair and the cookie are kept. */
 		signOutRefused: undefined as 400 | 403 | undefined,
 		revision: 2,
+		/** What GET /api/v1/organizations lists: a real instance lists none until A4 (SIGN-9). */
+		organizations: [] as { id: string; name: string; created_at: string; recovery: string }[],
 		hold: false,
 		release: undefined as (() => void) | undefined,
 		requestHeaders: [] as Record<string, string>[]
@@ -135,6 +136,8 @@ export function sessionTestMiddleware() {
 						controlled.signOutRefused =
 							value.value === 400 || value.value === 403 ? value.value : undefined;
 					else if (value.action === 'revision') controlled.revision = value.value;
+					else if (value.action === 'organizations' && Array.isArray(value.value))
+						controlled.organizations = value.value;
 					else {
 						json({}, 400);
 						return;
@@ -175,6 +178,7 @@ export function sessionTestMiddleware() {
 			}
 			if (
 				url.pathname !== '/api/v1/version' &&
+				url.pathname !== '/api/v1/organizations' &&
 				!(sessionPath && knownSessionPaths.has(url.pathname))
 			) {
 				json(notFound, 404);
@@ -191,7 +195,9 @@ export function sessionTestMiddleware() {
 				state.view =
 					login === 'Blair'
 						? { ...sessionView, account: { id: 'blair-id', login: 'Blair' } }
-						: sessionView;
+						: login === 'admin'
+							? { ...sessionView, account: { id: 'admin-id', login: 'admin' }, admin: true }
+							: sessionView;
 				establish();
 				return;
 			}
@@ -232,6 +238,11 @@ export function sessionTestMiddleware() {
 			if (url.pathname === '/api/v1/session' && req.method === 'GET') {
 				state.gets++;
 				respond(state.view);
+				return;
+			}
+			if (url.pathname === '/api/v1/organizations') {
+				if (req.method === 'GET' && url.search === '') respond({ organizations: state.organizations });
+				else json(invalidRequest, 400);
 				return;
 			}
 			if (url.pathname === '/api/v1/session/refresh' && req.method === 'POST') {

@@ -10,24 +10,23 @@ fn registry_rejects_each_identity_fault_and_tracks_only_live_opaque_ids() {
         assert!(register(&registry, id, ChannelKind::Local, &socket).is_err());
         assert!(registry.lock().unwrap().is_empty());
     }
-    let first = register(&registry, "opaque/Exact:id", ChannelKind::Gateway, &socket).unwrap();
+    let first = register(&registry, "opaque/Exact:id", ChannelKind::Web, &socket).unwrap();
     assert!(register(&registry, "opaque/Exact:id", ChannelKind::Local, &socket).is_err());
-    let case_distinct =
-        register(&registry, "OPAQUE/Exact:id", ChannelKind::Gateway, &socket).unwrap();
+    let case_distinct = register(&registry, "OPAQUE/Exact:id", ChannelKind::Web, &socket).unwrap();
     drop(first);
     assert!(!registry.lock().unwrap().contains_key("opaque/Exact:id"));
     let reused = register(&registry, "opaque/Exact:id", ChannelKind::Local, &socket).unwrap();
     let entries = registry.lock().unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries["opaque/Exact:id"].0, ChannelKind::Local);
-    assert_eq!(entries["OPAQUE/Exact:id"].0, ChannelKind::Gateway);
+    assert_eq!(entries["OPAQUE/Exact:id"].0, ChannelKind::Web);
     drop(entries);
     drop((reused, case_distinct));
     assert!(registry.lock().unwrap().is_empty());
 }
 
 #[test]
-fn total_and_gateway_bounds_are_independent_and_release_on_drop() {
+fn total_and_web_bounds_are_independent_and_release_on_drop() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, _peer) = UnixStream::pair().unwrap();
     for local in [true, false] {
@@ -41,7 +40,7 @@ fn total_and_gateway_bounds_are_independent_and_release_on_drop() {
                     if local {
                         ChannelKind::Local
                     } else {
-                        ChannelKind::Gateway
+                        ChannelKind::Web
                     },
                     &socket,
                 )
@@ -49,13 +48,13 @@ fn total_and_gateway_bounds_are_independent_and_release_on_drop() {
             );
         }
         if !local {
-            assert!(register(&registry, "eighth-gateway", ChannelKind::Gateway, &socket).is_err());
+            assert!(register(&registry, "eighth-web", ChannelKind::Web, &socket).is_err());
         }
         slots.push(register(&registry, "eighth-local", ChannelKind::Local, &socket).unwrap());
         assert!(register(&registry, "ninth-local", ChannelKind::Local, &socket).is_err());
-        assert!(register(&registry, "ninth-gateway", ChannelKind::Gateway, &socket).is_err());
+        assert!(register(&registry, "ninth-web", ChannelKind::Web, &socket).is_err());
         slots.remove(0);
-        slots.push(register(&registry, "replacement", ChannelKind::Gateway, &socket).unwrap());
+        slots.push(register(&registry, "replacement", ChannelKind::Web, &socket).unwrap());
         assert_eq!(registry.lock().unwrap().len(), 8);
         drop(slots);
         assert!(registry.lock().unwrap().is_empty());
@@ -128,7 +127,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             mailbox,
             directory,
         },
-        org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]),
+        crate::test_support::grant_key(),
     ))
 }
 fn office_fixture() -> (tempfile::TempDir, Arc<org_office::Office>) {
@@ -142,7 +141,7 @@ fn office_fixture() -> (tempfile::TempDir, Arc<org_office::Office>) {
             org_name: "Acme".into(),
             role: org_office::OfficeRole::Hq,
         },
-        org_office::Key::from_db_key(org_proto::DbKey::from_bytes([17; 32])),
+        org_office::Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([17; 32])),
     )
     .unwrap();
     (root, Arc::new(office))
@@ -235,7 +234,7 @@ fn admission_ack_keeps_owned_stream_registry_thread_and_shared_policy_until_join
     );
     let mut events = std::io::BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived { of: "live".into() })
     );
     let mut peer = std::io::BufReader::new(peer);
@@ -381,7 +380,7 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
     .unwrap();
     let hello: Value = frame::read_message(&mut office_peer).unwrap().unwrap();
     assert_eq!(hello["result"]["api_version"], 1);
-    frame::write_message(office_peer.get_mut(), &json!({"id":2,"method":"msg.bind","params":{"app_token":org_proto::AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])}})).unwrap();
+    frame::write_message(office_peer.get_mut(), &json!({"id":2,"method":"msg.bind","params":{"member":org_mailbox::testkit::fixture::ADA_HANDLE}})).unwrap();
     let bound: Value = frame::read_message(&mut office_peer).unwrap().unwrap();
     assert!(bound.get("result").is_some(), "{bound}");
     frame::write_message(
@@ -420,28 +419,26 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
         move |channel| channels.open(channel),
     )
     .unwrap();
-    let revoked = org_office_launch::v3::encode_transfer_record(
-        &org_office_launch::v3::TransferRecord::Revoked {
+    let revoked =
+        org_office_launch::encode_transfer_record(&org_office_launch::TransferRecord::Revoked {
             session_ids: vec!["fifo-tombstone".into()],
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     super::super::tests::send_rights(&host, &revoked, &[]);
     let (source, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .unwrap();
-    let record = org_office_launch::v3::encode_transfer_record(
-        &org_office_launch::v3::TransferRecord::Channel {
+    let record =
+        org_office_launch::encode_transfer_record(&org_office_launch::TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: OFFICE_ID.into(),
             channel_id: "independent".into(),
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
     let mut events = BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived {
             of: "independent".into()
         })
@@ -522,7 +519,7 @@ fn blocked_ack_writer_owns_registration_but_gates_serving_until_ack() {
     drop(locked);
     let mut events = BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived {
             of: "before-ack".into()
         })
@@ -756,7 +753,7 @@ fn already_closed_peer_is_adopted_and_acknowledged_then_reaped_normally() {
         .unwrap();
     let mut events = std::io::BufReader::new(events);
     assert_eq!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived {
             of: "peer-already-gone".into()
         })
@@ -848,7 +845,7 @@ fn ordinary_capacity_refusal_keeps_existing_rpc_and_transfer_manager_live() {
     let event: Value = frame::read_message(&mut events).unwrap().unwrap();
     assert_eq!(
         event,
-        json!({"v":3,"event":"fds_refused","of":"capacity","reason":"capacity"})
+        json!({"v":1,"event":"fds_refused","of":"capacity","reason":"capacity"})
     );
     let mut live = BufReader::new(held.pop().unwrap());
     frame::write_message(
@@ -879,17 +876,17 @@ fn immediate_eof_is_acknowledged_before_exactly_one_close_and_recovery_releases_
         channel.recovery = recovery;
         channels.open(channel).unwrap();
         assert_eq!(
-            org_office_launch::v3::read_server_event(&mut events).unwrap(),
+            org_office_launch::read_server_event(&mut events).unwrap(),
             Some(RendezvousEvent::FdsReceived { of: id.into() })
         );
         assert_eq!(
-            org_office_launch::v3::read_server_event(&mut events).unwrap(),
+            org_office_launch::read_server_event(&mut events).unwrap(),
             Some(RendezvousEvent::ChannelClosed { of: id.into() })
         );
         assert!(channels.registry.lock().unwrap().is_empty());
     }
     drop(channels);
-    assert!(org_office_launch::v3::read_server_event(&mut events)
+    assert!(org_office_launch::read_server_event(&mut events)
         .unwrap()
         .is_none());
 }
@@ -906,7 +903,7 @@ fn lifecycle_write_failure_ends_rendezvous_after_dropping_channel_ownership() {
         .unwrap();
     let mut events = std::io::BufReader::new(events);
     assert!(matches!(
-        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsReceived { .. })
     ));
     drop(events);
@@ -925,7 +922,7 @@ fn lifecycle_write_failure_ends_rendezvous_after_dropping_channel_ownership() {
 fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_existing_hello() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
-    use org_office_launch::v3::{self, TransferRecord};
+    use org_office_launch::TransferRecord;
     use org_proto::frame;
     use serde_json::{json, Value};
     use std::io::{BufReader, Read};
@@ -947,14 +944,16 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
         let (source, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
             .unwrap();
-        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
             kind: ChannelKind::Local,
             office_id: OFFICE_ID.into(),
             channel_id: format!("actual-{n}"),
         })
         .unwrap();
         super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
-        let event = v3::read_server_event(&mut events).unwrap().unwrap();
+        let event = org_office_launch::read_server_event(&mut events)
+            .unwrap()
+            .unwrap();
         if n < 8 {
             assert_eq!(
                 event,
@@ -968,7 +967,7 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
                 event,
                 RendezvousEvent::FdsRefused {
                     of: format!("actual-{n}"),
-                    reason: v3::RefusalReason::Capacity
+                    reason: org_office_launch::RefusalReason::Capacity
                 }
             );
             drop(source);
@@ -977,14 +976,14 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
         }
         drop(source);
     }
-    let revoked = v3::encode_transfer_record(&TransferRecord::Revoked {
+    let revoked = org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
         session_ids: vec!["after-capacity".into()],
     })
     .unwrap();
     super::super::tests::send_rights(&host, &revoked, &[]);
     // A later negative ACK proves the FIFO reader passed that revocation and survived.
     let (source, mut peer) = UnixStream::pair().unwrap();
-    let record = v3::encode_transfer_record(&TransferRecord::Channel {
+    let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
         kind: ChannelKind::Local,
         office_id: OFFICE_ID.into(),
         channel_id: "after-revoked".into(),
@@ -992,10 +991,10 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
     .unwrap();
     super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
     assert_eq!(
-        v3::read_server_event(&mut events).unwrap(),
+        org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsRefused {
             of: "after-revoked".into(),
-            reason: v3::RefusalReason::Capacity
+            reason: org_office_launch::RefusalReason::Capacity
         })
     );
     drop(source);

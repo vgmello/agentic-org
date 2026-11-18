@@ -3,16 +3,10 @@ use super::*;
 #[test]
 fn pending_reservations_share_physical_budgets_and_witness_drop_frees_nothing() {
     let mut registry = Registry::default();
-    for n in 0..MAX_GATEWAY_CHANNELS {
-        drop(
-            registry
-                .reserve(&n.to_string(), ChannelKind::Gateway)
-                .unwrap(),
-        );
+    for n in 0..MAX_WEB_CHANNELS {
+        drop(registry.reserve(&n.to_string(), ChannelKind::Web).unwrap());
     }
-    assert!(registry
-        .reserve("eighth-gateway", ChannelKind::Gateway)
-        .is_err());
+    assert!(registry.reserve("eighth-web", ChannelKind::Web).is_err());
     let local = registry.reserve("local", ChannelKind::Local).unwrap();
     assert!(registry.reserve("ninth-local", ChannelKind::Local).is_err());
     assert_eq!(registry.len(), MAX_CHANNELS);
@@ -27,7 +21,7 @@ fn pending_reservations_share_physical_budgets_and_witness_drop_frees_nothing() 
     assert!(registry.reserve("replacement", ChannelKind::Local).is_ok());
 }
 #[test]
-fn local_and_gateway_counts_are_independent_but_total_and_failure_are_absolute() {
+fn local_and_web_counts_are_independent_but_total_and_failure_are_absolute() {
     let mut registry = Registry::default();
     for n in 0..4 {
         registry
@@ -35,15 +29,11 @@ fn local_and_gateway_counts_are_independent_but_total_and_failure_are_absolute()
             .unwrap();
     }
     for n in 4..8 {
-        registry
-            .reserve(&n.to_string(), ChannelKind::Gateway)
-            .unwrap();
+        registry.reserve(&n.to_string(), ChannelKind::Web).unwrap();
     }
     assert!(registry.reserve("ninth", ChannelKind::Local).is_err());
     assert!(registry.remove("0", false));
-    let witness = registry
-        .reserve("gateway-fifth", ChannelKind::Gateway)
-        .unwrap();
+    let witness = registry.reserve("web-fifth", ChannelKind::Web).unwrap();
     registry.fail();
     assert!(!witness.is_live());
     assert_eq!(registry.len(), 0);
@@ -56,8 +46,8 @@ fn identities_and_refused_reservations_are_exact_without_tombstones() {
         assert!(registry.reserve(id, ChannelKind::Local).is_err());
     }
     let first = registry.reserve("Exact", ChannelKind::Local).unwrap();
-    assert!(registry.reserve("Exact", ChannelKind::Gateway).is_err());
-    let distinct = registry.reserve("exact", ChannelKind::Gateway).unwrap();
+    assert!(registry.reserve("Exact", ChannelKind::Web).is_err());
+    let distinct = registry.reserve("exact", ChannelKind::Web).unwrap();
     assert!(!registry.remove("foreign", false));
     assert!(registry.remove("Exact", false));
     assert!(!first.is_live());

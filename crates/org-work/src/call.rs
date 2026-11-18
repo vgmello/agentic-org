@@ -20,8 +20,9 @@ use org_proto::{ApiError, Call, ErrorCode, Request};
 pub struct Caller {
     /// The member the connection is bound as.
     pub member_id: String,
-    /// The connection is the app's (it may make app-only calls).
-    pub via_app: bool,
+    /// The call came through a host channel's grant, as the owner or a person (it may make the
+    /// calls only a person's session makes).
+    pub via_grant: bool,
 }
 
 impl Caller {
@@ -29,15 +30,15 @@ impl Caller {
     pub fn agent(member_id: impl Into<String>) -> Self {
         Self {
             member_id: member_id.into(),
-            via_app: false,
+            via_grant: false,
         }
     }
 
-    /// The app's connection, bound as the owner or a person.
-    pub fn app(member_id: impl Into<String>) -> Self {
+    /// A grant-bound call on a host channel, as the owner or a person.
+    pub fn grant_bound(member_id: impl Into<String>) -> Self {
         Self {
             member_id: member_id.into(),
-            via_app: true,
+            via_grant: true,
         }
     }
 }
@@ -120,17 +121,28 @@ work_calls!(
     BugReopen(BugReopen, BugReopenParams),
 );
 
-const APP_ONLY: &[&str] = &[WorkDelete::METHOD];
+const GRANT_ONLY: &[&str] = &[WorkDelete::METHOD];
 
 impl WorkCall {
-    /// Whether this request is app-only, even before its params can be parsed.
-    pub fn is_app_only(request: &Request) -> bool {
-        APP_ONLY.contains(&request.method.as_str())
+    /// Whether this request is grant-only, even before its params can be parsed.
+    pub fn is_grant_only(request: &Request) -> bool {
+        GRANT_ONLY.contains(&request.method.as_str())
     }
 
-    /// App-only calls (§2.2): refused on any other connection with `not_authorized`, before
+    /// Grant-only calls (§2.2): made only by a person or owner acting through a verified grant
+    /// on a host channel; refused on any other connection with `not_authorized`, before
     /// anything else. In phase 1: `work.delete`.
-    pub fn app_only(&self) -> bool {
-        APP_ONLY.contains(&self.method())
+    pub fn grant_only(&self) -> bool {
+        GRANT_ONLY.contains(&self.method())
+    }
+
+    /// The refusal for a grant-only `method` on a connection that isn't grant-bound. The
+    /// engine and the worker's early check both answer with it, so a caller sees one message
+    /// whichever layer refuses.
+    pub fn grant_only_refusal(method: &str) -> ApiError {
+        ApiError::new(
+            ErrorCode::NotAuthorized,
+            format!("`{method}` can only be made through a person's grant"),
+        )
     }
 }

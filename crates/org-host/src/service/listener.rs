@@ -178,21 +178,23 @@ impl Drop for WebConnection {
     }
 }
 
-/// Reverse control connection made by bootstrap mode to setup's listener. It
-/// has no gateway descriptor privilege and is never accepted on host.sock.
-pub(crate) struct SetupConnection {
+/// A served `Local` connection for tests, built like an accepted host.sock
+/// connection. It has no web process privilege.
+#[cfg(test)]
+pub(crate) struct LocalConnection {
     connection: Arc<Connection>,
     thread: Option<JoinHandle<()>>,
 }
-impl SetupConnection {
+#[cfg(test)]
+impl LocalConnection {
     pub(crate) fn start(stream: UnixStream, handler: Arc<dyn Handler>) -> io::Result<Self> {
         if !org_socket::peer_allowed(&stream, org_socket::effective_uid()) {
-            return Err(io::Error::other("setup peer refused"));
+            return Err(io::Error::other("local peer refused"));
         }
         let (connection, queue) = Connection::new(stream.try_clone()?, Accepted::sample(&stream));
         let serving = Arc::clone(&connection);
         let thread = thread::Builder::new()
-            .name("setup-control".into())
+            .name("local-control".into())
             .spawn(move || serve(stream, serving, queue, handler, 1))?;
         Ok(Self {
             connection,
@@ -203,7 +205,8 @@ impl SetupConnection {
         !self.connection.closed.load(Ordering::SeqCst)
     }
 }
-impl Drop for SetupConnection {
+#[cfg(test)]
+impl Drop for LocalConnection {
     fn drop(&mut self) {
         self.connection.close();
         if let Some(thread) = self.thread.take() {
@@ -654,11 +657,11 @@ impl Connection {
     pub(crate) fn hello_completed(&self) -> bool {
         self.hello_completed.load(Ordering::SeqCst)
     }
-    pub(crate) fn channel_kind(&self) -> org_office_launch::v3::ChannelKind {
+    pub(crate) fn channel_kind(&self) -> org_office_launch::ChannelKind {
         if self.gateway.is_some() {
-            org_office_launch::v3::ChannelKind::Gateway
+            org_office_launch::ChannelKind::Web
         } else {
-            org_office_launch::v3::ChannelKind::Local
+            org_office_launch::ChannelKind::Local
         }
     }
     pub(crate) fn gateway_listen(&self) -> Option<&org_host_control::listen::ListenConfig> {
@@ -892,9 +895,9 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>, closed: &AtomicBoo
                 let delivered = if sent.is_err() {
                     false
                 } else if let Some(gateway) = gateway {
-                    org_office_launch::v3::encode_transfer_record(
-                        &org_office_launch::v3::TransferRecord::Channel {
-                            kind: org_office_launch::v3::ChannelKind::Gateway,
+                    org_office_launch::encode_transfer_record(
+                        &org_office_launch::TransferRecord::Channel {
+                            kind: org_office_launch::ChannelKind::Web,
                             office_id: office,
                             channel_id: channel,
                         },
@@ -1017,7 +1020,7 @@ mod tests {
         });
         assert_eq!(
             connection.channel_kind(),
-            org_office_launch::v3::ChannelKind::Gateway
+            org_office_launch::ChannelKind::Web
         );
         assert!(connection.gateway_listen().is_some());
         let closed = Arc::clone(&connection.closed);
@@ -1065,7 +1068,7 @@ mod tests {
         }
         assert_eq!(serde_json::from_slice::<Response>(&line).unwrap().id, 3);
         let mut datagrams = org_socket::rights::DatagramReceiver::new(received);
-        let mut header = [0; org_office_launch::v3::TRANSFER_HEADER_MAX_BYTES];
+        let mut header = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
         let mut record = loop {
             match datagrams.receive(&mut header, 1, &SPAWN_LOCK) {
                 Ok(record) => break record,
@@ -1078,8 +1081,8 @@ mod tests {
             }
         };
         assert!(
-            matches!(org_office_launch::v3::decode_transfer_record(&header[..record.bytes]).unwrap(),
-            org_office_launch::v3::TransferRecord::Channel { kind:org_office_launch::v3::ChannelKind::Gateway, office_id, channel_id } if office_id=="office" && channel_id=="channel")
+            matches!(org_office_launch::decode_transfer_record(&header[..record.bytes]).unwrap(),
+            org_office_launch::TransferRecord::Channel { kind:org_office_launch::ChannelKind::Web, office_id, channel_id } if office_id=="office" && channel_id=="channel")
         );
         let mut channel =
             org_socket::rights::connected_unix_stream(record.descriptors.pop().unwrap()).unwrap();
@@ -1304,29 +1307,17 @@ mod tests {
         let web = WebConnection::start(host, transfer, loopback_listen(), Arc::new(Echo)).unwrap();
         assert_eq!(
             web.connection.channel_kind(),
-            org_office_launch::v3::ChannelKind::Gateway
+            org_office_launch::ChannelKind::Web
         );
         assert!(web.connection.gateway_listen().is_some());
         assert!(web.live());
-
-        // A setup reverse connection never gets web process privilege.
-        let (setup_host, _setup_peer) = UnixStream::pair().unwrap();
-        let setup = SetupConnection::start(setup_host, Arc::new(Echo)).unwrap();
-        assert_eq!(
-            setup.connection.channel_kind(),
-            org_office_launch::v3::ChannelKind::Local
-        );
-        assert!(setup.connection.gateway_listen().is_none());
 
         // Every connection the host.sock listener accepts is built by `Connection::new`,
         // which carries no web process.
         let (accepted, _accepted_peer) = UnixStream::pair().unwrap();
         let (plain, _queue) =
             Connection::new(accepted.try_clone().unwrap(), Accepted::sample(&accepted));
-        assert_eq!(
-            plain.channel_kind(),
-            org_office_launch::v3::ChannelKind::Local
-        );
+        assert_eq!(plain.channel_kind(), org_office_launch::ChannelKind::Local);
 
         // Peer EOF ends the web process control connection.
         drop(peer);
@@ -1351,7 +1342,7 @@ mod tests {
             if !kinds.is_empty() {
                 assert!(kinds
                     .iter()
-                    .all(|k| *k == org_office_launch::v3::ChannelKind::Local));
+                    .all(|k| *k == org_office_launch::ChannelKind::Local));
                 break;
             }
             assert!(std::time::Instant::now() < until, "no accepted connection");
@@ -1952,7 +1943,7 @@ mod channel_lifecycle_tests {
         }
         fn descriptor(&mut self, id: &str) -> UnixStream {
             let mut fds = if let Some(gateway) = &mut self.gateway {
-                let mut buffer = [0; org_office_launch::v3::TRANSFER_HEADER_MAX_BYTES];
+                let mut buffer = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
                 let until = Instant::now() + Duration::from_secs(3);
                 let received = loop {
                     match gateway.receive(&mut buffer, 1, &SPAWN_LOCK) {
@@ -1966,8 +1957,8 @@ mod channel_lifecycle_tests {
                     }
                 };
                 assert!(
-                    matches!(org_office_launch::v3::decode_transfer_record(&buffer[..received.bytes]).unwrap(),
-                    org_office_launch::v3::TransferRecord::Channel { kind: org_office_launch::v3::ChannelKind::Gateway, office_id, channel_id } if office_id == "office" && channel_id == id)
+                    matches!(org_office_launch::decode_transfer_record(&buffer[..received.bytes]).unwrap(),
+                    org_office_launch::TransferRecord::Channel { kind: org_office_launch::ChannelKind::Web, office_id, channel_id } if office_id == "office" && channel_id == id)
                 );
                 received.descriptors
             } else {

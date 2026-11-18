@@ -14,8 +14,10 @@ version = "0.0.0"
 dependencies = [
  "agentic-org-office",
  "org-client",
+ "org-office",
  "org-office-launch",
  "org-proto",
+ "org-socket",
  "org-spool",
  "serde",
  "serde_json",
@@ -31,6 +33,7 @@ dependencies = [
  "org-host",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-socket",
  "serde",
@@ -43,6 +46,7 @@ dependencies = [
 name = "agentic-org-office"
 version = "0.0.0"
 dependencies = [
+ "agentic-org-office",
  "hmac",
  "libc",
  "org-client",
@@ -76,6 +80,7 @@ dependencies = [
  "org-proto",
  "org-release",
  "org-socket",
+ "ring",
  "rustix",
  "scraper",
  "serde",
@@ -649,6 +654,7 @@ dependencies = [
  "libc",
  "org-host-control",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-release",
  "org-socket",
@@ -663,6 +669,7 @@ dependencies = [
  "tar",
  "tempfile",
  "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
@@ -722,6 +729,14 @@ dependencies = [
  "argon2",
  "ring",
  "zeroize",
+]
+
+[[package]]
+name = "org-platform"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "tempfile",
 ]
 
 [[package]]

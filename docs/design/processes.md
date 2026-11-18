@@ -62,8 +62,11 @@ neither inherits from or replaces the other (decision 9).
      Overridable documents are guidance the agent applies with judgment: summaries
      first, with the full text retrievable, under the cap of §3.2.
    - **How to use the tools.** Guidance for the product's own commands ships with
-     the product as built-in guidance, not as organization documents. Whether some of
-     it is also served as an MCP server is open.
+     the product as built-in skills, not as organization documents. An agent reads
+     them with `agent-os skill list` and `skill read`. None of it is served as an
+     MCP tool ([agent command line](agent-os-command-line.md), section 2.10). How
+     an agent is to behave in the product is one built-in text, the
+     [agent instructions](agent-instructions.md), which every agent receives first.
    - **Field name.** The record field is `overridable`, default `true`.
 5. **Code branch bases.** Every project-repository association has a required
    `integration_branch`. A task targets zero or more repositories, so branch, base
@@ -186,7 +189,7 @@ employee's home team never change this scope.
 
 The output, `EffectiveSet { entries, problems }`, names for each key the winning
 document, whether it was inherited, replaced or added, and the chain of layers with
-what happened to each, which `agent-os process why` prints (PROC-8).
+what happened to each, which `agent-os process inspect --why` prints (PROC-8).
 
 Sets are cached under a fingerprint of the organization state commit and the
 accountable team ancestry. A change to either drops the sets that used it. A rename
@@ -209,7 +212,7 @@ set with a warning.
 Overridable guidance is capped at **24 KiB**. The cap is a ceiling: the composer
 also respects the runtime's instruction limit and reserves room for identity, the
 task and tool help. Past the cap, summaries come first, then changed texts,
-organization first, and the rest are named with `agent-os process show <key>`.
+organization first, and the rest are named with `agent-os process inspect --key <key>`.
 Entries are whole UTF-8 documents; a rule is never cut midway and omitted text is
 never marked read. The section goes into the instructions at a start and the wake
 prompt at a wake. Texts count as read once the runtime accepted the start or wake.
@@ -250,7 +253,7 @@ The office writes it in the same transaction as the change that causes it.
   reset onto the integration branch or another branch never sets it.
 - **Merged** when `own_tip` is reachable from the integration branch. Once merged,
   the office refuses pushes to the branch.
-- **Pushes need a record.** `agent-os push` takes a `task/*` branch only from the
+- **Pushes need a record.** `agent-os repo push` takes a `task/*` branch only from the
   holder of its open record.
 - **Released** when a reservation's task leaves In progress, closes or moves before
   its branch exists. A failed `git worktree add` removes the reservation. Startup
@@ -309,10 +312,11 @@ section 5:
 | `process.write` | `document_id?`, `kind`, `scope`, front matter and body, `expected_revision?` | `{ document_id, revision }` | `invalid_request` (`sealed`), `already_exists`, `conflict`, `not_authorized` |
 
 `for` is `current` (default), `project { project_id }` or `task { task_id }`. The
-`agent-os` commands `process list [--kind process | standard]`, `process why` and
-`process show` call the reads; `process new` and `process edit` call the write for a
-project of the agent's own team. The local API version is 1 and these calls change in
-place until v1 ships.
+`agent-os` commands `process list` and `process inspect` (with `--why`) call the reads, for
+processes and standards alike ([agent command line](agent-os-command-line.md), section
+3.5); `process create` and `process update` call the write for a project of the
+agent's own team (decision 8). The
+local API version is 1 and these calls change in place until v1 ships.
 
 The result of `task.set_status` names a branch left with unmerged work at a close
 (§4). `work.changed` gains the branch-record changes. Unknown values decode as `Unknown`.
@@ -331,8 +335,8 @@ share the rule as `org_proto::has_reserved_branch_prefix`.
 - **`org-office`:** the index, caches, branch records, the calls and the checks
   inside the work write.
 - **`org-git`:** repository reads, branch creation at a commit and cleanup.
-- **`agent-os`:** the `process` read commands, and `process new` and `process edit`
-  for a project of the agent's own team.
+- **`agent-os`:** the `process` and `skill` read commands, and `process create` and
+  `process update` for a project of the agent's own team.
 - **`apps/agentic-org-ui`:** the Processes views and the profile tab.
 
 ## 8. Tests that prove the rules

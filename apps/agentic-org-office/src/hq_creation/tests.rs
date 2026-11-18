@@ -1,6 +1,6 @@
 use super::*;
 use std::path::Path;
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 fn binding(root: &Path) -> Binding {
     let public_root = root.join("state");
     std::fs::create_dir_all(&public_root).unwrap();
@@ -21,7 +21,7 @@ fn new() -> NewOffice {
     }
 }
 fn key() -> Key {
-    Key::from_db_key(org_proto::DbKey::from_bytes([8; 32]))
+    Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([8; 32]))
 }
 fn code() -> RecoveryCode {
     RecoveryCode::new("0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213".into()).unwrap()
@@ -33,7 +33,7 @@ fn actual_ca_creation_reopens_retries_exactly_and_starts_without_pending_code() 
     let office = prepare(
         &folder,
         &new(),
-        key(),
+        Some(key()),
         INSTANCE,
         &binding(dir.path()),
         code(),
@@ -65,12 +65,12 @@ fn actual_ca_creation_reopens_retries_exactly_and_starts_without_pending_code() 
         office.org_snapshot().unwrap().members[0].id,
         binding(dir.path()).owner_member_id
     );
-    verify_existing(&office, &key()).unwrap();
+    verify_existing(&office).unwrap();
     drop(office);
     let office = prepare(
         &folder,
         &new(),
-        key(),
+        Some(key()),
         INSTANCE,
         &binding(dir.path()),
         code(),
@@ -86,14 +86,14 @@ fn actual_ca_creation_reopens_retries_exactly_and_starts_without_pending_code() 
     assert!(prepare(
         &folder,
         &new(),
-        key(),
+        Some(key()),
         INSTANCE,
         &binding(dir.path()),
         wrong
     )
     .is_err());
     let office = Office::open_for_instance(&folder, key(), INSTANCE).unwrap();
-    verify_existing(&office, &key()).unwrap();
+    verify_existing(&office).unwrap();
     assert_eq!(
         office.hq_creation_record().unwrap().unwrap().public_key,
         public
@@ -139,7 +139,7 @@ fn selected_uuid_hq_marker_keeps_ca_identity_through_retry_and_reopen() {
         home_team_id: "019a8928-1337-7456-8456-0123456789ae".into(),
         hr_employee_id: "019a8928-1337-7456-8456-0123456789af".into(),
     });
-    let office = prepare(&folder, &new, key(), INSTANCE, &binding, code()).unwrap();
+    let office = prepare(&folder, &new, Some(key()), INSTANCE, &binding, code()).unwrap();
     let record = office.hq_creation_record().unwrap().unwrap();
     let marker = std::fs::read(folder.join("office.json")).unwrap();
     let marker = org_office_launch::OfficeFile::from_slice(&marker).unwrap();
@@ -150,14 +150,14 @@ fn selected_uuid_hq_marker_keeps_ca_identity_through_retry_and_reopen() {
     assert_eq!(marker.office_id, new.office_id);
     assert_eq!(marker.org_id, new.org_id);
     drop(office);
-    let office = prepare(&folder, &new, key(), INSTANCE, &binding, code()).unwrap();
+    let office = prepare(&folder, &new, Some(key()), INSTANCE, &binding, code()).unwrap();
     assert_eq!(
         office.hq_creation_record().unwrap().unwrap().package,
         record.package
     );
     drop(office);
     let office = Office::open_for_instance(&folder, key(), INSTANCE).unwrap();
-    verify_existing(&office, &key()).unwrap();
+    verify_existing(&office).unwrap();
     let current = office.hq_creation_public_record().unwrap().unwrap();
     assert_eq!(current.public_key, record.public_key);
     assert_eq!(current.organization_id, new.org_id);
@@ -180,7 +180,7 @@ fn legacy_satellite_without_hq_receipt_starts_but_retained_hq_material_requires_
             prepare(
                 &folder,
                 &new(),
-                key(),
+                Some(key()),
                 INSTANCE,
                 &binding(dir.path()),
                 code(),
@@ -189,7 +189,7 @@ fn legacy_satellite_without_hq_receipt_starts_but_retained_hq_material_requires_
         } else {
             Office::create(&folder, &new(), key()).unwrap()
         };
-        verify_existing(&office, &key()).unwrap();
+        verify_existing(&office).unwrap();
         let mut source = new();
         source.office_id = "SOURCE".into();
         let source = Office::create(dir.path().join("SOURCE"), &source, key()).unwrap();
@@ -207,13 +207,13 @@ fn legacy_satellite_without_hq_receipt_starts_but_retained_hq_material_requires_
             .unwrap();
         assert!(!office.is_replication_hq().unwrap());
         if provisioned {
-            assert!(verify_existing(&office, &key()).is_err());
+            assert!(verify_existing(&office).is_err());
         } else {
             assert!(office.hq_creation_record().unwrap().is_none());
-            verify_existing(&office, &key()).unwrap();
+            verify_existing(&office).unwrap();
             drop(office);
             let office = Office::open(&folder, key()).unwrap();
-            verify_existing(&office, &key()).unwrap();
+            verify_existing(&office).unwrap();
         }
     }
 }
@@ -228,7 +228,7 @@ fn enc5_ca_key_is_stored_only_wrapped_with_the_office_secrets_key() {
     let office = prepare(
         &folder,
         &new(),
-        key(),
+        Some(key()),
         INSTANCE,
         &binding(dir.path()),
         code(),
@@ -241,16 +241,29 @@ fn enc5_ca_key_is_stored_only_wrapped_with_the_office_secrets_key() {
     assert_eq!(ca.public_key(), record.public_key);
     let der = ca.local_der();
     assert!(!wrapped.windows(der.len()).any(|w| w == der));
-    // Every byte the office stores locally: no plaintext DER anywhere.
-    drop(office);
-    for entry in std::fs::read_dir(&folder).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_file() {
-            let bytes = std::fs::read(&path).unwrap();
-            assert!(!bytes.windows(der.len()).any(|w| w == der), "{path:?}");
+    // Every byte the office stores locally, including `office.db-wal` while the office is
+    // still open and after it closes: no plaintext DER anywhere.
+    let scan = |phase: &str| {
+        let mut scanned = 0;
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                let bytes = std::fs::read(&path).unwrap();
+                assert!(
+                    !bytes.windows(der.len()).any(|w| w == der),
+                    "{phase} {path:?}"
+                );
+                scanned += 1;
+            }
         }
-    }
-    let other = Key::from_db_key(org_proto::DbKey::from_bytes([9; 32]));
+        assert!(folder.join("office.db").is_file(), "{phase}");
+        scanned
+    };
+    assert!(folder.join("office.db-wal").is_file());
+    assert!(scan("open") > 0);
+    drop(office);
+    assert!(scan("closed") > 0);
+    let other = Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([9; 32]));
     assert!(unwrap_ca(&other, &record, "HQ").is_err());
     assert!(unwrap_ca(&key(), &record, "SAT").is_err());
     let mut moved = LocalRecord::new(
@@ -264,4 +277,63 @@ fn enc5_ca_key_is_stored_only_wrapped_with_the_office_secrets_key() {
     assert!(unwrap_ca(&key(), &moved, "HQ").is_err());
     moved.organization_id = record.organization_id.clone();
     assert!(unwrap_ca(&key(), &moved, "HQ").is_ok());
+}
+
+/// ENC-1 (ADR-0016 decision 3): without the office secrets key an HQ create retry is
+/// recovery-required, while an existing HQ office still opens and only its CA is unavailable.
+#[test]
+fn enc1_missing_secrets_key_makes_create_recovery_required_and_ca_unavailable() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("HQ");
+    let refused = prepare(
+        &folder,
+        &new(),
+        None,
+        INSTANCE,
+        &binding(dir.path()),
+        code(),
+    )
+    .expect_err("create without a secrets key must not provision");
+    assert!(matches!(
+        refused,
+        OfficeError::Invalid("HQ provisioning requires recovery")
+    ));
+    let office = prepare(
+        &folder,
+        &new(),
+        Some(key()),
+        INSTANCE,
+        &binding(dir.path()),
+        code(),
+    )
+    .unwrap();
+    let record = office.hq_creation_record().unwrap().unwrap();
+    drop(office);
+    let retry = prepare(
+        &folder,
+        &new(),
+        None,
+        INSTANCE,
+        &binding(dir.path()),
+        code(),
+    )
+    .expect_err("a create retry without a secrets key is recovery-required");
+    assert!(matches!(
+        retry,
+        OfficeError::Invalid("HQ provisioning requires recovery")
+    ));
+    let office = Office::open_for_instance(&folder, None, INSTANCE).unwrap();
+    assert_eq!(office.info().office_id, "HQ");
+    assert_eq!(
+        office.hq_creation_record().unwrap().unwrap().public_key,
+        record.public_key
+    );
+    assert_eq!(verify_existing(&office).unwrap(), CaStatus::Unavailable);
+    drop(office);
+    let wrong = Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([9; 32]));
+    let office = Office::open_for_instance(&folder, wrong, INSTANCE).unwrap();
+    assert_eq!(verify_existing(&office).unwrap(), CaStatus::Unavailable);
+    drop(office);
+    let office = Office::open_for_instance(&folder, key(), INSTANCE).unwrap();
+    assert_eq!(verify_existing(&office).unwrap(), CaStatus::Available);
 }

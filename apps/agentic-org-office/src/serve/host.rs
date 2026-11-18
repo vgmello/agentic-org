@@ -5,7 +5,7 @@ use crate::revocations::Revocations;
 
 pub(crate) struct HostChannel {
     pub _channel_id: String,
-    pub _kind: org_office_launch::v3::ChannelKind,
+    pub _kind: org_office_launch::ChannelKind,
     pub hello: HelloResult,
     pub _revocations: Arc<Mutex<Revocations>>,
 }
@@ -92,7 +92,7 @@ fn dispatch(
         shared,
         &mut Binding::Member {
             id: owner,
-            with_app_token: true,
+            via_grant: true,
         },
     );
     // Inbox may recheck live ownership after authorization; keep that refusal opaque too.

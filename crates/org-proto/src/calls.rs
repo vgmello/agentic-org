@@ -171,7 +171,7 @@ pub struct HelloResult {
         deserialize_with = "lenient_names"
     )]
     pub capabilities: Vec<String>,
-    /// The instance this server belongs to (a ULID). Required in every v2 result (X-02 §3);
+    /// The instance this server belongs to (canonical lowercase UUIDv7 text). Required in every v2 result (X-02 §3);
     /// absent from v1 servers. A client checks it against the instance of the context it
     /// selected and refuses a mismatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -422,12 +422,9 @@ impl Call for OfficeAppToken {
 /// `office.status_changed` events.
 ///
 /// It refuses the two reasons a restart can't fix: `unsupported_version` and
-/// `invalid_request`. Any other reason, or none, is restarted (e.g. `key_missing`,
-/// `restarts_exhausted`, `stopped_by_owner`, or an `offline` office waiting for its next
-/// backoff step). `key_missing` is restarted so an owner who restores the Keychain item
-/// needn't restart the host; if the key is still missing, the office goes back to
-/// `unavailable` with `key_missing`, with no backoff retries (seen as `office.status_changed`
-/// events), not as an error from this call.
+/// `invalid_request`. Any other reason, or none, is restarted (e.g. `restarts_exhausted`,
+/// `stopped_by_owner`, or an `offline` office waiting for its next backoff step). The new
+/// status arrives as `office.status_changed` events, not as an error from this call.
 ///
 /// App-only: the host verifies the caller's code signature as for [`OfficeAppToken`].
 /// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),

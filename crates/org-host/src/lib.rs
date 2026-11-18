@@ -13,7 +13,7 @@
 //! `org-office-launch`, and never depends on `org-office`. The private `hostdb` stores the
 //! host's registry in SQLCipher; organization databases remain in office servers.
 //!
-//! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
+//! It holds every office's secrets key (`keys`): it creates each one, keeps it in its key store
 //! (the Data Protection keychain in release builds, a development folder in debug builds) and
 //! hands it to the office's server on the launch pipe. Its servers never touch a key store.
 //!
@@ -38,8 +38,8 @@ compile_error!(
 );
 
 mod accounts;
+mod admin;
 mod app_auth;
-pub mod bootstrap;
 mod broadcast;
 mod catalog;
 mod clock;
@@ -51,13 +51,21 @@ mod host_log;
 mod host_secrets;
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "2b.3 activates hostdb after accepted bootstrap")
+    expect(
+        dead_code,
+        reason = "A2 B3 composes the registry into service start and setup"
+    )
 )]
 mod hostdb;
 pub mod human;
 mod ids;
+// Composed into `admin.link.initial` and `admin.reset` by A2 B3.
+#[cfg_attr(not(test), allow(dead_code))]
+mod links;
 pub mod release;
 mod web;
+#[cfg(all(test, debug_assertions))]
+mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[cfg_attr(not(test), expect(dead_code, reason = "B2-01.2 wires the host"))]
@@ -68,9 +76,17 @@ mod offices;
 mod peer;
 mod provisioning;
 mod recovery;
+mod registered;
 mod secrets;
 mod server_check;
 mod service;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "A3 B4 wires browser sessions into the host ops")
+)]
+mod sessions;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub mod setup_flow;
 pub mod signals;
 mod spawn;
 mod supervisor;
@@ -150,7 +166,7 @@ pub struct Config {
     #[cfg(debug_assertions)]
     pub dev_app_path: Option<PathBuf>,
     /// Debug builds only (release builds don't have the field): the folder (absolute) where the
-    /// host keeps the offices' database keys, as plain files, instead of the Keychain. A debug
+    /// host keeps the offices' secrets keys, as plain files, instead of the Keychain. A debug
     /// host without it refuses to start ([`HostError::NoDevKeyDir`]), so it never writes a real
     /// Keychain item. The binary takes it from `ORG_OFFICE_DEV_KEY_DIR`; tests set it directly.
     /// It must not be inside the office home, and two homes must not share one.
@@ -276,60 +292,6 @@ fn trusted_office_home() -> Result<PathBuf, String> {
     )
 }
 
-/// Whether this host may sweep the keys of offices with no folder at startup
-/// (`keys::sweep_orphans`, which deletes one only once it has stayed orphaned for 7 days). That
-/// is safe only when the key store belongs to this office home alone:
-/// - a release build: yes. Its Keychain group is shared by every release host of this account,
-///   but every release host serves the account's one office home ([`trusted_office_home`]), so
-///   no host can take another home's keys for orphans. Checked again here: a release host on
-///   any other home doesn't sweep;
-/// - a debug build: never, since its development key folder may be shared by several homes.
-///
-/// Logged either way.
-fn may_sweep_orphan_keys(home: &Path) -> bool {
-    let reason = sweep_refusal(
-        cfg!(debug_assertions),
-        home::account_office_home().as_deref(),
-        home,
-        home::same_path,
-    );
-    match reason {
-        Some(reason) => {
-            host_log::log(&format!(
-                "no orphan-key sweep for {}: {reason}",
-                home.display()
-            ));
-            false
-        }
-        None => {
-            host_log::log(&format!(
-                "orphan-key sweep on for {}: a key whose office has no folder is marked, and \
-                 deleted once it has stayed so for 7 days",
-                home.display()
-            ));
-            true
-        }
-    }
-}
-
-/// Why a host may not sweep orphan keys (see [`may_sweep_orphan_keys`]), or `None` if it may: a
-/// release build (`debug` false) serving its account's own office home `own`. Pure: `same`
-/// compares paths.
-fn sweep_refusal(
-    debug: bool,
-    own: Option<&Path>,
-    home: &Path,
-    same: impl Fn(&Path, &Path) -> bool,
-) -> Option<&'static str> {
-    if debug {
-        Some("a debug build's development key folder may be shared by several homes")
-    } else if own.is_some_and(|own| same(own, home)) {
-        None
-    } else {
-        Some("it isn't this account's office home")
-    }
-}
-
 /// `agentic-org-office` next to this executable (both live in the app bundle), found through the
 /// executable's canonical path (symlinks resolved). Defence in depth only: a hard link or a
 /// copied bundle still puts another server next to the host, which is why a release host checks
@@ -406,7 +368,7 @@ fn startup_keys(
     config: &Config,
     instance: &Option<instance::registry::Instance>,
     dev_key_dir: Option<&Path>,
-) -> Result<Arc<dyn keys::KeyStore>, HostError> {
+) -> Result<Arc<dyn keys::OfficeSecretsKeys>, HostError> {
     let keys = keys::store_for(
         dev_key_dir,
         instance
@@ -571,7 +533,7 @@ fn startup_protected_services(
     instance: &Option<instance::registry::Instance>,
     authentication: &Option<Arc<service::authentication::Authentication>>,
     supervisor: Supervisor,
-    keys: &Arc<dyn keys::KeyStore>,
+    keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
 ) -> Result<ProtectedServices, HostError> {
     let io = |context| move |source| HostError::Io { context, source };
@@ -583,11 +545,9 @@ fn startup_protected_services(
         ),
         _ => None,
     };
-    let supervisor = match (instance, &writers) {
-        (Some(instance), Some(writers)) => supervisor
-            .with_v3(instance.id())
-            .with_writers(Arc::clone(writers)),
-        _ => supervisor,
+    let supervisor = match &writers {
+        Some(writers) => supervisor.with_writers(Arc::clone(writers)),
+        None => supervisor,
     };
     let provisioning = match (instance, authentication, &writers) {
         (Some(instance), Some(authentication), Some(writers)) => {
@@ -613,9 +573,9 @@ fn startup_protected_services(
 
 impl Host {
     /// Starts the host: chooses its key store, checks the socket paths fit, makes the office
-    /// home owner-only, takes `host.lock`, binds `host.sock`, starts a server for every office in
-    /// the catalog and discards unfinished folders in the background. This legacy entry has no
-    /// registered instance and refuses every valid `host.sock` request; run setup. Registered
+    /// home owner-only, takes `host.lock` and binds `host.sock`. This legacy entry has no
+    /// registered instance: it starts and discards no office server, logs that setup must run
+    /// first and refuses every valid `host.sock` request. Registered
     /// entry points serve only hello and count-only status, with hello required first.
     pub fn start(config: Config) -> Result<Self, HostError> {
         Self::start_inner(config, None)
@@ -676,10 +636,8 @@ impl Host {
             None => HostLock::acquire(&layout)?,
         };
         // Decided only by the host that holds the home.
-        let sweep_orphans = match &instance {
-            Some(_) => true, // the key store and orphan record both belong to this instance
-            None => may_sweep_orphan_keys(&layout.home),
-        };
+        // An unregistered host reads no catalog, so it may never judge a key an orphan.
+        let sweep_orphans = instance.is_some();
         let server_check = startup_server_check(&config)?;
         let io = |context| move |source| HostError::Io { context, source };
         let authentication = startup_authentication(&layout, &instance, &mut custody, dev_key_dir)?;
@@ -688,7 +646,17 @@ impl Host {
             .map(service::authentication::Lifecycle::start)
             .transpose()
             .map_err(io("starting session lifecycle"))?;
-        let (catalog, protected_offices, unfinished) = startup_catalog(&layout, &authentication)?;
+        // An unregistered host starts and discards no office server: setup must run first.
+        let (catalog, protected_offices, unfinished) = match &instance {
+            Some(_) => startup_catalog(&layout, &authentication)?,
+            None => {
+                host_log::log(
+                    "no registered instance on this host: setup must run first; no office \
+                     server is started or discarded",
+                );
+                Default::default()
+            }
+        };
         // Bound first, so nothing has started when binding fails; clients that connect before
         // the listener starts (moments later) wait in the backlog.
         let bound = listener::bind(&layout.host_socket).map_err(|e| match e {
@@ -701,7 +669,7 @@ impl Host {
             },
         })?;
 
-        let supervisor = Supervisor::new(SupervisorConfig {
+        let supervisor_config = SupervisorConfig {
             program: config.server_program.clone(),
             home: layout.home.clone(),
             runtime_dir: Some(layout.run.clone()),
@@ -711,7 +679,11 @@ impl Host {
             keys: Arc::clone(&keys),
             server_check: Arc::new(server_check),
             sweep_orphans,
-        })
+        };
+        let supervisor = match &instance {
+            Some(instance) => Supervisor::new(supervisor_config, instance.id()),
+            None => Supervisor::unregistered(supervisor_config),
+        }
         .with_protected_offices(protected_offices);
         let ProtectedServices {
             writers: _writers,
@@ -832,20 +804,5 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_a_release_host_on_its_accounts_office_home_sweeps() {
-        let lexical = |a: &Path, b: &Path| a == b;
-        let own = Path::new("/Users/me/Library/Application Support/agentic.org");
-        assert_eq!(sweep_refusal(false, Some(own), own, lexical), None);
-        assert!(sweep_refusal(true, Some(own), own, lexical).is_some());
-        assert!(sweep_refusal(false, Some(own), Path::new("/tmp/h"), lexical).is_some());
-        assert!(sweep_refusal(false, None, own, lexical).is_some());
     }
 }

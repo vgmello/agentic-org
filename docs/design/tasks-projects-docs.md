@@ -67,7 +67,7 @@ Paths are inside the organization repository, not this software repository.
 | Supporting knowledge | Project-wide: the project's documentation tree `projects/<project-id>/docs/` with its `index.yaml` (document 18). Feature, release or deployment: beside that record (document 02) | Indexed documents with explicit scope; readable paths in the tree, stable-ID file names beside a record |
 | Comments, checklists, watchers, questions, waits | Task front matter | Shared operational projection |
 | Task history | `work-history/tasks/<task-id>/<revision>.json` | Immutable `task_events` |
-| HQ-allocated numbers | `identity/counters/` and `identity/allocations/` | The authority journal is also required before acknowledgement |
+| HQ-allocated numbers | `identity/counters/` and `identity/allocations/` | HQ's acceptance journal holds them until their files are written |
 | Private task notes | Separate durable private database (document 05) | No shared index, count or existence event |
 | Usage, budgets, chat, receipts | Their protected sources (documents 10, 15, 16, 17) | Git alone cannot restore them |
 | Code cache and task worktrees | `runtime/<office-id>/...` | Never authored organization content |

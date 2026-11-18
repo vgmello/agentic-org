@@ -183,7 +183,7 @@ reports_to_employee_id: null
 Reservations team employee identity. Execution configuration is stored separately in execution.md, as defined in document 11.
 ```
 
-Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling are outside this specification.
+Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. `here` is not allowed as a handle, because `@here` addresses a channel's members ([ADR-0024](../../adr/0024-a-channel-question-is-watched-for-its-answer.md) decision 7). Handles are readable identity references; stable IDs remain the foreign keys. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling are outside this specification.
 
 ## Runtime location
 

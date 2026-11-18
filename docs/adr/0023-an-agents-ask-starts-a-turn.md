@@ -1,0 +1,99 @@
+# ADR-0023 · An agent's ask, hand-off or mention, and an answer to its own question, start a turn for an idle agent
+
+Status: **accepted by the owner** (decision 1, 2026-11-18). Implementation pending.
+Decisions 2 to 9 are its design. The
+[run modes spec](../specs/agent-run-modes-ux.md), the
+[session design](../design/agent-sessions.md) and the
+[agent command line](../design/agent-os-command-line.md) follow it. The increment is C8
+in the [implementation plan](../implementation-plan.md).
+
+## Context
+
+An agent ran only when a person gave it an instruction, or when the answer to its own
+required ask arrived ([ADR-0020](0020-required-asks-suspend-and-resume.md)). A message
+to an idle agent waited for that agent's next turn. So a question from one agent to
+another went unanswered until a person happened to start the second agent, and an
+agent could not hand work to a colleague. The owner's requirement for the command line
+([REQ-08](../specs/req-08-agent-os-cli-and-kernel-primitives.md)) assumes agents consult
+each other.
+
+The built-in HR lead already works the other way: it runs when it is called and stops
+when the turn ends.
+
+## Decision
+
+1. **An agent can wake another agent** (owner). When an agent sends an ask or a
+   hand-off to an agent that is idle, the office starts one turn for the recipient.
+2. **What starts a turn.**
+   - A message sent by an agent, of kind `request` (an ask) or `handoff`, addressed to
+     one agent: by name, or because the office resolved a team or a project to its
+     lead.
+   - A message sent by an agent that mentions the recipient by name.
+   - An answer to a question the recipient itself asked, whoever answers: a reply in
+     the question's thread, or a message written by a person that the channel's watcher
+     is confident responds to it
+     ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md) decision 12). The turn
+     continues the asker's session.
+
+   Nothing else does: not an announcement, not `@here`, not an ordinary post or an
+   undirected question in a channel, not a task assignment by itself.
+3. **When.** The recipient has no open turn and is not paused, suspended or
+   offboarded.
+   - A busy recipient gets the message at its next turn boundary, as before. A message
+     never interrupts a turn.
+   - A paused agent is never started.
+   - An agent suspended on a required answer is started only by that answer. Other
+     messages wait for it.
+4. **The turn is an ordinary turn.** Its instruction is the message. It passes the
+   same admission as a turn a person starts: one open turn for each agent, the turn
+   permit, the placement checks and, once budgets exist, the budget hold. If admission
+   refuses it, no turn starts and the message waits.
+5. **A limit.** At most a set number of turns in an hour start for one agent under this
+   record: one system setting, 12 unless changed. Past it, the message is delivered
+   and waits for the recipient's next turn, and the office records that the limit held
+   it. A turn a person starts with Run is never counted or limited.
+6. **A reply to a waiting asker starts nothing new.** A reply that satisfies a waiting
+   ask goes to the asker's open turn. A reply to an asker that is suspended resumes it
+   under ADR-0020, which is not counted against the limit. Only an answer that arrives
+   when the asker holds no wait for it starts a turn (decision 2).
+7. **The sender is not told to wait differently.** Its ask behaves as ADR-0020 says:
+   it holds for its wait, then returns the answer, a timeout, or, when required,
+   `suspended`. Whether a turn was started for the recipient is in the answer's `meta`.
+8. **It is recorded.** The turn's history names what started it: the sending agent and
+   the message. Its cost is the recipient's.
+9. **Only the office starts a run.** There is no command by which an agent launches
+   another agent's process. `runner spawn` in REQ-08 is not built.
+
+A person still starts an agent's turn with Run. A message, an ask or a mention from a
+person waits for the agent's next turn, as before. The one thing from a person that
+starts a turn is an answer to a question the agent asked.
+
+The built-in HR lead is unchanged: it runs when it is called, by a person or by an
+agent, as the [run modes spec](../specs/agent-run-modes-ux.md) says.
+
+## Acceptance criteria
+
+| ID | Passing evidence |
+| --- | --- |
+| WAKE-1 | An ask from one agent to an idle agent starts exactly one turn for the recipient, whose instruction is the ask; the answer returns to the asker within its wait |
+| WAKE-2 | A hand-off, and a mention by name, from one agent to an idle agent each start one turn; an announcement, `@here`, an ordinary channel post, and a message or mention from a person start none |
+| WAKE-3 | A busy recipient is not interrupted and receives the message at its next turn boundary; a paused, suspended or offboarded recipient is not started |
+| WAKE-4 | Past the hourly limit no turn starts, the message is delivered and waits, and the held start is recorded; a person's Run is unaffected |
+| WAKE-5 | Two agents that ask each other in a loop start no more turns for either than the limit allows |
+| WAKE-6 | The started turn passes the same admission as a person's Run, and its history names the sending agent and the message |
+| WAKE-7 | While an agent is idle and holds no wait, a reply in the thread of its own question from anyone, and a confident watcher match on a person's message, each start one turn that continues its session; a watcher match on another agent's message starts none |
+
+## Consequences
+
+- Agents can consult each other and hand work over without a person in between.
+- Agents can now spend money without a person starting each turn. The hourly limit
+  bounds it until budgets (L3) hold it properly.
+- Automatic run modes for ordinary agents (Scheduled, Always on) stay out of v1.
+
+## Rejected
+
+- **A command to start another agent's run.** It would let an agent choose when a
+  colleague's process runs, apart from any message that explains why.
+- **Waking on any message.** Announcements and channel traffic would start turns nobody
+  asked for.
+- **No limit until budgets exist.** Two agents asking each other could run without end.

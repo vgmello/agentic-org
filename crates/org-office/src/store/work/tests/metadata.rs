@@ -661,13 +661,7 @@ fn seed_legacy(store: &Store, version: i64) {
     }
 }
 fn open_old(root: &tempfile::TempDir, schema: &Schema) -> Store {
-    Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
-        Opening::Existing,
-        schema,
-    )
-    .unwrap()
+    Store::open(&root.path().join("office.db"), Opening::Existing, schema).unwrap()
 }
 
 #[test]
@@ -705,14 +699,9 @@ fn work_v6_all_released_versions_upgrade_preserve_every_row_and_match_fresh_sche
         let store = reopen(&root);
         assert_eq!(store.read(|db| Ok(old_rows(db))).unwrap(), persisted);
         drop(store);
-        let error = Store::open(
-            &root.path().join("office.db"),
-            &Key::from_bytes([42; 32]),
-            Opening::Existing,
-            &V5,
-        )
-        .err()
-        .expect("max-v5 binary refuses v6");
+        let error = Store::open(&root.path().join("office.db"), Opening::Existing, &V5)
+            .err()
+            .expect("max-v5 binary refuses v6");
         let OfficeError::Storage(cause) = error else {
             panic!("expected older-binary refusal")
         };
@@ -732,7 +721,6 @@ fn work_v5_second_create_failure_rolls_back_all_v4_state_then_retries_cleanly() 
     drop(old);
     let error = Store::open(
         &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
         Opening::Existing,
         &OFFICE_SCHEMA,
     )
@@ -798,7 +786,6 @@ fn work_v5_numbered_v4_is_refused_before_ddl_and_preserves_version_and_rows() {
         sql_failure(
             Store::open(
                 &root.path().join("office.db"),
-                &Key::from_bytes([42; 32]),
                 Opening::Existing,
                 &OFFICE_SCHEMA,
             )

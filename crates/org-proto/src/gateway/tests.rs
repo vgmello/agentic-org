@@ -64,7 +64,7 @@ fn public_version_has_only_constant_protocol_metadata() {
 fn shared_mutation_outcomes_preserve_identity_and_http_meaning() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-outcomes.json"),
-        35,
+        38,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let result: Result<MutationOutcome<Value>, _> = parse(&case["wire"]);
@@ -245,7 +245,7 @@ fn shared_envelopes_have_one_native_id_unchanged_versions_and_explicit_scope() {
 
 #[test]
 fn shared_views_are_typed_additive_and_do_not_expose_private_endpoints() {
-    let vectors = fixture(include_str!("../../test-vectors/v2/gateway-views.json"), 17);
+    let vectors = fixture(include_str!("../../test-vectors/v2/gateway-views.json"), 18);
     for case in vectors["cases"].as_array().unwrap() {
         match case["category"].as_str().unwrap() {
             "version" => check_view::<Version>(case),
@@ -301,7 +301,7 @@ fn shared_views_are_typed_additive_and_do_not_expose_private_endpoints() {
 fn shared_session_shapes_keep_proof_out_of_reads_and_preserve_server_clock() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-session.json"),
-        8,
+        10,
     );
     assert_eq!(vectors["proof_header"], SESSION_PROOF_HEADER);
     for case in vectors["cases"].as_array().unwrap() {

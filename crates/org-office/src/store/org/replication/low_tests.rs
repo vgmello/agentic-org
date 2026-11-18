@@ -1,8 +1,8 @@
 //! Focused regressions for the B1-14a LOW findings.
 //! Contract: X-05 federation draft, "Apply, acknowledgement and snapshot rules": "Stream into bounded
 //! private staging, verify manifest/length/digest and schema"; Rowan's X-05 decisions
-//! §3: "restore_pending" fences writes, and Round 3: transport key "is never either
-//! office database key". Tomas's 2026-11-11 storage review LOW1/3/6 additionally
+//! §3: "restore_pending" fences writes; the artifact is plain SQLite checked by its SHA-256
+//! digest (ADR-0016 decision 5). Tomas's 2026-11-11 storage review LOW1/3/6 additionally
 //! require retryable bootstrap availability, area parents, and post-commit wakeups.
 use std::io::{self, Read};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use super::tests::{key, new_office, Hq};
 use super::*;
 use crate::rules::OrgCommand;
-use crate::{Key, NewOffice, Office, OfficeRole, SnapshotStageMode};
+use crate::{Office, SnapshotStageMode};
 
 const LIMIT: u64 = 1024 * 1024;
 
@@ -91,86 +91,42 @@ fn pair() -> (TempDir, Office, Office) {
 fn stage(
     receiver: &Office,
     exported: &crate::OrganizationSnapshotExport,
-    transport: &Key,
 ) -> Result<ValidatedSnapshot, SyncError> {
     receiver.stage_replication_snapshot(
         &Hq,
         &exported.manifest,
-        transport,
-        &*exported.ciphertext,
+        &*exported.artifact,
         LIMIT,
         SnapshotStageMode::Normal,
     )
 }
 
 #[test]
-fn snapshot_checksum_guard_rejects_a_wrong_claim_over_valid_ciphertext() {
+fn snapshot_checksum_guard_rejects_a_wrong_claim_over_a_valid_artifact() {
     let (_dir, hq, satellite) = pair();
-    let transport = Key::from_bytes([8; 32]);
-    let mut exported = hq.export_replication_snapshot(&transport, LIMIT).unwrap();
-    let valid = exported.manifest.ciphertext_digest;
-    exported.manifest.ciphertext_digest = Digest::from_bytes([7; 32]);
+    let mut exported = hq.export_replication_snapshot(LIMIT).unwrap();
+    let valid = exported.manifest.artifact_digest;
+    exported.manifest.artifact_digest = Digest::from_bytes([7; 32]);
     assert!(matches!(
-        stage(&satellite, &exported, &transport),
+        stage(&satellite, &exported),
         Err(SyncError::Refused(Refusal::IntegrityFailure))
     ));
-    exported.manifest.ciphertext_digest = valid;
-    stage(&satellite, &exported, &transport).unwrap();
+    exported.manifest.artifact_digest = valid;
+    stage(&satellite, &exported).unwrap();
 }
 
 #[test]
 fn snapshot_header_binding_is_checked_before_a_stage_token_is_returned() {
     let (_dir, hq, satellite) = pair();
-    let transport = Key::from_bytes([8; 32]);
-    let mut exported = hq.export_replication_snapshot(&transport, LIMIT).unwrap();
+    let mut exported = hq.export_replication_snapshot(LIMIT).unwrap();
     let valid = exported.manifest.digest;
     exported.manifest.digest = Digest::from_bytes([7; 32]);
     assert!(matches!(
-        stage(&satellite, &exported, &transport),
+        stage(&satellite, &exported),
         Err(SyncError::Refused(Refusal::IntegrityFailure))
     ));
     exported.manifest.digest = valid;
-    stage(&satellite, &exported, &transport).unwrap();
-}
-
-#[test]
-fn receiving_office_key_cannot_be_used_as_the_snapshot_transport_key() {
-    let dir = TempDir::new().unwrap();
-    let hq = new_office(&dir, "HQ");
-    hq.bind_replication_hq(Digest::ZERO, LIMIT).unwrap();
-    let receiver_key = Key::from_bytes([4; 32]);
-    let satellite = Office::create(
-        dir.path().join("SAT"),
-        &NewOffice {
-            office_id: "SAT".into(),
-            office_name: "Satellite".into(),
-            role: OfficeRole::Hq,
-            org_id: "ORG".into(),
-            org_name: "Organization".into(),
-        },
-        receiver_key.clone(),
-    )
-    .unwrap();
-    satellite
-        .bind_replication_satellite(
-            OfficeId::new("HQ").unwrap(),
-            Digest::ZERO,
-            Epoch::new(1).unwrap(),
-            Digest::ZERO,
-        )
-        .unwrap();
-    // The source has a different DB key, so its export is valid in isolation.
-    let exported = hq
-        .export_replication_snapshot(&receiver_key, LIMIT)
-        .unwrap();
-    assert!(matches!(
-        stage(&satellite, &exported, &receiver_key),
-        Err(SyncError::Refused(Refusal::InvalidInput))
-    ));
-    assert!(matches!(
-        hq.export_replication_snapshot(&key(), LIMIT),
-        Err(OfficeError::Invalid(_))
-    ));
+    stage(&satellite, &exported).unwrap();
 }
 
 struct NoArtifactRead;
@@ -183,8 +139,7 @@ impl Read for NoArtifactRead {
 #[test]
 fn stale_normal_snapshot_is_refused_before_any_artifact_input() {
     let (_dir, hq, satellite) = pair();
-    let transport = Key::from_bytes([8; 32]);
-    let old = hq.export_replication_snapshot(&transport, LIMIT).unwrap();
+    let old = hq.export_replication_snapshot(LIMIT).unwrap();
     hq.submit_org(OrgCommand::TeamCreate(TeamCreateParams {
         command_id: ulid::generate().unwrap(),
         team_id: "NEW".into(),
@@ -193,15 +148,13 @@ fn stale_normal_snapshot_is_refused_before_any_artifact_input() {
     }))
     .unwrap()
     .unwrap();
-    let fresh = hq.export_replication_snapshot(&transport, LIMIT).unwrap();
-    organization::install_snapshot(&satellite, stage(&satellite, &fresh, &transport).unwrap())
-        .unwrap();
+    let fresh = hq.export_replication_snapshot(LIMIT).unwrap();
+    organization::install_snapshot(&satellite, stage(&satellite, &fresh).unwrap()).unwrap();
     let before = satellite.replication_checkpoint().unwrap();
     assert!(matches!(
         satellite.stage_replication_snapshot(
             &Hq,
             &old.manifest,
-            &transport,
             NoArtifactRead,
             LIMIT,
             SnapshotStageMode::Normal
@@ -214,13 +167,12 @@ fn stale_normal_snapshot_is_refused_before_any_artifact_input() {
 #[test]
 fn restore_pending_hq_cannot_export_even_a_well_formed_projection() {
     let (_dir, hq, _satellite) = pair();
-    let transport = Key::from_bytes([8; 32]);
-    hq.export_replication_snapshot(&transport, LIMIT).unwrap();
+    hq.export_replication_snapshot(LIMIT).unwrap();
     hq.org_store()
         .run_sql_for_test("UPDATE org_replica SET restore_pending = 1");
     let before = hq.replication_checkpoint().unwrap();
     assert!(matches!(
-        hq.export_replication_snapshot(&transport, LIMIT),
+        hq.export_replication_snapshot(LIMIT),
         Err(OfficeError::Invalid(
             "organization snapshot requires unfenced HQ authority"
         ))
@@ -331,8 +283,7 @@ fn opening_without_snapshot_scratch_does_not_create_it() {
 #[test]
 fn exporting_uses_and_cleans_the_office_private_snapshot_folder() {
     let (dir, hq, _satellite) = pair();
-    hq.export_replication_snapshot(&Key::from_bytes([8; 32]), LIMIT)
-        .unwrap();
+    hq.export_replication_snapshot(LIMIT).unwrap();
     let root = dir.path().join("HQ/.snapshot-staging");
     assert!(root.is_dir());
     use std::os::unix::fs::PermissionsExt;
@@ -350,9 +301,7 @@ fn snapshot_root_symlink_is_refused_without_changing_its_target() {
     let canary = outside.join("preserve");
     std::fs::write(&canary, b"not snapshot state").unwrap();
     symlink(&outside, dir.path().join("HQ/.snapshot-staging")).unwrap();
-    assert!(hq
-        .export_replication_snapshot(&Key::from_bytes([8; 32]), LIMIT)
-        .is_err());
+    assert!(hq.export_replication_snapshot(LIMIT).is_err());
     assert_eq!(std::fs::read(&canary).unwrap(), b"not snapshot state");
     assert_eq!(
         outside.metadata().unwrap().permissions().mode() & 0o777,

@@ -15,7 +15,12 @@ fn harness(reply: Reply) -> (Shared, Seen) {
         reply.clone()
     });
     (
-        Shared::new(&test_info(), Path::new("/unused-c1-socket"), ports, token()),
+        Shared::new(
+            &test_info(),
+            Path::new("/unused-c1-socket"),
+            ports,
+            launch_key(),
+        ),
         seen,
     )
 }
@@ -36,7 +41,7 @@ fn request(method: &str, valid: bool) -> Request {
 fn member(app: bool) -> Binding {
     Binding::Member {
         id: "member-id".into(),
-        with_app_token: app,
+        via_grant: app,
     }
 }
 
@@ -61,24 +66,18 @@ fn assert_error(response: Response, expected: ErrorCode, message: Option<&str>) 
 }
 
 #[test]
-fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
+fn c1_work_guard_matrix_checks_binding_and_grant_only_before_params() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for binding in [
-        Binding::Anonymous,
-        Binding::App,
-        member(false),
-        member(true),
-    ] {
+    for binding in [Binding::Anonymous, member(false), member(true)] {
         for method in ["task.create", "work.delete"] {
             for valid in [false, true] {
                 let (shared, seen) = harness(Ok(Ok(accepted())));
                 let req = request(method, valid);
                 let response = answer(&req, &shared, &mut binding.clone());
                 let expected = match &binding {
-                    Binding::Anonymous | Binding::App => Some(ErrorCode::NotBound),
+                    Binding::Anonymous => Some(ErrorCode::NotBound),
                     Binding::Member {
-                        with_app_token: false,
-                        ..
+                        via_grant: false, ..
                     } if method == "work.delete" => Some(ErrorCode::NotAuthorized),
                     _ if !valid => Some(ErrorCode::InvalidRequest),
                     _ => None,
@@ -86,7 +85,9 @@ fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
                 if let Some(code) = expected {
                     let message = match code {
                         ErrorCode::NotBound => Some("bind as a member to change work"),
-                        ErrorCode::NotAuthorized => Some("`work.delete` is for the app"),
+                        ErrorCode::NotAuthorized => {
+                            Some("`work.delete` can only be made through a person's grant")
+                        }
                         _ => None,
                     };
                     assert_error(response, code, message);
@@ -100,14 +101,14 @@ fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
                         Outcome::Result(serde_json::to_value(accepted()).unwrap())
                     );
                     let calls = seen.lock().unwrap();
-                    let Binding::Member { with_app_token, .. } = binding else {
+                    let Binding::Member { via_grant, .. } = binding else {
                         unreachable!()
                     };
                     assert_eq!(
                         calls.as_slice(),
                         &[(
-                            if with_app_token {
-                                Caller::app("member-id")
+                            if via_grant {
+                                Caller::grant_bound("member-id")
                             } else {
                                 Caller::agent("member-id")
                             },
@@ -154,11 +155,6 @@ fn c1_all_25_work_methods_check_binding_then_their_typed_params() {
         let req = request(method, false);
         assert_error(
             answer(&req, &shared, &mut Binding::Anonymous),
-            ErrorCode::NotBound,
-            None,
-        );
-        assert_error(
-            answer(&req, &shared, &mut Binding::App),
             ErrorCode::NotBound,
             None,
         );
@@ -234,16 +230,16 @@ fn c1_leaves_later_work_calls_unknown_and_org_dispatch_unchanged() {
 }
 
 #[test]
-fn c1_app_only_request_classifier_ignores_bad_params_and_shares_call_policy() {
+fn c1_grant_only_request_classifier_ignores_bad_params_and_shares_call_policy() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for (method, app_only) in [
+    for (method, grant_only) in [
         ("work.delete", true),
         ("task.create", false),
         ("work.get", false),
     ] {
-        assert_eq!(WorkCall::is_app_only(&request(method, false)), app_only);
+        assert_eq!(WorkCall::is_grant_only(&request(method, false)), grant_only);
         if let Some(call) = WorkCall::parse(&request(method, true)).unwrap() {
-            assert_eq!(call.app_only(), app_only);
+            assert_eq!(call.grant_only(), grant_only);
         }
     }
     let params: TaskCreateParams = request("task.create", true).params::<TaskCreate>().unwrap();

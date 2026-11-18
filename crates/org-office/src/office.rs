@@ -145,8 +145,8 @@ impl ChangeSignal {
 ///
 /// ```text
 /// office.lock    exclusive flock, taken before anything else is looked at (single owner)
-/// org.db         SQLCipher: the organization's data (HQ's original, or a satellite's copy)
-/// office.db      SQLCipher, the same key: the office's own data
+/// org.db         plain SQLite: the organization's data (HQ's original, or a satellite's copy)
+/// office.db      plain SQLite: the office's own data
 /// workspace/     the office's files
 /// office.json    plaintext, no secrets, written LAST by `create`: its presence is the
 ///                "this office is finished" marker the host reads
@@ -162,6 +162,10 @@ pub struct Office {
     changes: ChangeSignal,
     // Databases close (and checkpoint) before the lock is released: fields drop in order.
     stores: OfficeStores,
+    /// The office secrets key, held only to wrap and unwrap the office's private keys
+    /// (`org_pki::wrap`). Never a database key: the databases are plain SQLite (ADR-0016).
+    /// `None` when the host has no key for this office: the data still serves.
+    secrets_key: Option<Key>,
     _lock: OfficeLock,
 }
 
@@ -238,9 +242,9 @@ impl Office {
     }
 
     /// Creates a new office in `folder` (`<home>/offices/<office-id>`, whose name must be the
-    /// office id) and opens it with `key`, **which the host made and holds** (ADR-0002, key
-    /// custody): the office never makes, stores or deletes a key. The host saves the key before
-    /// it asks for the create, so a crash can't leave data without its key.
+    /// office id). `key` is the office secrets key, **which the host made and holds** (ADR-0002,
+    /// key custody): the office never makes, stores or deletes it, and uses it only to wrap the
+    /// office's private keys (ADR-0016 decision 3). The databases are plain SQLite.
     ///
     /// The order is: lock the folder; look at it once (anything of an office already there is
     /// `OfficeExists`; nothing is ever reused or replaced); make both databases; make
@@ -250,7 +254,7 @@ impl Office {
     pub fn create(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
-        key: Key,
+        key: impl Into<Option<Key>>,
     ) -> Result<Self, OfficeError> {
         Self::create_waiting(folder, new, key, LOCK_WAIT)
     }
@@ -259,26 +263,26 @@ impl Office {
     pub fn create_for_instance(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
-        key: Key,
+        key: impl Into<Option<Key>>,
         instance: &str,
     ) -> Result<Self, OfficeError> {
-        Self::create_with(folder, new, key, LOCK_WAIT, Some(instance))
+        Self::create_with(folder, new, key.into(), LOCK_WAIT, Some(instance))
     }
 
     /// [`Office::create`] with a chosen lock wait.
     pub fn create_waiting(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
-        key: Key,
+        key: impl Into<Option<Key>>,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
-        Self::create_with(folder, new, key, lock_wait, None)
+        Self::create_with(folder, new, key.into(), lock_wait, None)
     }
 
     fn create_with(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
-        key: Key,
+        key: Option<Key>,
         lock_wait: Duration,
         instance: Option<&str>,
     ) -> Result<Self, OfficeError> {
@@ -314,12 +318,13 @@ impl Office {
             }
         }
 
-        match build(&folder, &key, &info, instance) {
+        match build(&folder, &info, instance) {
             Ok(stores) => Ok(Self {
                 folder,
                 info,
                 stores,
                 changes: ChangeSignal::default(),
+                secrets_key: key,
                 _lock: OfficeLock(lock),
             }),
             Err(error) => {
@@ -333,35 +338,39 @@ impl Office {
         }
     }
 
-    /// Opens the finished office in `folder` with `key` (the host's). **Never makes a database**
-    /// (it takes the folder's lock, which makes `office.lock` if there is none, and nothing
-    /// else): no `office.json` is `NotFound`; one that names another office is `Invalid`; a key
-    /// that does not open the databases is `KeyMissing` (fatal, never retried).
-    pub fn open(folder: impl Into<PathBuf>, key: Key) -> Result<Self, OfficeError> {
+    /// Opens the finished office in `folder`; `key` is the host's office secrets key, held only
+    /// to wrap and unwrap the office's private keys (ADR-0016 decision 3). **Never makes a
+    /// database** (it takes the folder's lock, which makes `office.lock` if there is none, and
+    /// nothing else): no `office.json` is `NotFound`; one that names another office is
+    /// `Invalid`. Without the key the office still opens and serves its data.
+    pub fn open(
+        folder: impl Into<PathBuf>,
+        key: impl Into<Option<Key>>,
+    ) -> Result<Self, OfficeError> {
         Self::open_waiting(folder, key, LOCK_WAIT)
     }
 
     /// Opens a v3 office, adopting its instance only for a pre-v3 office (X-02 §5.4).
     pub fn open_for_instance(
         folder: impl Into<PathBuf>,
-        key: Key,
+        key: impl Into<Option<Key>>,
         instance: &str,
     ) -> Result<Self, OfficeError> {
-        Self::open_with(folder, key, LOCK_WAIT, Some(instance))
+        Self::open_with(folder, key.into(), LOCK_WAIT, Some(instance))
     }
 
     /// [`Office::open`] with a chosen lock wait.
     pub fn open_waiting(
         folder: impl Into<PathBuf>,
-        key: Key,
+        key: impl Into<Option<Key>>,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
-        Self::open_with(folder, key, lock_wait, None)
+        Self::open_with(folder, key.into(), lock_wait, None)
     }
 
     fn open_with(
         folder: impl Into<PathBuf>,
-        key: Key,
+        key: Option<Key>,
         lock_wait: Duration,
         instance: Option<&str>,
     ) -> Result<Self, OfficeError> {
@@ -385,14 +394,9 @@ impl Office {
         // Refuse before either database migrates or changes journal mode. The office lock
         // keeps this read and the later transactional adoption under one owner.
         if let Some(instance) = instance {
-            Store::check_instance(&folder.join(OFFICE_DB), &key, instance, &info.office_id)?;
+            Store::check_instance(&folder.join(OFFICE_DB), instance, &info.office_id)?;
         }
-        let org = Store::open(
-            &folder.join(ORG_DB),
-            &key,
-            Opening::Existing,
-            &org_db::SCHEMA,
-        )?;
+        let org = Store::open(&folder.join(ORG_DB), Opening::Existing, &org_db::SCHEMA)?;
         if instance.is_some()
             && (meta(&org, "office_id")? != Some(info.office_id.clone())
                 || meta(&org, "organization_id")? != Some(info.org_id.clone()))
@@ -403,7 +407,6 @@ impl Office {
         }
         let local = Store::open_bound(
             &folder.join(OFFICE_DB),
-            &key,
             Opening::Existing,
             &OFFICE_SCHEMA,
             instance,
@@ -428,37 +431,33 @@ impl Office {
             info,
             stores,
             changes: ChangeSignal::default(),
+            secrets_key: key,
             _lock: OfficeLock(lock),
         })
     }
 
     /// Removes an UNFINISHED create (`agentic-org-office --discard`): the folder a failed create
-    /// may have left. The key is the host's and is not touched here. When the folder exists it
+    /// may have left. It needs no key: the databases are plain SQLite. When the folder exists it
     /// takes its lock (a missing folder takes none and makes none), and **refuses** anything
     /// that could be a real office, so one is never destroyed automatically:
     /// - a folder with `office.json`, or whose `org.db` holds a committed organization, is
     ///   `OfficeExists`;
-    /// - databases it cannot check (no `key` was given, the key does not open them, SQLCipher
-    ///   fails) are an error (`Storage`, or `KeyMissing` for a key that does not open them), and
-    ///   nothing is deleted. With no `key`, only a folder with NO database file is removed.
+    /// - databases it cannot check (a file that is not a database, an empty file beside a log
+    ///   that is not, a SQLite failure) are an error (`Invalid` or `Storage`), and nothing is
+    ///   deleted.
     ///
     /// A refused discard removes nothing an office made (it may leave `office.lock`, and checking a
     /// database may leave an empty log and index file beside it, which SQLite ignores). A folder
     /// that is not there is fine; one that is a link, or holds anything an office does not make,
     /// is `Invalid`.
-    pub fn discard(
-        folder: impl Into<PathBuf>,
-        office_id: &str,
-        key: Option<&Key>,
-    ) -> Result<(), OfficeError> {
-        Self::discard_waiting(folder, office_id, key, LOCK_WAIT)
+    pub fn discard(folder: impl Into<PathBuf>, office_id: &str) -> Result<(), OfficeError> {
+        Self::discard_waiting(folder, office_id, LOCK_WAIT)
     }
 
     /// [`Office::discard`] with a chosen lock wait.
     pub fn discard_waiting(
         folder: impl Into<PathBuf>,
         office_id: &str,
-        key: Option<&Key>,
         lock_wait: Duration,
     ) -> Result<(), OfficeError> {
         if !office_file::is_storage_id(office_id) {
@@ -488,11 +487,6 @@ impl Office {
         }
         if any_database {
             // Anything we cannot check is refused: a real office must never be destroyed.
-            let key = key.ok_or_else(|| {
-                OfficeError::storage(std::io::Error::other(
-                    "cannot check the databases: no key was given",
-                ))
-            })?;
             if !holds_data(&org_db)? && holds_data(&folder.join("org.db-wal"))? {
                 // SQLite deletes a log that sits beside an empty main file on the first read.
                 return Err(OfficeError::storage(std::io::Error::other(
@@ -502,13 +496,12 @@ impl Office {
             if holds_data(&org_db)? {
                 // "Committed" means the log has an entry (the genesis): the organization is
                 // whole. Anything less is an unfinished create.
-                let committed = Store::inspect(&org_db, key, org_db::is_committed)?;
+                let committed = Store::inspect(&org_db, org_db::is_committed)?;
                 if committed {
                     return Err(OfficeError::OfficeExists);
                 }
             }
-            // office.db is checked the same way, so a key that opens nothing never has more
-            // power to delete than no key: the key must open every database that holds data.
+            // office.db is checked the same way: every database that holds data must open.
             let office_db = folder.join(OFFICE_DB);
             if !holds_data(&office_db)? && holds_data(&folder.join("office.db-wal"))? {
                 return Err(OfficeError::storage(std::io::Error::other(
@@ -516,13 +509,19 @@ impl Office {
                 )));
             }
             if holds_data(&office_db)? {
-                Store::inspect(&office_db, key, |_| Ok(()))?;
+                Store::inspect(&office_db, |_| Ok(()))?;
             }
         }
         // Nothing here is a finished office. Empty the folder (all but the lock file), then
         // remove the lock file and the folder, so the lock is held until the end.
         empty_folder_but_the_lock(&folder, &mut |_| {})?;
         remove_the_empty_folder(&folder)
+    }
+
+    /// The office secrets key the host handed over, if any. Only for wrapping and unwrapping
+    /// the office's private keys (`org_pki::wrap`); never log, persist or send it.
+    pub fn secrets_key(&self) -> Option<&Key> {
+        self.secrets_key.as_ref()
     }
 
     /// The organization's structure as of the last log entry, from one consistent read.
@@ -600,13 +599,13 @@ impl Office {
         Ok((org, office))
     }
 
-    /// Exports the bound HQ's organization tables with a one-time transport key.
+    /// Exports the bound HQ's organization tables as a plain SQLite artifact whose SHA-256
+    /// digest the manifest carries (ADR-0016 decision 5).
     pub fn export_replication_snapshot(
         &self,
-        transport_key: &Key,
         max_bytes: u64,
     ) -> Result<OrganizationSnapshotExport, OfficeError> {
-        org_db::export_replication_snapshot(&self.stores.org, transport_key, max_bytes)
+        org_db::export_replication_snapshot(&self.stores.org, max_bytes)
     }
 
     /// Validates and stages one complete, bounded snapshot stream from the verified HQ.
@@ -616,7 +615,6 @@ impl Office {
         &self,
         peer: &dyn VerifiedPeer,
         manifest: &OrganizationSnapshotManifest,
-        transport_key: &Key,
         input: impl Read,
         max_bytes: u64,
         mode: SnapshotStageMode,
@@ -625,7 +623,6 @@ impl Office {
             &self.stores.org,
             peer.identity(),
             manifest,
-            transport_key,
             input,
             max_bytes,
             mode,
@@ -810,14 +807,12 @@ fn stores(org: Store, local: Store, office_id: &str) -> Result<OfficeStores, Off
 /// be.
 fn build(
     folder: &Path,
-    key: &Key,
     info: &OfficeInfo,
     instance: Option<&str>,
 ) -> Result<OfficeStores, OfficeError> {
-    let org = Store::open(&folder.join(ORG_DB), key, Opening::New, &org_db::SCHEMA)?;
+    let org = Store::open(&folder.join(ORG_DB), Opening::New, &org_db::SCHEMA)?;
     let local = Store::open_bound(
         &folder.join(OFFICE_DB),
-        key,
         Opening::New,
         &OFFICE_SCHEMA,
         instance,
@@ -1107,9 +1102,13 @@ fn failpoint(_folder: &Path, _step: &'static str) -> Result<(), OfficeError> {
     Ok(())
 }
 
+/// An instance id is canonical lowercase UUIDv7 text (the host's instance identity). A ULID,
+/// the earlier form, is refused, as is any other text: an office never binds to it.
 fn validate_instance(instance: Option<&str>) -> Result<(), OfficeError> {
-    if instance.is_some_and(|id| org_proto::ulid_time_ms(id).is_none()) {
-        return Err(OfficeError::Invalid("instance id must be a canonical ULID"));
+    if instance.is_some_and(|id| !org_proto::is_uuid_v7(id)) {
+        return Err(OfficeError::Invalid(
+            "instance id must be a canonical lowercase UUIDv7",
+        ));
     }
     Ok(())
 }

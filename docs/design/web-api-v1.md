@@ -35,13 +35,15 @@ it is mechanical (implementation plan, L10) and does not change the routes.
 
 All JSON responses use `Cache-Control: no-store`, except hashed UI assets. The page
 and API share the configured origin. A missing API route is a JSON 404, never SPA
-HTML. Unknown operations are never forwarded to a local socket.
+HTML. Unknown operations are never forwarded to a local socket. `HEAD` on a GET
+route answers that route's status and headers, through the same pair check, with
+no body; on any other route it is `invalid_request`.
 
 | Method/path | Body/result | Access and source |
 | --- | --- | --- |
 | GET `/api/v1/version` | `{api_version:1, contract_revision}` | Public. Constant protocol metadata only; nothing about the instance, organization or accounts |
-| POST `/api/v1/session/sign-in` | `{login,password}` → session view plus proof | Host `account.verify`; configured-origin validation, bounded limits |
-| POST `/api/v1/links/register` | `{link,login,password}` → session view plus proof | Public; redeems a registration link once (§4) |
+| POST `/api/v1/session/sign-in` | `{login,password}` → session view plus proof | Host `session.sign_in`; configured-origin validation, per-login and per-address limits (429) |
+| POST `/api/v1/links/register` | `{link,login,password}` → session view plus proof | Public; host `link.register`; redeems a registration link once (§4); per-address limit (429) |
 | POST `/api/v1/links/set-password` | `{link,password}` → `{}` | Public; redeems a set-new-password link once and ends every session of that account |
 | POST `/api/v1/links/approve` | `{link,decision:"approve"\|"decline"}` → `{}` | Pair; signs a terminal in as this account, or declines (§4) |
 | POST `/api/v1/session/password` | `{current_password,new_password}` → `{}` | Pair; ends every other session of the account |
@@ -50,7 +52,7 @@ HTML. Unknown operations are never forwarded to a local socket.
 | POST `/api/v1/session/refresh` | `{}` → session view plus rotated proof | Pair; host `session.renew`; both browser values rotate atomically |
 | POST `/api/v1/session/sign-out` | `{}` → `{}` | Pair; ends the host session, clears the browser pair and closes streams |
 | GET `/api/v1/capabilities` | Capability view (§7) | Pair; authorized scopes only |
-| GET `/api/v1/instance` | Instance view (§3) | Pair; host-derived status, no paths, sockets or credentials |
+| GET `/api/v1/instance` | Instance view (§3) | Pair; host `instance.view` (web connection only); host-derived status, no paths, sockets or credentials |
 | GET `/api/v1/organizations` | `{organizations:[...]}` | Pair; host `organization.list`, linked organizations only |
 | POST `/api/v1/organizations` | Command envelope with the [create payload](#selected-create-organization-payload) | Pair; host `organization.create`, the administrator only |
 | POST `/api/v1/organizations/operations/{id}/cancel` | `{}` → cancellation result (§5) | Pair; host `organization.cancel`; the same account or the administrator; the original create ID |
@@ -64,6 +66,32 @@ HTML. Unknown operations are never forwarded to a local socket.
 | POST `/api/v1/events/poll` | Same body → bounded frame batch | Pair; short-poll alternative with no held connection |
 
 Domain routes for tasks and organization changes are in [Tasks](#tasks) and §9.
+
+**Request shape.** Every POST needs `Content-Type: application/json` (an optional
+`charset=utf-8` and nothing else); anything else is HTTP 415 `invalid_request`,
+also on the public routes, which have no proof. `OPTIONS` on `/api/v1` is HTTP 405
+`invalid_request` with `Allow: GET, HEAD, POST`; no response carries an
+`Access-Control-*` header.
+
+**Host operations behind the session routes.** The web process reaches the host
+only over its own admitted control connection; `host.sock` and every other
+connection get `not_authorized` for these calls and nothing is stored. The web
+process sends SHA-256 digests of the cookie and proof, never the values, and the
+configured origin as `{scheme,host,port}`. Each result is the session record
+`{session_id, account:{id,login}, admin, orgs:[{org_id,employee_id,office_ids}],
+server_time_ms, idle_expires_at_ms}`.
+
+| Host method | Params | Result and refusals |
+| --- | --- | --- |
+| `link.register` | `{link, login, password, client_address, cookie_digest, proof_digest, origin}` | Session record. Rule failure: `invalid_request` with `{field, rule}`. Unknown, used, cancelled or expired link: `not_found`, checked before any password hashing, and counted on the client address. Locked address: `rate_limited` with `retry_after_ms` |
+| `session.sign_in` | `{login, password, client_address, cookie_digest, proof_digest, origin}` | Session record. An unknown login, a wrong password and a revoked account get one identical `not_authorized`. A locked login or address (IPv6 by /64): `rate_limited` with `retry_after_ms`, before any password check. Host full: `unavailable` |
+| `session.validate` | `{cookie_digest, proof_digest, origin}` | Session record, touched. No match, another origin or an idle session: `not_authorized`. Removed access ends every session of the account |
+| `session.end` | `{session_id}` | `{}`. Deletes the record, then pushes `session.ended {session_id}` before the reply on the same ordered connection; an unknown ID is not an error |
+
+Every session the host ends, also one reaped as idle or ended by a refusal, is
+pushed as `session.ended`. Browser sessions have no absolute lifetime and no
+per-connection or per-account cap: only the 30-day idle rule and a host-wide bound
+of 4096 live sessions.
 
 **Lookup query.** `instance_id` is always required. `kind=host` forbids `org_id`
 and `office_id`; `kind=org` requires `org_id` and forbids `office_id`;
@@ -181,7 +209,8 @@ Host session handles, grant MACs and channels never appear in a view.
 
 **Instance view:** `{instance_id,name,server_version,web_status,listen_scheme,tls,server_time_ms}`.
 `server_version` is the release pin's version; `web_status` is `ok|degraded`;
-`listen_scheme` is `https|http_loopback`; `tls` is `ok|missing|expiring`. Unknown
+`listen_scheme` is `https|http_loopback`; `tls` is `ok|missing|expiring`, and is
+absent until the instance serves TLS (the loopback listener has none). Unknown
 enum values decode to `unknown`. The view has no paths, endpoints, sockets,
 handles or certificate material.
 
@@ -359,16 +388,25 @@ authoritative; the HTTP status is a classification:
 | 202 | accepted |
 | 400 | invalid_request, invalid_name, cycle, not_empty, owner_protected, checklist_incomplete, unknown_method, clock_skew, unknown_recipient |
 | 401 / 403 | No valid session / signed in but not allowed: not_authorized |
+| 405 | invalid_request: a method the API does not serve, such as `OPTIONS`, with `Allow` |
 | 404 | not_found, unsupported route; never the SPA fallback |
 | 409 | conflict, already_exists, operation_reused, snapshot_required |
 | 410 | expired |
 | 413 | too_large, refused before forwarding |
+| 415 | invalid_request: a POST whose `Content-Type` is not `application/json` |
 | 426 | unsupported_version: refresh or update; never mock data |
-| 429 | rate_limited, with `retry_after_ms`; refused before dispatch, safe to retry after the delay |
+| 429 | rate_limited, with `retry_after_ms`; refused before any password check or dispatch, safe to retry after the delay |
 | 503 | not_ready, unavailable, storage_error, or a timeout confirmed before dispatch |
 | 504 | Outcome unknown after a possible dispatch, including a timeout; never rejected or accepted |
 
-`rate_limited` is a web-process code. An unexpected office error is logged as an
+`rate_limited` comes from the web process's own limits or from the host's sign-in
+and registration throttle.
+
+**Error body.** `{error:{code, message, field?, rule?, retry_after_ms?}}`. The
+optional fields appear only when set: `field` and `rule` name the input and the
+rule it failed on a 400 `invalid_request` (`login`: `format`, `taken`;
+`password`: `too_short`, `too_long`), and `retry_after_ms` is the wait in
+milliseconds on a 429. An unexpected office error is logged as an
 internal invariant failure and returned as rejected `unavailable` (503) only when
 nothing ran; anything that may have committed is unknown (504). Retries of
 `not_ready` are bounded and safe only when non-admission is confirmed.
@@ -522,19 +560,40 @@ returning 404 confirms that.
 
 - `org_proto::gateway` implements the DTOs, outcome classifier, session and stream
   types and the organization mutation codec, with vectors in
-  `crates/org-proto/test-vectors/v2/`. No HTTP route is served:
-  `agentic-org-web` refuses to start a listener.
+  `crates/org-proto/test-vectors/v2/`.
 - The create request accepts `{name}` only; it changes to the selected payload under
   FC-018.
 - The mutation codec carries the older membership operations
   (`team.add_member`, `team.remove_member`, `team.set_title`, `member.move`,
   `project.add_team`, `project.remove_team`) and the name `member`. They are replaced
   by the routes of §9 when the organization model is built (implementation plan B2).
-  The views spell `gateway_status` and `member_id`, which become `web_status` and
-  `employee_id`, and the 400 class still lists `not_a_member`.
+  The 400 class still lists `not_a_member`, which the older membership operations
+  still return.
 - Operation IDs are ULIDs (`crates/org-proto/src/ulid.rs`); they become UUIDv7
   under FC-142.
 - The task codec (`selected_tasks_v1`) exists in the office's acceptance store; no
   route reaches it.
-- Browser sessions live in memory in the host (`crates/org-host/src/service/authentication.rs`);
-  ADR-0013 moves them to the host database.
+- The host stores browser sessions in its registry behind the `BrowserSessions`
+  contract (`crates/org-host/src/sessions.rs`) and answers `link.register`,
+  `session.sign_in`, `session.validate` and `session.end` on the web process's
+  control connection only (`crates/org-host/src/service/authentication/browser.rs`).
+  The web process (`apps/agentic-org-web/src/api.rs`) serves `GET version`,
+  `POST session/sign-in`, `POST links/register`, `GET session`, `POST session/sign-out`
+  and `GET organizations` over them. It mints the cookie and proof, sends only their
+  digests and the accepted socket's peer address (never a forwarding header), and keeps
+  validated sessions in an in-memory cache bound to its control connection; the host's
+  `session.ended` push drops an entry. `GET organizations` answers
+  `{organizations: []}` after validating the session, with no host call, until A4
+  creates organizations. `GET instance` validates the pair, then asks the host's
+  `instance.view` (web connection only) for the name and web state; it omits `tls`
+  while the listener is loopback HTTP. `HEAD` serves the GET routes without a body.
+  The pair is minted from the system generator (`getentropy`): the sandboxed web
+  process cannot open `/dev/urandom`. `session/refresh`, the other link and password
+  routes, events and the domain routes are still JSON 404. Every POST needs JSON
+  (415 otherwise); `OPTIONS` is 405; `Sec-Fetch-Site: cross-site` is 403; host
+  refusals carry `field`/`rule` and `retry_after_ms` through to the error body. Real-
+  process tests over loopback TCP prove registration from a link, sign-in, restart
+  survival (SES-1, SES-2), sign-out while cached (SES-3), one validate then memory
+  (SES-5) and that every ingress refusal reaches no host op
+  (`crates/org-host/src/web_process_tests/browser_sessions.rs`). Native
+  command-line sessions stay in memory and end with their connection.

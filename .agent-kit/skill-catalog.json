@@ -62,15 +62,15 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "9c56303f0cb84fe80f986963fe14621db76615e5baa7183d814e2ba4d45e1bed"
+      "sha256": "bb0a72fddd749bfd7547d0261b62888c1e882df72ebfd02ab1c6fad7b008a817"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "bc2d81cbf0ec85359f846c21f8e51111a4abb2273ab339ae605699ec0bb8bd8b"
+      "sha256": "7acdfe9d7de32c7475ecdedb33c250b38daa2a9aface14007712c509c8bd0b04"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "3cb5d19d40ccb2dd417d22d0ba9229b708be65f113b34f6ca92a08696642f4f8"
+      "sha256": "0ba014aa1c5573c5fa869780df78170ecc40971892e3769f0779594ec0bd3c29"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -82,11 +82,11 @@
     },
     {
       "path": "apps/agentic-org-ui/package.json",
-      "sha256": "a5f4697b3d032b26acaf83fde679694345e853f104f4adfbdc324572314450aa"
+      "sha256": "a6a47bf87e5801b67f8b15a3f2c1d4f2a42bff5de1e7d538de9723d2d4ec1210"
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
-      "sha256": "4bcb18581f12cb50e5550e242c3c31aa528ff51661ae9522d6a3aa2417dafcbf"
+      "sha256": "ec630df1177affde52308916108ba2dd7805c06a03ee1be4f74ff6fb5cd9edd4"
     },
     {
       "path": "crates/org-client/Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "13e7acfe81cc8df1214261b653bc3801c8f3584a3f101f04f660b267cd4101ce"
+      "sha256": "7fb190e5f9bd74d021763947f85dccc37bdd10a2f4f93a56f73812eaad9b5d7b"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
@@ -122,7 +122,7 @@
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "bfa1ef1c76bba49388d9e6e62c390df11d48eab824dabf5499870e0c21593bce"
+      "sha256": "64361db9e0ea9bfb759ccef729c4fddf4345f499872caa403933bba8a140e6ad"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "e2fc528b1d5b1fe08ee699f450976aa00cb32d93ecbf1b9893c342d6e42344f5"
+      "sha256": "a6fee2bebca81bfde123b2808c28829078e54ead6d7e9dfba4edc11ba4046496"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "b0c0aab6289b209e63efa1efd9c048f02254c541910ee96a29d3480e037c568d"
+      "sha256": "e0a1415777a012f123ae5ff33719955ef3a847af1a0303fc88a8cc3332c5abdf"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "eee25c0f30e2e38de5a1af5a002fdcc7eb9dd3674c9a79a49fa462f080e979b2"
+      "sha256": "70ecbe4d678207b2f5764000270fabcdbe06d1ceef5c773d2dd5978989f282c6"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -186,7 +186,7 @@
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "2a542befdd42af769c72800e64cfb4fc7f4a8a639d9b2d20892460df586bb12a"
+      "sha256": "f8ad1e3d04d08b16f8ea6225eb76ccad2655c04329d222f1bfb956ffad0e0309"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
@@ -490,7 +490,7 @@
         ".agent-kit/tasks/v1-hq-creation-provider-contract.md",
         ".agent-kit/tasks/v1-creation-admission-interface.md",
         "crates/org-proto/src/location.rs",
-        "apps/agentic-org-office/tests/launch/v3_activation.rs"
+        "apps/agentic-org-office/tests/launch/activation.rs"
       ],
       "risks": [],
       "implementation": [

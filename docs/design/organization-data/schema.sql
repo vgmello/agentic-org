@@ -1661,7 +1661,7 @@ organization_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   ended_at TEXT,
   error_code TEXT,
-  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','assignment','answer','recovery')),
+  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','recovery')),
   started_by_employee_id TEXT,
   started_by_ref TEXT,
   CHECK (started_by_kind<>'recovery' OR started_by_employee_id IS NULL),
@@ -1910,6 +1910,8 @@ CREATE TABLE message_recipient_states (
   read_at TEXT,
   updated_at TEXT NOT NULL,
   reason TEXT,
+  delivered_because TEXT NOT NULL DEFAULT 'addressed' CHECK (delivered_because IN ('addressed','mention','thread_reply','answer_candidate')),
+  related_message_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(related_message_ids_json) AND json_type(related_message_ids_json)='array'),
   expired_waiting_person INTEGER NOT NULL DEFAULT 0 CHECK (expired_waiting_person IN (0,1)),
   owner_office_id TEXT NOT NULL,
   origin_incarnation TEXT NOT NULL,
@@ -1954,16 +1956,6 @@ CREATE TABLE message_attachments (
   content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
   PRIMARY KEY (organization_id,message_id,id),
   FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-
-CREATE TABLE message_mentions (
-  organization_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  PRIMARY KEY (organization_id,message_id,employee_id),
-  FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id),
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id)
 ) STRICT;
 CREATE TABLE message_reactions (
   organization_id TEXT NOT NULL,

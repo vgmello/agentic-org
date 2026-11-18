@@ -114,6 +114,8 @@ pub enum ErrorCode {
     OperationReused,
     /// A reserved organization create was cancelled or abandoned after its window expired.
     Cancelled,
+    /// A throttle key is locked; the error carries `retry_after_ms`.
+    RateLimited,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,
@@ -124,6 +126,15 @@ pub enum ErrorCode {
 pub struct ApiError {
     pub code: ErrorCode,
     pub message: String,
+    /// With `rate_limited`: how long until a retry can succeed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+    /// With `invalid_request` for a credential rule: the input field (`login`, `password`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// With `field`: the rule it failed (`format`, `taken`, `too_short`, `too_long`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 impl ApiError {
@@ -131,7 +142,25 @@ impl ApiError {
         Self {
             code,
             message: message.into(),
+            retry_after_ms: None,
+            field: None,
+            rule: None,
         }
+    }
+
+    /// `rate_limited` with the delay until a retry can succeed.
+    pub fn rate_limited(retry_after_ms: u64) -> Self {
+        let mut error = Self::new(ErrorCode::RateLimited, "too many attempts; try again later");
+        error.retry_after_ms = Some(retry_after_ms);
+        error
+    }
+
+    /// `invalid_request` naming the input field and the rule it failed.
+    pub fn rule(field: &str, rule: &str) -> Self {
+        let mut error = Self::new(ErrorCode::InvalidRequest, "a credential rule was not met");
+        error.field = Some(field.to_owned());
+        error.rule = Some(rule.to_owned());
+        error
     }
 }
 

@@ -647,7 +647,7 @@ impl Client {
                 "the offered API range is invalid".into(),
             ));
         }
-        if org_proto::ulid_time_ms(expected_instance_id).is_none() {
+        if !org_proto::is_uuid_v7(expected_instance_id) {
             return Err(ClientError::Protocol(
                 "the expected instance id is invalid".into(),
             ));
@@ -667,7 +667,7 @@ impl Client {
                 ));
             }
             let instance = match hello.instance_id.as_deref() {
-                Some(id) if org_proto::ulid_time_ms(id).is_some() => id,
+                Some(id) if org_proto::is_uuid_v7(id) => id,
                 _ => {
                     return Err(ClientError::Protocol(
                         "the server's instance id is missing or malformed".into(),

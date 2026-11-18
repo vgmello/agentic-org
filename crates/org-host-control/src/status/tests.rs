@@ -13,6 +13,7 @@ fn status_vector_uses_counts_and_instance_identity_without_office_ids() {
     let result = response.into_result::<InstanceStatus>().unwrap();
     assert_eq!(result.mode, InstanceMode::Service);
     assert_eq!(result.gateway.state, GatewayState::NotConfigured);
+    assert_eq!(result.administrator, Administrator::None);
     assert_eq!(
         result.offices,
         OfficeCounts {
@@ -64,11 +65,18 @@ fn unknown_response_states_are_readable_but_never_sent() {
             .clone();
     result["mode"] = json!("future_mode");
     result["gateway"]["state"] = json!("future_state");
+    result["administrator"] = json!("future_role");
     let typed: InstanceStatusResult = serde_json::from_value(result).unwrap();
     assert_eq!(typed.mode, InstanceMode::Unknown);
     assert_eq!(typed.gateway.state, GatewayState::Unknown);
     assert!(serde_json::to_value(typed.mode).is_err());
     assert!(serde_json::to_value(typed.gateway).is_err());
+    assert_eq!(typed.administrator, Administrator::Unknown);
+    assert!(serde_json::to_value(typed.administrator).is_err());
+    assert_eq!(
+        serde_json::to_value(Administrator::Present).unwrap(),
+        json!("present")
+    );
 }
 
 #[test]

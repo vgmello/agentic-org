@@ -10,7 +10,6 @@ const view = {
 	admin: false,
 	organizations: [],
 	server_time_ms: 100,
-	absolute_expires_at: 'later',
 	idle_expires_at: 'sooner'
 };
 function setup(body: unknown, status = 200) {
@@ -60,6 +59,35 @@ describe('P6a fixed session operations', () => {
 			);
 		}
 	);
+	it('B6 register posts the link secret only in the JSON body, without a proof header', async () => {
+		const { gateway, fetch } = setup({ result: { ...view, proof } });
+		const request = { link: 'k7Q2-secret', login: 'alex', password: 'long-enough-pw' };
+		expect(await gateway.register(request)).toEqual({ ...view, proof });
+		const [url, init] = fetch.mock.calls[0];
+		expect(String(url)).toBe('http://localhost:4173/api/v1/links/register');
+		expect(String(url)).not.toContain('k7Q2');
+		expect(init?.method).toBe('POST');
+		expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json');
+		expect(new Headers(init?.headers).get('X-Org-Session-Proof')).toBeNull();
+		expect(JSON.parse(init?.body as string)).toEqual(request);
+	});
+	it('B6 register refuses a request without a link before any dispatch', async () => {
+		const { gateway, fetch } = setup({ result: { ...view, proof } });
+		await expect(gateway.register({ link: '', login: 'alex', password: 'long-enough-pw' })).rejects.toThrow();
+		expect(fetch).not.toHaveBeenCalled();
+	});
+	it('B6 errors carry the credential field and rule but never the server message', async () => {
+		const { gateway } = setup(
+			{ error: { code: 'invalid_request', message: 'server words', field: 'login', rule: 'taken' } },
+			400
+		);
+		const error = await gateway
+			.register({ link: 'x', login: 'alex', password: 'long-enough-pw' })
+			.catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(SessionRequestError);
+		expect(error).toMatchObject({ status: 400, code: 'invalid_request', field: 'login', rule: 'taken' });
+		expect(String((error as Error).message)).not.toContain('server words');
+	});
 	it('does not publish an unsolicited proof from GET session', async () => {
 		const { gateway } = setup({ result: { ...view, proof } });
 		expect(await gateway.get(proof)).toEqual(view);
@@ -85,7 +113,7 @@ describe('P6a fixed session operations', () => {
 					error: {
 						code: 'not_authorized',
 						message: proof,
-						session_reason: 'hq_restarted',
+						session_reason: 'future_reason',
 						retry_after_ms: 500
 					}
 				},
@@ -93,7 +121,7 @@ describe('P6a fixed session operations', () => {
 			);
 			const error = await gateway.get(proof).catch((error) => error);
 			expect(error).toBeInstanceOf(SessionRequestError);
-			expect(error).toMatchObject({ status, sessionReason: 'hq_restarted', retryAfterMs: 500 });
+			expect(error).toMatchObject({ status, sessionReason: 'unknown', retryAfterMs: 500 });
 			expect(JSON.stringify(error)).not.toContain(proof);
 			expect(String(error)).not.toContain(proof);
 		}

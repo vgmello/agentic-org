@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::future::{poll_fn, Future};
 use std::io;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::task::Poll;
@@ -20,6 +20,7 @@ use tokio::task::JoinSet;
 use tokio::time;
 use tokio_rustls::TlsAcceptor;
 
+use super::linger::{linger, reclaimed, Reclaim};
 use super::write_stall::WriteStall;
 use crate::origin::check_listener;
 use crate::tls::TlsCertificates;
@@ -151,7 +152,7 @@ where
             let Some(accepted) = until_shutdown(listener.accept(), shutdown.as_mut()).await else {
                 break;
             };
-            let (stream, _) = accepted?;
+            let (stream, peer) = accepted?;
             let handler = Arc::clone(&handler);
             let mode = mode.clone();
             connections.spawn(async move {
@@ -161,14 +162,14 @@ where
                 };
                 match mode {
                     ListenMode::HttpLoopback => {
-                        let _ = serve_connection(stream, handler, limits).await;
+                        serve_then_linger(stream, peer, handler, limits).await;
                     }
                     ListenMode::Https(certificates) => {
                         let accept = TlsAcceptor::from(certificates.server_config());
                         if let Ok(Ok(stream)) =
                             time::timeout(limits.handshake_timeout, accept.accept(stream)).await
                         {
-                            let _ = serve_connection(stream, handler, limits).await;
+                            serve_then_linger(stream, peer, handler, limits).await;
                         }
                     }
                 }
@@ -196,8 +197,28 @@ async fn until_shutdown<F: Future, S: Future<Output = ()>>(
     .await
 }
 
+/// Serve one connection, then close it with a bounded linger (see `linger`),
+/// so an early reply to a request with unread body bytes is not reset.
+async fn serve_then_linger<T, H, F>(
+    stream: T,
+    peer: SocketAddr,
+    handler: Arc<H>,
+    limits: HttpLimits,
+) where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
+    F: Future<Output = Result<Response<Full<Bytes>>, Infallible>> + Send + 'static,
+{
+    let (stream, slot) = Reclaim::new(stream);
+    let _ = serve_connection(stream, Some(peer), handler, limits).await;
+    if let Some((stream, shut_down)) = reclaimed(&slot) {
+        linger(stream, shut_down).await;
+    }
+}
+
 async fn serve_connection<T, H, F>(
     stream: T,
+    peer: Option<SocketAddr>,
     handler: Arc<H>,
     limits: HttpLimits,
 ) -> Result<(), hyper::Error>
@@ -219,10 +240,21 @@ where
     builder
         .serve_connection(
             TokioIo::new(stream),
-            service_fn(move |request| handler(request)),
+            service_fn(move |mut request: Request<Incoming>| {
+                // The browser's address is the accepted socket's peer, never a header.
+                if let Some(peer) = peer {
+                    request.extensions_mut().insert(PeerAddress(peer));
+                }
+                handler(request)
+            }),
         )
         .await
 }
+
+/// The TCP peer of the connection a request arrived on, set by the transport
+/// from `accept()`. Request headers (`X-Forwarded-For`, `Forwarded`) never set it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerAddress(pub SocketAddr);
 
 #[cfg(test)]
 mod tests;

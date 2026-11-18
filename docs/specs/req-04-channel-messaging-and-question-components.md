@@ -75,17 +75,19 @@ Written by the lead on 2026-11-17. It adds no requirement; it places the owner's
 
 | `ask_user` field | Card field | Change needed |
 | --- | --- | --- |
-| `question_type` | `question_type`: `choice`, `yes_no` or `free_text` | New field |
+| `question_type` | `questions[].question_type`: `choice`, `yes_no` or `free_text`. Every question field below sits in an entry of `questions[]` | New field |
 | `prompt` | The message body | None |
 | `options[].id`, `.label` | `options[{id,label}]` | None |
 | `options[].description` | `options[].description` | New optional field |
 | `allow_multiple` | `allow_multiple` | New field; default false |
 | `default_value` | `default_option`, with `default_at` | None. Preselected in the component; given to the agent with the timeout of a non-required ask (owner point 4) |
-| the answer | `answer{by,at,option_id,text}` | Add `option_ids[]` for a multi-select answer |
+| the answer | `answer{by,at,answers[{question_id,option_ids,text}]}` | One entry for each question; `option_ids[]` holds one ID, or several for a multi-select |
+
+**Several questions in one ask.** Owner, 2026-11-18: an agent can ask several questions at once, like a short wizard. An ask carries `questions[]`, one to eight, each with its own `id`, `question_type`, `prompt`, `options`, `allow_multiple`, `default_value` and an `optional` mark. The payload above, with one question, is the same thing with a list of one. The person answers them in one form and sends once; an agent answers them in one `agent-os msg reply`. There is no partial answer, and no question depends on another's answer: an agent that needs to branch asks again. The asker receives one result, keyed by question ID.
 
 **Validation.** The office validates the payload before it becomes a message and refuses a malformed one with a reason the agent can act on: `choice` needs at least one option with unique IDs (the existing ask contract allows at most six options; more needs that limit raised); `yes_no` and `free_text` take no options; `default_value` must be an option ID for `choice`, `yes` or `no` for `yes_no`.
 
-**How the agent emits it.** Two routes with one schema: an `ask_user` tool that the office provides to the agent's runtime, so the payload is checked at the tool boundary and the agent cannot fall back to unformatted prose; and `agent-os msg ask` accepting the same JSON for a runtime without tool support. The instruction to use it ships with the product as built-in guidance, not as an organization process ([processes design](../design/processes.md), decision 4).
+**How the agent emits it.** One route: `agent-os msg ask`, to a person, an agent or a channel, with this schema as the command's input. The office validates the payload, so an ask cannot fall back to unformatted prose. No tool is given to the agent's runtime for it: no product command is an MCP tool ([REQ-08](req-08-agent-os-cli-and-kernel-primitives.md); [agent command line](../design/agent-os-command-line.md), section 2.10). The instruction to use it ships with the product as built-in guidance, not as an organization process ([processes design](../design/processes.md), decision 4).
 
 **Waiting for the answer.** Every ask waits for a bounded time and may be marked required ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)). Answering never makes the person wait: the answer is saved in their office and relayed.
 

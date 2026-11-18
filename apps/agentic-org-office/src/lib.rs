@@ -6,9 +6,9 @@
 //! agentic-org-office --office <id>   # first stdin line: the start message; serves the office
 //! agentic-org-office --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
-//! V2 events travel on stdout and stdin EOF ends the worker. V3 events travel on the
-//! authenticated rendezvous; its EOF closes the databases and exits 0. V3 stdin is drained
-//! unparsed and is not a lifetime signal. Logs go to stderr.
+//! One launch version: events travel on the authenticated rendezvous; its EOF closes the databases
+//! and exits 0. stdin is drained unparsed after the first line and is not a lifetime signal;
+//! stdout carries nothing. Logs go to stderr.
 //! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
 //! process around it: launch control, typed authority and the socket. The server never touches
 //! a Keychain.
@@ -29,6 +29,8 @@ mod revocations;
 mod serve;
 mod signals;
 mod startup;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod transfer;
 mod zeroed;
 
@@ -107,15 +109,14 @@ pub fn run(args: &[String], control: ControlPipe) -> i32 {
     }
 }
 
-/// `--discard`: the first line carries the office's key, or null when the host holds none. The
-/// key is the host's and is never made, stored or deleted here.
+/// `--discard`: needs no key, because the databases are plain SQLite (ADR-0016); a key the
+/// handoff carries is dropped when the request is parsed.
 fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
     let (message, _from_host) = match first_line(&mut control, FirstLine::Discard, Some(id)) {
         Ok(first) => first,
         Err(code) => return code,
     };
     let Launch::Discard {
-        key,
         office: _office_identity,
     } = message
     else {
@@ -141,18 +142,11 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
             "selected writer custody is required",
         );
     }
-    match Office::discard(folder, id, key.as_ref()) {
+    match Office::discard(folder, id) {
         Ok(()) => {
             emit(&mut control, &ServerEvent::Discarded);
             0
         }
-        // The contract: a discard that cannot check the databases reports `storage_error`, not
-        // `key_missing` (a person looks; the host never retries it on its own).
-        Err(OfficeError::KeyMissing) => fail(
-            &mut control,
-            FailCode::StorageError,
-            "the key given does not open the databases",
-        ),
         Err(e) => fail_with(&mut control, &e),
     }
 }
@@ -195,50 +189,35 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             return fail(&mut control, FailCode::InvalidName, "a name is not trimmed");
         }
     }
-    // Explicit creation-v1 consumes/drops its code before the serve lifetime.
-    // Legacy v2/v3 keeps its existing behavior and never claims selected setup.
-    let (created, _legacy_recovery) = if let Some(context) = create.hq_creation {
-        let (Some(instance), Some(owner)) = (create.instance.as_deref(), create.owner_member_id)
-        else {
-            return fail(
-                &mut control,
-                FailCode::InvalidRequest,
-                "missing HQ creation binding",
-            );
-        };
-        let launch::CreationRecovery::V3 { _code } = create._recovery else {
-            return fail(
-                &mut control,
-                FailCode::InvalidRequest,
-                "missing HQ recovery code",
-            );
-        };
-        let binding = org_office::hq_creation::Binding {
-            operation_id: context.operation_id,
-            owner_member_id: owner,
-            public_root: context.public_root.into(),
-            bootstrap: context.bootstrap.map(|b| *b),
-        };
-        (
-            hq_creation::prepare(
-                &folder,
-                &create.office,
-                create.key,
-                instance,
-                &binding,
-                _code,
-            ),
-            None,
-        )
-    } else {
-        let created = match create.instance.as_deref() {
-            Some(instance) => {
-                Office::create_for_instance(folder, &create.office, create.key, instance)
-            }
-            None => Office::create(folder, &create.office, create.key),
-        };
-        (created, Some(create._recovery))
+    // HQ creation-v1 is the only create: it consumes the recovery code before serving.
+    let Some(context) = create.hq_creation else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "missing HQ creation binding",
+        );
     };
+    let Some(recovery) = create.recovery else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "missing recovery code",
+        );
+    };
+    let binding = org_office::hq_creation::Binding {
+        operation_id: context.operation_id,
+        owner_member_id: create.owner_member_id,
+        public_root: context.public_root.into(),
+        bootstrap: context.bootstrap.map(|b| *b),
+    };
+    let created = hq_creation::prepare(
+        &folder,
+        &create.office,
+        Some(create.key),
+        &create.instance,
+        &binding,
+        recovery,
+    );
     let office = match created {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
@@ -280,7 +259,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         runtime,
         office,
         create.auth,
-        create.instance,
+        Some(create.instance),
     )
 }
 
@@ -315,26 +294,28 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
             "selected writer custody is required",
         );
     }
-    let instance = office.map(|identity| {
-        let _office_id = identity.office_id;
-        identity.instance_id
-    });
-    let opened = match instance.as_deref() {
-        Some(instance) => Office::open_for_instance(folder, key.clone(), instance),
-        None => Office::open(folder, key.clone()),
-    };
+    let instance = office.instance_id;
+    let opened = Office::open_for_instance(folder, key.clone(), &instance);
     let office = match opened {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    if let Err(error) = hq_creation::verify_existing(&office, &key) {
-        return fail_with(&mut control, &error);
+    match hq_creation::verify_existing(&office) {
+        Ok(hq_creation::CaStatus::Unavailable) => {
+            // No key material, path or SQL in the log: the office keeps serving its data.
+            eprintln!(
+                "agentic-org-office: organization CA unavailable: the office secrets key is \
+                 absent or does not unwrap it"
+            );
+        }
+        Ok(hq_creation::CaStatus::NotHq | hq_creation::CaStatus::Available) => {}
+        Err(error) => return fail_with(&mut control, &error),
     }
-    serve_office(control, from_host, runtime, office, auth, instance)
+    serve_office(control, from_host, runtime, office, auth, Some(instance))
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
-/// is gone, otherwise a `failed` line has been written.
+/// is gone; otherwise the failure is logged and reported on the rendezvous if one exists.
 fn first_line(
     control: &mut Control,
     expected: FirstLine,
@@ -382,7 +363,10 @@ fn serve_office(
     let office = Arc::new(office);
     let mut transfer = control.transfer();
     let admitted = initial_writer_admission(&mut transfer, &office, instance.as_deref(), &control);
-    if admitted.is_err() {
+    if let Err(error) = &admitted {
+        // The log (stderr) is the only place the cause goes; the host gets a fixed text.
+        eprintln!("agentic-org-office: protected writer admission failed: {error}");
+        log_causes(error);
         return fail(
             &mut control,
             FailCode::StorageError,
@@ -509,7 +493,7 @@ fn serve_office(
         auth,
     );
     shared.register_inbox(inbox, office.is_replication_hq());
-    // The launch transport selects stdin for v2, authenticated rendezvous for v3.
+    // The host's lifetime is the authenticated rendezvous (stdin is drained elsewhere).
     // The fixed-buffer watcher never parses later input.
     let host_gone = Arc::new(AtomicBool::new(false));
     let watcher = {
@@ -539,8 +523,8 @@ fn serve_office(
             let mut channels = transfer::Channels::new(
                 Arc::clone(&shared),
                 Arc::clone(&office),
-                instance.expect("verified v3 instance"),
-                control.writer().expect("v3 rendezvous writer"),
+                instance.expect("verified launch instance"),
+                control.writer().expect("launch rendezvous writer"),
                 Arc::clone(&revocations),
             );
             transfer::Service::start(transport, revocations, move |channel| {
@@ -689,7 +673,7 @@ impl follow::OrgFeed for OfficeFeed {
     }
 }
 
-/// Launch-v2 runtime comes from the host's clean environment. No invalid override falls back.
+/// The runtime directory comes from the host's clean environment. No invalid override falls back.
 fn runtime_dir_from(
     home: &Path,
     value: Option<std::ffi::OsString>,
@@ -746,7 +730,6 @@ fn fail_code(error: &OfficeError) -> FailCode {
     match error {
         OfficeError::InvalidName(_) => FailCode::InvalidName,
         OfficeError::OfficeExists | OfficeError::AlreadyExists => FailCode::AlreadyExists,
-        OfficeError::KeyMissing => FailCode::KeyMissing,
         OfficeError::InUse => FailCode::InUse,
         // `NotFound` on `--office`: serving an office that does not exist is a bad argument.
         OfficeError::NotFound => FailCode::InvalidRequest,
@@ -844,7 +827,7 @@ mod tests {
                     org_id: "ORG1".into(),
                     org_name: "Acme".into(),
                 },
-                Key::from_db_key(org_proto::DbKey::from_bytes([4; 32])),
+                Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([4; 32])),
             )
             .unwrap(),
         );
@@ -873,7 +856,6 @@ mod tests {
             ),
             (OfficeError::OfficeExists, FailCode::AlreadyExists),
             (OfficeError::AlreadyExists, FailCode::AlreadyExists),
-            (OfficeError::KeyMissing, FailCode::KeyMissing),
             (OfficeError::InUse, FailCode::InUse),
             (OfficeError::Invalid("x"), FailCode::StorageError),
             (OfficeError::NotFound, FailCode::InvalidRequest),

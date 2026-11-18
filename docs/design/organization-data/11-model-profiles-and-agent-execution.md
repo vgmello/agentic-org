@@ -210,7 +210,7 @@ Every internal command envelope contains `{protocol_version:1, organization_id, 
 | Command | Required payload / result |
 | --- | --- |
 | `RunTurn` | turn_id, employee_id, placement_generation, expected_agent_config_revision, expected_profile_revision, task_id or null, workspace_key, immutable input_ref/input_sha256. Returns accepted turn identity. A second open turn for the employee returns BUSY. |
-| What started a turn | Every turn records `started_by_kind` (`run`, `message`, `mention`, `ask`, `assignment`, `answer` or `recovery`), the employee who did it in `started_by_employee_id` (null for a recovery) and, in `started_by_ref`, the message or task it came from ([ADR-0028](../../adr/0028-an-agent-is-always-available.md)). The limit on one agent starting another is counted from these rows. Presence is not stored here: an agent that is active, configured and not held is available whether or not a process is running. |
+| What started a turn | Every turn records `started_by_kind` (`run`, `message`, `mention`, `ask`, `handoff`, `assignment`, `answer` or `recovery`), the employee who did it in `started_by_employee_id` (null for a recovery) and, in `started_by_ref`, the message or task it came from ([ADR-0023](../../adr/0023-an-agents-ask-starts-a-turn.md), [ADR-0028](../../adr/0028-an-agent-is-always-available.md)). ADR-0023's hourly limit is counted from these rows. Presence is not stored here: an agent that is active, configured and not held is available whether or not a process is running. |
 | `ResumeTurn` | turn_id, expected_turn_revision; recovery-required turns also require recovery `{checkpoint_ref, receipt_dispositions:[{operation_id, outcome, result_ref, evidence_ref}]}`. Outcome is confirmed_completed or confirmed_not_started, with evidence verified by the tool broker/operator recovery authority. Unknown outcomes remain recovery_required. Retries a blocked turn or resumes only after validated reconciliation. Preserves turn ID, model and workspace. |
 | `CancelTurn` | turn_id, expected_turn_revision. Stops current work and becomes cancelled only after completion/cleanup facts are known. |
 | `StopAgent` | employee_id, placement_generation. Stops active and idle main processes. It creates no future automatic wake or budget policy. |
@@ -348,7 +348,7 @@ The installed-version driver probes, authenticated production composition, compl
 5. Implement native adapters and, when its backend ships, the HTTP worker/agent loop behind the same port; gate each production backend on AE-09/14. Unsupported drivers can remain explicitly unavailable while supported backends ship.
 6. Connect durable usage capture/routing evidence and restoration (AE-12), then report the performance gate (AE-13).
 
-The first release accepts explicit turn commands only. Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service. Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
+The first release accepts explicit turn commands only. Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service; the office's messaging is one such caller when another agent's ask or hand-off starts a turn ([ADR-0023](../../adr/0023-an-agents-ask-starts-a-turn.md)). Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
 
 ## 12. SQL tables, relationships and file mapping
 
@@ -811,7 +811,7 @@ organization_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   ended_at TEXT,
   error_code TEXT,
-  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','assignment','answer','recovery')),
+  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','recovery')),
   started_by_employee_id TEXT,
   started_by_ref TEXT,
   CHECK (started_by_kind<>'recovery' OR started_by_employee_id IS NULL),

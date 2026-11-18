@@ -90,7 +90,7 @@ would be declared four times.
 | --- | --- | --- | --- |
 | `agentic-org` (`serve`) | Start an office worker and admit it | `org-host/src/spawn.rs`, `server_check.rs`, `code_signing.rs`, `peer.rs`, `supervisor/child.rs`, `supervisor/channels.rs` (`reader_is_child`), `supervisor/mod.rs` (macOS-only tests and scripted checks), `lib.rs` (`startup_server_check`) | `admission` |
 | `agentic-org` (`serve`) | Start the web process and verify its confinement | Not wired (A3); host side is `org-socket/src/confinement.rs` (`verify_gateway`) | `admission`, `confinement` |
-| `agentic-org` (`serve`) | Admit native clients on `host.sock`, including the recovery peer | `org-host/src/app_auth.rs`, `bootstrap.rs`, `human.rs` (`verify_host`), `recovery.rs` (`native()` admits only on macOS), `peer.rs` | `admission` (peer) |
+| `agentic-org` (`serve`) | Admit native clients on `host.sock`, including the recovery peer | `org-host/src/app_auth.rs`, `human.rs` (`verify_host`), `recovery.rs` (`native()` admits only on macOS), `peer.rs` | `admission` (peer) |
 | `agentic-org` (`serve`) | Office secrets keys and host secrets | `org-host/src/keys/` (`mod.rs`, `keychain.rs`, `dev.rs`), `host_secrets.rs`, `host_secrets/` (`keychain.rs`, `dev.rs`) | `credentials` |
 | `agentic-org` (`serve`, `setup`) | Register, start and stop the service; stop on a signal | Not built (A2); `org-host/src/signals.rs` is portable | `service` |
 | `agentic-org` (`serve`, `setup`) | Release images: which platform's release, static check and the host's own image | `org-host/src/release.rs` (`cfg!` picks the release platform), `release/platform.rs`, `release/runtime.rs` (`check_self`), `org-socket/src/image.rs` | `admission` |
@@ -449,9 +449,11 @@ the 6.2 floor, and denying `connect` outright is simpler.
 ```rust
 pub enum ServiceMode { Registered, Foreground }
 pub struct Unit { pub instance_id: String, pub program: PathBuf, pub args: Vec<OsString>, pub env: Vec<(OsString, OsString)> }
-pub fn service(mode: ServiceMode) -> Result<Box<dyn ServiceManager>, Refused>;
+pub struct Placement { pub prefix: String, pub directory: PathBuf } // Placement::user(home); tests use a temp one
+pub fn service(mode: ServiceMode, home: &Path) -> Result<Box<dyn ServiceManager>, Refused>;
+pub fn service_in(mode: ServiceMode, placement: Placement) -> Result<Box<dyn ServiceManager>, Refused>;
 pub trait ServiceManager {
-    fn register(&self, unit: &Unit) -> Result<(), ServiceError>;   // idempotent, never takes over another unit
+    fn register(&self, unit: &Unit) -> Result<Registration, ServiceError>; // Unchanged | Loaded; idempotent, never takes over another unit
     fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
     fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
     fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>; // includes login and linger requirements
@@ -460,14 +462,34 @@ pub trait ServiceManager {
 ```
 
 This contract is agreed with the Track A lead on the first day (X1a), because A2
-writes the launchd registration and needs somewhere to put it.
+writes the launchd registration and needs somewhere to put it. A2 B0 built it as shown
+(`crates/org-platform/src/service/`), before X1a: `ServiceStatus` is `NotRegistered`,
+`Unloaded`, `Stopped` or `Running { pid }`; every adapter refuses a relative program,
+path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
+`GLIBC_TUNABLES`) in the unit's environment. `Foreground` refuses everywhere until X5.
 
 `agentic-org serve` is the same foreground process in every mode; it stops on
 `SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
 process and the workers (`SIGTERM`, then `SIGKILL` after 5 s), flushes its logs and
 exits 0 within 8 s, inside a container runtime's default 10-second grace.
 
-**macOS adapter.** A per-user launchd agent (written by A2 behind this contract).
+**macOS adapter.** A per-user launchd agent (written by A2 behind this contract):
+`~/Library/LaunchAgents/com.ellosoft.agentic-org.instance.<instance-id>.plist` with
+`RunAtLoad`, `KeepAlive { SuccessfulExit = false }`, `Umask` 0077 and an explicit
+environment, loaded with `launchctl bootstrap gui/<uid>`. An identical loaded job is
+left alone; a different file or a job loaded from elsewhere under the label is a
+conflict. "Elsewhere" is decided by the top-level `path` of `launchctl print`, which
+must name our definition file; `register`, `start`, `stop`, `status` and `unregister`
+all refuse such a job. The definition is published by hard-linking a complete temporary
+file, so a file that appears meanwhile is never replaced (a conflict). `start` never
+loads a definition: on `Unloaded` it refuses, and the caller runs `register` again,
+which loads the file only when its bytes equal the rendered unit. `unregister` waits
+up to 15 s for launchd to drop the job after `bootout`. The plist has no
+`ProcessType`, so the host is not throttled as a background job. Program, arguments
+and environment must be valid XML text (no NUL or other C0 control except tab, line
+feed and carriage return). `stop` sends `SIGTERM`, so the clean exit is not restarted.
+Disk encryption reads `diskutil info -plist` for the mount point (`statfs`) of the
+nearest existing ancestor of the root.
 
 **Linux adapter, `Registered`.** A systemd user unit,
 `~/.config/systemd/user/agentic-org-<instance-id>.service`, with
@@ -693,8 +715,8 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |
 | X1a crate and check | new `crates/org-platform/` (skeleton, `service` contract); the workspace `Cargo.toml`; `.github/workflows/ci.yml`, the check script and its allowlist | A2 writes the launchd adapter in `org-platform/src/service/macos.rs` |
-| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs`; `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
-| X1c `admission`, `confinement`, `presence` | `org-platform/src/{admission,confinement,presence}/`, `org-platform/build.rs`; `org-socket/src/{confinement.rs, confinement/, image.rs}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, bootstrap.rs, human.rs (verify_host), recovery.rs, recovery/presence.rs, release.rs, release/platform.rs, release/runtime.rs, supervisor/child.rs, supervisor/channels.rs, supervisor/mod.rs, offices.rs, lib.rs}`, `org-host/build.rs`, `org-host/Cargo.toml` | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `supervisor/mod.rs`. A2 and A3: `org-host/src/lib.rs`, `bootstrap.rs`. A3: the web process's start and its confinement call. A4: `offices.rs` |
+| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (or `org-store/src/files.rs`, where B1a carries its flush); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
+| X1c `admission`, `confinement`, `presence` | `org-platform/src/{admission,confinement,presence}/`, `org-platform/build.rs`; `org-socket/src/{confinement.rs, confinement/, image.rs}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, human.rs (verify_host), recovery.rs, recovery/presence.rs, release.rs, release/platform.rs, release/runtime.rs, supervisor/child.rs, supervisor/channels.rs, supervisor/mod.rs, offices.rs, lib.rs}`, `org-host/build.rs`, `org-host/Cargo.toml` | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `supervisor/mod.rs`. A2 and A3: `org-host/src/lib.rs`, `instance/`, `hostdb`. A3: the web process's start and its confinement call. A4: `offices.rs` |
 | X1d `credentials` | `org-platform/src/credentials/`; `org-host/src/{keys/, host_secrets.rs, host_secrets/}` | A1 (`keys/`, the office secrets key) |
 | X2 first worker | `org-platform/src/{admission,fs,dirs,process,socket}/linux.rs`, `org-platform/src/testing.rs`; the tests in `org-host/src/supervisor/` and `apps/agentic-org/tests/`; `ci.yml` | the tests in `apps/agentic-org/tests/` that A1 and A2 also edit |
 | X3 credentials on Linux | `org-platform/src/credentials/linux.rs`; the `credentials` setup property | A2 (setup) |
@@ -719,7 +741,7 @@ How the tracks avoid each other:
   dialog checks on a Mac and records the result in the merge; X1b needs only macOS CI.
 - **Agree the shared hot spots.** `supervisor/child.rs`, `supervisor/channels.rs`
   and `supervisor/mod.rs` (A1 removes the older launch form there), `keys/` (A1
-  renames the database key), `org-host/src/lib.rs` and `bootstrap.rs` (A2, A3),
+  renames the database key), `org-host/src/lib.rs` and `instance/` (A2, A3),
   `hostdb` (A2, A3) and `offices.rs` (A4) are edited by both tracks. The Track X lead
   asks the other lead which lands first; the second rebases. X1c's change in those files
   is limited to call sites: `spawn_suspended`, `ServerCheck::admit`, `still` and

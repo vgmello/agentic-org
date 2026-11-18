@@ -5,7 +5,28 @@ const MAX_UNTRUSTED_BYTES: usize = 2048;
 
 /// Logs one line. Never pass it secrets; pass text a server sent through [`untrusted`].
 pub(crate) fn log(message: &str) {
+    #[cfg(test)]
+    CAPTURED.with(|captured| {
+        if let Some(lines) = captured.borrow_mut().as_mut() {
+            lines.push(message.to_owned());
+        }
+    });
     eprintln!("agentic-org: {message}");
+}
+
+#[cfg(test)]
+thread_local! {
+    static CAPTURED: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` and returns what it logged on this thread, so a test can assert
+/// that no secret reaches the host log.
+#[cfg(test)]
+pub(crate) fn capture<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+    CAPTURED.with(|captured| *captured.borrow_mut() = Some(Vec::new()));
+    let result = f();
+    let lines = CAPTURED.with(|captured| captured.borrow_mut().take().unwrap_or_default());
+    (result, lines)
 }
 
 /// Text a server sent (e.g. a `failed` message), made safe for one log line: control characters,
@@ -41,6 +62,18 @@ fn breaks_or_reorders(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_collects_this_threads_lines_only_while_active() {
+        log("before");
+        let ((), lines) = capture(|| {
+            log("one");
+            std::thread::spawn(|| log("other thread")).join().unwrap();
+        });
+        assert_eq!(lines, ["one"]);
+        log("after");
+        assert_eq!(capture(|| ()).1, Vec::<String>::new());
+    }
 
     #[test]
     fn untrusted_text_is_escaped_and_cut() {

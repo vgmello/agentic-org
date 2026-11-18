@@ -43,11 +43,11 @@ pub struct AccountVerifyResult {
     pub orgs: Vec<LinkedOrg>,
 }
 
-/// An organization the account is linked to: the member it acts as there and its offices.
+/// An organization the account is linked to: the employee it acts as there and its offices.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedOrg {
     pub org_id: String,
-    pub member_id: String,
+    pub employee_id: String,
     pub office_ids: Vec<String>,
 }
 
@@ -73,7 +73,6 @@ pub struct SessionInspectResult {
     pub admin: bool,
     pub orgs: Vec<LinkedOrg>,
     pub server_time_ms: u64,
-    pub absolute_expires_at_ms: u64,
     pub idle_expires_at_ms: u64,
 }
 impl Call for SessionInspect {
@@ -539,7 +538,7 @@ impl Call for TlsSet {
     type Result = HostOpResult<Empty, TlsRefusal>;
 }
 
-/// Why `tls.set` or `bootstrap` refused a TLS pair (X-02 §6.2, §6.3), with its wire form. These
+/// Why `tls.set` refused a TLS pair (X-02 §6.2, §6.3), with its wire form. These
 /// aren't §9 error codes, and none carries a message.
 ///
 /// A code this build doesn't know decodes as [`TlsRefusal::Unknown`]. It is never sent:
@@ -554,9 +553,8 @@ pub enum TlsRefusal {
     /// `{"code": "tls_invalid"}`: the certificate or the key doesn't parse. Never stored, so a
     /// retry with the same `operation_id` and a fixed pair is checked as new. A pair the PEM reader
     /// refuses has no fingerprint at all: it
-    /// ([`TlsPair::fingerprint`] fails, `TlsRefusal::from` an [`InvalidPem`]) gets it on every
-    /// path, before anything else that needs the pair's fingerprint: `tls.set`'s journal lookup,
-    /// and a `bootstrap` replay's pair comparison (not `tls_mismatch`).
+    /// ([`TlsPairFingerprint`] fails, `TlsRefusal::from` an [`InvalidPem`]) gets it on every
+    /// path, before anything else that needs the pair's fingerprint: `tls.set`'s journal lookup.
     TlsInvalid,
     /// `{"code": "tls_key_mismatch"}`: the key doesn't match the certificate.
     TlsKeyMismatch,
@@ -662,23 +660,15 @@ impl fmt::Display for InvalidTimestamp {
 impl std::error::Error for InvalidTimestamp {}
 
 impl TlsRefusal {
-    /// Whether the host journals this refusal from `op`, so a retry with the same `operation_id`
-    /// replays it (X-02 §6.3):
-    /// - `tls.set`: only `tls_key_mismatch` is stored. It depends on the pair alone, which the
-    ///   fingerprint covers. `tls_invalid` isn't, so a retry with a fixed pair is checked as new;
-    ///   a pair the PEM reader refuses has no fingerprint at all and gets it at the journal lookup
-    ///   ([`TlsRefusal::TlsInvalid`]). The others depend on state outside the op that is expected
-    ///   to change (the stored and running origins, the clock, the stored configuration), so a
-    ///   retry is checked again.
-    ///   [`TlsRefusal::Unknown`] is never stored.
-    /// - `bootstrap`: never. The host runs every bootstrap check before it creates the registry,
-    ///   so a refused bootstrap leaves no record, and a re-run with the same `operation_id` is a
-    ///   first bootstrap.
-    pub fn is_stored(&self, op: TlsInstallOp) -> bool {
-        match op {
-            TlsInstallOp::TlsSet => matches!(self, TlsRefusal::TlsKeyMismatch),
-            TlsInstallOp::Bootstrap => false,
-        }
+    /// Whether `tls.set` journals this refusal, so a retry with the same `operation_id` replays
+    /// it (X-02 §6.3). Only `tls_key_mismatch` is stored: it depends on the pair alone, which
+    /// the fingerprint covers. `tls_invalid` isn't, so a retry with a fixed pair is checked as
+    /// new; a pair the PEM reader refuses has no fingerprint at all and gets it at the journal
+    /// lookup ([`TlsRefusal::TlsInvalid`]). The others depend on state outside the op that is
+    /// expected to change (the stored and running origins, the clock, the stored
+    /// configuration), so a retry is checked again. [`TlsRefusal::Unknown`] is never stored.
+    pub fn is_stored(&self) -> bool {
+        matches!(self, TlsRefusal::TlsKeyMismatch)
     }
 }
 
@@ -690,32 +680,13 @@ impl From<InvalidPem> for TlsRefusal {
 }
 
 impl From<InvalidListenConfig> for TlsRefusal {
-    /// The invalid-configuration rule's refusal, as `bootstrap` and `tls.set` answer it.
+    /// The invalid-configuration rule's refusal, as `tls.set` answers it.
     fn from(invalid: InvalidListenConfig) -> Self {
         match invalid {
             InvalidListenConfig::Listen(_) | InvalidListenConfig::Origin(_) => {
                 TlsRefusal::OriginInvalid
             }
             InvalidListenConfig::Hsts => TlsRefusal::HstsInvalid,
-        }
-    }
-}
-
-/// The ops that install a TLS pair and can refuse it with a [`TlsRefusal`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TlsInstallOp {
-    /// `tls.set`.
-    TlsSet,
-    /// `bootstrap` (its `tls`, and its invalid-configuration check with or without `tls`).
-    Bootstrap,
-}
-
-impl TlsInstallOp {
-    /// The op's method.
-    pub fn method(self) -> &'static str {
-        match self {
-            TlsInstallOp::TlsSet => TlsSet::METHOD,
-            TlsInstallOp::Bootstrap => Bootstrap::METHOD,
         }
     }
 }
@@ -841,74 +812,12 @@ impl Call for Subscribe {
     type Result = Empty;
 }
 
-/// `bootstrap` (bootstrap-mode host only, on its connection to setup's listener): create the
-/// registry and the first account, and answer with a session for it. The host stores
-/// `operation_id` and `hq_operation_id`; on a non-empty registry a different `operation_id` is
-/// refused with `already_bootstrapped`, and the same one replays with a fresh session until
-/// bootstrap has finished, then gets `bootstrap_finished`. Under
-/// `https` a first bootstrap needs `tls`; a replay may omit it and compares a given pair by
-/// fingerprint.
-///
-/// The journal lookup by `operation_id` comes first, as for every journaled op. **A replay then
-/// checks the `login` and password as a sign-in** (X-02 §6.2 step 3, §6.3), never against a
-/// fingerprint, which holds no secret: a `login` and password that don't sign in are the plain
-/// error `not_authorized`, counted toward lockout as `account.verify` is, and setup answers it by
-/// asking for the password again. Then the fingerprint (the normalized `login` and
-/// `hq_operation_id`, [`crate::journal::Journaled`]): another `hq_operation_id` is the plain
-/// error `operation_reused`. Then the pair, compared by [`TlsPair::fingerprint`] with the stored
-/// pair's: another one is `tls_mismatch`, and one the PEM reader refuses (no fingerprint) is
-/// `tls_invalid`, unstored.
-///
-/// Its result is a [`BootstrapOutcome`] ([`HostOpResult`]'s wire form, **never `accepted`**):
-/// `completed` with [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`], in the order
-/// that type states.
-/// On an empty registry the host checks the stored listen configuration with or without `tls`
-/// (`origin_invalid`, `hsts_invalid`), and a first `tls` gets `tls.set`'s checks in `tls.set`'s
-/// order (parse, key match, validity, coverage), all before it creates the registry. **No
-/// bootstrap refusal is ever stored**: a re-run with the same `operation_id` after a refusal on
-/// an empty registry is a first bootstrap.
-pub struct Bootstrap;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BootstrapParams {
-    pub operation_id: String,
-    pub hq_operation_id: String,
-    pub login: String,
-    pub password: Password,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tls: Option<TlsPair>,
-}
-
-/// A TLS pair, as `bootstrap` carries it. Not `Clone`: the key is a secret.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TlsPair {
-    /// The certificate chain, PEM.
-    pub cert: String,
-    pub key: TlsPrivateKey,
-}
-
-impl TlsPair {
-    /// This pair's [`TlsPairFingerprint`], by the one implementation `tls.set`'s journal
-    /// fingerprint uses too, so the same pair fingerprints the same in both ops. A `bootstrap`
-    /// replay compares its pair with the stored one's by it: another fingerprint is
-    /// [`BootstrapRefusal::TlsMismatch`].
-    ///
-    /// An error is a pair the PEM reader refuses ([`crate::pem`]): it has no fingerprint, and the
-    /// host answers it with [`TlsRefusal::TlsInvalid`] (`TlsRefusal::from`), unstored, on every
-    /// path, a replay included.
-    pub fn fingerprint(&self) -> Result<TlsPairFingerprint, InvalidPem> {
-        let TlsPair { cert, key } = self;
-        TlsPairFingerprint::of(cert, key)
-    }
-}
-
 /// A TLS pair's fingerprint (X-02 §6.2, §6.3): the SHA-256, as lowercase hex, of the certificate
 /// chain (every `CERTIFICATE` block's DER, each with a u32 big-endian length prefix, in order) and
 /// of the DER of the key's first `PRIVATE KEY`,
 /// `RSA PRIVATE KEY` or `EC PRIVATE KEY` block, each read by [`crate::pem`]. It holds no secret,
 /// so the journal can keep it: it is `tls.set`'s journal fingerprint fields, serialized as
-/// `{"cert_chain_sha256", "key_der_sha256"}` in that order, and what a `bootstrap` replay compares
-/// pairs by ([`TlsPair::fingerprint`]). The same DER fingerprints the same however its text is
+/// `{"cert_chain_sha256", "key_der_sha256"}` in that order. The same DER fingerprints the same however its text is
 /// wrapped, whatever its line ends (LF, CRLF or a lone CR) and whatever text surrounds the blocks; every
 /// `CERTIFICATE` block in the chain must frame, and the whole chain is hashed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -918,8 +827,8 @@ pub struct TlsPairFingerprint {
 }
 
 impl TlsPairFingerprint {
-    /// The one implementation, for [`TlsPair::fingerprint`] and `TlsSetParams`'
-    /// [`crate::journal::Journaled`] implementation. The decoded key bytes are zeroed once hashed
+    /// The one implementation, for `TlsSetParams`' [`crate::journal::Journaled`]
+    /// implementation. The decoded key bytes are zeroed once hashed
     /// (best effort: `sha2`'s own block buffer isn't). Its error never quotes the pair.
     pub(crate) fn of(cert: &str, key: &TlsPrivateKey) -> Result<Self, InvalidPem> {
         // The whole chain, as the host reads it with `all_blocks`: each block's DER with a u32
@@ -965,158 +874,4 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(hex, "{b:02x}");
         hex
     })
-}
-
-/// `bootstrap`'s completed result: a session for the first account.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BootstrapResult {
-    pub session: SessionHandle,
-}
-
-impl Call for Bootstrap {
-    const METHOD: &'static str = "bootstrap";
-    type Params = BootstrapParams;
-    type Result = BootstrapOutcome;
-}
-
-/// `bootstrap`'s result (X-02 §6.3): [`HostOpResult`]'s wire form, tagged by `status`, without
-/// `accepted`, which bootstrap never answers. So `{"status": "accepted"}` doesn't decode, and
-/// neither does any other status: bootstrap's result shapes are fixed, so there is no `Unknown`.
-/// Not `Clone`: the session is a secret.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum BootstrapOutcome {
-    Completed { result: BootstrapResult },
-    Rejected { refusal: BootstrapRefusal },
-}
-
-/// Why `bootstrap` refused (X-02 §6.3, "Result shapes fixed by move 1"): a [`TlsRefusal`], or
-/// one of bootstrap's own four, `{"code": "tls_required"}`, `{"code": "tls_mismatch"}`,
-/// `{"code": "already_bootstrapped"}` and `{"code": "bootstrap_finished"}`. None is ever stored
-/// ([`BootstrapRefusal::is_stored`]).
-///
-/// **The host decides in this order**, and answers the first that applies. Steps 1 to 3 act on
-/// the journal lookup's answer (no record, a finished one, or a replay), and that lookup comes
-/// first, as for every journaled op:
-/// 1. on a non-empty registry, an `operation_id` other than the recorded bootstrap's (or a
-///    registry setup has no record of) is [`BootstrapRefusal::AlreadyBootstrapped`], whatever
-///    else holds, even after bootstrap has finished;
-/// 2. the recorded `operation_id` gets [`BootstrapRefusal::BootstrapFinished`] once bootstrap has
-///    finished;
-/// 3. otherwise the recorded `operation_id` replays, checked in this order: the `login` and
-///    password as a sign-in (a `login` and password that don't sign in are the plain error
-///    `not_authorized`), then the fingerprint (the normalized `login` and `hq_operation_id`:
-///    another `hq_operation_id` is the plain error `operation_reused`), then the pair, by
-///    [`TlsPair::fingerprint`]: one the PEM reader refuses is [`TlsRefusal::TlsInvalid`], one
-///    other than the stored one is [`BootstrapRefusal::TlsMismatch`]. A replay doesn't re-check
-///    the listen configuration;
-/// 4. on an empty registry: the stored listener fields and `origin`
-///    ([`TlsRefusal::OriginInvalid`]; a missing listen configuration is one), then `hsts`
-///    ([`TlsRefusal::HstsInvalid`]), then
-///    [`BootstrapRefusal::TlsRequired`], then `tls.set`'s order for the pair (parse, key match,
-///    validity, coverage). Every refusal here but `tls_required` is a [`BootstrapRefusal::Tls`].
-///
-/// It is one flat object tagged by `code`, like [`TlsRefusal`]. A code neither type knows decodes
-/// as `Tls(TlsRefusal::Unknown)`; it is never sent: serializing it fails.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BootstrapRefusal {
-    /// `{"code": "tls_required"}`: a first bootstrap under `https` without `tls`.
-    TlsRequired,
-    /// `{"code": "tls_mismatch"}`: a replay with a pair other than the stored one (compared by
-    /// [`TlsPair::fingerprint`]; a pair with no fingerprint is `tls_invalid` instead). Setup
-    /// tells the operator to re-run `setup --resume` with the original pair, or without `tls` and
-    /// then `agentic-org tls renew`.
-    TlsMismatch,
-    /// `{"code": "already_bootstrapped"}`: a different `operation_id` on a non-empty registry
-    /// (whether or not bootstrap has finished), or a registry setup has no record of. Setup
-    /// aborts and tells the operator to resume by signing in (`agentic-org setup --resume`) or to
-    /// repair or uninstall.
-    AlreadyBootstrapped,
-    /// `{"code": "bootstrap_finished"}`: the recorded bootstrap's own `operation_id`, after the
-    /// registry records that bootstrap has finished (setup's `exit` followed the HQ link), so
-    /// bootstrap mode is refused. A distinct result, not an abort: setup goes on to start the
-    /// service host (X-02 §6.2 step 5).
-    BootstrapFinished,
-    /// The listen configuration or the pair failed one of `tls.set`'s checks.
-    Tls(TlsRefusal),
-}
-
-impl BootstrapRefusal {
-    /// Always `false`. On an empty registry the host runs every check before it creates the
-    /// registry, so a refused bootstrap leaves no record ([`TlsRefusal::is_stored`] with
-    /// [`TlsInstallOp::Bootstrap`]); on a non-empty one, `tls_mismatch`, `already_bootstrapped`
-    /// and `bootstrap_finished` answer the request without journaling it.
-    pub fn is_stored(&self) -> bool {
-        match self {
-            BootstrapRefusal::TlsRequired
-            | BootstrapRefusal::TlsMismatch
-            | BootstrapRefusal::AlreadyBootstrapped
-            | BootstrapRefusal::BootstrapFinished => false,
-            BootstrapRefusal::Tls(refusal) => refusal.is_stored(TlsInstallOp::Bootstrap),
-        }
-    }
-}
-
-/// Bootstrap's own codes.
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "code", rename_all = "snake_case")]
-enum BootstrapOwnRefusal {
-    TlsRequired,
-    TlsMismatch,
-    AlreadyBootstrapped,
-    BootstrapFinished,
-}
-
-/// Bootstrap's own codes first: [`TlsRefusal`] would take any other code as its `Unknown`.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum BootstrapRefusalWire {
-    Own(BootstrapOwnRefusal),
-    Tls(TlsRefusal),
-}
-
-impl Serialize for BootstrapRefusal {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            BootstrapRefusal::TlsRequired => BootstrapOwnRefusal::TlsRequired.serialize(s),
-            BootstrapRefusal::TlsMismatch => BootstrapOwnRefusal::TlsMismatch.serialize(s),
-            BootstrapRefusal::AlreadyBootstrapped => {
-                BootstrapOwnRefusal::AlreadyBootstrapped.serialize(s)
-            }
-            BootstrapRefusal::BootstrapFinished => {
-                BootstrapOwnRefusal::BootstrapFinished.serialize(s)
-            }
-            BootstrapRefusal::Tls(refusal) => refusal.serialize(s),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for BootstrapRefusal {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Ok(match BootstrapRefusalWire::deserialize(d)? {
-            BootstrapRefusalWire::Own(BootstrapOwnRefusal::TlsRequired) => {
-                BootstrapRefusal::TlsRequired
-            }
-            BootstrapRefusalWire::Own(BootstrapOwnRefusal::TlsMismatch) => {
-                BootstrapRefusal::TlsMismatch
-            }
-            BootstrapRefusalWire::Own(BootstrapOwnRefusal::AlreadyBootstrapped) => {
-                BootstrapRefusal::AlreadyBootstrapped
-            }
-            BootstrapRefusalWire::Own(BootstrapOwnRefusal::BootstrapFinished) => {
-                BootstrapRefusal::BootstrapFinished
-            }
-            BootstrapRefusalWire::Tls(refusal) => BootstrapRefusal::Tls(refusal),
-        })
-    }
-}
-
-/// `exit` (bootstrap-mode host only): setup is done with the bootstrap-mode host, which exits and
-/// releases `host.lock`. Never served on `host.sock`.
-pub struct Exit;
-
-impl Call for Exit {
-    const METHOD: &'static str = "exit";
-    type Params = Empty;
-    type Result = Empty;
 }

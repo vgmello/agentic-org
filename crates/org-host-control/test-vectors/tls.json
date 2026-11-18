@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "X-02 §2, §6.1-§6.3 (rev 14). 'fetch': tls.fetch's tagged result, {ok:{mode:https,cert,key,origin,hsts}} | {ok:{mode:http_loopback,origin,hsts}} | {unavailable:ListenFailure}; 'expect' is the decoded form or 'refused'. https needs a non-empty cert and key; http_loopback refuses a cert or key of any value, null included. Accepted rows serialize back to the same JSON. 'listen_failure' is ListenFailure alone (status, doctor and unavailable): {reason:origin_invalid} | {reason:hsts_invalid} | {reason:tls_name_mismatch,uncovered:[canonical origins]}. 'refusals': the tls.set/bootstrap refusals with their wire forms and whether each op journals them (only tls.set's tls_key_mismatch; no bootstrap refusal is ever stored). A tls.set pair the PEM reader refuses has no fingerprint, so the journal lookup itself answers tls_invalid, unstored. After the journal lookup, tls.set and bootstrap.tls check in this order: origin_invalid, hsts_invalid, tls_invalid, tls_key_mismatch, tls_not_valid, tls_name_mismatch. 'bad_refusals' don't decode. 'listen_config': the invalid-configuration rule on a stored listen configuration; 'result' is 'valid', 'origin_invalid' (with the OriginError code, or with 'field' when a listener field, address, port or scheme, is missing or malformed: origin can't be checked against it) or 'hsts_invalid', which the host reports as that ListenFailure and bootstrap and tls.set refuse with as that code. A missing origin or hsts has no default. 'bootstrap': bootstrap's result, a HostOpResult that is never 'accepted' ({status:accepted} and any other status don't decode): completed {result:{session}} or rejected {refusal}, the refusal a TlsRefusal or {code:tls_required} / {code:tls_mismatch} / {code:already_bootstrapped} / {code:bootstrap_finished}; 'expect' is 'completed', the refusal's code, or 'refused'. No bootstrap refusal is ever stored. The host decides in this order, the journal lookup first as for every journaled op: on a non-empty registry, an operation_id other than the recorded bootstrap's (or a registry setup has no record of) is already_bootstrapped whatever else holds; the recorded one is bootstrap_finished once bootstrap has finished, and otherwise replays (sign-in, then fingerprint, then pair by TlsPair::fingerprint: another pair is tls_mismatch, and a pair the PEM reader refuses has no fingerprint and is tls_invalid, unstored); on an empty registry, origin_invalid, hsts_invalid, tls_required, then tls.set's order (tls_invalid, tls_key_mismatch, tls_not_valid, tls_name_mismatch). 'timestamps': tls_not_valid's not_before and not_after, RFC 3339 in one profile, YYYY-MM-DDTHH:MM:SSZ (UTC, uppercase T and Z, no fractional seconds, no offset, a real date and time); 'valid' says whether it decodes. A refused one makes the whole refusal fail to decode.",
+  "comment": "X-02 §2, §6.1-§6.3 (rev 14). 'fetch': tls.fetch's tagged result, {ok:{mode:https,cert,key,origin,hsts}} | {ok:{mode:http_loopback,origin,hsts}} | {unavailable:ListenFailure}; 'expect' is the decoded form or 'refused'. https needs a non-empty cert and key; http_loopback refuses a cert or key of any value, null included. Accepted rows serialize back to the same JSON. 'listen_failure' is ListenFailure alone (status, doctor and unavailable): {reason:origin_invalid} | {reason:hsts_invalid} | {reason:tls_name_mismatch,uncovered:[canonical origins]}. 'refusals': the tls.set refusals with their wire forms and whether tls.set journals them (only tls_key_mismatch). A tls.set pair the PEM reader refuses has no fingerprint, so the journal lookup itself answers tls_invalid, unstored. After the journal lookup, tls.set checks in this order: origin_invalid, hsts_invalid, tls_invalid, tls_key_mismatch, tls_not_valid, tls_name_mismatch. 'bad_refusals' don't decode. 'listen_config': the invalid-configuration rule on a stored listen configuration; 'result' is 'valid', 'origin_invalid' (with the OriginError code, or with 'field' when a listener field, address, port or scheme, is missing or malformed: origin can't be checked against it) or 'hsts_invalid', which the host reports as that ListenFailure and tls.set refuses with as that code. A missing origin or hsts has no default. 'timestamps': tls_not_valid's not_before and not_after, RFC 3339 in one profile, YYYY-MM-DDTHH:MM:SSZ (UTC, uppercase T and Z, no fractional seconds, no offset, a real date and time); 'valid' says whether it decodes. A refused one makes the whole refusal fail to decode.",
   "fetch": [
     {
       "name": "https serves the stored pair with the snapshot's origin and hsts",
@@ -432,8 +432,7 @@
         ]
       },
       "stored": {
-        "tls.set": false,
-        "bootstrap": false
+        "tls.set": false
       }
     },
     {
@@ -446,8 +445,7 @@
         ]
       },
       "stored": {
-        "tls.set": false,
-        "bootstrap": false
+        "tls.set": false
       }
     },
     {
@@ -456,8 +454,7 @@
         "code": "tls_invalid"
       },
       "stored": {
-        "tls.set": false,
-        "bootstrap": false
+        "tls.set": false
       }
     },
     {
@@ -466,8 +463,7 @@
         "code": "tls_key_mismatch"
       },
       "stored": {
-        "tls.set": true,
-        "bootstrap": false
+        "tls.set": true
       }
     },
     {
@@ -478,8 +474,7 @@
         "not_after": "2027-12-01T00:00:00Z"
       },
       "stored": {
-        "tls.set": false,
-        "bootstrap": false
+        "tls.set": false
       }
     },
     {
@@ -488,8 +483,7 @@
         "code": "origin_invalid"
       },
       "stored": {
-        "tls.set": false,
-        "bootstrap": false
+        "tls.set": false
       }
     },
     {
@@ -498,8 +492,7 @@
         "code": "hsts_invalid"
       },
       "stored": {
-        "tls.set": false,
-        "bootstrap": false
+        "tls.set": false
       }
     }
   ],
@@ -973,167 +966,6 @@
       },
       "result": "origin_invalid",
       "origin_error": "default_port"
-    }
-  ],
-  "bootstrap": [
-    {
-      "name": "success is completed with a session",
-      "wire": {
-        "status": "completed",
-        "result": {
-          "session": "bootstrap-session-handle"
-        }
-      },
-      "expect": "completed"
-    },
-    {
-      "name": "tls_required: a first https bootstrap without tls",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_required"
-        }
-      },
-      "expect": "tls_required"
-    },
-    {
-      "name": "tls_mismatch: a replay with another pair",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_mismatch"
-        }
-      },
-      "expect": "tls_mismatch"
-    },
-    {
-      "name": "already_bootstrapped: a different operation_id on a non-empty registry, even after bootstrap has finished, or a registry setup has no record of",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "already_bootstrapped"
-        }
-      },
-      "expect": "already_bootstrapped"
-    },
-    {
-      "name": "bootstrap_finished: the recorded operation_id after bootstrap has finished, so setup goes on to step 5",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "bootstrap_finished"
-        }
-      },
-      "expect": "bootstrap_finished"
-    },
-    {
-      "name": "tls_name_mismatch: the pair doesn't cover the configured origin",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_name_mismatch",
-          "uncovered": [
-            "https://mac.local:8443"
-          ]
-        }
-      },
-      "expect": "tls_name_mismatch"
-    },
-    {
-      "name": "tls_invalid",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_invalid"
-        }
-      },
-      "expect": "tls_invalid"
-    },
-    {
-      "name": "tls_key_mismatch",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_key_mismatch"
-        }
-      },
-      "expect": "tls_key_mismatch"
-    },
-    {
-      "name": "tls_not_valid",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_not_valid",
-          "not_before": "2026-12-01T00:00:00Z",
-          "not_after": "2027-12-01T00:00:00Z"
-        }
-      },
-      "expect": "tls_not_valid"
-    },
-    {
-      "name": "tls_not_valid with fractional seconds doesn't decode",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_not_valid",
-          "not_before": "2026-12-01T00:00:00.000Z",
-          "not_after": "2027-12-01T00:00:00Z"
-        }
-      },
-      "expect": "refused"
-    },
-    {
-      "name": "origin_invalid, with or without tls",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "origin_invalid"
-        }
-      },
-      "expect": "origin_invalid"
-    },
-    {
-      "name": "hsts_invalid, with or without tls",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "hsts_invalid"
-        }
-      },
-      "expect": "hsts_invalid"
-    },
-    {
-      "name": "a refusal that doesn't decode",
-      "wire": {
-        "status": "rejected",
-        "refusal": {
-          "code": "tls_name_mismatch"
-        }
-      },
-      "expect": "refused"
-    },
-    {
-      "name": "a completed result without a session",
-      "wire": {
-        "status": "completed",
-        "result": {}
-      },
-      "expect": "refused"
-    },
-    {
-      "name": "accepted: bootstrap never answers it, so it doesn't decode",
-      "wire": {
-        "status": "accepted"
-      },
-      "expect": "refused"
-    },
-    {
-      "name": "a status bootstrap doesn't have",
-      "wire": {
-        "status": "abandoned"
-      },
-      "expect": "refused"
     }
   ],
   "timestamps": [

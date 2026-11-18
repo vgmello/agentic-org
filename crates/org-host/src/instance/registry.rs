@@ -11,6 +11,8 @@ use super::{Error, Name};
 const REGISTRY: &str = "instances.json";
 const CONFIG: &str = "instance.json";
 const LOCK: &str = "registry.lock";
+/// The host's durable record that it created this instance's host registry (ADR-0022).
+const REGISTRY_CREATED: &str = "host-registry.created";
 const MAX_BYTES: usize = 64 * 1024;
 const MAX_INSTANCES: usize = 256;
 
@@ -25,11 +27,19 @@ struct Binding {
     temp_folder: PathBuf,
 }
 
+/// The one format check for an instance ID: canonical lowercase UUIDv7 text (non-negotiable 4).
+/// A ULID, the earlier form, and uppercase hex are refused.
+pub(crate) fn valid_instance_id(id: &str) -> bool {
+    org_proto::is_uuid_v7(id)
+}
+
 impl Binding {
     fn validate(&self) -> Result<(), Error> {
         Name::parse(Some(self.name.as_str()))?;
-        if org_proto::ulid_time_ms(&self.id).is_none() {
-            return Err(Error::Unsafe("instance ID is not a canonical ULID"));
+        if !valid_instance_id(&self.id) {
+            return Err(Error::Unsafe(
+                "instance ID is not a canonical lowercase UUIDv7",
+            ));
         }
         if absolute(&self.root)? != self.root {
             return Err(Error::Unsafe("registered root is not normalized"));
@@ -308,6 +318,29 @@ impl Instance {
         Ok(())
     }
 
+    /// Whether the host recorded that it created this instance's host registry. The marker
+    /// holds the instance ID; any other content is refused rather than trusted.
+    pub(crate) fn registry_created(&self) -> Result<bool, Error> {
+        self.root.verify()?;
+        match self.root.read(REGISTRY_CREATED, MAX_BYTES)? {
+            None => Ok(false),
+            Some(bytes) if *bytes == *self.binding.id.as_bytes() => Ok(true),
+            Some(_) => Err(Error::Unsafe("host registry marker names another instance")),
+        }
+    }
+
+    /// Records, durably and once, that the host registry exists. The caller holds this
+    /// instance's root lock and `host.lock`, and calls it only after the registry is
+    /// published. A later start that finds the marker without the registry refuses.
+    pub(crate) fn record_registry_created(&self) -> Result<(), Error> {
+        if self.registry_created()? {
+            return Ok(());
+        }
+        self.root
+            .publish(REGISTRY_CREATED, self.binding.id.as_bytes(), None)?;
+        Ok(())
+    }
+
     pub(crate) fn temp_folder(&self) -> &Path {
         &self.binding.temp_folder
     }
@@ -503,7 +536,7 @@ impl Registry {
                 if !root.is_empty()? {
                     return Err(Error::Conflict("unregistered root contains existing state"));
                 }
-                let id = crate::ids::generate()?;
+                let id = crate::ids::uuid_v7()?;
                 if locator.entries.iter().any(|e| e.binding.id == id) {
                     return Err(Error::Conflict(
                         "generated instance ID is already reserved; retry",
@@ -564,6 +597,31 @@ impl Registry {
             .verify()?;
         self.directory.verify_file(LOCK, &lock)?;
         Ok((entry.binding.id.clone(), entry.binding.temp_folder.clone()))
+    }
+
+    /// The browser ports registered instances saved, with each instance's name. An entry
+    /// whose root or configuration cannot be read is skipped: setup uses this only to
+    /// avoid choosing a port another instance already owns.
+    pub(crate) fn saved_browser_ports(&self) -> Result<Vec<(String, u16)>, Error> {
+        let lock = self.directory.lock_file(LOCK)?;
+        let (locator, _) = self.load()?;
+        let mut ports = Vec::new();
+        for entry in &locator.entries {
+            let Ok(root) = Directory::open_root(&entry.binding.root, false) else {
+                continue;
+            };
+            let Ok(Some(bytes)) = root.read(CONFIG, MAX_BYTES) else {
+                continue;
+            };
+            let Ok(config) = decode::<Config>(&bytes) else {
+                continue;
+            };
+            if let Some(listen) = config.browser {
+                ports.push((entry.binding.name.as_str().to_owned(), listen.port()));
+            }
+        }
+        self.directory.verify_file(LOCK, &lock)?;
+        Ok(ports)
     }
 
     fn load(&self) -> Result<(Locator, Option<ControlFile>), Error> {

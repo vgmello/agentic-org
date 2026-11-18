@@ -46,12 +46,24 @@ pub struct OfficeCounts {
     pub active: u64,
     pub failed: u64,
 }
+/// Whether the instance has an administrator account yet (A2). Until it does, only a
+/// registration link (setup or `admin reset`) can create one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Administrator {
+    None,
+    Present,
+    #[serde(other, skip_serializing)]
+    Unknown,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceStatusResult {
     pub instance_id: String,
     pub mode: InstanceMode,
     pub gateway: GatewayStatus,
     pub offices: OfficeCounts,
+    pub administrator: Administrator,
 }
 impl Call for InstanceStatus {
     const METHOD: &'static str = "instance.status";

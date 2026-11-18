@@ -33,15 +33,15 @@ Code-signing identifiers, entitlement requirements, launch framing and key-store
 namespaces are persisted identities. They do not follow file names, and release
 tooling signs the four executables with those identities.
 
-## Where the entry points stand (2026-11-17)
+## Where the entry points stand (2026-11-18)
 
 This section is what the code does today. Each statement was checked against the
 source; recheck it against the commit you work on.
 
 | Executable | What works |
 | --- | --- |
-| `agentic-org` | `serve`, help and version. `setup` refuses without changing state ([`apps/agentic-org/src/lib.rs`](../../apps/agentic-org/src/lib.rs)). The host socket answers only `hello` and `instance.status` (`crates/org-host/src/service/mod.rs`). |
-| `agentic-org-office` | Runs when the host starts it, on macOS only (`crates/org-host/src/spawn.rs`). Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls yet. |
+| `agentic-org` | On macOS: `setup [--name N] [--port P]` creates the instance, registers and starts its launchd user service and prints one registration link when the output is a terminal ([`crates/org-host/src/setup_flow.rs`](../../crates/org-host/src/setup_flow.rs)); `admin reset [--name N]` issues a new registration link after local presence and the system dialog (its set-new-password branch answers `unavailable` until A3); `service start\|stop\|status [--name N]`; `serve --name N` runs a registered instance from its frozen setup record and creates the host registry at first start. Help and version. Setup on other systems refuses before any change. A release build of `setup` and `serve --name` refuses until it carries a pinned runtime release (SRV-1). Debug builds keep the legacy `serve --home` entry for integration tests. The host socket answers `hello`, `instance.status` (with `administrator`), `admin.link.initial` and `admin.reset` (`crates/org-host/src/service/mod.rs`, `crates/org-host/src/admin.rs`). |
+| `agentic-org-office` | Runs when the host starts it, on macOS only (`crates/org-host/src/spawn.rs`). The host launches it only over the registered instance's verified rendezvous; a host with no registered instance starts no office. Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls yet. The host no longer sends the name-only non-HQ `organization.create`; the worker's v2 create arm and the v2 wire types are removed in A1.5. |
 | `agentic-org-web` | Help and version. `--serve` runs only after a verified host handoff and otherwise refuses without opening a listener ([`apps/agentic-org-web/src/main.rs`](../../apps/agentic-org-web/src/main.rs)); the host starts it only in debug/test instance composition, and it serves only `GET /api/v1/version`. |
 | `agent-os` | Messaging, directory and work calls against a running office when one is named; with none it writes to a file queue, which is deleted (implementation plan B6). |
 
@@ -57,6 +57,8 @@ The order in which these become usable is the
 
 Run format, workspace Clippy and tests with the pinned toolchain. Tests check the
 four production targets, that no standalone host binary exists, that help and
-version create no state, that `setup` refuses without partial provisioning, and
+version create no state, that `setup` refuses satellite flags and unknown arguments
+without partial provisioning, that `setup` run twice changes nothing (with a
+child-process service manager; no test touches launchd unless opted in), and
 that web startup refuses without opening a listener until the handoff is wired.
 Tests use temporary roots and never touch a real organization.

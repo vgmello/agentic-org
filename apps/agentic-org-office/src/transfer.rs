@@ -4,7 +4,7 @@ mod recovery;
 mod writer;
 use crate::{revocations::Revocations, startup};
 pub(super) use channels::Channels;
-use org_office_launch::v3::{self, ChannelKind, TransferRecord};
+use org_office_launch::{ChannelKind, TransferRecord};
 #[cfg(not(test))]
 use org_socket::poll_readable;
 use org_socket::rights::ReceiveError;
@@ -73,7 +73,7 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid transfer record")
 }
 fn decode(payload: &[u8], descriptors: usize) -> io::Result<TransferRecord> {
-    let record = v3::decode_transfer_record(payload).map_err(|_| invalid())?;
+    let record = org_office_launch::decode_transfer_record(payload).map_err(|_| invalid())?;
     if descriptors != record.fd_count() {
         return Err(invalid());
     }
@@ -85,12 +85,12 @@ fn receive(
     transport: &mut startup::Transfer,
 ) -> Result<
     (
-        [u8; v3::TRANSFER_HEADER_MAX_BYTES],
+        [u8; org_office_launch::TRANSFER_HEADER_MAX_BYTES],
         org_socket::rights::Received,
     ),
     ReceiveError,
 > {
-    let mut payload = [0; v3::TRANSFER_HEADER_MAX_BYTES];
+    let mut payload = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
     let received = transport
         .receiver
         .receive_up_to(&mut payload, 1, &transport.fence)?;
@@ -123,7 +123,7 @@ pub(super) fn install_initial(
                 writer::install(stream, office, instance, &office_id)?;
                 return startup::write_event(
                     out,
-                    &v3::RendezvousEvent::FdsReceived { of: channel_id },
+                    &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
                 )
                 .map_err(|_| invalid());
             }

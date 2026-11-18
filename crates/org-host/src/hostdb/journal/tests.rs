@@ -1,5 +1,5 @@
 use super::*;
-use crate::hostdb::tests::first_account::PHC;
+use crate::hostdb::tests::admin_fixture::PHC;
 use serde_json::json;
 
 thread_local! {
@@ -43,10 +43,7 @@ fn completed() -> Effect {
 fn rejected(code: org_proto::ErrorCode) -> Effect {
     Effect {
         stored: Stored::Rejected {
-            refusal: org_proto::ApiError {
-                code,
-                message: "refused".into(),
-            },
+            refusal: org_proto::ApiError::new(code, "refused"),
         },
         verifier: None,
     }

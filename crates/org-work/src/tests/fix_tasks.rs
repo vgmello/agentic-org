@@ -18,7 +18,7 @@ fn undo(w: &World, id: &str, version: u64) -> WorkCall {
 fn cancel(w: &World, task: &str) {
     let mut p = w.status(task, ItemStatus::Done);
     p.resolution = Some(Resolution::Cancelled);
-    w.ok(&app(), WorkCall::TaskSetStatus(p));
+    w.ok(&owner_by_grant(), WorkCall::TaskSetStatus(p));
 }
 
 fn link_fixes(w: &World, task: &str, bug: &str) -> WorkCall {
@@ -57,11 +57,11 @@ fn a_task_created_with_fixes_links_to_the_bug_and_both_summaries_show_it() {
 
     // The bug's summary lists its fix tasks (in the answer of a call on the bug).
     let p = w.bug_assign(&bug, Some("riley"));
-    let accepted = w.ok(&app(), WorkCall::BugAssign(p));
+    let accepted = w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
     assert_eq!(accepted.items[0].fixed_by, std::slice::from_ref(&task));
     let second = w.fix_task(&bug);
     let p = w.bug_assign(&bug, None);
-    let accepted = w.ok(&app(), WorkCall::BugAssign(p));
+    let accepted = w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
     let mut fixed_by = accepted.items[0].fixed_by.clone();
     fixed_by.sort();
     let mut want = vec![task.clone(), second.clone()];
@@ -69,9 +69,9 @@ fn a_task_created_with_fixes_links_to_the_bug_and_both_summaries_show_it() {
     assert_eq!(fixed_by, want);
 
     // A deleted fix task drops out of the list.
-    w.ok(&app(), w.delete(&second));
+    w.ok(&owner_by_grant(), w.delete(&second));
     let p = w.bug_assign(&bug, Some("riley"));
-    let accepted = w.ok(&app(), WorkCall::BugAssign(p));
+    let accepted = w.ok(&owner_by_grant(), WorkCall::BugAssign(p));
     assert_eq!(accepted.items[0].fixed_by, [task]);
 }
 
@@ -87,7 +87,7 @@ fn fixes_refusals_on_create() {
     };
     let task = w.task();
     let deleted = w.bug();
-    w.ok(&app(), w.delete(&deleted));
+    w.ok(&owner_by_grant(), w.delete(&deleted));
     let l = || w.id();
     type Edit = Box<dyn Fn(&mut TaskCreateParams)>;
     let fix = |bug_id: &str| NewFixLink {
@@ -165,7 +165,11 @@ fn fixes_refusals_on_create() {
     for (f, code, what) in cases {
         let mut p = w.create_params(PROJECT);
         f(&mut p);
-        assert_eq!(w.code(&app(), WorkCall::TaskCreate(p)), code, "{what}");
+        assert_eq!(
+            w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
+            code,
+            "{what}"
+        );
     }
     // A taken link id.
     let taken = w
@@ -181,7 +185,7 @@ fn fixes_refusals_on_create() {
         bug_id: bug,
     }];
     assert_eq!(
-        w.code(&app(), WorkCall::TaskCreate(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
         ErrorCode::AlreadyExists
     );
 }
@@ -230,7 +234,7 @@ fn work_link_fixes_goes_from_a_task_to_a_bug_of_its_project() {
     });
     assert_eq!(w.code(&agent(), doc), ErrorCode::InvalidRequest);
     let gone = w.bug();
-    w.ok(&app(), w.delete(&gone));
+    w.ok(&owner_by_grant(), w.delete(&gone));
     assert_eq!(
         w.code(&agent(), link_fixes(&w, &task, &gone)),
         ErrorCode::InvalidRequest
@@ -404,7 +408,7 @@ fn deleted_fix_tasks_are_ignored_when_counting() {
     let bug = w.triaged();
     let (a, b) = (w.fix_task(&bug), w.fix_task(&bug));
     let v = w.version(&bug);
-    w.ok(&app(), w.delete(&b));
+    w.ok(&owner_by_grant(), w.delete(&b));
     assert_eq!(w.version(&bug), v, "deleting a fix task is no trigger");
     w.set(&a, ItemStatus::Done);
     assert_eq!(w.item(&bug).status, ItemStatus::Fixed);
@@ -419,7 +423,7 @@ fn unlinking_or_deleting_a_fix_task_changes_nothing() {
     let v = w.version(&bug);
     let link = w.item(&task).live_links().next().expect("link").id.clone();
     w.ok(
-        &app(),
+        &owner_by_grant(),
         WorkCall::Unlink(WorkUnlinkParams {
             change_id: w.id(),
             link_id: link,
@@ -431,7 +435,7 @@ fn unlinking_or_deleting_a_fix_task_changes_nothing() {
     let done_bug = w.bug_at(ItemStatus::Fixed);
     let t = w.fix_task(&done_bug);
     let v = w.version(&done_bug);
-    w.ok(&app(), w.delete(&t));
+    w.ok(&owner_by_grant(), w.delete(&t));
     assert_eq!(w.version(&done_bug), v);
     assert_eq!(w.item(&done_bug).status, ItemStatus::Fixed);
 }
@@ -470,12 +474,12 @@ fn fixed_stays_when_a_required_bug_step_is_left_and_an_event_says_so() {
     );
     // There is nothing to undo in it.
     assert_eq!(
-        w.code(&app(), undo(&w, &bug, e.version)),
+        w.code(&owner_by_grant(), undo(&w, &bug, e.version)),
         ErrorCode::InvalidRequest
     );
 
     // The tick is not an edge either: the rule runs when a fix task changes again.
-    w.ok(&app(), w.check(&step_id, true));
+    w.ok(&owner_by_grant(), w.check(&step_id, true));
     assert_eq!(w.item(&bug).status, ItemStatus::InProgress);
     w.set(&task, ItemStatus::InProgress);
     w.set(&task, ItemStatus::Done);
@@ -535,7 +539,7 @@ fn a_bug_fixed_by_hand_goes_back_when_a_fix_task_is_reopened() {
     w.set(&task, ItemStatus::Done);
     w.set(&task, ItemStatus::InProgress);
     let p = w.fixed_params(&bug);
-    w.ok(&app(), WorkCall::BugMarkFixed(p));
+    w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
     w.set(&task, ItemStatus::Done);
     w.set(&task, ItemStatus::Todo);
     let b = w.item(&bug);
@@ -559,7 +563,7 @@ fn still_happens_and_a_reopen_are_not_fixed_again_by_old_fix_tasks() {
     // Another unrelated change to the done task is no edge for the bug.
     let v = w.version(&bug);
     w.ok(
-        &app(),
+        &owner_by_grant(),
         WorkCall::TaskUpdate({
             let mut p = w.update(&task);
             p.title = Some("Fix the coupon, again".into());
@@ -573,7 +577,7 @@ fn still_happens_and_a_reopen_are_not_fixed_again_by_old_fix_tasks() {
     let t = w.fix_task(&closed);
     w.set(&t, ItemStatus::Done);
     let p = w.reopen_params(&closed);
-    w.ok(&app(), WorkCall::BugReopen(p));
+    w.ok(&owner_by_grant(), WorkCall::BugReopen(p));
     assert_eq!(w.item(&closed).status, ItemStatus::Triaged);
 }
 
@@ -606,7 +610,7 @@ fn a_task_made_from_the_bugs_own_step_that_also_fixes_it_changes_the_bug_once() 
     });
     w.triage(&bug);
     let (task, call) = w.make_task(&step);
-    w.ok(&app(), call);
+    w.ok(&owner_by_grant(), call);
     w.ok(&agent(), link_fixes(&w, &task, &bug));
     w.set(&task, ItemStatus::InProgress);
     assert_eq!(w.item(&bug).status, ItemStatus::InProgress);
@@ -678,16 +682,16 @@ fn undoing_fixed_goes_back_and_undoing_a_reopen_goes_back_to_fixed() {
     w.set(&task, ItemStatus::Done);
     let fixed_at = w.version(&bug);
     assert_eq!(w.item(&bug).status, ItemStatus::Fixed);
-    w.ok(&app(), undo(&w, &bug, fixed_at));
+    w.ok(&owner_by_grant(), undo(&w, &bug, fixed_at));
     assert_eq!(w.item(&bug).status, ItemStatus::InProgress);
 
     // Fixed again by hand with a note, reopened by its task, and the reopen undone.
     let p = w.fixed_params(&bug);
-    w.ok(&app(), WorkCall::BugMarkFixed(p));
+    w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
     w.set(&task, ItemStatus::Todo);
     assert_eq!(w.item(&bug).status, ItemStatus::InProgress);
     let auto = w.version(&bug);
-    w.ok(&app(), undo(&w, &bug, auto));
+    w.ok(&owner_by_grant(), undo(&w, &bug, auto));
     let b = w.item(&bug);
     assert_eq!(b.status, ItemStatus::Fixed);
     assert_eq!(
@@ -707,13 +711,16 @@ fn undo_refusals_for_a_bug() {
 
     // Not automatic: the triage.
     assert_eq!(
-        w.code(&app(), undo(&w, &bug, auto - 1)),
+        w.code(&owner_by_grant(), undo(&w, &bug, auto - 1)),
         ErrorCode::InvalidRequest
     );
     // A later change to the status makes it stale.
     let p = w.fixed_params(&bug);
-    w.ok(&app(), WorkCall::BugMarkFixed(p));
-    assert_eq!(w.code(&app(), undo(&w, &bug, auto)), ErrorCode::Conflict);
+    w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
+    assert_eq!(
+        w.code(&owner_by_grant(), undo(&w, &bug, auto)),
+        ErrorCode::Conflict
+    );
 
     // After an hour.
     let bug2 = w.triaged();
@@ -722,7 +729,7 @@ fn undo_refusals_for_a_bug() {
     let auto2 = w.version(&bug2);
     w.clock.advance(UNDO_WINDOW + 1);
     assert_eq!(
-        w.code(&app(), undo(&w, &bug2, auto2)),
+        w.code(&owner_by_grant(), undo(&w, &bug2, auto2)),
         ErrorCode::InvalidRequest
     );
 }
@@ -736,8 +743,11 @@ fn a_comment_after_the_automatic_change_does_not_block_its_undo() {
     let task = w.fix_task(&bug);
     w.set(&task, ItemStatus::InProgress);
     let auto = w.version(&bug);
-    w.ok(&app(), WorkCall::Comment(w.comment(&bug, "On it")));
-    w.ok(&app(), undo(&w, &bug, auto));
+    w.ok(
+        &owner_by_grant(),
+        WorkCall::Comment(w.comment(&bug, "On it")),
+    );
+    w.ok(&owner_by_grant(), undo(&w, &bug, auto));
     assert_eq!(w.item(&bug).status, ItemStatus::Triaged);
 }
 
@@ -754,7 +764,9 @@ fn a_task_and_its_bug_commit_together_or_not_at_all() {
     w.store.fail_next(FailPoint::RecordChange);
     let p = w.status(&task, ItemStatus::InProgress);
     assert!(
-        w.svc.call(app(), WorkCall::TaskSetStatus(p)).is_err(),
+        w.svc
+            .call(owner_by_grant(), WorkCall::TaskSetStatus(p))
+            .is_err(),
         "the storage error reaches the caller"
     );
     assert_eq!(
@@ -793,7 +805,7 @@ fn a_task_cannot_be_created_with_more_fix_links_than_an_item_may_have() {
         })
         .collect();
     assert_eq!(
-        w.code(&app(), WorkCall::TaskCreate(p)),
+        w.code(&owner_by_grant(), WorkCall::TaskCreate(p)),
         ErrorCode::InvalidRequest
     );
 }

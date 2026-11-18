@@ -95,8 +95,10 @@ agentic-org-office --discard <id>    # remove an unfinished office, then exit (t
 ```
 
 - Nothing but the office ID goes on the command line.
-- **stdin is the control pipe.** Its EOF means the host is gone: the worker stops
-  accepting, finishes in-flight writes, removes its socket, releases the lock and exits.
+- **stdin carries only the first line.** The worker drains stdin after it and never
+  treats stdin as a lifetime signal. **The rendezvous connection is the host's
+  lifetime:** when it ends, the host is gone and the worker stops accepting, finishes
+  in-flight writes, removes its socket, releases the lock and exits.
 - **stdout is untrusted** and carries nothing the host acts on; logs go to stderr, which
   the host writes to the office's log (`0600`, rotated at 10 MiB, one old file kept).
 - **No child can read or write the control channel.** First thing at startup, before
@@ -149,7 +151,7 @@ worker keeps one copy in memory, zeroed on drop.
 
 The transfer socket (a datagram socket pair, host to worker) carries channel records:
 a JSON header of at most 1024 bytes and zero or one descriptor. Web channels arrive as
-`ChannelKind::Gateway` records and native ones as `ChannelKind::Local`. An office
+`ChannelKind::Web` records and native ones as `ChannelKind::Local`. An office
 accepts at most eight channels, at most seven of them from the web process, so one
 stays free for a local caller. Session revocation arrives as a `Revoked` record. Package
 export for recovery uses a separate `recovery_public_read` record with one connected
@@ -201,7 +203,7 @@ replacements for missing committed custody. One gate per operation serializes wo
 attempts. The handoff carries the exact prepared plan and IDs, which the worker's
 intent keeps. The host installs writer custody before admitting the office and keeps
 the outcome pending until the worker has written the initial files and is ready. The
-initial canonical files and the directory generation enter the work acceptance journal
+initial canonical files and the directory generation enter the office's acceptance journal
 together. Remote connectivity and publication, and HR execution, are reported as
 unverified.
 
@@ -233,8 +235,11 @@ The instance configuration has an optional `browser` listener snapshot, written 
 protected setup under the instance lock and never taken from HTTP. A bind uses one
 validated snapshot. Loopback HTTP is admitted; HTTPS is unavailable until the host
 verifies its certificate pair, and it is never downgraded. The browser service starts
-only for a registered, protected HQ instance, restarts with bounded backoff and is
-killed and reaped at host shutdown. Its failure leaves native control available.
+once the instance is registered and its host authentication (registry) is present; no
+organization or Active HQ is required, because the person registers from setup's link and
+creates the organization in the browser, and routes that need an organization or office
+answer their own "not yet" state (for example `organizations: []`). It restarts with
+bounded backoff and is killed and reaped at host shutdown. Its failure leaves native control available.
 
 ### `failed` codes
 
@@ -299,7 +304,8 @@ restarted.
   moment, intermediate states may be skipped and duplicates are possible, so clients
   replace their record idempotently.
 - **Shutdown** (the service manager's stop signal, or the host exiting): close every
-  child's stdin, wait up to 10 s, then SIGKILL what is left, and reap.
+  child's stdin and its rendezvous connection (the worker stops on the rendezvous
+  closing), wait up to 10 s, then SIGKILL what is left, and reap.
 - **Create:** under the catalog mutex only, check the name and its uniqueness among the
   instance's organizations (ignoring case, counting creates in flight), make the IDs,
   reserve the name and release the mutex. Outside it: create the office secrets key and
@@ -380,6 +386,18 @@ it restarts the worker; it never races a live worker over its agents.
   `supervisor` (spawn, the launch protocol, status, backoff, shutdown), `service` (the
   host socket), `keys` and `host_secrets` (credential providers), `spawn` (process
   admission).
+- `keys::OfficeSecretsKeys` is the host's own contract for the office secrets keys
+  (create add-only, load, delete, list; errors carry codes, never key bytes). Its
+  adapters: the macOS Data Protection keychain (`keys/keychain.rs`, service
+  `org.agentic.office-key`), owner-only files in a development folder for debug builds
+  (`keys/dev.rs`), an in-memory store with fault injection for tests (`keys/memory.rs`),
+  and, for every other operating system, an adapter that refuses each call with a
+  reported reason (`keys/unsupported.rs`). `keys/platform.rs` holds the only
+  `cfg(target_os)` choice and owns the Keychain preconditions (the compiled-in access
+  group, its entitlement and the host's own hardening). Another operating system gets the
+  refusing adapter before any of them is checked, so its operator sees "this operating
+  system has no office secrets key store", never a macOS-only reason. The supervisor and
+  provisioning never branch on the platform.
 - The organization name rule is `org_proto::OrganizationName`: trimmed, Unicode
   lowercase as its key, refusing empty, too long and control characters
   (`invalid_name`).
@@ -390,12 +408,12 @@ it restarts the worker; it never races a live worker over its agents.
 
 | Increment | Requirement | Code today |
 | --- | --- | --- |
-| A1 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/v3.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
+| A1 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/contract.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
 | A1, A3 | People are authorized by grants; no application token | The older first line still carries `app_token`, and the host still has `app_auth.rs`; the worker stores the grant key unused. |
 | A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
-| A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
+| A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
-| A1 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
+| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5); an operating system without an adapter refuses. |
 | X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
 
 `organization.provision.v1` today carries a `home_team_name`, creates no person record
@@ -405,7 +423,7 @@ The office directory today is `<home>/offices/<office-id>/` under the host home
 resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`
 besides `office.lock` and `office.json`. Those databases are the source of truth until
 the store writes the [storage tree](organization-data/README.md#shared-storage-contract)
-(implementation plan B1). The rendezvous's first line still has an optional
+(implementation plan B1b). The rendezvous's first line still has an optional
 `id_profile: "selected_v1"`; without it the code accepts the older alphanumeric IDs, and
 `office.json` version 2 holds UUIDv7 IDs. Every ID becomes UUIDv7 and the profile
 switch goes (FC-142). The `joined` event, the `child` and `child_gone` events, the

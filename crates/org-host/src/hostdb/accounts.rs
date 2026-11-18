@@ -138,6 +138,7 @@ fn read(db: &Connection, account_id: &AccountId) -> Result<Option<Account>, Erro
     Ok(Some(account))
 }
 
+mod store;
 #[cfg(test)]
 mod tests;
 

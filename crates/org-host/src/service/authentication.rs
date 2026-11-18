@@ -24,7 +24,12 @@ use crate::hostdb::{
     HostDb,
 };
 
+/// Argon2 runs at most this many at once, native and browser paths together.
 const MAX_HASHES: usize = 2;
+// The limits below apply only to native sessions (this connection-bound map).
+// Browser sessions live in the `BrowserSessions` store: no absolute lifetime,
+// no per-connection cap, the 30-day idle rule and the store's host-wide
+// `SESSION_LIMIT` (A3 plan B4 step 5).
 const MAX_SESSIONS: usize = 1024;
 const MAX_CONNECTION_SESSIONS: usize = 32;
 const ABSOLUTE: Duration = Duration::from_secs(12 * 3600);
@@ -130,7 +135,7 @@ fn unavailable() -> ApiError {
 fn storage(_: crate::hostdb::Error) -> ApiError {
     unavailable()
 }
-fn wall_ms() -> Result<u64, ApiError> {
+pub(super) fn wall_ms() -> Result<u64, ApiError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -150,7 +155,7 @@ pub(crate) fn hash_password(password: &Password) -> Result<Verifier, ApiError> {
     if password.expose().len() > 4096 {
         return Err(denied());
     }
-    let random = crate::secrets::generate_db_key().map_err(|_| unavailable())?;
+    let random = crate::secrets::generate_office_secrets_key().map_err(|_| unavailable())?;
     let salt = SaltString::encode_b64(&random.expose_bytes()[..16]).map_err(|_| unavailable())?;
     Verifier::new(
         argon()?
@@ -158,13 +163,13 @@ pub(crate) fn hash_password(password: &Password) -> Result<Verifier, ApiError> {
             .map_err(|_| unavailable())?
             .to_string(),
     )
-    .map_err(storage)
+    .map_err(|_| unavailable())
 }
 fn digest(handle: &SessionHandle) -> [u8; 32] {
     Sha256::digest(handle.expose().as_bytes()).into()
 }
 fn random_handle() -> Result<SessionHandle, ApiError> {
-    let bytes = crate::secrets::generate_db_key().map_err(|_| unavailable())?;
+    let bytes = crate::secrets::generate_office_secrets_key().map_err(|_| unavailable())?;
     SessionHandle::new(
         bytes
             .expose_bytes()
@@ -207,14 +212,11 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
-                    member_id: l.member_id().into(),
+                    employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })
                 .collect(),
             server_time_ms: wall,
-            absolute_expires_at_ms: wall
-                .checked_add(absolute.as_millis() as u64)
-                .ok_or_else(unavailable)?,
             idle_expires_at_ms: wall
                 .checked_add(idle.as_millis() as u64)
                 .ok_or_else(unavailable)?,
@@ -288,7 +290,12 @@ impl Authentication {
         custody: Arc<dyn HostSecrets>,
         instance: &str,
     ) -> Result<Self, ApiError> {
-        let db = Arc::new(HostDb::open(home, &*custody).map_err(storage)?);
+        let db = Arc::new(HostDb::open(home, &*custody).map_err(|e| match e {
+            crate::hostdb::Error::Outdated => {
+                ApiError::new(ErrorCode::Unavailable, crate::hostdb::sessions::OUTDATED)
+            }
+            e => storage(e),
+        })?);
         Self::new(db, custody, instance)
     }
     fn new(
@@ -323,16 +330,8 @@ impl Authentication {
             return Err(denied());
         }
         let key = LoginKey::new(login).map_err(|_| denied())?;
-        let permit = self
-            .hashing
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                (n < MAX_HASHES).then_some(n + 1)
-            })
-            .map_err(|_| unavailable())?;
-        let _ = permit;
-        let _permit = HashPermit(&self.hashing);
         let now = wall_ms()?;
-        let socket = if connection.channel_kind() == org_office_launch::v3::ChannelKind::Gateway {
+        let socket = if connection.channel_kind() == org_office_launch::ChannelKind::Web {
             Socket::Control
         } else {
             Socket::Local
@@ -350,6 +349,16 @@ impl Authentication {
         {
             return Err(denied());
         }
+        // The permit follows the lockout read: a locked login or socket never
+        // occupies a hash slot, so locked calls cannot starve verification.
+        let permit = self
+            .hashing
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < MAX_HASHES).then_some(n + 1)
+            })
+            .map_err(|_| unavailable())?;
+        let _ = permit;
+        let _permit = HashPermit(&self.hashing);
         let credentials = self.db.account_credentials(&key).map_err(storage)?;
         let verifier = credentials.as_ref().map_or(&self.dummy, |c| c.verifier());
         let parsed = PasswordHash::new(verifier.expose()).map_err(|_| unavailable())?;
@@ -425,7 +434,7 @@ impl Authentication {
                 .iter()
                 .map(|l| LinkedOrg {
                     org_id: l.org_id().into(),
-                    member_id: l.member_id().into(),
+                    employee_id: l.member_id().into(),
                     office_ids: vec![],
                 })
                 .collect(),
@@ -620,5 +629,6 @@ impl Authentication {
     }
 }
 
+mod browser;
 #[cfg(test)]
 pub(crate) mod tests;

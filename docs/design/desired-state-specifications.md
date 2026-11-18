@@ -171,7 +171,7 @@ development process ([development process design](development-processes.md#5-two
    there is none, and may group them in milestones of that release. A task says which code links it is
    expected to touch.
 10. They decide which roles the tasks need. For each, the technical lead reads the role
-    (`agent-os role show`) and asks HR for the hire with a reason
+    (`agent-os role inspect`) and asks HR for the hire with a reason
     ([development process design](development-processes.md#7-hiring-when-the-development-process-says-so)).
     A lead with hiring power approves: the request goes up the lead chain until it
     reaches one, and the technical lead's own request is enough when it leads the
@@ -214,8 +214,8 @@ advances its revision, is attributed and is kept in organization Git. It reaches
 agent that works on the project as guidance, and the technical lead reads it first the
 next time the same question comes up.
 
-- The technical lead writes project standards with `agent-os process new` and
-  `process edit`, which the process design opens to agents of the project's own team
+- The technical lead writes project standards with `agent-os process create` and
+  `process update`, which the process design opens to agents of the project's own team
   ([process design](processes.md), decision 8).
 - An agent adds standards and changes the project's own. It cannot replace one
   inherited from the organization, a team or the development process, cannot mark a document not
@@ -260,7 +260,7 @@ These calls are general and belong to the documentation tree
 - **`realizes`** is a field of the task and is set through the task calls
   ([task design](tasks-projects-docs.md)). The service checks that each entry is an
   issued version of a document of the task's project.
-- **`agent-os`:** `doc issue`, `doc diff`, `doc versions`, `doc code-link add | remove`,
+- **`agent-os`:** `doc issue`, `doc diff`, `doc versions`, `doc link-code` and `doc unlink-code`,
   `doc code-links [--path <file>] [--check]`, `doc status`, and `task create | edit
   --realizes <document>@<version>`. `doc link` stays the command for links between
   records ([knowledge UX](../specs/decisions-and-tech-debt-ux.md), AUTH-5).
@@ -271,7 +271,7 @@ These calls are general and belong to the documentation tree
 | --- | --- |
 | DSS-1 | Choosing `dss` for a project shows two seed roles, adds the product and technical sections and gives the project Product, Technical and Releases tabs; nothing else is created, and the project has no Features tab. |
 | DSS-2 | A Product DSS document is created from its template under a product domain section and appears in the index with its summary. |
-| DSS-3 | Edits to an issued document do not change what `doc show` returns by default; issuing does, and adds one version with its note and issuer. |
+| DSS-3 | Edits to an issued document do not change what `doc inspect` returns by default; issuing does, and adds one version with its note and issuer. |
 | DSS-4 | A Technical DSS version records the Product DSS versions it was derived from, and a document's page shows them in both directions. |
 | DSS-5 | In a project whose standards answer every question a change raises, the technical lead issues the Technical DSS without sending the person an ask. |
 | DSS-6 | In a project with no standards, the technical lead asks; the answer appears in the document's Decisions section with who decided; a standard written from it is delivered to the next agent started on the project. |

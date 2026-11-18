@@ -9,7 +9,7 @@ use std::rc::Rc;
 const AGENT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const ITEM: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607185";
 
 fn request(method: &str, params: Value) -> Request {
     Request {
@@ -140,7 +140,7 @@ fn c1_work_commit_replay_reopen_conflict_and_owner_delete_use_real_stores() {
         );
         let deleted = call(
             &office,
-            Caller::app(owner),
+            Caller::grant_bound(owner),
             "work.delete",
             json!({"change_id":crate::ulid::generate().unwrap(),"item_id":ITEM,"expected_version":2}),
         );
@@ -194,7 +194,12 @@ fn c1_work_shared_constructor_builds_once_and_instance_mismatch_refuses_first() 
     let office = Office::open_for_instance(&folder, key.clone(), INSTANCE).unwrap();
     assert_eq!(STORES_BUILT.with(Cell::get), before + 2);
     drop(office);
-    assert!(Office::open_for_instance(&folder, key.clone(), "01ARZ3NDEKTSV4RRFFQ69G5FA2").is_err());
+    assert!(Office::open_for_instance(
+        &folder,
+        key.clone(),
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f607186"
+    )
+    .is_err());
     assert_eq!(STORES_BUILT.with(Cell::get), before + 2);
     let office = Office::open(&folder, key).unwrap();
     assert_eq!(STORES_BUILT.with(Cell::get), before + 3);
@@ -206,7 +211,6 @@ fn c1_work_construction_is_between_workspace_and_genesis() {
     let dir = TempDir::new().unwrap();
     let key = test_key();
     let before = STORES_BUILT.with(Cell::get);
-    let seen_key = key.clone();
     let seen = Rc::new(Cell::new(0));
     let record = Rc::clone(&seen);
     ON_STEP.with(|hook| {
@@ -219,7 +223,7 @@ fn c1_work_construction_is_between_workspace_and_genesis() {
                 STORES_BUILT.with(Cell::get),
                 before + usize::from(step != "workspace")
             );
-            let committed = Store::inspect(&folder.join(ORG_DB), &seen_key, |db| {
+            let committed = Store::inspect(&folder.join(ORG_DB), |db| {
                 db.query_row(
                     "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
                     (),

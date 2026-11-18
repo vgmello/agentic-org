@@ -1184,19 +1184,13 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         rows = sorted(tuple(r) for r in self.db.execute("SELECT task_id, release_id FROM task_releases"))
         self.assertEqual(rows, [("listed", "r2"), ("planned", "r1")])  # "ktlo" has no release lane
 
-    def test_a_message_records_whom_it_mentions(self):
-        columns = [row[1] for row in self.db.execute("PRAGMA table_info(message_mentions)")]
-        self.assertEqual(columns, ["organization_id", "message_id", "conversation_id", "employee_id"])
-        self.refused(lambda: insert(self.db, "message_mentions", organization_id="org",
-                                    message_id="missing", conversation_id="missing", employee_id="ana"))
-
     def test_a_turn_records_what_started_it(self):
         columns = {row[1]: row for row in self.db.execute("PRAGMA table_info(agent_execution_turns)")}
         self.assertEqual(columns["started_by_kind"][4], "'run'")
         self.assertIn("started_by_employee_id", columns)
         self.assertIn("started_by_ref", columns)
         sql = self.db.execute("SELECT sql FROM sqlite_schema WHERE name='agent_execution_turns'").fetchone()[0]
-        for kind in ("run", "message", "mention", "ask", "assignment", "answer", "recovery"):
+        for kind in ("run", "message", "mention", "ask", "handoff", "assignment", "answer", "recovery"):
             self.assertIn(f"'{kind}'", sql)
 
     def test_a_process_declares_its_tabs_from_the_generic_views(self):

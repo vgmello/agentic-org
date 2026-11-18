@@ -10,23 +10,25 @@
 //!
 //! Its own `main` (`harness = false`), because the server writes control lines on stdout.
 
-use std::io::BufReader;
+use std::io::{BufReader, Write};
+use std::os::fd::AsFd;
+use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
-use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use org_client::Client;
+use agentic_org_office::test_support::{grant_key, signed_grant, ChannelCaller};
+use org_office::rules::OrgCommand;
+use org_office_launch::ServerEvent;
 use org_office_launch::{
-    read_server_event, write_host_message, CreateOffice, HostMessage, ServerEvent,
+    self, ChannelKind, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
+    TransferRecord,
 };
-use org_proto::location::office_socket_path;
 use org_proto::org::{
-    AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams, MemberOffboard,
-    MemberOffboardParams,
+    AgentProfile, AgentRuntime, AgentStatus, MemberAddAgentParams, MemberOffboardParams,
 };
-use org_proto::{AppToken, DbKey, OfficeRole};
+use org_proto::OfficeSecretsKey;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -37,6 +39,8 @@ const ORG: &str = "01ORG0000000000000000ACME1";
 const PIXEL: &str = "AGENT00000000000000000PIXL";
 const NOVA: &str = "AGENT00000000000000000NOVA";
 const WAIT: Duration = Duration::from_secs(30);
+/// The instance the host starts the office as (the worker adopts the library-stored office into it).
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 
 fn main() {
     if std::env::var_os(SERVER_ENV).is_some() {
@@ -211,77 +215,117 @@ impl World {
         }
     }
 
-    fn socket(&self) -> PathBuf {
-        office_socket_path(&self.home, OFFICE).unwrap()
-    }
-
-    /// Creates the office, hires pixel and nova into it, and returns the running server.
+    /// Stores the office with the library and hires pixel and nova into it there (the worker
+    /// creates only through HQ creation-v1, and no app or person binds on the office socket),
+    /// then starts it the way the host does (the first line on stdin, the keys and the
+    /// transfer socket over the rendezvous) and returns the running server.
     fn office(&self) -> Server {
+        let office = org_office::Office::create(
+            org_office_launch::office_dir(&self.home, OFFICE).unwrap(),
+            &org_office::NewOffice {
+                office_id: OFFICE.into(),
+                office_name: "HQ".into(),
+                role: org_office::OfficeRole::Hq,
+                org_id: ORG.into(),
+                org_name: "Acme".into(),
+            },
+            org_office::Key::from_office_secrets_key(office_secrets_key()),
+        )
+        .unwrap();
+        for (n, id, handle) in [(1, PIXEL, "pixel"), (2, NOVA, "nova")] {
+            office
+                .submit_org(OrgCommand::MemberAddAgent(MemberAddAgentParams {
+                    command_id: command_id(n),
+                    member_id: id.into(),
+                    name: handle.to_uppercase(),
+                    office_id: OFFICE.into(),
+                    profile: AgentProfile {
+                        role: "engineer".into(),
+                        title: "Engineer".into(),
+                        focus: None,
+                        runtime: AgentRuntime::ClaudeCode,
+                        model: None,
+                        run_mode: None,
+                        schedule: None,
+                        home: None,
+                        messaging_name: handle.into(),
+                        status: AgentStatus::Active,
+                        offboarded_at: None,
+                    },
+                }))
+                .unwrap()
+                .unwrap();
+        }
+        let owner = office
+            .org_snapshot()
+            .unwrap()
+            .members
+            .into_iter()
+            .find(|m| m.owner)
+            .unwrap()
+            .id;
+        drop(office);
+
+        let rendezvous = self.home.parent().unwrap().join("r");
+        let _ = std::fs::remove_file(&rendezvous);
+        let listener = UnixListener::bind(&rendezvous).unwrap();
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .arg("--create")
+            .args(["--office", OFFICE])
             .env(SERVER_ENV, "1")
             .env("ORG_OFFICE_HOME", &self.home)
             .env("HOME", &self.user)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (tx, events) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            while let Ok(Some(event)) = read_server_event(&mut reader) {
-                if tx.send(event).is_err() {
-                    break;
-                }
-            }
-        });
-        let mut server = Server {
-            stdin: child.stdin.take(),
-            child,
-            events,
-        };
-        write_host_message(
-            server.stdin.as_mut().unwrap(),
-            &HostMessage::Create(CreateOffice {
-                org_id: ORG.into(),
-                org_name: "Acme".into(),
+        let mut stdin = child.stdin.take();
+        org_office_launch::write_first_line(
+            stdin.as_mut().unwrap(),
+            &HostFirstLine::Start(OfficeLine {
+                id_profile: None,
+                selected_writer_required: false,
+                instance_id: INSTANCE.into(),
                 office_id: OFFICE.into(),
-                office_name: "HQ".into(),
-                role: OfficeRole::Hq,
-                app_token: token(),
-                db_key: DbKey::from_bytes([0xB3; 32]),
+                rendezvous: rendezvous.to_str().unwrap().into(),
             }),
         )
         .unwrap();
-        assert!(matches!(server.event(), ServerEvent::Created { .. }));
-        assert!(matches!(server.event(), ServerEvent::Ready { .. }));
-
-        let app = Client::connect(self.socket()).unwrap();
-        app.bind_app(token()).unwrap();
-        for (n, id, handle) in [(1, PIXEL, "pixel"), (2, NOVA, "nova")] {
-            app.call::<MemberAddAgent>(&MemberAddAgentParams {
-                command_id: command_id(n),
-                member_id: id.into(),
-                name: handle.to_uppercase(),
-                office_id: OFFICE.into(),
-                profile: AgentProfile {
-                    role: "engineer".into(),
-                    title: "Engineer".into(),
-                    focus: None,
-                    runtime: AgentRuntime::ClaudeCode,
-                    model: None,
-                    run_mode: None,
-                    schedule: None,
-                    home: None,
-                    messaging_name: handle.into(),
-                    status: AgentStatus::Active,
-                    offboarded_at: None,
-                },
-            })
-            .unwrap();
-        }
+        let stream = accept(&listener, &mut child);
+        let mut server = Server {
+            reader: BufReader::with_capacity(1, stream.try_clone().unwrap()),
+            stream,
+            transfer: None,
+            stdin,
+            child,
+            owner,
+            channels: 0,
+        };
+        let ready_for_secrets: Value = serde_json::from_slice(
+            &org_proto::frame::read_line(&mut server.reader)
+                .unwrap()
+                .expect("the rendezvous closed"),
+        )
+        .unwrap();
+        assert_eq!(ready_for_secrets["event"], "ready_for_secrets");
+        let mut handoff = org_office_launch::encode_handoff(&Handoff::Start {
+            office_secrets_key: Some(office_secrets_key()),
+            grant_key: grant_key(),
+            fds: vec![HandoffFd::Transfer],
+        })
+        .unwrap();
+        server.stream.write_all(&handoff).unwrap();
+        handoff.fill(0);
+        let (transfer, host_end) = UnixDatagram::pair().unwrap();
+        transfer.shutdown(std::net::Shutdown::Write).unwrap();
+        send_fds(&server.stream, &[org_office_launch::FD_MARKER], &transfer);
+        server.expect_received("handoff");
+        drop(transfer);
+        server.transfer = Some(host_end);
+        assert!(matches!(
+            server.event(),
+            RendezvousEvent::Server(ServerEvent::Ready { .. })
+        ));
         server
     }
 
@@ -331,19 +375,90 @@ impl World {
     }
 }
 
+/// Waits for the worker to connect to the rendezvous, failing if it exits first.
+fn accept(listener: &UnixListener, child: &mut Child) -> UnixStream {
+    listener.set_nonblocking(true).unwrap();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).unwrap();
+                stream.set_read_timeout(Some(WAIT)).unwrap();
+                return stream;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("rendezvous accept: {e}"),
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the worker exited before the rendezvous"
+        );
+        assert!(Instant::now() < deadline, "the worker never connected");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// One `sendmsg` of `payload` carrying `fd`, as the host sends descriptors.
+fn send_fds(socket: &impl AsFd, payload: &[u8], fd: &impl AsFd) {
+    org_socket::rights::send(
+        socket.as_fd(),
+        payload,
+        &[fd.as_fd()],
+        Instant::now() + Duration::from_secs(5),
+    )
+    .unwrap();
+}
+
+/// The running office: its process, the rendezvous it reports on and the host end of its
+/// transfer socket.
 struct Server {
     child: Child,
     stdin: Option<ChildStdin>,
-    events: Receiver<ServerEvent>,
+    stream: UnixStream,
+    reader: BufReader<UnixStream>,
+    transfer: Option<UnixDatagram>,
+    owner: String,
+    channels: u32,
 }
 
 impl Server {
-    fn event(&self) -> ServerEvent {
-        self.events.recv_timeout(WAIT).expect("no control line")
+    fn event(&mut self) -> RendezvousEvent {
+        org_office_launch::read_server_event(&mut self.reader)
+            .unwrap()
+            .expect("the rendezvous closed")
     }
 
-    /// Closes stdin, as a host that goes away does, and waits for the server to exit.
+    fn expect_received(&mut self, of: &str) {
+        match self.event() {
+            RendezvousEvent::FdsReceived { of: got } => assert_eq!(got, of),
+            other => panic!("expected fds_received for {of}, got {other:?}"),
+        }
+    }
+
+    /// A new host channel to the office, acting as the owner with a signed grant (persons and
+    /// the owner act only through grants on host channels).
+    fn owner(&mut self) -> ChannelCaller {
+        self.channels += 1;
+        let id = format!("owner-{}", self.channels);
+        let (source, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(WAIT)).unwrap();
+        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
+            kind: ChannelKind::Local,
+            office_id: OFFICE.into(),
+            channel_id: id.clone(),
+        })
+        .unwrap();
+        send_fds(self.transfer.as_ref().unwrap(), &record, &source);
+        self.expect_received(&id);
+        drop(source);
+        let mut caller = ChannelCaller::new(peer);
+        assert_eq!(caller.hello()["result"]["api_version"], 2);
+        caller.with_grant(signed_grant(&self.owner, ORG, OFFICE, &id, "owner-session"))
+    }
+
+    /// Ends the rendezvous, as a host that goes away does, and waits for the server to exit.
     fn stop(&mut self) {
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
         self.stdin = None;
         let started = Instant::now();
         while self.child.try_wait().unwrap().is_none() {
@@ -392,8 +507,9 @@ impl Run {
     }
 }
 
-fn token() -> AppToken {
-    AppToken::from_bytes([0xA7; 32])
+/// The database key the host would hold for the office.
+fn office_secrets_key() -> OfficeSecretsKey {
+    OfficeSecretsKey::from_bytes([0xB3; 32])
 }
 
 /// A ULID made now (the command ids the office accepts), distinct for each `n`.
@@ -714,7 +830,7 @@ fn wait_times_out_and_a_person_can_interrupt_it() {
 
 fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
     let world = World::new();
-    let _server = world.office();
+    let mut server = world.office();
     let waiting = world
         .agent("nova", &["msg", "wait", "--timeout", "3s"])
         .stdout(Stdio::piped())
@@ -722,14 +838,17 @@ fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
         .spawn()
         .unwrap();
     std::thread::sleep(Duration::from_millis(800));
-    let app = Client::connect(world.socket()).unwrap();
-    app.bind_app(token()).unwrap();
-    app.call::<MemberOffboard>(&MemberOffboardParams {
-        command_id: command_id(9),
-        member_id: NOVA.into(),
-        expected_version: 1,
-    })
-    .unwrap();
+    let mut owner = server.owner();
+    let offboarded = owner.call(
+        "member.offboard",
+        serde_json::to_value(MemberOffboardParams {
+            command_id: command_id(9),
+            member_id: NOVA.into(),
+            expected_version: 1,
+        })
+        .unwrap(),
+    );
+    assert!(offboarded.get("result").is_some(), "{offboarded}");
 
     // The held wait ends no later than its timeout. Today the office re-checks a binding only
     // when the next call arrives, so it times out (2); if it ends held waits on offboarding, it

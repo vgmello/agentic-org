@@ -1,5 +1,5 @@
 use super::*;
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 fn binding(root: &Path) -> Binding {
     let public_root = root.join("state");
     std::fs::create_dir_all(&public_root).unwrap();
@@ -61,7 +61,7 @@ fn hq_creation_retries_before_after_atomic_material_and_created_marker() {
         FAIL_AT.set(None);
         assert!(!folder.join("office.json").exists());
         assert!(matches!(
-            Office::discard(&folder, "HQ", Some(&key)),
+            Office::discard(&folder, "HQ"),
             Err(OfficeError::OfficeExists)
         ));
         let had_committed = matches!(
@@ -263,7 +263,7 @@ fn completed_hq_retry_refuses_missing_or_empty_organization_history_without_rein
             } else {
                 &org_db::SCHEMA
             };
-            drop(Store::open(&org_path, &key, Opening::New, schema).unwrap());
+            drop(Store::open(&org_path, Opening::New, schema).unwrap());
         }
         let damaged_org = fs::read(&org_path).ok();
         assert!(
@@ -289,7 +289,7 @@ fn completed_hq_retry_refuses_missing_or_empty_organization_history_without_rein
             fs::read(bound.public_root.join(PUBLIC_ESCROW)).unwrap(),
             record.package
         );
-        let retained = Store::inspect(&folder.join(OFFICE_DB), &key, storage::read)
+        let retained = Store::inspect(&folder.join(OFFICE_DB), storage::read)
             .unwrap()
             .unwrap();
         assert_eq!(retained.public_key, record.public_key);
@@ -360,7 +360,7 @@ fn admitted_hq_retry_with_lost_marker_refuses_lost_native_history() {
                 } else {
                     &org_db::SCHEMA
                 };
-                drop(Store::open(&org_path, &key, Opening::New, schema).unwrap());
+                drop(Store::open(&org_path, Opening::New, schema).unwrap());
             }
         }
         let damaged_org = fs::read(&org_path).ok();
@@ -408,7 +408,7 @@ fn admitted_hq_retry_with_lost_marker_refuses_lost_native_history() {
         for (path, bytes) in sources {
             assert_eq!(fs::read(path).unwrap(), bytes);
         }
-        let retained = Store::inspect(&folder.join(OFFICE_DB), &key, storage::read)
+        let retained = Store::inspect(&folder.join(OFFICE_DB), storage::read)
             .unwrap()
             .unwrap();
         assert_eq!(retained.public_key, record.public_key);
@@ -494,7 +494,7 @@ fn hq_creation_finishes_empty_preschema_database_but_retains_foreign_schema() {
         )
         .is_err());
         FAIL_AT.set(None);
-        // Simulate the initial SQLCipher file opened, with no schema transaction.
+        // Simulate the initial database file opened, with no schema transaction.
         let schema = Schema {
             admit: None,
             version: 0,
@@ -507,7 +507,7 @@ fn hq_creation_finishes_empty_preschema_database_but_retains_foreign_schema() {
             },
             upgrade: |_, _| unreachable!(),
         };
-        let db = Store::open(&folder.join("office.db"), &key, Opening::New, &schema).unwrap();
+        let db = Store::open(&folder.join("office.db"), Opening::New, &schema).unwrap();
         drop(db);
         let result = Office::provision_hq_for_instance(
             &folder,
@@ -519,7 +519,7 @@ fn hq_creation_finishes_empty_preschema_database_but_retains_foreign_schema() {
         );
         assert_eq!(result.is_err(), foreign);
         if foreign {
-            assert!(Store::inspect(&folder.join("office.db"), &key, |db| {
+            assert!(Store::inspect(&folder.join("office.db"), |db| {
                 assert_eq!(
                     db.query_row("SELECT x FROM foreign_data", [], |r| r.get::<_, String>(0))
                         .unwrap(),
@@ -902,7 +902,6 @@ fn frozen_selected_v7(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
 fn frozen_schema7_upgrades_to8_preserving_instance_origin_status_and_directory() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("office.db");
-    let key = Key::from_bytes([29; 32]);
     let schema = Schema {
         version: 7,
         admit: None,
@@ -912,11 +911,11 @@ fn frozen_schema7_upgrades_to8_preserving_instance_origin_status_and_directory()
         },
         upgrade: |_, _| unreachable!(),
     };
-    let old = Store::open(&path, &key, Opening::New, &schema).unwrap();
+    let old = Store::open(&path, Opening::New, &schema).unwrap();
     old.write(|db| {
         assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),7);
         assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE name='local_hq_creation'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        db.execute_batch("INSERT INTO meta VALUES('office_id','HQ'),('instance_id','01ARZ3NDEKTSV4RRFFQ69G5FAV'),('incarnation','original');
+        db.execute_batch("INSERT INTO meta VALUES('office_id','HQ'),('instance_id','0190a5d2-7c3e-7a01-8b2c-3d4e5f607182'),('incarnation','original');
           INSERT INTO work_origin_counter VALUES('original',11);
           INSERT INTO member_status VALUES('task-only',NULL,'TASK','now',NULL),('status-only','working',NULL,'now','later'),('both','busy','TASK','now','later');
           INSERT INTO selected_directory VALUES('ORG',1,'{}','retained');
@@ -926,14 +925,8 @@ fn frozen_schema7_upgrades_to8_preserving_instance_origin_status_and_directory()
     }).unwrap();
     drop(old);
     for _ in 0..2 {
-        let current = Store::open_bound(
-            &path,
-            &key,
-            Opening::Existing,
-            &OFFICE_SCHEMA,
-            Some(INSTANCE),
-        )
-        .unwrap();
+        let current =
+            Store::open_bound(&path, Opening::Existing, &OFFICE_SCHEMA, Some(INSTANCE)).unwrap();
         current.read(|db| {
             assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),8);
             assert_eq!(db.query_row("SELECT count(*) FROM local_hq_creation",[],|r|r.get::<_,i64>(0)).unwrap(),0);
@@ -1111,4 +1104,47 @@ fn hq_creation_admission_preserves_plain_legacy_without_creation_receipts() {
     office
         .finish_selected_bootstrap(Arc::new(AdmissionOwner("legacy-owner".into())))
         .unwrap();
+}
+
+/// ENC-5 (ADR-0016 decision 5): `office.db` is a plain SQLite file. A plain rusqlite
+/// connection with no key reads the HQ creation record while the office still holds its
+/// WAL, and the CA column holds exactly the opaque wrapped record the worker supplied.
+#[test]
+fn hq_creation_record_is_plain_sqlite_with_only_the_wrapped_ca_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("HQ");
+    let office = Office::provision_hq_for_instance(
+        &folder,
+        &new(),
+        Key::from_bytes([8; 32]),
+        INSTANCE,
+        &binding(dir.path()),
+        material,
+    )
+    .unwrap();
+    let header = std::fs::read(folder.join("office.db")).unwrap();
+    assert!(header.starts_with(b"SQLite format 3\0"));
+    // A plain reader beside the live office; SQLite is already initialized by the open above.
+    #[allow(clippy::disallowed_methods)]
+    let db = rusqlite::Connection::open_with_flags(
+        folder.join("office.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let wrapped: Vec<u8> = db
+        .query_row(
+            "SELECT wrapped_ca_key FROM local_hq_creation WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(wrapped, vec![5; 100]);
+    assert_eq!(
+        office
+            .hq_creation_record()
+            .unwrap()
+            .unwrap()
+            .wrapped_ca_key(),
+        wrapped.as_slice()
+    );
 }

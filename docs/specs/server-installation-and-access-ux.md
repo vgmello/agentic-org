@@ -72,9 +72,18 @@ For a new instance the wizard establishes, in order:
 4. Agent isolation ([ADR-0015](../adr/0015-agent-isolation-modes.md)): setup offers
    the isolation mode and, for `dedicated-user`, performs the one administrator step
    that creates the agent account and installs its launcher; without administrator
-   rights it continues in `same-user` and says so. Setup also reports whether
-   operating-system disk encryption is on and which file permissions it set
-   ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)).
+   rights it continues in `same-user` and says so. Until `dedicated-user` is offered
+   (implementation plan L6), setup records `same-user` and states the reduced
+   protection: "Agents run as alex (same-user mode): only the tool sandbox separates
+   agents from the server's data." Setup also reports whether operating-system disk
+   encryption is on and which file permissions it set, reading the modes back from
+   disk ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)). On a Mac:
+   "Disk encryption (FileVault): on." When it is off: "Disk encryption is off.
+   Agentic Org does not encrypt its data; turn on FileVault in System Settings ›
+   Privacy & Security." When it can't be determined, setup says so with the reason.
+   Off and unknown warn and never refuse. The permissions line reads "File
+   permissions: the instance folder and everything in it are readable only by alex
+   (folders 700, files 600)." or lists the paths that are not private.
 5. Local prerequisites for running agents: Git and the supported harnesses (§3).
    Model profiles and provider connections belong to an organization and are set
    up after it exists; offline setup performs no provider auth/model probe.
@@ -404,7 +413,10 @@ It works once and expires in 24 hours (at 14:02 tomorrow):
   administrator account." The link's own lines are setup's.
 - A new link cancels the previous one. Issuing it changes nothing else: the old
   password works until the new one is set.
-- On a Mac the system dialog reads "reset the administrator's password". Over
+- On a Mac the system dialog reads "reset the administrator's password", or, while
+  no administrator exists, "create a new administrator registration link": the same
+  presence check and dialog apply to a registration link. Setup's initial link needs
+  no dialog. Over
   SSH, or with no session at the Mac's screen, it stops before anything (the
   table below).
 - **On Linux,** run it with `sudo` as the Linux user who runs the instance. It
@@ -971,8 +983,8 @@ recovering after losing HQ (REC-1).
 
 ### 4a.9 Open questions
 
-- A81 · Username length and characters, and the password rule (at least 12 characters is proposed). Usernames are normalized (NFC, case-folded) and unique ignoring case.
-- A82 · Sign-in rate limit: per username, per source address or both, the limits, and whether the refusal carries a retry time the page can show.
+- A81 · Settled (A3): a username is 1 to 64 Unicode characters after NFC, with no control characters (Cc), no format characters (Cf, such as zero-width spaces and joiners, bidirectional marks, embeddings, overrides and isolates, and the byte-order mark), no line or paragraph separator (U+2028, U+2029) and no whitespace at the start or end; usernames are unique ignoring case (NFC, case fold, NFC). A password is at least 12 Unicode characters after NFC and at most 1024 bytes, checked only when it is set; sign-in checks only the 4096-byte input bound, so a name that breaks the format is an unknown login. The host decides; a refusal names `{field, rule}`.
+- A82 · Settled (A3): sign-in is limited both per username and per source address (an IPv6 address by its /64). Per username, six failed attempts can be made without waiting; after the sixth the login waits 1 second, and each further failure doubles the wait, capped at 15 minutes. Per address, the same doubling wait is capped at 60 seconds. A locked call does no password work: it is refused before any password check or hashing. The browser refusal is `rate_limited` with `retry_after_ms`, which the page may show as a wait time. Native `account.verify` keeps its per-login and per-socket limits and answers a locked call with the same `not_authorized` as a wrong password.
 - A87 · Settled: the creator's person record takes the account's username as its name and handle when the organization is created; it is edited later like any person's. The owner bar (offices §7.1) shows the person's name.
 - A88 · Which read gives the browser "being prepared" and "couldn't be prepared" recovery states. `organization.list` gives linked organizations `recovery: pending | delivered | acknowledged` with the dates and the count of second showings.
 - A93 · Which name for the HQ machine HQ reports for "<HQ machine>" in copy: the host name, or a configured label.

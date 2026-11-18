@@ -1,9 +1,8 @@
-//! Host-owned launch-v3 connections. Keys go only to the authenticated reader;
+//! Host-owned launch connections. Keys go only to the authenticated reader;
 //! channel descriptors are retained until that worker acknowledges ownership.
 use super::child::Signal;
 use crate::{cloexec::SPAWN_LOCK, peer::AuditToken, server_check::ServerCheck, sync::lock};
-use org_office_launch::v3;
-use org_proto::{frame, DbKey, GrantKey};
+use org_proto::{frame, GrantKey, OfficeSecretsKey};
 use std::{
     collections::BTreeMap,
     fs::DirBuilder,
@@ -47,6 +46,18 @@ pub(super) struct Broker {
     endpoints: Mutex<BTreeMap<String, Weak<Endpoint>>>,
     pub(super) writers: Option<Arc<crate::writer::Writers>>,
 }
+/// What a create or start handoff carries, borrowed from its holder (never copied).
+#[derive(Clone, Copy)]
+pub(super) enum HandoffSecrets<'a> {
+    /// A start: the office's secrets key, or `None` when the host has none for it. The handoff
+    /// then carries `null` and the start proceeds; only what the key unwraps is unavailable.
+    Start(Option<&'a OfficeSecretsKey>),
+    /// An HQ create: the new office's secrets key (always present) and its recovery code.
+    Create {
+        office_secrets_key: &'a OfficeSecretsKey,
+        recovery: &'a org_proto::RecoveryCode,
+    },
+}
 pub(super) struct Rendezvous {
     listener: UnixListener,
     path: PathBuf,
@@ -85,7 +96,7 @@ fn launch<T>(_: T) -> io::Error {
 /// never enter host diagnostics, even when a child sends an invalid message.
 fn phase<T>(name: &'static str, result: io::Result<T>) -> io::Result<T> {
     result.inspect_err(|error| {
-        crate::host_log::log(&format!("office v3 {name} failed ({:?})", error.kind()));
+        crate::host_log::log(&format!("office launch {name} failed ({:?})", error.kind()));
     })
 }
 
@@ -111,7 +122,7 @@ impl Broker {
             Err(e) => return Err(e),
         }
         crate::home::owner_only_dir(&directory).map_err(launch)?;
-        let nonce = crate::secrets::generate_db_key()?;
+        let nonce = crate::secrets::generate_office_secrets_key()?;
         let name: String = nonce.expose_bytes()[..8]
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -144,17 +155,53 @@ impl Broker {
         pid: u32,
         admitted: Option<AuditToken>,
         check: &ServerCheck,
-        db_key: &DbKey,
-        recovery: Option<&org_proto::RecoveryCode>,
+        secrets: HandoffSecrets<'_>,
         generation: u64,
         signals: Sender<Signal>,
+        exited: &mut dyn FnMut() -> bool,
     ) -> io::Result<Arc<Endpoint>> {
-        let deadline = Instant::now() + DEADLINE;
+        let (stream, deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, exited)?;
+        self.handoff(
+            stream, office, pid, admitted, check, secrets, generation, signals, deadline,
+        )
+    }
+    /// The one connection to a bound rendezvous, by `deadline`, with blocking I/O bounded by
+    /// what is left of it. The wait ends early when `exited` says the worker is gone: a worker
+    /// that refuses its first line (or crashes) before connecting never will, and its refusal
+    /// went to stdout, which the host does not read. That is a crash, not a fatal code.
+    fn connect(
+        rendezvous: Rendezvous,
+        deadline: Instant,
+        exited: &mut dyn FnMut() -> bool,
+    ) -> io::Result<(UnixStream, Instant)> {
+        let mut gone = false;
         let stream = loop {
             match rendezvous.listener.accept() {
                 Ok((stream, _)) => break stream,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(10))
+                // One more accept after the exit was seen: a worker may connect and then exit.
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock && gone => {
+                    return phase(
+                        "rendezvous accept",
+                        Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "the worker exited without connecting",
+                        )),
+                    );
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock && Instant::now() >= deadline => {
+                    return phase(
+                        "rendezvous accept",
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "no worker connected in time",
+                        )),
+                    );
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    gone = exited();
+                    if !gone {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
                 Err(e) => return phase("rendezvous accept", Err(e)),
             }
@@ -168,24 +215,16 @@ impl Broker {
         stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(left))?;
         stream.set_write_timeout(Some(left))?;
-        self.handoff(
-            stream, office, pid, admitted, check, db_key, recovery, generation, signals, deadline,
-        )
+        Ok((stream, deadline))
     }
-    #[allow(clippy::too_many_arguments)]
-    fn handoff(
-        &self,
+    /// Authenticate the socket's reader, read its `ready_for_secrets` and check its image again:
+    /// the steps before any secret goes out, shared by every op.
+    fn ready(
         stream: UnixStream,
-        office: &str,
         pid: u32,
         admitted: Option<AuditToken>,
         check: &ServerCheck,
-        db_key: &DbKey,
-        recovery: Option<&org_proto::RecoveryCode>,
-        generation: u64,
-        signals: Sender<Signal>,
-        deadline: Instant,
-    ) -> io::Result<Arc<Endpoint>> {
+    ) -> io::Result<BufReader<UnixStream>> {
         // Authenticate the socket's actual reader, not merely a process that was
         // admitted before it ran. Release macOS requires the exact audit token.
         phase(
@@ -193,7 +232,7 @@ impl Broker {
             reader_is_child(&stream, pid, admitted),
         )?;
         let mut reader = BufReader::new(stream);
-        let _: v3::ReadyForSecrets = phase(
+        let _: org_office_launch::ReadyForSecrets = phase(
             "ready for secrets",
             frame::read_message(&mut reader).map_err(launch),
         )?
@@ -209,17 +248,91 @@ impl Broker {
             "handoff image identity",
             check.still(pid, admitted).map_err(launch),
         )?;
+        Ok(reader)
+    }
+    /// A `--discard` run over the rendezvous: the handoff carries no secret (a plain office
+    /// opens nothing that needs a key) and names no descriptors, so no transfer pair is made,
+    /// no marker is sent and no `fds_received` is awaited. The worker's `discarded`/`failed` arrive on the stream and go to `signals` as
+    /// [`Signal::Event`]; the stream's end (or any other event) is [`Signal::Closed`]. No
+    /// endpoint is registered: a discard serves no channels.
+    pub fn discard(
+        rendezvous: Rendezvous,
+        pid: u32,
+        admitted: Option<AuditToken>,
+        check: &ServerCheck,
+        generation: u64,
+        signals: Sender<Signal>,
+        exited: &mut dyn FnMut() -> bool,
+    ) -> io::Result<()> {
+        let (stream, _deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, exited)?;
+        Self::discard_handoff(stream, pid, admitted, check, generation, signals)
+    }
+    fn discard_handoff(
+        stream: UnixStream,
+        pid: u32,
+        admitted: Option<AuditToken>,
+        check: &ServerCheck,
+        generation: u64,
+        signals: Sender<Signal>,
+    ) -> io::Result<()> {
+        let mut reader = Self::ready(stream, pid, admitted, check)?;
+        // Still sent only to the authenticated child reader, after `ready_for_secrets`, so a
+        // discard keeps the start/create handshake order; the header itself holds no secret.
+        let header = org_office_launch::encode_discard_handoff().map_err(launch)?;
+        phase("handoff header send", reader.get_mut().write_all(&header))?;
+        // The report may take as long as the supervisor's discard timeout allows; it kills the
+        // worker at that deadline, which ends this stream.
+        set_timeout_unless_peer_closed(reader.get_ref(), None)?;
+        std::thread::Builder::new()
+            .name(format!("office-{pid}-launch-discard"))
+            .spawn(move || {
+                while let Ok(Some(org_office_launch::RendezvousEvent::Server(event))) =
+                    org_office_launch::read_server_event(&mut reader)
+                {
+                    if signals.send(Signal::Event { generation, event }).is_err() {
+                        return;
+                    }
+                }
+                let _ = signals.send(Signal::Closed { generation });
+            })?;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn handoff(
+        &self,
+        stream: UnixStream,
+        office: &str,
+        pid: u32,
+        admitted: Option<AuditToken>,
+        check: &ServerCheck,
+        secrets: HandoffSecrets<'_>,
+        generation: u64,
+        signals: Sender<Signal>,
+        deadline: Instant,
+    ) -> io::Result<Arc<Endpoint>> {
+        let mut reader = Self::ready(stream, pid, admitted, check)?;
         let (transfer, worker) = {
             let _fence = lock(&SPAWN_LOCK);
             UnixDatagram::pair()?
         };
-        org_socket::rights::set_buffer_sizes(transfer.as_fd(), v3::TRANSFER_SOCKET_BUFFER_BYTES)?;
-        org_socket::rights::set_buffer_sizes(worker.as_fd(), v3::TRANSFER_SOCKET_BUFFER_BYTES)?;
-        let random = crate::secrets::generate_db_key()?;
+        org_socket::rights::set_buffer_sizes(
+            transfer.as_fd(),
+            org_office_launch::TRANSFER_SOCKET_BUFFER_BYTES,
+        )?;
+        org_socket::rights::set_buffer_sizes(
+            worker.as_fd(),
+            org_office_launch::TRANSFER_SOCKET_BUFFER_BYTES,
+        )?;
+        let random = crate::secrets::generate_office_secrets_key()?;
         let key = GrantKey::from_bytes(*random.expose_bytes());
-        let mut header = match recovery {
-            Some(code) => v3::encode_create_handoff(db_key, &key, code),
-            None => v3::encode_start_handoff(db_key, &key),
+        let mut header = match secrets {
+            HandoffSecrets::Create {
+                office_secrets_key,
+                recovery,
+            } => org_office_launch::encode_create_handoff(office_secrets_key, &key, recovery),
+            HandoffSecrets::Start(office_secrets_key) => {
+                org_office_launch::encode_start_handoff(office_secrets_key, &key)
+            }
         }
         .map_err(launch)?;
         let sent = reader.get_mut().write_all(&header);
@@ -229,26 +342,29 @@ impl Broker {
             "handoff descriptor send",
             org_socket::rights::send(
                 reader.get_ref().as_fd(),
-                &[v3::FD_MARKER],
+                &[org_office_launch::FD_MARKER],
                 &[worker.as_fd()],
                 deadline,
             )
             .map_err(launch),
         )?;
-        reader.get_ref().set_read_timeout(Some(
-            deadline
-                .checked_duration_since(Instant::now())
-                .ok_or_else(invalid)?,
-        ))?;
+        set_timeout_unless_peer_closed(
+            reader.get_ref(),
+            Some(
+                deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or_else(invalid)?,
+            ),
+        )?;
         match phase(
             "handoff receipt decode",
-            v3::read_server_event(&mut reader).map_err(launch),
+            org_office_launch::read_server_event(&mut reader).map_err(launch),
         )? {
-            Some(v3::RendezvousEvent::FdsReceived { of }) if of == "handoff" => {}
+            Some(org_office_launch::RendezvousEvent::FdsReceived { of }) if of == "handoff" => {}
             _ => return Err(invalid()),
         }
         drop(worker); // Receiver ownership proved before sender drops its copy.
-        reader.get_ref().set_read_timeout(None)?;
+        set_timeout_unless_peer_closed(reader.get_ref(), None)?;
         let endpoint = Arc::new(Endpoint {
             office: office.into(),
             key,
@@ -263,11 +379,11 @@ impl Broker {
         lock(&self.endpoints).insert(office.into(), Arc::downgrade(&endpoint));
         let receiving = Arc::clone(&endpoint);
         std::thread::Builder::new()
-            .name(format!("office-{pid}-v3"))
+            .name(format!("office-{pid}-launch"))
             .spawn(move || {
-                while let Ok(Some(event)) = v3::read_server_event(&mut reader) {
+                while let Ok(Some(event)) = org_office_launch::read_server_event(&mut reader) {
                     match event {
-                        v3::RendezvousEvent::Server(event) => {
+                        org_office_launch::RendezvousEvent::Server(event) => {
                             if signals.send(Signal::Event { generation, event }).is_err() {
                                 break;
                             }
@@ -316,13 +432,14 @@ impl Endpoint {
         if request.office_id != self.office {
             return Err(invalid());
         }
-        let (_, mut client, _slot) = self.ordinary_channel(v3::ChannelKind::Local, |id| {
-            v3::TransferRecord::RecoveryPublicRead {
-                version: 1,
-                office_id: self.office.clone(),
-                channel_id: id.into(),
-            }
-        })?;
+        let (_, mut client, _slot) =
+            self.ordinary_channel(org_office_launch::ChannelKind::Local, |id| {
+                org_office_launch::TransferRecord::RecoveryPublicRead {
+                    version: 1,
+                    office_id: self.office.clone(),
+                    channel_id: id.into(),
+                }
+            })?;
         client.set_nonblocking(false)?;
         client.set_read_timeout(Some(DEADLINE))?;
         client.set_write_timeout(Some(DEADLINE))?;
@@ -356,7 +473,9 @@ impl Endpoint {
         });
         let slot = {
             let mut channels = lock(&endpoint.channels);
-            let slot = channels.reserve("channel", v3::ChannelKind::Local).unwrap();
+            let slot = channels
+                .reserve("channel", org_office_launch::ChannelKind::Local)
+                .unwrap();
             assert!(channels.acknowledge("channel"));
             slot
         };
@@ -364,10 +483,12 @@ impl Endpoint {
     }
     fn writer_control(&self, worker: UnixStream) -> io::Result<()> {
         let id = crate::ids::generate()?;
-        let header = v3::encode_transfer_record(&v3::TransferRecord::WriterControl {
-            office_id: self.office.clone(),
-            channel_id: id.clone(),
-        })
+        let header = org_office_launch::encode_transfer_record(
+            &org_office_launch::TransferRecord::WriterControl {
+                office_id: self.office.clone(),
+                channel_id: id.clone(),
+            },
+        )
         .map_err(launch)?;
         self.transfer_descriptor(&id, worker, &header, false)
     }
@@ -415,18 +536,18 @@ impl Endpoint {
             }
         }
     }
-    fn receipt(&self, event: v3::RendezvousEvent) -> io::Result<()> {
+    fn receipt(&self, event: org_office_launch::RendezvousEvent) -> io::Result<()> {
         let (id, refused) = match event {
-            v3::RendezvousEvent::ChannelClosed { of } => {
+            org_office_launch::RendezvousEvent::ChannelClosed { of } => {
                 return lock(&self.channels)
                     .remove(&of, true)
                     .then_some(())
                     .ok_or_else(invalid);
             }
-            v3::RendezvousEvent::FdsReceived { of } => (of, false),
-            v3::RendezvousEvent::FdsRefused {
+            org_office_launch::RendezvousEvent::FdsReceived { of } => (of, false),
+            org_office_launch::RendezvousEvent::FdsRefused {
                 of,
-                reason: v3::RefusalReason::Capacity,
+                reason: org_office_launch::RefusalReason::Capacity,
             } => (of, true),
             _ => return Err(invalid()),
         };
@@ -476,9 +597,9 @@ impl Endpoint {
     }
     pub fn open(
         self: &Arc<Self>,
-        kind: v3::ChannelKind,
+        kind: org_office_launch::ChannelKind,
     ) -> io::Result<(String, UnixStream, ChannelSlot)> {
-        self.ordinary_channel(kind, |id| v3::TransferRecord::Channel {
+        self.ordinary_channel(kind, |id| org_office_launch::TransferRecord::Channel {
             kind,
             office_id: self.office.clone(),
             channel_id: id.into(),
@@ -486,8 +607,8 @@ impl Endpoint {
     }
     fn ordinary_channel(
         &self,
-        kind: v3::ChannelKind,
-        record: impl FnOnce(&str) -> v3::TransferRecord,
+        kind: org_office_launch::ChannelKind,
+        record: impl FnOnce(&str) -> org_office_launch::TransferRecord,
     ) -> io::Result<(String, UnixStream, ChannelSlot)> {
         let id = crate::ids::generate()?;
         let slot = lock(&self.channels).reserve(&id, kind)?;
@@ -496,7 +617,7 @@ impl Endpoint {
                 let _fence = lock(&SPAWN_LOCK);
                 UnixStream::pair()?
             };
-            let header = v3::encode_transfer_record(&record(&id)).map_err(launch)?;
+            let header = org_office_launch::encode_transfer_record(&record(&id)).map_err(launch)?;
             self.transfer_descriptor(&id, worker, &header, true)?;
             Ok((id.clone(), client, slot))
         })();
@@ -507,9 +628,11 @@ impl Endpoint {
         result
     }
     pub fn revoke(&self, session: &str) -> io::Result<()> {
-        let header = v3::encode_transfer_record(&v3::TransferRecord::Revoked {
-            session_ids: vec![session.into()],
-        })
+        let header = org_office_launch::encode_transfer_record(
+            &org_office_launch::TransferRecord::Revoked {
+                session_ids: vec![session.into()],
+            },
+        )
         .map_err(launch)?;
         if !self.live.load(Ordering::SeqCst)
             || org_socket::rights::send(
@@ -529,6 +652,24 @@ impl Endpoint {
 impl Drop for Endpoint {
     fn drop(&mut self) {
         self.fail();
+    }
+}
+
+/// Sets `stream`'s read timeout, except where the worker has already closed its end.
+///
+/// Darwin's `setsockopt` answers `EINVAL` on a socket whose both directions are shut down,
+/// which is what a unix stream becomes once its peer has closed. A worker may report a fatal
+/// `failed` right after `fds_received` (or after a discard header) and exit before the host
+/// changes the timeout. Its buffered events stay readable and the read then ends at EOF without
+/// blocking, so the timeout no longer matters: treating that as an error would lose the
+/// worker's failure report and turn it into a crash. Any other error is still an error.
+pub(crate) fn set_timeout_unless_peer_closed(
+    stream: &UnixStream,
+    timeout: Option<Duration>,
+) -> io::Result<()> {
+    match stream.set_read_timeout(timeout) {
+        Err(error) if error.raw_os_error() == Some(libc::EINVAL) => Ok(()),
+        other => other,
     }
 }
 

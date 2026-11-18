@@ -299,7 +299,7 @@ sections in its instructions:
 2. **The project's development process:** its name and summary, its stages, the
    agent's role in it, and for each of the agent's skills the title and the
    when-to-use line. The body of a skill is retrieved with
-   `agent-os skill show <key>`. The section says that a non-overridable organization
+   `agent-os skill read <key>`. The section says that a non-overridable organization
    process or standard is always followed, and that the skills may adjust the
    organization's other guidance for this project.
 
@@ -314,19 +314,19 @@ sections in its instructions:
   ([agent sessions](agent-sessions.md), Claude's isolation switches). The office
   composes the section for every runtime the same way.
 - **Work without a project** has no development process section.
-- **`agent-os dev-process show`** prints the project's process, its stages and the
-  agent's role; **`agent-os skill list`** and **`skill show`** print its skills.
+- **`agent-os dev-process inspect`** prints the project's process, its stages and the
+  agent's role; **`agent-os skill list`** and **`skill read`** print its skills.
 
 ## 7. Hiring when the development process says so
 
 A skill tells a lead when to staff the project and how to decide which roles it needs.
 The lead then uses the product's hiring, as any agent may:
 
-1. **Inspect the role.** `agent-os role list` and `agent-os role show <key>` print the
+1. **Inspect the role.** `agent-os role list` and `agent-os role inspect <key>` print the
    role's definition and what a hire proposal needs: the required home team, the
    optional title, focus and reporting line, and the execution profiles available, with
    which are ready on which office.
-2. **Ask.** `agent-os hire request --role <key> --team <project team> --focus … --why …`
+2. **Ask.** `agent-os hr hire --role <key> --team <project team> --focus … --why …`
    sends the request to HR. HR drafts the proposal; when HR cannot run, the command
    says so and a person fills the form
    ([hire flow](../specs/our-org-in-the-app.md), APPR-8).
@@ -355,14 +355,14 @@ What the design adds is how they are used.
   `agent-os doc ls [path]` lists one folder and exists as a fallback;
   `agent-os doc list` filters by kind, status or scope across the project. Both are the
   `doc.list` call.
-- **Reading.** `agent-os doc show <id | path>` prints a document. For a versioned
+- **Reading.** `agent-os doc inspect <id | path>` prints a document. For a versioned
   document it prints the latest issued version and says how many unissued changes
   follow it; `--working` prints the working text and `--version <n>` an earlier one.
   `agent-os doc get <id | path> --to <file>` copies a media file into the agent's
   temporary folder.
-- **Writing.** `agent-os doc new --kind … --path … --title … --summary …` starts a
-  document from the kind's template. `doc edit`, `doc move`, `doc put <path> <file>`
-  for media, and `doc section add | edit | move` change the tree. Each is one accepted
+- **Writing.** `agent-os doc create --kind … --path … --title … --summary …` starts a
+  document from the kind's template. `doc update`, `doc move`, `doc put <path> <file>`
+  for media, and `doc-section create | update | move` change the tree. Each is one accepted
   change that also writes the index. A document is never written into a code worktree.
 - **Skills name kinds and sections by what they are for, not by path.** A skill says
   "save it as a Product DSS in the section for its product domain". The agent finds the
@@ -428,7 +428,7 @@ increment.
 - **`org-office`:** the development process projection, import and export,
   `project.set_development_process`, the derived seed roster and tabs, the tree writes
   with the index in one change, the project boundary for agents, and the calls.
-- **`agent-os`:** `dev-process`, `skill`, `role`, `doc` and the role on `hire request`.
+- **`agent-os`:** `dev-process`, `skill`, `role`, `doc` and the role on `hr hire`.
 - **`apps/agentic-org-ui`:** the Development process select and seed roster on a
   project, the catalogue and editor, the three generic tab views, and the Docs tab.
 
@@ -446,11 +446,11 @@ office.
 | PKG-5 | Choosing one creates the missing roles and adds the declared sections in the same accepted change, and starts no agent. |
 | PKG-6 | The seed roster shows each seed role as open, hire requested or filled, derived from the project team's members; an existing owner team fills the roles its members hold. |
 | PKG-7 | An agent's instructions carry the development process as its own section, separate from organization processes: the skills for its role and the ones for everyone, with retrievable bodies; another role's skills are not in it. |
-| PKG-8 | No skill appears in `process list`, `process why` or the Processes page, and no organization, team or project process document replaces or is replaced by a skill. |
+| PKG-8 | No skill appears in `process list`, `process inspect --why` or the Processes page, and no organization, team or project process document replaces or is replaced by a skill. |
 | PKG-9 | With a skill and a non-overridable organization standard that disagree, the standard is delivered in full as must-follow and the development process section says it is always followed. A skill that adjusts overridable organization guidance is delivered as written. |
-| PKG-10 | A lead agent's `hire request` for a role of the process produces a proposal for the project's team; nothing is provisioned before a lead with Allow hiring approves, the request going up the chain until it reaches one (HIRE-1 to HIRE-3); the new agent's first instructions carry its role's skills. |
+| PKG-10 | A lead agent's `hr hire` for a role of the process produces a proposal for the project's team; nothing is provisioned before a lead with Allow hiring approves, the request going up the chain until it reaches one (HIRE-1 to HIRE-3); the new agent's first instructions carry its role's skills. |
 | PKG-11 | `doc index` returns the whole index in one call while it is at most 256 KiB, and the section list with each section readable by path beyond that. After any accepted write it lists exactly what the tree holds. |
-| PKG-12 | An agent of another project is refused `doc index`, `doc ls`, `doc show` and every write, with `other_project` and the lead to ask; a person is not. |
+| PKG-12 | An agent of another project is refused `doc index`, `doc ls`, `doc inspect` and every write, with `other_project` and the lead to ask; a person is not. |
 | PKG-13 | Changing a project's development process removes no file, section, document or role; the tabs follow the new process at once; the next start of each agent delivers its skills. |
 | PKG-14 | With no development process, a project's tree starts with `decisions`, `designs` and `reports`, and its tabs are the fixed ones, Features and Releases. |
 | PKG-15 | The tab bar is exactly Overview, Work, the process's tabs in order, Features or Releases if the project holds them and the process gave no tab for them, then Docs, Team, Activity, Conversations. Nothing about tabs is stored on the project. |
@@ -481,7 +481,7 @@ Each step is usable on its own. Increments are in the
    editor and import, the select, the seed roster, the tabs, skills in an agent's
    instructions, and process and standard writes by agents of the project's team
    (FC-175, FC-176, FC-177, FC-179, FC-184, FC-187). Needs the agent launch path (C3).
-3. **Hiring from a skill:** `role show` and the role on `hire request` (FC-178). Needs
+3. **Hiring from a skill:** `role inspect` and the role on `hr hire` (FC-178). Needs
    the hire flow (C2).
 4. **Issued versions, code links and realizing tasks** (FC-181, FC-182), then **the
    DSS process** (FC-183) ([desired state design](desired-state-specifications.md))

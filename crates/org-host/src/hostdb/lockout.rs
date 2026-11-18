@@ -28,8 +28,13 @@ pub(crate) enum Outcome {
 pub(crate) struct State {
     now_ms: i64,
     locked: bool,
+    until_ms: i64,
 }
 impl State {
+    /// How long until the key accepts another attempt; zero when unlocked.
+    pub(crate) fn retry_after_ms(&self) -> i64 {
+        self.until_ms.saturating_sub(self.now_ms).max(0)
+    }
     pub(crate) fn now_ms(&self) -> i64 {
         self.now_ms
     }
@@ -98,9 +103,11 @@ impl HostDb {
         let tx = db.transaction()?;
         let now = now(&tx, i64::try_from(wall_ms).map_err(|_| Error::Unsafe)?)?;
         let row = load(&tx, socket.as_str(), key)?;
+        let until_ms = row.map_or(now, |r| r.until);
         Ok(State {
             now_ms: now,
-            locked: row.is_some_and(|r| now < r.until),
+            locked: now < until_ms,
+            until_ms,
         })
     }
     /// Counter and clock commit together. Locked attempts change neither. No password work here.
@@ -111,16 +118,36 @@ impl HostDb {
         wall_ms: u64,
         outcome: Outcome,
     ) -> Result<State, Error> {
+        self.record_login_capped(
+            socket,
+            key,
+            wall_ms,
+            outcome,
+            crate::accounts::store::LOGIN_DELAY_CAP_MS,
+        )
+    }
+    /// `record_login` with the delay capped at `cap_ms` (the per-address web key, Revision 3).
+    pub(crate) fn record_login_capped(
+        &self,
+        socket: Socket,
+        key: &str,
+        wall_ms: u64,
+        outcome: Outcome,
+        cap_ms: i64,
+    ) -> Result<State, Error> {
         let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let now = now(&tx, i64::try_from(wall_ms).map_err(|_| Error::Unsafe)?)?;
         let socket = socket.as_str();
         let row = load(&tx, socket, key)?;
-        if outcome != Outcome::Reset && row.as_ref().is_some_and(|r| now < r.until) {
-            return Ok(State {
-                now_ms: now,
-                locked: true,
-            });
+        if let Some(until_ms) = row.as_ref().map(|r| r.until).filter(|u| now < *u) {
+            if outcome != Outcome::Reset {
+                return Ok(State {
+                    now_ms: now,
+                    locked: true,
+                    until_ms,
+                });
+            }
         }
         let mut until = now;
         if outcome == Outcome::Failure {
@@ -129,14 +156,7 @@ impl HostDb {
                 .checked_add(1)
                 .ok_or(Error::Unsafe)?
                 .min(63);
-            let delay = if failures < 6 {
-                0
-            } else {
-                1_000_i64
-                    .checked_shl((failures - 6).min(10) as u32)
-                    .ok_or(Error::Unsafe)?
-                    .min(900_000)
-            };
+            let delay = crate::accounts::store::backoff_ms(failures, cap_ms);
             until = now.checked_add(delay).ok_or(Error::Unsafe)?;
             tx.execute(
                 "INSERT INTO login_lockout (socket,login_key,failures,locked_until_ms,last_failure_ms)
@@ -155,6 +175,7 @@ impl HostDb {
         Ok(State {
             now_ms: now,
             locked: now < until,
+            until_ms: until,
         })
     }
     /// A sweep retains corrupt rows for diagnosis and logs only their audit hash.

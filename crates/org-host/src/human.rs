@@ -15,13 +15,13 @@ fn unavailable() -> String {
 }
 /// Exclusive byte/descriptor reader. No buffered ordinary reader can consume
 /// SCM_RIGHTS. Fatal ancillary truncation requires process termination.
-struct Wire {
+pub(crate) struct Wire {
     write: UnixStream,
     read: StreamReceiver,
     id: u64,
 }
 impl Wire {
-    fn new(stream: UnixStream) -> Result<Self, String> {
+    pub(crate) fn new(stream: UnixStream) -> Result<Self, String> {
         stream.set_nonblocking(false).map_err(|_| unavailable())?;
         stream
             .set_write_timeout(Some(Duration::from_secs(30)))
@@ -51,7 +51,7 @@ impl Wire {
             }
         }
     }
-    fn call<C: Call>(
+    pub(crate) fn call<C: Call>(
         &mut self,
         params: &C::Params,
         principal: Option<&Principal>,
@@ -143,7 +143,7 @@ fn session(handle: &SessionHandle) -> SessionHandle {
     SessionHandle::new(handle.expose().into()).expect("live nonempty handle")
 }
 
-fn verify_host(stream: &UnixStream) -> Result<(), String> {
+pub(crate) fn verify_host(stream: &UnixStream) -> Result<(), String> {
     if !org_socket::peer_allowed(stream, org_socket::effective_uid()) {
         return Err("host peer refused".into());
     }
@@ -170,7 +170,37 @@ fn verify_host(stream: &UnixStream) -> Result<(), String> {
 fn password() -> Result<Password, String> {
     terminal::password()
 }
-pub(super) fn paths(name: Option<&str>) -> Result<Paths, String> {
+/// A development build may place every instance under an explicit application base,
+/// `ORG_DEV_ACCOUNT_BASE` (absolute), with the user temp base `<base>/temp`: tests and dev runs
+/// then never touch the account's real `Library` folders. A release build refuses the variable.
+pub const DEV_ACCOUNT_BASE: &str = "ORG_DEV_ACCOUNT_BASE";
+
+/// The instance paths of this account, for setup, `serve --name`, `admin` and `recovery`.
+pub(crate) fn paths(name: Option<&str>) -> Result<Paths, String> {
+    if let Some(base) = std::env::var_os(DEV_ACCOUNT_BASE).filter(|b| !b.is_empty()) {
+        if !cfg!(debug_assertions) {
+            return Err(format!(
+                "{DEV_ACCOUNT_BASE} is a development setting; this release build refuses it"
+            ));
+        }
+        let base = PathBuf::from(base);
+        if !base.is_absolute() {
+            return Err(format!("{DEV_ACCOUNT_BASE} must be an absolute path"));
+        }
+        let temp = base.join("temp");
+        for dir in [&base, &temp] {
+            match std::fs::create_dir(dir) {
+                Ok(()) => {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                        .map_err(|e| e.to_string())?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(format!("creating {}: {e}", dir.display())),
+            }
+        }
+        return Paths::at(&base, temp, name).map_err(|e| e.to_string());
+    }
     if !cfg!(target_os = "macos") {
         return Err(
             "protected platform setup/custody is unavailable on this target; no HQ was provisioned"

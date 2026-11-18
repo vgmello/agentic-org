@@ -79,7 +79,10 @@ crates/
       model.rs
     processes/
       mod.rs                         # Office integration; pure rules in org-process
-    store/                           # Storage adapters: the only place that knows the engine (ADR-0018)
+    projects/                        # The projects family, same shape as organization (B3)
+    store/                           # The store seam and engines: the only place that knows the engine (ADR-0018)
+      mod.rs                         # open_store: the one composition seam
+      sqlite/                        # The SQLite engine: one module per record family
     office.rs                        # Office lifecycle and public facade
 
   org-work/src/
@@ -97,6 +100,7 @@ crates/
     model.rs
     ports.rs
 
+  org-store/                         # Engine-neutral store: journal, writer, files, rebuild, Engine and Projector
   org-proto/                         # Local request and event contracts
   org-office-launch/                 # Private host/worker launch contract (the verified rendezvous)
   org-client/                        # Local IPC client
@@ -126,19 +130,23 @@ apps/
   agentic-org-ui/                    # Static browser application
 ```
 
-`org-office` combines domain behaviour and storage. It keeps a private store and one
-accepting writer per stream. Logical domain ownership does not need separate
-databases, writers or public SQL repositories. Store adapters implement
-consumer-owned contracts such as the work and messaging ports, and keep transactions,
-deduplication, outbox writes and sequence allocation atomic.
+How the office stores data is the [office store design](office-store.md). `org-store`
+holds the engine-neutral foundation: one acceptance journal per office as the commit
+point, the single writer, the files under `durable/`, rebuild, and the `Engine` and
+`Projector` traits. Each record family (organization, projects, work, messaging,
+execution) has one shape: records and codec, a read port and a write port, a projector,
+one file per operation and a testkit. The SQLite engine in `org-office/src/store/sqlite/`
+implements the ports, one module per family. One journal entry keeps sequence
+allocation, receipts and the outbox atomic; logical domain ownership does not need
+separate databases, writers or public SQL repositories.
 
 Dependencies point from adapters and composition towards policies and contracts:
 
 ```text
 web process -> typed authorized host and office client operations
 office -> public use-case APIs, runtime and sync adapters
-office storage implementations -> work and messaging ports
-work and messaging -> their protocol vocabulary
+office storage engine -> family ports and org-store's Engine
+work and messaging -> org-store's change contract and their protocol vocabulary
 session coordinator -> employee policy + runtime contracts
 vendor adapters -> runtime contracts
 ```
@@ -165,6 +173,7 @@ library.
 | `org-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
 | `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
 | `org-platform` | Holds every operating-system difference: the platform contracts of ADR-0017 with macOS, Linux and refusing adapters ([Linux host design](linux-host.md)) | New in X1a; the only crate with platform conditionals | Track X, from X1a (the first day) |
+| `org-store` | The office store's engine-neutral foundation ([office store design](office-store.md)) | New in B1a; depends on no family (on `org-platform` once X1b moves its flush there) | B1a |
 | `org-spool` | File queue `agent-os` uses when no office is named | Deleted, with the route through it | With conversations and messages (implementation plan B6) |
 
 ## 4. Svelte and TypeScript layout
@@ -260,8 +269,8 @@ module.
 2. The web process authenticates the person and passes a typed operation with its
    operation ID and expected revision ([web API, Tasks](web-api-v1.md#tasks)).
 3. The command reaches the office with the person's principal and a host grant.
-4. `org-work` validates the change and the office store commits the task, its
-   history event and its idempotency result together.
+4. `org-work` decides the change and the office store commits the task file, its
+   history event and its idempotency receipt as one journal entry.
 5. The browser sees the outcome on the response and the change on the work feed.
 
 A lost response is resolved by lookup of the same operation ID. Closing the browser
@@ -281,6 +290,6 @@ The application renames and host extraction are done. The domain modules above a
 not finished: `org-office` has `organization`, `employees`, `processes` and `rules`
 modules that implement the older model with several memberships per member, and `store` holds the SQL for all of them,
 with SQL in four files outside it (`organization/bootstrap.rs`,
-`organization/admission.rs`, `office.rs`, `office/hq_creation.rs`) that moves behind it
-under ADR-0018. `org-git` and the vendor runtime adapters do
+`organization/admission.rs`, `office.rs`, `office/hq_creation.rs`). `org-store` does not
+exist yet; B1b deletes today's `store` whole and the SQL outside it. `org-git` and the vendor runtime adapters do
 not exist yet.

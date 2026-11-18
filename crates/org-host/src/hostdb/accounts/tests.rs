@@ -1,6 +1,6 @@
 use super::*;
 use crate::hostdb::{
-    tests::{first_account, fixture, init},
+    tests::{admin_fixture, fixture},
     *,
 };
 
@@ -16,7 +16,7 @@ pub(in crate::hostdb) fn after_row() {
 
 fn first() -> Account {
     Account {
-        account_id: AccountId::parse(&init(false).bootstrap.account).unwrap(),
+        account_id: AccountId::parse(admin_fixture::ACCOUNT).unwrap(),
         login: "Sage".into(),
         admin: true,
         revoked_at_ms: None,
@@ -33,7 +33,7 @@ fn credentials_and_authority_read_exact_account_and_opaque_phc() {
         .unwrap()
         .unwrap();
     assert_eq!(credentials.account, first());
-    assert_eq!(credentials.verifier.expose(), first_account::PHC);
+    assert_eq!(credentials.verifier.expose(), admin_fixture::PHC);
     assert_eq!(
         db.account_authority(&first().account_id).unwrap(),
         Some(first())
@@ -77,7 +77,7 @@ fn reads_bind_keys_and_ids_and_keep_each_accounts_links_separate() {
             (
                 second,
                 key,
-                &first_account::PHC.replace("$AAAAAAAA", "$BAAAAAAA"),
+                &admin_fixture::PHC.replace("$AAAAAAAA", "$BAAAAAAA"),
             ),
         )
         .unwrap();
@@ -111,7 +111,7 @@ fn reads_bind_keys_and_ids_and_keep_each_accounts_links_separate() {
     assert_eq!(credentials.account, expected);
     assert_eq!(
         credentials.verifier.expose(),
-        &first_account::PHC.replace("$AAAAAAAA", "$BAAAAAAA")
+        &admin_fixture::PHC.replace("$AAAAAAAA", "$BAAAAAAA")
     );
     assert_eq!(
         db.account_authority(&AccountId::parse(second).unwrap())
@@ -183,7 +183,7 @@ fn every_read_observes_demotion_revocation_display_and_link_changes() {
     assert!(!credentials.account.admin);
     assert_eq!(credentials.account.revoked_at_ms, Some(456));
     assert_eq!(credentials.account.links[0].member_id, "MEMBER");
-    assert_eq!(credentials.verifier.expose(), first_account::PHC);
+    assert_eq!(credentials.verifier.expose(), admin_fixture::PHC);
     db.connection.lock().unwrap().execute_batch("UPDATE accounts SET login='Sage',admin=1,revoked_at_ms=NULL; DELETE FROM account_links").unwrap();
     assert_eq!(
         db.account_authority(&first().account_id).unwrap(),
@@ -249,7 +249,7 @@ fn read_errors_propagate_without_sql_or_secret_payloads() {
         for error in errors {
             assert!(matches!(error, Error::Sql(_)));
             let shown = format!("{error:?}");
-            assert!(!shown.contains(first_account::PHC));
+            assert!(!shown.contains(admin_fixture::PHC));
             assert!(!shown.contains(table));
             assert!(!shown.contains("sage"));
         }
@@ -338,14 +338,14 @@ fn read_only_accessors_expose_exact_snapshot_fields() {
         .unwrap()
         .unwrap();
     let account = credentials.account();
-    assert_eq!(account.account_id(), init(false).bootstrap.account);
+    assert_eq!(account.account_id(), admin_fixture::ACCOUNT.to_string());
     assert_eq!(account.login(), "Sage");
     assert!(account.admin());
     assert_eq!(account.revoked_at_ms(), Some(456));
     assert_eq!(account.links().len(), 1);
     assert_eq!(account.links()[0].org_id(), "ORG");
     assert_eq!(account.links()[0].member_id(), "MEMBER");
-    assert_eq!(credentials.verifier().expose(), first_account::PHC);
+    assert_eq!(credentials.verifier().expose(), admin_fixture::PHC);
 }
 
 #[test]

@@ -1,8 +1,8 @@
 use super::*;
 
 // X-02 rev15 §5.4: instance binding is local metadata, not a schema version.
-const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-const OTHER_INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
+const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607183";
 
 #[test]
 fn v3_create_persists_instance_and_v2_open_leaves_it_untouched() {
@@ -251,7 +251,7 @@ fn legacy_instance_office(version: i64, bound: Option<&str>) -> (TempDir, Key, P
         },
         upgrade: |_, _| unreachable!("fixture creates only its declared released schema"),
     };
-    let store = Store::open(&folder.join(OFFICE_DB), &key, Opening::New, &schema).unwrap();
+    let store = Store::open(&folder.join(OFFICE_DB), Opening::New, &schema).unwrap();
     put_meta(&store, &[("office_id", ID), ("incarnation", "17")]).unwrap();
     if let Some(instance) = bound {
         put_meta(&store, &[("instance_id", instance)]).unwrap();
@@ -335,7 +335,7 @@ fn v3_mismatch_on_v1_through_v6_changes_neither_database() {
             create: |_| unreachable!(),
             upgrade: |_, _| unreachable!(),
         };
-        let store = Store::open(&folder.join(OFFICE_DB), &key, Opening::Existing, &schema).unwrap();
+        let store = Store::open(&folder.join(OFFICE_DB), Opening::Existing, &schema).unwrap();
         store
             .read(|db| {
                 assert_eq!(
@@ -360,7 +360,7 @@ fn v3_adoption_rolls_back_with_failed_upgrade_and_retry_can_adopt_another_instan
         },
         upgrade: |_, _| unreachable!(),
     };
-    let store = Store::open(&folder.join(OFFICE_DB), &key, Opening::Existing, &corrupt).unwrap();
+    let store = Store::open(&folder.join(OFFICE_DB), Opening::Existing, &corrupt).unwrap();
     store
         .write(|db| {
             db.execute_batch("CREATE TABLE msg_threads(block_upgrade INTEGER);")
@@ -373,7 +373,7 @@ fn v3_adoption_rolls_back_with_failed_upgrade_and_retry_can_adopt_another_instan
         Office::open_for_instance(&folder, key.clone(), INSTANCE),
         Err(OfficeError::Storage(_))
     ));
-    let store = Store::open(&folder.join(OFFICE_DB), &key, Opening::Existing, &corrupt).unwrap();
+    let store = Store::open(&folder.join(OFFICE_DB), Opening::Existing, &corrupt).unwrap();
     assert!(meta(&store, "instance_id").unwrap().is_none());
     store
         .write(|db| {
@@ -436,7 +436,7 @@ fn v3_refuses_wrong_local_or_org_identity_before_adopting_instance() {
             "org-office" => (ORG_DB, org_db::SCHEMA, "office_id"),
             _ => (ORG_DB, org_db::SCHEMA, "organization_id"),
         };
-        let store = Store::open(&folder.join(file), &key, Opening::Existing, &schema).unwrap();
+        let store = Store::open(&folder.join(file), Opening::Existing, &schema).unwrap();
         store
             .write(move |db| {
                 if missing {
@@ -469,7 +469,7 @@ fn v3_refuses_wrong_local_or_org_identity_before_adopting_instance() {
 }
 
 #[test]
-fn v2_open_preserves_an_unrecognized_instance_value_and_wrong_key_cannot_adopt() {
+fn v2_open_preserves_an_unrecognized_instance_value_and_adoption_needs_no_key() {
     let (_dir, key, folder) = legacy_instance_office(5, Some("legacy-unrecognized-value"));
     let office = Office::open(&folder, key.clone()).unwrap();
     assert_eq!(
@@ -480,12 +480,6 @@ fn v2_open_preserves_an_unrecognized_instance_value_and_wrong_key_cannot_adopt()
     );
     drop(office);
     let (_dir, key, folder) = legacy_instance_office(1, None);
-    let before = fs::read(folder.join(OFFICE_DB)).unwrap();
-    assert!(matches!(
-        Office::open_for_instance(&folder, Key::from_bytes([9; 32]), INSTANCE),
-        Err(OfficeError::KeyMissing)
-    ));
-    assert_eq!(fs::read(folder.join(OFFICE_DB)).unwrap(), before);
     let office = Office::open_for_instance(&folder, key, INSTANCE).unwrap();
     assert_eq!(
         meta(&office.stores.local, "instance_id")
@@ -498,13 +492,7 @@ fn v2_open_preserves_an_unrecognized_instance_value_and_wrong_key_cannot_adopt()
 #[test]
 fn v3_newer_schema_is_refused_without_adopting_instance() {
     let (_dir, key, folder) = legacy_instance_office(5, None);
-    let store = Store::open(
-        &folder.join(OFFICE_DB),
-        &key,
-        Opening::Existing,
-        &OFFICE_SCHEMA,
-    )
-    .unwrap();
+    let store = Store::open(&folder.join(OFFICE_DB), Opening::Existing, &OFFICE_SCHEMA).unwrap();
     store
         .write(|db| {
             db.pragma_update(None, "user_version", OFFICE_SCHEMA.version + 1)
@@ -525,7 +513,7 @@ fn v3_newer_schema_is_refused_without_adopting_instance() {
         create: |_| unreachable!(),
         upgrade: |_, _| unreachable!(),
     };
-    let store = Store::open(&folder.join(OFFICE_DB), &key, Opening::Existing, &future).unwrap();
+    let store = Store::open(&folder.join(OFFICE_DB), Opening::Existing, &future).unwrap();
     assert!(meta(&store, "instance_id").unwrap().is_none());
 }
 
@@ -539,7 +527,7 @@ fn v3_instance_mismatch_precedes_any_legacy_org_migration() {
         create: |tx| tx.execute_batch(include_str!("../../store/org/fixtures/schema-v1.sql")),
         upgrade: |_, _| unreachable!(),
     };
-    let org = Store::open(&folder.join(ORG_DB), &key, Opening::New, &schema).unwrap();
+    let org = Store::open(&folder.join(ORG_DB), Opening::New, &schema).unwrap();
     put_meta(
         &org,
         &[("office_id", ID), ("organization_id", &format!("ORG{ID}"))],
@@ -641,13 +629,7 @@ fn released_rows(db: &rusqlite::Connection) -> Vec<(String, Vec<Vec<rusqlite::ty
 #[test]
 fn genuine_v6_constraints_metadata_and_all_rows_survive_v7_and_reopen() {
     let (_dir, key, folder) = legacy_instance_office(6, Some(INSTANCE));
-    let old = Store::open(
-        &folder.join(OFFICE_DB),
-        &key,
-        Opening::Existing,
-        &RELEASED_V6,
-    )
-    .unwrap();
+    let old = Store::open(&folder.join(OFFICE_DB), Opening::Existing, &RELEASED_V6).unwrap();
     old.write(|db| {
         assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),6);
         assert_eq!(db.query_row("SELECT count(*) FROM sqlite_schema WHERE name LIKE 'selected_%'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
@@ -684,12 +666,7 @@ fn genuine_v6_constraints_metadata_and_all_rows_survive_v7_and_reopen() {
         ..RELEASED_V6
     };
     assert!(matches!(
-        Store::open(
-            &folder.join("invalid-admission.db"),
-            &key,
-            Opening::New,
-            &invalid
-        ),
+        Store::open(&folder.join("invalid-admission.db"), Opening::New, &invalid),
         Err(OfficeError::Invalid(
             "work_items contains a numbered task or bug without a project"
         ))
@@ -735,5 +712,26 @@ fn genuine_v6_constraints_metadata_and_all_rows_survive_v7_and_reopen() {
                 }
             })
             .unwrap();
+    }
+}
+
+/// An instance id is canonical lowercase UUIDv7 text: a ULID (the earlier form) and uppercase
+/// UUIDv7 are refused before any folder is made.
+#[test]
+fn create_for_instance_refuses_a_ulid_or_uppercase_instance() {
+    for instance in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F607182",
+    ] {
+        let dir = TempDir::new().unwrap();
+        let folder = folder_of(&dir, ID);
+        assert!(
+            matches!(
+                Office::create_for_instance(&folder, &new_office(ID), test_key(), instance),
+                Err(OfficeError::Invalid(_))
+            ),
+            "{instance}"
+        );
+        assert!(!folder.join(OFFICE_DB).exists(), "{instance}");
     }
 }

@@ -1,4 +1,4 @@
-//! Host registry/TLS/recovery custody, separate from office database keys and their sweep.
+//! Host registry/TLS/recovery custody, separate from office secrets keys and their sweep.
 
 #[cfg(debug_assertions)]
 pub(crate) mod dev;
@@ -15,10 +15,6 @@ pub(crate) const MAX_BYTES: usize = 16 * 1024;
 pub(crate) struct Name(String);
 
 impl Name {
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn parse(name: &str) -> Result<Self, Error> {
         let valid = name == "registry"
             || name == "writer-device"
@@ -41,10 +37,6 @@ impl Name {
             .then(|| Self(name.to_owned()))
             .ok_or(Error::InvalidName)
     }
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -67,10 +59,6 @@ impl Value {
         }
         Ok(Self(bytes))
     }
-    #[cfg_attr(
-        not(any(test, debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.2b hostdb")
-    )]
     pub(crate) fn expose(&self) -> &[u8] {
         &self.0
     }
@@ -148,7 +136,7 @@ pub(crate) fn store_for(
     instance: &str,
     own_signing: impl FnOnce() -> Option<crate::code_signing::Signing>,
 ) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
-    if org_proto::ulid_time_ms(instance).is_none() {
+    if !org_proto::is_uuid_v7(instance) {
         return Err(SelectionError::InvalidInstance);
     }
     #[cfg(debug_assertions)]
@@ -178,7 +166,7 @@ fn release_store(
     instance: &str,
     own_signing: impl FnOnce() -> Option<crate::code_signing::Signing>,
 ) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
-    if org_proto::ulid_time_ms(instance).is_none() {
+    if !org_proto::is_uuid_v7(instance) {
         return Err(SelectionError::InvalidInstance);
     }
     let group = group

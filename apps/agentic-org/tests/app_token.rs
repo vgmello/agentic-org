@@ -1,7 +1,8 @@
-//! App tokens (ADR-0003 §2.1) on the control pipe, against the fake office server: one per
-//! office per host run, in the first line of every start, never in a log.
+//! Launch secrets on the launch rendezvous, against the fake office server: every start's handoff
+//! carries a grant key of its own (a fresh one per run), and a worker that refuses its first line
+//! never gets one. The handoff carries no app token.
 //!
-//! The tests never see a token: the fake records a fingerprint of each one it gets.
+//! The tests never see a key: the fake records a fingerprint of each one it gets.
 
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
@@ -12,17 +13,12 @@
 
 mod support;
 
-use std::thread;
 use std::time::Duration;
 
 use org_host::Host;
-use org_office_launch::{write_host_message, CreateOffice, HostMessage, StartOffice};
-use org_proto::{
-    AppToken, DbKey, Empty, ErrorCode, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
-    OrganizationCreateParams,
-};
+use org_proto::{Empty, OfficeList, OfficeStatus, OfficeStatusReason};
 use serde_json::json;
-use support::{alive, eventually, has_hex_run, hq, restart_host, Client, TestHome};
+use support::{eventually, has_hex_run, hq, office_info, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -45,21 +41,9 @@ fn wait_for(host: &Host, office_id: &str, want: OfficeStatus) {
     });
 }
 
-/// A host message as one pipe line, for a wrapper script to send in the host's place.
-fn line(message: &HostMessage) -> String {
-    let mut out = Vec::new();
-    write_host_message(&mut out, message).unwrap();
-    String::from_utf8(out).unwrap()
-}
-
-fn kill(pid: u32) {
-    // SAFETY: sends a signal to a process the test started (through the host).
-    assert_eq!(unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) }, 0);
-}
-
 #[cfg(target_os = "macos")]
 #[test]
-fn every_start_gets_its_office_token_and_restarts_reuse_it() {
+fn every_start_gets_a_grant_key_of_its_own() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
@@ -68,104 +52,35 @@ fn every_start_gets_its_office_token_and_restarts_reuse_it() {
     wait_for(&host, A, OfficeStatus::Active);
     wait_for(&host, B, OfficeStatus::Active);
 
-    let a = home.token_fingerprints(A);
+    let a = home.grant_fingerprints(A);
     assert_eq!(home.runs(A), 3);
-    assert_eq!(a.len(), 3, "a start without a token: {a:?}");
-    assert!(
-        a.iter().all(|fp| *fp == a[0]),
-        "a restart got a new token: {a:?}"
-    );
-    let b = home.token_fingerprints(B);
+    assert_eq!(a.len(), 3, "a start without a grant key: {a:?}");
+    let mut distinct = a.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 3, "a restart reused a grant key: {a:?}");
+    let b = home.grant_fingerprints(B);
     assert_eq!(b.len(), 1);
-    assert_ne!(a[0], b[0], "two offices share a token");
+    assert!(!a.contains(&b[0]), "two offices share a grant key");
     assert!(home.first_line_refusals(A).is_empty());
-
-    // The fake wrote its fingerprints to stderr, so the office logs exist and were checked.
-    let handle = &A[A.len() - 12..];
-    let logs = home.logs();
-    assert!(logs
-        .iter()
-        .any(|(path, text)| path.ends_with(format!("{handle}.log")) && text.contains(&a[0])));
     home.assert_no_secret_in_home();
     host.shutdown();
 }
 
+/// The worker can report on the rendezvous only once it has read a valid first line
+/// naming it; a refusal before that goes to stdout, which the host does not read. So a worker
+/// that refuses its first line and exits is a crash: restarted with backoff, never given a key,
+/// and noticed when it exits rather than at the end of the rendezvous wait.
 #[cfg(target_os = "macos")]
 #[test]
-fn a_host_restart_makes_new_tokens() {
-    let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    for _ in 0..2 {
-        let host = restart_host(&home, &home.config());
-        wait_for(&host, A, OfficeStatus::Active);
-        host.shutdown();
-    }
-    let a = home.token_fingerprints(A);
-    assert_eq!(a.len(), 2);
-    assert_ne!(
-        a[0], a[1],
-        "the second host run reused the first run's token"
+fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secret() {
+    // A retired v2 create line, keys included (the launch library no longer writes v2): the
+    // worker refuses it by its version without decoding it.
+    let v2_create = format!(
+        r#"{{"v":2,"op":"create","org_id":"01ORGA","org_name":"Acme","office_id":"{A}","office_name":"HQ","role":"hq","app_token":"{}","db_key":"{}"}}"#,
+        "07".repeat(32),
+        "08".repeat(32),
     );
-    home.assert_no_secret_in_home();
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_created_office_keeps_its_token_when_it_restarts() {
-    let home = TestHome::registered();
-    let host = home.start(home.config()).unwrap();
-    let mut client = Client::for_host(&host);
-    let org = client
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Acme".into(),
-        })
-        .unwrap();
-    let office_id = org.offices[0].id.clone();
-    wait_for(&host, &office_id, OfficeStatus::Active);
-    let created = home.token_fingerprints("create");
-    assert_eq!(created.len(), 1);
-
-    // Kill the server twice; each restart (`--office`) gets the token the create got.
-    let mut pid = home.pids("create")[0];
-    for restarts in 1..=2 {
-        kill(pid);
-        eventually(WAIT, "the office to restart", || {
-            home.runs(&office_id) == restarts && !alive(pid)
-        });
-        wait_for(&host, &office_id, OfficeStatus::Active);
-        pid = *home.pids(&office_id).last().unwrap();
-    }
-    assert_eq!(
-        home.token_fingerprints(&office_id),
-        [created[0].clone(), created[0].clone()]
-    );
-
-    // Another organization's office gets a token of its own.
-    let other = client
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Beta".into(),
-        })
-        .unwrap();
-    let fingerprints = home.token_fingerprints("create");
-    assert_eq!(fingerprints.len(), 2);
-    assert_ne!(fingerprints[0], fingerprints[1]);
-    wait_for(&host, &other.offices[0].id, OfficeStatus::Active);
-    home.assert_no_secret_in_home();
-    host.shutdown();
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
-    let create = line(&HostMessage::Create(CreateOffice {
-        org_id: "01ORGA".into(),
-        org_name: "Acme".into(),
-        office_id: A.into(),
-        office_name: "HQ".into(),
-        role: OfficeRole::Hq,
-        app_token: AppToken::from_bytes([7; 32]),
-        db_key: DbKey::from_bytes([8; 32]),
-    }));
     let cases = [
         (
             "malformed",
@@ -176,8 +91,8 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
             r#"printf '{"v":2,"op":"stop"}\n' | "$FAKE" "$@""#.to_owned(),
         ),
         (
-            "create-op",
-            format!(r#"printf '%s' '{create}' | "$FAKE" "$@""#),
+            "v2-create",
+            format!(r#"printf '%s\n' '{v2_create}' | "$FAKE" "$@""#),
         ),
     ];
     for (name, body) in cases {
@@ -186,16 +101,48 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
         let mut config = home.config();
         config.set_server_program(home.wrapper(name, &body));
         let host = home.start(config).unwrap();
-        wait_for(&host, A, OfficeStatus::Unavailable);
-        // Several backoff periods (100 + 200 + 400 ms) pass without a restart:
-        // invalid_request is fatal.
-        thread::sleep(Duration::from_millis(800));
-        assert_eq!(status(&host, A), OfficeStatus::Unavailable, "{name}");
-        assert_eq!(home.runs(A), 1, "{name}");
-        assert_eq!(home.first_line_refusals(A).len(), 1, "{name}");
-        assert!(home.token_fingerprints(A).is_empty(), "{name}");
+        // Two runs well inside the host's 5 s rendezvous wait: the exit ended the first wait.
+        eventually(
+            Duration::from_secs(3),
+            &format!("{name}: a restart"),
+            || home.first_line_refusals(A).len() >= 2,
+        );
+        assert_ne!(status(&host, A), OfficeStatus::Unavailable, "{name}");
+        assert_ne!(status(&host, A), OfficeStatus::Active, "{name}");
+        assert!(home.grant_fingerprints(A).is_empty(), "{name}");
+        assert!(home.office_secrets_key_fingerprints(A).is_empty(), "{name}");
         host.shutdown();
     }
+}
+
+/// A worker that refuses every first line is given up on: with a give-up limit of 3 its third
+/// short exit makes the office `unavailable`/`restarts_exhausted`, and no further run starts.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
+    let home = TestHome::registered();
+    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    let mut config = home.config();
+    config.set_server_program(home.wrapper("malformed", r#"printf 'not json\n' | "$FAKE" "$@""#));
+    config.timings.give_up_after = 3;
+    config.timings.backoff_initial = Duration::from_millis(20);
+    config.timings.backoff_max = Duration::from_millis(40);
+    let host = home.start(config).unwrap();
+    eventually(WAIT, "the office to be given up on", || {
+        office_info(&host, A).is_some_and(|info| {
+            info.status == OfficeStatus::Unavailable
+                && info.status_reason == Some(OfficeStatusReason::RestartsExhausted)
+        })
+    });
+    assert_eq!(home.first_line_refusals(A).len(), 3);
+    // Many backoff periods later, still three runs: nothing restarts it.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(home.first_line_refusals(A).len(), 3);
+    assert_eq!(home.runs(A), 3);
+    assert_eq!(status(&host, A), OfficeStatus::Unavailable);
+    assert!(home.grant_fingerprints(A).is_empty());
+    assert!(home.office_secrets_key_fingerprints(A).is_empty());
+    host.shutdown();
 }
 
 #[cfg(target_os = "macos")]
@@ -213,32 +160,7 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     });
     assert_ne!(status(&host, A), OfficeStatus::Unavailable);
     assert!(home.first_line_refusals(A).is_empty());
-    assert!(home.token_fingerprints(A).is_empty());
-    host.shutdown();
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_create_whose_first_line_is_a_start_line_fails() {
-    let start = line(&HostMessage::Start(StartOffice {
-        app_token: AppToken::from_bytes([7; 32]),
-        db_key: DbKey::from_bytes([8; 32]),
-    }));
-    let home = TestHome::registered();
-    let mut config = home.config();
-    config.set_server_program(home.wrapper(
-        "start-op",
-        &format!(r#"printf '%s' '{start}' | "$FAKE" "$@""#),
-    ));
-    let host = home.start(config).unwrap();
-    let err = Client::for_host(&host)
-        .call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: "Acme".into(),
-        })
-        .unwrap_err();
-    assert_eq!(err.code, ErrorCode::StorageError);
-    assert_eq!(home.first_line_refusals("create").len(), 1);
-    assert!(home.token_fingerprints("create").is_empty());
+    assert!(home.grant_fingerprints(A).is_empty());
     host.shutdown();
 }
 

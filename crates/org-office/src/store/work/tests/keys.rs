@@ -151,7 +151,6 @@ fn b111_duplicate_requests_refuse_v6_open_atomically() {
     drop(old);
     let error = Store::open(
         &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
         Opening::Existing,
         &OFFICE_SCHEMA,
     )
@@ -161,13 +160,7 @@ fn b111_duplicate_requests_refuse_v6_open_atomically() {
         format!("{error:?}").contains("work"),
         "clear work key admission error: {error:?}"
     );
-    let old = Store::open(
-        &root.path().join("office.db"),
-        &Key::from_bytes([42; 32]),
-        Opening::Existing,
-        &STALE_V6,
-    )
-    .unwrap();
+    let old = Store::open(&root.path().join("office.db"), Opening::Existing, &STALE_V6).unwrap();
     assert_eq!(
         old.read(|db| Ok((
             super::metadata::schema_rows(db),
@@ -229,7 +222,6 @@ fn b111_upgrade_and_current_admission_reject_each_invalid_key_atomically() {
             drop(old);
             let error = Store::open(
                 &root.path().join("office.db"),
-                &Key::from_bytes([42; 32]),
                 Opening::Existing,
                 &OFFICE_SCHEMA,
             )
@@ -245,13 +237,8 @@ fn b111_upgrade_and_current_admission_reject_each_invalid_key_atomically() {
             } else {
                 assert!(format!("{error:?}").contains("UNIQUE constraint failed"));
             }
-            let old = Store::open(
-                &root.path().join("office.db"),
-                &Key::from_bytes([42; 32]),
-                Opening::Existing,
-                schema,
-            )
-            .unwrap();
+            let old =
+                Store::open(&root.path().join("office.db"), Opening::Existing, schema).unwrap();
             assert_eq!(
                 old.read(|db| Ok((
                     super::metadata::schema_rows(db),
@@ -425,7 +412,9 @@ fn b111_native_parent_guard_preserves_link_read_storage_errors_without_writes() 
             shortcut: None,
         })
     };
-    let refusal = service.call(Caller::app("owner1"), call(999_861)).unwrap();
+    let refusal = service
+        .call(Caller::grant_bound("owner1"), call(999_861))
+        .unwrap();
     assert!(
         matches!(refusal,TxnOutput::Refused(error) if error.code==org_proto::ErrorCode::InvalidRequest)
     );
@@ -442,7 +431,7 @@ fn b111_native_parent_guard_preserves_link_read_storage_errors_without_writes() 
     .unwrap();
     let before = db.read(|db| Ok(super::metadata::old_rows(db))).unwrap();
     let error = service
-        .call(Caller::app("owner1"), call(999_862))
+        .call(Caller::grant_bound("owner1"), call(999_862))
         .unwrap_err();
     let mut cause = error.source();
     let mut json_error = false;
@@ -484,21 +473,20 @@ fn b111_duplicate_admission_preserves_logical_state_in_wal_and_delete_journals()
             .unwrap();
         drop(old);
         let path = root.path().join("office.db");
-        let key = Key::from_bytes([42; 32]);
-        // Reuse the store's initialized, keyed SQLCipher opener to construct the legacy
+        // Reuse the store's opener to construct the legacy
         // journal fixture after its writer closes. No transaction may change journal mode.
-        let db = crate::store::connect(&path, &key, false, true).unwrap();
+        let db = crate::store::connect(&path, false, true).unwrap();
         let actual: String = db
             .pragma_update_and_check(None, "journal_mode", journal, |r| r.get(0))
             .unwrap();
         assert_eq!(actual.to_ascii_uppercase(), journal);
         drop(db);
         let original_bytes = std::fs::read(&path).unwrap();
-        let error = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA)
+        let error = Store::open(&path, Opening::Existing, &OFFICE_SCHEMA)
             .err()
             .expect("duplicate numbers refuse admission in either journal mode");
         assert!(format!("{error:?}").contains("UNIQUE constraint failed"));
-        let db = crate::store::connect(&path, &key, false, true).unwrap();
+        let db = crate::store::connect(&path, false, true).unwrap();
         assert_eq!(
             (
                 super::metadata::schema_rows(&db),

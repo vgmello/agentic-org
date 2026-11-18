@@ -88,19 +88,19 @@ fn deleting_an_area_moves_its_open_bugs_and_leaves_the_closed_ones() {
         let id = w.bug_in(Some(AREA_UI));
         w.triage(&id);
         let p = w.fixed_params(&id);
-        w.ok(&app(), WorkCall::BugMarkFixed(p));
+        w.ok(&owner_by_grant(), WorkCall::BugMarkFixed(p));
         id
     };
     let closed = {
         let id = w.bug_in(Some(AREA_UI));
         let p = w.wont_fix_params(&id);
-        w.ok(&app(), WorkCall::BugClose(p));
+        w.ok(&owner_by_grant(), WorkCall::BugClose(p));
         id
     };
     let elsewhere = w.bug_in(Some(AREA_PAY));
     let deleted_bug = {
         let id = w.bug_in(Some(AREA_UI));
-        w.ok(&app(), w.delete(&id));
+        w.ok(&owner_by_grant(), w.delete(&id));
         id
     };
     let versions: Vec<u64> = [&new, &closed, &elsewhere, &deleted_bug]
@@ -148,7 +148,7 @@ fn deleting_an_area_moves_its_open_bugs_and_leaves_the_closed_ones() {
     );
     assert_eq!(
         w.code(
-            &app(),
+            &owner_by_grant(),
             WorkCall::Undo(WorkUndoParams {
                 change_id: w.id(),
                 target_id: triaged.clone(),

@@ -3,10 +3,10 @@
 //! restarting on a fatal failure or when it keeps failing (the give-up rule), until
 //! `office.restart` or the next host run.
 //!
-//! Every start loads the office's database key from the key store first. A missing item, or one
-//! that isn't a key, starts no server: the office is `unavailable`/`key_missing`, the same as a
-//! server reporting `key_missing`, and `office.restart` loads it again. Any other key store error
-//! is a `storage_error`, retried with backoff. The key is dropped once its line is written.
+//! Every start loads the office's secrets key from the key store first. A missing item, or one
+//! that isn't a key, still starts the server: its handoff carries `null` and the office serves
+//! its data, with only what the key unwraps unavailable. Any other key store error is a
+//! `storage_error`, retried with backoff. The key is dropped once its line is written.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -15,12 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use org_office_launch::{FailCode, ServerEvent};
-use org_proto::{AppToken, OfficeStatusReason};
+use org_proto::OfficeStatusReason;
 
 use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
 use super::state::{OfficeState, SharedState};
 use crate::host_log;
-use crate::keys::KeyStore;
+use crate::keys::OfficeSecretsKeys;
 use crate::logs::RotatingLog;
 use crate::timings::Timings;
 
@@ -40,11 +40,7 @@ const EXIT_LINES_WAIT: Duration = Duration::from_millis(200);
 /// Everything one office's supervision thread owns.
 pub(crate) struct OfficeRunner {
     pub(crate) office_id: String,
-    /// The office's app token for this host run: every start gets it. Shared with the
-    /// supervisor, which hands the token to the app (`office.app_token`).
-    pub(crate) token: Arc<AppToken>,
-    /// Where the office's database key is kept; loaded before every start.
-    pub(crate) keys: Arc<dyn KeyStore>,
+    pub(crate) keys: Arc<dyn OfficeSecretsKeys>,
     pub(crate) spawner: Spawner,
     pub(crate) timings: Timings,
     pub(crate) state: Arc<SharedState>,
@@ -163,26 +159,13 @@ impl OfficeRunner {
         taken
     }
 
-    fn key_missing(&self) -> Ending {
-        host_log::log(&format!(
-            "office {} has no usable key in the host's key store; it isn't started \
-             (office.restart tries again)",
-            self.office_id
-        ));
-        Ending::Ended {
-            reason: OfficeStatusReason::KeyMissing,
-            fatal: true,
-            uptime: None,
-        }
-    }
-
-    /// Loads the office's key, then starts its server (already marked `starting`) and watches
-    /// it. Without its key, nothing is started.
+    /// Loads the office's secrets key, then starts its server (already marked `starting`) and
+    /// watches it. Without its key (no item, or one that isn't a key) the start proceeds with
+    /// none; only a key store that can't be read starts nothing.
     fn start(&self, generation: &mut u64) -> Ending {
         let key = match self.keys.load(&self.office_id) {
-            Ok(Some(key)) => key,
-            Ok(None) => return self.key_missing(),
-            Err(e) if e.means_key_missing() => return self.key_missing(),
+            Ok(key) => key,
+            Err(e) if e.means_key_missing() => None,
             Err(e) => {
                 host_log::log(&format!(
                     "couldn't load the key of office {}: {e}",
@@ -195,7 +178,13 @@ impl OfficeRunner {
                 };
             }
         };
-        let mode = Mode::Office(&self.office_id, &self.token, &key);
+        if key.is_none() {
+            host_log::log(&format!(
+                "office {} has no usable key in the host's key store; it starts without one",
+                self.office_id
+            ));
+        }
+        let mode = Mode::Office(&self.office_id, key.as_ref());
         let spawned = self
             .spawner
             .spawn(mode, *generation, self.sender.clone(), self.log.clone());
@@ -425,7 +414,6 @@ fn after_exit(failure: Option<FailCode>, ready_at: Option<Instant>) -> Ending {
 pub(crate) fn reason_for(code: FailCode) -> (OfficeStatusReason, bool) {
     match code {
         FailCode::InUse => (OfficeStatusReason::InUse, false),
-        FailCode::KeyMissing => (OfficeStatusReason::KeyMissing, true),
         FailCode::UnsupportedVersion => (OfficeStatusReason::UnsupportedVersion, true),
         FailCode::InvalidRequest | FailCode::InvalidName | FailCode::AlreadyExists => {
             (OfficeStatusReason::InvalidRequest, true)
@@ -538,7 +526,6 @@ mod tests {
         for (code, reason, fatal) in [
             (FailCode::InUse, R::InUse, false),
             (FailCode::StorageError, R::StorageError, false),
-            (FailCode::KeyMissing, R::KeyMissing, true),
             (FailCode::UnsupportedVersion, R::UnsupportedVersion, true),
             (FailCode::InvalidRequest, R::InvalidRequest, true),
             (FailCode::InvalidName, R::InvalidRequest, true),

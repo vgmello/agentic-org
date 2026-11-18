@@ -1,6 +1,6 @@
 # Schema coverage and integrity review
 
-The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 92 tables and 12 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 91 tables and 12 views; the private side has 4 tables. These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -19,7 +19,7 @@ The primary design documents define two SQL artifacts. Load `schema.sql` once in
 | [11](11-model-profiles-and-agent-execution.md) | [schema.sql](schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts`, `model_profile_model_union` |
 | [12](12-task-assignment-and-history.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
 | [05: private operational data](05-operational-data.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
-| [15](15-messaging-and-chat.md) | [schema.sql](schema.sql) | `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_mentions`, `message_reactions` |
+| [15](15-messaging-and-chat.md) | [schema.sql](schema.sql) | `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
 | [03: task details](03-features-and-work.md#detailed-task-payload-and-feature-lifecycle) | [schema.sql](schema.sql) | `task_details` |
 | [16](16-recovery-and-office-continuity.md) | [schema.sql](schema.sql) | `mutation_receipts`, `office_origin_streams`, `office_recovery_checkpoints`, `recovery_snapshot_transfers`, `process_cleanup_records` |
 | [17](17-budgets-and-controls.md) | [schema.sql](schema.sql) | `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
@@ -33,7 +33,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code has this table with these columns), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (no code).
 
-As of 2026-11-18 none of the 92 tables or 12 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 88 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
+As of 2026-11-18 none of the 91 tables or 12 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 87 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -72,7 +72,6 @@ As of 2026-11-18 none of the 92 tables or 12 views is implemented as drafted. 16
 | `links` | table | Absent |  |
 | `local_repository_locations` | table | Absent |  |
 | `message_attachments` | table | Absent |  |
-| `message_mentions` | table | Absent |  |
 | `message_reactions` | table | Absent |  |
 | `message_recipient_states` | table | Different shape in code | Closest current table: `msg_state`, `msg_unread` |
 | `messages` | table | Different shape in code | Closest current table: `msg_headers`, `msg_bodies` |
@@ -164,10 +163,10 @@ All write connections must set `foreign_keys=ON` and `recursive_triggers=ON`. Th
 A task event (schema 2, the only version) carries its recorded resource profile and
 its complete event bytes alongside lossless change/provenance text. Codec/hash,
 duplicate, header and coverage validation is admission work, not SQL. The
-work-acceptance journal ordinal/anchor in document 16 is not an event-source stream
+acceptance journal ordinal/anchor in document 16 is not an event-source stream
 sequence. See ADR-0006 for its frozen mapping.
 
-Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, authority journals, and execution transaction envelopes/input/checkpoints/tool receipts have explicit serialization/storage contracts in documents 01, 05, 06, 10 and 11. They are not missing tables merely because their durable source is a file. Accounts, credentials and the link from an account to its person record are host data; private mirrors do not create credentials. Private notes and their command receipts are authoritative in the separate private database defined by document 05; document 13 points to that section.
+Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, the office acceptance journal (16), and execution transaction envelopes/input/checkpoints/tool receipts have explicit serialization/storage contracts in documents 01, 05, 06, 10 and 11. They are not missing tables merely because their durable source is a file. Accounts, credentials and the link from an account to its person record are host data; private mirrors do not create credentials. Private notes and their command receipts are authoritative in the separate private database defined by document 05; document 13 points to that section.
 
 ## Verification and limits
 

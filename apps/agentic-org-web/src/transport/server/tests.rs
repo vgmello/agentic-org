@@ -99,28 +99,30 @@ impl Running {
         stream
     }
 
+    /// One exchange. A reset fails: the lingering close lets even a parser
+    /// refusal, which leaves input unread, reach the client intact.
     fn request(&self, bytes: &[u8]) -> Vec<u8> {
-        self.exchange(bytes, false)
-    }
-
-    fn protocol_refusal(&self, bytes: &[u8]) -> Vec<u8> {
-        self.exchange(bytes, true)
-    }
-
-    fn exchange(&self, bytes: &[u8], refusal_may_reset: bool) -> Vec<u8> {
         let mut stream = self.connect();
         stream.write_all(bytes).unwrap();
         let mut response = Vec::new();
-        if let Err(error) = stream.read_to_end(&mut response) {
-            // A parser refusal closes with unread input still in the socket.
-            // TCP may report reset after delivering the complete error reply.
-            // The test below still requires that 4xx and its empty body.
-            assert!(
-                refusal_may_reset && error.kind() == io::ErrorKind::ConnectionReset,
-                "{error}"
-            );
-        }
+        stream.read_to_end(&mut response).unwrap();
         response
+    }
+
+    /// `head` in one write, then `trailing` in a second write that may arrive
+    /// after the server has answered from the head alone. The write may fail
+    /// once the server has closed; only the reply read decides the outcome.
+    /// Returns the bytes read and whether that read ended in a reset.
+    fn split_request(&self, head: &[u8], trailing: &[u8]) -> (Vec<u8>, bool) {
+        let mut stream = self.connect();
+        stream.write_all(head).unwrap();
+        let _ = stream.write_all(trailing);
+        let mut response = Vec::new();
+        match stream.read_to_end(&mut response) {
+            Ok(_) => (response, false),
+            Err(error) if error.kind() == io::ErrorKind::ConnectionReset => (response, true),
+            Err(error) => panic!("{error}"),
+        }
     }
 }
 
@@ -224,17 +226,68 @@ fn malformed_and_oversize_headers_close_with_bodyless_errors_before_a_handler() 
         ..HttpLimits::default()
     };
     let server = Running::start(ListenMode::HttpLoopback, limits);
-    let response = server.protocol_refusal(b"NOT A REQUEST\r\n\r\n");
+    let response = server.request(b"NOT A REQUEST\r\n\r\n");
     assert!(response.starts_with(b"HTTP/1.1 400"));
     assert!(body(&response).is_empty());
     assert!(!String::from_utf8_lossy(&response).contains("text/html"));
     let mut request = b"GET / HTTP/1.1\r\nHost: gateway.test\r\nX-Large: ".to_vec();
     request.extend(vec![b'x'; 9000]);
     request.extend(b"\r\n\r\n");
-    let response = server.protocol_refusal(&request);
+    let response = server.request(&request);
     assert!(response.starts_with(b"HTTP/1.1 431"));
     assert!(body(&response).is_empty());
     assert!(!String::from_utf8_lossy(&response).contains("text/html"));
+    assert_eq!(server.calls.load(Ordering::Acquire), 0);
+}
+
+/// A3 B1: Hyper's own 400 and 431 parser refusals answer while request bytes
+/// are still unread or still arriving. Each reply must reach the client
+/// complete, with no reset, every time.
+#[test]
+fn a3_b1_parser_refusals_with_trailing_input_reach_the_client_without_a_reset() {
+    const ROUNDS: usize = 500;
+    let server = Running::start(
+        ListenMode::HttpLoopback,
+        HttpLimits {
+            header_bytes: 8192,
+            ..HttpLimits::default()
+        },
+    );
+    let mut oversize = b"GET / HTTP/1.1\r\nHost: gateway.test\r\nX-Large: ".to_vec();
+    oversize.extend(vec![b'x'; 9000]);
+    oversize.extend(b"\r\n\r\n");
+    let trailing = [b'y'; 4096];
+    let cases: [(&[u8], &[u8]); 2] = [
+        (b"NOT A REQUEST\r\n\r\n", b"HTTP/1.1 400"),
+        (&oversize, b"HTTP/1.1 431"),
+    ];
+    // Every case runs before anything is asserted, so a failure reports each case's count.
+    let mut counts = Vec::new();
+    for (head, status) in cases {
+        let mut resets = 0;
+        for _ in 0..ROUNDS {
+            let (response, reset) = server.split_request(head, &trailing);
+            if reset {
+                resets += 1;
+                continue;
+            }
+            assert!(
+                response.starts_with(status),
+                "{}",
+                String::from_utf8_lossy(&response)
+            );
+            assert!(body(&response).is_empty());
+        }
+        counts.push(format!(
+            "{resets} of {ROUNDS} {} refusals were reset",
+            String::from_utf8_lossy(status)
+        ));
+    }
+    assert!(
+        counts.iter().all(|c| c.starts_with("0 ")),
+        "{}",
+        counts.join("; ")
+    );
     assert_eq!(server.calls.load(Ordering::Acquire), 0);
 }
 
@@ -248,7 +301,7 @@ fn b105_header_field_count_is_enforced_independently_of_header_bytes() {
         },
     );
     assert!(server.request(REQUEST).starts_with(b"HTTP/1.1 200"));
-    let response = server.protocol_refusal(
+    let response = server.request(
         b"GET / HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\nX-Third: x\r\n\r\n",
     );
     assert!(response.starts_with(b"HTTP/1.1 431"));
@@ -363,6 +416,84 @@ fn x02_s6_1_new_tls_handshakes_cannot_resume_a_replaced_identity() {
                 }
             });
     }
+}
+
+/// A3 B1 over TLS: the handler answers from the head alone while the body
+/// arrives in a second TLS record. The lingering close must deliver the whole
+/// reply and its close_notify, with no truncation (`UnexpectedEof`), and close
+/// the TCP connection with a FIN rather than a reset.
+#[test]
+fn a3_b1_https_early_replies_to_unread_bodies_reach_the_client_without_a_reset() {
+    const ROUNDS: usize = 300;
+    let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
+    let server = Running::start(ListenMode::Https(certificates), HttpLimits::default());
+    let failures = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let client = resuming_client();
+            // Larger than one TLS record, so body bytes are still unread in the
+            // socket when the server answers.
+            let upload = vec![b'x'; 64 * 1024];
+            let mut failures = Vec::new();
+            for _ in 0..ROUNDS {
+                let tcp = tokio::net::TcpStream::connect(server.address)
+                    .await
+                    .unwrap();
+                let mut tls = time::timeout(
+                    GUARD,
+                    client.connect(ServerName::try_from("gateway.test").unwrap(), tcp),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                tls.write_all(
+                    b"POST / HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\nContent-Length: 65536\r\n\r\n",
+                )
+                .await
+                .unwrap();
+                tls.flush().await.unwrap();
+                // The body write may fail once the server has closed; only
+                // the reply read decides the outcome.
+                let _ = tls.write_all(&upload).await;
+                let _ = tls.flush().await;
+                let mut response = Vec::new();
+                let read = time::timeout(GUARD, tls.read_to_end(&mut response))
+                    .await
+                    .unwrap();
+                match read {
+                    Ok(_) => {
+                        assert!(
+                            response.starts_with(b"HTTP/1.1 200"),
+                            "{}",
+                            String::from_utf8_lossy(&response)
+                        );
+                        assert_eq!(body(&response), b"{}");
+                        // After close_notify the TLS client stops reading, so
+                        // also check the TCP close itself: a FIN (EOF), not a
+                        // reset that could discard an unread reply.
+                        let mut after = [0; 1];
+                        let close = time::timeout(GUARD, tls.get_mut().0.read(&mut after));
+                        match close.await.unwrap() {
+                            Ok(0) => {}
+                            Ok(_) => panic!("data after close_notify"),
+                            Err(error) => failures.push(error.kind()),
+                        }
+                    }
+                    Err(error) => failures.push(error.kind()),
+                }
+            }
+            failures
+        });
+    assert!(
+        failures.is_empty(),
+        "{} of {ROUNDS} HTTPS early replies failed, first {:?}",
+        failures.len(),
+        failures[0]
+    );
+    assert_eq!(server.calls.load(Ordering::Acquire), ROUNDS);
 }
 
 #[test]
@@ -786,6 +917,7 @@ fn full_http_stack_times_out_when_a_client_stops_reading() {
         let server = WriteStall::new(server, Duration::from_secs(30)).unwrap();
         let connection = tokio::spawn(serve_connection(
             server,
+            None,
             Arc::new(large_response),
             HttpLimits::default(),
         ));
@@ -822,6 +954,7 @@ fn full_http_stack_completes_a_slow_but_continuously_read_response() {
         let server = WriteStall::new(server, Duration::from_secs(30)).unwrap();
         let connection = tokio::spawn(serve_connection(
             server,
+            None,
             Arc::new(large_response),
             HttpLimits::default(),
         ));
@@ -845,4 +978,62 @@ fn full_http_stack_completes_a_slow_but_continuously_read_response() {
         assert!(response.starts_with(b"HTTP/1.1 200"));
         assert_eq!(body(&response), &[b'x'; 8192]);
     });
+}
+
+/// A3 B1: a client that keeps sending after an early reply holds its
+/// connection, and the only permit, for no longer than the linger bound.
+#[test]
+fn a3_b1_a_client_that_keeps_sending_is_cut_off_within_the_linger_bound() {
+    use super::super::linger::LINGER_TIME;
+    let server = Running::start(
+        ListenMode::HttpLoopback,
+        HttpLimits {
+            connections: 1,
+            ..HttpLimits::default()
+        },
+    );
+    let mut flooding = server.connect();
+    // The handler answers without reading the declared 10 MiB body.
+    flooding
+        .write_all(b"POST / HTTP/1.1\r\nHost: gateway.test\r\nContent-Length: 10485760\r\n\r\n")
+        .unwrap();
+    let mut sender = flooding.try_clone().unwrap();
+    let sending = thread::spawn(move || {
+        let chunk = [b'x'; 1024];
+        let mut sent = 0_usize;
+        while sender.write_all(&chunk).is_ok() {
+            sent += chunk.len();
+            thread::sleep(Duration::from_millis(1));
+        }
+        sent
+    });
+    let mut response = Vec::new();
+    let mut byte = [0; 1];
+    while !response.ends_with(b"{}") {
+        assert_eq!(flooding.read(&mut byte).unwrap(), 1, "reply ended early");
+        response.push(byte[0]);
+    }
+    let replied = Instant::now();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    // The half-close follows the reply at once: EOF, not a reset, and well
+    // before the linger bound cuts the sender off.
+    let mut rest = Vec::new();
+    let eof = flooding.read_to_end(&mut rest);
+    let eof_at = replied.elapsed();
+    assert!(eof.is_ok(), "expected EOF after the reply: {eof:?}");
+    assert!(rest.is_empty());
+    assert!(eof_at < LINGER_TIME, "EOF only after {eof_at:?}");
+    let sent = sending.join().unwrap();
+    let held = replied.elapsed();
+    assert!(
+        held < LINGER_TIME + Duration::from_millis(500),
+        "connection held {held:?} after the reply"
+    );
+    assert!(
+        sent < 10 * 1024 * 1024,
+        "the server must stop accepting the body"
+    );
+    // The only permit is free again.
+    assert!(server.request(REQUEST).starts_with(b"HTTP/1.1 200"));
+    assert_eq!(server.calls.load(Ordering::Acquire), 2);
 }

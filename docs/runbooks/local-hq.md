@@ -1,7 +1,7 @@
 # Runbook: a development host on this machine
 
 What can be built and run from this checkout today, and how to do it without touching
-a real installation. Checked against the source on 2026-11-17; recheck against the
+a real installation. Checked against the source on 2026-11-18; recheck against the
 commit you work on. [Executable migration](../design/executable-migration.md) is the
 reference for what each executable does now.
 
@@ -11,8 +11,8 @@ reference for what each executable does now.
 | --- | --- |
 | Build the four executables | macOS: CI builds the whole workspace there. Linux: all four build. The host refuses to start an office worker there: the check that a started worker is the intended program exists only for macOS, and the Linux version refuses rather than use a weaker check (`crates/org-host/src/supervisor/channels.rs`, `crates/org-host/src/spawn.rs`). Increment X2 brings the host to Linux. |
 | `--help` and `--version` of each executable | Work. |
-| `agentic-org serve` (debug build) against a disposable home | macOS: starts the host in the foreground (from the source; not run for this runbook). Its socket answers only `hello` and `instance.status`, and refuses every call while no instance is registered. |
-| `agentic-org setup` | Refuses and changes nothing. Increment A2 makes it work. |
+| `agentic-org serve` (debug build) against a disposable home | macOS: starts the host in the foreground (from the source; not run for this runbook). With no registered instance its socket refuses every call, `hello` included ("run setup"). `serve --name N` runs an instance that setup registered; its socket answers, among others, `hello`, `instance.status`, `admin.link.initial` and `admin.reset`, and the account/session, recovery and provisioning calls (FC-014, FC-016), which need an existing account and session — none exists before browser registration (A3). |
+| `agentic-org setup` | macOS: creates the instance, registers and starts a launchd user agent under your account, and prints a one-time registration link (increment A2); `agentic-org admin reset` and `agentic-org service start\|stop\|status` go with it. This is a real installation in your account. For a disposable run, a debug build with the `test-support` feature takes `ORG_DEV_ACCOUNT_BASE` (an absolute private folder used instead of `~/Library`) and `ORG_DEV_SERVICE_DIR` (runs the service as a child process instead of launchd), as `apps/agentic-org/setup-tests/setup.rs` does. The registration page itself is increment A3. Other systems refuse setup. |
 | `agentic-org-web` | Refuses to open a listener. Increment A3 makes it work. |
 | Create an organization, sign in, open the browser application against a server | Not possible yet (increments A3 and A4). |
 | The host starting an office worker | macOS only today (`crates/org-host/src/spawn.rs`); increment X2 adds Linux. |

@@ -92,24 +92,21 @@ fn create_makes_the_whole_folder_and_office_json() {
 }
 
 #[test]
-fn both_databases_are_encrypted_with_the_one_key() {
-    let (dir, key, office) = made();
+fn both_databases_are_plain_sqlite_and_open_without_a_key() {
+    let (dir, _, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     for file in ["org.db", "office.db"] {
         let bytes = fs::read(folder.join(file)).unwrap();
+        // ADR-0016 decision 3: plain SQLite, protected by file permissions only.
         assert!(
-            !bytes.starts_with(b"SQLite format 3"),
-            "{file} is in the clear"
-        );
-        assert!(
-            !bytes.windows(4).any(|w| w == b"Acme" || w == b"meta"),
-            "{file} shows its contents"
+            bytes.starts_with(b"SQLite format 3\0"),
+            "{file} is not plain SQLite"
         );
     }
-    // The same key opens both.
+    // No key is needed to open either.
     for (file, schema) in [("org.db", &org_db::SCHEMA), ("office.db", &OFFICE_SCHEMA)] {
-        Store::open(&folder.join(file), &key, Opening::Existing, schema).unwrap();
+        Store::open(&folder.join(file), Opening::Existing, schema).unwrap();
     }
 }
 
@@ -283,7 +280,7 @@ fn one_process_at_a_time_owns_an_office_and_a_new_one_waits_for_the_old() {
         Err(OfficeError::InUse)
     ));
     assert!(matches!(
-        Office::discard_waiting(&folder, ID, Some(&key), SHORT),
+        Office::discard_waiting(&folder, ID, SHORT),
         Err(OfficeError::InUse)
     ));
 
@@ -322,21 +319,30 @@ fn open_makes_nothing() {
 }
 
 #[test]
-fn open_with_a_key_that_does_not_open_the_databases_is_key_missing_and_changes_nothing() {
-    let (dir, _key, office) = made();
+fn open_without_the_secrets_key_still_serves_the_data() {
+    // ENC-1 (ADR-0016 decision 3): the databases are plain SQLite, so an office started
+    // with no secrets key, or another one, reads its data; only wrapped secrets are out of reach.
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
+    let org = office.org_snapshot().unwrap();
+    assert_eq!(
+        office.secrets_key().map(Key::expose_bytes),
+        Some(key.expose_bytes())
+    );
     drop(office);
-    let before = names_in(&folder);
-    let org_before = fs::read(folder.join("org.db")).unwrap();
 
-    // The host sent another key: the databases are not opened, nor a key made in its place.
-    assert!(matches!(
-        Office::open(&folder, Key::from_bytes([1; 32])),
-        Err(OfficeError::KeyMissing)
-    ));
+    let office = Office::open(&folder, None).unwrap();
+    assert!(office.secrets_key().is_none());
+    assert_eq!(office.org_snapshot().unwrap(), org);
+    drop(office);
 
-    assert_eq!(fs::read(folder.join("org.db")).unwrap(), org_before);
-    assert_eq!(names_in(&folder), before);
+    let other = Key::from_bytes([1; 32]);
+    let office = Office::open(&folder, other.clone()).unwrap();
+    assert_eq!(
+        office.secrets_key().map(Key::expose_bytes),
+        Some(other.expose_bytes())
+    );
+    assert_eq!(office.org_snapshot().unwrap(), org);
 }
 
 #[test]
@@ -390,24 +396,15 @@ fn discard_removes_an_unfinished_create() {
     // (a) a folder with only the lock; (b) databases made but the organization not committed.
     for with_schema_only_database in [false, true] {
         let dir = TempDir::new().unwrap();
-        let key = test_key();
         let folder = folder_of(&dir, ID);
         fs::create_dir_all(&folder).unwrap();
         if with_schema_only_database {
-            drop(Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap());
-            drop(
-                Store::open(
-                    &folder.join("office.db"),
-                    &key,
-                    Opening::New,
-                    &OFFICE_SCHEMA,
-                )
-                .unwrap(),
-            );
+            drop(Store::open(&folder.join("org.db"), Opening::New, &org_db::SCHEMA).unwrap());
+            drop(Store::open(&folder.join("office.db"), Opening::New, &OFFICE_SCHEMA).unwrap());
             fs::create_dir(folder.join("workspace")).unwrap();
         }
 
-        Office::discard(&folder, ID, Some(&key)).unwrap();
+        Office::discard(&folder, ID).unwrap();
 
         assert!(!folder.exists(), "the folder is still there");
     }
@@ -421,7 +418,7 @@ fn discard_never_removes_a_finished_office() {
     let before = names_in(&folder);
 
     assert!(matches!(
-        Office::discard(&folder, ID, Some(&key)),
+        Office::discard(&folder, ID),
         Err(OfficeError::OfficeExists)
     ));
 
@@ -431,13 +428,13 @@ fn discard_never_removes_a_finished_office() {
 
 #[test]
 fn discard_never_removes_an_office_that_lost_its_office_json() {
-    let (dir, key, office) = made();
+    let (dir, _, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     fs::remove_file(folder.join("office.json")).unwrap();
 
     assert!(matches!(
-        Office::discard(&folder, ID, Some(&key)),
+        Office::discard(&folder, ID),
         Err(OfficeError::OfficeExists)
     ));
 
@@ -446,25 +443,50 @@ fn discard_never_removes_an_office_that_lost_its_office_json() {
 
 #[test]
 fn discard_refuses_databases_it_cannot_check() {
-    let (dir, _key, office) = made();
+    // A file that is not a database is never deleted: discard cannot prove it unfinished.
+    let dir = TempDir::new().unwrap();
     let folder = folder_of(&dir, ID);
-    drop(office);
-    fs::remove_file(folder.join("office.json")).unwrap();
-
-    // The host has no key for it: databases are not looked into, and are not deleted.
+    fs::create_dir_all(&folder).unwrap();
+    let junk = vec![0x5a; 8192];
+    fs::write(folder.join("org.db"), &junk).unwrap();
     assert!(matches!(
-        Office::discard(&folder, ID, None),
-        Err(OfficeError::Storage(_))
+        Office::discard(&folder, ID),
+        Err(OfficeError::Invalid(_) | OfficeError::Storage(_))
     ));
-    assert!(folder.join("org.db").exists());
+    assert_eq!(fs::read(folder.join("org.db")).unwrap(), junk);
+}
 
-    // The key is wrong: it does not open them (KeyMissing), and nothing is deleted.
-    assert!(matches!(
-        Office::discard(&folder, ID, Some(&Key::from_bytes([3; 32]))),
-        Err(OfficeError::KeyMissing)
-    ));
-    assert!(folder.join("org.db").exists());
-    assert!(folder.join("office.db").exists());
+#[test]
+fn discard_refuses_a_garbage_main_file_beside_a_valid_wal_and_deletes_nothing() {
+    for name in ["org.db", "office.db"] {
+        let dir = TempDir::new().unwrap();
+        let folder = folder_of(&dir, ID);
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join(name);
+        let wal = folder.join(format!("{name}-wal"));
+        let store = Store::open(&path, Opening::New, &org_db::SCHEMA).unwrap();
+        store.run_sql_for_test("CREATE TABLE probe(x); INSERT INTO probe VALUES (1);");
+        // Committed frames, page 1 included, still in the log while the store is open.
+        let frames = fs::read(&wal).unwrap();
+        assert!(
+            !frames.is_empty(),
+            "{name}: the store must leave frames in its WAL"
+        );
+        let length = fs::metadata(&path).unwrap().len() as usize;
+        drop(store);
+        let junk = vec![0x5a; length.max(4096)];
+        fs::write(&path, &junk).unwrap();
+        fs::write(&wal, &frames).unwrap();
+        let _ = fs::remove_file(folder.join(format!("{name}-shm")));
+
+        assert!(matches!(
+            Office::discard(&folder, ID),
+            Err(OfficeError::Invalid(_))
+        ));
+        assert!(folder.exists(), "{name}: the folder was removed");
+        assert_eq!(fs::read(&path).unwrap(), junk, "{name}");
+        assert_eq!(fs::read(&wal).unwrap(), frames, "{name}");
+    }
 }
 
 #[test]
@@ -473,7 +495,7 @@ fn discard_with_no_key_removes_only_a_folder_with_no_database_file() {
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(folder.join("workspace")).unwrap();
 
-    Office::discard(&folder, ID, None).unwrap();
+    Office::discard(&folder, ID).unwrap();
 
     assert!(!folder.exists());
 }
@@ -481,16 +503,12 @@ fn discard_with_no_key_removes_only_a_folder_with_no_database_file() {
 #[test]
 fn discard_checks_the_id_and_the_folder_name() {
     let dir = TempDir::new().unwrap();
-    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
 
     for (path, id) in [(&folder, "has-dash"), (&folder, "OTHER"), (&folder, "")] {
         assert!(
-            matches!(
-                Office::discard(path, id, Some(&key)),
-                Err(OfficeError::Invalid(_))
-            ),
+            matches!(Office::discard(path, id), Err(OfficeError::Invalid(_))),
             "{id:?}"
         );
     }
@@ -500,18 +518,17 @@ fn discard_checks_the_id_and_the_folder_name() {
 #[test]
 fn discard_without_a_folder_is_fine_and_with_a_held_lock_gives_up() {
     let dir = TempDir::new().unwrap();
-    let key = test_key();
     let folder = folder_of(&dir, ID);
 
     // With the folder absent the discard takes no lock and makes nothing.
-    Office::discard(&folder, ID, Some(&key)).unwrap();
+    Office::discard(&folder, ID).unwrap();
     assert!(!dir.path().join("offices").exists(), "it made a folder");
 
     // While someone holds the folder's lock (a create of the same id) it waits, then gives up.
     fs::create_dir_all(&folder).unwrap();
     let _held = lock_folder(&folder, SHORT).unwrap();
     assert!(matches!(
-        Office::discard_waiting(&folder, ID, Some(&key), SHORT),
+        Office::discard_waiting(&folder, ID, SHORT),
         Err(OfficeError::InUse)
     ));
     assert!(folder.exists());
@@ -578,7 +595,7 @@ fn open_checks_that_each_database_belongs_to_the_office() {
         let (dir, key, office) = made();
         let folder = folder_of(&dir, ID);
         drop(office);
-        let store = Store::open(&folder.join(file), &key, Opening::Existing, schema).unwrap();
+        let store = Store::open(&folder.join(file), Opening::Existing, schema).unwrap();
         store
             .write(|db| {
                 db.execute(
@@ -604,30 +621,22 @@ fn open_checks_that_each_database_belongs_to_the_office() {
 #[test]
 fn discard_looks_at_office_db_alone_too_and_refuses_what_it_cannot_check() {
     let dir = TempDir::new().unwrap();
-    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
-    drop(
-        Store::open(
-            &folder.join("office.db"),
-            &key,
-            Opening::New,
-            &OFFICE_SCHEMA,
-        )
-        .unwrap(),
-    );
-    // Data in office.db and no key: refused, as for org.db.
+    let junk = vec![0x5a; 8192];
+    fs::write(folder.join("office.db"), &junk).unwrap();
+    // office.db that is not a database: refused, as for org.db, and kept byte for byte.
     assert!(matches!(
-        Office::discard(&folder, ID, None),
-        Err(OfficeError::Storage(_))
+        Office::discard(&folder, ID),
+        Err(OfficeError::Invalid(_) | OfficeError::Storage(_))
     ));
-    assert!(folder.join("office.db").exists());
+    assert_eq!(fs::read(folder.join("office.db")).unwrap(), junk);
 
     // An empty org.db beside a log that is not empty: not looked at (SQLite would delete
     // the log), refused.
     fs::write(folder.join("org.db-wal"), b"frames").unwrap();
     assert!(matches!(
-        Office::discard(&folder, ID, Some(&key)),
+        Office::discard(&folder, ID),
         Err(OfficeError::Storage(_))
     ));
     assert_eq!(fs::read(folder.join("org.db-wal")).unwrap(), b"frames");
@@ -637,7 +646,7 @@ fn discard_looks_at_office_db_alone_too_and_refuses_what_it_cannot_check() {
 fn discard_of_a_missing_folder_takes_no_lock_and_makes_nothing() {
     let dir = TempDir::new().unwrap();
 
-    Office::discard(folder_of(&dir, ID), ID, None).unwrap();
+    Office::discard(folder_of(&dir, ID), ID).unwrap();
 
     assert!(!dir.path().join("offices").exists(), "it made a folder");
 }
@@ -702,7 +711,7 @@ fn a_failed_create_whose_cleanup_fails_leaves_an_unfinished_create_and_discard_f
         "the cleanup was meant to fail"
     );
     // What is left is an unfinished create: discard, given the key, removes it.
-    Office::discard(&folder, ID, Some(&key)).unwrap();
+    Office::discard(&folder, ID).unwrap();
     assert!(!folder.exists());
 }
 
@@ -710,14 +719,13 @@ fn a_failed_create_whose_cleanup_fails_leaves_an_unfinished_create_and_discard_f
 fn a_crashed_create_before_the_organization_commit_is_discardable() {
     // org.db holds the office id but no organization yet (a crash at "databases"/"workspace").
     let dir = TempDir::new().unwrap();
-    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
-    let org = Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap();
+    let org = Store::open(&folder.join("org.db"), Opening::New, &org_db::SCHEMA).unwrap();
     put_meta(&org, &[("office_id", ID)]).unwrap();
     drop(org);
 
-    Office::discard(&folder, ID, Some(&key)).unwrap();
+    Office::discard(&folder, ID).unwrap();
 
     assert!(!folder.exists());
 }
@@ -750,7 +758,6 @@ fn files_are_removed_logs_first_and_main_databases_last() {
 fn discard_refuses_a_folder_holding_something_an_office_does_not_make() {
     // A wrong path whose last name happens to be an id: its own files are not ours to delete.
     let dir = TempDir::new().unwrap();
-    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(folder.join("sub/deep")).unwrap();
     fs::write(folder.join("notes.txt"), b"mine").unwrap();
@@ -758,7 +765,7 @@ fn discard_refuses_a_folder_holding_something_an_office_does_not_make() {
     fs::create_dir(folder.join("workspace")).unwrap();
 
     assert!(matches!(
-        Office::discard(&folder, ID, Some(&key)),
+        Office::discard(&folder, ID),
         Err(OfficeError::Invalid(_))
     ));
 
@@ -782,7 +789,7 @@ fn a_folder_that_is_a_link_is_never_followed() {
     std::os::unix::fs::symlink(&target, &folder).unwrap();
 
     assert!(matches!(
-        Office::discard(&folder, ID, Some(&key)),
+        Office::discard(&folder, ID),
         Err(OfficeError::Invalid(_))
     ));
     assert!(matches!(
@@ -803,7 +810,7 @@ fn a_folder_that_is_a_link_is_never_followed() {
 
 #[test]
 fn discard_refuses_a_folder_with_office_json_even_if_nothing_is_committed() {
-    let (dir, key, office) = made();
+    let (dir, _, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     // Only the marker and the lock are left: still a finished office as far as discard knows.
@@ -818,7 +825,7 @@ fn discard_refuses_a_folder_with_office_json_even_if_nothing_is_committed() {
         let _ = fs::remove_file(folder.join(entry));
     }
     assert!(matches!(
-        Office::discard(&folder, ID, Some(&key)),
+        Office::discard(&folder, ID),
         Err(OfficeError::OfficeExists)
     ));
     assert!(folder.join("office.json").exists());
@@ -827,12 +834,10 @@ fn discard_refuses_a_folder_with_office_json_even_if_nothing_is_committed() {
 #[test]
 fn the_organization_is_committed_before_office_json_is_written() {
     let key = test_key();
-    let seen_key = key.clone();
     ON_STEP.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(move |folder, step| {
             if step == "office_json" {
-                let key = seen_key.clone();
-                let committed = Store::inspect(&folder.join("org.db"), &key, |db| {
+                let committed = Store::inspect(&folder.join("org.db"), |db| {
                     db.query_row(
                         "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
                         (),
@@ -913,7 +918,7 @@ fn a_trailing_slash_does_not_hide_a_link() {
         Err(OfficeError::Invalid(_))
     ));
     assert!(matches!(
-        Office::discard(&slashed, ID, Some(&key)),
+        Office::discard(&slashed, ID),
         Err(OfficeError::Invalid(_))
     ));
     assert!(
@@ -946,7 +951,7 @@ fn a_cleanup_that_fails_part_way_stops_there() {
         folder.join("org.db").exists(),
         "the main file went before its log"
     );
-    Office::discard(&folder, ID, Some(&key)).unwrap();
+    Office::discard(&folder, ID).unwrap();
 }
 
 #[test]
@@ -1378,36 +1383,14 @@ fn followers_are_woken_by_a_commit_and_a_wait_that_sees_a_newer_token_returns_at
 }
 
 #[test]
-fn a_key_that_opens_nothing_never_deletes_more_than_no_key_would() {
-    // office.db holds data and org.db is missing: a folder only a key can vouch for.
+fn discard_removes_an_unfinished_create_holding_only_office_db() {
+    // office.db holds data and org.db is missing: the plain database is checked, then removed.
     let dir = TempDir::new().unwrap();
-    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
-    drop(
-        Store::open(
-            &folder.join("office.db"),
-            &key,
-            Opening::New,
-            &OFFICE_SCHEMA,
-        )
-        .unwrap(),
-    );
-    let before = fs::read(folder.join("office.db")).unwrap();
+    drop(Store::open(&folder.join("office.db"), Opening::New, &OFFICE_SCHEMA).unwrap());
 
-    // No key and a WRONG key both refuse, and leave the file byte for byte as it was.
-    assert!(matches!(
-        Office::discard(&folder, ID, None),
-        Err(OfficeError::Storage(_))
-    ));
-    assert!(matches!(
-        Office::discard(&folder, ID, Some(&Key::from_bytes([9; 32]))),
-        Err(OfficeError::KeyMissing)
-    ));
-    assert_eq!(fs::read(folder.join("office.db")).unwrap(), before);
-
-    // The key that opens it may remove the unfinished create.
-    Office::discard(&folder, ID, Some(&key)).unwrap();
+    Office::discard(&folder, ID).unwrap();
     assert!(!folder.exists());
 }
 
@@ -1421,10 +1404,7 @@ fn a_log_left_beside_an_empty_database_is_never_looked_into_or_deleted() {
 
         for key in [None, Some(test_key())] {
             assert!(
-                matches!(
-                    Office::discard(&folder, ID, key.as_ref()),
-                    Err(OfficeError::Storage(_))
-                ),
+                matches!(Office::discard(&folder, ID), Err(OfficeError::Storage(_))),
                 "{name} {key:?}"
             );
             assert_eq!(fs::read(folder.join(name)).unwrap(), b"frames");

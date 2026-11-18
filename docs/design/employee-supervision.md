@@ -148,10 +148,11 @@ process text. No process edit invents commands or changes tool permissions.
 ## 5. Not in v1
 
 Goals and goal reminders, automatic scheduling, generated native agent definitions
-and private specialists, delegation to child agents, and memory checkpoints are not
-part of v1. An agent that delegates inside its vendor tool does so within that tool's
-own sandbox and the office's rules; the office grants a child nothing and tracks no
-child job. EMP criteria about these features describe later work.
+and private specialists, delegation chosen by a process, and memory checkpoints are not
+part of v1. Starting a sub-agent inside the vendor tool is
+([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs within the turn, in the
+parent's sandbox and under the office's rules; the office grants it nothing of its own
+and tracks no separate job for it. EMP criteria about these features describe later work.
 
 ## 6. Validation
 

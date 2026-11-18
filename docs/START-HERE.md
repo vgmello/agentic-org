@@ -38,7 +38,7 @@ They explain; they do not decide. The documents below decide.
 | How code must be organized | [Architecture rules](architecture-rules.md), [project structure](design/project-structure.md), [Rust style guide](rust-style-guide.md) | Dependency direction, where logic lives, naming |
 | Which document wins when two disagree | [Documentation authority map](design/documentation-authority.md) | The owning document for each topic |
 | How to work here | [`AGENTS.md`](../AGENTS.md), [branch and merge](processes/branch-and-merge.md) | Branches, checks, reviews |
-| How to build and test it | [`DEVELOPMENT.md`](../DEVELOPMENT.md), [local HQ runbook](runbooks/local-hq.md) | Build and test commands, and what can be run today: a disposable foreground host, until increment A2 makes setup work |
+| How to build and test it | [`DEVELOPMENT.md`](../DEVELOPMENT.md), [local HQ runbook](runbooks/local-hq.md) | Build and test commands, and what can be run today: `agentic-org setup` on macOS (from source builds), or a disposable foreground host |
 
 [`docs/research/`](research/) holds what was learned about vendor tools. It informs a
 design; it is not a requirement.
