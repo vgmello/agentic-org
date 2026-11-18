@@ -1,0 +1,81 @@
+[
+ {
+  "ref": "T-A40",
+  "title": "Split the checkout service",
+  "projectId": "beacon",
+  "teamId": "web",
+  "assigneeId": "sam",
+  "priority": "high",
+  "state": "in_progress"
+ },
+ {
+  "ref": "T-A42",
+  "title": "Pay button wraps under the total at 320 px",
+  "projectId": "beacon",
+  "teamId": "web",
+  "assigneeId": "noor",
+  "priority": "medium",
+  "state": "in_review"
+ },
+ {
+  "ref": "T-A44",
+  "title": "Decide the retry policy for payments",
+  "projectId": "beacon",
+  "teamId": "web",
+  "assigneeId": "mira",
+  "priority": "urgent",
+  "state": "blocked"
+ },
+ {
+  "ref": "T-A31",
+  "title": "Empty state for saved carts",
+  "projectId": "beacon",
+  "teamId": "web",
+  "assigneeId": "noor",
+  "priority": "low",
+  "state": "done"
+ },
+ {
+  "ref": "T-A37",
+  "title": "Make the deploy script give up after 5 tries",
+  "projectId": "atlas",
+  "teamId": "platform",
+  "assigneeId": "kai",
+  "priority": "high",
+  "state": "in_review"
+ },
+ {
+  "ref": "T-A45",
+  "title": "Rotate the registry credentials",
+  "projectId": "atlas",
+  "teamId": "platform",
+  "priority": "medium",
+  "state": "todo"
+ },
+ {
+  "ref": "T-A46",
+  "title": "Write the welcome checklist for new agents",
+  "projectId": "onboarding",
+  "teamId": "people",
+  "assigneeId": "ines",
+  "priority": "low",
+  "state": "todo"
+ },
+ {
+  "ref": "T-A47",
+  "title": "Icon set for the checkout steps",
+  "projectId": "beacon",
+  "teamId": "design",
+  "assigneeId": "pax",
+  "priority": "medium",
+  "state": "in_progress"
+ },
+ {
+  "ref": "T-A48",
+  "title": "Review the onboarding copy",
+  "projectId": "onboarding",
+  "teamId": "people",
+  "priority": "medium",
+  "state": "todo"
+ }
+]
