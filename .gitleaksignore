@@ -139,3 +139,9 @@ f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-base
 f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:347
 f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:37
 f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:39
+
+# Prose in the web API design ("browser authentication, instance/organization/office status"); no credential
+0c4d11fcd5661aecba9f1b07c765a09195602af4:docs/design/web-api-v1.md:generic-api-key:17
+
+# A fixed test UUID used as an office key name in the Linux credential store tests; no credential
+2741ac5fef4f45c64ea5866db3c3ac04716e3a80:crates/org-platform-host/src/credentials/linux/release/tests.rs:generic-api-key:331

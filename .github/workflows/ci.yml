@@ -67,7 +67,9 @@ jobs:
 
       - name: clippy (Linux host)
         if: runner.os == 'Linux'
-        run: cargo clippy --locked -p org-host -p agentic-org --all-targets -- -D warnings -A dead_code -A unused_imports
+        # `-A dead_code` leaves every `expect(dead_code)` in these crates unfulfilled, so that lint is
+        # allowed here too; the macOS job still checks each expectation.
+        run: cargo clippy --locked -p org-host -p agentic-org --all-targets -- -D warnings -A dead_code -A unused_imports -A unfulfilled_lint_expectations
 
       - name: CLI migration checks (Linux)
         if: runner.os == 'Linux'

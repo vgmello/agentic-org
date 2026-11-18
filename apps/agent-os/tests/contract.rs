@@ -1170,6 +1170,12 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
 
 #[test]
 fn a_stuck_outbox_file_neither_stops_the_relay_nor_delays_nudged_sends() {
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    if unsafe { geteuid() } == 0 {
+        return; // root writes into a mode-500 folder: the file cannot be stuck
+    }
     use std::os::unix::fs::PermissionsExt;
     let mut env = setup("relay_stuck");
     // A message PEER's read-only new/ can't take: it stays in the outbox (a pass error).
