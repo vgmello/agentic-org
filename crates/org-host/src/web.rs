@@ -30,7 +30,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -83,6 +83,175 @@ fn os_failed(cause: &'static str) -> impl FnOnce(io::Error) -> io::Error {
     move |error| failed(&format!("{cause} ({:?})", error.kind()))
 }
 
+/// The longest reason the host shows of a confinement refusal, in bytes.
+const REASON_BYTES: usize = 240;
+
+/// A confinement adapter's reason, or a web process's own, made fit for a log line:
+/// printable ASCII only (anything else becomes `?`) and at most [`REASON_BYTES`]
+/// long. The adapters' reasons are call names, error names and small numbers; this
+/// is the bound that holds whatever the text is. It is shown and never parsed.
+fn shown(reason: &str) -> String {
+    reason
+        .chars()
+        .take(REASON_BYTES)
+        .map(|c| if matches!(c, ' '..='~') { c } else { '?' })
+        .collect()
+}
+
+/// The control stream ended where a line was expected. Its text is that of any other
+/// failed step; the type lets the start tell a child that went away by itself.
+#[derive(Debug)]
+struct ControlEof(String);
+impl std::fmt::Display for ControlEof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for ControlEof {}
+
+/// What a web process that could not confine itself writes to its standard error
+/// before it exits (`agentic-org-web`'s `process::REFUSAL_PREFIX`):
+///
+/// ```text
+/// line   = "agentic-org-web: startup refused: confinement: " reason LF
+/// reason = 1*240 ( %x20-7E )
+/// ```
+///
+/// The host looks for this one line in the first [`STDERR_KEPT`] bytes of the
+/// standard error of a child that ended before it reported ready, and only shows its
+/// reason. Nothing else a child writes there is kept, and the reason decides nothing.
+const REFUSAL_PREFIX: &str = "agentic-org-web: startup refused: confinement: ";
+/// How much of a child's standard error is kept; the rest is read and dropped.
+const STDERR_KEPT: usize = 1024;
+/// How long a child whose control stream ended may take to exit by itself, so that
+/// its last line is whole when it is read. After that it is killed as before.
+const EXIT_GRACE: Duration = Duration::from_millis(250);
+/// How long the end of an exited child's standard error is waited for.
+const STDERR_GRACE: Duration = Duration::from_millis(250);
+
+/// The reason of the first well-formed refusal line in `captured`, if there is one.
+/// A line that is cut off, empty, too long or not printable ASCII is no refusal line.
+fn refusal_reason(captured: &[u8]) -> Option<&str> {
+    let mut rest = captured;
+    while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
+        let (line, after) = rest.split_at(end);
+        rest = &after[1..];
+        let Some(reason) = line.strip_prefix(REFUSAL_PREFIX.as_bytes()) else {
+            continue;
+        };
+        let printable = reason.iter().all(|byte| (0x20..=0x7e).contains(byte));
+        if reason.is_empty() || reason.len() > REASON_BYTES || !printable {
+            return None;
+        }
+        return std::str::from_utf8(reason).ok();
+    }
+    None
+}
+
+/// The start of a child's standard error, read by its own thread until the child's
+/// end closes it.
+struct Stderr {
+    kept: Mutex<(Vec<u8>, bool)>,
+    ended: Condvar,
+}
+impl Stderr {
+    /// Reads `stderr` to its end on a new thread, keeping its first [`STDERR_KEPT`]
+    /// bytes and dropping the rest, so that a child never blocks on a full pipe.
+    fn capture(mut stderr: impl Read + Send + 'static) -> io::Result<Arc<Self>> {
+        let captured = Arc::new(Self {
+            kept: Mutex::new((Vec::new(), false)),
+            ended: Condvar::new(),
+        });
+        let filling = Arc::clone(&captured);
+        thread::Builder::new()
+            .name("web-stderr".into())
+            .spawn(move || {
+                let mut bytes = [0u8; 4096];
+                while let Ok(read @ 1..) = stderr.read(&mut bytes) {
+                    let mut kept = lock(&filling.kept);
+                    let room = STDERR_KEPT - kept.0.len();
+                    kept.0.extend_from_slice(&bytes[..read.min(room)]);
+                }
+                lock(&filling.kept).1 = true;
+                filling.ended.notify_all();
+            })?;
+        Ok(captured)
+    }
+
+    /// The reason of the child's refusal line, once its standard error has ended or
+    /// `wait` has passed.
+    fn refusal(&self, wait: Duration) -> Option<String> {
+        let (kept, _) = self
+            .ended
+            .wait_timeout_while(lock(&self.kept), wait, |kept| !kept.1)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        refusal_reason(&kept.0).map(shown)
+    }
+}
+
+/// The cause of a start that failed before the ready line, with the reason of the
+/// child's own refusal when it left one. Only a child that has ended by itself is
+/// asked: one that is already reaped, or, when its control stream ended, one that
+/// exits within [`EXIT_GRACE`]. Any other child is left to be killed at once.
+fn with_refusal(error: io::Error, captured: &Stderr, child: &mut Child) -> io::Error {
+    let went_away = error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<ControlEof>());
+    let until = Instant::now()
+        + if went_away {
+            EXIT_GRACE
+        } else {
+            Duration::ZERO
+        };
+    while !matches!(child.try_wait(), Ok(true)) {
+        if Instant::now() >= until {
+            return error;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    match captured.refusal(STDERR_GRACE) {
+        Some(reason) => io::Error::other(format!(
+            "{error}; it reported that it cannot confine itself: {reason}"
+        )),
+        None => error,
+    }
+}
+
+/// The cause of a rendezvous peer that is not the admitted child. A child that has
+/// ended is no reader either, and it may have connected first: that is said as what
+/// it is, with the reason of its own refusal when it left one.
+fn not_the_reader(captured: &Stderr, child: &mut Child) -> io::Error {
+    if !matches!(child.try_wait(), Ok(true)) {
+        return failed("the rendezvous peer is not the admitted child");
+    }
+    let ended = failed(&format!(
+        "the child exited before its ready line ({})",
+        exited(child)
+    ));
+    with_refusal(ended, captured, child)
+}
+
+/// The web process's whole environment: nothing. Not one variable of the host's
+/// reaches it, so neither `RUST_BACKTRACE` (a backtrace opens files, which a confined
+/// process cannot do) nor a loader variable can. It needs none: its release, its
+/// rendezvous and its instance come on the command line and the first line.
+fn web_env() -> ChildEnv {
+    ChildEnv::new()
+}
+
+/// After `verify_web`: the status it read was the admitted child's only if that
+/// child is still this process's unreaped child. A process id alone can be reused.
+fn still_running(child: &mut Child) -> io::Result<()> {
+    match child.try_wait() {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(failed(&format!(
+            "the child exited after its sandbox was verified ({})",
+            exited(child)
+        ))),
+        Err(error) => Err(os_failed("wait for the child")(error)),
+    }
+}
+
 pub(crate) struct Configuration {
     pub program: PathBuf,
     pub instance: String,
@@ -117,6 +286,16 @@ pub(crate) fn admission<E>(
     }
 }
 
+/// The refusal of a system on which the web process cannot be confined: fixed
+/// wording, then the adapter's reason (which call failed with which error, which
+/// ABI is too old, or that the system has no adapter).
+fn unconfinable(reason: io::Error) -> io::Error {
+    io::Error::other(format!(
+        "the web process requires process confinement, which is unavailable here: {}",
+        shown(&reason.to_string())
+    ))
+}
+
 pub(crate) struct Supervisor {
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<GatewayState>>,
@@ -129,14 +308,10 @@ impl Supervisor {
         state: Arc<Mutex<GatewayState>>,
         eligible: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> io::Result<Self> {
-        // No bind, child or secret handoff for unverified TLS or a platform without a
-        // web process confinement adapter.
+        // No bind, child or secret handoff for unverified TLS or a system on which the
+        // web process cannot be confined.
         // Each refusal names its cause for the host log.
-        org_platform::confinement::web_confinement_supported().map_err(|_| {
-            io::Error::other(
-                "the web process requires process confinement, which has no adapter on this platform",
-            )
-        })?;
+        org_platform::confinement::web_confinement_supported().map_err(unconfinable)?;
         if config.listen.scheme() != ListenMode::HttpLoopback {
             return Err(io::Error::other(
                 "the web process requires a verified HTTP loopback listener",
@@ -418,7 +593,7 @@ impl Running {
             .admission(&config.program)
             .map_err(os_failed("spawn the web process suspended"))?;
         let held = checked
-            .start(&[OsStr::new("--serve")], &ChildEnv::new(), &SPAWN_LOCK)
+            .start(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
             .map_err(|error| match SpawnRefused::of(&error) {
                 Some(refusal) => refused("admission")(config.check.why(&refusal.refusal)),
                 None => os_failed("spawn the web process suspended")(error),
@@ -448,7 +623,7 @@ impl Running {
             .stdin
             .write_all(&first)
             .map_err(os_failed("write the first line"))?;
-        // Drain bounded chunks without retaining any child output in logs.
+        // Its standard output is drained and dropped: nothing of it is kept.
         let mut stdout = spawned.stdout;
         thread::Builder::new()
             .name("web-stdout".into())
@@ -456,26 +631,25 @@ impl Running {
                 let _ = io::copy(&mut stdout, &mut io::sink());
             })
             .map_err(os_failed("start the stdout drain"))?;
-        let mut stderr = spawned.stderr;
-        thread::Builder::new()
-            .name("web-stderr".into())
-            .spawn(move || {
-                let mut bytes = [0u8; 4096];
-                while matches!(stderr.read(&mut bytes), Ok(n) if n > 0) {}
-            })
-            .map_err(os_failed("start the stderr drain"))?;
+        // Its standard error is drained too; only its start is kept, for the one line
+        // of a child that could not confine itself.
+        let captured =
+            Stderr::capture(spawned.stderr).map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + WAIT;
-        let mut stream = rendezvous.accept(&mut spawned.child, until)?;
+        let mut stream = rendezvous
+            .accept(&mut spawned.child, until)
+            .map_err(|error| with_refusal(error, &captured, &mut spawned.child))?;
         crate::supervisor::channels::reader_is_child(&checked, &spawned.child, &stream)
-            .map_err(|_| failed("the rendezvous peer is not the admitted child"))?;
+            .map_err(|_| not_the_reader(&captured, &mut spawned.child))?;
         let mut receiver = org_socket::rights::StreamReceiver::new(
             stream
                 .try_clone()
                 .map_err(os_failed("clone the control stream"))?,
         );
-        let ready: GatewayReadyForSecrets =
-            serde_json::from_slice(&line(&mut receiver, until, "ready line")?)
-                .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
+        let ready = line(&mut receiver, until, "ready line")
+            .map_err(|error| with_refusal(error, &captured, &mut spawned.child))?;
+        let ready: GatewayReadyForSecrets = serde_json::from_slice(&ready)
+            .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
         let enforcement = reported(&ready).map_err(failed)?;
         org_platform::confinement::verify_ready_report(&enforcement)
             .map_err(|error| failed(&error.to_string()))?;
@@ -494,8 +668,14 @@ impl Running {
                 refusal => refused("re-admission")(config.check.why(&refusal)),
             })?;
         let paths: Vec<_> = config.critical_paths.iter().map(PathBuf::as_path).collect();
-        org_platform::confinement::verify_web(pid, &enforcement, &paths)
-            .map_err(os_failed("verify the web process sandbox"))?;
+        org_platform::confinement::verify_web(pid, &enforcement, &paths).map_err(|error| {
+            failed(&format!(
+                "verify the web process sandbox: {}",
+                shown(&error.to_string())
+            ))
+        })?;
+        // The child is held unreaped across that check; it must not have exited since.
+        still_running(&mut spawned.child)?;
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)
             .map_err(os_failed("send the descriptor handoff"))?;
@@ -611,7 +791,8 @@ fn line(
             Err(org_socket::rights::ReceiveError::Fatal(e))
                 if e.kind() == io::ErrorKind::UnexpectedEof =>
             {
-                return Err(failed(&format!("control EOF before the {what}")))
+                let cause = failed(&format!("control EOF before the {what}"));
+                return Err(io::Error::other(ControlEof(cause.to_string())));
             }
             Err(org_socket::rights::ReceiveError::Fatal(e)) => {
                 crate::host_log::log(&fatal_receive(what, e.kind()));
