@@ -22,7 +22,9 @@ tokens in `apps/agentic-org-ui/src/app.css`, and builds component variants with
   first choice: the interactive element itself is 44 px, and what looks like a 36 px tile
   is drawn by an inner element or a pseudo-element, for example a segment that fills an
   `h-11` track with `relative before:absolute before:inset-1 before:rounded-md
-  aria-pressed:before:bg-white/10`. The element's own box is then 44 px.
+  aria-pressed:before:bg-white/10`. The element's own box is then 44 px. Keep the tile's
+  fill translucent, or put the label in a `relative` span, so the tile never covers the
+  text.
 - **This product's tests measure the element's box.** Existing browser tests assert that a
   control's bounding box is at least 44 px below 640 px, and a pseudo-element that extends
   outside the element (`after:-inset-y-1`) does not enlarge that box. Use that technique
@@ -38,9 +40,10 @@ tokens in `apps/agentic-org-ui/src/app.css`, and builds component variants with
 
 - **Tokens before palette.** Use the semantic utilities the project defines
   (`bg-background`, `text-muted-foreground`, `border-border`, `bg-primary`) so a role
-  changes in one place. Two tokens do not yet match section 6a, which wins: error and
-  destructive text is `text-red-300`, not `text-destructive`, and a form field's boundary is
-  gray-500, not the `input` or `border` token. Reach for a raw palette step only
+  changes in one place. Three tokens do not yet match section 6a, which wins: error and
+  destructive text is `text-red-300`, not `text-destructive`; a form field's boundary is
+  gray-500, not the `input` or `border` token; and keyboard focus is a solid
+  `outline-indigo-400`, not the half-opacity `ring` token. Reach for a raw palette step only
   where section 6a of the app shell spec names one.
 - **Opacity modifiers make tints that follow the surface**: `border-white/10`, `bg-white/5`,
   `bg-black/10`. Here row dividers are `divide-y divide-white/5` on the list, not a border

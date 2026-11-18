@@ -141,6 +141,10 @@ lead session, and it has consequences beyond this persona:
   persona and its limits.
 - It bypasses the repository's convention for third-party skills, which is a committed
   copy under `.agents/skills` recorded in `skills-lock.json`.
+- The installer's own four npm dependencies are fetched unpinned and were not inspected.
+
+Run from the repository root, never from `apps/agentic-org-ui`, whose `.claude/skills/`
+folder is tracked by Git:
 
 ```sh
 npx --yes ui-ux-pro-max-cli@2.15.0 init --ai claude --offline
@@ -237,7 +241,7 @@ success. Tailwind Plus components stay inside `apps/agentic-org-ui`.
 The reference files give general ranges and "breaks when" exceptions. Neither relaxes a
 rule in section 6a. Where 6a is stricter or simply different, 6a is the answer here: at
 most one primary action per view; a disabled control shows its reason or is omitted;
-sort and filter are named text buttons and radio menus, not selects; first loads show a
+sort and filter use named text buttons and radio menus; first loads show a
 skeleton with a Loading label; controls take solid 20 px icons; navigation order and the
 narrow-width layout are fixed by sections 0 and 1.
 
