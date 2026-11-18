@@ -55,7 +55,7 @@ fn pending(links: &dyn OneTimeLinks, now: i64) -> bool {
         .is_some()
 }
 fn account(name: &str) -> NewAccount {
-    let verifier = crate::hostdb::journal::Verifier::new(PHC.into()).unwrap();
+    let verifier = crate::accounts::verifier::Verifier::new(PHC.into()).unwrap();
     NewAccount::new(Username::new(name).unwrap(), verifier).unwrap()
 }
 fn registered(r: Registration) -> AccountId {

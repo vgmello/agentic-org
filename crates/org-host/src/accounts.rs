@@ -10,3 +10,4 @@ pub(crate) mod rules;
     expect(dead_code, reason = "A3 B4 wires browser sign-in into the host ops")
 )]
 pub(crate) mod store;
+pub(crate) mod verifier;

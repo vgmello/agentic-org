@@ -15,7 +15,7 @@ use std::net::IpAddr;
 
 use super::identity::{AccountId, LoginKey};
 use super::rules::Username;
-use crate::hostdb::journal::Verifier;
+use crate::accounts::verifier::Verifier;
 use crate::links::{Refused, Token};
 
 #[cfg(test)]

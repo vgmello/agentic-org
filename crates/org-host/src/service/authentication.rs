@@ -158,7 +158,7 @@ pub(crate) fn hash_password(password: &Password) -> Result<Verifier, ApiError> {
             .map_err(|_| unavailable())?
             .to_string(),
     )
-    .map_err(storage)
+    .map_err(|_| unavailable())
 }
 fn digest(handle: &SessionHandle) -> [u8; 32] {
     Sha256::digest(handle.expose().as_bytes()).into()

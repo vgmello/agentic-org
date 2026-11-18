@@ -1,14 +1,19 @@
 //! Checked PHC ownership, with no password hashing or registry dependency.
-use super::Error;
+//! A plain value type owned by `accounts`, so the account-store contract
+//! depends on nothing in `hostdb` (A3 B3 ruling).
 use argon2::password_hash::PasswordHash;
+
+/// The PHC string is not the pinned Argon2id profile.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct InvalidVerifier;
 
 /// A pinned Argon2id PHC. Deliberately neither Debug nor Clone.
 pub(crate) struct Verifier(String);
 impl Verifier {
-    pub(crate) fn new(phc: String) -> Result<Self, Error> {
+    pub(crate) fn new(phc: String) -> Result<Self, InvalidVerifier> {
         // Own the input before any fallible parsing so rejection also zeroizes it.
         let verifier = Self(phc);
-        let hash = PasswordHash::new(verifier.expose()).map_err(|_| Error::Unsafe)?;
+        let hash = PasswordHash::new(verifier.expose()).map_err(|_| InvalidVerifier)?;
         if hash.algorithm.as_str() != "argon2id"
             || hash.version != Some(19)
             || hash.params.iter().count() != 3
@@ -17,18 +22,18 @@ impl Verifier {
             || hash.params.get_decimal("p") != Some(1)
             || hash.hash.as_ref().map(|tag| tag.len()) != Some(32)
         {
-            return Err(Error::Unsafe);
+            return Err(InvalidVerifier);
         }
         let mut salt = [0; 16];
         if hash
             .salt
-            .ok_or(Error::Unsafe)?
+            .ok_or(InvalidVerifier)?
             .decode_b64(&mut salt)
-            .map_err(|_| Error::Unsafe)?
+            .map_err(|_| InvalidVerifier)?
             .len()
             != 16
         {
-            return Err(Error::Unsafe);
+            return Err(InvalidVerifier);
         }
         Ok(verifier)
     }
