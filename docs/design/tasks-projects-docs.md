@@ -43,7 +43,10 @@ from all of these.
    authored fields, never calculated from task completion.
 6. **Supporting documents have explicit scope:** a required project and at most one
    feature, release or deployment of the same project. `feature.md` is not duplicated
-   as a supporting document.
+   as a supporting document. Project-wide documents live in one tree per project
+   with one index, and a task may name the issued document versions it realizes
+   ([process package design](process-packages.md#6-the-project-documentation-tree),
+   [document 18](organization-data/18-process-packages-and-project-documentation.md)).
 7. **Privacy is separate.** Shared comments stay shared. Private notes are author-only
    records with no administrator exception, outside organization Git, shared history,
    shared search and shared feeds.
@@ -61,7 +64,7 @@ Paths are inside the organization repository, not this software repository.
 | Project task, any type | `projects/<project-id>/work/tasks/<task-id>.md` | One task row with the owner team |
 | Projectless task, any type | `teams/<team-id>/.../work/tasks/<task-id>.md` | Under the full team path; no copy in a project |
 | Feature definition | `projects/<project-id>/features/<feature-id>/feature.md` | Feature row and derived full slug |
-| Supporting knowledge | Project, feature, release or deployment folders (document 02) | Indexed documents with explicit scope and stable-ID file names |
+| Supporting knowledge | Project-wide: the project's documentation tree `projects/<project-id>/docs/` with its `index.yaml` (document 18). Feature, release or deployment: beside that record (document 02) | Indexed documents with explicit scope; readable paths in the tree, stable-ID file names beside a record |
 | Comments, checklists, watchers, questions, waits | Task front matter | Shared operational projection |
 | Task history | `work-history/tasks/<task-id>/<revision>.json` | Immutable `task_events` |
 | HQ-allocated numbers | `identity/counters/` and `identity/allocations/` | The authority journal is also required before acknowledgement |

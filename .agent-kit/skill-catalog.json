@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "6773e7878f6a9cc48d8ddc64e240324f873efd6baec26d7ae183fdd9ad2c822e"
+      "sha256": "6e157124f35a776895a2298f7158e8541c51345234dda0545c434819922a78e6"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "99db991b16e646b5d6b41b0d0c96bd2def50faf50eb81615bc9390640d4027f5"
+      "sha256": "08dcdcbbbc1a9f0cd58f14209c6e7bff71bece547b48da9e1c8cb47d588a44c1"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "6b65bf97b04ce3ada47f9b820bde19b3ac5efc2138d5e63a6231b029fe1c527a"
+      "sha256": "33917b21d5108b29ccbda0b46ab540cc94fe673d7166438f8edc0c95d784bc78"
     },
     {
       "path": "docs/processes/branch-and-merge.md",

@@ -242,7 +242,8 @@ The decisions this design applies:
      does not work, actions needing approval are denied and the run ends `blocked`.
 8. **Instructions are composed by the office** from the employee's identity and role
    (`profile.md`), its prompt and tools (`execution.md`), the turn's explicit
-   objective, the effective processes and standards
+   objective, the effective processes and standards, which include the skills of the
+   project's process package for the agent's role
    ([process design](processes.md#32-delivery-to-sessions-proc-7)), built-in `agent-os`
    help, and the project's instruction files read with the office's hardened Git from
    each association's `integration_branch` in a verified cache. Nothing an agent

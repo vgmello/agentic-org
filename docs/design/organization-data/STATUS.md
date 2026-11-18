@@ -23,6 +23,7 @@ Every numbered document carries one status line. The vocabulary is: **draft** (s
 
 | Date | Set revision | Change |
 | --- | --- | --- |
+| 2026-11-18 | 2.16 | Document 18 added for the owner's REQ-06 and REQ-07: process packages, a project's package, the project documentation tree and its index, issued document versions, code links and the tasks that realize a version. `projects` gains `process_package_id`; `documents` gains `summary`, `path`, `version` and `issued_revision`, and an extensible `kind` for tree documents; project-wide decisions, designs and reports move into the tree. The shared draft has 89 tables and 11 views. |
 | 2026-11-17 | 2.15 | Every actor is a person or an agent, never `owner`; accounts are tied to persons; creating an organization makes its top-level team, the creator's person record and the HR lead; a project creates its team; agents are onboarded only through HR; areas are removed; older material removed. |
 
 The SQL is a structural draft. Implementing the schema, task mutation/replication, private task-note storage/access controls, memory consolidation and analytics retention is separate work. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.

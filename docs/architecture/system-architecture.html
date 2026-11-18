@@ -272,6 +272,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <li><a href="#federation">HQ and satellites</a></li>
     <li><a href="#security">Secrets and trust</a></li>
     <li><a href="#lifecycle">Install and recovery</a></li>
+    <li><a href="#packages">Process packages and docs</a></li>
     <li><a href="#matrix">Status matrix</a></li>
     <li><a href="#conflicts">Review decisions</a></li>
   </ol>
@@ -285,9 +286,10 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <p class="lede">How every component interacts and how each is meant to work: processes, connections, storage, the paths a command and an agent turn take, and the trust boundaries between them. Each element is marked with how far the code has got, so the design target and the current build can be compared line by line.</p>
   <div class="meta">
     <span>Branch <b>v1-integration @ 55c7d76</b></span>
-    <span>Data contract <b>organization-data rev 2.10</b></span>
-    <span>ADRs <b>0001 to 0020</b></span>
+    <span>Data contract <b>organization-data rev 2.16</b></span>
+    <span>ADRs <b>0001 to 0021</b></span>
     <span>Written <b>2026-11-17</b></span>
+    <span>Updated <b>2026-11-18</b></span>
   </div>
 </header>
 
@@ -460,6 +462,9 @@ offices/
       <tr><td>Organization, offices, teams, roles, repositories</td><td><code>organization.yaml</code>, <code>teams/&lt;id&gt;/team.yaml</code>, <code>offices/&lt;id&gt;.yaml</code>, <code>roles/</code>, <code>repositories.yaml</code></td><td>HQ</td><td>Yes</td><td><span class="st target">Designed</span> today rows in <code>org.db</code></td></tr>
       <tr><td>Employees and execution config</td><td><code>agents|people/&lt;id&gt;/profile.md</code>, <code>agents/&lt;id&gt;/execution.md</code></td><td>HQ</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
       <tr><td>Projects, features, releases, deployments, flags, documents</td><td>Files under <code>projects/&lt;project-id&gt;/</code></td><td>HQ creates; offices edit features</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
+      <tr><td>Process packages</td><td><code>process-packages/&lt;package-id&gt;/</code>: <code>package.yaml</code>, <code>roles/</code>, <code>skills/</code>, <code>templates/</code>. A built-in package comes from the product and has no file.</td><td>HQ</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
+      <tr><td>Project documentation tree and its index</td><td><code>projects/&lt;project-id&gt;/docs/</code>: documents, diagrams, images and <code>index.yaml</code></td><td>One writing office per tree; HQ in v1</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
+      <tr><td>Issued document versions</td><td><code>projects/&lt;project-id&gt;/docs-history/&lt;document-id&gt;/&lt;version&gt;.md</code>, written once</td><td>The tree's writing office</td><td>Yes</td><td><span class="st target">Designed</span></td></tr>
       <tr><td>Tasks with comments, checklist, watchers, links</td><td><code>…/work/tasks/&lt;task-id&gt;.md</code> front matter</td><td>The task's one accepting writer</td><td>Yes</td><td><span class="st target">Designed</span> today <code>work_items</code> in <code>office.db</code></td></tr>
       <tr><td>Task history</td><td><code>work-history/tasks/&lt;task-id&gt;/&lt;revision&gt;.json</code>, append-only, hashed</td><td>Accepting writer</td><td>Yes, after publication; journal before</td><td><span class="st part">Built, not reachable</span> acceptance journal tables</td></tr>
       <tr><td>Numbers and allocations</td><td><code>identity/counters</code>, <code>identity/allocations</code>, plus the durable authority ledger</td><td>Organization authority, serialized</td><td>Yes, plus ledger</td><td><span class="st target">Designed</span></td></tr>
@@ -479,8 +484,8 @@ offices/
   <div class="tbl"><table>
     <thead><tr><th>Format</th><th>Used when</th><th>Examples</th></tr></thead>
     <tbody>
-      <tr><td>Markdown with YAML front matter</td><td>A person or agent writes prose and the record has fields</td><td>Tasks, features, profiles, roles, processes, standards, documents, releases</td></tr>
-      <tr><td>YAML</td><td>Pure configuration or a list</td><td><code>organization.yaml</code>, <code>team.yaml</code>, <code>project.yaml</code>, counters, allocations, prices</td></tr>
+      <tr><td>Markdown with YAML front matter</td><td>A person or agent writes prose and the record has fields</td><td>Tasks, features, profiles, roles, processes, standards, documents, releases, a package's role definitions, skills and templates, issued versions</td></tr>
+      <tr><td>YAML</td><td>Pure configuration or a list</td><td><code>organization.yaml</code>, <code>team.yaml</code>, <code>project.yaml</code>, <code>package.yaml</code>, <code>docs/index.yaml</code>, counters, allocations, prices</td></tr>
       <tr><td>JSON</td><td>One immutable, hashed, system-written record</td><td>Task history events, message envelopes, receipts, budget events</td></tr>
       <tr><td>JSON Lines</td><td>An append-only stream</td><td>Usage ledger, office origin streams</td></tr>
     </tbody>
@@ -501,7 +506,7 @@ offices/
     <li>One write connection on one thread per database, batching with savepoints. Readers use a small pool.</li>
     <li>Schemas are versioned in code by <code>user_version</code>. There are no SQL migration files.</li>
     <li>The host creates each office key once and never recreates it. A missing key is an error, <code>key_missing</code>.</li>
-    <li>The draft target schema is 77 tables and 10 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
+    <li>The draft target schema is 89 tables and 11 views. It is a structural draft, not an applied migration. Every write connection must enable <code>foreign_keys</code> and <code>recursive_triggers</code>.</li>
   </ul>
 </section>
 
@@ -624,6 +629,8 @@ offices/
     </div>
   </div>
   <p>A successful turn does not close its task. Task status stays a separate authored value.</p>
+  <h3>What the agent is told at a start <span class="st target">Designed</span></h3>
+  <p>The office composes an agent's instructions before every start, the same way for every runtime. They carry the employee's identity and role, its prompt, the objective of the turn, every non-overridable process and standard in full, and summaries of the overridable ones. When the task's project follows a process package (section 15) they also carry a short block naming the project's process, its stages and the agent's role in it, and the title and when-to-use line of each skill written for that role or for everyone. A skill body is retrieved with <code>agent-os process show &lt;key&gt;</code>. The vendor tool's own skill loading stays switched off; the package is the one source. Who starts a turn does not change: an explicit instruction from a person, the answer to a required ask, or a recovery.</p>
 </section>
 
 <section id="control">
@@ -714,6 +721,7 @@ offices/
     <li><span class="hop">Office</span>After closure and merge: tags <code>merged/&lt;branch&gt;</code>, deletes the remote task branch by compare-and-swap, removes the worktree. A handoff never triggers cleanup.</li>
   </ol>
   <p>Two kinds of repository are easy to confuse. The <strong>organization repository</strong> holds definitions and must be remote. <strong>Code repositories</strong> hold product code and may be local only.</p>
+  <p>Process packages and each project's documentation tree are organization repository content (section 15). A document is never written into a code worktree. A code link points the other way, from a document to a path in a code repository; its stale check reads the office's verified cache at the link's integration branch and needs no network.</p>
 </section>
 
 <section id="federation">
@@ -832,8 +840,84 @@ offices/
   </ul>
 </section>
 
+<section id="packages">
+  <h2><span class="num">15</span>Process packages and project documentation</h2>
+  <p class="sec-lede">How a project is given a way of working without the product knowing any methodology, and where a project's documents live. <span class="st target">Designed</span> on 2026-11-18 from the owner's REQ-06 and REQ-07; nothing is built. The records are in document 18 of the data contract.</p>
+  <figure><div class="fig-scroll"><svg viewBox="0 0 1180 330" role="img" aria-label="From choosing a process package to a converged version: a person chooses a package for a project; missing roles are created and declared sections are added; the seed roster is filled by a hire or an assign; each agent receives its role's skills at launch; document writes update the index in the same accepted change; a version is issued; tasks realize it; it is converged when they are finished." xmlns="http://www.w3.org/2000/svg"><rect class="d-box target" x="30" y="50" width="250" height="84" rx="5"/><text class="d-m" x="42" y="68" text-anchor="start">1</text><text class="d-t" x="155.0" y="82" text-anchor="middle">Choose a package</text><text class="d-m" x="155.0" y="100" text-anchor="middle">project.set_process</text><text class="d-s" x="155.0" y="118" text-anchor="middle">a person; one accepted change at HQ</text><rect class="d-box target" x="320" y="50" width="250" height="84" rx="5"/><text class="d-m" x="332" y="68" text-anchor="start">2</text><text class="d-t" x="445.0" y="82" text-anchor="middle">Roles and sections added</text><text class="d-s" x="445.0" y="102" text-anchor="middle">missing organization roles created;</text><text class="d-s" x="445.0" y="118" text-anchor="middle">declared sections enter the index</text><rect class="d-box target" x="610" y="50" width="250" height="84" rx="5"/><text class="d-m" x="622" y="68" text-anchor="start">3</text><text class="d-t" x="735.0" y="82" text-anchor="middle">Seed roster filled</text><text class="d-s" x="735.0" y="102" text-anchor="middle">by a hire or an assign;</text><text class="d-s" x="735.0" y="118" text-anchor="middle">derived from the team, never stored</text><rect class="d-box target" x="900" y="50" width="250" height="84" rx="5"/><text class="d-m" x="912" y="68" text-anchor="start">4</text><text class="d-t" x="1025.0" y="82" text-anchor="middle">Skills at launch</text><text class="d-s" x="1025.0" y="102" text-anchor="middle">the skills for the agent's role,</text><text class="d-s" x="1025.0" y="118" text-anchor="middle">as summaries with retrievable bodies</text><rect class="d-box target" x="30" y="200" width="250" height="84" rx="5"/><text class="d-m" x="42" y="218" text-anchor="start">5</text><text class="d-t" x="155.0" y="232" text-anchor="middle">Document writes</text><text class="d-m" x="155.0" y="250" text-anchor="middle">doc.write</text><text class="d-s" x="155.0" y="268" text-anchor="middle">index.yaml in the same accepted change</text><rect class="d-box target" x="320" y="200" width="250" height="84" rx="5"/><text class="d-m" x="332" y="218" text-anchor="start">6</text><text class="d-t" x="445.0" y="232" text-anchor="middle">Issue a version</text><text class="d-m" x="445.0" y="250" text-anchor="middle">doc.issue</text><text class="d-s" x="445.0" y="268" text-anchor="middle">the working text, fixed and written once</text><rect class="d-box target" x="610" y="200" width="250" height="84" rx="5"/><text class="d-m" x="622" y="218" text-anchor="start">7</text><text class="d-t" x="735.0" y="232" text-anchor="middle">Tasks realize it</text><text class="d-m" x="735.0" y="250" text-anchor="middle">realizes: document @ version</text><text class="d-s" x="735.0" y="268" text-anchor="middle">set on the task; checked by the office</text><rect class="d-box target" x="900" y="200" width="250" height="84" rx="5"/><text class="d-m" x="912" y="218" text-anchor="start">8</text><text class="d-t" x="1025.0" y="232" text-anchor="middle">Converged</text><text class="d-s" x="1025.0" y="252" text-anchor="middle">derived: at least one realizing task,</text><text class="d-s" x="1025.0" y="268" text-anchor="middle">and every one of them finished</text><path class="d-e target" d="M280 92 L320 92"/><polygon class="d-ah target" points="320,92 312,88.4 312,95.6"/><path class="d-e target" d="M570 92 L610 92"/><polygon class="d-ah target" points="610,92 602,88.4 602,95.6"/><path class="d-e target" d="M860 92 L900 92"/><polygon class="d-ah target" points="900,92 892,88.4 892,95.6"/><path class="d-e target" d="M280 242 L320 242"/><polygon class="d-ah target" points="320,242 312,238.4 312,245.6"/><path class="d-e target" d="M570 242 L610 242"/><polygon class="d-ah target" points="610,242 602,238.4 602,245.6"/><path class="d-e target" d="M860 242 L900 242"/><polygon class="d-ah target" points="900,242 892,238.4 892,245.6"/><path class="d-e target" d="M1025 134 L1025 167 L155 167 L155 200"/><polygon class="d-ah target" points="155,200 158.6,192 151.4,192"/><text class="d-z" x="30" y="32">A project and its process</text><text class="d-z" x="30" y="316">Nothing here starts an agent. A person fills the roster, and an agent acts when it has a turn.</text></svg></div><figcaption><b>From choosing a package to a converged version.</b> Steps 1 to 4 are the process package: a person chooses it, the office adds what is missing, people fill the seed roles, and each agent is told its role's skills. Steps 5 to 8 are the documentation tree, which every project has, with or without a package. No step is run by an engine: a person or an agent makes each call.</figcaption></figure>
+
+  <h3>What a package is, and what it is not</h3>
+  <div class="cols">
+    <div>
+      <h4>Content</h4>
+      <ul>
+        <li>A folder in organization Git, <code>process-packages/&lt;package-id&gt;/</code>: a manifest, a definition per role, skills and document templates. Parts are named by key inside the package.</li>
+        <li>The manifest declares roles (a few marked <code>seed</code>), document kinds (some <code>versioned</code>), the folders a project's documentation starts with, and stages that describe the order of work.</li>
+        <li>A built-in package ships with the product, has a fixed ID and no file, and cannot be edited. An organization changes one by copying it. The first is <code>dss</code>.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Limits</h4>
+      <ul>
+        <li>No engine. Nothing reads a stage, starts work because a document changed, or blocks an action.</li>
+        <li>A package grants nothing. It names no tool, model, credential, budget or approver, and an unknown manifest field is refused.</li>
+        <li>A skill is overridable guidance. It is never must-follow text and never displaces a document marked <code>overridable: false</code>.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Roles and skills</h4>
+      <ul>
+        <li>A package role is matched to an organization role by key. Missing ones are created when the package is chosen; existing ones are left alone. An employee still has one role.</li>
+        <li>Resolution gains one layer: organization, the accountable team's chain, the project's package, the project.</li>
+        <li>An agent receives the skills whose roles name its role's key, and the ones written for everyone. A project document with a skill's key replaces that skill in that project.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Hiring</h4>
+      <ul>
+        <li>The seed roster is derived: a seed role is filled when an active member of the project's team holds it.</li>
+        <li>A skill tells a lead when to staff. The lead reads the role (<code>agent-os role show</code>) and asks (<code>agent-os hire request --role</code>).</li>
+        <li>HR drafts, a person approves, product code provisions. A package decides when a lead asks, never whether the hire happens.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Calls</h3>
+  <p>Calls go to the caller's own office on a bound connection. Every write carries an operation ID and an expected revision.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Call</th><th>Who</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td class="k">package.list · package.get</td><td>People and agents</td><td>The catalogue, and one part of a package: the manifest, a role, a skill or a template.</td></tr>
+      <tr><td class="k">package.write · package.copy</td><td>People</td><td>Create or change an organization package; copy a package under a new ID and key.</td></tr>
+      <tr><td class="k">project.set_process</td><td>The owner, or a person in the lead chain of the project's owning team</td><td>Sets <code>process_package_id</code>, creates the missing organization roles and adds the declared sections, in one accepted change. Starts no agent. Refused for a package that is not current.</td></tr>
+      <tr><td class="k">project.seed_roster</td><td>People and agents</td><td>One row per seed role: open, hire requested or filled.</td></tr>
+      <tr><td class="k">role.list · role.get</td><td>People and agents</td><td>A role's definition and what a hire proposal for it needs.</td></tr>
+      <tr><td class="k">doc.index · doc.list · doc.read</td><td>People; agents for their own projects</td><td>The whole index in one read; a folder listing as a fallback; a document as its latest issued version, its working text or an earlier version.</td></tr>
+      <tr><td class="k">doc.write</td><td>People; agents for their own projects</td><td>Create, change or move a document, a section or a media file. The index is written in the same accepted change.</td></tr>
+      <tr><td class="k">doc.issue</td><td>Whoever may write the document</td><td>Fixes the working text as the next version, with a note and the versions it was derived from. Refused when the kind is not versioned, nothing changed, or the document has no owner.</td></tr>
+      <tr><td class="k">doc.diff · doc.versions · doc.status</td><td>Readers of the project</td><td>Differences between versions or the working text; the versions with their tasks and progress; per document, the latest version, unissued changes and convergence.</td></tr>
+      <tr><td class="k">doc.link_code · doc.code_links</td><td>Writers; readers</td><td>Add or remove a code link. List them, look them up by repository path, and check for stale ones against the repository cache.</td></tr>
+      <tr><td class="k">process.effective · why · show</td><td>As today</td><td>Return package skills with <code>layer: package</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p>A task names the versions it realizes in its own <code>realizes</code> field, set through the task calls. The office checks that each entry is an issued version of a document of the task's project.</p>
+
+  <h3>The project boundary for agents</h3>
+  <p>People read and write the documentation of every project of their organization. An agent reads and writes the tree of its own projects only: a project whose owning team is its home team or a team above it, a project one of whose contributing teams is, and a project in which it is the assignee of an open task. For any other project the index, the listing, the files and every write are refused with <code>not_authorized</code> and the reason <code>other_project</code>, and the refusal names that project's lead. The office checks this from the agent's binding on every call. An agent that needs something from another project asks that project's agents and people.</p>
+
+  <h3>One writing office, and limits</h3>
+  <ul>
+    <li>A project's tree and its index have one writing office at a time. In v1 it is HQ. Another office forwards a write to it and serves reads from its replica.</li>
+    <li>If the tree and the index are found to differ, for example after a commit made outside the product, the project shows a problem and the office repairs the copied fields from the files. It never deletes a file to make the two agree.</li>
+    <li>An issued version is written once. The draft schema refuses an update, a delete and a replace of its row.</li>
+    <li>A document body is at most 8 MiB and a media file 5 MiB. A media file larger than one frame is sent in parts under one operation ID.</li>
+    <li>A tree holds at most 10,000 entries. The index is returned whole up to 256 KiB and by section beyond that. A path is at most 512 bytes and eight levels deep.</li>
+    <li>Skills count against the same 24 KiB cap as other overridable guidance.</li>
+  </ul>
+  <div class="note warn"><p><b>Open with the owner.</b> The flows of REQ-06 and REQ-07 have one agent hand work to another, or ask another, and expect it to act. Today a turn starts only from a person's Run or the answer to a required ask. Whether an ask or a task assignment starts an agent is not decided. Until it is, a person presses Run on the next agent. Nothing in this section changes that rule.</p></div>
+</section>
+
 <section id="matrix">
-  <h2><span class="num">15</span>Status matrix</h2>
+  <h2><span class="num">16</span>Status matrix</h2>
   <p class="sec-lede">One row per architectural element. Use it to check that work in progress is closing a gap in this table.</p>
   <div class="tbl wide"><table>
     <thead><tr><th>Element</th><th>State</th><th>What exists</th><th>What closes the gap</th></tr></thead>
@@ -855,6 +939,11 @@ offices/
       <tr><td>Local Git and worktrees</td><td><span class="st target">Designed</span></td><td>Nothing</td><td><code>org-git</code>; design rewritten 2026-11-17 with eleven open questions</td></tr>
       <tr><td>GitHub and other hosting providers</td><td><span class="st defer">Deferred</span></td><td>Nothing</td><td>v2</td></tr>
       <tr><td>Process and standard resolution</td><td><span class="st target">Designed</span></td><td><code>org-process</code> has an earlier, multi-chain rule and no caller</td><td>Simplify to one chain; call it at agent launch</td></tr>
+      <tr><td>Process packages and a project's process</td><td><span class="st target">Designed</span></td><td>Nothing. <code>org-process</code> parses an earlier process document format</td><td>Package records and catalogue, <code>project.set_process</code>, the seed roster, the skill layer in resolution, role-named hire requests (L12)</td></tr>
+      <tr><td>Project documentation tree and index</td><td><span class="st target">Designed</span></td><td><code>org-docs</code> front-matter parser and editor only</td><td>Tree writes with the index in one change, the project boundary for agents, <code>agent-os doc</code>, the Docs tab (L11)</td></tr>
+      <tr><td>Issued versions, code links, realizing tasks</td><td><span class="st target">Designed</span></td><td>Draft schema in document 18</td><td><code>doc.issue</code>, differences, the stale-link check against the Git cache, derived convergence (L13)</td></tr>
+      <tr><td>The built-in DSS package</td><td><span class="st target">Designed</span></td><td>Nothing</td><td>The package's content, then a run with real agents (L14)</td></tr>
+      <tr><td>Moving a package between organizations</td><td><span class="st target">Designed</span></td><td>Nothing</td><td>An archive of the package folder (L15)</td></tr>
       <tr><td>Linux and containers</td><td><span class="st target">Designed</span></td><td>Workers start only on macOS</td><td>Five platform contracts with Linux implementations (ADR-0017)</td></tr>
       <tr><td>Replaceable storage engine</td><td><span class="st target">Designed</span></td><td>SQL mostly inside the store folder; two files outside</td><td>One selection point and engine-independent suites (ADR-0018)</td></tr>
       <tr><td>Private task notes</td><td><span class="st target">Designed</span></td><td>Draft schema, acceptance criteria PN-01 to PN-06</td><td>Store, access control, API, UI</td></tr>
@@ -866,7 +955,7 @@ offices/
 </section>
 
 <section id="conflicts">
-  <h2><span class="num">16</span>Decisions from the architecture review</h2>
+  <h2><span class="num">17</span>Decisions from the architecture review</h2>
   <p class="sec-lede">The decisions in force. Each is written into the requirement documents named in the last column; what is left is code.</p>
   <div class="note"><p><b>The rule above the rest.</b> Nothing has shipped. Until the owner declares v1 shipped there are no versions to keep side by side, no migrations and no old shapes to preserve. Where a rebuild gives the cleaner architecture, rebuild.</p></div>
   <h3>Decided, with code still to change</h3>
@@ -898,7 +987,22 @@ offices/
     <tbody>
       <tr><td>Questions to people</td><td>One structured schema, rendered as choice, yes/no or free-text components built with shadcn-svelte and Bits UI in the product's own chat. No external channels. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one.</td><td class="k">REQ-04</td></tr>
       <tr><td>Asking and waiting</td><td>10 minutes wait, 2 minutes grace. A required ask left unanswered suspends the agent; the answer resumes it.</td><td class="k">ADR-0020</td></tr>
+      <tr><td>How a project works</td><td>A project follows at most one process package: content, not code. No engine reads it and it grants nothing. Its skills are one more layer of guidance, bound to roles by key. A project starts with the package's seed roles and hires the rest through HR, with a person's approval, when a skill says so. Project-wide documents live in one tree per project with one index, kept by the office from what agents and people do. An agent reads and writes the tree of its own projects only.</td><td class="k">REQ-07, process package design, document 18</td></tr>
+      <tr><td>Desired state specifications</td><td>The first built-in package. A document is issued in versions and the desired state is the latest issued one. A Technical DSS version names the Product DSS versions it follows; a task names the versions it realizes; code links tie documents to code. Convergence is derived from tasks. The factory is agents following skills, not a pipeline in the product.</td><td class="k">REQ-06, desired state design</td></tr>
+      <tr><td>Agents writing guidance</td><td>An agent may write process and standard documents at the scope of its own project. It never writes at team or organization scope and never marks a document not overridable.</td><td class="k">process design</td></tr>
       <tr><td>Anything from before</td><td>Dropped. The former development team's earlier command-line tool and its message queue are not carried over, and no rule protects them. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td class="k">AGENTS.md</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Open with the owner</h3>
+  <p>Five points from REQ-06 and REQ-07 are not decided. Each has a recommendation in the requirement document, and the design works without the answer.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Point</th><th>Today</th><th>Recommendation</th></tr></thead>
+    <tbody>
+      <tr><td>Agents starting other agents</td><td>A turn starts only from a person's Run or the answer to a required ask. On-call run modes are deferred (FC-104).</td><td>A narrow on-call rule: an ask addressed to an agent, or a task assigned by its lead chain or a lead of the task's project, gives it a turn, under a permit and the budget holds.</td></tr>
+      <tr><td>Who approves a hire a lead asks for</td><td>A person approves every hire.</td><td>Keep it. Say if approving a staffing plan once should cover the hires named in it.</td></tr>
+      <tr><td>Features beside the Product DSS</td><td>Features are a record; the DSS package does not use them.</td><td>Keep features for projects whose process uses them.</td></tr>
+      <tr><td>The word "process"</td><td>A single guidance document is called a process; a project's process is now a package.</td><td>Say "process package", "skill" and "process document", unless the existing documents are to be renamed.</td></tr>
+      <tr><td>Packages between organizations</td><td>Selected as the last increment (L15).</td><td>Say if it is needed sooner or not in v1.</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>
@@ -906,7 +1010,7 @@ offices/
 </section>
 
 <footer class="doc-foot">
-  Built from the repository branch <code>v1-integration</code>: the organization-data contracts (documents 01 to 17), ADRs 0001 to 0020, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
+  Built from the repository branch <code>v1-integration</code>: the organization-data contracts (documents 01 to 18), ADRs 0001 to 0020, the design and UX documents, and a read of every crate and app. Section 15 and the rows that mention REQ-06 and REQ-07 were added on 2026-11-18 from the design documents; no code changed. Implementation claims were checked against source by reading dispatch code and schemas; nothing was built or run. Served-method and table lists may miss entries constructed dynamically.
 </footer>
 </main>
 </div>

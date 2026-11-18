@@ -196,11 +196,14 @@ slug TEXT NOT NULL CHECK (
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
+  process_package_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
   UNIQUE (organization_id, slug),
   UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, process_package_id) REFERENCES process_packages(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
@@ -311,7 +314,7 @@ CREATE TABLE documents (
   release_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
+  kind TEXT NOT NULL CHECK (length(kind) > 0),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -321,10 +324,22 @@ CREATE TABLE documents (
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
+  summary TEXT,
+  path TEXT CHECK (path IS NULL OR (
+    length(path) BETWEEN 4 AND 512 AND path NOT GLOB '*[^a-z0-9/._-]*'
+    AND substr(path, 1, 1) GLOB '[a-z0-9]' AND path GLOB '*.md'
+    AND instr(path, '//') = 0 AND instr(path, '..') = 0 AND instr(path, '/.') = 0)),
+  version INTEGER CHECK (version >= 1),
+  issued_revision INTEGER CHECK (issued_revision >= 1),
   PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, project_id, path),
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),
+  CHECK ((path IS NOT NULL) = (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL AND kind <> 'brief')),
+  CHECK (path IS NOT NULL OR kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
+  CHECK ((version IS NULL) = (issued_revision IS NULL)),
+  CHECK (version IS NULL OR (path IS NOT NULL AND issued_revision <= revision AND status <> 'draft')),
   CHECK ((feature_id IS NOT NULL) + (release_id IS NOT NULL) + (deployment_id IS NOT NULL) <= 1),
   CHECK (feature_id IS NULL OR kind IN ('design', 'decision', 'report')),
   CHECK (kind <> 'brief' OR (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL)),
@@ -2230,3 +2245,240 @@ SELECT r.organization_id, r.id AS release_id,
                       WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status NOT IN ('done', 'cancelled'))
   END AS is_done
 FROM releases r;
+
+-- Document 18: process packages and project documentation
+CREATE TABLE process_packages (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  origin TEXT NOT NULL CHECK (origin IN ('built_in', 'organization')),
+  name TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  version_label TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
+  owner_employee_id TEXT,
+  copied_from_package_id TEXT,
+  stages_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(stages_json) AND json_type(stages_json) = 'array'),
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
+  updated_by_id TEXT,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, key),
+  CHECK (origin = 'built_in' OR status <> 'current' OR owner_employee_id IS NOT NULL),
+  CHECK (copied_from_package_id IS NULL OR copied_from_package_id <> id),
+  FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE process_package_roles (
+  organization_id TEXT NOT NULL,
+  package_id TEXT NOT NULL,
+  key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'),
+  position INTEGER NOT NULL CHECK (position >= 0),
+  name TEXT NOT NULL,
+  seed INTEGER NOT NULL DEFAULT 0 CHECK (seed IN (0, 1)),
+  hats_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(hats_json) AND json_type(hats_json) = 'array'),
+  body_markdown TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (organization_id, package_id, key),
+  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE process_package_skills (
+  organization_id TEXT NOT NULL,
+  package_id TEXT NOT NULL,
+  key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'),
+  position INTEGER NOT NULL CHECK (position >= 0),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL CHECK (length(description) > 0),
+  body_markdown TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (organization_id, package_id, key),
+  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE process_package_skill_roles (
+  organization_id TEXT NOT NULL,
+  package_id TEXT NOT NULL,
+  skill_key TEXT NOT NULL,
+  role_key TEXT NOT NULL,
+  PRIMARY KEY (organization_id, package_id, skill_key, role_key),
+  FOREIGN KEY (organization_id, package_id, skill_key) REFERENCES process_package_skills(organization_id, package_id, key)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, package_id, role_key) REFERENCES process_package_roles(organization_id, package_id, key)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE process_package_kinds (
+  organization_id TEXT NOT NULL,
+  package_id TEXT NOT NULL,
+  key TEXT NOT NULL CHECK (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND key NOT IN ('brief', 'decision', 'design', 'report', 'changelog')),
+  title TEXT NOT NULL,
+  versioned INTEGER NOT NULL DEFAULT 0 CHECK (versioned IN (0, 1)),
+  template_markdown TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (organization_id, package_id, key),
+  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE process_package_folders (
+  organization_id TEXT NOT NULL,
+  package_id TEXT NOT NULL,
+  path TEXT NOT NULL CHECK (
+    length(path) BETWEEN 1 AND 256 AND path NOT GLOB '*[^a-z0-9/_-]*'
+    AND substr(path, 1, 1) GLOB '[a-z0-9]' AND substr(path, -1, 1) <> '/'
+    AND instr(path, '//') = 0),
+  position INTEGER NOT NULL CHECK (position >= 0),
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  kinds_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(kinds_json) AND json_type(kinds_json) = 'array'),
+  PRIMARY KEY (organization_id, package_id, path),
+  FOREIGN KEY (organization_id, package_id) REFERENCES process_packages(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE documentation_sections (
+  organization_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL CHECK (
+    length(path) BETWEEN 1 AND 256 AND path NOT GLOB '*[^a-z0-9/_-]*'
+    AND substr(path, 1, 1) GLOB '[a-z0-9]' AND substr(path, -1, 1) <> '/'
+    AND instr(path, '//') = 0),
+  position INTEGER NOT NULL CHECK (position >= 0),
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  kinds_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(kinds_json) AND json_type(kinds_json) = 'array'),
+  PRIMARY KEY (organization_id, project_id, path),
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE documentation_media (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL CHECK (
+    length(path) BETWEEN 3 AND 512 AND path NOT GLOB '*[^a-z0-9/._-]*'
+    AND substr(path, 1, 1) GLOB '[a-z0-9]' AND path NOT GLOB '*.md'
+    AND instr(path, '//') = 0 AND instr(path, '..') = 0 AND instr(path, '/.') = 0),
+  type TEXT NOT NULL CHECK (type IN ('image', 'diagram')),
+  media_type TEXT NOT NULL CHECK (length(media_type) > 0),
+  bytes INTEGER NOT NULL CHECK (bytes BETWEEN 1 AND 5242880),
+  sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
+  updated_by_id TEXT,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, project_id, path),
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE document_versions (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  document_id TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  title TEXT NOT NULL,
+  body_sha256 TEXT NOT NULL CHECK (length(body_sha256) = 64 AND body_sha256 NOT GLOB '*[^0-9a-f]*'),
+  body_markdown TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  issued_at TEXT NOT NULL,
+  issued_by_kind TEXT NOT NULL CHECK (issued_by_kind IN ('employee', 'system')),
+  issued_by_id TEXT,
+  PRIMARY KEY (organization_id, document_id, version),
+  CHECK ((issued_by_kind = 'employee' AND issued_by_id IS NOT NULL) OR (issued_by_kind <> 'employee' AND issued_by_id IS NULL)),
+  FOREIGN KEY (organization_id, issued_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TRIGGER document_versions_are_written_once
+BEFORE UPDATE ON document_versions
+BEGIN
+  SELECT RAISE(ABORT, 'an issued document version is never changed');
+END;
+
+CREATE TRIGGER document_versions_are_kept
+BEFORE DELETE ON document_versions
+BEGIN
+  SELECT RAISE(ABORT, 'an issued document version is never removed');
+END;
+
+CREATE TABLE document_version_sources (
+  organization_id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  source_document_id TEXT NOT NULL,
+  source_version INTEGER NOT NULL,
+  PRIMARY KEY (organization_id, document_id, version, source_document_id, source_version),
+  CHECK (source_document_id <> document_id),
+  FOREIGN KEY (organization_id, document_id, version) REFERENCES document_versions(organization_id, document_id, version)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, source_document_id, source_version) REFERENCES document_versions(organization_id, document_id, version)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE document_code_links (
+  organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  repository_id TEXT NOT NULL,
+  path TEXT NOT NULL CHECK (
+    length(path) > 0 AND substr(path, 1, 1) <> '/' AND path <> '..'
+    AND path NOT GLOB '../*' AND path NOT GLOB '*/../*' AND path NOT GLOB '*/..'),
+  symbol TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (organization_id, id),
+  FOREIGN KEY (organization_id, document_id) REFERENCES documents(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE INDEX document_code_links_by_path ON document_code_links (organization_id, repository_id, path);
+
+CREATE TABLE task_document_versions (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  PRIMARY KEY (organization_id, task_id, document_id, version),
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, document_id, version) REFERENCES document_versions(organization_id, document_id, version)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE VIEW document_version_progress AS
+SELECT v.organization_id, v.document_id, v.version,
+  COUNT(t.id) AS task_count,
+  COALESCE(SUM(t.status IN ('done', 'cancelled')), 0) AS done_task_count,
+  (COUNT(t.id) > 0 AND COUNT(t.id) = COALESCE(SUM(t.status IN ('done', 'cancelled')), 0)) AS is_converged
+FROM document_versions v
+LEFT JOIN task_document_versions r
+  ON r.organization_id = v.organization_id AND r.document_id = v.document_id AND r.version = v.version
+LEFT JOIN tasks t ON t.organization_id = r.organization_id AND t.id = r.task_id
+GROUP BY v.organization_id, v.document_id, v.version;

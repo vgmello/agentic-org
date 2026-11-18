@@ -1,6 +1,6 @@
 # Features and work structure
 
-Status: **selected** data contract, revision 2.11. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Status: **selected** data contract, revision 2.12. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -97,6 +97,7 @@ erDiagram
 - A project task can have zero or one feature and zero or one milestone, both from the same project. Team tasks have neither. Feature and milestone membership are independent.
 - A feature belongs to one project and has a numeric reference such as `F-6`. Its file stores project-unique `local_slug: table-booking`. The public feature `slug` is derived automatically as `reservations/table-booking` using the project slug, making it unique within the organization.
 - A bug is `type: bug`; `severity` is optional metadata for triage. A request is `type: request`. Changing type preserves the task's ID, number, comments and relationships. Additional types do not require new SQL tables; their workflow behaviour remains out of scope.
+- A project task may name the issued document versions it brings the code in line with, in `realizes[]`. The record and the derived convergence of a version are owned by [document 18](18-process-packages-and-project-documentation.md#tasks-that-realize-a-version).
 - A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on projection and publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
 
 ```text
@@ -247,6 +248,7 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
 | `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required owning `team_id`, optional `project_id`, nullable current `assigned_team_id` and `assignee_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. Reporter/originator uses immutable `created_by_*`. |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
+| `task_document_versions` | `realizes[]`: one row per `{document_id, version}`; defined in [document 18](18-process-packages-and-project-documentation.md). |
 | `links` | Source `links[]` is defined in [record contracts](08-record-contracts.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
 | `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |

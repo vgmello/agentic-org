@@ -42,7 +42,8 @@ change may add a platform branch.
 enrolment of the office, replication between offices, and messages relayed between
 them (S1).
 
-**Later:** costs and budgets, features and releases, updates. All of it is v1 scope.
+**Later:** costs and budgets, features and releases, project documentation, process
+packages and the desired state package, updates. All of it is v1 scope.
 
 Most of step 2 and the hire flow are create, read, update and delete on records the
 data contract already defines. The parts that are not: the web process and sessions
@@ -514,6 +515,8 @@ Three things to know about the order:
 - **Code today:** `crates/org-process` resolves several chains, which the design
   replaces with one, and has no caller.
 - **Needs:** C3.
+- **Leave room for:** the package layer between the team chain and the project, which
+  L12 adds to the same `resolve`.
 
 ---
 
@@ -877,6 +880,11 @@ product without it.
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
 | L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
+| L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [process package design](design/process-packages.md#6-the-project-documentation-tree), [document 18](design/organization-data/18-process-packages-and-project-documentation.md), FC-173. With or before L7, whose project-wide documents live in the tree |
+| L12 | Process packages: records and catalogue, the Process select on a project with its seed roster, skills as a layer of resolution, `agent-os role` and a role on a hire request, and process and standard writes by agents for their own project | [process package design](design/process-packages.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-168 to FC-171, FC-177. Needs C2, C3, C5 and L11 |
+| L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-174, FC-175. Needs L11, B4 and C7 |
+| L14 | The built-in desired state package, and a run of it with real agents from a conversation to converged code | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-176. Needs L12, L13, B7 and C6. Unattended, it also needs the owner's answer on whether an ask or an assignment starts an agent |
+| L15 | Moving a process package between organizations as an archive | [process package design](design/process-packages.md#2-the-package), FC-172. Timing is with the owner |
 | L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |

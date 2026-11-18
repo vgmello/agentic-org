@@ -4,7 +4,7 @@ title: "Roles: what each agent is for (UX)"
 status: current
 owner: lead
 created: "2026-11-09"
-updated: "2026-11-17"
+updated: "2026-11-18"
 requested_by: owner
 builds_on: [processes-ux, our-org-in-the-app, agent-run-modes-ux]
 ---
@@ -27,6 +27,7 @@ v1 delivers shared roles and the employee's reference to one role. Per-agent ove
 4. **Processes and standards are separate records** scoped to the organization, a team or a project, overridable unless marked `overridable: false`. The [processes design](../design/processes.md) owns how the set for a task is resolved.
 5. **Role content is shared.** It describes work for teammates; editing is authorized and revision-checked. No prose and no employee field grants account rights.
 6. **Changing an employee's role** updates `role_id` with the expected employee revision and keeps history.
+7. **A process package names the roles it needs by key.** When a project chooses a package, each of its roles that the organization lacks is created here from the package's definition; one the organization already has is left as it is. An employee who has a role with that key receives the package's skills for it. The key of a role that a package in use names cannot be changed or removed ([process packages](../design/process-packages.md), [document 18](../design/organization-data/18-process-packages-and-project-documentation.md#roles-the-package-needs-and-the-organizations-roles)).
 
 Example (common attribution omitted; accepted writes supply the bound actor and timestamps):
 

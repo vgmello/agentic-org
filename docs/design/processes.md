@@ -6,7 +6,9 @@ inherited, and what an agent receives. The records are owned by
 [project structure](organization-data/02-project-structure.md),
 [identity](organization-data/06-identity-and-numbering.md) and
 [record contracts](organization-data/08-record-contracts.md). The screens are in the
-[processes UX](../specs/processes-ux.md).
+[processes UX](../specs/processes-ux.md). A project may also follow a
+[process package](process-packages.md), whose skills join the resolution below as one
+more layer.
 
 ## Decisions
 
@@ -28,8 +30,14 @@ inherited, and what an agent receives. The records are owned by
    and standards behave the same way.
    - **What applies to a piece of work.** Start with the organization's current
      documents. Apply the accountable team's chain from the top team down to that
-     team. Then apply the project's. At each step a lower level may add a document
-     with a new key, or replace one from above that has the same key.
+     team. Then apply the skills of the project's process package, if it follows one.
+     Then apply the project's own documents. At each step a lower level may add a
+     document with a new key, or replace one from above that has the same key.
+   - **A package's skills** are the ones written for the agent's role and the ones
+     written for everyone ([process package design](process-packages.md#4-how-skills-reach-an-agent)).
+     They are always overridable guidance. A package is content chosen for the
+     project, so it sits below the teams and above the project's own documents, and
+     the project can replace one skill by writing a document with its key.
    - **A level can forbid replacement.** A document marked `overridable: false`
      cannot be replaced by any level below it. There is no way to switch a document
      off; a document stops applying when its own level deprecates it. A lower
@@ -62,7 +70,14 @@ inherited, and what an agent receives. The records are owned by
 7. **Not in v1:** mechanical enforcement of a process (including the one-open-branch
    rule), approval workflows, private processes, timers, moments, checklist
    composition from processes, and a process execution engine. The product tells the
-   agent what binds it; it does not block an action for breaking a process.
+   agent what binds it; it does not block an action for breaking a process. A process
+   package adds content, not an engine.
+8. **Agents write documents for their own project.** An agent may create and change
+   process and standard documents at the scope of a project it works in, so that
+   decisions taken while building become standards
+   ([desired state design](desired-state-specifications.md#4-standards-as-a-byproduct)).
+   It can never mark a document not overridable, and it cannot write at team or
+   organization scope; those stay with people.
 
 ## 1. Where each thing lives
 
@@ -71,6 +86,7 @@ inherited, and what an agent receives. The records are owned by
 | Organization process or standard | Organization Git `processes/<id>.md` or `standards/<id>.md` |
 | Team process or standard | Organization Git, under the team's path, with its `team_id` |
 | Project process or standard | Organization Git `projects/<project-id>/processes/<id>.md` or `standards/<id>.md` |
+| Skill of a process package | The package: organization Git `process-packages/<package-id>/skills/<key>.md`, or the product for a built-in package ([document 18](organization-data/18-process-packages-and-project-documentation.md)) |
 | Employee home team | Employee profile; separate from assignment and placement |
 | Process index | Rebuildable projection of the authored documents |
 | Effective sets | Computed from the documents; never authored facts |
@@ -138,8 +154,11 @@ the repository cannot be read, reads answer from the index with `stale_since`
 
 Inputs: O, the organization's documents; T, the accountable team's ancestor chain
 (the project owner's team for project work, the task's team for projectless work);
-J, the project's documents. All come from the state branch. Assignment and an
-employee's home team never change this scope.
+K, the skills of the project's process package that are written for the agent's role
+or for everyone (empty without a package or for projectless work); J, the project's
+documents. O, T and J come from the state branch; K comes from the package, which is
+on the state branch or built into the product. Assignment and an employee's home team
+never change O, T or J. The agent's role selects within K and changes nothing else.
 
 1. **Valid documents only.** Invalid front matter or a path and scope mismatch: left
    out, with a problem. A `draft` or `deprecated` document is left out silently.
@@ -151,14 +170,17 @@ employee's home team never change this scope.
    that the organization or a team above it marked `overridable: false` is refused,
    naming the level that forbids it (PROC-3). The write path refuses it too (§5).
 4. **Fold the chain,** organization first, then each team from the top down, then the
-   project; the lower level wins for an overridable key.
+   package's skills, then the project; the lower level wins for an overridable key. A
+   skill whose key is non-overridable above it is left out with a problem naming the
+   level that forbids it; a skill is never itself non-overridable.
 
 The output, `EffectiveSet { entries, problems }`, names for each key the winning
 document, whether it was inherited, replaced or added, and the chain of layers with
 what happened to each, which `agent-os process why` prints (PROC-8).
 
-Sets are cached under a fingerprint of the organization state commit and the
-accountable team ancestry. A change to either drops the sets that used it. A rename
+Sets are cached under a fingerprint of the organization state commit, the accountable
+team ancestry, and for project work the package's ID and revision and the agent's role
+key. A change to any of them drops the sets that used it. A rename
 of a team or project drops the sets that show its name. Dropped sets are recomputed at
 the next start, wake or read. The last good set per agent and project is kept with
 its time. If a set cannot be computed (PROC-17), the agent works from the last good
@@ -170,8 +192,9 @@ set with a warning.
 ([agent sessions](agent-sessions.md)):
 
 - every non-overridable document, in full, in the must-follow section of decision 4;
-- for overridable documents, each one's title, place (organization, or the team's or
-  project's name), revision and summary;
+- for overridable documents, each one's title, place (organization, the team's or
+  project's name, or the package's name), revision and summary; for a skill the
+  summary is its when-to-use line;
 - the full text of each document whose winning blob the agent has not read for that
   key in this context.
 
@@ -256,6 +279,13 @@ write names the expected revision, and a change that lost a race is `conflict`.
 Authority comes from the authenticated caller, never from an owner or status field
 in the document.
 
+People write at every scope. An agent writes only at the scope of one of its own
+projects, with the same boundary as the project's documentation
+([document 18](organization-data/18-process-packages-and-project-documentation.md#who-may-read-and-write-a-projects-documentation)),
+and a write from an agent that sets `overridable: false`, or that names a team or the
+organization, is refused with `not_authorized`. A package's skills are changed by
+changing the package ([process package design](process-packages.md#2-the-package)).
+
 ## 6. The contract
 
 Reads, for any employee bound to the organization:
@@ -266,10 +296,13 @@ Reads, for any employee bound to the organization:
 | `process.why` | `key`, `employee_id?`, `for?` | `{ key, chain: Vec<Layer>, winner? }` | as above |
 | `process.show` | `key`, `employee_id?`, `for?`; or `document_id`, `revision?`; `offset?` | `{ path, commit, blob, revision, content (≤ 512 KiB), total_bytes, next_offset? }` | as above |
 | `process.view` | `scope: organization \| team { team_id } \| project { project_id }` | `{ rows, indexed_commit, stale_since? }` (PROC-9, PROC-10) | as above |
+| `process.write` | `document_id?`, `kind`, `scope`, front matter and body, `expected_revision?` | `{ document_id, revision }` | `invalid_request` (`sealed`), `already_exists`, `conflict`, `not_authorized` |
 
 `for` is `current` (default), `project { project_id }` or `task { task_id }`. The
-`agent-os` commands `process list`, `process why` and `process show` call these. The
-local API version is 1 and these calls change in place until v1 ships.
+`agent-os` commands `process list [--kind process | standard | skill]`, `process why`
+and `process show` call the reads; `process new` and `process edit` call the write for
+the agent's own project. Entries name their layer: organization, team, package or
+project. The local API version is 1 and these calls change in place until v1 ships.
 
 The result of `task.set_status` names a branch left with unmerged work at a close
 (§4). `work.changed` gains the branch-record changes. Unknown values decode as `Unknown`.
@@ -282,13 +315,15 @@ share the rule as `org_proto::has_reserved_branch_prefix`.
 
 ## 7. Where the code lives
 
-- **`org-process`:** front matter, path to level and scope, `resolve`, the
-  fingerprint, `render`, the branch-record rules from given commits, and the write
-  checks. Pure: no SQL, Git, network or clock.
+- **`org-process`:** front matter, path to level and scope, the package manifest and
+  skill formats, `resolve` with the package layer, the fingerprint, `render`, the
+  branch-record rules from given commits, and the write checks. Pure: no SQL, Git,
+  network or clock.
 - **`org-office`:** the index, caches, branch records, the calls and the checks
   inside the work write.
 - **`org-git`:** repository reads, branch creation at a commit and cleanup.
-- **`agent-os`:** the `process` read commands.
+- **`agent-os`:** the `process` read commands, and `process new` and `process edit`
+  for the agent's own project.
 - **`apps/agentic-org-ui`:** the Processes views and the profile tab.
 
 ## 8. Tests that prove the rules
@@ -298,7 +333,12 @@ Each test fails without its rule.
 - **Resolution:** matching by key, never by ID; level order; the nearer team wins;
   a non-overridable organization or team document refuses lower replacements; a
   clashed or unreadable non-overridable key stays non-overridable; contributing teams
-  add nothing; drafts and deprecated documents never apply.
+  add nothing; drafts and deprecated documents never apply; a package's skills sit
+  between the team chain and the project, filtered by the agent's role; a skill never
+  displaces a non-overridable key.
+- **Writes by agents:** a project-scope write from an agent of that project is
+  accepted; one for another project, a team or the organization, or one that sets
+  `overridable: false`, is refused.
 - **Delivery:** every non-overridable document is delivered in full whatever its
   size; a non-overridable set over the budget refuses the launch and names the
   documents; the overridable cap and order hold; a fresh context gets the manifest
@@ -322,4 +362,5 @@ Each test fails without its rule.
 `checklist`), resolves several team chains with conflict rules, renders a section
 and implements one-open-branch checks for a single repository. Nothing calls it. It is
 simplified to the one-chain rule and the envelope above when the agent launch path is
-built (implementation plan C5). The UI's Processes screens run on sample data.
+built (implementation plan C5). The package layer and the write call come with the
+process packages (L12). The UI's Processes screens run on sample data.
