@@ -742,6 +742,52 @@ fn a_restrictive_umask_cannot_publish_an_unreadable_replacement() {
     assert!(output.status.success(), "{output:?}");
 }
 
+/// A mask that takes the owner's own bits away (`0277`) makes a new file `0400` and a
+/// new directory `0500`. What an open makes gets its mode set explicitly, so the store
+/// it makes is one the next open accepts; what exists with such a mode was not made by
+/// that open, and is refused and never repaired.
+#[test]
+fn a_restrictive_umask_cannot_make_a_store_that_the_next_open_refuses() {
+    const MARKER: &str = "ORG_CREDENTIALS_UMASK_OPEN_CHILD";
+    const TEST: &str =
+        "credentials::adapter_tests::a_restrictive_umask_cannot_make_a_store_that_the_next_open_refuses";
+    if let Some(anchor) = std::env::var_os(MARKER) {
+        let anchor = PathBuf::from(anchor);
+        let location = DirectoryStore {
+            anchor: &anchor,
+            below: &BELOW,
+            create: true,
+            sharing: Sharing::Exclusive,
+            suffix: "",
+        };
+        // SAFETY: this exact-test child is isolated from the parent's parallel tests.
+        unsafe { libc::umask(0o277) };
+        let store = credentials(CredentialLocation::Directory(location)).unwrap();
+        store.add(&name("registry"), b"value").unwrap();
+        drop(store);
+        let again = credentials(CredentialLocation::Directory(location)).unwrap();
+        assert_eq!(loaded(&again, &name("registry")).unwrap(), b"value");
+        return;
+    }
+    let f = Fixture::new();
+    let output = child(TEST, MARKER, &f.anchor);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(mode(&f.anchor.join(BELOW[0])), 0o700);
+    assert_eq!(mode(&f.dir()), 0o700);
+    assert_eq!(mode(&f.dir().join(".lock")), 0o600);
+    assert_eq!(mode(&f.dir().join("registry")), 0o600);
+    // An existing lock or directory with such a mode is left as it is, and refused.
+    fs::set_permissions(f.dir().join(".lock"), fs::Permissions::from_mode(0o400)).unwrap();
+    assert!(f.open().is_err());
+    assert_eq!(mode(&f.dir().join(".lock")), 0o400);
+    fs::set_permissions(f.dir().join(".lock"), fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(f.dir(), fs::Permissions::from_mode(0o500)).unwrap();
+    assert_eq!(f.open().unwrap_err(), CredentialError::Unsafe);
+    assert_eq!(mode(&f.dir()), 0o500);
+    fs::set_permissions(f.dir(), fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(f.open().is_ok());
+}
+
 #[test]
 fn an_add_whose_winner_is_gone_before_it_is_read_again_is_refused() {
     let f = Fixture::new();

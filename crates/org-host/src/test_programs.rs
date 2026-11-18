@@ -1,4 +1,4 @@
-//! Compiled programs the host's unit tests start as office workers.
+//! Compiled programs the host's unit tests start as office workers and as web processes.
 //!
 //! A host starts only a worker image that nobody else could have written, and a system that
 //! executes the bytes it verified cannot start a `#!` script at all. A test that goes
@@ -19,6 +19,32 @@ pub(crate) fn recording_worker() -> PathBuf {
     static COPY: OnceLock<PathBuf> = OnceLock::new();
     COPY.get_or_init(|| private_copy(&built_example("recording_worker")))
         .clone()
+}
+
+/// The fake web process (`examples/fake_web.rs`): a compiled stand-in for `agentic-org-web`
+/// that takes its steps from a file beside the copy a test starts. This user's own copy,
+/// made once by each test process; a test copies it again to the place its host starts.
+pub(crate) fn fake_web() -> PathBuf {
+    static COPY: OnceLock<PathBuf> = OnceLock::new();
+    COPY.get_or_init(|| private_copy(&built_example("fake_web")))
+        .clone()
+}
+
+/// A program cargo built for another package of the workspace (`agentic-org-web`,
+/// `agentic-org-office`), found in the folder cargo built this crate's tests into. Cargo
+/// names no path for another package's program: `cargo test --workspace` builds them all
+/// before any test runs, and a narrower run must build `name`'s package first.
+pub(crate) fn sibling_program(name: &str) -> PathBuf {
+    let test_binary = std::env::current_exe().unwrap();
+    let profile = test_binary.parent().and_then(Path::parent).unwrap();
+    let built = profile.join(name);
+    assert!(
+        built.is_file(),
+        "{} is not built: run `cargo test --workspace`, or `cargo build -p {name}` before \
+         `cargo test -p org-host`",
+        built.display()
+    );
+    built
 }
 
 /// What the recording worker's runs in the office home `home` read from standard input, in

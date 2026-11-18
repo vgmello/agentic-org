@@ -461,6 +461,41 @@ checks and a lock.
   the keys) and never to bind-mount a macOS folder (refused by the filesystem rule).
   Without a mounted secrets volume, setup refuses.
 
+**Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
+`Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,
+data_root, mount_point_required, expect_items })` returns a `ReleaseRoot` whose
+`store(ReleaseItems { directory, suffix, sharing })` opens an item store below the
+checked root with the X1d engine; `org-host/src/release_store.rs` is the host's use of
+it). As built, where the text above is not exact:
+
+- The checks run in this order and the first failure refuses with the rule and the
+  offending directory (`CredentialError::Root(RootRefusal { rule, path })`, the one
+  error of this capability that carries a path: a directory path is configuration,
+  not a secret): path syntax; the walk, ancestors opened with `O_PATH`, each judged
+  before anything below it is opened; the store's owner and mode; the filesystem
+  (ext2 and ext3 share ext4's number and pass); disjointness from the data root; the
+  mount point when asked; the empty store; then the lock, which is the first thing
+  made.
+- The lock file is `.lock`, the engine's name. The layout is `<dir>/.lock`,
+  `<dir>/office-keys/<office id>.key` (the raw 32 bytes, as in the Keychain) and
+  `<dir>/host-secrets/<name>`.
+- An item, for the empty-store rule, is a regular file whose name does not start with
+  a dot, in a directory directly below the root that is the service user's with mode
+  `0700`. The rule is checked over the whole store before any view exists. The host
+  says keys exist when the office home holds an office folder (a folder is made only
+  after its key was stored).
+- The private group is the user's primary group whose member list is empty or names
+  only the user. An account that has that group as its primary group is not in the
+  member list and is not looked for (it cannot be found without enumerating
+  accounts). The same rule admits an image file of the admission adapter (section
+  3.1) that the service user owns and its group can write, so a development host on
+  an account with umask `002` starts its own build.
+- The record's `credentials` path is byte-exact normalized and frozen; setup creates
+  the directory, opens it once as the host will, and prints `Secrets: <path>`.
+- Open: `mount_point_required` is not asked for until the record has a service mode
+  (X5); a whole release-profile host on a release directory runs in no test; setup
+  itself still stops on Linux until X5's service and disk-encryption adapters.
+
 **What it proves.** Only the service user and root can read the items, none is in
 the data volume, a wrong setup refuses, and a lost store is noticed (LNX-4). **What it
 does not prove.** Any process running as the service user reads every item; macOS
@@ -476,20 +511,21 @@ because they are read-only and the host creates keys.
 **Contract** (`org_platform::confinement`):
 
 ```rust
-pub fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)>; // in the web process
-pub fn web_confinement_supported() -> Result<(), Refused>;       // in the host, before any bind, child or secret
+pub fn confine_web(rendezvous: &Path) -> io::Result<Confined>;   // in the web process
+pub struct Confined { pub stream: UnixStream, pub enforcement: Enforcement, pub landlock_not_applied: Option<String> }
+pub fn web_confinement_supported() -> io::Result<()>;            // in the host, before any bind, child or secret
 pub fn verify_ready_report(enforcement: &Enforcement) -> io::Result<()>; // in the host, when the ready line arrives
 pub fn verify_web(pid: u32, enforcement: &Enforcement, critical: &[&Path]) -> io::Result<()>; // in the host, before the handoff
+pub fn layers(enforcement: &Enforcement) -> io::Result<Layers>;  // what the process is confined by, for the host's log
 ```
 
-Built in X1c as shown. The functions return `io::Result`, because they fail for
-reasons other than a missing adapter; a refusal is the error's inner `Refused`.
-`verify_web` takes the process id until the admission contract's `Child` exists (X4
-switches to it for the pidfd). The host makes two checks, where one function would
-reorder macOS's steps: the report when the ready line arrives, and the process itself
-after the reader and image re-checks. The ready line carries the Landlock status only:
-a domain not enforced in full never becomes an `Enforcement`, and the host observes
-seccomp on the process itself.
+Built in X1c (macOS) and X4 (Linux). The functions return `io::Result`, because they
+fail for reasons other than a missing adapter; a refusal's reason is in the error.
+`verify_web` takes the process id: the admission's child type is in the host-only
+crate, so the host holds the child (unreaped) across the call and checks afterwards
+that it has not exited. The host makes two checks, where one function would reorder
+macOS's steps: the report when the ready line arrives, and the process itself after
+the reader and image re-checks.
 
 `confine_web` returns the connected rendezvous stream only after confinement is in
 force, so the web process cannot use the stream unconfined on any system. The order
@@ -502,68 +538,123 @@ confinement holds. `Enforcement` is the evidence the web process reports in
 profile, then the connection; the host's `sandbox_check` probes
 (`org-platform/src/confinement/macos.rs`, moved from `org-socket` in X1c).
 
-**Linux adapter.** Called on the main thread before any runtime thread. The host
-starts the web process without `RUST_BACKTRACE` (a backtrace opens files, which the
-filter forbids), and `ChildEnv` refuses it for the web image.
+**Linux adapter: the seccomp filter, and Landlock where the kernel has it.** The
+filter is the layer that must hold; without it the web process does not start.
+Landlock is a second layer over the same ground: it is applied on every kernel that
+offers it and is never a reason to refuse (owner direction, 2026-11-18: the product
+runs on ordinary Linux hosts and in Docker without extra configuration; requiring
+Landlock from Linux 6.2 excluded common hosts). Nothing chooses the layers but the
+kernel: there is no setting. `confine_web` is called on the main thread before any
+runtime thread. The host starts the web process with an empty environment (so no
+`RUST_BACKTRACE`: a backtrace opens files, which the filter kills).
 
+0. `mallopt(M_ARENA_MAX, 1)`. glibc opens `/proc/sys/vm/overcommit_memory` the first
+   time a heap of a non-main allocator arena shrinks, which the filter kills: the
+   real web process died that way under 224 concurrent requests. With one arena there
+   is no such heap. It holds only when the process never had a second thread before
+   this call (the contract); otherwise the result is the kill, never an unconfined
+   process. The cost is one allocator lock for all threads; per-thread caches remain.
 1. Disable core dumps, set `PR_SET_DUMPABLE` to 0, and require exactly one thread
    (`/proc/self/status`, `Threads: 1`) and exactly descriptors 0 to 2
    (`/proc/self/fd`). Static assets are already in memory.
 2. Connect to the rendezvous. This is the last new socket the process creates.
 3. `PR_SET_NO_NEW_PRIVS`.
-4. Landlock. Query the ABI; require 3 or higher. Create a ruleset that handles every
-   filesystem right the running ABI knows, add no rule, and restrict the process: no
-   path can be read, written, executed, created, renamed, linked or truncated. With
-   ABI 4 or higher it also handles TCP bind and connect with no rule; with ABI 6 or
-   higher it also scopes abstract Unix sockets and signals to the process.
-5. seccomp. A filter that kills the process on a foreign architecture (including x32
-   on x86-64) and allows a fixed list per architecture. The list, from a trace of the
-   HTTPS path: memory (`mmap`, `munmap`, `mprotect`, `madvise`, `brk`), `futex`,
-   `epoll_*`, `eventfd2`, `read`, `write`, `writev`, `recvfrom`, `recvmsg`,
-   `sendmsg`, `sendto`, `accept4`, `getsockname`, `getsockopt`, `setsockopt`,
-   `shutdown`, `close`, `fcntl`, `poll`, clocks, `getrandom`, `rt_sig*`,
-   `sigaltstack`, `rseq`, `set_robust_list`, `gettid`, `sched_getaffinity`, `exit`,
-   `exit_group`, signals to itself, thread `clone` with `CLONE_THREAD` checked in its
-   flags, `prctl` limited by its first argument to `PR_SET_NAME` and `PR_GET_*`, and
-   `ioctl` limited by request to `FIONBIO` and `FIONREAD`. It returns `ENOSYS` for
-   `clone3`, so the C library falls back to `clone`, and kills the process on every
-   other call, among them `socket`, `connect`, `bind`, `listen`, every `open`,
-   `execve`, `execveat`, `ptrace`, `process_vm_*`, `unshare`, `setns`, `mount`,
-   `bpf`, `io_uring_setup` and `memfd_create`. The list is proved by running the web
-   process's complete HTTP and TLS test path under the filter, on the development
-   system and in the container image, whose glibc may make other calls.
+4. Landlock, if it can be applied. Query the ABI; from ABI 1 up, create a ruleset that
+   handles every right that ABI knows (filesystem rights; from ABI 4 TCP bind and
+   connect; from ABI 6 the scopes for abstract Unix sockets and signals), add no rule,
+   and restrict the process. If the query, the ruleset or the restriction fails for
+   any reason (no Landlock in the kernel, a container profile that refuses the call),
+   nothing is restricted by Landlock, the reason is kept, and the next step runs.
+5. seccomp, installed for every thread (`SECCOMP_FILTER_FLAG_TSYNC`). The filter kills
+   the process on a foreign architecture (including x32 on x86-64) and on every call
+   outside a fixed list per architecture (x86-64 and aarch64; any other architecture
+   refuses). A failure to install it refuses: the stream is dropped unused and the
+   error names the call and the error.
+   - Allowed with any arguments: `read`, `write`, `writev`, `close`, `poll` (`ppoll`
+     on aarch64), `recvfrom`, `recvmsg`, `shutdown`, `getsockname`, `getpeername`,
+     `setsockopt`, `getsockopt`, `accept4`, `epoll_create1`, `epoll_ctl`,
+     `epoll_wait` (`epoll_pwait` on aarch64), `eventfd2`, `munmap`, `brk`, `madvise`,
+     `futex`, `sched_getaffinity`, `sched_yield`, `set_robust_list`, `rseq`, `gettid`,
+     `getpid`, `exit`, `exit_group`, `rt_sigaction`, `rt_sigprocmask`, `rt_sigreturn`,
+     `sigaltstack`, `restart_syscall`, `getrandom`.
+   - Allowed by argument: `sendto` only without a destination and with flags within
+     `MSG_DONTWAIT | MSG_NOSIGNAL`; `clone` only with glibc's exact thread flags;
+     `prctl` only `PR_SET_NAME`; `ioctl` only `FIONBIO` and `FIONREAD`; `fcntl` only
+     `F_GETFD`, `F_GETFL` and `F_DUPFD_CLOEXEC`; `mmap` and `mprotect` without
+     `PROT_EXEC`; `mremap` with no flag or `MREMAP_MAYMOVE`; `tgkill` only to the
+     process itself; `clock_gettime` only with a fixed clock.
+   - `clone3` answers `ENOSYS`, so glibc falls back to `clone`, whose flags the filter
+     can read. `sendmsg` is killed: the web process sends no descriptor.
+   - Everything else kills, among them `socket`, `connect`, `bind`, `listen`, every
+     `open`, `execve`, `execveat`, `ptrace`, `process_vm_*`, `kill`, `unshare`,
+     `setns`, `mount`, `bpf`, `io_uring_setup` and `memfd_create`.
 6. Report `Enforcement { landlock_abi, seccomp: true }` and send `ReadyForSecrets`.
+   When Landlock was not applied, the web process first writes one line on standard
+   error, `agentic-org-web: confinement: landlock not applied: <reason>` (the reason
+   is 1 to 240 printable ASCII characters).
 
-On the host, `verify_web` reads `/proc/<pid>/status` of the admitted child, then
-checks the child is still alive through its pidfd, and requires `NoNewPrivs: 1`,
-`Seccomp: 2` and at least one filter, and a reported Landlock ABI of 3 or higher.
-Any failure kills and reaps the web process before any descriptor or secret is sent.
+Why each entry that is not obvious is there, all measured on Linux 6.18 with glibc
+2.39: `getpeername` (the web process checks its control connection), `getpid`
+(glibc's `abort`), `restart_syscall` (the kernel, after a stop and continue during a
+timed `poll`), `mremap` (glibc grows a large block with it: a buffer pushed past
+about 128 KiB killed a healthy process), `sched_yield` (a contended standard channel).
+Why the argument rules: a `sendto` with `MSG_FASTOPEN` and a destination CONNECTS a
+TCP socket, and did so in a probe under Landlock with TCP connect denied (Landlock
+checks the `connect` call only), and a datagram send with a destination reaches any
+named Unix socket of the user; `fcntl` with `F_SETOWN`, `F_SETSIG` and `O_ASYNC` makes
+the kernel signal any process of the user (a probe killed one; Landlock stops that
+only from ABI 6).
 
-**Minimum kernel.** Landlock ABI 3 is Linux 6.2; the kill-process action is 4.14. The
-floor is 6.2 because Landlock before ABI 3 does not cover truncating a file by path,
-and each layer alone must deny every file change.
+On the host: `web_confinement_supported()` asks, without changing anything, whether
+this architecture has a list, whether the kernel knows the kill-process action, and
+whether a filter can be installed (an install with a null filter must answer
+`EFAULT`); Landlock is not asked. `verify_ready_report` accepts a report with or
+without Landlock. `verify_web` reads `/proc/<pid>/status` of the admitted child and
+requires `NoNewPrivs: 1`, `Seccomp: 2` and more filters than the host itself has
+(`Seccomp_filters` counts inherited ones, so under a container's own profile "one
+filter" would prove nothing); the host then checks the child is still running. Any
+failure kills and reaps the web process before any descriptor or secret is sent. Once
+per start the host logs what the web process is confined by: `the seccomp filter and
+Landlock ABI n`, or `the seccomp filter alone: Landlock was not applied: <reason>`.
+
+**Minimum kernel.** The kill-process action is Linux 4.14; the admission of section
+3.1 needs 5.9. Landlock adds itself from 5.13.
 
 **What it proves.** Once ready, the web process cannot open any file, create or
-connect a socket, start a program or trace another process; it can only serve the
-listener and descriptors it holds. **What it does not prove.** The host cannot
-observe another process's Landlock domain: it trusts the report of an image it
-admitted by digest, and observes seccomp and no-new-privileges itself. The macOS
-host's path probes have no Linux equivalent.
+connect a socket, start a program, or trace or signal another process; it can only
+serve the listener and descriptors it holds. The whole list of forbidden operations
+is proved under the filter alone as well as under both layers, and no operation the
+list allows was found that only Landlock stopped (X4, 22 candidates in six
+layerings). **What it does not prove.** The host cannot observe another process's
+Landlock domain, nor which filter a process installed: it trusts the report of an
+image it admitted by digest, and observes that a filter beyond its own, and
+no-new-privileges, are in force. The macOS host's path probes have no Linux
+equivalent. **What Landlock adds where it is present:** a backstop for a mistake in
+the list. With `connect` added to the list as an experiment, the call was refused by
+Landlock and succeeded under the filter alone.
 
-**Failing closed, and in a container.** Landlock missing from the kernel's security
-modules (`EOPNOTSUPP`), disabled, an ABI below 3, or a container seccomp profile that
-refuses `landlock_create_ruleset` or `seccomp` (`EPERM`, `ENOSYS`) makes the web
-process exit before readiness with the reason; the host reports the web service
-unavailable and keeps native control (LNX-3). A container's own seccomp profile does
-not replace this filter. Whether Docker Desktop's kernel on a Mac has Landlock decides
-whether the web process can run in a container on a Mac at all; it is probed on the
-first day of Track X, before this adapter's details are fixed (implementation plan,
-X4).
+A confined process must not make a call the list lacks: it is killed. Known such
+calls a web process could be tempted to make: `std::thread::sleep`
+(`clock_nanosleep`), `available_parallelism` (opens files), `geteuid`, `localtime`
+(opens a file), anything that opens a file. Left open and judged harmless:
+`sched_getaffinity` of another process, futex priority-inheritance operations that
+name another task, `getsockopt(SO_PEERPIDFD)`.
+
+**Failing closed, and in a container.** A kernel or a container profile that refuses
+`seccomp` makes the host refuse to start the web process, or the web process exit
+before readiness, with the reason in the host log (the web process writes
+`agentic-org-web: startup refused: confinement: <reason>` on standard error, and the
+host keeps the first 1024 bytes of a child that ends before its ready line); the host
+reports the web service unavailable and keeps native control (LNX-3). A container's
+own seccomp profile does not replace this filter. Under Docker's default profile on
+Linux 6.18 both layers apply (measured, X4). The reason reaches the host's log, not
+yet its status output (the status contract is Track A's).
 
 Rejected: an allowlist that returns an error instead of killing, because a forbidden
 call that fails quietly hides a broken assumption; connecting after confinement as
-macOS does, because Landlock does not control connecting to a named Unix socket on
-the 6.2 floor, and denying `connect` outright is simpler.
+macOS does, because Landlock does not control connecting to a named Unix socket and
+denying `connect` outright is simpler; requiring Landlock, because it excluded hosts
+without adding a guarantee the filter does not give.
 
 ### 3.4 Service lifecycle
 
@@ -635,6 +726,12 @@ when that instance is not set up yet, `serve` first runs the same non-interactiv
 offline setup (`setup --non-interactive --config`), which repeats as a no-op later,
 then serves. The image's entry point is `tini`, so orphaned agent processes are
 reaped and the stop signal reaches `serve`.
+
+**Amended by the owner's direction of 2026-11-18, to be rewritten with X5:** the
+container starts with a plain `docker run` that publishes the port. The image declares
+its volumes; without an operator's certificate the instance makes its own at first
+start; the seccomp and AppArmor options below are optional and only let agents'
+vendor sandboxes create user namespaces.
 
 **The container file** (`deploy/container/Dockerfile`):
 
@@ -805,6 +902,17 @@ everything. The cases that matter run as the service user:
   that names the setup operation, which the setup record holds, can take it, once.
   That user can also write the host's registry directly, so the link gives it nothing
   more.
+- **Another account that shares the service user's group.** The credential store and
+  the admission of a development image accept a directory or file that the service
+  user's group can write when that group is the user's private group: its primary
+  group, named as the user, with a member list that is empty or names only the user.
+  An account that root created with that group as its own primary group is not in the
+  member list and is not detected (finding it means enumerating every account). Such
+  an account can read no item and plant none, but it can rename an ancestor of the
+  store and put an older copy the service user owns in its place, and it can rewrite a
+  development build's group-writable executable before the host hashes it. A release
+  image is covered by its pinned digest. Do not give another account the service
+  user's group.
 - **Stop the service**: kill or stop the host or its children. This denies service and
   exposes nothing; recovery is as after a crash.
 - **Make the web process refuse to start** on a kernel without Landlock or under a

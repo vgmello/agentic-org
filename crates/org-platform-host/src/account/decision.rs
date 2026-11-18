@@ -1,5 +1,8 @@
 //! Whether a group is a user's private group, pure: the rule over the two account
 //! database entries. The GNU/Linux probe supplies them (`linux.rs`).
+//!
+//! The rule cannot see an account that has the group as its *primary* group: no member
+//! list names it. The module documentation says what follows from that.
 
 /// A user's entry in the account database.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,7 +26,8 @@ pub(super) struct GroupEntry {
 }
 
 /// Whether `group` is the private group of `user`: the user's primary group, named as
-/// the user, whose member list is empty or names only the user.
+/// the user, whose member list is empty or names only the user. Not detected: another
+/// account with this group as its primary group.
 pub(super) fn is_private_group(user: &UserEntry, group: &GroupEntry) -> bool {
     !user.name.is_empty()
         && group.id == user.primary_group

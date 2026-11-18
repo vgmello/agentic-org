@@ -25,8 +25,10 @@ the checklist row is FC-164. Every handoff and review of this track also carries
   architecture, A1's SQLCipher removal) and at `42dd1322` (A1.5's single launch
   contract, A2's setup and service on macOS, A3's stored browser sessions, instance
   IDs as UUIDv7; see "Merges with v1-integration" below). The session that runs this
-  lead may push only that branch; the merge into `v1-integration` is made by a
-  session that may.
+  lead pushes that branch. **Owner's go-ahead, 2026-11-18:** the lead may merge into
+  `v1-integration` what is ready, once an independent reviewer has approved the exact
+  commit; nothing else is pushed there. The path to that merge is under "Merge into
+  v1-integration" below.
 - **Systems.** Development and the full Linux checks run on Linux x86-64 (kernel
   6.18, as root in a container). macOS code is type-checked locally with
   `cargo check --target aarch64-apple-darwin` where the crate has no C build, and
@@ -44,10 +46,10 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
 | X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
-| X2 first worker on Linux (LNX-1) | Both slices integrated; LNX-1 passes on Linux; the host slice is under fresh review | See below |
-| X3 host secrets on Linux (LNX-4) | Not started | |
-| X4 web process confined on Linux (LNX-3) | The Linux confinement adapter is integrated (`458ed8b1`) and under fresh review; the host slice is in work | See below |
-| X5 service and container (LNX-2) | Not started | |
+| X2 first worker on Linux (LNX-1) | Built, reviewed and repaired; LNX-1 passes on Linux and in a default Docker container; a fresh final review of the repairs is owed | See below |
+| X3 host secrets on Linux (LNX-4) | Built, reviewed and repaired (`ce7dd5a1`); a fresh final review of the repairs is owed | See below |
+| X4 web process confined on Linux (LNX-3) | Adapter reviewed and repaired; Landlock optional; host slice integrated (`4823b23a`); the real-host LNX-3 test and the last web tests are in work; a fresh review of the host work is owed | See below |
+| X5 service and container (LNX-2) | Built on branch `x/x5-service` (`a31873e8`), not integrated; under fresh review; the browser is not served from the container | See below |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
 
 ## X1a · The platform crate and the check
@@ -632,9 +634,19 @@ web test. **A second is new and intermittent:**
 (twelve offices started at once by an in-process host while a client lists them)
 went silent for 30 s in 3 of 6 runs with the machine under load (load average 7 to
 8, three other builds) and passed in the others in under 2 s. It ran on Linux for the
-first time with slice 2. Whether it is the test, the load or a hang in the host's
-Linux start path is not known yet; the slice's author is finding out before anything
-else is built on it.
+first time with slice 2.
+
+**Cause found: a race in the test's own bookkeeping** (branch `x/x2-hang`,
+`d9613a56`, merged at `82fbc3d1`). Reproduced 3 of 31 on the loaded machine. The hung
+process, read with a debugger: the run was complete (10,675 calls sent and answered,
+all twelve offices active), the writer thread was gone, the test thread was parked in
+its 30 s receive, every host thread was idle in its normal wait, and all twelve
+children ran the sealed image. The reader ended on "the writer has finished and every
+call is answered"; it could read the last answer before the writer had stored its
+count, and then wait for a message that never comes. Forced with a 200 ms delay: 3 of
+3. The writer now names its last call before it makes it; no timeout changed; 30 of
+30 under load afterwards. The race is in system-neutral test code, so macOS had it
+too. The test is Track A's: what it asserts about ordering is unchanged.
 
 Not verified by the reviewer: anything on macOS at run time (first-run risks it
 names: hard-linking a socket in LNX-1, path lengths under `/private/tmp`, the private
@@ -731,7 +743,46 @@ that the test seams are compiled only for tests. Not verified: C1 on the kernel,
 aarch64 at run time, Landlock ABI 3 to 6 on a real kernel, a container runtime's
 profile, Docker Desktop's kernel, the example on macOS.
 
-**Slice 2, the host:** in work in worktree `x/x4-host` (the adapter's author): the
+**Repairs of slice 1 and slice 2, the host: integrated at `4823b23a`** (branch
+`x/x4-host`, ten commits ending at `eed52d58`, by the adapter's author).
+
+- Review repairs: C1 was real on this kernel: with `tcp_fastopen` 1, a `sendto` with
+  `MSG_FASTOPEN` and a destination connected and delivered data on a fresh TCP socket
+  and on a listener after `shutdown`, and still did under Landlock ABI 7 with TCP
+  connect denied. `sendto` now passes only without a destination and with two known
+  flags; `sendmsg` is killed. C2 and C3: `mremap` (two flags) and `sched_yield` are
+  allowed. C5: the example proves each thread refusal by itself. C7: the filter is
+  installed for every thread. C8, C9: the contract lists what a confined process must
+  not call; `clock_gettime` takes only fixed clocks.
+- Landlock optional (owner direction below): applied from ABI 1 where the kernel
+  offers it; any failure of its three calls is kept as a reason and the filter is
+  installed all the same. The forbidden list (42 calls), the working roles and the
+  host's check run in four layerings (both layers; Landlock refused at each of its
+  three calls). Asked whether any allowed call was stopped by Landlock alone: 22
+  candidate operations gave identical results unconfined, under Landlock alone, under
+  both and under the filter alone; none found. What is lost without Landlock is the
+  backstop for a mistake in the list (shown by adding `connect` to it).
+- Host: the refusal's reason reaches the host log through one bounded line on the web
+  process's standard error; the host logs once per start what confines the web
+  process; the child must be running after `verify_web`; the environment is empty by
+  name; a web process started from a sealed image takes its release root from its
+  first argument (before, it never reached confinement under the Linux admission).
+- Lead's decisions: the reason stays in the log (a status field is Track A's
+  contract); the duplicated refusal prefix stays, pinned by a test on each side; the
+  rule that the host exits on a descriptor arriving before the handoff
+  acknowledgement is unchanged.
+- Lead's checks at the merge: lint for the three targets; 1,094 tests of the
+  platform, socket, host, web and app crates passed; failing were the offline and
+  IPv6 tests, the service test whose race is described under X2, and one setup test
+  whose fixed port another agent's run held (8 of 8 alone, three times).
+
+**In work (worktree `x/x4-web`, the same author):** the real-host test of LNX-3 in
+its amended meaning; one web admission per host lifetime; the web check following the
+system's image identity; the 13 web tests that still start a script through the
+macOS admission, on a compiled fake web child. Then one fresh review of all of X4's
+host work (`7ffc5e68..4823b23a` and this slice).
+
+**Earlier plan for slice 2, kept for the record:** in worktree `x/x4-host` (the adapter's author): the
 refusal's reason from the adapter and from the web process to the host log and the
 web service's status (LNX-3 "reports the reason" holds today in the adapter and the
 example, not through the host); liveness of the child around `verify_web`; an explicit
@@ -739,6 +790,110 @@ environment for the web process; the web tests on both systems. The real-host te
 of LNX-3 follows the integration of X2's host slice.
 
 Not run anywhere yet: a release build, the container image's glibc, aarch64.
+
+## X3 · Host secrets on Linux (integrated, under review)
+
+One worker, branch `x/x3-credentials`, seven commits ending at `00d1d70e`, merged at
+`d13aa040`. What it built is in design 3.2 ("Built in X3"). Its production-path test
+(the store opened through the public contract on this machine's ext4, a key added
+through the host's key view and loaded through a second handle) passed first.
+
+Lead's decisions on what the worker raised:
+
+| Question | Decision |
+| --- | --- |
+| Where `expect_items` is checked, what an item is, and the host's source of "keys exist" (office folders) | Accepted as built, subject to the review (it is asked whether an instance with wrapped records can ever start on an empty key directory and make fresh keys) |
+| "No other members" of a private group: the member list is empty or names only the user; an account with that primary group is not looked for | Accepted for now and put to the reviewer, because the same rule now admits a group-writable image |
+| The lock is `.lock`; ancestors are opened with `O_PATH`; one error carries a path | Accepted; design 3.2 says so |
+| A whole release-profile host on a release directory runs in no test | X5: the container is the first place where it can run |
+| The runner hid the from-root acceptance tests (it made the build output writable by everyone, which the ancestor rule refuses on purpose) | The runner now leaves the build output unwritable by others and gives the test user only `target/tmp`; both from-root tests then open the store as uid 1000 (seen by the lead) |
+| `mount_point_required` is always false | X5 adds the record's service mode |
+| Interactive setup stops on Linux before it changes anything: no service adapter, and no disk-encryption adapter (not in any plan before) | Both are X5's |
+
+Lead's checks at the merge: lint for Linux (whole workspace), macOS and the refusing
+target; guard tests; the refusing target's tests; `org-platform`, `org-platform-host`,
+`org-host` and `agentic-org` unprivileged: 1,053 passed, none failed. The list of
+platform predicates: 17 files, 104 predicates.
+
+**Repairs: integrated at `ce7dd5a1`** (branch `x/x3-repairs`, two commits ending at
+`fac893ed`, by the store's author, who confirmed S1 on a real kernel and rejected no
+finding; the table below says what each became). Lead's checks: lint for the three
+targets, guard tests, 971 tests of the platform and host crates unprivileged with
+none failing, and the bind-mount cases as root. From the author's reading of the
+source, asked by the reviewer: when the host-secrets directory alone is lost, nothing
+is regenerated for an existing office (writer custody and a pending recovery code
+refuse), but the start itself does not refuse; a marker in the data root
+(`selected-writer.required`) could make `expect_items` exact per item store. Open.
+
+**Review: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the lead, on
+`4823b23a..d13aa040`). It built trees as root on ext4, tmpfs and overlay and attacked
+them as three other users; ran the store's tests ten times as uid 1000 and as root
+with nothing left behind; and read the release-only branches that no test executes.
+
+| Finding | Severity | State |
+| --- | --- | --- |
+| S1 A store that is a bind mount of a subdirectory of the data root is accepted (and the reverse): the `..` walk from a mount root leaves through the mount point, so the chains never meet, and the mount-point rule passes too. The container mistake `-v ./agentic:/data -v ./agentic/secrets:/secrets` puts every key in the data volume, silently (probed) | MAJOR | With the author: containment decided on paths inside the filesystem, read from the mount table; refused when it cannot be determined |
+| S2 The private-group rule admits a group another account has as its primary group; that account can read and plant nothing but can roll the store back to an older copy, and can rewrite a group-writable development image (probed) | MINOR: root must have made such an account | Not closed (it needs every account enumerated, which is unbounded under a directory service); stated in the code and in design section 5 |
+| S3 An item store with a wrong mode is reported as "credentials missing", and any file in any `0700` subdirectory counts as an item | MINOR | With the author: the host names its item stores; a wrong mode is its own refusal; only real items count |
+| S4 Setup creates the directories by path before any check and can leave them behind on a refusal, and records an unnormalized path | MINOR, latent until setup works on Linux | With X5's worker, who owns `setup_flow.rs` now |
+| S5 A POSIX ACL on an ancestor admitted by the group-write exception is not seen (probed) | MINOR: only the owner or root can set it | With the author: such a directory, and such an image, must carry no access ACL |
+| S6 Texts and the mode of a lock made under a restrictive umask | NIT | With the author |
+| S7 Commands now create the application folder on Linux before they fail on a missing record | NIT | Noted, not changed |
+| S8 A macOS record now carries `"credentials": null`, which an older binary would reject | NIT | Rejected: nothing has shipped |
+| S9 The account helper has one adapter | NIT | With the author: the crate's three-adapter layout |
+| S10 The LNX-4 test is at the level of the two views | NIT | X5: LNX-4 on the instance the container sets up |
+
+Found correct, by probe: every spelling, symbolic link, ancestor, mode, filesystem,
+mount-point, empty-store and lock case of design 3.2, each refusal naming the right
+directory (`/tmp`, `/var/tmp` and `/dev/shm` are always refused as ancestors, as the
+design intends). By reading: every check is made on the descriptor the next `openat`
+uses; no office with records ever gets a fresh key (`provisioning.rs`,
+`supervisor/office.rs` end with `KeyMissing`); a release host has no fallback to a
+development store, to the environment, or to no store; macOS is unchanged in
+substance. Not verified: macOS at run time, a release-profile host, XFS/Btrfs/F2FS
+and network filesystems live, directory services, an actual race, and whether a lost
+host-secrets directory alone is noticed (asked of the author).
+
+## X5 · The service on Linux and the container (built, not integrated)
+
+One worker, branch `x/x5-service`, six commits on `82fbc3d1` ending at `a31873e8`.
+It is not merged: it needs the newer `v1-integration` under it (the merge is in work
+on `x/merge-a`), its fresh review (in progress on `a31873e8`), and the decisions
+below.
+
+What it built: the systemd user-unit adapter of `org_platform::service` and the
+foreground mode (nothing registered); a Linux disk-encryption probe
+(`org_platform::disk`: on only when the device is a `dm-crypt` target, otherwise off
+or not known); non-interactive setup from a strict file and `serve --setup <file>`;
+the record's service mode and the mount-point rule from it; root's
+`admin reset --user` (`host.sock` admits UID 0 for `hello` and `admin.reset` only;
+a same-user peer is refused for it on Linux); the X3 review's S4 (setup creates the
+credential directory below judged ancestors and removes what it made on a refusal);
+`deploy/container/` (Dockerfile on a Debian base, `setup.json`, optional
+`seccomp.json` and AppArmor profile, README, the LNX-2 script).
+
+What the worker measured in Docker (29.10, kernel 6.18, default profiles), 3 of 3
+runs of `deploy/container/lnx2.sh`: a plain `docker run -d -p 127.0.0.1:8443:8443
+<image>` sets the instance up, starts a worker, `agent-os` sends and reads, root gets
+the registration link, `docker stop` returns in under half a second with exit code 0,
+and a replaced container on the same two volumes is the same instance. Image 191 MB.
+`/data` and `/secrets` are ext4 with named and with anonymous volumes and pass the
+mount-point rule; an overlay directory, a plain directory, a root-owned or `0750`
+store are each refused by their rule.
+
+**What does not work, from the worker's receipt (not yet verified by the lead):**
+
+| Gap | What it needs |
+| --- | --- |
+| The browser is not served from the container. The web process serves plain HTTP on loopback only (`web.rs` requires a verified HTTP loopback listener; `tls.fetch` answers only that profile; the `tls_pair` custody is unused), a published port is not loopback, and no workspace dependency can make a certificate | Either HTTPS serving in the host and the web process (a product feature that exists on no system yet: FC-017, Track A's area) with a certificate made at first start, or plain HTTP allowed on the container's interface. The owner's decision |
+| The container uses the development key store (`/secrets/dev-keys`), because the image holds a debug build; a release directory is used only by a release-profile host | A release image needs the release pipeline (a signed manifest and pinned runtime); until then the release store runs in no host anywhere |
+| A new, empty secrets volume does not stop the start in that image: the host serves and reports the office as having no usable key; no key is made | Follows from the development store |
+| `-v D:/data -v D/secrets:/secrets` is not refused: the store is beside the instance root (`/data/instance`), not inside it | The store must be compared with the data volume, not only with the instance root: X3's author, after the merge |
+| Real systemd never ran (no user bus in the sandbox) | A CI runner or a machine with a user manager; an opt-in test exists |
+
+Lead's decisions so far: `root` at `/data/instance` with the service user's home at
+`/data` is accepted (the host refuses overlapping instance and locator roots);
+`hello` for root is accepted as the handshake of `admin.reset`, subject to the review.
 
 ## Merges with v1-integration
 
@@ -796,6 +951,39 @@ time):
   (`PermissionDenied`), and `dependency_closure` on both systems (`cargo metadata
   --offline` needs a crate of the other system that the runner's cache lacks).
 
+Run 44285111130 on `6af7ede0` (code as of X2's host slice, `e8cf07fb`; read
+2026-11-18 about 12:40 UTC; the seven newer heads had no Rust job result yet, the
+runners' queue being hours long):
+
+- macOS: `lnx1` passed (the hard-linked socket works there), `supervision` 19,
+  `service` 7, `setup` 8, `contract` 11, `keys` 3, `binary` 6, `app_token` 5,
+  `host_control` 14, `instances` 1; `org-host` 607 passed with only the six known
+  `release::store` failures; `org-platform` 99, `org-platform-host` 88 and its
+  presence test, `org-socket` 59; 68 tests named admission, 50 credentials, 11
+  keychain, 18 server_check, 24 custody and 43 `web::tests` passed, none failed.
+- macOS, new: `org-socket` `confinement_example`
+  `the_example_passes_where_the_web_process_can_be_confined` failed: the example's
+  child answered `refused: gateway confinement unavailable`.
+- Linux (`ubuntu-26.04`): `lnx1` passed; every `apps/agentic-org` suite passed;
+  `org-host` 593 passed. New failures, all from the runner's environment meeting a
+  test's assumption, none seen in the sandbox:
+  - all three `confinement_example` tests: `the process must hold exactly descriptors
+    0, 1 and 2; it holds [0, 1, 2, 142, 145]`. The runner leaves two descriptors open
+    in the test process and the test's children inherit them; the entry check refuses,
+    correctly. The macOS failure above is very probably the same (the macOS adapter
+    gives no reason). The product's own start closes everything above 2. With X4's
+    author: the example starts its children with only descriptors 0 to 2, and a test
+    holds a stray descriptor on purpose.
+  - `admission::linux::tests::a_program_that_root_owns_is_admitted` and
+    `web::tests::running_ended_reads_the_refusal…`: `open` failed with ELOOP. On
+    Ubuntu 26.04 `/usr/bin/true` and its like are symbolic links into a multi-call
+    program, and the admission refuses a link at the pinned path. The first is fixed
+    by the lead (`ce7dd5a1`); the web tests move to compiled programs with X4's
+    author.
+  - `web::tests::the_supervisor_refuses_a_platform_without_a_confinement_adapter`:
+    the known one, rewritten at `4823b23a`.
+- The job "Platform conditionals list only shrinks" passed.
+
 This is a debug, unsigned build: the Keychain, the publisher check of a signed image,
 Seatbelt on a signed web process and the presence dialog are still owed from a Mac
 (the lists under X1c and X1d).
@@ -832,3 +1020,30 @@ default seccomp profile, no option beyond a bind mount of the build output):
 
 Not measured: Docker Desktop on a Mac, an older Docker or host kernel, the product's
 own image (X5).
+
+## Merge into v1-integration
+
+Owner's go-ahead (2026-11-18): merge what is ready when the independent reviewer
+approves it. What must be true of the one commit that is merged:
+
+1. X3's review repairs and X4's last slice are integrated (both in work); X5 is not
+   part of this merge unless it is finished and reviewed by then.
+2. `origin/v1-integration` is merged into the Track X branch again. It moved 82
+   commits past `42dd1322` (to `f7e60098`): a trial merge conflicts in 20 files, among
+   them the host's key stores, supervisor, web process and `serve`, which the running
+   workers are editing, so this merge is made once, after their branches are in. A
+   read-only analysis of Track A's changes in those files is being written as a merge
+   guide.
+3. The checks pass on that commit: fmt; lint for Linux, macOS (cross-lint) and the
+   refusing target; the guard tests; the whole workspace's tests unprivileged; and the
+   macOS CI job on the pushed commit shows no failure that `v1-integration` does not
+   already have.
+4. One fresh independent review of that exact commit covers what no fresh reviewer
+   has read: the two merges with `v1-integration` (the lead's conflict resolutions),
+   the repairs of X2's host slice and the test-race fix, all of X4's host work and the
+   Landlock change, and X3's repairs. Its verdict must be ACCEPT; a CHANGES_REQUIRED
+   is repaired and reviewed again.
+5. Then `git merge --no-ff` into `v1-integration` and push, and the Track A lead is
+   told what changed under them (the platform crates, the rule against platform
+   predicates and its CI check, the admission and credential contracts, the root
+   refusal, the runner's test user).

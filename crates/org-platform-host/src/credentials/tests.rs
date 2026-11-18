@@ -188,6 +188,23 @@ fn the_protected_store_kind_says_which_entry_opens_a_release_builds_store() {
         expect_items: true,
     })
     .err();
+    // The entry that names the host's item stores answers the same on every target.
+    let stores = [super::ItemStore {
+        directory: "office-keys",
+        suffix: ".key",
+        is_item: |_| true,
+    }];
+    let with_stores = super::release_directory_with_stores(
+        ReleaseDirectory {
+            path: Path::new("relative/credentials"),
+            data_root: std::os::fd::AsFd::as_fd(&data_root),
+            mount_point_required: false,
+            expect_items: true,
+        },
+        &stores,
+    )
+    .err();
+    assert_eq!(with_stores, outcome);
     let unsupported = Some(CredentialError::Refused(refusal()));
     match protected_store() {
         Ok(ProtectedStore::ReleaseDirectory) => assert_eq!(

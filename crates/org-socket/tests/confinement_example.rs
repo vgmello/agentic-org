@@ -6,6 +6,12 @@
 //! such a reason: under a profile that refuses it, the whole example passes with
 //! the filter alone and says so.
 //!
+//! Every test here holds one more descriptor open, and inheritable, while it runs the
+//! example: a process that starts a confining process must give it exactly descriptors 0
+//! to 2, whatever it holds itself, and a CI runner leaves descriptors of its own open in
+//! the processes it starts. The example closes them when it starts each child; without
+//! that, every adapter's entry check refuses the child, as it must.
+//!
 //! `cargo test` builds this package's examples before it runs its tests.
 
 use org_platform::confinement::{
@@ -15,6 +21,7 @@ use org_platform::confinement::{
 use std::{
     fs,
     io::{self, Read},
+    os::fd::AsRawFd,
     os::unix::{fs::DirBuilderExt, net::UnixListener},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -40,8 +47,24 @@ fn example() -> PathBuf {
     path
 }
 
+/// A descriptor of this test process that every process it starts inherits: open, and not
+/// close-on-exec, for as long as this is held.
+struct Inherited(#[allow(dead_code)] fs::File);
+
+fn inherited() -> Inherited {
+    let file = fs::File::open("/").unwrap();
+    assert!(file.as_raw_fd() > 2);
+    // SAFETY: clears close-on-exec on a descriptor this test owns.
+    assert_eq!(
+        unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFD, 0) },
+        0
+    );
+    Inherited(file)
+}
+
 #[test]
 fn the_example_passes_where_the_web_process_can_be_confined() {
+    let _held = inherited();
     let output = Command::new(example())
         .env_remove("RUST_BACKTRACE")
         .stdin(Stdio::null())
@@ -85,6 +108,7 @@ impl Drop for Root {
 /// rendezvous closed without a byte. `None` where this system's adapter does not
 /// confine with such calls: there is no profile to start it under.
 fn refused_under(call: RefusedCall, name: &str) -> Option<(Output, bool)> {
+    let _held = inherited();
     let root = Root(fs::canonicalize("/tmp").unwrap().join(format!(
         "agx-{}-{name}-{}",
         std::process::id(),
@@ -100,7 +124,10 @@ fn refused_under(call: RefusedCall, name: &str) -> Option<(Output, bool)> {
     listener.set_nonblocking(true).unwrap();
     let mut command = Command::new(example());
     command
+        // `--start`: the example starts the role with exactly its three standard
+        // descriptors, as it starts every child, and passes on its output and status.
         .args([
+            "--start",
             "--child",
             root.0.to_str().unwrap(),
             rendezvous.to_str().unwrap(),
@@ -158,6 +185,7 @@ fn assert_refused(outcome: Option<(Output, bool)>, reason: &str) {
 /// The whole example, parent and children, under a profile that refuses `call`.
 /// `None` where this system has no such profile.
 fn example_under(call: RefusedCall) -> Option<Output> {
+    let _held = inherited();
     let mut command = Command::new(example());
     command.env_remove("RUST_BACKTRACE").stdin(Stdio::null());
     if let Err(error) = testing::refuse_call(&mut command, call) {

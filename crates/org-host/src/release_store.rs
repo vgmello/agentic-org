@@ -16,8 +16,18 @@ use std::path::Path;
 
 use org_platform::Refused;
 use org_platform_host::credentials::{
-    release_directory, CredentialError, ProtectedStore, ReleaseDirectory, ReleaseRoot,
+    release_directory_with_stores, CredentialError, ItemStore, ProtectedStore, ReleaseDirectory,
+    ReleaseRoot,
 };
+
+/// The host's item stores below its credential directory, as each view defines its own:
+/// the office secrets keys and the host's own secrets. The platform judges these two
+/// directories when it opens the credential directory, counts only what the two views would
+/// list when the records say keys exist, and opens no other.
+pub(crate) const ITEM_STORES: [ItemStore<'static>; 2] = [
+    crate::keys::RELEASE_ITEM_STORE,
+    crate::host_secrets::RELEASE_ITEM_STORE,
+];
 
 /// What the host knows of its credential directory when it starts.
 pub(crate) struct Facts<'a> {
@@ -42,12 +52,14 @@ pub(crate) fn open(
     store: Result<ProtectedStore, Refused>,
     facts: Facts<'_>,
 ) -> Result<Option<ReleaseRoot>, String> {
-    open_with(release_build, store, facts, release_directory)
+    open_with(release_build, store, facts, |location| {
+        release_directory_with_stores(location, &ITEM_STORES)
+    })
 }
 
 /// [`open`] with the platform's entry as a parameter: the host's is
-/// `release_directory`, which walks from `/`; a test passes the platform's test entry,
-/// which starts the same walk at the test's own directory.
+/// `release_directory_with_stores` for [`ITEM_STORES`], which walks from `/`; a test passes
+/// the platform's test entry, which starts the same walk at the test's own directory.
 fn open_with(
     release_build: bool,
     store: Result<ProtectedStore, Refused>,

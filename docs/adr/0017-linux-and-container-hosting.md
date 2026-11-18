@@ -19,7 +19,8 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
 - Worker admission on macOS checks the child's code signature through its audit token.
   Linux has no equivalent in the code.
 - The web process confines itself with a macOS Seatbelt profile. On every other system
-  a refusing adapter reports that confinement is unavailable.
+  a refusing adapter reports that confinement is unavailable (when this was written;
+  Linux has its adapter since X4).
 - The host's secrets use the macOS keychain; a Linux release build has no store.
 - No service is registered on any system yet. A container has neither launchd nor a
   user's systemd.
@@ -41,7 +42,7 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
    | --- | --- | --- | --- |
    | Process admission | Is the child the program we meant to start? | Code signature through the audit token | The verified release image: the pinned path, its content digest from the release manifest, and the child's identity from the kernel |
    | Credential provider | Where do host secrets live? | Keychain | A host-only directory with owner-only permissions; in a container, a mounted secret volume |
-   | Confinement | What may the web process touch? | Seatbelt (ADR-0008) | Landlock and seccomp; the adapter must exist, and a container's own restrictions do not replace it |
+   | Confinement | What may the web process touch? | Seatbelt (ADR-0008) | A seccomp filter, and Landlock where the kernel has it; the adapter must exist, and a container's own restrictions do not replace it |
    | Service lifecycle | Who starts and restarts the host? | launchd | A systemd user unit, or the container runtime running `agentic-org serve` in the foreground |
    | Agent isolation | How is an agent kept from the data? | The modes of ADR-0015 | The same modes; `dedicated-user` uses an account created in the image or by setup |
 3. **No platform fails open.** On a system with only a refusing adapter, or where a
@@ -61,7 +62,7 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
 | --- | --- |
 | LNX-1 | On Linux, the host starts an office worker, the worker serves the local socket, and `agent-os` completes a send and a read. |
 | LNX-2 | The same in a container built from the repository's container file, with only mounted volumes for data and secrets, and again after the container is replaced. |
-| LNX-3 | With the Linux kernel feature unavailable, the web process refuses to start and reports the reason. |
+| LNX-3 | With seccomp unavailable, the web process refuses to start and the host log has the reason; with Landlock unavailable it starts, confined by the filter, and the host log says so (amended 2026-11-18, decision 9). |
 | LNX-4 | Host secrets on Linux are readable only by the service account; none is in the data volume. |
 | LNX-5 | No `.rs` file outside `crates/org-platform` has a `cfg`, `cfg_attr` or `cfg!` predicate on `target_os`, `target_vendor`, `target_env` or `target_family`; a CI check that parses the source enforces it. |
 | LNX-6 | The CI matrix runs the workspace checks on macOS and Linux. |
@@ -110,19 +111,30 @@ These settle what the decisions above left open. The detail is in the
    disjoint from the data root by device and inode; a mount point in a container; and
    an empty store for an instance whose records say keys exist refuses. Anything else
    refuses. The same engine is every development build's store.
-9. **The web process confines itself with Landlock and seccomp.** It connects to the
-   rendezvous, sets no-new-privileges, applies Landlock (ABI 3 or higher, every
-   filesystem right handled, no rule) and a seccomp allowlist that kills on any other
-   call, then reports ready. The host checks seccomp and no-new-privileges in
-   `/proc/<pid>/status`. Linux hosts need kernel 6.2 or later with Landlock enabled,
-   and glibc 2.34 or later; other C libraries get the refusing adapters.
+9. **The web process confines itself with a seccomp filter, and with Landlock where
+   the kernel has it** (amended by the owner's direction of 2026-11-18: the product
+   runs on ordinary Linux hosts and in Docker without extra configuration). It
+   connects to the rendezvous, sets no-new-privileges, applies Landlock if the kernel
+   offers it (any ABI, every right handled, no rule), installs a seccomp allowlist
+   that kills on any other call, then reports ready. The filter is mandatory and
+   fails closed; Landlock is a second layer and its absence is logged, never a
+   refusal: every forbidden operation is killed by the filter alone, and no allowed
+   call was found that only Landlock stopped. The host checks seccomp and
+   no-new-privileges in `/proc/<pid>/status`. Linux hosts need kernel 5.9 or later
+   (the admission of decision 7) and glibc 2.34 or later; other C libraries get the
+   refusing adapters. As first accepted, this decision required Landlock ABI 3 and
+   therefore kernel 6.2.
 10. **Service.** A systemd user unit on a Linux machine; in a container, `agentic-org
     serve --setup <file>` in the foreground under `tini`, stopping within 8 seconds on
     `SIGTERM`. Setup's non-interactive configuration names the mode and the credential
-    directory; nothing detects a container. `serve` refuses to run as root. The
-    container runs as UID 61000 with the repository's seccomp and AppArmor profiles,
-    listens with HTTPS on its network interface with an operator-supplied certificate,
-    and its first registration link comes only from
+    directory; nothing detects a container. `serve` and `setup` refuse to run as root.
+    The container runs as UID 61000 and listens with HTTPS on its network interface.
+    It starts with a plain `docker run` that publishes the port (amended by the
+    owner's direction of 2026-11-18): the image declares its two volumes, a
+    certificate is made for the instance at first start unless the operator supplies
+    one, and the repository's seccomp and AppArmor profiles are optional files that
+    let agents' vendor sandboxes create user namespaces. Its first registration link
+    comes only from
     `docker exec -u 0 <container> agentic-org admin reset --user <service user>`.
 11. **Recovery, reset and native clients on Linux.** A native client on `host.sock` is
     admitted by its kernel UID; Linux has no code identity for it, so the "verified

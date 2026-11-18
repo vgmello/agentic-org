@@ -10,25 +10,38 @@
 //! (a home directory's parent may be searchable only), and `fstat` and `openat` work
 //! on such a descriptor. Each is judged before anything below it is opened, so an
 //! unsafe directory is never walked through.
+//!
+//! Three probes read `/proc`: a directory's access ACL (through its descriptor's entry
+//! there, `crate::account`), a directory's own path (the same entry, read as a link)
+//! and the mount table (`/proc/self/mountinfo`). Without `/proc` the first refuses a
+//! group-writable directory above the store, and the other two refuse every store:
+//! where the two directories are inside their filesystems is then not known
+//! (`mounts.rs`).
 
 use std::ffi::{CStr, CString, OsStr, OsString};
-use std::fs::{File, TryLockError};
-use std::io;
+use std::fs::{File, Permissions, TryLockError};
+use std::io::{self, Read};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::account;
+use crate::credentials::mounts::{self, Mount, Place};
 use crate::credentials::rules::{self, Ancestor, Identity};
 use crate::credentials::{
-    directory, CredentialError, ReleaseDirectory, ReleaseItems, RootRefusal, RootRule,
+    directory, valid_name, CredentialError, ItemStore, MountDoubt, ReleaseDirectory, ReleaseItems,
+    RootRefusal, RootRule,
 };
 
 /// The lock file's name. An item store's directory has the syntax of an item name,
 /// which never starts with `.`, so none can be the lock.
 const LOCK: &CStr = c".lock";
+const LOCK_NAME: &str = ".lock";
+
+/// The kernel's table of this process's mounts.
+const MOUNT_TABLE: &str = "/proc/self/mountinfo";
 
 /// The most directories a walk up to `/` passes before it gives up: more than any
 /// path the kernel resolves can have.
@@ -46,6 +59,9 @@ pub(super) struct Root {
     path: PathBuf,
     /// The lock file, locked exclusively.
     lock: File,
+    /// The item stores the directory was opened for: directory and suffix of each.
+    /// Only these can be opened from it.
+    stores: Vec<(String, String)>,
 }
 
 impl Drop for Root {
@@ -59,12 +75,31 @@ impl Drop for Root {
 
 pub(in crate::credentials) fn release_directory(
     location: &ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     // Before anything is opened.
     let names = rules::components(location.path).map_err(|rule| refused(rule, location.path))?;
+    declared(item_stores)?;
     let start = Path::new("/");
     let root = open_absolute(start).map_err(|error| refused(component_rule(&error), start))?;
-    open(Walk { start, root, names }, location)
+    open(Walk { start, root, names }, location, item_stores)
+}
+
+/// The declared item stores as the root keeps them, or [`CredentialError::InvalidName`]
+/// if one is not a single item-store name with a suffix the engine takes, or two share
+/// a directory.
+fn declared(item_stores: &[ItemStore<'_>]) -> Result<Vec<(String, String)>, CredentialError> {
+    let mut stores: Vec<(String, String)> = Vec::new();
+    for store in item_stores {
+        if !valid_name(store.directory)
+            || !directory::valid_suffix(store.suffix)
+            || stores.iter().any(|(taken, _)| taken == store.directory)
+        {
+            return Err(CredentialError::InvalidName);
+        }
+        stores.push((store.directory.to_owned(), store.suffix.to_owned()));
+    }
+    Ok(stores)
 }
 
 /// The release directory at `location`, with the walk started at the directory `base`
@@ -76,6 +111,7 @@ pub(in crate::credentials) fn release_directory(
 pub(in crate::credentials) fn release_directory_below(
     base: &Path,
     location: &ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     let below = location
         .path
@@ -83,6 +119,7 @@ pub(in crate::credentials) fn release_directory_below(
         .map_err(|_| refused(RootRule::Relative, location.path))?;
     // The same syntax rule, on the part of the path that is walked.
     let names = rules::names(below).map_err(|rule| refused(rule, location.path))?;
+    declared(item_stores)?;
     let root = open_absolute(base).map_err(|error| refused(component_rule(&error), base))?;
     open(
         Walk {
@@ -91,6 +128,7 @@ pub(in crate::credentials) fn release_directory_below(
             names,
         },
         location,
+        item_stores,
     )
 }
 
@@ -106,7 +144,11 @@ struct Walk<'a> {
     names: Vec<&'a OsStr>,
 }
 
-fn open(walk: Walk<'_>, location: &ReleaseDirectory<'_>) -> Result<ReleaseRoot, CredentialError> {
+fn open(
+    walk: Walk<'_>,
+    location: &ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+) -> Result<ReleaseRoot, CredentialError> {
     // SAFETY: no arguments and no side effects; it cannot fail.
     let service_user = unsafe { libc::geteuid() };
     let mut private_group = PrivateGroup::NotAsked;
@@ -134,25 +176,37 @@ fn open(walk: Walk<'_>, location: &ReleaseDirectory<'_>) -> Result<ReleaseRoot, 
     let found = directory.metadata().map_err(unavailable)?;
     rules::store(found.uid(), found.mode(), service_user).map_err(refuse)?;
     rules::filesystem(filesystem_kind(directory.as_fd()).map_err(unavailable)?).map_err(refuse)?;
+    // Disjoint as this process sees the two directories...
     let store_chain = chain(directory.as_fd()).map_err(unavailable)?;
     let data_chain = chain(location.data_root)
         .map_err(|error| refused(RootRule::DataRoot(error.kind()), &path))?;
     rules::disjoint(&store_chain, &data_chain).map_err(refuse)?;
+    // ...and inside the filesystem, where a bind mount cannot hide what it shows. Any
+    // doubt about either place refuses.
+    let undetermined = |doubt| refused(RootRule::Undetermined(doubt), &path);
+    let table = mount_table().map_err(undetermined)?;
+    let store_place = place(directory.as_fd(), &table).map_err(undetermined)?;
+    let data_place = place(location.data_root, &table).map_err(undetermined)?;
+    mounts::disjoint(&store_place, &data_place).map_err(refuse)?;
     if location.mount_point_required {
         let (attributes, reported) = mount_attributes(directory.as_fd()).map_err(unavailable)?;
         rules::mount_point(attributes, reported).map_err(refuse)?;
     }
+    // The host's item stores that exist, each judged by its own rule and named.
+    let existing = item_store_directories(&directory, &path, item_stores, service_user)?;
     if location.expect_items {
-        let items = count_items(directory.as_fd(), service_user).map_err(unavailable)?;
+        let mut items = 0;
+        for (store, store_path, store_directory) in &existing {
+            items += count_items(store, store_path, store_directory)?;
+        }
         rules::items_present(true, items).map_err(refuse)?;
     }
+    drop(existing);
     // The first thing that is made, after every check of the directory has passed.
-    let lock = open_lock(directory.as_fd()).map_err(|error| match error.raw_os_error() {
-        // A link, a directory or a device node at the lock's name is no lock file.
-        Some(libc::ELOOP | libc::EISDIR | libc::ENXIO) => refuse(RootRule::LockFile),
-        _ => unavailable(error),
-    })?;
-    let lock_is = lock.metadata().map_err(unavailable)?;
+    let lock = open_lock(&directory, &path, service_user)?;
+    let lock_is = lock
+        .metadata()
+        .map_err(|error| refuse(RootRule::LockUnavailable(error.kind())))?;
     rules::lock_file(
         lock_is.is_file(),
         lock_is.uid(),
@@ -164,12 +218,15 @@ fn open(walk: Walk<'_>, location: &ReleaseDirectory<'_>) -> Result<ReleaseRoot, 
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return Err(refuse(RootRule::InUse)),
-        Err(TryLockError::Error(error)) => return Err(unavailable(error)),
+        Err(TryLockError::Error(error)) => {
+            return Err(refuse(RootRule::LockUnavailable(error.kind())))
+        }
     }
     Ok(ReleaseRoot(Arc::new(Root {
         directory,
         path,
         lock,
+        stores: declared(item_stores)?,
     })))
 }
 
@@ -178,6 +235,16 @@ impl ReleaseRoot {
         &self,
         items: &ReleaseItems<'_>,
     ) -> Result<super::Store, CredentialError> {
+        // Only a store the directory was opened for: those are the ones that were
+        // judged and counted when it opened.
+        if !self
+            .0
+            .stores
+            .iter()
+            .any(|(directory, suffix)| directory == items.directory && suffix == items.suffix)
+        {
+            return Err(CredentialError::InvalidName);
+        }
         // The engine opens the item store's directory relative to this descriptor,
         // without following a link, and checks it as it checks every directory.
         let anchor = self.0.directory.try_clone()?;
@@ -244,14 +311,23 @@ fn judge_ancestor(
     } else {
         None
     };
-    rules::ancestor(&Ancestor {
+    let mut facts = Ancestor {
         owner: found.uid(),
         group: found.gid(),
         mode: found.mode(),
         service_user,
         private_group: group,
-    })
-    .map_err(|rule| refused(rule, path))
+        access_acl: false,
+    };
+    rules::ancestor(&facts).map_err(|rule| refused(rule, path))?;
+    if rules::needs_access_acl(facts.mode) {
+        // Admitted by a group-write exception: only without an access ACL. One that
+        // cannot be read is not known to be absent.
+        facts.access_acl = account::has_access_acl(ancestor.as_fd())
+            .map_err(|error| refused(RootRule::Unavailable(error.kind()), path))?;
+        rules::ancestor(&facts).map_err(|rule| refused(rule, path))?;
+    }
+    Ok(())
 }
 
 fn owned(fd: libc::c_int) -> io::Result<File> {
@@ -348,35 +424,78 @@ fn mount_attributes(fd: BorrowedFd<'_>) -> io::Result<(u64, u64)> {
     Ok((stat.stx_attributes, stat.stx_attributes_mask))
 }
 
-/// How many items the release directory `root` holds, for the empty-store rule: the
-/// regular files that count as items ([`rules::counts_as_item`]) in the directories
-/// directly below `root` that could be an item store, which are the service user's
-/// with mode `0700`. Nothing else is looked into, and nothing is followed.
-fn count_items(root: BorrowedFd<'_>, service_user: libc::uid_t) -> io::Result<usize> {
-    let mut items = 0;
-    for name in entries(root)? {
-        let directory = match open_at(root, &name, libc::O_RDONLY) {
-            Ok(directory) => directory,
-            // Not a directory, a link, or a directory this user may not read (a
-            // volume's `lost+found`): no item store.
-            Err(error)
-                if matches!(
-                    error.raw_os_error(),
-                    Some(libc::ENOTDIR | libc::ELOOP | libc::EACCES | libc::ENOENT)
-                ) =>
-            {
-                continue
-            }
-            Err(error) => return Err(error),
+/// One of the host's item stores that exists below the release directory: its
+/// declaration, its path, and its directory open for reading.
+type ExistingStore<'a, 'b> = (&'a ItemStore<'b>, PathBuf, File);
+
+/// The host's item stores that exist below the release directory `root` (at
+/// `root_path`), each opened without following a link and judged: a directory of the
+/// service user with mode exactly `0700`, or its own rule with its own path. One that
+/// does not exist is not in the answer; the engine makes it when it is opened. Nothing
+/// else in the release directory is looked at.
+fn item_store_directories<'a, 'b>(
+    root: &File,
+    root_path: &Path,
+    item_stores: &'a [ItemStore<'b>],
+    service_user: libc::uid_t,
+) -> Result<Vec<ExistingStore<'a, 'b>>, CredentialError> {
+    let mut existing = Vec::new();
+    for store in item_stores {
+        let path = root_path.join(store.directory);
+        let unavailable = |error: io::Error| refused(RootRule::Unavailable(error.kind()), &path);
+        // To judge it, not to read it: a directory this user cannot read is judged too.
+        let held = match open_at(root.as_fd(), OsStr::new(store.directory), libc::O_PATH) {
+            Ok(held) => held,
+            Err(error) => match error.raw_os_error() {
+                Some(libc::ENOENT) => continue,
+                Some(libc::ELOOP | libc::ENOTDIR) => {
+                    return Err(refused(RootRule::ItemStoreNotADirectory, &path))
+                }
+                _ => return Err(unavailable(error)),
+            },
         };
-        let found = directory.metadata()?;
-        if rules::store(found.uid(), found.mode(), service_user).is_err() {
+        let found = held.metadata().map_err(unavailable)?;
+        rules::item_store(found.uid(), found.mode(), service_user)
+            .map_err(|rule| refused(rule, &path))?;
+        let readable =
+            open_at(held.as_fd(), OsStr::new("."), libc::O_RDONLY).map_err(unavailable)?;
+        existing.push((store, path, readable));
+    }
+    Ok(existing)
+}
+
+/// How many items the item store `store` holds, in its directory `directory` at
+/// `path`: the files the directory store's engine would give the host. A name counts
+/// if it is an item name with the store's suffix (the engine's rule) that the host's
+/// own name rule accepts, and its file then has to be what the engine requires of an
+/// item (a regular file of this user, mode `0600`, one link); one that is not refuses
+/// with [`RootRule::ItemUnsafe`] and is not counted as missing. Every other entry is
+/// no item of the store.
+fn count_items(
+    store: &ItemStore<'_>,
+    path: &Path,
+    directory: &File,
+) -> Result<usize, CredentialError> {
+    let unavailable = |error: io::Error| refused(RootRule::Unavailable(error.kind()), path);
+    let mut items = 0;
+    for entry in entries(directory.as_fd()).map_err(unavailable)? {
+        let Some(file) = entry.to_str() else { continue };
+        let named = directory::item_name(file, store.suffix).is_some_and(store.is_item);
+        if !named {
             continue;
         }
-        for entry in entries(directory.as_fd())? {
-            if rules::counts_as_item(entry.as_bytes()) && is_regular(directory.as_fd(), &entry)? {
-                items += 1;
+        match directory::open_item(directory, file) {
+            Ok(Some(_)) => items += 1,
+            // Gone again since the directory was read.
+            Ok(None) => {}
+            Err(CredentialError::Io(kind))
+                if is_regular(directory.as_fd(), &entry).map_err(unavailable)? =>
+            {
+                return Err(refused(RootRule::Unavailable(kind), path))
             }
+            // Not a regular file (a link is never followed), or one with another
+            // owner, mode or link count.
+            Err(_) => return Err(refused(RootRule::ItemUnsafe, path)),
         }
     }
     Ok(items)
@@ -453,16 +572,121 @@ impl Drop for Stream {
     }
 }
 
-/// Opens the lock file in the release directory, making it (mode `0600`) if it is
-/// missing, and never following a link. `O_NONBLOCK`: a FIFO at the name must not
-/// block the host; the lock rule then refuses it.
-fn open_lock(directory: BorrowedFd<'_>) -> io::Result<File> {
-    let flags =
-        libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+/// Opens the lock file of the release directory `directory` (at `path`), never
+/// following a link. `O_NONBLOCK`: a FIFO at the name must not block the host; the
+/// lock rule then refuses it.
+///
+/// A missing lock is made by this call alone (`O_EXCL`), and its mode is then set to
+/// `0600` on the descriptor that made it: the process's file-creation mask may have
+/// taken the owner's own bits away, and a lock made unusable would refuse the store
+/// for good. An existing lock is opened as it is and never changed.
+///
+/// A lock that cannot be opened is refused by the lock's own rule where what stands
+/// there visibly breaks it (another owner, another mode, not a regular file), and as
+/// [`RootRule::LockUnavailable`] otherwise.
+fn open_lock(
+    directory: &File,
+    path: &Path,
+    service_user: libc::uid_t,
+) -> Result<File, CredentialError> {
+    let flags = libc::O_RDWR | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+    let at = directory.as_raw_fd();
     // SAFETY: a valid directory descriptor and a NUL-terminated name; the mode is
     // read because `O_CREAT` is set.
-    let fd = unsafe { libc::openat(directory.as_raw_fd(), LOCK.as_ptr(), flags, 0o600) };
-    owned(fd)
+    let made = owned(unsafe {
+        libc::openat(
+            at,
+            LOCK.as_ptr(),
+            flags | libc::O_CREAT | libc::O_EXCL,
+            0o600,
+        )
+    });
+    let opened = match made {
+        Ok(lock) => lock
+            .set_permissions(Permissions::from_mode(0o600))
+            .map(|()| lock),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            // SAFETY: a valid directory descriptor and a NUL-terminated name.
+            owned(unsafe { libc::openat(at, LOCK.as_ptr(), flags) })
+        }
+        Err(error) => Err(error),
+    };
+    opened.map_err(|error| {
+        let broken = match error.raw_os_error() {
+            // A link, a directory or a device node at the lock's name is no lock file.
+            Some(libc::ELOOP | libc::EISDIR | libc::ENXIO) => true,
+            // What stands there, as far as it can be seen without opening it.
+            _ => std::fs::symlink_metadata(path.join(LOCK_NAME)).is_ok_and(|found| {
+                rules::lock_file(
+                    found.is_file(),
+                    found.uid(),
+                    found.mode(),
+                    found.nlink(),
+                    service_user,
+                )
+                .is_err()
+            }),
+        };
+        let rule = if broken {
+            RootRule::LockFile
+        } else {
+            RootRule::LockUnavailable(error.kind())
+        };
+        refused(rule, path)
+    })
+}
+
+/// The kernel's mount table of this process, parsed, or the doubt it leaves.
+fn mount_table() -> Result<Vec<Mount>, MountDoubt> {
+    let unreadable = |error: io::Error| MountDoubt::Unreadable(error.kind());
+    let mut table = Vec::new();
+    File::open(MOUNT_TABLE)
+        .map_err(unreadable)?
+        .take(mounts::LARGEST_TABLE as u64 + 1)
+        .read_to_end(&mut table)
+        .map_err(unreadable)?;
+    mounts::parse(&table)
+}
+
+/// Where the open directory `fd` is inside its filesystem: the mount the kernel says
+/// it is in (`statx`), and its path from this process's root (its descriptor's entry
+/// in `/proc/self/fd`), placed by the mount table `table`.
+///
+/// The path is only believed if it names the same directory the descriptor holds: a
+/// directory that was deleted or moved has a path that does not.
+fn place(fd: BorrowedFd<'_>, table: &[Mount]) -> Result<Place, MountDoubt> {
+    let unreadable = |error: io::Error| MountDoubt::Unreadable(error.kind());
+    // SAFETY: an all-zero `statx` is a valid value for the call to overwrite.
+    let mut stat: libc::statx = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid descriptor, an empty NUL-terminated path with `AT_EMPTY_PATH`
+    // (the descriptor itself is examined), and a valid out-pointer.
+    let status = unsafe {
+        libc::statx(
+            fd.as_raw_fd(),
+            c"".as_ptr(),
+            libc::AT_EMPTY_PATH,
+            libc::STATX_MNT_ID,
+            &mut stat,
+        )
+    };
+    if status != 0 {
+        return Err(unreadable(io::Error::last_os_error()));
+    }
+    if stat.stx_mask & libc::STATX_MNT_ID == 0 {
+        return Err(MountDoubt::NoMountId);
+    }
+    // The mount first: where its root was deleted, no path names the directory.
+    mounts::listed(table, stat.stx_mnt_id)?;
+    let path =
+        std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).map_err(unreadable)?;
+    let held = File::from(fd.try_clone_to_owned().map_err(unreadable)?)
+        .metadata()
+        .map_err(unreadable)?;
+    let named = std::fs::metadata(&path).map_err(|_| MountDoubt::PathOutsideMount)?;
+    if identity(&named) != identity(&held) {
+        return Err(MountDoubt::PathOutsideMount);
+    }
+    mounts::place(table, stat.stx_mnt_id, path.as_os_str().as_bytes())
 }
 
 #[cfg(test)]

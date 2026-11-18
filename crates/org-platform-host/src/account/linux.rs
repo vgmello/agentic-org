@@ -1,12 +1,20 @@
-//! GNU/Linux: the service user's private group, from the account database.
+//! GNU/Linux: the service user's private group, from the account database, and a
+//! file's access ACL, from its extended attribute.
 //!
-//! The two entries are read with `getpwuid_r` and `getgrgid_r`, the reentrant calls:
-//! the host is threaded, and the plain calls return storage that another thread's call
-//! overwrites. The answer is whatever the system's name service gives (files, or a
-//! directory service where one is configured).
+//! The two account entries are read with `getpwuid_r` and `getgrgid_r`, the reentrant
+//! calls: the host is threaded, and the plain calls return storage that another
+//! thread's call overwrites. The answer is whatever the system's name service gives
+//! (files, or a directory service where one is configured).
+//!
+//! The ACL is the attribute `system.posix_acl_access`. It is asked for through the
+//! descriptor's entry in `/proc/self/fd`: `fgetxattr` refuses a descriptor opened with
+//! `O_PATH` (`EBADF`), and the directories above a credential directory are held that
+//! way. The kernel keeps no such attribute for an ACL that says no more than the mode
+//! does, so its presence is an ACL with an entry for a named user or group, or a mask.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io;
+use std::os::fd::{AsRawFd, BorrowedFd};
 
 use super::decision::{is_private_group, GroupEntry, UserEntry};
 
@@ -22,7 +30,7 @@ const LARGEST_BUFFER: usize = 1 << 20;
 ///
 /// An error means the account database could not be read. A caller that grants
 /// something to the private group grants nothing then.
-pub(crate) fn private_group_of(user: libc::uid_t) -> io::Result<Option<libc::gid_t>> {
+pub(super) fn private_group_of(user: libc::uid_t) -> io::Result<Option<libc::gid_t>> {
     let Some(account) = user_entry(user)? else {
         return Ok(None);
     };
@@ -30,6 +38,29 @@ pub(crate) fn private_group_of(user: libc::uid_t) -> io::Result<Option<libc::gid
         return Ok(None);
     };
     Ok(is_private_group(&account, &group).then_some(group.id))
+}
+
+/// The attribute that holds a file's POSIX access ACL.
+const ACCESS_ACL: &CStr = c"system.posix_acl_access";
+
+/// Whether `file` carries a POSIX access ACL: whether the attribute exists. Nothing of
+/// it is read. A filesystem without ACLs has none.
+pub(super) fn has_access_acl(file: BorrowedFd<'_>) -> io::Result<bool> {
+    let path = CString::new(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    // SAFETY: two NUL-terminated strings that outlive the call; a null buffer of size
+    // zero asks only for the attribute's size, so nothing is written.
+    let size =
+        unsafe { libc::getxattr(path.as_ptr(), ACCESS_ACL.as_ptr(), std::ptr::null_mut(), 0) };
+    if size >= 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        // No such attribute; and a filesystem that keeps no such attributes at all.
+        Some(libc::ENODATA | libc::ENOTSUP) => Ok(false),
+        _ => Err(error),
+    }
 }
 
 /// A larger buffer for an entry that did not fit, or the error that it never will.
@@ -135,6 +166,61 @@ fn group_entry(group: libc::gid_t) -> io::Result<Option<GroupEntry>> {
     }
 }
 
+/// Test support: gives `path` a POSIX access ACL with one entry for the user `user`
+/// and the mask `mask` (permission bits, 0 to 7), keeping what the mode says of the
+/// owner, the owning group and others. It is what `setfacl -m u:<user>:rwx,m::<mask>`
+/// writes: the attribute's binary form, set directly, so that no tool is needed. The
+/// owner of a file may give it an ACL, so this needs no privilege. An error is the
+/// system's: a filesystem without ACLs answers `ENOTSUP`.
+#[cfg(test)]
+pub(crate) fn set_access_acl_for_test(
+    path: &std::path::Path,
+    user: u32,
+    mask: u16,
+) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+    // <linux/posix_acl_xattr.h>: a version word, then entries of tag, permissions, id.
+    const VERSION: u32 = 2;
+    const USER_OBJ: u16 = 0x01;
+    const USER: u16 = 0x02;
+    const GROUP_OBJ: u16 = 0x04;
+    const MASK: u16 = 0x10;
+    const OTHER: u16 = 0x20;
+    const NO_ID: u32 = u32::MAX;
+    let mode = std::fs::symlink_metadata(path)?.mode();
+    let bits = |shift: u32| ((mode >> shift) & 7) as u16;
+    let mut blob = VERSION.to_le_bytes().to_vec();
+    for (tag, permissions, id) in [
+        (USER_OBJ, bits(6), NO_ID),
+        (USER, 7, user),
+        (GROUP_OBJ, bits(3), NO_ID),
+        (MASK, mask, NO_ID),
+        (OTHER, bits(0), NO_ID),
+    ] {
+        blob.extend_from_slice(&tag.to_le_bytes());
+        blob.extend_from_slice(&permissions.to_le_bytes());
+        blob.extend_from_slice(&id.to_le_bytes());
+    }
+    let path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    // SAFETY: two NUL-terminated strings and a buffer of exactly the length passed,
+    // all alive across the call, which keeps nothing.
+    let status = unsafe {
+        libc::setxattr(
+            path.as_ptr(),
+            ACCESS_ACL.as_ptr(),
+            blob.as_ptr().cast(),
+            blob.len(),
+            0,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +274,52 @@ mod tests {
                 "missing"
             }
         );
+    }
+
+    /// The ACL probe on real files: none on a fresh file or directory, one once it was
+    /// set, and a descriptor opened with `O_PATH` is enough to ask (the directories
+    /// above a credential directory are held that way).
+    #[test]
+    fn a_file_carries_an_access_acl_exactly_when_one_was_set() {
+        use std::os::fd::AsFd;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let fixture = tempfile::tempdir_in("/var/tmp").unwrap();
+        let directory = fixture.path().join("directory");
+        let file = fixture.path().join("file");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(&file, b"").unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let through_path = |path: &std::path::Path| {
+            let held = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_PATH | libc::O_NOFOLLOW)
+                .open(path)
+                .unwrap();
+            has_access_acl(held.as_fd())
+        };
+        for path in [&directory, &file] {
+            assert!(!through_path(path).unwrap(), "{}", path.display());
+            assert!(!has_access_acl(std::fs::File::open(path).unwrap().as_fd()).unwrap());
+        }
+        // An entry for another user, with a mask that lets it write.
+        if let Err(error) = set_access_acl_for_test(&directory, 65534, 7) {
+            println!("skipped: this filesystem takes no ACL: {error}");
+            return;
+        }
+        set_access_acl_for_test(&file, 65534, 6).unwrap();
+        for path in [&directory, &file] {
+            assert!(through_path(path).unwrap(), "{}", path.display());
+            assert!(has_access_acl(std::fs::File::open(path).unwrap().as_fd()).unwrap());
+        }
+        // The mask is what the mode then shows as the group's bits.
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(std::fs::metadata(&directory).unwrap().mode() & 0o777, 0o775);
+        assert_eq!(std::fs::metadata(&file).unwrap().mode() & 0o777, 0o664);
+        // Memory filesystems and `/proc` keep no such attribute, or none was set.
+        for path in ["/proc", "/"] {
+            assert!(!through_path(std::path::Path::new(path)).unwrap(), "{path}");
+        }
     }
 
     #[test]
