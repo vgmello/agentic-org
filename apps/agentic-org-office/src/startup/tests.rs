@@ -43,20 +43,17 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
 fn handoff(op: FirstLine) -> Handoff {
     match op {
         FirstLine::Create => Handoff::Create {
-            db_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
+            office_secrets_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+            recovery_code: Some(RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap()),
             fds: vec![HandoffFd::Transfer],
         },
         FirstLine::Start => Handoff::Start {
-            db_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
+            office_secrets_key: Some(OfficeSecretsKey::from_bytes([0xb3; 32])),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         },
-        FirstLine::Discard => Handoff::Discard {
-            db_key: None,
-            fds: vec![],
-        },
+        FirstLine::Discard => Handoff::Discard { fds: vec![] },
     }
 }
 
@@ -287,26 +284,25 @@ fn launch_owns_cloexec_transfer_before_receipt_and_routes_events_without_overrea
 #[test]
 fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for key in [false, true] {
+    {
         let (_dir, listener, path) = listener();
         let (mut control, output) = launch(&first(&path, FirstLine::Discard));
         let sender = std::thread::spawn(move || {
             let (mut stream, mut reader) = accept(listener);
-            let header = Handoff::Discard {
-                db_key: key.then(|| OfficeSecretsKey::from_bytes([0xb3; 32])),
-                fds: vec![],
-            };
+            let header = Handoff::Discard { fds: vec![] };
             stream
                 .write_all(&org_office_launch::encode_handoff(&header).unwrap())
                 .unwrap();
             // No marker: requiring one deadlocks. No receipt: first event is discarded.
             assert_eq!(event(&mut reader), json!({"v":1,"event":"discarded"}));
         });
-        assert!(
-            matches!(control.read(FirstLine::Discard).unwrap(), Some(Request::Launch {
-            handoff: Handoff::Discard { db_key, .. }, ..
-        }) if db_key.is_some() == key)
-        );
+        assert!(matches!(
+            control.read(FirstLine::Discard).unwrap(),
+            Some(Request::Launch {
+                handoff: Handoff::Discard { .. },
+                ..
+            })
+        ));
         assert_header_wiped(true);
         assert!(control.transfer.is_none());
         assert!(!control.failed_rights());

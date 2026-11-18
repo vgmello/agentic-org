@@ -141,7 +141,7 @@ fn office_fixture() -> (tempfile::TempDir, Arc<org_office::Office>) {
             org_name: "Acme".into(),
             role: org_office::OfficeRole::Hq,
         },
-        org_office::Key::from_db_key(org_proto::OfficeSecretsKey::from_bytes([17; 32])),
+        org_office::Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([17; 32])),
     )
     .unwrap();
     (root, Arc::new(office))

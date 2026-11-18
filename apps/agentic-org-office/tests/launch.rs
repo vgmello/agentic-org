@@ -184,7 +184,7 @@ fn seed(world: &World) {
             org_office::Office::create(
                 world.folder(OFFICE),
                 &new,
-                org_office::Key::from_db_key(db_key()),
+                org_office::Key::from_office_secrets_key(db_key()),
             )
             .unwrap(),
         );
@@ -463,7 +463,7 @@ fn the_host_going_away_before_the_first_line_is_a_clean_exit_with_no_line() {
 }
 
 #[test]
-fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_deletes_nothing() {
+fn discard_without_office_json_finds_the_organization_and_deletes_nothing() {
     let _process = process_isolation();
     let world = World::new();
     let mut first = started(&world);
@@ -471,27 +471,39 @@ fn discard_without_office_json_finds_the_organization_with_any_or_no_key_and_del
     // Lose office.json, as a crash or a person might: the databases are all that is left.
     std::fs::remove_file(world.folder(OFFICE).join("office.json")).unwrap();
 
-    // The databases are plain SQLite (ADR-0016): with no key, a wrong key or the right one the
+    // The databases are plain SQLite (ADR-0016) and the discard handoff carries no secret: the
     // organization is found, so the discard is refused and nothing is deleted.
-    for key in [
-        None,
-        Some(OfficeSecretsKey::from_bytes([0xC4; 32])),
-        Some(db_key()),
-    ] {
-        let mut session = handshake(&world, FirstLine::Discard, INSTANCE, key);
-        let failed = session.event();
-        assert_eq!(failed["code"], "already_exists", "{failed}");
-        assert!(!session.run.wait().success());
-        session.no_stdout();
-        assert!(
-            world.folder(OFFICE).join("org.db").exists(),
-            "a database was deleted"
-        );
-        assert!(
-            !session.run.stderr().contains(DB_KEY_HEX),
-            "the key reached the log of a failed discard"
-        );
-    }
+    let mut session = handshake(&world, FirstLine::Discard, INSTANCE, None);
+    let failed = session.event();
+    assert_eq!(failed["code"], "already_exists", "{failed}");
+    assert!(!session.run.wait().success());
+    session.no_stdout();
+    assert!(
+        world.folder(OFFICE).join("org.db").exists(),
+        "a database was deleted"
+    );
+}
+
+#[test]
+fn a_start_without_the_office_secrets_key_serves_the_office() {
+    let _process = process_isolation();
+    let world = World::new();
+    let mut first = started(&world);
+    assert!(first.host_goes_away().success());
+
+    // The host has no key for the office: its start handoff carries `null` and the office
+    // still opens and serves its plain databases; only the CA is unavailable.
+    let mut session = handshake(&world, FirstLine::Start, INSTANCE, None);
+    assert_eq!(session.event()["event"], "ready");
+    assert_eq!(hello(&world).office.id, OFFICE);
+    assert!(session.host_goes_away().success());
+    assert!(
+        !session.run.stderr().contains(DB_KEY_HEX),
+        "the key reached the log"
+    );
+
+    let mut again = started(&world);
+    assert!(again.host_goes_away().success());
 }
 
 #[test]

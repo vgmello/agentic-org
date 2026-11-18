@@ -421,9 +421,9 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
     let handoff = Handoff::Create {
-        db_key: db_key(),
+        office_secrets_key: db_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
-        recovery_code: recovery_code(),
+        recovery_code: Some(recovery_code()),
         fds: vec![HandoffFd::Transfer],
     };
     let mut header = org_office_launch::encode_handoff(&handoff).unwrap();
@@ -822,7 +822,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     ready_create(&world).stop();
     let office = org_office::Office::open_for_instance(
         world.folder(OFFICE),
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(db_key()),
         INSTANCE,
     )
     .unwrap();

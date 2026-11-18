@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "X-02 rev15 \u00a75.2: authenticated v3 rendezvous receipts. The opaque of value correlates handoff or a channel ID; the host checks its pending records. V2 stdout has no receipt variant.",
+  "comment": "X-02 rev15 \u00a75.2: authenticated launch (v1) rendezvous receipts. The opaque of value correlates handoff or a channel ID; the host checks its pending records. Stdout carries no receipt.",
   "events": [
     {
       "of": "handoff",

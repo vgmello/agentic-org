@@ -222,7 +222,7 @@ fn the_fake_creates_and_starts_an_office_over_the_rendezvous() {
     );
     let mut reader = accept_ready(&listener);
     let header = org_office_launch::encode_start_handoff(
-        &OfficeSecretsKey::from_bytes([7; 32]),
+        Some(&OfficeSecretsKey::from_bytes([7; 32])),
         &GrantKey::from_bytes([10; 32]),
     )
     .unwrap();
@@ -266,7 +266,7 @@ fn the_fake_discards_over_the_rendezvous_without_a_transfer_socket() {
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("db"), b"databases").unwrap();
     // The host never sends a key with a discard now.
-    let header = org_office_launch::encode_discard_handoff(None).unwrap();
+    let header = org_office_launch::encode_discard_handoff().unwrap();
     reader.get_mut().write_all(&header).unwrap();
     // No marker is sent and no receipt comes: the first event is the report.
     assert_eq!(
@@ -353,7 +353,7 @@ fn the_fake_refuses_a_handoff_whose_op_is_not_the_start_lines() {
         &RecoveryCode::new("a recovery code".into()).unwrap(),
     )
     .unwrap();
-    let discard = org_office_launch::encode_discard_handoff(None).unwrap();
+    let discard = org_office_launch::encode_discard_handoff().unwrap();
     for header in [create, discard] {
         let home = Home::new();
         let (mut child, listener) = home.launch(

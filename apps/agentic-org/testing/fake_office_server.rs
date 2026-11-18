@@ -111,11 +111,9 @@ static TRANSFER: OnceLock<OwnedFd> = OnceLock::new();
 enum Launch {
     Create(CreateFields),
     Start,
-    /// A discard's handoff carries no key the fake needs: the databases are plain SQLite, so
-    /// its folder is removed whatever it holds.
-    Discard {
-        db_key: Option<OfficeSecretsKey>,
-    },
+    /// A discard's handoff carries no secret: the databases are plain SQLite, so its folder is
+    /// removed whatever it holds.
+    Discard,
 }
 
 /// What a create line names.
@@ -400,10 +398,12 @@ fn first_line(
         (
             HostFirstLine::Create(create),
             Handoff::Create {
-                db_key, grant_key, ..
+                office_secrets_key,
+                grant_key,
+                ..
             },
         ) => {
-            note_db_key(home, key, Some(&db_key), "");
+            note_db_key(home, key, Some(&office_secrets_key), "");
             note_grant(home, key, &grant_key);
             record(home, &format!("recovery {key} {pid} present"));
             Launch::Create(CreateFields {
@@ -417,14 +417,16 @@ fn first_line(
         (
             HostFirstLine::Start(_),
             Handoff::Start {
-                db_key, grant_key, ..
+                office_secrets_key,
+                grant_key,
+                ..
             },
         ) => {
-            note_db_key(home, key, Some(&db_key), "");
+            note_db_key(home, key, office_secrets_key.as_ref(), "");
             note_grant(home, key, &grant_key);
             Launch::Start
         }
-        (HostFirstLine::Discard(_), Handoff::Discard { db_key, .. }) => Launch::Discard { db_key },
+        (HostFirstLine::Discard(_), Handoff::Discard { .. }) => Launch::Discard,
         _ => refuse_first_line(home, key, FailCode::InvalidRequest),
     }
 }
@@ -559,8 +561,8 @@ fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
     fail(code)
 }
 
-/// Records the database key's fingerprint (never the key), or `null`, in `fake.log`. `more` is
-/// appended (the office id, for a discard).
+/// Records the office secrets key's fingerprint (never the key), or `null` (a start without
+/// one, and every discard), in `fake.log`. `more` is appended (the office id, for a discard).
 fn note_db_key(home: &Path, key: &str, db_key: Option<&OfficeSecretsKey>, more: &str) {
     let fingerprint = db_key.map_or_else(|| "null".to_owned(), fingerprint);
     record(
@@ -597,11 +599,13 @@ fn nibble(hex: u8) -> u8 {
 
 /// `--discard <id>`: removes an unfinished office's folder, then exits. It needs no key.
 fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut impl BufRead) -> ! {
-    let db_key = match first_line(home, key, stdin, FirstLine::Discard, Some(id)) {
-        Launch::Discard { db_key } => db_key,
-        _ => refuse_first_line(home, key, FailCode::InvalidRequest),
-    };
-    note_db_key(home, key, db_key.as_ref(), id);
+    if !matches!(
+        first_line(home, key, stdin, FirstLine::Discard, Some(id)),
+        Launch::Discard
+    ) {
+        refuse_first_line(home, key, FailCode::InvalidRequest)
+    }
+    note_db_key(home, key, None, id);
     let dir = office_dir(home, id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
     act_before(step, home, key, stdin);
     if dir.exists() {

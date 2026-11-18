@@ -11,8 +11,9 @@ pub(super) struct Create {
     pub auth: LaunchAuth,
     pub instance: String,
     pub owner_member_id: String,
-    /// Consumed by HQ creation-v1 during preparation, before serving.
-    pub recovery: RecoveryCode,
+    /// Consumed by HQ creation-v1 during preparation, before serving. A create without one is
+    /// refused before anything is stored.
+    pub recovery: Option<RecoveryCode>,
     /// A create without it is refused: HQ creation-v1 is the only create (G2).
     pub hq_creation: Option<org_office_launch::HqCreationV1>,
 }
@@ -25,13 +26,15 @@ pub(super) struct OfficeIdentity {
 
 pub(super) enum Launch {
     Create(Create),
+    /// `key` is `None` when the host has no office secrets key for the office: the office still
+    /// opens and serves its data, and only what the key unwraps (the CA) is unavailable.
     Start {
-        key: Key,
+        key: Option<Key>,
         auth: LaunchAuth,
         office: OfficeIdentity,
     },
-    /// Discard needs no key: the databases are plain SQLite (ADR-0016). A key the handoff
-    /// carries is ignored.
+    /// Discard needs no key: the databases are plain SQLite (ADR-0016), and its handoff
+    /// carries no secret.
     Discard {
         office: OfficeIdentity,
     },
@@ -44,7 +47,7 @@ impl Launch {
                 line: HostFirstLine::Create(c),
                 handoff:
                     Handoff::Create {
-                        db_key,
+                        office_secrets_key,
                         grant_key,
                         recovery_code,
                         ..
@@ -58,7 +61,7 @@ impl Launch {
                     org_name: c.org_name,
                 },
                 role: c.role,
-                key: Key::from_db_key(db_key),
+                key: Key::from_office_secrets_key(office_secrets_key),
                 auth: grant_key.into(),
                 instance: c.office.instance_id,
                 owner_member_id: c.owner_member_id,
@@ -69,10 +72,12 @@ impl Launch {
                 line: HostFirstLine::Start(s),
                 handoff:
                     Handoff::Start {
-                        db_key, grant_key, ..
+                        office_secrets_key,
+                        grant_key,
+                        ..
                     },
             } => Self::Start {
-                key: Key::from_db_key(db_key),
+                key: office_secrets_key.map(Key::from_office_secrets_key),
                 auth: grant_key.into(),
                 office: OfficeIdentity {
                     office_id: s.office_id,

@@ -229,7 +229,7 @@ impl World {
                 org_id: ORG.into(),
                 org_name: "Acme".into(),
             },
-            org_office::Key::from_db_key(db_key()),
+            org_office::Key::from_office_secrets_key(db_key()),
         )
         .unwrap();
         for (n, id, handle) in [(1, PIXEL, "pixel"), (2, NOVA, "nova")] {
@@ -309,7 +309,7 @@ impl World {
         .unwrap();
         assert_eq!(ready_for_secrets["event"], "ready_for_secrets");
         let mut handoff = org_office_launch::encode_handoff(&Handoff::Start {
-            db_key: db_key(),
+            office_secrets_key: Some(db_key()),
             grant_key: grant_key(),
             fds: vec![HandoffFd::Transfer],
         })

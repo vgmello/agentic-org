@@ -88,9 +88,11 @@ impl Caller {
 /// Stores the office with the library and returns its owner's member id.
 fn seeded(world: &World) -> String {
     seed(world);
-    let office =
-        org_office::Office::open(world.folder(OFFICE), org_office::Key::from_db_key(db_key()))
-            .unwrap();
+    let office = org_office::Office::open(
+        world.folder(OFFICE),
+        org_office::Key::from_office_secrets_key(db_key()),
+    )
+    .unwrap();
     let owner = office
         .org_snapshot()
         .unwrap()
@@ -168,7 +170,7 @@ fn initial_replica_refuses_the_snapshot_to_an_unbound_connection_and_to_an_owner
             org_id: ORG.into(),
             org_name: "Acme".into(),
         },
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(db_key()),
     )
     .unwrap();
     source
@@ -176,9 +178,11 @@ fn initial_replica_refuses_the_snapshot_to_an_unbound_connection_and_to_an_owner
         .unwrap();
     let pin = source.replication_checkpoint().unwrap();
     drop(source);
-    let office =
-        org_office::Office::open(world.folder(OFFICE), org_office::Key::from_db_key(db_key()))
-            .unwrap();
+    let office = org_office::Office::open(
+        world.folder(OFFICE),
+        org_office::Key::from_office_secrets_key(db_key()),
+    )
+    .unwrap();
     office
         .bind_replication_satellite(pin.hq_office, pin.ca, pin.highest_epoch, Default::default())
         .unwrap();

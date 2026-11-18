@@ -599,36 +599,39 @@ pub enum HandoffFd {
 }
 
 /// The host's answer to [`ReadyForSecrets`] on the rendezvous connection: one JSON line with the
-/// keys, naming the descriptors the following `sendmsg` carries. Its op matches the first
+/// secrets, naming the descriptors the following `sendmsg` carries. Its op matches the first
 /// line's. Not `Clone`: it holds the keys. Encode it with [`encode_handoff`] and zero the bytes
 /// after sending them.
 ///
-/// It decodes as one flat object, not through serde's internally tagged enums, so each key goes
-/// straight from the JSON into its secret type without an intermediate buffer. A key the op
-/// doesn't carry is refused, even as `null`.
+/// It decodes as one flat object, not through serde's internally tagged enums, so each secret
+/// goes straight from the JSON into its secret type without an intermediate buffer. A field the
+/// op doesn't carry is refused, even as `null`.
 #[derive(Debug, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Handoff {
-    /// After a create line (HQ): `fds` is `["transfer"]`.
+    /// After a create line (HQ): the new office's secrets key (required), the grant key and,
+    /// when the create has one, the recovery code (absent otherwise, never `null`). `fds` is
+    /// `["transfer"]`.
     Create {
-        db_key: OfficeSecretsKey,
+        office_secrets_key: OfficeSecretsKey,
         grant_key: GrantKey,
-        recovery_code: RecoveryCode,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        recovery_code: Option<RecoveryCode>,
         fds: Vec<HandoffFd>,
     },
-    /// After a start line: `fds` is `["transfer"]`.
+    /// After a start line: the office secrets key, or `null` when the host has none for that
+    /// office (present either way), and the grant key. A start without a key proceeds: the
+    /// office serves its data and only what the key unwraps is unavailable. `fds` is
+    /// `["transfer"]`.
     Start {
-        db_key: OfficeSecretsKey,
+        office_secrets_key: Option<OfficeSecretsKey>,
         grant_key: GrantKey,
         fds: Vec<HandoffFd>,
     },
-    /// After a discard line: the key, or `null` when the host has none (present either way, as
-    /// in v2). `fds` is `[]`: no transfer socket, and no marker follows.
-    Discard {
-        db_key: Option<OfficeSecretsKey>,
-        fds: Vec<HandoffFd>,
-    },
+    /// After a discard line: no secret at all (a plain office opens nothing that needs a key).
+    /// `fds` is `[]`: no transfer socket, and no marker follows.
+    Discard { fds: Vec<HandoffFd> },
 }
 
 /// A present key, `null` included, as `Some`: so a key the op doesn't carry is refused even as
@@ -648,7 +651,8 @@ enum HandoffOp {
 }
 
 /// A handoff as read: every field at the top level, each secret decoded in place. A field it
-/// doesn't define (a v2 `app_token` included) is refused; `v` is checked before the decode.
+/// doesn't define (a retired `app_token` or `db_key` included) is refused; `v` is checked before
+/// the decode.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawHandoff {
@@ -656,7 +660,7 @@ struct RawHandoff {
     _version: Option<IgnoredAny>,
     op: HandoffOp,
     #[serde(default, deserialize_with = "present")]
-    db_key: Option<Option<OfficeSecretsKey>>,
+    office_secrets_key: Option<Option<OfficeSecretsKey>>,
     #[serde(default, deserialize_with = "present")]
     grant_key: Option<Option<GrantKey>>,
     #[serde(default, deserialize_with = "present")]
@@ -669,28 +673,33 @@ impl<'de> Deserialize<'de> for Handoff {
         use serde::de::Error as _;
         let raw = RawHandoff::deserialize(d)?;
         let fds = raw.fds;
-        match (raw.op, raw.db_key, raw.grant_key, raw.recovery_code) {
+        match (
+            raw.op,
+            raw.office_secrets_key,
+            raw.grant_key,
+            raw.recovery_code,
+        ) {
             (
                 HandoffOp::Create,
-                Some(Some(db_key)),
+                Some(Some(office_secrets_key)),
                 Some(Some(grant_key)),
-                Some(Some(recovery_code)),
+                recovery_code @ (None | Some(Some(_))),
             ) => Ok(Handoff::Create {
-                db_key,
+                office_secrets_key,
                 grant_key,
-                recovery_code,
+                recovery_code: recovery_code.flatten(),
                 fds,
             }),
-            (HandoffOp::Start, Some(Some(db_key)), Some(Some(grant_key)), None) => {
+            (HandoffOp::Start, Some(office_secrets_key), Some(Some(grant_key)), None) => {
                 Ok(Handoff::Start {
-                    db_key,
+                    office_secrets_key,
                     grant_key,
                     fds,
                 })
             }
-            (HandoffOp::Discard, Some(db_key), None, None) => Ok(Handoff::Discard { db_key, fds }),
+            (HandoffOp::Discard, None, None, None) => Ok(Handoff::Discard { fds }),
             _ => Err(D::Error::custom(
-                "a handoff must carry exactly the keys of its op",
+                "a handoff must carry exactly the fields of its op",
             )),
         }
     }
@@ -732,22 +741,23 @@ pub fn encode_handoff(handoff: &Handoff) -> Result<Vec<u8>, LaunchError> {
     encode_secret(handoff)
 }
 
-/// Borrow host-held keys for a start without creating another owned key copy.
-/// The returned line is secret and must be zeroed by the sender on every path.
+/// Borrow host-held secrets for a start without creating another owned key copy. The office
+/// secrets key is `None` when the host has none for the office: it goes out as `null` and the
+/// start proceeds. The returned line is secret and must be zeroed by the sender on every path.
 pub fn encode_start_handoff(
-    db_key: &OfficeSecretsKey,
+    office_secrets_key: Option<&OfficeSecretsKey>,
     grant_key: &GrantKey,
 ) -> Result<Vec<u8>, LaunchError> {
     #[derive(Serialize)]
     struct Start<'a> {
         op: &'static str,
-        db_key: &'a OfficeSecretsKey,
+        office_secrets_key: Option<&'a OfficeSecretsKey>,
         grant_key: &'a GrantKey,
         fds: [HandoffFd; 1],
     }
     encode_secret(&Start {
         op: "start",
-        db_key,
+        office_secrets_key,
         grant_key,
         fds: [HandoffFd::Transfer],
     })
@@ -756,40 +766,38 @@ pub fn encode_start_handoff(
 /// Borrow the frozen host-held creation material. No owned secret copies and no
 /// alternative framing to the existing create handoff; caller zeroes every line.
 pub fn encode_create_handoff(
-    db_key: &OfficeSecretsKey,
+    office_secrets_key: &OfficeSecretsKey,
     grant_key: &GrantKey,
     recovery_code: &RecoveryCode,
 ) -> Result<Vec<u8>, LaunchError> {
     #[derive(Serialize)]
     struct Create<'a> {
         op: &'static str,
-        db_key: &'a OfficeSecretsKey,
+        office_secrets_key: &'a OfficeSecretsKey,
         grant_key: &'a GrantKey,
         recovery_code: &'a RecoveryCode,
         fds: [HandoffFd; 1],
     }
     encode_secret(&Create {
         op: "create",
-        db_key,
+        office_secrets_key,
         grant_key,
         recovery_code,
         fds: [HandoffFd::Transfer],
     })
 }
 
-/// Borrow the host-held key (or `None` when the key store has none) for a discard. The key is
-/// present either way, as `null` when absent; `fds` is `[]`: no transfer socket and no marker
-/// follow. No owned secret copy; the caller zeroes the line on every path.
-pub fn encode_discard_handoff(db_key: Option<&OfficeSecretsKey>) -> Result<Vec<u8>, LaunchError> {
+/// The discard handoff: no secret, and `fds` is `[]` (no transfer socket, no marker follows).
+/// It still goes only to the authenticated reader after `ready_for_secrets`, keeping the
+/// handshake order of every op.
+pub fn encode_discard_handoff() -> Result<Vec<u8>, LaunchError> {
     #[derive(Serialize)]
-    struct Discard<'a> {
+    struct Discard {
         op: &'static str,
-        db_key: Option<&'a OfficeSecretsKey>,
         fds: [HandoffFd; 0],
     }
     encode_secret(&Discard {
         op: "discard",
-        db_key,
         fds: [],
     })
 }

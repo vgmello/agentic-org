@@ -141,9 +141,9 @@ fn launch_receives_keys_and_acknowledges_handoff_before_ready() {
     let (transfer, host_end) = UnixDatagram::pair().unwrap();
     transfer.shutdown(std::net::Shutdown::Write).unwrap();
     let handoff = Handoff::Create {
-        db_key: db_key(),
+        office_secrets_key: db_key(),
         grant_key: GrantKey::from_bytes([7; 32]),
-        recovery_code: recovery_code(),
+        recovery_code: Some(recovery_code()),
         fds: vec![HandoffFd::Transfer],
     };
     let mut header = org_office_launch::encode_handoff(&handoff).unwrap();
@@ -296,20 +296,20 @@ fn handshake_with(
     );
     let header = match op {
         FirstLine::Create => Handoff::Create {
-            db_key: key.unwrap(),
+            office_secrets_key: key.unwrap(),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: recovery_code(),
+            recovery_code: Some(recovery_code()),
             fds: vec![HandoffFd::Transfer],
         },
         FirstLine::Start => Handoff::Start {
-            db_key: key.unwrap(),
+            office_secrets_key: key,
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         },
-        FirstLine::Discard => Handoff::Discard {
-            db_key: key,
-            fds: vec![],
-        },
+        FirstLine::Discard => {
+            assert!(key.is_none(), "a discard handoff carries no secret");
+            Handoff::Discard { fds: vec![] }
+        }
     };
     let mut bytes = org_office_launch::encode_handoff(&header).unwrap();
     stream.write_all(&bytes).unwrap();
@@ -345,14 +345,14 @@ fn assert_reopens(world: &World) {
     assert!(matches!(
         org_office::Office::open_for_instance(
             world.folder(OFFICE),
-            org_office::Key::from_db_key(db_key()),
+            org_office::Key::from_office_secrets_key(db_key()),
             "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184"
         ),
         Err(org_office::OfficeError::Invalid(_))
     ));
     let office = org_office::Office::open_for_instance(
         world.folder(OFFICE),
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(db_key()),
         INSTANCE,
     )
     .unwrap();
@@ -461,9 +461,11 @@ fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_bind
     // Seed through the library, then start it as the host does and hire through the owner's grant.
     seed(&world);
     let owner_id = {
-        let office =
-            org_office::Office::open(world.folder(OFFICE), org_office::Key::from_db_key(db_key()))
-                .unwrap();
+        let office = org_office::Office::open(
+            world.folder(OFFICE),
+            org_office::Key::from_office_secrets_key(db_key()),
+        )
+        .unwrap();
         let owner = office
             .org_snapshot()
             .unwrap()
@@ -589,27 +591,23 @@ fn start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() 
 }
 
 #[test]
-fn discard_uses_zero_fds_and_no_receipt_with_null_or_present_key() {
+fn discard_uses_zero_fds_no_receipt_and_no_secret() {
     let _process = process_isolation();
     let world = World::new();
-    for key in [None, Some(db_key())] {
-        std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
-        let mut session = handshake(&world, FirstLine::Discard, INSTANCE, key);
-        assert_eq!(session.event(), json!({"v":1,"event":"discarded"}));
-        assert!(session.run.wait().success());
-        session.no_stdout();
-        assert!(!world.folder(OFFICE).exists());
-    }
+    std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
+    let mut session = handshake(&world, FirstLine::Discard, INSTANCE, None);
+    assert_eq!(session.event(), json!({"v":1,"event":"discarded"}));
+    assert!(session.run.wait().success());
+    session.no_stdout();
+    assert!(!world.folder(OFFICE).exists());
     ready_create(&world).stop();
-    for key in [None, Some(db_key())] {
-        let mut session = handshake(&world, FirstLine::Discard, INSTANCE, key);
-        let failed = session.event();
-        assert_eq!(failed["event"], "failed");
-        assert_eq!(failed["code"], "already_exists");
-        assert!(!session.run.wait().success());
-        session.no_stdout();
-        assert!(world.folder(OFFICE).join("office.json").exists());
-    }
+    let mut session = handshake(&world, FirstLine::Discard, INSTANCE, None);
+    let failed = session.event();
+    assert_eq!(failed["event"], "failed");
+    assert_eq!(failed["code"], "already_exists");
+    assert!(!session.run.wait().success());
+    session.no_stdout();
+    assert!(world.folder(OFFICE).join("office.json").exists());
 }
 
 #[test]
@@ -738,9 +736,9 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
         let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
         assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
         let header = org_office_launch::encode_handoff(&Handoff::Create {
-            db_key: db_key(),
+            office_secrets_key: db_key(),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: recovery_code(),
+            recovery_code: Some(recovery_code()),
             fds: vec![HandoffFd::Transfer],
         })
         .unwrap();
@@ -866,18 +864,18 @@ fn selected_handshake(world: &World, start: bool) -> Session {
     assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
     let handoff = if start {
         Handoff::Start {
-            db_key: db_key(),
+            office_secrets_key: Some(db_key()),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         }
     } else {
         Handoff::Create {
-            db_key: db_key(),
+            office_secrets_key: db_key(),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: RecoveryCode::new(
-                "0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213".into(),
-            )
-            .unwrap(),
+            recovery_code: Some(
+                RecoveryCode::new("0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213".into())
+                    .unwrap(),
+            ),
             fds: vec![HandoffFd::Transfer],
         }
     };
@@ -1072,7 +1070,7 @@ fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
     thread.join().unwrap();
     let office = org_office::Office::open_for_instance(
         world.folder(&p.office_id),
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(db_key()),
         INSTANCE,
     )
     .unwrap();
@@ -1155,7 +1153,7 @@ fn selected_interrupted_material(world: &World) -> SelectedRetainedMaterial {
     let folder = world.folder(&p.office_id);
     let office = org_office::Office::open_for_instance(
         &folder,
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(db_key()),
         INSTANCE,
     )
     .unwrap();
@@ -1181,7 +1179,7 @@ fn assert_selected_retained_material(world: &World, retained: &SelectedRetainedM
     std::fs::write(folder.join("hq-creation.v1.json"), &retained.intent).unwrap();
     let office = org_office::Office::open_for_instance(
         &folder,
-        org_office::Key::from_db_key(db_key()),
+        org_office::Key::from_office_secrets_key(db_key()),
         INSTANCE,
     )
     .unwrap();

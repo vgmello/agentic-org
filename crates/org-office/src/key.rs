@@ -24,14 +24,14 @@ impl Key {
     /// is a bitwise copy, so a stack frame the key passed through may keep the bytes until it is
     /// reused; the heap copy shared by the stores is the one that is wiped when the last holder
     /// drops.
-    pub fn from_db_key(key: OfficeSecretsKey) -> Self {
+    pub fn from_office_secrets_key(key: OfficeSecretsKey) -> Self {
         Self(Arc::new(key))
     }
 
     /// A key from raw bytes, for tests (the host makes the real ones).
     #[cfg(test)]
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self::from_db_key(OfficeSecretsKey::from_bytes(bytes))
+        Self::from_office_secrets_key(OfficeSecretsKey::from_bytes(bytes))
     }
 
     /// The raw key, for the worker to wrap and unwrap the office's private keys

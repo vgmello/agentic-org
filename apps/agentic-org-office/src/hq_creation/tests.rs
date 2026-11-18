@@ -21,7 +21,7 @@ fn new() -> NewOffice {
     }
 }
 fn key() -> Key {
-    Key::from_db_key(org_proto::OfficeSecretsKey::from_bytes([8; 32]))
+    Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([8; 32]))
 }
 fn code() -> RecoveryCode {
     RecoveryCode::new("0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213".into()).unwrap()
@@ -263,7 +263,7 @@ fn enc5_ca_key_is_stored_only_wrapped_with_the_office_secrets_key() {
     assert!(scan("open") > 0);
     drop(office);
     assert!(scan("closed") > 0);
-    let other = Key::from_db_key(org_proto::OfficeSecretsKey::from_bytes([9; 32]));
+    let other = Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([9; 32]));
     assert!(unwrap_ca(&other, &record, "HQ").is_err());
     assert!(unwrap_ca(&key(), &record, "SAT").is_err());
     let mut moved = LocalRecord::new(
@@ -330,7 +330,7 @@ fn enc1_missing_secrets_key_makes_create_recovery_required_and_ca_unavailable() 
     );
     assert_eq!(verify_existing(&office).unwrap(), CaStatus::Unavailable);
     drop(office);
-    let wrong = Key::from_db_key(org_proto::OfficeSecretsKey::from_bytes([9; 32]));
+    let wrong = Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([9; 32]));
     let office = Office::open_for_instance(&folder, wrong, INSTANCE).unwrap();
     assert_eq!(verify_existing(&office).unwrap(), CaStatus::Unavailable);
     drop(office);

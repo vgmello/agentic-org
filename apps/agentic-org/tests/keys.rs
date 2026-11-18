@@ -1,13 +1,13 @@
-//! Key custody against the fake office server: a start hands the stored database key over the
-//! rendezvous, a missing or unreadable key is `key_missing` with no spawn, and the key is never
-//! touched by a failed start. (Create-time key custody is the HQ create's, tested in org-host;
+//! Key custody against the fake office server: a start hands the stored office secrets key over
+//! the rendezvous, a missing or unreadable key starts the office anyway with `null`, and the key
+//! is never touched by a failed start. (Create-time key custody is the HQ create's, tested in org-host;
 //! the launch discard handoff carries no key and is tested in org-host's supervisor.)
 //!
 //! Every host here keeps its keys in a development key folder next to its test home (never the
 //! Keychain); the tests never see a key in a log: the fake records only fingerprints.
 
 // Development key folders exist in debug builds only (a release host uses the Keychain, which
-// tests never touch), and `office.restart` needs the debug-build development fallback.
+// tests never touch).
 #![cfg(debug_assertions)]
 // Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
 // helpers are unused.
@@ -18,8 +18,8 @@ mod support;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_host::{Config, Host, HostError};
-use org_proto::{ApiError, OfficeStatus, OfficeStatusReason};
+use org_host::{Host, HostError};
+use org_proto::{OfficeStatus, OfficeStatusReason};
 use serde_json::json;
 use support::{hq, office_info, TestHome};
 
@@ -27,17 +27,6 @@ const WAIT: Duration = Duration::from_secs(10);
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
 const T: &str = "2026-11-08T00:00:00.000Z";
-
-/// A config whose app-only calls (`office.restart`) accept this test process.
-fn app_config(home: &TestHome) -> Config {
-    let mut config = home.config();
-    config.dev_app_path = Some(std::env::current_exe().unwrap());
-    config
-}
-
-fn restart(host: &Host, office_id: &str) -> Result<(), ApiError> {
-    org_host::test_support::Fixture::new(host).restart(office_id)
-}
 
 fn wait_for_state(
     host: &Host,
@@ -78,33 +67,30 @@ fn a_debug_host_without_a_dev_key_folder_refuses_to_start() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn a_missing_or_unreadable_key_is_key_missing_with_no_spawn_until_a_restart_finds_it() {
+fn a_missing_or_unreadable_key_still_starts_the_office_with_a_null_key() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     home.remove_key(A);
     home.write_office(&hq(B, "01ORGB", "Beta", T));
     home.write_key_text(B, "not a key");
-    let host = home.start(app_config(&home)).unwrap();
+    let host = home.start(home.config()).unwrap();
+    // The data is plain SQLite: each office serves it, its handoff's key `null`.
     for office in [A, B] {
-        wait_for_state(
-            &host,
-            office,
-            OfficeStatus::Unavailable,
-            Some(OfficeStatusReason::KeyMissing),
-        );
+        wait_for_state(&host, office, OfficeStatus::Active, None);
+        assert_eq!(home.runs(office), 1, "{office}");
+        assert_eq!(home.db_key_fingerprints(office), ["null"], "{office}");
     }
-    // Fatal: no restart on its own, and no server ever started.
-    thread::sleep(Duration::from_millis(500));
-    assert_eq!((home.runs(A), home.runs(B)), (0, 0));
 
-    // Once the key is back, a restart starts it with that key.
+    host.shutdown();
+
+    // Once the key is back, the next start hands it over.
     home.write_key(A);
-    restart(&host, A).unwrap();
+    let host = home.start(home.config()).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
-    assert_eq!(home.runs(A), 1);
+    assert_eq!(home.runs(A), 2);
     assert_eq!(
         home.db_key_fingerprints(A),
-        [home.stored_key_fingerprint(A).unwrap()]
+        ["null".to_owned(), home.stored_key_fingerprint(A).unwrap()]
     );
     // The host never replaces or deletes an item, even one that isn't a key.
     assert_eq!(home.key_text(B).as_deref(), Some("not a key"));

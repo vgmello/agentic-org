@@ -55,16 +55,16 @@
 //!   `/dev/null` unless it's given its own pipes; stderr (the logs) is inherited. The host opens
 //!   its own descriptors close-on-exec, so no child holds `host.lock`.
 //! - **No app token** travels at launch: a worker's persons act only through owner grants.
-//! - **The database key** ([`OfficeSecretsKey`], 32 bytes) and the grant key travel only in the rendezvous
-//!   handoff ([`Handoff`]), never on stdin. The host creates each office's key and stores it
-//!   in its own key store before the office's first `--create`, and sends it on every create,
-//!   start and discard handoff. The server never creates, stores, loads or deletes a key, and
-//!   never touches the Keychain: it uses only the key its handoff carries. After it first opens
-//!   the databases it wipes every copy it holds, except the one its store keeps for its reader
-//!   pool: in memory only, zeroed on drop, never logged. Wiping is best effort: the key's bytes
-//!   live on the heap, so moving it leaves no copy, but buffers it passed through can. A key that
-//!   doesn't open an office's existing databases is [`FailCode::KeyMissing`], and the server
-//!   deletes nothing on it.
+//! - **The office secrets key** ([`OfficeSecretsKey`], 32 bytes) and the grant key travel only
+//!   in the rendezvous handoff ([`Handoff`]), never on stdin. The host creates each office's key
+//!   and stores it in its own key store before the office's first `--create`, and sends it on
+//!   every create and start handoff; a start whose key the host doesn't have carries `null` and
+//!   proceeds. The discard handoff carries no secret. The databases are plain SQLite: the key only
+//!   wraps and unwraps the office's CA private key, so an office without its key (or with a wrong
+//!   one) still serves its data and only the CA is unavailable. The server never creates, stores,
+//!   loads or deletes a key, and never touches the Keychain: it uses only the key its handoff
+//!   carries, in memory only, zeroed on drop, never logged. Wiping is best effort: the key's bytes
+//!   live on the heap, so moving it leaves no copy, but buffers it passed through can.
 //! - **Zeroing is best effort.** [`read_first_line`] and the handoff readers zero their own
 //!   buffers and never reallocate them with a secret inside. Copies outside this crate remain:
 //!   the caller's reader and writer buffers (e.g. `Stdin`'s, which may keep the line for the
@@ -92,18 +92,15 @@
 //! The host runs `--discard <id>` for every plain-id office folder without `office.json` (a
 //! folder with an unreadable or invalid `office.json` is logged and left alone; once
 //! `office.json` exists the host never discards the office: it adopts or quarantines it). Its
-//! first line is a [`HostFirstLine::Discard`]; its handoff carries the office's key, or
-//! `"db_key": null` when the host has none for that id.
+//! first line is a [`HostFirstLine::Discard`]; its handoff carries no secret.
 //! An office with no folder: the server takes no lock, creates nothing and reports `discarded`.
 //! The server takes the office lock (same wait) and removes only an office that never finished.
-//! It refuses ([`FailCode::AlreadyExists`]) a folder that holds `office.json`. With a key, it
-//! deletes only when no database file exists, or when it can open the databases with that key
-//! and they hold no committed organization. With `db_key: null`, it deletes only a folder with
-//! no database file. A committed organization is [`FailCode::AlreadyExists`]; anything else
-//! (databases it can't open or check, or any database file when it has no key) is
-//! [`FailCode::StorageError`]. Either way the host logs it and leaves the folder for a person,
-//! so a real office that lost its `office.json` is never destroyed automatically. Otherwise it
-//! removes the folder, reports [`ServerEvent::Discarded`] and exits 0.
+//! It refuses ([`FailCode::AlreadyExists`]) a folder that holds `office.json`. It deletes only
+//! when no database file exists, or when it can open the databases and they hold no committed
+//! organization. A committed organization is [`FailCode::AlreadyExists`]; databases it can't
+//! open or check are [`FailCode::StorageError`]. Either way the host logs it and leaves the
+//! folder for a person, so a real office that lost its `office.json` is never destroyed
+//! automatically. Otherwise it removes the folder, reports [`ServerEvent::Discarded`] and exits 0.
 //! The server no longer removes keys: after `discarded`, the host deletes its own key item for
 //! that office. That is the only time the host deletes a key, a failed create included.
 //!
@@ -512,8 +509,8 @@ pub enum ServerEvent {
     /// The server can't go on; it exits non-zero right after. The server never deletes a key.
     /// After a failed `--create` the host keeps the key it made: if `office.json` is in place
     /// the office is stored and the host adopts it; if not, it discards the unfinished office
-    /// with that key and deletes the key only after [`ServerEvent::Discarded`], since a database
-    /// left behind without its key could never be checked or discarded. `message` is untrusted
+    /// and deletes the key only after [`ServerEvent::Discarded`], so a folder left behind never
+    /// outlives the key that wraps its CA private key. `message` is untrusted
     /// text: the host escapes control characters and caps its length before logging it.
     Failed { code: FailCode, message: String },
     /// An event this build doesn't know. The host ignores it; it is never written.

@@ -3,13 +3,13 @@
 //! removes an unfinished one.
 //!
 //! The host hands a server no app token: a launch handoff carries only the office's
-//! database key (and, for the HQ create, its recovery code) over the instance's rendezvous.
+//! secrets key (and, for the HQ create, its recovery code) over the instance's rendezvous.
 //!
-//! Each office's database key lives in the host's key store ([`KeyStore`], the host's own
+//! Each office's secrets key lives in the host's key store ([`KeyStore`], the host's own
 //! abstraction: the supervisor never knows which store it is). A create stores the new key
 //! before its server starts; every start and discard loads it just before the spawn, and drops
 //! it once the first line is written. A start whose key is missing, or whose item isn't a key,
-//! spawns nothing: the office is `unavailable`/`key_missing` until `office.restart`. The supervisor
+//! still spawns the server, whose handoff carries `null`. The supervisor
 //! deletes a key **only** after the office's `--discard` reported `discarded`.
 //!
 //! Status per office ([`OfficeState`]): `starting` (spawned, no `ready` yet) → `active`
@@ -56,7 +56,7 @@ pub(crate) struct SupervisorConfig {
     pub(crate) logs_dir: PathBuf,
     pub(crate) log_max_bytes: u64,
     pub(crate) timings: Timings,
-    /// Where every office's database key is kept.
+    /// Where every office's secrets key is kept.
     pub(crate) keys: Arc<dyn KeyStore>,
     /// How every server is checked before it gets its first line (`server_check`).
     pub(crate) server_check: Arc<ServerCheck>,
@@ -342,13 +342,13 @@ impl Supervisor {
             .server_check
             .may_spawn()
             .map_err(CreateStartError::NotStarted)?;
-        let db_key = self
+        let office_secrets_key = self
             .config
             .keys
             .load(&first.office.office_id)
             .map_err(|_| CreateStartError::NotStarted("original HQ key unavailable".into()))?
             .ok_or_else(|| CreateStartError::NotStarted("original HQ key missing".into()))?;
-        let line = CreateLine::hq(first, db_key, recovery);
+        let line = CreateLine::hq(first, office_secrets_key, recovery);
         let log = self.log_for(line.office_id());
         let spawned = self
             .spawner()
@@ -368,7 +368,7 @@ impl Supervisor {
     }
 
     /// Runs `agentic-org-office --discard <office_id>` and waits (up to the discard timeout) for
-    /// it to report. The server gets no key (its handoff's `db_key` is `null`); the host reads
+    /// it to report. The server gets no key (its handoff carries no secret); the host reads
     /// the key only so that an unreadable key store starts no server. The server takes the office lock, refuses a folder that holds `office.json`, and removes the
     /// folder. After `discarded`, and only then, the office's key is deleted from the key store.
     /// A key store that can't be read starts no server ([`DiscardOutcome::KeyUnreadable`]).
@@ -777,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn a_start_without_a_usable_key_spawns_nothing() {
+    fn a_start_without_a_usable_key_still_spawns_its_server() {
         let dir = short_tempdir();
         let ran = dir.path().join("ran");
         let program = script(
@@ -787,43 +787,29 @@ mod tests {
         );
         let keys = Arc::new(MemoryKeys::default());
         let supervisor = supervisor(dir.path(), program, &keys);
-        let unavailable = |reason| move |s: &OfficeState| *s == OfficeState::unavailable(reason);
-        // No item: `key_missing`, fatal.
-        supervisor.start_office(OFFICE).unwrap();
-        wait_for_state(
-            &supervisor,
-            OFFICE,
-            unavailable(OfficeStatusReason::KeyMissing),
-        );
-        // `office.restart` loads it again (and still finds none).
-        let loads = || {
-            keys.calls()
-                .iter()
-                .filter(|call| **call == (Op::Load, OFFICE.to_owned()))
-                .count()
+        let spawned = |id: &str| {
+            fs::read_to_string(&ran)
+                .unwrap_or_default()
+                .lines()
+                .any(|line| line.split_whitespace().any(|arg| arg == id))
         };
-        assert_eq!(loads(), 1);
-        assert_eq!(supervisor.restart(OFFICE), RestartOutcome::Restarting);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while loads() < 2 {
-            assert!(
-                Instant::now() < deadline,
-                "the restart didn't reload the key"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
-        wait_for_state(
-            &supervisor,
-            OFFICE,
-            unavailable(OfficeStatusReason::KeyMissing),
-        );
+        let wait_for_spawn = |id: &str| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !spawned(id) {
+                assert!(Instant::now() < deadline, "office {id} wasn't started");
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        // No item: the server starts anyway (its handoff would carry `null`).
+        supervisor.start_office(OFFICE).unwrap();
+        wait_for_spawn(OFFICE);
         // An item that isn't a key: the same.
         const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
         keys.create(B, &OfficeSecretsKey::from_bytes([1; 32]))
             .unwrap();
         keys.fail(Op::Load, Fault::Corrupt);
         supervisor.start_office(B).unwrap();
-        wait_for_state(&supervisor, B, unavailable(OfficeStatusReason::KeyMissing));
+        wait_for_spawn(B);
         // A store that fails otherwise: `storage_error`, retried with backoff.
         const C: &str = "01CCCCCCCCCCCCCCCCCCCCCCCC";
         keys.fail(Op::Load, Fault::Io);
@@ -834,7 +820,7 @@ mod tests {
                 && s.next_restart_at.is_some()
         });
         supervisor.shutdown();
-        assert!(!ran.exists(), "a server started without its key");
+        assert!(!spawned(C), "a server started over an unreadable key store");
         // Nothing was deleted, and the item that isn't a key is still there.
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
         assert!(keys.has(B));
@@ -959,7 +945,7 @@ mod tests {
 
     /// Names the file where this test binary, run again as a launch `--discard` server by
     /// [`a_discard_hands_off_no_key_and_deletes_it_only_after_discarded`], records its
-    /// handoff's `db_key` (`null` or `key`).
+    /// handoff's op (`discard`).
     const DISCARD_SEEN: &str = "ORG_HOST_TEST_DISCARD_SEEN";
     const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 
@@ -985,13 +971,13 @@ mod tests {
             std::process::exit(3);
         }
         let mut stream = UnixStream::connect(&office.rendezvous).unwrap();
-        let org_office_launch::Handoff::Discard { db_key, fds } =
+        let org_office_launch::Handoff::Discard { fds } =
             channels::tests::discard_worker_reads_handoff(&mut stream)
         else {
             std::process::exit(4);
         };
         assert!(fds.is_empty());
-        let note = if db_key.is_some() { "key\n" } else { "null\n" };
+        let note = "discard\n";
         fs::write(seen, note).unwrap();
         org_office_launch::write_rendezvous_event(
             &mut stream,
@@ -1002,7 +988,7 @@ mod tests {
     }
 
     /// The whole discard path: the spawner binds a rendezvous, writes the discard line, the
-    /// broker hands off a header whose `db_key` is `null` although the key store holds the
+    /// broker hands off a header with no secret although the key store holds the
     /// office's key, the worker's `discarded` arrives on the stream, and only then is the key
     /// deleted.
     #[cfg(target_os = "macos")]
@@ -1037,8 +1023,8 @@ mod tests {
         assert!(!keys.has(OFFICE), "the key outlived `discarded`");
         assert_eq!(
             fs::read_to_string(&seen).unwrap(),
-            "null\n",
-            "the discard handoff carried the key"
+            "discard\n",
+            "the server didn't read a discard handoff"
         );
         assert!(keys
             .calls()

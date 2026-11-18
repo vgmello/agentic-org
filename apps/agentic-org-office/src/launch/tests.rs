@@ -35,26 +35,23 @@ fn request(op: u8, key: bool) -> Request {
         0 => Request::Launch {
             line: HostFirstLine::Create(create()),
             handoff: Handoff::Create {
-                db_key: db_key(),
+                office_secrets_key: db_key(),
                 grant_key: grant(),
-                recovery_code: RecoveryCode::new("RECOVERY-TEST".into()).unwrap(),
+                recovery_code: key.then(|| RecoveryCode::new("RECOVERY-TEST".into()).unwrap()),
                 fds: vec![HandoffFd::Transfer],
             },
         },
         1 => Request::Launch {
             line: HostFirstLine::Start(office()),
             handoff: Handoff::Start {
-                db_key: db_key(),
+                office_secrets_key: key.then(db_key),
                 grant_key: grant(),
                 fds: vec![HandoffFd::Transfer],
             },
         },
         _ => Request::Launch {
             line: HostFirstLine::Discard(office()),
-            handoff: Handoff::Discard {
-                db_key: key.then(db_key),
-                fds: vec![],
-            },
+            handoff: Handoff::Discard { fds: vec![] },
         },
     }
 }
@@ -70,11 +67,16 @@ fn launch_create_preserves_identity_keys_and_typed_recovery() {
     assert_eq!(c.office.org_name, "Acme");
     assert_eq!(c.office.role, org_office::OfficeRole::Hq);
     assert_eq!(c.role, OfficeRole::Hq);
-    assert!(c.key == Key::from_db_key(db_key()));
+    assert!(c.key == Key::from_office_secrets_key(db_key()));
     assert_eq!(c.auth.grant_key(), &grant());
     assert_eq!(c.instance, INSTANCE);
     assert_eq!(c.owner_member_id, OWNER);
-    assert_eq!(c.recovery.expose(), "RECOVERY-TEST");
+    assert_eq!(c.recovery.unwrap().expose(), "RECOVERY-TEST");
+    // A create handoff without a recovery code reaches the workflow as `None`, which refuses it.
+    let Launch::Create(c) = Launch::from_request(request(0, false)).unwrap() else {
+        panic!("not create")
+    };
+    assert!(c.recovery.is_none());
 }
 #[test]
 fn start_preserves_keys_authority_and_instance() {
@@ -83,7 +85,7 @@ fn start_preserves_keys_authority_and_instance() {
     else {
         panic!("not start")
     };
-    assert!(key == Key::from_db_key(db_key()));
+    assert!(key == Some(Key::from_office_secrets_key(db_key())));
     assert_eq!(auth.grant_key(), &grant());
     assert_eq!(
         office,
@@ -94,20 +96,29 @@ fn start_preserves_keys_authority_and_instance() {
     );
 }
 #[test]
-fn discard_accepts_a_null_or_present_key_and_carries_none() {
+fn a_start_without_the_office_secrets_key_proceeds_with_none() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    for present in [false, true] {
-        let Launch::Discard { office } = Launch::from_request(request(2, present)).unwrap() else {
-            panic!("not discard")
-        };
-        assert_eq!(
-            office,
-            OfficeIdentity {
-                office_id: "OFFICE1".into(),
-                instance_id: INSTANCE.into(),
-            }
-        );
-    }
+    let Launch::Start { key, auth, office } = Launch::from_request(request(1, false)).unwrap()
+    else {
+        panic!("not start")
+    };
+    assert!(key.is_none());
+    assert_eq!(auth.grant_key(), &grant());
+    assert_eq!(office.office_id, "OFFICE1");
+}
+#[test]
+fn discard_carries_no_secret() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let Launch::Discard { office } = Launch::from_request(request(2, false)).unwrap() else {
+        panic!("not discard")
+    };
+    assert_eq!(
+        office,
+        OfficeIdentity {
+            office_id: "OFFICE1".into(),
+            instance_id: INSTANCE.into(),
+        }
+    );
 }
 #[test]
 fn unknown_or_mismatched_requests_never_normalize() {
@@ -119,10 +130,7 @@ fn unknown_or_mismatched_requests_never_normalize() {
     ] {
         let request = Request::Launch {
             line,
-            handoff: Handoff::Discard {
-                db_key: None,
-                fds: vec![],
-            },
+            handoff: Handoff::Discard { fds: vec![] },
         };
         assert!(matches!(
             Launch::from_request(request),

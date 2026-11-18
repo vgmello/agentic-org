@@ -72,7 +72,7 @@ fn probe(failure: bool) {
         org_id: ID.into(),
         org_name: "Acme".into(),
     };
-    let key = || Key::from_db_key(OfficeSecretsKey::from_bytes([4; 32]));
+    let key = || Key::from_office_secrets_key(OfficeSecretsKey::from_bytes([4; 32]));
     let office = Office::create_for_instance(&folder, &info, key(), INSTANCE).unwrap();
     let path = dir.path().join("rv.sock");
     let listener = UnixListener::bind(&path).unwrap();
@@ -121,7 +121,7 @@ fn probe(failure: bool) {
         assert_eq!(ready["event"], "ready_for_secrets");
         let (worker, transfer) = UnixDatagram::pair().unwrap();
         let handoff = Handoff::Start {
-            db_key: OfficeSecretsKey::from_bytes([4; 32]),
+            office_secrets_key: Some(OfficeSecretsKey::from_bytes([4; 32])),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         };

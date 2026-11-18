@@ -197,6 +197,13 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             "missing HQ creation binding",
         );
     };
+    let Some(recovery) = create.recovery else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "missing recovery code",
+        );
+    };
     let binding = org_office::hq_creation::Binding {
         operation_id: context.operation_id,
         owner_member_id: create.owner_member_id,
@@ -209,7 +216,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         Some(create.key),
         &create.instance,
         &binding,
-        create.recovery,
+        recovery,
     );
     let office = match created {
         Ok(office) => office,
@@ -820,7 +827,7 @@ mod tests {
                     org_id: "ORG1".into(),
                     org_name: "Acme".into(),
                 },
-                Key::from_db_key(org_proto::OfficeSecretsKey::from_bytes([4; 32])),
+                Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([4; 32])),
             )
             .unwrap(),
         );

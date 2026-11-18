@@ -53,7 +53,13 @@ fn actual_launch_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on
         }
         let handoff = org_office_launch::decode_handoff(&header).unwrap();
         crate::secrets::zero(&mut header);
-        assert!(matches!(handoff, org_office_launch::Handoff::Start { .. }));
+        assert!(matches!(
+            handoff,
+            org_office_launch::Handoff::Start {
+                office_secrets_key: Some(_),
+                ..
+            }
+        ));
         let (marker, mut fds) = byte(&mut receiver, 1);
         assert_eq!(marker, org_office_launch::FD_MARKER);
         let transfer = org_socket::rights::unix_datagram(fds.pop().unwrap()).unwrap();
@@ -110,8 +116,7 @@ fn actual_launch_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on
             std::process::id(),
             None,
             &ServerCheck::Skip,
-            &key,
-            None,
+            HandoffSecrets::Start(Some(&key)),
             7,
             signals,
             Instant::now() + Duration::from_secs(3),
@@ -152,8 +157,7 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
             std::process::id() + 1,
             None,
             &ServerCheck::Skip,
-            &OfficeSecretsKey::from_bytes([72; 32]),
-            None,
+            HandoffSecrets::Start(Some(&OfficeSecretsKey::from_bytes([72; 32]))),
             1,
             signals,
             Instant::now() + Duration::from_secs(1)
@@ -191,14 +195,13 @@ fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
     let worker_thread = std::thread::spawn(move || {
-        let org_office_launch::Handoff::Discard { db_key, fds } =
-            discard_worker_reads_handoff(&mut worker)
+        let org_office_launch::Handoff::Discard { fds } = discard_worker_reads_handoff(&mut worker)
         else {
             panic!("not a discard handoff");
         };
         assert!(fds.is_empty());
-        // A discard gets no secret: the header's key is `null`.
-        assert!(db_key.is_none(), "a discard handoff carried a key");
+        // A discard gets no secret: `Handoff::Discard` has no field for one, and its decode
+        // refuses any key field.
         // No marker and no transfer socket follow: the next bytes are the host's EOF once
         // the stream closes, never a descriptor. The worker reports on the stream.
         org_office_launch::write_rendezvous_event(
@@ -322,9 +325,13 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             }
             header.push(b);
         }
+        // The host has no key for this office: the start still goes ahead, with `null`.
         assert!(matches!(
             org_office_launch::decode_handoff(&header).unwrap(),
-            org_office_launch::Handoff::Start { .. }
+            org_office_launch::Handoff::Start {
+                office_secrets_key: None,
+                ..
+            }
         ));
         crate::secrets::zero(&mut header);
         let (marker, mut fds) = byte(&mut receiver, 1);
@@ -350,8 +357,7 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             std::process::id(),
             None,
             &ServerCheck::Skip,
-            &OfficeSecretsKey::from_bytes([73; 32]),
-            None,
+            HandoffSecrets::Start(None),
             1,
             signals,
             &mut || false,
@@ -455,8 +461,7 @@ pub(crate) fn worker_fixture(office: &str) -> WorkerFixture {
             std::process::id(),
             None,
             &ServerCheck::Skip,
-            &OfficeSecretsKey::from_bytes([71; 32]),
-            None,
+            HandoffSecrets::Start(Some(&OfficeSecretsKey::from_bytes([71; 32]))),
             7,
             signals,
             Instant::now() + Duration::from_secs(3),
@@ -743,8 +748,7 @@ fn incompatible_profile_gets_no_secret_or_descriptor() {
                 std::process::id(),
                 None,
                 &ServerCheck::Skip,
-                &OfficeSecretsKey::from_bytes([71; 32]),
-                None,
+                HandoffSecrets::Start(Some(&OfficeSecretsKey::from_bytes([71; 32]))),
                 1,
                 signals,
                 Instant::now() + Duration::from_secs(1)

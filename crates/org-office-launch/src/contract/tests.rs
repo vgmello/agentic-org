@@ -415,102 +415,154 @@ fn line_value(bytes: &[u8]) -> Value {
 #[test]
 fn handoffs_carry_the_keys_and_name_their_descriptors() {
     let create = Handoff::Create {
-        db_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
+        office_secrets_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
         grant_key: GrantKey::from_bytes([0xef; 32]),
-        recovery_code: RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap(),
+        recovery_code: Some(RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()),
         fds: vec![HandoffFd::Transfer],
     };
     let bytes = encode_handoff(&create).unwrap();
     assert_eq!(
         line_value(&bytes),
-        json!({"v": 1, "op": "create", "db_key": KEY_HEX, "grant_key": GRANT_HEX,
+        json!({"v": 1, "op": "create", "office_secrets_key": KEY_HEX, "grant_key": GRANT_HEX,
                "recovery_code": "ABCD-EFGH-IJKL", "fds": ["transfer"]})
     );
     let back = decode_handoff(&bytes[..bytes.len() - 1]).unwrap();
     assert_eq!(back.fds(), &[HandoffFd::Transfer]);
     let Handoff::Create {
+        office_secrets_key,
         grant_key,
-        recovery_code,
+        recovery_code: Some(recovery_code),
         ..
     } = &back
     else {
         panic!("{back:?}");
     };
+    assert_eq!(office_secrets_key.expose_bytes(), &[0xcd; 32]);
     assert_eq!(grant_key.expose_bytes(), &[0xef; 32]);
     assert_eq!(recovery_code.expose(), "ABCD-EFGH-IJKL");
     // Debug shows no secret.
     let printed = format!("{back:?}");
     assert!(!printed.contains("cdcd") && !printed.contains("efef") && !printed.contains("ABCD"));
 
+    // A create without a recovery code leaves the field out (never `null`) and decodes back.
+    let bare = Handoff::Create {
+        office_secrets_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
+        grant_key: GrantKey::from_bytes([0xef; 32]),
+        recovery_code: None,
+        fds: vec![HandoffFd::Transfer],
+    };
+    let bytes = encode_handoff(&bare).unwrap();
+    assert_eq!(
+        line_value(&bytes),
+        json!({"v": 1, "op": "create", "office_secrets_key": KEY_HEX, "grant_key": GRANT_HEX,
+               "fds": ["transfer"]})
+    );
+    assert!(matches!(
+        decode_handoff(&bytes[..bytes.len() - 1]).unwrap(),
+        Handoff::Create {
+            recovery_code: None,
+            ..
+        }
+    ));
+
     let start = Handoff::Start {
-        db_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
+        office_secrets_key: Some(OfficeSecretsKey::from_bytes([0xcd; 32])),
         grant_key: GrantKey::from_bytes([0xef; 32]),
         fds: vec![HandoffFd::Transfer],
     };
     assert_eq!(
         line_value(&encode_handoff(&start).unwrap()),
-        json!({"v": 1, "op": "start", "db_key": KEY_HEX, "grant_key": GRANT_HEX, "fds": ["transfer"]})
+        json!({"v": 1, "op": "start", "office_secrets_key": KEY_HEX, "grant_key": GRANT_HEX,
+               "fds": ["transfer"]})
     );
-
-    // A discard gets no transfer socket, and its key may be null but not missing.
-    let discard = Handoff::Discard {
-        db_key: None,
-        fds: vec![],
+    // A start without the key carries `null` (present, not missing) and proceeds.
+    let keyless = Handoff::Start {
+        office_secrets_key: None,
+        grant_key: GrantKey::from_bytes([0xef; 32]),
+        fds: vec![HandoffFd::Transfer],
     };
+    let bytes = encode_handoff(&keyless).unwrap();
+    assert_eq!(
+        line_value(&bytes),
+        json!({"v": 1, "op": "start", "office_secrets_key": null, "grant_key": GRANT_HEX,
+               "fds": ["transfer"]})
+    );
+    assert!(matches!(
+        decode_handoff(&bytes[..bytes.len() - 1]).unwrap(),
+        Handoff::Start {
+            office_secrets_key: None,
+            ..
+        }
+    ));
+    let missing = format!(r#"{{"v":1,"op":"start","grant_key":"{GRANT_HEX}","fds":["transfer"]}}"#);
+    assert!(decode_handoff(missing.as_bytes()).is_err());
+
+    // A discard gets no transfer socket and no secret.
+    let discard = Handoff::Discard { fds: vec![] };
     assert_eq!(
         line_value(&encode_handoff(&discard).unwrap()),
-        json!({"v": 1, "op": "discard", "db_key": null, "fds": []})
+        json!({"v": 1, "op": "discard", "fds": []})
     );
-    assert!(decode_handoff(br#"{"v":1,"op":"discard","fds":[]}"#).is_err());
-    assert!(decode_handoff(br#"{"v":1,"op":"discard","db_key":null,"fds":[]}"#).is_ok());
+    assert!(decode_handoff(br#"{"v":1,"op":"discard","fds":[]}"#).is_ok());
+    assert!(
+        decode_handoff(br#"{"v":1,"op":"discard","office_secrets_key":null,"fds":[]}"#).is_err()
+    );
 }
 
 #[test]
-fn the_borrowing_discard_encoder_matches_the_owned_handoff() {
-    // Without a key: `null`, present, and no descriptors.
-    let none = encode_discard_handoff(None).unwrap();
+fn the_borrowing_encoders_match_the_owned_handoffs() {
+    let discard = encode_discard_handoff().unwrap();
     assert_eq!(
-        line_value(&none),
-        json!({"v": 1, "op": "discard", "db_key": null, "fds": []})
+        line_value(&discard),
+        json!({"v": 1, "op": "discard", "fds": []})
     );
     assert_eq!(
-        none,
-        encode_handoff(&Handoff::Discard {
-            db_key: None,
-            fds: vec![],
-        })
-        .unwrap()
+        discard,
+        encode_handoff(&Handoff::Discard { fds: vec![] }).unwrap()
     );
-    // With a borrowed key: byte for byte the owned encoding, and it decodes back.
+
     let key = OfficeSecretsKey::from_bytes([0xcd; 32]);
-    let some = encode_discard_handoff(Some(&key)).unwrap();
+    let grant = GrantKey::from_bytes([0xef; 32]);
+    for borrowed in [Some(&key), None] {
+        let line = encode_start_handoff(borrowed, &grant).unwrap();
+        assert_eq!(
+            line,
+            encode_handoff(&Handoff::Start {
+                office_secrets_key: borrowed.map(|_| OfficeSecretsKey::from_bytes([0xcd; 32])),
+                grant_key: GrantKey::from_bytes([0xef; 32]),
+                fds: vec![HandoffFd::Transfer],
+            })
+            .unwrap()
+        );
+        let Handoff::Start {
+            office_secrets_key, ..
+        } = decode_handoff(&line[..line.len() - 1]).unwrap()
+        else {
+            panic!("not a start");
+        };
+        assert_eq!(
+            office_secrets_key.map(|k| *k.expose_bytes()),
+            borrowed.map(|k| *k.expose_bytes())
+        );
+    }
+
+    let code = RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
     assert_eq!(
-        line_value(&some),
-        json!({"v": 1, "op": "discard", "db_key": KEY_HEX, "fds": []})
-    );
-    assert_eq!(
-        some,
-        encode_handoff(&Handoff::Discard {
-            db_key: Some(OfficeSecretsKey::from_bytes([0xcd; 32])),
-            fds: vec![],
+        encode_create_handoff(&key, &grant, &code).unwrap(),
+        encode_handoff(&Handoff::Create {
+            office_secrets_key: OfficeSecretsKey::from_bytes([0xcd; 32]),
+            grant_key: GrantKey::from_bytes([0xef; 32]),
+            recovery_code: Some(RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()),
+            fds: vec![HandoffFd::Transfer],
         })
         .unwrap()
     );
-    let Handoff::Discard {
-        db_key: Some(back),
-        fds,
-    } = decode_handoff(&some[..some.len() - 1]).unwrap()
-    else {
-        panic!("not a keyed discard");
-    };
-    assert!(fds.is_empty());
-    assert_eq!(back.expose_bytes(), &[0xcd; 32]);
 }
 
 #[test]
 fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
     let wrong = Handoff::Start {
-        db_key: OfficeSecretsKey::from_bytes([1; 32]),
+        office_secrets_key: Some(OfficeSecretsKey::from_bytes([1; 32])),
         grant_key: GrantKey::from_bytes([2; 32]),
         fds: vec![],
     };
@@ -521,24 +573,24 @@ fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
     let k = "01".repeat(32);
     for (line, version) in [
         (
-            r#"{"v":1,"op":"discard","db_key":null,"fds":["transfer"]}"#.to_owned(),
+            r#"{"v":1,"op":"discard","fds":["transfer"]}"#.to_owned(),
             false,
         ),
         (
             format!(
-                r#"{{"v":1,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer","transfer"]}}"#
+                r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer","transfer"]}}"#
             ),
             false,
         ),
         (
             format!(
-                r#"{{"v":1,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["listener"]}}"#
+                r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["listener"]}}"#
             ),
             false,
         ),
         (
             format!(
-                r#"{{"v":2,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
+                r#"{{"v":2,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
             ),
             true,
         ),
@@ -552,6 +604,22 @@ fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
         } else {
             assert!(result.is_err(), "{line}");
         }
+    }
+    // The retired contract version 3, in its own shape or this one, is refused as a version.
+    for line in [
+        format!(r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#),
+        format!(
+            r#"{{"v":3,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
+        ),
+        r#"{"v":3,"op":"discard","fds":[]}"#.to_owned(),
+    ] {
+        assert!(
+            matches!(
+                decode_handoff(line.as_bytes()),
+                Err(LaunchError::UnsupportedVersion { found: 3, .. })
+            ),
+            "{line}"
+        );
     }
 }
 
@@ -615,47 +683,64 @@ fn the_launch_constants() {
 fn a_handoff_carries_exactly_the_keys_of_its_op() {
     let k = "01".repeat(32);
     for line in [
-        // A start with a recovery code, a create without one, a discard with a grant key,
-        // a start whose key is null, an unknown op.
+        // A start with a recovery code, a discard with any secret, an unknown op.
         format!(
-            r#"{{"v":1,"op":"start","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
         ),
-        // A key the op doesn't carry is refused even as null.
+        // A field the op doesn't carry is refused even as null.
         format!(
-            r#"{{"v":1,"op":"start","db_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
         ),
-        r#"{"v":1,"op":"discard","db_key":null,"grant_key":null,"fds":[]}"#.to_owned(),
-        format!(r#"{{"v":1,"op":"discard","db_key":"{k}","recovery_code":null,"fds":[]}}"#),
-        // A key the op carries can't be null either.
+        r#"{"v":1,"op":"discard","grant_key":null,"fds":[]}"#.to_owned(),
+        r#"{"v":1,"op":"discard","recovery_code":null,"fds":[]}"#.to_owned(),
+        format!(r#"{{"v":1,"op":"discard","office_secrets_key":"{k}","fds":[]}}"#),
+        format!(r#"{{"v":1,"op":"discard","grant_key":"{k}","fds":[]}}"#),
+        // A secret the op requires can't be null or missing; an optional recovery code is
+        // left out, never null.
         format!(
-            r#"{{"v":1,"op":"create","db_key":"{k}","grant_key":null,"recovery_code":"c","fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":null,"recovery_code":"c","fds":["transfer"]}}"#
         ),
         format!(
-            r#"{{"v":1,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+            r#"{{"v":1,"op":"create","office_secrets_key":null,"grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
         ),
-        format!(r#"{{"v":1,"op":"create","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#),
-        format!(r#"{{"v":1,"op":"discard","db_key":null,"grant_key":"{k}","fds":[]}}"#),
-        format!(r#"{{"v":1,"op":"start","db_key":null,"grant_key":"{k}","fds":["transfer"]}}"#),
-        format!(r#"{{"v":1,"op":"join","db_key":"{k}","fds":[]}}"#),
-        // A field the handoff doesn't define, a v2 key above all.
         format!(
-            r#"{{"v":1,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"],"app_token":"{k}"}}"#
+            r#"{{"v":1,"op":"create","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
         ),
-        format!(r#"{{"v":1,"op":"discard","db_key":null,"fds":[],"app_token":"{k}"}}"#),
         format!(
-            r#"{{"v":1,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"],"extra":1}}"#
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+        ),
+        format!(
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":null,"fds":["transfer"]}}"#
+        ),
+        format!(r#"{{"v":1,"op":"start","office_secrets_key":"{k}","fds":["transfer"]}}"#),
+        format!(r#"{{"v":1,"op":"join","office_secrets_key":"{k}","fds":[]}}"#),
+        // A field the handoff doesn't define, a retired one above all.
+        format!(
+            r#"{{"v":1,"op":"start","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"],"app_token":"{k}"}}"#
+        ),
+        format!(r#"{{"v":1,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#),
+        r#"{"v":1,"op":"discard","db_key":null,"fds":[]}"#.to_owned(),
+        format!(r#"{{"v":1,"op":"discard","fds":[],"app_token":"{k}"}}"#),
+        format!(
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"],"extra":1}}"#
         ),
     ] {
         let error = decode_handoff(line.as_bytes()).unwrap_err().to_string();
         assert!(!error.contains("0101"), "{error}");
     }
-    let ok = format!(
-        r#"{{"v":1,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
-    );
-    assert!(matches!(
-        decode_handoff(ok.as_bytes()).unwrap(),
-        Handoff::Create { .. }
-    ));
+    for ok in [
+        format!(
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
+        ),
+        format!(
+            r#"{{"v":1,"op":"create","office_secrets_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#
+        ),
+    ] {
+        assert!(matches!(
+            decode_handoff(ok.as_bytes()).unwrap(),
+            Handoff::Create { .. }
+        ));
+    }
 }
 
 #[test]
@@ -818,6 +903,16 @@ fn rendezvous_receipt_vectors_pin_encoding_decoding_and_strict_fields() {
         )),
         Err(LaunchError::UnsupportedVersion { found: 4, .. })
     ));
+    // The retired contract version 3 is refused as a version, whatever the event.
+    for wire in [
+        &b"{\"v\":3,\"event\":\"fds_received\",\"of\":\"handoff\"}\n"[..],
+        &b"{\"v\":3,\"event\":\"ready\",\"socket\":\"/run/o.sock\",\"pid\":42}\n"[..],
+    ] {
+        assert!(matches!(
+            read_server_event(&mut Cursor::new(wire)),
+            Err(LaunchError::UnsupportedVersion { found: 3, .. })
+        ));
+    }
 }
 
 #[test]
