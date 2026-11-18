@@ -81,7 +81,11 @@ The lead's design for the rule:
 14. **A default value never answers a required ask.** For an ask that is not required and
     carries a default, the timeout result includes the default, so the agent can
     continue with it; the card then shows that nobody answered and what the agent
-    continued with. A person's later answer still arrives as a message.
+    continued with. A person's later answer still arrives as a message. An ask may carry
+    several questions, answered together
+    ([messaging](../design/organization-data/15-messaging-and-chat.md)); each question
+    has its own default, and the timeout result carries the default of each question
+    that has one.
 
 ## Rules that follow
 

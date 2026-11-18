@@ -104,7 +104,7 @@ Titles follow `app-shell-ux.md` §4.
 
 | Kind | Who | Shown as | What answering does |
 | --- | --- | --- | --- |
-| **Ask** (an ask waits for a bounded time; it may be marked required, and a required ask left unanswered suspends the asking agent until it is answered, [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)) | an agent asking someone | a card: the question, options as buttons, **Reply…**, how long it's been waiting, and what it blocks, including that the agent is stopped waiting when the ask is required | the authorized answer/reply is stored under the expected envelope revision and shows **Answered by <name>**; the waiting service reconciles the retained outcome before resuming, and Needs you reflects that outcome |
+| **Ask** (an ask waits for a bounded time; it may be marked required, and a required ask left unanswered suspends the asking agent until it is answered, [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)) | an agent asking someone | a card: the question, options as buttons, **Reply…**; for an ask with several questions, a form with each question in its own component and one **Send answers** button, shown as steps when there are more than three; how long it's been waiting, and what it blocks, including that the agent is stopped waiting when the ask is required | the authorized answer/reply is stored under the expected envelope revision and shows **Answered by <name>**; the waiting service reconciles the retained outcome before resuming, and Needs you reflects that outcome |
 | **Hand-off** (`handoff`) | agent → agent or person | "[arrow-path] sam → server-dev: review the store traits" with **Accept** · **Reply…** (only the recipient sees Accept, or the owner when it's handed to the owner; everyone else sees Reply… only) | Accept durably records card acceptance, then the card reads "Accepted by <name> · <time>" with no buttons for authorized readers. A linked assignment change is a separate authorized atomic `(assigned_team_id, assignee_id)` update with expected task revision and durable task event; accountable team/reporter remain unchanged. Handoff never closes a task or removes its worktree |
 | **Announcement** | an agent, for something to act on or know | [megaphone] with links (branch, feature, report) and reactions | reactions are acknowledgements (Seen, Looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject, answered in the app) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
@@ -191,8 +191,12 @@ resolution back is process guidance, not a coded routing decision.
 Opening a DM is permitted under the same recipient rules as direct sends.
 Anything an agent's own subprocesses post is attributed to that agent.
 
-Ordinary channel activity goes to the inbox. Membership never causes a channel post
-to start anyone's work.
+For a person, ordinary channel activity shows as unread. An agent's inbox holds only
+what is addressed to it: a direct message, an ask or a hand-off, a mention by name, a
+reply in a thread it started or replied in, and a message judged to answer its own
+channel question ([ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md)).
+An agent reads the rest of a channel only when it chooses to. Membership never causes
+a channel post to start anyone's work.
 
 ### 4.2 System notices and delivery
 
@@ -235,7 +239,7 @@ Hover/focus still exposes each message's reactions, Reply and menu and each oper
 - CHAT-4 · Agents' messages are directed Asks, hand-offs, replies, announcements and nonblocking channel Questions (§4.1). Tool output, logs and routine progress never appear in Chat.
 - CHAT-5 · An ask shows options and Reply; only its addressed authorized actor can answer. Persist the revisioned outcome/reply before acknowledgement; Needs you and waiting execution reconcile that outcome rather than infer a completed transition from the UI.
 - CHAT-6 · An ask shows its default preselected and its deadline. A default is never recorded as the person's answer; when an agent continues with it after its wait ends, the card says so. A required ask is never closed by a default.
-- CHAT-7 · A message never starts or interrupts an agent's work; the UI says the reply waits for the agent's next run. The only automatic start is the resume on a required ask's answer, which respects execution admission, permits, placement and all holds. Typing requires live observed work.
+- CHAT-7 · A message never interrupts an agent's work, and a message from a person starts none: the UI says the reply waits for the agent's next run. The automatic starts are the resume on a required ask's answer (ADR-0020), an answer to a question the agent asked, and being addressed by another agent (ADR-0023). Each respects execution admission, permits, placement and all holds. Typing requires live observed work.
 - CHAT-8 · Agent conversations reply in threads by default, and a thread reply can also be sent to the channel.
 - CHAT-9 · `/bug`, `/request` and `/task` create typed tasks with scoped creation and assignment validation; Turn into… uses the same path.
 - CHAT-10 · Announcements are limited per agent per channel, and extra posts fold into a thread.
@@ -276,6 +280,7 @@ Hover/focus still exposes each message's reactions, Reply and menu and each oper
 - CHAT-41 · Agent-authored emoji sequences are removed at render only, including joiners/variation selectors/modifiers/keycaps while ordinary digits/# remain; human text and protected stored bodies/hashes remain exact. Message kind markers use Heroicons plus words.
 - CHAT-42 · MA-1–9 lifecycle and delivery acceptance in §§2.1–2.2/4.2 applies through authorized owning services; no reply/done/default timer/accept button can infer a task or execution transition.
 - CHAT-43 · AC-CP-1–5 in §4.3 limit initial/older pages to 200 authorized messages and validate the 1,000-message scenario with separate CI/manual metrics.
+- CHAT-44 · An ask with several questions shows one form: a single choice as a radio group, a multiple choice as checkboxes, yes or no as a button pair, free text as a text area, each default preselected. **Send answers** is enabled only when every question that is not optional has an answer, and it stores one answer for the whole ask. An agent answers the same ask with one `agent-os msg reply` naming each question by its ID, and the office refuses an answer that does not fit the questions, saying which IDs are valid.
 
 ## 8. Open questions
 
