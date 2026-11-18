@@ -184,7 +184,7 @@ describe('follow', () => {
 			.mockResolvedValueOnce(lookedAccepted())
 			.mockResolvedValueOnce(lookedAccepted())
 			.mockResolvedValueOnce(lookedCompleted());
-		const sleep = vi.fn(async (_ms: number, _signal?: AbortSignal) => {});
+		const sleep = vi.fn<(ms: number, signal?: AbortSignal) => Promise<void>>(async () => {});
 		const waiting = vi.fn();
 		expect(await s.api.follow(OP, { sleep, waiting })).toEqual({ kind: 'completed', organization });
 		expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 1500]);
@@ -199,7 +199,7 @@ describe('follow', () => {
 				looked({ outcome: 'rejected', error: { code: 'storage_error', message: 'm' } })
 			)
 			.mockResolvedValueOnce(notFound);
-		const sleep = vi.fn(async (_ms: number, _signal?: AbortSignal) => {});
+		const sleep = vi.fn<(ms: number, signal?: AbortSignal) => Promise<void>>(async () => {});
 		expect(await s.api.follow(OP, { sleep })).toEqual({
 			kind: 'rejected',
 			error: { code: 'storage_error' }
@@ -215,7 +215,7 @@ describe('follow', () => {
 			.mockResolvedValueOnce(down)
 			.mockResolvedValueOnce(lookedAccepted())
 			.mockResolvedValue(down);
-		const sleep = vi.fn(async (_ms: number, _signal?: AbortSignal) => {});
+		const sleep = vi.fn<(ms: number, signal?: AbortSignal) => Promise<void>>(async () => {});
 		expect(await s.api.follow(OP, { sleep })).toEqual({ kind: 'unreachable' });
 		expect(s.read).toHaveBeenCalledTimes(3 + UNREACHABLE_LIMIT);
 	});

@@ -7,7 +7,10 @@
  * shallow routing, which leaves `page.url` unchanged and stores `page.url.href` (the fragment
  * included) in the history entry's state, so it would keep the secret rather than clear it.
  */
-export function takeLinkSecret(loc: Pick<Location, 'hash' | 'pathname' | 'search'>, hist: Pick<History, 'replaceState' | 'state'>): string | undefined {
+export function takeLinkSecret(
+	loc: Pick<Location, 'hash' | 'pathname' | 'search'>,
+	hist: Pick<History, 'replaceState' | 'state'>
+): string | undefined {
 	const raw = loc.hash.startsWith('#') ? loc.hash.slice(1) : loc.hash;
 	if (raw.length > 0) hist.replaceState(hist.state, '', loc.pathname + loc.search);
 	return raw.length > 0 && raw.length <= 1024 && /^[\x21-\x7e]+$/.test(raw) ? raw : undefined;

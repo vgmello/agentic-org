@@ -45,7 +45,8 @@ export function createSelection(storage: () => KeyValue | undefined) {
 			write({ ...read(), [key(owner)]: organizationId });
 		},
 		clear(owner: SelectionOwner): void {
-			const { [key(owner)]: _removed, ...rest } = read();
+			const rest = { ...read() };
+			delete rest[key(owner)];
 			write(rest);
 		}
 	});

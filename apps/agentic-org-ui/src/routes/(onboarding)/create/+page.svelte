@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import Info from '@lucide/svelte/icons/info';
@@ -105,7 +106,7 @@
 		await appSession.boot();
 		const state = appSession.state;
 		if (state.kind !== 'signed-in') {
-			await goto(signInHref('/create', location.origin), { replaceState: true });
+			await goto(resolve(signInHref('/create', location.origin)), { replaceState: true });
 			return;
 		}
 		clock.synchronize(state.session.server_time_ms);
@@ -120,10 +121,11 @@
 		const state = appSession.state;
 		if (state.kind !== 'signed-out') return;
 		if (state.reason === 'signed-out')
-			void goto('/sign-in?note=signed-out', { replaceState: true });
-		else if (state.reason === 'changed-account') void goto('/sign-in', { replaceState: true });
+			void goto(resolve('/sign-in?note=signed-out'), { replaceState: true });
+		else if (state.reason === 'changed-account')
+			void goto(resolve('/sign-in'), { replaceState: true });
 		else if (state.reason === 'ended')
-			void goto(signInHref('/create', location.origin, 'ended'), { replaceState: true });
+			void goto(resolve(signInHref('/create', location.origin, 'ended')), { replaceState: true });
 	});
 
 	function submit(event: SubmitEvent) {
@@ -180,7 +182,7 @@
 {:else if !session.admin}
 	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">Create organization</h1>
 	<p class="mt-4 text-base/7 text-gray-300" role="alert">{NOT_ADMINISTRATOR}</p>
-	<div class="mt-6"><a href="/welcome" class={secondary}>Back to organizations</a></div>
+	<div class="mt-6"><a href={resolve('/welcome')} class={secondary}>Back to organizations</a></div>
 {:else if created}
 	<h1
 		bind:this={heading}
@@ -215,7 +217,7 @@
 		</div>
 	</section>
 	<div class="mt-8">
-		<Button onclick={() => goto('/')}>Open {created.name}</Button>
+		<Button onclick={() => goto(resolve('/'))}>Open {created.name}</Button>
 	</div>
 {:else}
 	<h1 class="text-3xl/9 font-semibold tracking-tight text-white">Create organization</h1>
@@ -336,7 +338,7 @@
 							>Check again</button
 						>
 					{:else if failure.action === 'open_list'}
-						<a href="/welcome" class={secondary}>Open organization list</a>
+						<a href={resolve('/welcome')} class={secondary}>Open organization list</a>
 					{/if}
 					<button type="button" class={secondary} onclick={() => copy('details')}
 						>Copy details</button
@@ -352,7 +354,7 @@
 			<Button type="submit" disabled={locked || barred}>
 				{working ? 'Creating…' : 'Create organization'}
 			</Button>
-			<a href="/welcome" class={secondary}>{working ? 'Close' : 'Cancel'}</a>
+			<a href={resolve('/welcome')} class={secondary}>{working ? 'Close' : 'Cancel'}</a>
 			{#if working}
 				<span class="text-sm/6 text-gray-300">Closing this panel doesn't stop it.</span>
 			{/if}

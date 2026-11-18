@@ -48,7 +48,8 @@ describe('organization view', () => {
 	it.each(['id', 'slug', 'name', 'created_at', 'employee_id', 'recovery', 'offices'])(
 		'refuses a view without %s',
 		(key) => {
-			const { [key]: _missing, ...rest } = organization as Record<string, unknown>;
+			const rest: Record<string, unknown> = { ...organization };
+			delete rest[key];
 			expect(() => readOrganizationView(rest)).toThrow(WireDecodeError);
 			expect(() => readOrganizationView({ ...organization, [key]: null })).toThrow(WireDecodeError);
 		}

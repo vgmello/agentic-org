@@ -28,7 +28,7 @@ import {
 function setup() {
 	const s = scripted();
 	const phases: Phase[] = [];
-	const sleep = vi.fn(async (_ms: number, _signal?: AbortSignal) => {});
+	const sleep = vi.fn<(ms: number, signal?: AbortSignal) => Promise<void>>(async () => {});
 	const flow = createOrganizationFlow({
 		api: s.api,
 		report: (p) => phases.push(p),

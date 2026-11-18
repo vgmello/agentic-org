@@ -149,39 +149,41 @@ test("a name HQ refuses as invalid shows the inline message for HQ's rule", asyn
 	expect((await server.stats()).creates).toEqual([]);
 });
 
-test('an invalid name or an empty field shows its message, sends nothing, and clears on typing (OFC-16, FC-018 (6))', { tag: '@webkit' }, async ({
-	page
-}) => {
-	const server = await open(page);
-	const name = page.getByLabel('Name', { exact: true });
-	await create(page).click();
-	await expect(page.getByText('Give the organization a name.')).toBeVisible();
-	await expect(page.getByText('Give the organization a slug.')).toBeVisible();
-	await expect(page.getByText("Enter the remote repository's address.")).toBeVisible();
-	await expect(page.getByText('Enter the state branch.')).toBeVisible();
-	await expect(name).toHaveAttribute('aria-invalid', 'true');
-	await expect(name).toBeFocused();
-	expect(await name.getAttribute('aria-describedby')).toContain('name-error');
-	expect(await axe(page)).toEqual([]);
-	await name.fill('x'.repeat(65));
-	await expect(page.getByText('Give the organization a name.')).toHaveCount(0);
-	await expect(name).not.toHaveAttribute('aria-invalid', 'true');
-	await expect(page.getByText('Enter the state branch.')).toBeVisible();
-	await create(page).click();
-	await expect(page.getByText('Use 64 characters or fewer.')).toBeVisible();
-	await fill(page, 'bad‮name');
-	await create(page).click();
-	await expect(
-		page.getByText("The name can't contain invisible or direction-changing characters.")
-	).toBeVisible();
-	await page.getByLabel('Org Git URL').fill('/Users/alex/org');
-	await fill(page, 'Fine');
-	await page.getByLabel('Org Git URL').fill('/Users/alex/org');
-	await create(page).click();
-	await expect(page.getByText(/Org Git must be a remote repository/)).toBeVisible();
-	expect((await server.stats()).creates).toEqual([]);
-	await expect(create(page)).toBeEnabled();
-});
+test(
+	'an invalid name or an empty field shows its message, sends nothing, and clears on typing (OFC-16, FC-018 (6))',
+	{ tag: '@webkit' },
+	async ({ page }) => {
+		const server = await open(page);
+		const name = page.getByLabel('Name', { exact: true });
+		await create(page).click();
+		await expect(page.getByText('Give the organization a name.')).toBeVisible();
+		await expect(page.getByText('Give the organization a slug.')).toBeVisible();
+		await expect(page.getByText("Enter the remote repository's address.")).toBeVisible();
+		await expect(page.getByText('Enter the state branch.')).toBeVisible();
+		await expect(name).toHaveAttribute('aria-invalid', 'true');
+		await expect(name).toBeFocused();
+		expect(await name.getAttribute('aria-describedby')).toContain('name-error');
+		expect(await axe(page)).toEqual([]);
+		await name.fill('x'.repeat(65));
+		await expect(page.getByText('Give the organization a name.')).toHaveCount(0);
+		await expect(name).not.toHaveAttribute('aria-invalid', 'true');
+		await expect(page.getByText('Enter the state branch.')).toBeVisible();
+		await create(page).click();
+		await expect(page.getByText('Use 64 characters or fewer.')).toBeVisible();
+		await fill(page, 'bad‮name');
+		await create(page).click();
+		await expect(
+			page.getByText("The name can't contain invisible or direction-changing characters.")
+		).toBeVisible();
+		await page.getByLabel('Org Git URL').fill('/Users/alex/org');
+		await fill(page, 'Fine');
+		await page.getByLabel('Org Git URL').fill('/Users/alex/org');
+		await create(page).click();
+		await expect(page.getByText(/Org Git must be a remote repository/)).toBeVisible();
+		expect((await server.stats()).creates).toEqual([]);
+		await expect(create(page)).toBeEnabled();
+	}
+);
 
 test('typing in a field while other fields still show errors keeps focus and every character in that field', async ({
 	page

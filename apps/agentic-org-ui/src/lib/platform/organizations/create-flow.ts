@@ -329,7 +329,8 @@ export function createOrganizationFlow({
 		/** Typing in a field clears that field's error. */
 		edited(field: CreateField) {
 			if (phase.kind !== 'editing' || !phase.errors[field]) return;
-			const { [field]: _cleared, ...errors } = phase.errors;
+			const errors = { ...phase.errors };
+			delete errors[field];
 			show({ kind: 'editing', errors }, 'typed');
 		},
 		/** The page is going away. The create itself continues at HQ (OFC-23). */

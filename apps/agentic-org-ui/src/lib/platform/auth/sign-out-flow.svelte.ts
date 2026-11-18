@@ -13,7 +13,10 @@ function compose() {
 	let failed = $state(false);
 	let query: ReturnType<typeof createUnsavedQuery> | undefined;
 	const ready = () =>
-		(query ??= createUnsavedQuery({ channel: new BroadcastChannel('org-drafts'), local: drafts.hasUnsavedText }));
+		(query ??= createUnsavedQuery({
+			channel: new BroadcastChannel('org-drafts'),
+			local: drafts.hasUnsavedText
+		}));
 	const unsaved = () => ready().anyUnsaved();
 	async function run() {
 		if (signingOut) return;

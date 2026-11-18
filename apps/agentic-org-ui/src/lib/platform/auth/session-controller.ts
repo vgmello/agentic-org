@@ -248,7 +248,11 @@ export function createSessionController({
 			await publishEstablished(session, next, { kind: 'signed-in', account_id: next.account_id });
 		});
 	}
-	async function send(request: { path: string; signal?: AbortSignal } & ({ method: 'GET' } | { method: 'POST'; body: unknown })) {
+	async function send(
+		request: { path: string; signal?: AbortSignal } & (
+			{ method: 'GET' } | { method: 'POST'; body: unknown }
+		)
+	) {
 		ensureOpen();
 		const expected = record;
 		if (!expected) throw new Error('Sign in required');

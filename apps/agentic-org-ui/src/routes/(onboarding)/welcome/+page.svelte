@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import AccountMenu from '$lib/platform/auth/AccountMenu.svelte';
@@ -48,6 +49,8 @@
 	const stop = new AbortController();
 	// Creates this page is following now. One that HQ stops answering for leaves the set, so
 	// Check again on its row, or the next reading of the list, follows it again.
+	// Bookkeeping only, never rendered or read by an effect: a plain Set on purpose.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const followed = new Set<string>();
 	/** Creates whose lookup stopped because HQ could not be reached. */
 	let stalled = $state<string[]>([]);
@@ -107,7 +110,7 @@
 				selection.select(owner, result.organization.id);
 				selected = result.organization.id;
 				// Entering the organization is the shell's: routing decides from the selection.
-				await goto('/');
+				await goto(resolve('/'));
 			} else if (result.kind === 'vanished') {
 				show(result.list);
 				await say({ title: "Couldn't open it", hint: `${name} is no longer on this HQ.` });
@@ -131,7 +134,7 @@
 	onMount(async () => {
 		await appSession.boot();
 		if (appSession.state.kind !== 'signed-in') {
-			await goto(signInHref('/welcome', location.origin), { replaceState: true });
+			await goto(resolve(signInHref('/welcome', location.origin)), { replaceState: true });
 			return;
 		}
 		await load();
@@ -141,12 +144,12 @@
 	$effect(() => {
 		const state = appSession.state;
 		if (state.kind === 'signed-out' && state.reason === 'signed-out')
-			void goto('/sign-in?note=signed-out', { replaceState: true });
+			void goto(resolve('/sign-in?note=signed-out'), { replaceState: true });
 		// SIGN-31: another account signed in from another tab; this tab keeps none of the previous account's data.
 		else if (state.kind === 'signed-out' && state.reason === 'changed-account')
-			void goto('/sign-in', { replaceState: true });
+			void goto(resolve('/sign-in'), { replaceState: true });
 		else if (state.kind === 'signed-out' && state.reason === 'ended')
-			void goto(signInHref('/welcome', location.origin, 'ended'), { replaceState: true });
+			void goto(resolve(signInHref('/welcome', location.origin, 'ended')), { replaceState: true });
 	});
 
 	const signOut = () => signOutFlow.request();
@@ -156,7 +159,7 @@
 
 {#snippet createLink()}
 	<a
-		href="/create"
+		href={resolve('/create')}
 		class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
 	>
 		<Plus class="size-4" aria-hidden="true" />Create organization
@@ -207,8 +210,7 @@
 						</p>
 						<p class="text-sm/6 text-gray-300">
 							{row.office ??
-								'No office'}{#if !row.unavailable}{' · '}{row.status}{/if}{#if row.created}{' · '}Created
-								{row.created}{/if}
+								'No office'}{#if !row.unavailable}{` · ${row.status}`}{/if}{#if row.created}{` · Created ${row.created}`}{/if}
 						</p>
 					</div>
 					<button
