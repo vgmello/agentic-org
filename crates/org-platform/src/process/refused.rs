@@ -37,6 +37,11 @@ pub(super) fn hardened() -> io::Result<bool> {
     refused()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
+    refused()
+}
+
 pub(super) enum Watch {}
 
 impl Watch {
@@ -173,6 +178,7 @@ mod tests {
     fn hardening_refuses_and_reports_nothing() {
         assert_refused(super::harden_self());
         assert_refused(super::hardened());
+        assert_refused(super::open_paths());
     }
 
     #[test]

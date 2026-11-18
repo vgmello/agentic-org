@@ -72,6 +72,21 @@ pub(super) fn hardened() -> io::Result<bool> {
     Ok(super::shared::core_dumps_disabled()? && !dumpable()?)
 }
 
+/// The targets of this process's descriptor links that are absolute paths.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir("/proc/self/fd")? {
+        // The descriptor that lists this directory is closed before its link is read.
+        if let Ok(target) = std::fs::read_link(entry?.path()) {
+            if target.is_absolute() {
+                paths.push(target);
+            }
+        }
+    }
+    Ok(paths)
+}
+
 pub(super) fn check_version() -> io::Result<()> {
     let release = std::fs::read_to_string("/proc/sys/kernel/osrelease")?;
     let version = |s: &str| -> Option<(u32, u32)> {

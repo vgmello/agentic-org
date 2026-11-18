@@ -110,6 +110,15 @@ pub mod testing {
     pub fn hardened() -> io::Result<bool> {
         super::native::hardened()
     }
+
+    /// The paths of the files this process holds open now, one entry per open descriptor
+    /// that the system names by a path (a file opened twice is listed twice; sockets and
+    /// pipes are left out or carry a name that is no path). For a consumer's test that
+    /// its code leaves no file open. GNU/Linux reads `/proc/self/fd`; macOS asks
+    /// `lsof` about this process. The refusing adapter refuses.
+    pub fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
+        super::native::open_paths()
+    }
 }
 
 fn check(rc: libc::c_int) -> io::Result<()> {

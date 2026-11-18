@@ -191,3 +191,26 @@ fn hardening_holds_in_the_process_that_asked_and_cannot_be_undone() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// The open-file listing sees a file while this process holds it open, as often as it is
+/// open, and no longer once it is closed.
+#[test]
+fn the_open_file_listing_follows_what_this_process_holds_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().canonicalize().unwrap().join("held");
+    let held = |path: &std::path::Path| {
+        super::testing::open_paths()
+            .unwrap()
+            .iter()
+            .filter(|open| open.as_path() == path)
+            .count()
+    };
+    assert_eq!(held(&path), 0);
+    let first = std::fs::File::create(&path).unwrap();
+    assert_eq!(held(&path), 1);
+    let second = std::fs::File::open(&path).unwrap();
+    assert_eq!(held(&path), 2);
+    drop(first);
+    drop(second);
+    assert_eq!(held(&path), 0);
+}
