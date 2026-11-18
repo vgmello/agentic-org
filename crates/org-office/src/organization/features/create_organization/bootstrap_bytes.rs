@@ -203,10 +203,63 @@ fn todays_bootstrap_writes_the_golden_creation_files() {
     );
 }
 
-/// The comparison itself is not ignored: it must keep finding what it found, so the
-/// ignore reason above stays true until B1b block 4 deletes today's bootstrap.
 #[test]
-fn the_comparison_with_todays_bootstrap_reports_each_difference() {
+fn todays_bootstrap_has_only_the_documented_differences() {
+    let mut expected = creation_files();
+    assert!(expected
+        .remove("state/identity/office-codes.yaml")
+        .is_some());
+
+    let repositories = expected.get_mut("state/repositories.yaml").unwrap();
+    let canonical = std::str::from_utf8(repositories).unwrap();
+    let without_key = canonical.replace("\"key\":\"organization\",", "");
+    assert_ne!(without_key, canonical);
+    *repositories = without_key.into_bytes();
+
+    let omitted = [
+        "contact",
+        "focus",
+        "may_hire",
+        "role_text",
+        "title",
+        "title_in_team",
+    ];
+    for (path, profile) in expected
+        .iter_mut()
+        .filter(|(path, _)| path.ends_with("/profile.md"))
+    {
+        let mut without_fields = String::new();
+        let mut missing = 0;
+        for line in std::str::from_utf8(profile).unwrap().split_inclusive('\n') {
+            if line
+                .split_once(": ")
+                .is_some_and(|(key, _)| omitted.contains(&key))
+            {
+                missing += 1;
+            } else {
+                without_fields.push_str(line);
+            }
+        }
+        assert_eq!(missing, omitted.len(), "{path}");
+        *profile = without_fields.into_bytes();
+    }
+
+    let actual = bootstrap_files();
+    assert_eq!(
+        actual.keys().collect::<Vec<_>>(),
+        expected.keys().collect::<Vec<_>>()
+    );
+    for (path, bytes) in expected {
+        assert_eq!(
+            std::str::from_utf8(&actual[&path]).unwrap(),
+            std::str::from_utf8(&bytes).unwrap(),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn the_comparison_reports_each_kind_of_difference() {
     let golden = BTreeMap::from([
         ("state/a".to_owned(), b"x: 1\ny: 2\n".to_vec()),
         ("state/b".to_owned(), b"x: 1\n".to_vec()),
