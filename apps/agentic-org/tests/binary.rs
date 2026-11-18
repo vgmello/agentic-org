@@ -255,6 +255,53 @@ fn sigterm_stops_the_servers_cleanly_and_exits_0() {
     );
 }
 
+/// X5 review V2: the stop is bounded whatever a worker does. A worker that ignores the
+/// end of its input (as one that is stopped or hung does) is killed when the grace ends,
+/// and the service still exits 0 within the 8 s the design gives it (Linux host design,
+/// section 3.4), inside a container runtime's 10 s.
+#[cfg(debug_assertions)]
+#[test]
+fn a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_8_seconds() {
+    const NAME: &str =
+        "a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_8_seconds";
+    if !may_run_the_service(NAME) {
+        return;
+    }
+    let instance = Registered::new();
+    fs::write(
+        instance.home().join("fake-script.json"),
+        format!(r#"{{"{A}": {{"do": "ready", "ignore_eof": true}}}}"#),
+    )
+    .unwrap();
+    let mut host = instance.spawn_host("host.err");
+    instance.wait_until_active(&mut host);
+    let pids = instance.pids(A);
+    assert_eq!(pids.len(), 1);
+    let alive = |pid: u32| unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    assert!(alive(pids[0]));
+    let asked = Instant::now();
+    signal(&host, libc::SIGTERM);
+    let status = wait_for_exit(&mut host);
+    let took = asked.elapsed();
+    println!("the service stopped {took:?} after SIGTERM with a worker that ignores it");
+    assert!(
+        status.success(),
+        "{status}: {}",
+        instance.stderr("host.err")
+    );
+    assert!(took < Duration::from_secs(8), "{took:?}");
+    // It was given the grace first: the stop did not simply kill at once.
+    assert!(took >= Duration::from_secs(4), "{took:?}");
+    assert!(
+        instance.eof_exits(A).is_empty(),
+        "the worker exited by itself"
+    );
+    eventually(Duration::from_secs(2), "the worker to be gone", || {
+        !alive(pids[0])
+    });
+    assert!(!instance.host_socket().exists());
+}
+
 #[cfg(debug_assertions)]
 #[test]
 fn sigint_also_stops_it() {

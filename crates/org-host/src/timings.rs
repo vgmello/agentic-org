@@ -20,7 +20,11 @@ pub struct Timings {
     /// `unavailable` (`restarts_exhausted`) until `office.restart` or the next host run.
     pub give_up_after: u32,
     pub give_up_window: Duration,
-    /// How long servers get to exit after their stdin closes before they're SIGKILLed.
+    /// How long servers get to exit after their stdin closes before they're SIGKILLed. It
+    /// bounds the host's own stop: every server is asked at once and waited for until one
+    /// shared deadline, so the host exits within this grace plus the moments its own
+    /// threads take. The design's bound is 8 s from `SIGTERM` to exit 0 (Linux host
+    /// design, section 3.4), inside a container runtime's default grace of 10 s.
     pub shutdown_grace: Duration,
     /// How long `--discard` of an unfinished office may take (it waits for the office lock).
     pub discard_timeout: Duration,
@@ -44,7 +48,7 @@ impl Default for Timings {
             backoff_reset_after: Duration::from_secs(60),
             give_up_after: 10,
             give_up_window: Duration::from_secs(30 * 60),
-            shutdown_grace: Duration::from_secs(10),
+            shutdown_grace: Duration::from_secs(5),
             discard_timeout: Duration::from_secs(30),
             create_wait: Duration::from_secs(30),
             exit_poll: Duration::from_secs(1),
