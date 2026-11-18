@@ -93,11 +93,11 @@ Three things to know about the order:
 - **Read:** [host boundary design](design/office-host-boundary.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [ADR-0012](adr/0012-office-channel-lifecycle.md). Checklist rows FC-017, FC-162.
-- **Code today:** `crates/org-host/src/supervisor/child.rs` implements both launch forms;
-  `crates/org-office-launch/src/contract.rs` is the rendezvous form;
-  `apps/agentic-org-office/src/launch.rs` receives a grant key and does not use it; the
-  CA key sits in the encrypted `office.db` (`crates/org-office/src/store/hq_creation.rs`);
-  `crates/org-pki` seals with the recovery code; SQLCipher is a workspace dependency
+- **Code before A1:** `crates/org-host/src/supervisor/child.rs` implemented both launch forms;
+  `crates/org-office-launch/src/contract.rs` was the rendezvous form;
+  `apps/agentic-org-office/src/launch.rs` received a grant key and did not use it; the
+  CA key sat in the encrypted `office.db` (`crates/org-office/src/store/hq_creation.rs`);
+  `crates/org-pki` sealed with the recovery code; SQLCipher was a workspace dependency
   used by `crates/org-office/src/store` and `crates/org-host/src/hostdb`.
 - **Done when:** the host starts and restarts an office with one launch form; the
   workspace has no SQLCipher dependency; ENC-1, ENC-5 and ENC-6 pass. ENC-3 is

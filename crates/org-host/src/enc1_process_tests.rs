@@ -8,9 +8,10 @@
 //! supervisor restarts it to `active` again; after the office's key file is deleted
 //! from the development store a restart still reaches `active` with no status reason
 //! (the start proceeds with no key) and the data is plain SQLite that reads with no
-//! key; the office secrets key, as raw bytes or as lowercase/uppercase hex (its stored
-//! and handoff form), appears in no file but its own dev key file, and the wrapped CA
-//! record, in any of those forms, never leaves the office's folder.
+//! key. Its dev key file holds the office secrets key as lowercase hex (its stored and
+//! handoff form); once that file is deleted, no remaining file holds the key as raw bytes
+//! or lowercase/uppercase hex. The wrapped CA record is found raw in the office's folder
+//! and, in any of those forms, in no file outside it.
 use crate::web_process_tests::{provision_hq, start_signed_in, Started};
 use org_proto::{OfficeInfo, OfficeStatus};
 use std::{
@@ -136,8 +137,15 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
         .cloned()
         .collect();
     assert_eq!(key_files.len(), 1, "{all:?}");
-    let key = unhex(&fs::read_to_string(&key_files[0]).unwrap());
+    let key_text = fs::read_to_string(&key_files[0]).unwrap();
+    let key = unhex(&key_text);
     assert_eq!(key.len(), 32);
+    // Positive control: the key file holds the key in the lowercase hex form scanned below.
+    let [_, key_lower_hex, _] = encodings(&key);
+    assert!(
+        contains(key_text.as_bytes(), &key_lower_hex),
+        "key file is not lowercase hex"
+    );
 
     // A killed worker is restarted and reaches `active` again.
     kill_worker_and_wait_for_another(&worker);
@@ -184,32 +192,42 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
     // The office answers the host's status checks on the same data with no key.
     wait_active(&host, &office_id, "serving without a key");
 
-    // ENC-5: the office secrets key, raw or hex, appears in no file but its (now
-    // deleted) dev key file, so neither the office nor the host stored it; the wrapped
-    // CA record, raw or hex, appears only in the office's own folder, so no rendezvous
-    // event or handoff carried it to anything the host wrote (registry, logs, runtime
-    // files).
+    // ENC-5: with its dev key file deleted, the office secrets key, raw or hex, appears
+    // in no remaining file, so neither the office nor the host stored it elsewhere; the
+    // wrapped CA record, raw or hex, appears only in the office's own folder, so no
+    // rendezvous event or handoff carried it to anything the host wrote (registry, logs,
+    // runtime files).
     let key_forms = encodings(&key);
     let wrapped_forms = encodings(&wrapped);
+    assert!(
+        !all.contains(&key_files[0]),
+        "the deleted key file is not scanned"
+    );
     let mut scanned = 0;
+    let mut wrapped_in_folder = false;
     for path in &all {
         if path.starts_with(base.join("bin")) {
             continue;
         }
         let Ok(bytes) = fs::read(path) else { continue };
         scanned += 1;
-        if *path != key_files[0] {
-            for form in &key_forms {
-                assert!(!contains(&bytes, form), "office secrets key in {path:?}");
-            }
+        for form in &key_forms {
+            assert!(!contains(&bytes, form), "office secrets key in {path:?}");
         }
-        if !path.starts_with(&folder) {
+        if path.starts_with(&folder) {
+            wrapped_in_folder |= contains(&bytes, &wrapped);
+        } else {
             for form in &wrapped_forms {
                 assert!(!contains(&bytes, form), "wrapped CA record in {path:?}");
             }
         }
     }
     assert!(scanned > 4, "{scanned}");
+    // Positive control: the scan reads the files that do hold the wrapped CA record.
+    assert!(
+        wrapped_in_folder,
+        "no file in {folder:?} holds the wrapped CA record"
+    );
     drop(wire);
     host.shutdown();
 }
