@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::change::DurablePath;
+use crate::{change::DurablePath, files::FilesError, journal::JournalError};
 
 /// A failure of the projection's database.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,6 +111,12 @@ pub enum StoreError {
         path: Option<String>,
         reason: String,
     },
+    /// The journal refused: at opening, or a failure that stops it.
+    Journal(JournalError),
+    /// File publication failed.
+    Files(FilesError),
+    /// The host's writer custody refused or could not be reached.
+    Custody(String),
     /// A broken internal rule. Never a refusal of the caller's input.
     Internal(String),
 }
@@ -136,6 +142,9 @@ impl fmt::Display for StoreError {
                 reason,
             } => write!(f, "store stopped at {path}: {reason}"),
             Self::Stopped { path: None, reason } => write!(f, "store stopped: {reason}"),
+            Self::Journal(error) => error.fmt(f),
+            Self::Files(error) => error.fmt(f),
+            Self::Custody(message) => write!(f, "writer custody: {message}"),
             Self::Internal(message) => write!(f, "internal store error: {message}"),
         }
     }
@@ -146,6 +155,36 @@ impl std::error::Error for StoreError {}
 impl From<EngineError> for StoreError {
     fn from(error: EngineError) -> Self {
         Self::Engine(error)
+    }
+}
+
+impl From<JournalError> for StoreError {
+    fn from(error: JournalError) -> Self {
+        Self::Journal(error)
+    }
+}
+
+impl From<FilesError> for StoreError {
+    fn from(error: FilesError) -> Self {
+        Self::Files(error)
+    }
+}
+
+impl StoreError {
+    pub(crate) fn stopped(reason: impl Into<String>) -> Self {
+        Self::Stopped {
+            path: None,
+            reason: reason.into(),
+        }
+    }
+
+    /// The engine ended the writer's transaction while this happened.
+    pub(crate) fn transaction_ended(&self) -> bool {
+        match self {
+            Self::Engine(error) => error.transaction_ended,
+            Self::Projection(error) => error.transaction_ended,
+            _ => false,
+        }
     }
 }
 

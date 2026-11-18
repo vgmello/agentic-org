@@ -11,7 +11,72 @@ use std::{
 use crate::{
     disk::{Disk, DiskFile, RealDisk},
     files::{Files, FilesError},
+    store::{Hooks, Site},
 };
+
+/// Where a flush error is injected.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FlushSite {
+    Segment,
+    File,
+    Directory,
+}
+
+/// One value per row of the design's crash table (office-store.md, section 4).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CrashPoint {
+    /// Killed after a decision ran, before its entry is framed.
+    DuringDecide,
+    /// Killed after an operation is applied to the projection, before the append.
+    DuringApply,
+    /// Killed mid-write: only this many bytes of the batch reach the segment.
+    MidAppend(usize),
+    /// Killed after the append, before the projection commit.
+    AfterAppend,
+    /// Killed after the projection commit, before any reply.
+    AfterCommit,
+    /// Killed after the committed-class replies. With [`Faults::power_cut`], the row
+    /// "after a committed reply, before the flush".
+    AfterCommittedReply,
+    /// Killed during materialization: a temporary file is flushed, nothing renamed.
+    MaterializeTempFlushed,
+    /// Killed during materialization: a file is renamed into place, the round unfinished.
+    MaterializeRenamed,
+    /// Killed after the files of a round are written, before the materialized mark.
+    BeforeMark,
+    /// Killed while a rebuild is building the new projection.
+    DuringRebuild,
+    /// A flush returns an error. The process lives and must stop accepting.
+    FlushError(FlushSite),
+    /// The append returns an error. The batch fails alone.
+    AppendError,
+    /// The append writes fewer bytes than the batch. The batch fails alone.
+    ShortAppend,
+    /// A short append whose truncation also fails. The store stops.
+    TruncateError,
+}
+
+impl CrashPoint {
+    /// Every point, with a representative cut for the mid-append one.
+    pub const ALL: [CrashPoint; 16] = [
+        CrashPoint::DuringDecide,
+        CrashPoint::DuringApply,
+        CrashPoint::MidAppend(9),
+        CrashPoint::AfterAppend,
+        CrashPoint::AfterCommit,
+        CrashPoint::AfterCommittedReply,
+        CrashPoint::MaterializeTempFlushed,
+        CrashPoint::MaterializeRenamed,
+        CrashPoint::BeforeMark,
+        CrashPoint::DuringRebuild,
+        CrashPoint::FlushError(FlushSite::Segment),
+        CrashPoint::FlushError(FlushSite::File),
+        CrashPoint::FlushError(FlushSite::Directory),
+        CrashPoint::AppendError,
+        CrashPoint::ShortAppend,
+        CrashPoint::TruncateError,
+    ];
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DiskOp {
@@ -80,6 +145,8 @@ struct State {
     lengths: BTreeMap<PathBuf, (u64, u64)>,
     hold_flushes: bool,
     blocked_flushes: usize,
+    /// Sites in the writer and flusher to die at, each after this many passes.
+    sites: Vec<(Site, usize)>,
 }
 
 #[derive(Default)]
@@ -123,6 +190,41 @@ impl Faults {
             action,
             repeat,
         });
+    }
+
+    /// Arms `point`: it acts at its `nth` opportunity from now (counted from one).
+    pub fn arm(&self, point: CrashPoint, nth: usize) {
+        let site = |site| {
+            assert!(nth >= 1, "opportunities are counted from one");
+            self.lock().sites.push((site, nth - 1));
+        };
+        match point {
+            CrashPoint::DuringDecide => site(Site::DuringDecide),
+            CrashPoint::DuringApply => site(Site::DuringApply),
+            CrashPoint::AfterAppend => site(Site::AfterAppend),
+            CrashPoint::AfterCommit => site(Site::AfterCommit),
+            CrashPoint::AfterCommittedReply => site(Site::AfterCommittedReply),
+            CrashPoint::BeforeMark => site(Site::BeforeMark),
+            CrashPoint::DuringRebuild => site(Site::DuringRebuild),
+            CrashPoint::MidAppend(cut) => self.crash_mid_write(Target::Segment, nth, cut),
+            CrashPoint::MaterializeTempFlushed => {
+                self.crash(DiskOp::Flush, Target::File, nth, true)
+            }
+            CrashPoint::MaterializeRenamed => self.crash(DiskOp::Rename, Target::File, nth, true),
+            CrashPoint::FlushError(FlushSite::Segment) => {
+                self.fail(DiskOp::Flush, Target::Segment, nth)
+            }
+            CrashPoint::FlushError(FlushSite::File) => self.fail(DiskOp::Flush, Target::File, nth),
+            CrashPoint::FlushError(FlushSite::Directory) => {
+                self.fail(DiskOp::SyncDir, Target::Directory, nth)
+            }
+            CrashPoint::AppendError => self.fail(DiskOp::Write, Target::Segment, nth),
+            CrashPoint::ShortAppend => self.short_write(Target::Segment, nth, 7),
+            CrashPoint::TruncateError => {
+                self.short_write(Target::Segment, nth, 7);
+                self.fail(DiskOp::Truncate, Target::Segment, 1);
+            }
+        }
     }
 
     /// The `nth` matching call from now fails with an error.
@@ -196,6 +298,7 @@ impl Faults {
         state.dead = false;
         state.fired = false;
         state.rules.clear();
+        state.sites.clear();
         state.log.clear();
         state.hold_flushes = false;
     }
@@ -453,5 +556,27 @@ impl DiskFile for FaultFile {
             entry.1 = entry.1.min(len);
         }
         Ok(())
+    }
+}
+
+impl Hooks for Faults {
+    fn crash_at(&self, site: Site) -> bool {
+        let mut state = self.lock();
+        if state.dead {
+            return true;
+        }
+        let Some(index) = state.sites.iter().position(|(armed, _)| *armed == site) else {
+            return false;
+        };
+        if state.sites[index].1 > 0 {
+            state.sites[index].1 -= 1;
+            return false;
+        }
+        state.sites.remove(index);
+        state.fired = true;
+        state.dead = true;
+        drop(state);
+        self.changed.notify_all();
+        true
     }
 }

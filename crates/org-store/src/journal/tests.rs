@@ -421,7 +421,7 @@ fn no_entry_is_handed_out_before_its_flush_and_a_flush_error_is_reported() {
         journal.set_materialized(1),
         Err(JournalError::Internal(_))
     ));
-    assert_eq!(journal.flush().unwrap(), 1);
+    assert_eq!(journal.flush().unwrap().ordinal, 1);
     assert_eq!(journal.after(0), [first]);
 
     let second = next(&journal.head(), &f.identity);
@@ -433,6 +433,86 @@ fn no_entry_is_handed_out_before_its_flush_and_a_flush_error_is_reported() {
     }
     assert_eq!(journal.flushed(), 1);
     assert_eq!(journal.after(0).len(), 1);
+}
+
+#[test]
+fn a_failed_flush_is_never_followed_by_another_flush_or_append() {
+    let f = fixture();
+    let journal = f.create();
+    let first = next(&journal.head(), &f.identity);
+    journal.append(std::slice::from_ref(&first)).unwrap();
+    f.faults.fail(DiskOp::Flush, Target::Segment, 1);
+    let failed = journal.flush().unwrap_err();
+    assert!(matches!(failed, JournalError::Flush { .. }));
+    f.faults.clear_log();
+    // The disk would now succeed, and must not be asked: the pages may be gone.
+    assert_eq!(journal.flush().err(), Some(failed.clone()));
+    let second = next(&journal.head(), &f.identity);
+    assert_eq!(
+        journal.append(std::slice::from_ref(&second)).err(),
+        Some(failed)
+    );
+    assert!(f.faults.log().is_empty());
+    assert_eq!(journal.flushed(), 0);
+    assert!(journal.after(0).is_empty());
+
+    // The same when the flush that fails is the one after a truncation.
+    let g = fixture();
+    let journal = g.create();
+    g.fill(&journal, 1);
+    let batch = [next(&journal.head(), &g.identity)];
+    g.faults.short_write(Target::Segment, 1, 5);
+    g.faults.fail(DiskOp::Flush, Target::Segment, 1);
+    assert!(matches!(
+        journal.append(&batch),
+        Err(JournalError::Broken { .. })
+    ));
+    assert!(matches!(journal.flush(), Err(JournalError::Broken { .. })));
+}
+
+#[test]
+fn a_tree_is_never_framed_as_a_file_and_positions_past_the_limit_refuse_to_open() {
+    let f = fixture();
+    let journal = f.create();
+    let head = journal.head();
+    let draft = EntryDraft {
+        ordinal: 1,
+        previous_sha256: head.sha256,
+        office_id: f.identity.office_id.clone(),
+        journal_incarnation: f.identity.journal_incarnation.clone(),
+        at: Timestamp(1),
+        ack: Ack::Committed,
+        feed: FeedPosition(1),
+        operation: None,
+        positions: BTreeMap::new(),
+        files: vec![FileDraft {
+            path: DurablePath::parse("state").unwrap(),
+            op: FileOp::Put,
+            bytes: Some(b"x".to_vec().into()),
+            previous_sha256: None,
+        }],
+    };
+    assert!(matches!(
+        Entry::frame(draft),
+        Err(JournalError::Internal(_))
+    ));
+    drop(journal);
+    let past = Checkpoint {
+        format: FORMAT.to_owned(),
+        ordinal: 3,
+        sha256: head.sha256,
+        high_waters: HighWaters::default(),
+        feed: FeedPosition(u64::MAX),
+    };
+    fs::write(
+        journal_dir(&f.root, &f.identity).join("checkpoint.json"),
+        serde_json::to_vec(&past).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        f.open().err(),
+        Some(JournalError::Corrupt { ordinal: 3, .. })
+    ));
 }
 
 #[test]

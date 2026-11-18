@@ -227,6 +227,12 @@ impl Entry {
     pub fn frame(draft: EntryDraft) -> Result<Entry, JournalError> {
         let mut files = Vec::with_capacity(draft.files.len());
         for file in &draft.files {
+            if !file.path.names_a_file() {
+                return Err(JournalError::Internal(format!(
+                    "{} is a tree, not a file",
+                    file.path
+                )));
+            }
             if file.bytes.is_none() != (file.op == FileOp::Remove) {
                 return Err(JournalError::Internal(
                     "a removal has no bytes and every other change has".into(),
@@ -674,6 +680,12 @@ impl Journal {
                 feed: checkpoint.feed,
             };
         }
+        if base.ordinal > MAX_POSITION || base.feed.0 > MAX_POSITION || !base.high_waters.valid() {
+            return Err(JournalError::Corrupt {
+                ordinal: base.ordinal,
+                reason: "the anchor or checkpoint holds a position past the limit".into(),
+            });
+        }
         let mut materialized = base.ordinal;
         if let Some(bytes) = read_small(&dir.join("materialized.json"))? {
             let mark: Materialized = serde_json::from_slice(&bytes)
@@ -951,29 +963,42 @@ impl Journal {
     }
 
     /// Fully flushes the journal through the head it had when the call began, and returns
-    /// that ordinal. Appends continue meanwhile. An error is final for this process.
-    pub fn flush(&self) -> Result<u64, JournalError> {
+    /// that head. Appends continue meanwhile. An error is final for this process.
+    pub fn flush(&self) -> Result<JournalPoint, JournalError> {
         let (target, rolled, active, directory) = {
             let mut inner = self.inner();
+            if let Some(broken) = &inner.broken {
+                return Err(broken.clone());
+            }
             let active = match (&inner.active, inner.segments.back()) {
                 (Some(file), Some(segment)) => Some((segment.path.clone(), Arc::clone(file))),
                 _ => None,
             };
             let directory = std::mem::take(&mut inner.directory_unflushed);
             let rolled = std::mem::take(&mut inner.unflushed);
-            (inner.head.ordinal, rolled, active, directory)
+            (inner.head.clone(), rolled, active, directory)
         };
-        if directory {
-            let segments = self.dir.join("segments");
-            self.disk
-                .sync_dir(&segments)
-                .map_err(|e| flush_error(&segments, &e))?;
-        }
-        for (path, file) in rolled.iter().chain(active.iter()) {
-            file.flush_full().map_err(|e| flush_error(path, &e))?;
-        }
+        let flushed: Result<(), JournalError> = (|| {
+            if directory {
+                let segments = self.dir.join("segments");
+                self.disk
+                    .sync_dir(&segments)
+                    .map_err(|e| flush_error(&segments, &e))?;
+            }
+            for (path, file) in rolled.iter().chain(active.iter()) {
+                file.flush_full().map_err(|e| flush_error(path, &e))?;
+            }
+            Ok(())
+        })();
         let mut inner = self.inner();
-        inner.flushed = inner.flushed.max(target);
+        if let Err(error) = flushed {
+            // After a failed flush the kernel may have dropped the pages: a later flush
+            // could succeed without the data being on the drive. Nothing more is flushed
+            // or appended in this process.
+            inner.broken.get_or_insert(error.clone());
+            return Err(error);
+        }
+        inner.flushed = inner.flushed.max(target.ordinal);
         Ok(target)
     }
 

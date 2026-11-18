@@ -188,7 +188,13 @@ impl Tree {
 pub struct DurablePath(Arc<str>);
 
 impl DurablePath {
+    /// The longest path, in bytes: it must fit a file-system path with the root before it.
+    pub const MAX_BYTES: usize = 512;
+
     pub fn parse(text: &str) -> Result<Self, StoreError> {
+        if text.len() > Self::MAX_BYTES {
+            return Err(StoreError::invalid("a durable path is at most 512 bytes"));
+        }
         let mut components = text.split('/');
         let tree = components.next().unwrap_or_default();
         if !Tree::ALL.iter().any(|known| known.name() == tree) {
@@ -479,6 +485,9 @@ mod tests {
             assert!(DurablePath::parse(bad).is_err(), "accepted {bad:?}");
         }
         assert!(DurablePath::parse(&format!("state/{}", "a".repeat(255))).is_ok());
+        let deep = format!("state/{}", "abcdefg/".repeat(64));
+        assert!(DurablePath::parse(&deep[..512]).is_ok());
+        assert!(DurablePath::parse(&format!("{}x", &deep[..512])).is_err());
     }
 
     #[test]

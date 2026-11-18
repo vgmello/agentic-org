@@ -418,7 +418,8 @@ fn not_a_record(path: &Path) -> FilesError {
 fn read_file(full: &Path) -> Result<Option<Vec<u8>>, FilesError> {
     let file = match OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        // Never follows a link, and never waits on a FIFO someone put there.
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(full)
     {
         Ok(file) => file,
