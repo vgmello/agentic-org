@@ -26,10 +26,6 @@
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
 	"webkitExempt": [
 		{
-			"spec": "organizations.spec.ts",
-			"why": "focus here is moved by the page itself (failure alert, first invalid field, created heading), not by pointer or Tab order; not yet run on WebKit (A4.5)"
-		},
-		{
 			"spec": "agents-roster.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
 		},

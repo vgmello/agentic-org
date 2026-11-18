@@ -96,7 +96,7 @@ test('the slug follows the name until it is edited, and is sent as typed', async
 	]);
 });
 
-test('an invalid name or an empty field shows its message, sends nothing, and clears on typing (OFC-16, FC-018 (6))', async ({
+test('an invalid name or an empty field shows its message, sends nothing, and clears on typing (OFC-16, FC-018 (6))', { tag: '@webkit' }, async ({
 	page
 }) => {
 	const server = await open(page);

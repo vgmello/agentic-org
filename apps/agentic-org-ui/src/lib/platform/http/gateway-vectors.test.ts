@@ -29,14 +29,17 @@ function normalized<T>(c: Case, reader: wire.Reader<T>): T | undefined {
 	if (c.expect.valid !== false) expect(result).toEqual(c.expect.normalized);
 	return result;
 }
-const projection = (operation: unknown): wire.Reader<unknown> => {
-	if (operation === 'organization.create') return wire.readOrganization;
+// The cases of the former four-field organization view (`organization.create` results, the
+// `organization` view) are still read by Rust; the UI reads the current view through
+// platform/organizations/readers.ts (gateway-organizations.json) and has no reader for the old one.
+const projection = (operation: unknown): wire.Reader<unknown> | undefined => {
+	if (operation === 'organization.create') return undefined;
 	if (operation === 'office.restart') return wire.readRestartResult;
 	throw new Error('Unknown fixture projection');
 };
 const views: Record<string, wire.Reader<unknown>> = {
 	version: wire.readVersion, instance: wire.readInstance, office: wire.readOffice,
-	organization: wire.readOrganization, capabilities: wire.readCapabilities, snapshot: wire.readSnapshot
+	capabilities: wire.readCapabilities, snapshot: wire.readSnapshot
 };
 
 function assertCoreCounts(data: Record<Name, Fixture>): void {
@@ -165,6 +168,7 @@ for (const name of Object.keys(counts) as Name[]) describe(name, () => {
 				expect({ error }).toEqual(c.wire); expect(wire.gatewayErrorStatus(error, true)).toBe(c.expect.http_status); break;
 			}
 			case 'gateway-views': {
+				if (c.category === 'organization') break;
 				const response = normalized(c, (value) => wire.readResponse(value, views[c.category as string]));
 				if (response && c.category === 'capabilities' && c.expect.available !== undefined && 'result' in response) {
 					expect(wire.readCapabilities(response.result).operations.map((cap) => wire.capabilityAvailable(cap, wire.GATEWAY_OPERATION_NAMES))).toEqual(c.expect.available);
@@ -179,6 +183,7 @@ for (const name of Object.keys(counts) as Name[]) describe(name, () => {
 			case 'gateway-stream': normalized(c, c.category === 'poll' ? wire.readPollResponse : wire.readEventFrame as wire.Reader<unknown>); break;
 			case 'gateway-mutation-results': {
 				const result = projection(c.operation);
+				if (!result) break;
 				normalized(c, c.response_kind === 'mutation' ? (value) => wire.readMutationOutcome(value, result)
 					: (value) => wire.readResponse(value, (value) => wire.readOperationLookup(value, result)) as unknown);
 				break;
@@ -190,7 +195,9 @@ for (const name of Object.keys(counts) as Name[]) describe(name, () => {
 it('uses identical serialized public result bytes in both mutation/lookup pairs', () => {
 	const pairs = list(fixtures['gateway-mutation-results'].pairs); expect(pairs).toHaveLength(2);
 	for (const item of pairs) {
-		const pair = record(item), reader = projection(pair.operation), mutation = wire.readMutationOutcome(pair.mutation, reader);
+		const pair = record(item), reader = projection(pair.operation);
+		if (!reader) continue;
+		const mutation = wire.readMutationOutcome(pair.mutation, reader);
 		const response = wire.readResponse(pair.lookup, (value) => wire.readOperationLookup(value, reader));
 		if (mutation.outcome !== 'completed' || !('result' in response) || !('outcome' in response.result) || response.result.outcome !== 'completed') throw new Error('Expected paired completion');
 		const bytes = JSON.stringify(mutation.result);
@@ -257,9 +264,8 @@ it('negotiates additive revisions and validates exact nonnegative integer times'
 	for (const value of [1.5, -1, Number.MAX_SAFE_INTEGER + 1, '1', NaN, Infinity]) expect(() => wire.readSafeInteger(value)).toThrow(wire.WireDecodeError);
 	expect(wire.readSafeInteger(1.0)).toBe(1); expect(wire.readSafeInteger(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
 });
-it('validates typed create/restart and dedicated empty cancellation requests', () => {
+it('validates typed restart and dedicated empty cancellation requests', () => {
 	const first = record(fixtures['gateway-envelopes'].cases[0].wire);
-	expect(wire.readCreateRequest(first).params).toEqual({ name: 'Acme' }); expect(() => wire.readCreateRequest({ ...first, params: {} })).toThrow(wire.WireDecodeError);
 	expect(wire.readRestartRequest({ ...first, params: {} }).params).toEqual({}); expect(wire.readCancelRequest({})).toEqual({});
 	expect(() => wire.readCancelRequest({ operation_id: first.operation_id })).toThrow(wire.WireDecodeError);
 });

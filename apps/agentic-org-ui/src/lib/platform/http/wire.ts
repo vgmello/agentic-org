@@ -121,7 +121,6 @@ export function readCommandEnvelope<P = JsonObject>(value: unknown, params: Read
 export function nativeParams<P>(envelope: CommandEnvelope<P>, kind: OperationKind): JsonObject {
 	return checked(() => ({ ...businessParams(envelope.params), [idFields[readKind(kind)]]: operationId(envelope.operation_id) }))(undefined);
 }
-export const readCreateRequest = (value: unknown) => readCommandEnvelope(value, object({ name: text }));
 export const readRestartRequest = (value: unknown) => readCommandEnvelope(value, object({}));
 export const readCancelRequest = checked((value) => Object.keys(fields(value)).length === 0 ? {} : invalid());
 
@@ -279,8 +278,6 @@ function publicProjection(value: unknown, depth = 0): void {
 		}
 	}
 }
-const organizationReader = object({ id: text, name: text, created_at: text, recovery: word(['pending', 'delivered', 'acknowledged'] as const) });
-export const readOrganization = checked((value) => { fields(value); publicProjection(value); return organizationReader(value); });
 export const readRestartResult = checked((value) => { fields(value); publicProjection(value); return {}; });
 export const readCancelResult = checked((value) => {
 	const result = object({ operation_id: operationId, state: cancelState })(value);
@@ -297,7 +294,6 @@ export const readOffice = checked(object({
 	status_reason: optional(word(['in_use', 'storage_error', 'invalid_request', 'unsupported_version', 'crashed', 'start_timeout', 'restarts_exhausted', 'stopped_by_owner'] as const)),
 	next_restart_at: optional(text)
 }));
-export const readOrganizationList = checked(object({ organizations: array(readOrganization) }));
 export const readOfficeList = checked(object({ offices: array(readOffice) }));
 const capabilityReader = object({ name: text, scope: readResponseScope, available: defaulted(bool, () => false), reason: optional(text) });
 export type Capability = ReturnType<typeof capabilityReader>;
