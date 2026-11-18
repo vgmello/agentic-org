@@ -90,12 +90,12 @@ Written by the lead on 2026-11-18 and updated the same day with the owner's answ
 
 **Decided by the owner, 2026-11-18.**
 
-1. **Two kinds of process.** The system has primitives; a development process defines how a project uses them; organization processes define how agents interact and work in general. They are separate primitives. A development process may adjust the organization's overridable guidance for its project, and a document marked not overridable is always followed.
+1. **Three things, kept apart.** An organization process says how the organization handles something (the PCI process, the PII process); a standard says what it uses and how it builds and runs things (technologies, tools, the deployment pattern); a development process says how a project builds software. The product must make the difference plain. The system has primitives; a development process defines how a project uses them; organization processes define how agents interact and work in general. They are separate primitives. A development process may adjust the organization's overridable guidance for its project, and a document marked not overridable is always followed.
 2. **A lead with hiring power approves a hire.** Allow hiring is a permission of a lead, person or agent, given lead by lead; a request escalates up the lead chain until it reaches someone who has it ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)).
 3. **Agents behave like people who are always online.** Anything addressed to an agent starts it: a message, a mention, an ask or a task assignment, from anyone. An idle agent shows as available; senders see presence and decide whether to wait ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
 4. **Releases, milestones and features are primitives a process chooses to use.** They exist in the system for every project; nothing forces a change into a release. Software delivery by features is its own process, built in beside DSS, and both built-in processes use releases.
 5. **A development process declares the project's tabs.** The tabs are generic; a process says which things it has and they become tabs ([design](../design/development-processes.md#4-the-projects-tabs)).
-6. **Built-in processes, and processes anyone can create or edit.** A process can be imported into the system as a file. There is no link between organizations.
+6. **Built-in processes, and processes anyone can create or edit.** A process can be imported into the system as a file and downloaded as one. Nothing links two organizations: they are completely independent.
 7. **Teams and projects live side by side.** A team is created before any project and never needs one; a project always has a team.
 
 **Decided by the lead,** inside the [non-negotiables](../architecture-non-negotiables.md) and recorded in the design.
@@ -112,6 +112,4 @@ Written by the lead on 2026-11-18 and updated the same day with the owner's answ
 10. **The views a tab can use are the product's:** documents of a section, tasks of given types as a list or a board, the feature map, and releases with their milestones. A new kind of view is a product change.
 11. **How agents starting agents is bounded:** a start never interrupts a running turn, passes the permit and budget checks, and one agent may start another only so many times an hour.
 
-**Point that needs the owner.**
-
-1. **Import.** You said earlier that processes do not move between organizations, and later that a process can be imported. The design reads this as: a person can import a process file and download one, and nothing connects two organizations. Say if that is wrong.
+**Nothing is waiting for the owner.** The import reading is confirmed (2026-11-18): a person can import a process file and download one, and organizations are completely independent. A task need not be in a release; on a board, tasks with a release and tasks without one are different lanes. The Allow hiring permission applies to people as well as agents, and the owner and the administrator always have hiring power.

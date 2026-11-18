@@ -8,8 +8,15 @@ inherited, and what an agent receives. The records are owned by
 [record contracts](organization-data/08-record-contracts.md). The screens are in the
 [processes UX](../specs/processes-ux.md).
 
-These are **organization processes**: how the organization works, whatever is being
-built. "Before you commit, run these checks" is one. A project's
+The owner's definitions (2026-11-18), which the product keeps visibly apart:
+
+- An **organization process** says how the organization handles something, whatever is
+  being built: the PCI process, the PII process, "before you commit, run these checks".
+- A **standard** says what the organization uses and how it builds and runs things:
+  which technologies and tools, the deployment pattern, how we deploy.
+
+Both are the organization's, both use the envelope and inheritance below, and this
+design is the specification for both. A project's
 [development process](development-processes.md) is a different primitive (owner,
 2026-11-18): it says how a project builds software, with roles, stages, skills,
 document kinds and tabs. The two are stored, edited and delivered separately, and

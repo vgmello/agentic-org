@@ -25,8 +25,9 @@ an agent the owner trusted to staff its team.
 2. **A request escalates until it reaches someone who has it.** It goes up the lead
    chain from the team the new agent joins and stops at the first lead whose
    `may_hire` is on. A lead without it does not decide; the request passes on, and
-   that lead and the requester are told who it went to. Above the top team, and at
-   any time, the organization's owner can approve.
+   that lead and the requester are told who it went to. The organization's owner
+   always has hiring power, and so does the server's administrator acting in the
+   organization; a request that no lead can decide reaches the owner.
 3. **The permission is given lead by lead, to a person or an agent.** A person's
    record is created with it on and an agent's with it off. The lead of an
    engineering team can have it off while the lead of the director team above has it

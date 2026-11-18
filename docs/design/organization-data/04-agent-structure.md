@@ -1,6 +1,6 @@
 # Agents and employees
 
-Status: **selected** data contract, revision 2.13. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
+Status: **selected** data contract, revision 2.14. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
 
 ## Confirmed relationships
 
@@ -102,7 +102,7 @@ A lead with hiring power approves a hire (owner, 2026-11-18). Hiring power is th
 
 - A hire request goes up the lead chain from the team the new agent joins: that team's lead, then the lead of the team above, and so on. It stops at the first lead whose `may_hire` is on, and that lead approves or rejects it.
 - A lead whose `may_hire` is off does not decide: the request passes on. That lead and the requester are told who it went to.
-- Above the top team, and at any time, the organization's owner can approve.
+- The organization's owner always has hiring power, and so does the server's administrator acting in the organization; neither needs the permission. A request that no lead can decide reaches the owner.
 - A lead who has the permission hires into its own team, and the teams under it, without a second approval: its request is recorded as requested and approved by it.
 
 The permission is given lead by lead, not by position. In a director team with engineering teams under it, the lead of an engineering team can have it off while the lead of the director team has it on: a hire into the engineering team then goes up to the director team's lead. Hiring is into a team and needs no project.

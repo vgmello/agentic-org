@@ -15,21 +15,19 @@ decision and what was rejected are in
 desired state specifications, is in the
 [desired state design](desired-state-specifications.md).
 
-## Two kinds of process
+## Three things, kept apart
 
-The owner's rule (2026-11-18): there are two primitives, and they stay apart.
+The owner's rule (2026-11-18): these are different primitives, and the product must
+make the difference plain wherever they appear.
 
-- An **organization process**, with its standards, says how the organization works
-  whatever is being built: "before you commit, run these checks". It is written at
-  the organization, a team or a project, inherited downward, and can be must-follow.
-  It is the [process design](processes.md).
-- A **development process** says how a project builds software: which roles start
-  it, what each role does, which documents it produces, which tabs the project has.
-  The owner's name for the kind is an agentic software development process (ASDP).
-  The desired state specification (DSS) is one; feature delivery is another. A
-  project follows at most one. This design is about these.
-- A **skill** is one piece of a development process's guidance, written for one or
-  more roles.
+| | What it says | Examples | Belongs to |
+| --- | --- | --- | --- |
+| **Organization process** | How the organization handles something, whatever is being built | The PCI process, the PII process, "before you commit, run these checks", how agents ask and escalate | The organization, a team or a project, inherited downward ([process design](processes.md)) |
+| **Standard** | What the organization uses and how it builds and runs things | Which technologies and tools, the deployment pattern, how we deploy | The same levels and inheritance as an organization process; it is the organization's |
+| **Development process** | How a project builds software: which roles start it, what each role does, which documents it produces, which tabs the project has | Desired state specification (DSS), feature delivery | A project follows at most one. The owner's name for the kind is an agentic software development process (ASDP). This design is about these |
+
+A **skill** is one piece of a development process's guidance, written for one or more
+roles.
 
 The owner's summary: the system has primitives (projects, teams, tasks, releases,
 milestones, features, documents, roles, hiring, messages, asks). How a project uses
@@ -37,8 +35,9 @@ them is defined by its development process. How agents interact with each other 
 work in general is defined by organization processes, and a development process may
 adjust that for its project.
 
-Both kinds are text an agent reads and applies. Neither is code the product runs.
-Neither inherits from or contains the other. A development process may refine the
+All three are text an agent reads and applies. None is code the product runs. A
+development process neither inherits from nor contains the organization's processes
+and standards. A development process may refine the
 organization's overridable guidance for its project; a document the organization or a
 team marked not overridable is always followed.
 
@@ -80,7 +79,8 @@ team marked not overridable is always followed.
    role; it gives no one the right to approve.
 9. **Releases, milestones and features are primitives a process chooses to use.**
    They exist in the system for every project. Whether and how a project uses them
-   is its development process's choice; nothing forces a change into a release.
+   is its development process's choice; nothing forces a change into a release, and
+   a task with no release is ordinary: on a board it is in its own lane.
 10. **A development process declares the project's tabs.** The product provides a
     small set of generic views. A process lists the things it has, each as a tab
     built from one of those views. Releases and features are such things: a project
@@ -226,7 +226,7 @@ Work and Docs. Each names one of the product's generic views and says what it sh
 | View | What the tab shows | What the process sets |
 | --- | --- | --- |
 | `documents` | The documents, diagrams and images of one section of the tree, with status, version, unissued changes and progress. **New** starts a document there | `section` (one of the process's folders), optional `kinds` |
-| `work` | The project's tasks of the given types, as a list or as a board with one column per status. **New** creates a task of the first type | `types` (task types; a process may use its own, such as `story`), `layout: list \| board` |
+| `work` | The project's tasks of the given types, as a list or as a board with one column per status. A board may have a lane per release and one for tasks in no release, such as keep-the-lights-on work, because a task need not be in a release. **New** creates a task of the first type | `types` (task types; a process may use its own, such as `story`), `layout: list \| board`, `lanes: none \| release` |
 | `features` | The feature map of the [features UX](../specs/features-ux.md). Listing this view is how a process says it uses features | Nothing |
 | `releases` | The project's releases with their milestones and progress. Listing this view is how a process says it uses releases | Nothing |
 
@@ -456,7 +456,7 @@ office.
 | PKG-15 | The tab bar is exactly Overview, Work, the process's tabs in order, Features or Releases if the project holds them and the process gave no tab for them, then Docs, Team, Activity, Conversations. Nothing about tabs is stored on the project. |
 | PKG-16 | Any person of the organization creates, copies, imports and edits a development process; an agent's write of one is refused. An imported file is validated, gets a new ID and arrives as a draft; a downloaded one imports again unchanged. |
 | PKG-17 | Releases, milestones and features exist as records for every project; a process that lists no `releases` or `features` tab does not use them, and nothing refuses a task that is in no release. No manifest field hides or removes a fixed tab. |
-| PKG-18 | A `documents` tab lists exactly the documents and media of its section, limited to its kinds; a `work` tab lists exactly the tasks of its types, as a list or a board; an empty tab shows its empty state and New. |
+| PKG-18 | A `documents` tab lists exactly the documents and media of its section, limited to its kinds; a `work` tab lists exactly the tasks of its types, as a list or a board, and with `lanes: release` every task is in the lane of its release or in the No release lane; an empty tab shows its empty state and New. |
 
 ## 12. Open points
 
