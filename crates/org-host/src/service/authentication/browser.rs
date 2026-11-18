@@ -239,6 +239,31 @@ impl Authentication {
         }
     }
 
+    /// The account a browser pair acts for, from current registry authority: the same
+    /// check as `session.validate` (the session is touched; a session whose account is gone
+    /// or revoked ends), returning the account record instead of its view.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "called by service/organizations.rs once service/mod.rs hooks its dispatch"
+        )
+    )]
+    pub(crate) fn browser_account(
+        &self,
+        params: &SessionValidateParams,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<crate::hostdb::accounts::Account, ApiError> {
+        let view = self.validate_browser(params, now_ms, ended)?;
+        let id = AccountId::parse(&view.account.id).map_err(|_| unavailable())?;
+        self.db
+            .account_authority(&id)
+            .map_err(|_| unavailable())?
+            .filter(|a| a.revoked_at_ms().is_none())
+            .ok_or_else(denied)
+    }
+
     /// `session.end`: deletes one session. Ending an unknown session is not an error.
     pub(crate) fn end_browser(&self, session_id: &str) -> Result<Vec<Ended>, ApiError> {
         let sessions: &dyn BrowserSessions = &*self.db;

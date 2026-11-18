@@ -6,7 +6,7 @@ fn binding(root: &Path) -> Binding {
     std::fs::create_dir_all(&public_root).unwrap();
     Binding {
         operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
-        owner_member_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
+        owner_member_id: "01900000-0000-7000-8000-0000000000ee".into(),
         public_root: std::fs::canonicalize(public_root).unwrap(),
         bootstrap: None,
     }
@@ -131,13 +131,16 @@ fn selected_uuid_hq_marker_keeps_ca_identity_through_retry_and_reopen() {
             slug: "example".into(),
             repository_remote_url: "https://example.test/org.git".into(),
             state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
         },
         organization_id: new.org_id.clone(),
         office_id: new.office_id.clone(),
         repository_id: "019a8928-1337-7456-8456-0123456789ad".into(),
         home_team_id: "019a8928-1337-7456-8456-0123456789ae".into(),
         hr_employee_id: "019a8928-1337-7456-8456-0123456789af".into(),
+        creator: org_proto::selected_bootstrap::CreatorV1::from_login(
+            binding.owner_member_id.clone(),
+            "Ana",
+        ),
     });
     let office = prepare(&folder, &new, Some(key()), INSTANCE, &binding, code()).unwrap();
     let record = office.hq_creation_record().unwrap().unwrap();

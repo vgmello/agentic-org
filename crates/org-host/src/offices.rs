@@ -285,6 +285,23 @@ impl Offices {
             .collect()
     }
 
+    /// One organization with its offices on this Mac (HQ first), if the catalog holds it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "read by the browser calls once service/mod.rs hooks their dispatch"
+        )
+    )]
+    pub(crate) fn organization_by_id(&self, id: &str) -> Option<Organization> {
+        self.organizations().into_iter().find(|o| o.id == id)
+    }
+
+    /// The broadcast this host's events and snapshots are ordered by.
+    pub(crate) fn broadcast(&self) -> &Broadcast {
+        &self.broadcast
+    }
+
     /// Every office on this Mac, in the order of [`Offices::organizations`].
     pub(crate) fn offices(&self) -> Vec<OfficeInfo> {
         self.organizations()
@@ -299,7 +316,7 @@ impl Offices {
         &self,
         first: org_office_launch::CreateLine,
         recovery: org_proto::RecoveryCode,
-    ) -> Result<bool, ApiError> {
+    ) -> Result<(), ApiError> {
         let deadline = Instant::now() + self.create_wait;
         self.wait_for_startup(deadline)?;
         let p = first
@@ -316,7 +333,9 @@ impl Offices {
             {
                 return Err(storage_error());
             }
-            return Ok(self.state_of(&office).status == OfficeStatus::Active);
+            // Completion is the durable identity: the worker reported `created` and the
+            // host adopted the office, whatever its status is now.
+            return Ok(());
         }
         lock(&self.catalog)
             .reserve_selected(p)
@@ -351,7 +370,7 @@ impl Offices {
                 let file = file.clone();
                 self.supervisor.adopt(*adoptable);
                 self.add_created(&file, |_| {});
-                Ok(self.state_of(&office).status == OfficeStatus::Active)
+                Ok(())
             }
             // Published effects may exist after every such outcome. The caller
             // retains its original operation and reconciles; never a rejection.

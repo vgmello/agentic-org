@@ -52,7 +52,74 @@ pub(super) fn read(
     })
     .transpose()
 }
+/// Which of a plan's two catalog-unique values another create already holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Taken {
+    Name,
+    Slug,
+}
+/// Names compare by their case-folded key; a slug is already lowercase.
+fn taken(db: &rusqlite::Connection, name: &str, slug: &str) -> Result<Option<Taken>, Error> {
+    let key = OrganizationName::parse(name).map_err(|_| Error::Unsafe)?;
+    let exists = |sql: &str, value: &str| -> Result<bool, Error> {
+        Ok(db.query_row(sql, [value], |r| r.get(0))?)
+    };
+    if exists(
+        "SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE name_key=?1)",
+        key.key(),
+    )? {
+        return Ok(Some(Taken::Name));
+    }
+    if exists(
+        "SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE slug=?1)",
+        slug,
+    )? {
+        return Ok(Some(Taken::Slug));
+    }
+    Ok(None)
+}
+fn select(db: &rusqlite::Connection, filter: &str, value: &str) -> Result<Vec<Reservation>, Error> {
+    let mut statement = db.prepare(&format!(
+        "SELECT operation_id FROM selected_provisioning WHERE {filter} ORDER BY operation_id"
+    ))?;
+    let ids = statement
+        .query_map([value], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.iter()
+        .map(|id| read(db, id)?.ok_or(Error::Unsafe))
+        .collect()
+}
 impl HostDb {
+    /// Whether another create already holds the plan's name or slug. Read-only: a refusal
+    /// from this check has stored nothing anywhere.
+    pub(crate) fn provisioning_taken(
+        &self,
+        name: &str,
+        slug: &str,
+    ) -> Result<Option<Taken>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        taken(&db, name, slug)
+    }
+    /// Every create that reserved its identity and has not been linked: what a starting host
+    /// continues without waiting for a client.
+    pub(crate) fn provisioning_reserved(&self) -> Result<Vec<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        select(&db, "linked=0 AND ?1=?1", "")
+    }
+    /// The account's creates, linked or not.
+    pub(crate) fn provisioning_of(&self, account: &str) -> Result<Vec<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        select(&db, "account=?1", account)
+    }
+    /// One of the account's own creates. Another account's operation reads as absent.
+    pub(crate) fn provisioning_lookup(
+        &self,
+        account: &str,
+        operation: &str,
+    ) -> Result<Option<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        Ok(read(&db, operation)?.filter(|r| r.account == account))
+    }
     pub(crate) fn provisioning_offices(&self) -> Result<std::collections::BTreeSet<String>, Error> {
         let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         let mut statement =
@@ -108,7 +175,7 @@ impl HostDb {
     ) -> Result<Reservation, Error> {
         if !frozen.prepared.valid()
             || frozen.account != account.account_id()
-            || !org_proto::is_valid_member_id(&frozen.owner_member)
+            || frozen.prepared.creator.employee_id != frozen.owner_member
             || frozen.recovery_handle != format!("recovery.{}", frozen.operation_id)
             || frozen.key_fingerprint.is_some()
             || frozen.linked
@@ -128,6 +195,11 @@ impl HostDb {
                 return Err(Error::OperationReused);
             }
             return Ok(prior);
+        }
+        // The same check as admission, repeated in the inserting transaction; the UNIQUE
+        // constraints remain underneath it.
+        if taken(&tx, &frozen.prepared.plan.name, &frozen.prepared.plan.slug)?.is_some() {
+            return Err(Error::Conflict);
         }
         let name =
             OrganizationName::parse(&frozen.prepared.plan.name).map_err(|_| Error::Unsafe)?;

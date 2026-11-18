@@ -718,6 +718,11 @@ impl Host {
             ))),
             _ => None,
         };
+        // A create that reserved its identity before the host last stopped continues now,
+        // with no client asking; later ones start from the browser's request.
+        if let Some(provisioning) = &provisioning {
+            provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
+        }
         let service = Arc::new(
             Service::new(
                 Arc::clone(&offices),

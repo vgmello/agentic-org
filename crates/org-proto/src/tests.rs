@@ -1861,6 +1861,7 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
         "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "01arz3ndektsv4rrffq69g5fav",
         "00000000000000000000000000",
+        "01900000-0000-7000-8000-000000000001",
     ] {
         assert!(is_valid_member_id(good), "{good}");
         assert!(
@@ -1877,6 +1878,9 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
         "01ARZ3NDEKTSV4RRFFQ69G5F-V",
         "01ARZ3NDEKTSV4RRFFQ69G5FAé",
         " 01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "01900000-0000-4000-8000-000000000001",
+        "01900000-0000-7000-8000-00000000000",
+        "01900000000070008000000000000001",
     ] {
         assert!(!is_valid_member_id(bad), "{bad:?}");
     }

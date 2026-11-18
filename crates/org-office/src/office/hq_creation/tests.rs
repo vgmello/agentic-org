@@ -5,7 +5,7 @@ fn binding(root: &Path) -> Binding {
     std::fs::create_dir_all(&public_root).unwrap();
     Binding {
         operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
-        owner_member_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
+        owner_member_id: "01900000-0000-7000-8000-0000000000ee".into(),
         public_root: std::fs::canonicalize(public_root).unwrap(),
         bootstrap: None,
     }
@@ -607,13 +607,16 @@ fn selected_creation_refuses_missing_or_mismatched_bootstrap_before_material_or_
                     slug: "example".into(),
                     repository_remote_url: "https://example.test/org.git".into(),
                     state_branch: "org/state".into(),
-                    home_team_name: "Core".into(),
                 },
                 organization_id: id(1),
                 office_id: id(2),
                 repository_id: id(3),
                 home_team_id: id(4),
                 hr_employee_id: id(5),
+                creator: org_proto::selected_bootstrap::CreatorV1::from_login(
+                    binding.owner_member_id.clone(),
+                    "Ana",
+                ),
             };
             match mismatch {
                 "office" => prepared.office_id = id(6),

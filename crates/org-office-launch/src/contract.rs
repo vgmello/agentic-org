@@ -303,6 +303,7 @@ impl CreateLine {
                 if b.organization_id != self.org_id
                     || b.office_id != self.office.office_id
                     || b.plan.name != self.org_name
+                    || b.creator.employee_id != self.owner_member_id
                     || self.office.id_profile != Some(IdProfile::SelectedV1)
                     || !self.office.selected_writer_required
                 {

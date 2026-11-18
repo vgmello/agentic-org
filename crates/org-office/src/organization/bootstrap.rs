@@ -33,6 +33,7 @@ impl Office {
             return Ok(());
         };
         if !prepared.valid()
+            || prepared.creator.employee_id != binding.owner_member_id
             || prepared.organization_id != self.info().org_id
             || prepared.office_id != self.info().office_id
         {
@@ -108,8 +109,10 @@ impl Office {
         })
     }
 }
-fn provenance(at: &str, actor: &str) -> Value {
-    json!({"schema_version":1,"revision":1,"created_at":at,"created_by_kind":actor,"created_by_id":null,"updated_at":at,"updated_by_kind":actor,"updated_by_id":null})
+/// Every bootstrap record is created by the organization's creator, a person employee.
+/// No record is attributed to a nameless owner.
+fn provenance(at: &str, creator: &str) -> Value {
+    json!({"schema_version":1,"revision":1,"created_at":at,"created_by_kind":"employee","created_by_id":creator,"updated_at":at,"updated_by_kind":"employee","updated_by_id":creator})
 }
 fn with(mut base: Value, fields: Value) -> Value {
     base.as_object_mut()
@@ -192,25 +195,31 @@ fn materialize(p: &PreparedV1, office_name: &str, at: &str) -> Result<Materializ
         return Err(invalid());
     }
     let mut files = BTreeMap::new();
+    let creator = p.creator.employee_id.as_str();
     let org = with(
-        provenance(at, "owner"),
+        provenance(at, creator),
         json!({"id":p.organization_id,"slug":p.plan.slug,"name":p.plan.name,"organization_repository_id":p.repository_id,"state_branch":p.plan.state_branch}),
     );
     let repo = with(
-        provenance(at, "owner"),
+        provenance(at, creator),
         json!({"id":p.repository_id,"kind":"remote","remote_url":p.plan.repository_remote_url}),
     );
     let office = with(
-        provenance(at, "owner"),
+        provenance(at, creator),
         json!({"id":p.office_id,"slug":"hq","name":office_name,"role":"hq"}),
     );
+    // One top-level team, named after the organization and led by its creator.
     let team = with(
-        provenance(at, "owner"),
-        json!({"id":p.home_team_id,"name":p.plan.home_team_name,"number":1,"parent_team_id":null,"lead_employee_id":null,"status":"active"}),
+        provenance(at, creator),
+        json!({"id":p.home_team_id,"name":p.plan.name,"number":1,"parent_team_id":null,"lead_employee_id":creator,"status":"active"}),
+    );
+    let person = with(
+        provenance(at, creator),
+        json!({"id":creator,"name":p.creator.name,"handle":p.creator.handle,"kind":"person","home_team_id":p.home_team_id,"role_id":null,"reports_to_employee_id":null,"status":"active","offboarded_at":null}),
     );
     let hr = with(
-        provenance(at, "system"),
-        json!({"id":p.hr_employee_id,"name":"HR","handle":"hr","kind":"agent","home_team_id":p.home_team_id,"role_id":null,"reports_to_employee_id":null,"status":"active","is_owner":false,"agent_status":"paused","offboarded_at":null}),
+        provenance(at, creator),
+        json!({"id":p.hr_employee_id,"name":"HR","handle":org_proto::selected_bootstrap::HR_HANDLE,"kind":"agent","home_team_id":p.home_team_id,"role_id":null,"reports_to_employee_id":null,"status":"active","agent_status":"paused","offboarded_at":null}),
     );
     files.insert("organization.yaml".into(), yaml(&org)?);
     files.insert(
@@ -236,9 +245,17 @@ fn materialize(p: &PreparedV1, office_name: &str, at: &str) -> Result<Materializ
         ),
         profile,
     );
+    let mut profile = b"---\n".to_vec();
+    profile.extend(yaml(&person)?);
+    profile.extend(b"---\n");
+    files.insert(
+        format!("teams/{}/people/{creator}/profile.md", p.home_team_id),
+        profile,
+    );
     let team = with(team, json!({"organization_id":p.organization_id}));
     let hr = with(hr, json!({"organization_id":p.organization_id}));
-    let source = json!({"schema_version":1,"organization_id":p.organization_id,"source_position":{"epoch":0,"seq":0},"teams":{p.home_team_id.clone():team},"employees":{p.hr_employee_id.clone():hr},"projects":{}});
+    let person = with(person, json!({"organization_id":p.organization_id}));
+    let source = json!({"schema_version":1,"organization_id":p.organization_id,"source_position":{"epoch":0,"seq":0},"teams":{p.home_team_id.clone():team},"employees":{p.hr_employee_id.clone():hr,creator:person},"projects":{}});
     Ok((serde_json::to_vec(&source).map_err(storage)?, files))
 }
 

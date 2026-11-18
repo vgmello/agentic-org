@@ -409,7 +409,6 @@ pub(super) fn provision_hq(
             slug: "example".into(),
             repository_remote_url: "https://example.test/organization.git".into(),
             state_branch: "org/state".into(),
-            home_team_name: "Core".into(),
         },
     };
     let until = Instant::now() + WAIT;

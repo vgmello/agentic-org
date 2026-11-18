@@ -18,7 +18,6 @@ fn plan() -> PlanV1 {
         slug: "example".into(),
         repository_remote_url: "https://example.test/organization.git".into(),
         state_branch: "org/state".into(),
-        home_team_name: "Core".into(),
     }
 }
 fn params() -> Params {
@@ -117,6 +116,12 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
     assert!(!r.linked);
     db.verify_selected_owner(&r.prepared.organization_id, &r.account, &r.owner_member)
         .unwrap();
+    // The creator is the account's person: a UUIDv7 that is also the linked member id,
+    // named after the username, with the username as a valid handle.
+    assert!(org_proto::is_uuid_v7(&r.owner_member));
+    assert_eq!(r.prepared.creator.employee_id, r.owner_member);
+    assert_eq!(r.prepared.creator.name, actor.login());
+    assert_eq!(r.prepared.creator.handle, "owner-1");
     assert!(writers.required(&r.prepared.office_id).unwrap());
     assert!(crate::catalog::unfinished_folders(&office_home)
         .unwrap()
@@ -238,7 +243,13 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
         // Stop at the actual production phase after custody/SQL reservation,
         // before reserve_writer can allocate any writer or device identity.
         let pending = controller
-            .new_pending(&actor, &p, journal::fingerprint(&p).unwrap(), &handle)
+            .new_pending(
+                &actor,
+                &p.operation_id,
+                &p.plan,
+                journal::fingerprint(&p).unwrap(),
+                &handle,
+            )
             .unwrap();
         let reservation = db
             .reserve_provisioning(&actor, &pending.reservation)
@@ -415,6 +426,7 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
     let actor = account(&db);
     let p = params();
     let fp = journal::fingerprint(&p).unwrap();
+    let owner_member = crate::ids::uuid_v7().unwrap();
     let prepared = PreparedV1 {
         plan: p.plan.clone(),
         organization_id: crate::ids::uuid_v7().unwrap(),
@@ -422,17 +434,24 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
         repository_id: crate::ids::uuid_v7().unwrap(),
         home_team_id: crate::ids::uuid_v7().unwrap(),
         hr_employee_id: crate::ids::uuid_v7().unwrap(),
+        creator: org_proto::selected_bootstrap::CreatorV1::from_login(owner_member.clone(), "Ana"),
     };
     let r = Reservation {
         operation_id: p.operation_id.clone(),
         account: actor.account_id().into(),
         fingerprint: fp,
         prepared,
-        owner_member: crate::ids::generate().unwrap(),
+        owner_member,
         recovery_handle: format!("recovery.{}", p.operation_id),
         key_fingerprint: None,
         linked: false,
     };
+    let mut other = r.clone();
+    other.owner_member = crate::ids::uuid_v7().unwrap();
+    assert!(
+        db.reserve_provisioning(&actor, &other).is_err(),
+        "the owner member must be the creator's person"
+    );
     db.reserve_provisioning(&actor, &r).unwrap();
     assert_eq!(
         db.reserve_provisioning(&actor, &r).unwrap().prepared,

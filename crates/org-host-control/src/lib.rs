@@ -58,6 +58,7 @@ pub mod gateway;
 pub mod journal;
 pub mod listen;
 pub mod ops;
+pub mod organization;
 pub mod pem;
 pub mod provision;
 pub mod recovery;
