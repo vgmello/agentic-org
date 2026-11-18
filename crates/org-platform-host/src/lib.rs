@@ -21,3 +21,4 @@
 compile_error!("org-platform-host builds only for Unix targets");
 
 pub mod names;
+pub mod presence;

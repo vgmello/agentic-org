@@ -46,4 +46,3 @@ syn = { version = "=2.0.119", features = ["full", "visit"] }
 
 [build-dependencies]
 org-release = { path = "../org-release" }
-cc = "=1.11.1"

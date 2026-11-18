@@ -19,3 +19,7 @@ core-foundation.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[build-dependencies]
+# build.rs compiles the recovery presence bridge (src/presence/bridge.m) for macOS targets.
+cc = "=1.11.1"

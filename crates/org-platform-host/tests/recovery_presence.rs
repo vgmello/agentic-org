@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const BRIDGE: &[u8] = include_bytes!("../src/recovery/presence.m");
+const BRIDGE: &[u8] = include_bytes!("../src/presence/bridge.m");
 const FIXTURE: &[u8] = include_bytes!("fixtures/recovery_presence.m");
 const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 
@@ -142,7 +142,7 @@ fn unchanged(path: &Path, compiled_bytes: &[u8]) {
 #[test]
 fn exact_native_bridge_lifecycle_with_arc_and_asan_without_os_prompt() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let bridge = manifest.join("src/recovery/presence.m");
+    let bridge = manifest.join("src/presence/bridge.m");
     let fixture = manifest.join("tests/fixtures/recovery_presence.m");
     let temporary = tempfile::Builder::new()
         .prefix("agentic-recovery-presence-")

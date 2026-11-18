@@ -45,7 +45,6 @@ crates/org-host/src/offices.rs 2
 crates/org-host/src/peer.rs 10
 crates/org-host/src/provisioning/tests.rs 1
 crates/org-host/src/recovery.rs 2
-crates/org-host/src/recovery/presence.rs 7
 crates/org-host/src/release.rs 2
 crates/org-host/src/release/platform.rs 4
 crates/org-host/src/release/runtime.rs 3
@@ -56,7 +55,6 @@ crates/org-host/src/supervisor/channels.rs 2
 crates/org-host/src/supervisor/child.rs 1
 crates/org-host/src/supervisor/mod.rs 9
 crates/org-host/src/web/tests.rs 26
-crates/org-host/tests/recovery_presence.rs 1
 crates/org-office/src/store/acceptance/tests.rs 2
 crates/org-socket/src/image.rs 8
 crates/org-socket/src/rights/send/tests.rs 2

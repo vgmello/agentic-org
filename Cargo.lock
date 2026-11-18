@@ -646,7 +646,6 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "caseless",
- "cc",
  "core-foundation",
  "flate2",
  "hmac",
@@ -745,6 +744,7 @@ dependencies = [
 name = "org-platform-host"
 version = "0.0.0"
 dependencies = [
+ "cc",
  "core-foundation",
  "libc",
  "org-platform",
