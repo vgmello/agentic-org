@@ -26,7 +26,7 @@
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "d7c915c5b1c7a4dfb60f2918da94b37b4172a24245a44f30a5fea2b542965f84"
+      "sha256": "f958c21e2260814c8c58b688b6c9d9f8470a1d8224d1d3f259e2af5bce378693"
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
@@ -54,7 +54,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "e16c8c2c13dbc6acf0d9dbe74e148069a9110f506e1bce9a71cc9bca75e954e0"
+      "sha256": "d3064b8661b9191afcb4745399b8b6ff14d92037ff49a31b55cb7801e5080f18"
     },
     {
       "path": "AGENTS.md",
@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "9c56303f0cb84fe80f986963fe14621db76615e5baa7183d814e2ba4d45e1bed"
+      "sha256": "f1526ebacbfec99658b7e278d368b76ad8e9ea1ed82b1cf036d9bc4e933a1fce"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "bc2d81cbf0ec85359f846c21f8e51111a4abb2273ab339ae605699ec0bb8bd8b"
+      "sha256": "a4a021a3bbff4da4dc387667eb26d9419fb38d9cb47fac444ad8d072538ca1c8"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -288,7 +288,8 @@
         "apps/agentic-org-web",
         "crates/org-pki",
         "crates/org-socket",
-        "crates/org-release"
+        "crates/org-release",
+        "crates/org-platform"
       ],
       "risks": [],
       "implementation": [

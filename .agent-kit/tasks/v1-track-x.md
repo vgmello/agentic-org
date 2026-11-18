@@ -1,0 +1,87 @@
+# Track X: Linux and containers (X1a to X6)
+
+The Track X lead's plan and state for milestone two of the
+[implementation plan](../../docs/implementation-plan.md#milestone-two--linux-in-parallel-track-x).
+The stable contract is [ADR-0017](../../docs/adr/0017-linux-and-container-hosting.md)
+(criteria LNX-1 to LNX-6) and the [Linux host design](../../docs/design/linux-host.md);
+the checklist row is FC-164. Every handoff and review of this track also carries
+[independent delivery and dependency boundaries](../../docs/independent-delivery.md).
+
+## How this track is run
+
+- **Lead and models.** The lead is a Claude session (model identifier recorded in the
+  session, not here). The kit's active profile names `gpt-6.1-sol` for every phase;
+  this lead runs on another model, so, as AGENTS.md requires, every phase and gate is
+  kept and run with fresh-context subagents of the lead's own model: plan,
+  implementation, fresh read-only review, repairs, original-author validation and a
+  separate fresh final review. The Codex wrapper (`kit_codex.py`), Repowise and
+  Hindsight are not installed in the cloud container this lead runs in, so
+  `kit_hooks.py check` cannot pass there (its `kit_hindsight_embed.py test` step
+  fails on the missing tool); the remaining kit checks and the project checks are run
+  directly and their results are recorded per increment below.
+- **Where the work is.** Branch `claude/hopeful-noether-lsmbac`, started from
+  `origin/v1-integration` at `032ea63`. The session that runs this lead may push only
+  that branch; the merge into `v1-integration` is made by a session that may.
+- **Systems.** Development and the full Linux checks run on Linux x86-64 (kernel
+  6.18, as root in a container). macOS code is type-checked locally with
+  `cargo check --target aarch64-apple-darwin` where the crate has no C build, and
+  built and tested by the macOS CI job on every push. The signed-build, Keychain,
+  Seatbelt and presence-dialog checks on a Mac are owed by the Track A engineer
+  before X1c and X1d are relied on (design, section 7).
+- **Writers.** One writer per file. Where an increment is split, each worker has its
+  own worktree and file list, recorded under that increment.
+
+## Increments
+
+| Increment | State | Evidence |
+| --- | --- | --- |
+| X1a crate, `service` contract, check | Built 2026-11-18 | See below |
+| X1b `fs`, `dirs`, `process`, `socket` | Not started | |
+| X1c `admission`, `confinement`, `presence` | Not started | |
+| X1d `credentials` | Not started | |
+| X2 first worker on Linux (LNX-1) | Not started | |
+| X3 host secrets on Linux (LNX-4) | Not started | |
+| X4 web process confined on Linux (LNX-3) | Not started | |
+| X5 service and container (LNX-2) | Not started | |
+| X6 both systems in CI (LNX-5, LNX-6) | Not started | |
+
+## X1a · The platform crate and the check
+
+**Outcome.** An internal foundation; nothing a person can see. No change can add a
+platform predicate outside `crates/org-platform`, and A2 has a `service` contract to
+write the launchd registration behind.
+
+**Prerequisites.** None. **Early production-path proof.** The check runs against the
+real workspace sources in `cargo test --workspace` and as its own CI step on both
+systems.
+
+**Files owned.** New: `crates/org-platform/` (`Cargo.toml`, `src/lib.rs`,
+`src/refusal.rs`, `src/service.rs`, `src/service/refused.rs`, `src/service/tests.rs`,
+`tests/platform_conditionals.rs`), `.github/platform-conditionals.allow`. Edited:
+the workspace `Cargo.toml` and `Cargo.lock`, `.github/workflows/ci.yml` (one step),
+`docs/design/linux-host.md`, `docs/implementation-plan.md` (X1a),
+`docs/FEATURES.md` and `docs/FEATURE-AREAS.md` (FC-164), this file and `v1-state.md`.
+**Deleted.** Nothing.
+
+**Decisions taken where the documents were silent** (each is written into the
+[design](../../docs/design/linux-host.md), sections 1 and 3.4):
+
+1. The check is a test of `org-platform`, not a separate script: `cargo test
+   --workspace` runs it for every engineer and on both CI systems with no extra
+   tooling, and CI names it as its own step for a fast, readable failure.
+2. The allowlist carries a count per file, and the check requires the exact count.
+   A file-only list would let a listed file gain predicates unnoticed; the plan's
+   "Done when" requires failing on a new predicate.
+3. `service(mode)` refuses for every target in X1a, for both modes. The launchd
+   adapter is A2's and the systemd and foreground adapters are X5's; each adds its
+   target's branch to the constructor.
+4. The contract's status and error types (`ServiceStatus`, `ServiceState`,
+   `Availability`, `ServiceError`), the idempotence and conflict rules of each method,
+   and `Unit::check` (instance id shape, absolute program path, no NUL or line break,
+   no loader variable in the unit's environment).
+5. `ServiceManager` is `Send + Sync`, so a composition can hold one across threads.
+
+**Still open.** The A2 lead reviews the `service` contract when A2 starts. Nothing in
+Track X depends on that answer before X5.
+
+**Checks and review.** Recorded here when run.

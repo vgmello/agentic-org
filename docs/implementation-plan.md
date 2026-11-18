@@ -649,20 +649,23 @@ half of LNX-6 run).
 
 ### X1a · The platform crate and the check
 
-- **Outcome:** none a person can see. From the first day no change can add a
-  platform branch outside one crate, and A2 has a contract to write service
-  registration behind.
-- **Build:**
-  - The crate `crates/org-platform`, with its module layout and the `Refused` type,
-    and the `service` contract with a refusing adapter, agreed with the A2 lead.
-  - The CI check: a script that parses every `.rs` file outside
-    `crates/org-platform/` with `syn` and fails on a `cfg`, `cfg_attr` or `cfg!`
-    predicate naming `target_os`, `target_vendor`, `target_env` or `target_family`,
-    with an allowlist of today's files that may only shrink.
+- **Outcome:** none a person can see. No change can add a platform branch outside one
+  crate, and A2 has a contract to write service registration behind.
+- **Built (2026-11-18):**
+  - The crate `crates/org-platform` with the `Refused` type and the `service`
+    contract ([design, section 3.4](design/linux-host.md#34-service-lifecycle)); its
+    constructor refuses on every target until A2 writes the launchd adapter and X5 the
+    Linux adapters.
+  - The check `crates/org-platform/tests/platform_conditionals.rs`: it parses every
+    `.rs` file outside `crates/org-platform/` with `syn` and fails on a `cfg`,
+    `cfg_attr` or `cfg!` predicate naming `target_os`, `target_vendor`, `target_env`
+    or `target_family`, beyond `.github/platform-conditionals.allow`. The list has
+    the 79 files and 495 predicates of that day, each file with its count; no file
+    is added and no count grows. CI runs the check on macOS and Linux.
 - **Read:** [Linux host design](design/linux-host.md) sections 1, 3.4 and 7,
   [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
-- **Code today:** 44 source files and 35 test files outside any adapter name a
-  platform target. The source files are 29 in `org-host` (among them `spawn.rs`,
+- **Code today:** the 79 listed files are 44 source files and 35 test files. The
+  source files are 29 in `org-host` (among them `spawn.rs`,
   `server_check.rs`, `code_signing.rs`, `peer.rs`, `app_auth.rs`, `bootstrap.rs`,
   `human.rs`, `offices.rs`, `recovery.rs`, `release.rs`, `writer.rs`, `hostdb.rs`,
   `lib.rs`, `keys/mod.rs`, `host_secrets.rs`, `supervisor/mod.rs`,
@@ -676,9 +679,7 @@ half of LNX-6 run).
   each to its contract. Milestone-one work in those files adds no new conditional.
   CI lints `org-host` and `agentic-org` on Linux with `dead_code` and
   `unused_imports` allowed and runs none of their tests there.
-- **Done when:** the crate builds on macOS and Linux; the check runs in CI on both and
-  fails on a new predicate; the A2 lead has accepted the `service` contract. Merged on
-  the first day of Track X.
+- **Still open:** the A2 lead reviews the `service` contract when A2 starts.
 - **Needs:** nothing.
 
 ### X1b · Files, locations, processes and sockets behind the crate

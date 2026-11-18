@@ -62,6 +62,11 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 docs/design/organization-data/test_schema.py
 
+      # ADR-0017 LNX-5: no platform predicate outside crates/org-platform, beyond the shrinking
+      # list in .github/platform-conditionals.allow. `cargo test` below runs it again with the rest.
+      - name: Platform conditionals (LNX-5)
+        run: cargo test --locked -p org-platform --test platform_conditionals
+
       - name: cargo clippy
         run: cargo clippy --locked --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
 

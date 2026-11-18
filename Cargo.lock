@@ -725,6 +725,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-platform"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "org-process"
 version = "0.0.0"
 dependencies = [

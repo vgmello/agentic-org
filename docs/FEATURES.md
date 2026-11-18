@@ -28,8 +28,8 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 61 |
-| Planned | 54 |
+| In progress | 62 |
+| Planned | 53 |
 | Blocked | 1 |
 | Deferred | 42 |
 | Needs verification | 0 |
@@ -87,7 +87,7 @@ Full requirements: [Installation, access and office operations](specs/server-ins
 | [ ] | FC-155 | [Browser CSP and production asset security](design/rust-browser-bff-and-static-sveltekit.md) | In progress | [UI] documents production-static CSP harness and browser security checks; authenticated production service remains blocked. |
 | [ ] | FC-159 | [Stored browser sessions that survive restarts](adr/0013-stored-browser-sessions.md) | Planned | The host holds sessions in memory today and ends them with the control connection; the web process holds none (F4 removed its connection-bound session layer and answers the session routes with JSON 404 until this row lands); criteria SES-1 to SES-8 are unmet, and the absolute lifetime and per-account cap the decision removes are still in the code. Native CLI sessions stay connection-bound. |
 | [ ] | FC-162 | [No application-level data encryption; office private keys wrapped](adr/0016-no-application-level-data-encryption.md) | Planned | SQLCipher is still in place (`crates/org-host/src/hostdb/sqlcipher.rs`). The per-office key becomes the office secrets key that wraps an office's private keys. Criteria ENC-1 to ENC-6 are unmet. |
-| [ ] | FC-164 | [Linux and container hosting behind platform contracts](adr/0017-linux-and-container-hosting.md) | Planned | macOS and Linux are both v1, including an office inside a container. The host compiles on Linux and starts workers only on macOS: the check that a started worker is the intended program has a macOS version and a refusing one for every other system (`crates/org-host/src/supervisor/channels.rs`). The Linux admission, credential and confinement adapters are not written; criteria LNX-1 to LNX-6 are unmet. Design and increments X1a to X6 selected 2026-11-17 ([Linux host design](design/linux-host.md), implementation plan Track X). |
+| [ ] | FC-164 | [Linux and container hosting behind platform contracts](adr/0017-linux-and-container-hosting.md) | In progress | macOS and Linux are both v1, including an office inside a container. X1a is built: `crates/org-platform` holds the `Refused` type and the `service` contract, whose constructor refuses on every target until its adapters are written (`crates/org-platform/src/service.rs`), and the LNX-5 check parses every `.rs` file outside that crate and fails on a platform predicate beyond the shrinking list of 79 files and 495 predicates (`crates/org-platform/tests/platform_conditionals.rs`, `.github/platform-conditionals.allow`; CI runs it on macOS and Linux). Remaining: every other contract and capability still lives outside the crate (X1b to X1d); the host starts workers only on macOS, because the check that a started worker is the intended program has a macOS version and a refusing one for every other system (`crates/org-host/src/supervisor/channels.rs`); the Linux admission, credential, confinement and service adapters and the container file are not written (X2 to X5); CI still excludes `org-host` and `agentic-org` from the Linux lint and test runs (X6). Criteria LNX-1 to LNX-6 are unmet. [Linux host design](design/linux-host.md), implementation plan Track X. |
 
 ### Organization, people and teams
 

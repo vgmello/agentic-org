@@ -1,0 +1,91 @@
+# Platform conditionals outside crates/org-platform (ADR-0017 LNX-5).
+#
+# Each line is a source file and the number of `cfg`, `cfg_attr` and `cfg!` predicates
+# in it that name target_os, target_vendor, target_env or target_family, as the check
+# in crates/org-platform/tests/platform_conditionals.rs counts them. These are the
+# files that had such predicates when org-platform was created (increment X1a).
+#
+# This list only shrinks. No file is added and no count is raised: a new
+# operating-system difference goes into crates/org-platform, behind a contract
+# (docs/design/linux-host.md, section 1). When a file loses predicates, lower its
+# count, or delete its line at zero, in the same change; the check fails until you do.
+# The list is empty when Track X is complete (increment X6).
+apps/agentic-org-office/src/startup/tests.rs 8
+apps/agentic-org-office/src/transfer/tests.rs 4
+apps/agentic-org-office/tests/launch/v3_activation/transfer.rs 3
+apps/agentic-org-web/src/release.rs 2
+apps/agentic-org-web/src/transport/server/tests.rs 2
+apps/agentic-org/tests/app_token.rs 7
+apps/agentic-org/tests/binary.rs 8
+apps/agentic-org/tests/contract.rs 12
+apps/agentic-org/tests/create.rs 21
+apps/agentic-org/tests/host_control.rs 3
+apps/agentic-org/tests/instances.rs 2
+apps/agentic-org/tests/keys.rs 8
+apps/agentic-org/tests/service.rs 4
+apps/agentic-org/tests/supervision.rs 17
+crates/org-client/src/agent.rs 3
+crates/org-host/src/app_auth.rs 8
+crates/org-host/src/bootstrap.rs 3
+crates/org-host/src/bootstrap/tests.rs 6
+crates/org-host/src/code_signing.rs 17
+crates/org-host/src/host_secrets.rs 6
+crates/org-host/src/host_secrets/dev.rs 4
+crates/org-host/src/host_secrets/tests.rs 7
+crates/org-host/src/hostdb.rs 2
+crates/org-host/src/hostdb/tests.rs 2
+crates/org-host/src/human.rs 4
+crates/org-host/src/human/recovery.rs 1
+crates/org-host/src/instance/directory.rs 29
+crates/org-host/src/instance/mod.rs 8
+crates/org-host/src/instance/registry.rs 1
+crates/org-host/src/instance/temp.rs 4
+crates/org-host/src/instance/tests.rs 4
+crates/org-host/src/keys/mod.rs 15
+crates/org-host/src/lib.rs 1
+crates/org-host/src/offices.rs 2
+crates/org-host/src/peer.rs 10
+crates/org-host/src/provisioning/tests.rs 1
+crates/org-host/src/recovery.rs 2
+crates/org-host/src/recovery/presence.rs 7
+crates/org-host/src/release.rs 2
+crates/org-host/src/release/files.rs 3
+crates/org-host/src/release/files/output.rs 4
+crates/org-host/src/release/platform.rs 4
+crates/org-host/src/release/runtime.rs 3
+crates/org-host/src/release/store/tests.rs 1
+crates/org-host/src/server_check.rs 12
+crates/org-host/src/spawn.rs 13
+crates/org-host/src/supervisor/channels.rs 2
+crates/org-host/src/supervisor/child.rs 1
+crates/org-host/src/supervisor/mod.rs 9
+crates/org-host/src/web/tests.rs 26
+crates/org-host/src/writer.rs 3
+crates/org-host/tests/recovery_presence.rs 1
+crates/org-office/src/store/acceptance/durable.rs 2
+crates/org-office/src/store/acceptance/tests.rs 2
+crates/org-office/src/store/tests/sqlcipher_init.rs 4
+crates/org-socket/examples/gateway_confinement.rs 3
+crates/org-socket/src/confinement.rs 12
+crates/org-socket/src/image.rs 8
+crates/org-socket/src/peer.rs 2
+crates/org-socket/src/rights.rs 7
+crates/org-socket/src/rights/send.rs 2
+crates/org-socket/src/rights/send/tests.rs 2
+crates/org-socket/src/rights/stream.rs 5
+crates/org-socket/src/rights/stream/tests.rs 27
+crates/org-socket/src/rights/stream/tests/typed.rs 7
+crates/org-socket/src/rights/tests.rs 6
+crates/org-socket/src/rights/tests/bounded.rs 5
+crates/org-socket/tests/stream_adoption.rs 1
+crates/org-spool/src/safe_read.rs 5
+crates/org-supervise/src/child.rs 5
+crates/org-supervise/src/lib.rs 1
+crates/org-supervise/src/platform.rs 15
+crates/org-supervise/src/recovery.rs 2
+crates/org-supervise/src/recovery/scan.rs 2
+crates/org-supervise/src/spawn.rs 6
+crates/org-supervise/tests/lifecycle.rs 1
+crates/org-supervise/tests/recovery_native.rs 25
+crates/org-supervise/tests/spawn.rs 4
+crates/org-supervise/tests/support/core_limit.rs 2

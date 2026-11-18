@@ -63,15 +63,21 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   `EAFNOSUPPORT_ON_UNIX_BIND`, `SEND_BUFFER_FULL`, `INIT_ARRAY_SECTION`), or uses a
   portable `libc` constant, instead of a `cfg`. Consumer tests otherwise run on both
   systems against the real adapter or a test adapter built from the contract.
-- **The check (LNX-5).** A CI script parses every `.rs` file outside
-  `crates/org-platform/` with `syn` and fails on any `cfg`, `cfg_attr` or `cfg!`
-  predicate that names `target_os`, `target_vendor`, `target_env` or `target_family`.
-  String literals and fixtures (for example the TOML and `syn` fixtures in
+- **The check (LNX-5).** `crates/org-platform/tests/platform_conditionals.rs` parses
+  every `.rs` file outside `crates/org-platform/` with `syn` and counts each `cfg`,
+  `cfg_attr` and `cfg!` predicate that names `target_os`, `target_vendor`,
+  `target_env` or `target_family`, including those inside macro calls and
+  definitions. It is a test of the workspace, so `cargo test --workspace` runs it on
+  every system, and CI also runs it as its own step on macOS and Linux. String
+  literals and fixtures (for example the TOML and `syn` fixtures in
   `org-office/src/store/tests/opener_policy.rs`) are not predicates and do not
-  match. Its allowlist, `.github/platform-conditionals.allow`, starts in X1a with every
-  file that has such a predicate today, as the script itself lists them (a text
-  search finds 79 files, a few of them only through fixtures); the script fails when a listed file no
-  longer has one, so the list only shrinks. X1b to X1d remove the source files, X2
+  match; a file that does not parse fails the check. Its allowlist,
+  `.github/platform-conditionals.allow`, was written in X1a from the check's own
+  findings: 79 files with 495 predicates, one `path count` line each (a text search
+  finds 81 files, two of them only through fixtures). The check fails on a predicate
+  in a file that is not listed, on a listed file with more predicates than its
+  count, and on a listed file with fewer than its count or none, so no file gains a
+  predicate and the list only shrinks. X1b to X1d remove the source files, X2
   and the `testing` module remove the test files, and the list is empty at X6.
   Outside the check, and harmless: `cfg(unix)`, because a non-Unix target cannot
   build `org-platform` at all, so such a branch never selects between supported
@@ -449,18 +455,45 @@ the 6.2 floor, and denying `connect` outright is simpler.
 ```rust
 pub enum ServiceMode { Registered, Foreground }
 pub struct Unit { pub instance_id: String, pub program: PathBuf, pub args: Vec<OsString>, pub env: Vec<(OsString, OsString)> }
+impl Unit { pub fn check(&self) -> Result<(), ServiceError>; }
 pub fn service(mode: ServiceMode) -> Result<Box<dyn ServiceManager>, Refused>;
-pub trait ServiceManager {
+pub trait ServiceManager: Send + Sync {
     fn register(&self, unit: &Unit) -> Result<(), ServiceError>;   // idempotent, never takes over another unit
     fn start(&self, instance_id: &str) -> Result<(), ServiceError>;
     fn stop(&self, instance_id: &str) -> Result<(), ServiceError>;
-    fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>; // includes login and linger requirements
+    fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>;
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
 }
+pub struct ServiceStatus { pub state: ServiceState, pub availability: Availability }
+pub enum ServiceState { NotRegistered, Stopped, Running }
+pub enum Availability { Always, WhileLoggedIn { remedy: Option<String> } }
+pub enum ServiceError { InvalidUnit { reason }, NotRegistered, Conflict, Manager { action, detail } }
 ```
 
-This contract is agreed with the Track A lead on the first day (X1a), because A2
-writes the launchd registration and needs somewhere to put it.
+The rules every adapter keeps (the contract's documentation in
+`crates/org-platform/src/service.rs` is the full text):
+
+- `register` records the unit and does not start it. The same unit again succeeds and
+  changes nothing. A different registration already under the instance's name is
+  `Conflict` and nothing changes; a unit is replaced by `unregister`, then `register`.
+- `start` and `stop` succeed when the instance is already in that state, and are
+  `NotRegistered` for an instance without a registration. `status` reports
+  `ServiceState::NotRegistered` instead of failing. `unregister` stops the instance,
+  removes the registration, and succeeds when there is none.
+- `Availability` is the login requirement: `Always`, or `WhileLoggedIn` with the
+  command that lifts the limit when the system has one. Setup prints that command and
+  never runs it unasked.
+- `Unit::check` is applied by every adapter before it writes anything: an instance id
+  of 1 to 64 ASCII letters, digits, `-` or `_` (it becomes part of a unit or label
+  name), an absolute program path, no NUL or line break in any value, well-formed
+  environment names, and no loader variable (`LD_*`, `DYLD_*`, `GLIBC_TUNABLES`), the
+  rule `ChildEnv` applies to children (section 3.1).
+
+The contract landed in X1a with the refusing adapter for every target, so A2 writes
+the launchd adapter in `service/macos.rs` behind it and X5 the Linux adapters in
+`service/linux.rs`; each adds its target's branch to the constructor. The Track A lead
+reviews the contract when A2 starts; a change A2 needs is made in this section and in
+the contract together.
 
 `agentic-org serve` is the same foreground process in every mode; it stops on
 `SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
