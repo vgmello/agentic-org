@@ -5,7 +5,7 @@
 //! set. Team and employee files do not hold the organization ID: an office store holds one
 //! organization.
 
-pub mod yaml;
+mod yaml;
 
 use org_store::{DurablePath, Id, StoreError, Timestamp};
 use serde_json::{json, Value};
@@ -19,6 +19,11 @@ const SCHEMA_VERSION: u64 = 1;
 pub const MAX_TEXT_CHARS: usize = 200;
 /// The longest remote URL, in bytes.
 pub const MAX_URL_BYTES: usize = 2048;
+/// The longest handle, in bytes: the limit the office has always held an agent's handle to.
+pub const MAX_HANDLE_BYTES: usize = org_proto::org::AGENT_MESSAGING_NAME_MAX_CHARS;
+/// Words that address something else, so nobody has them as a handle: `here` is a
+/// channel's members (ADR-0024), the others are the owner and the office in messaging.
+const RESERVED_HANDLES: [&str; 3] = ["here", org_proto::OWNER_HANDLE, org_proto::OFFICE_HANDLE];
 
 macro_rules! text_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
@@ -184,15 +189,29 @@ pub fn is_slug(text: &str) -> bool {
     text.len() <= 64 && parts_ok
 }
 
-/// A handle, stored without `@`: a lowercase letter or digit, then letters, digits, `-`
-/// or `_`, at most 32 bytes. `here` addresses a channel's members and is no handle.
+/// The characters and length every handle has, whoever checks it: 1 to
+/// [`MAX_HANDLE_BYTES`] ASCII letters, digits, `-`, `_` and `.`, starting with a letter or
+/// digit. The one copy of that rule; [`is_handle`] and the office's check of an agent's
+/// messaging name both stand on it.
+pub fn has_handle_characters(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.len() <= MAX_HANDLE_BYTES
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
+/// A handle as a record stores it, without `@` (data contract, README "handles"):
+/// [`has_handle_characters`], in lowercase, with dots only between other characters and
+/// never two together, not a reserved word and not shaped like an address.
 pub fn is_handle(text: &str) -> bool {
-    let mut bytes = text.bytes();
-    let first = bytes.next();
-    first.is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
-        && text.len() <= 32
-        && text != "here"
+    has_handle_characters(text)
+        && !text.bytes().any(|b| b.is_ascii_uppercase())
+        && !text.ends_with('.')
+        && !text.contains("..")
+        && !RESERVED_HANDLES.contains(&text)
+        && !org_proto::is_shaped_like_an_address(text)
 }
 
 /// One or two letters, without `I` and `O` (document 06).
@@ -507,6 +526,11 @@ impl Team {
     }
 }
 
+/// The readable reference of the team numbered `number`.
+pub fn team_key(number: u64) -> String {
+    format!("TEAM-{number}")
+}
+
 /// The folder of the team at the end of `chain`: a top-level team first, then each child.
 fn team_folder(chain: &[Id]) -> String {
     let mut folder = String::from("state");
@@ -552,6 +576,10 @@ pub fn decode_team(bytes: &[u8]) -> Result<Team, RecordError> {
     };
     if record.number == 0 {
         return Err(reader.error("number", "below 1"));
+    }
+    // The key is derived from the number. A file may repeat it, and then it must agree.
+    if reader.has("key") && reader.text("key")? != team_key(record.number) {
+        return Err(reader.error("key", "not TEAM-<number>"));
     }
     if record.parent_team_id.as_ref() == Some(&record.id) {
         return Err(reader.error("parent_team_id", "a team is not its own parent"));

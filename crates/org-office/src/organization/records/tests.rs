@@ -453,22 +453,105 @@ fn the_text_rules_are_the_contracts() {
     for bad in ["", "-a", "a-", "a--b", "A", "a_b", "a b", &"a".repeat(65)] {
         assert!(!is_slug(bad), "{bad:?}");
     }
-    assert!(is_handle("ana") && is_handle("a_b-2") && is_handle("7up") && is_handle("hr"));
+    for good in ["ana", "a_b-2", "7up", "hr", "ana.silva", "a.b.c", "a.-_.b"] {
+        assert!(is_handle(good), "{good}");
+    }
+    assert!(is_handle(&"a".repeat(MAX_HANDLE_BYTES)));
+    assert_eq!(MAX_HANDLE_BYTES, 64);
     for bad in [
         "",
         "here",
+        "owner",
+        "office",
         "Ana",
         "-a",
         "_a",
+        ".a",
+        "a.",
+        "a..b",
+        ".",
         "a b",
         "@ana",
-        &"a".repeat(33),
+        "run:1",
+        // The shape of a member id, which messaging addresses by.
+        &"a".repeat(26),
+        &"a".repeat(MAX_HANDLE_BYTES + 1),
     ] {
         assert!(!is_handle(bad), "{bad:?}");
+    }
+    // The office's wider check of a messaging name shares the characters and the length.
+    for shared in ["Ana", "a.", "a..b", "here"] {
+        assert!(has_handle_characters(shared), "{shared}");
+    }
+    for bad in ["", ".a", "a b", "a:b", &"a".repeat(MAX_HANDLE_BYTES + 1)] {
+        assert!(!has_handle_characters(bad), "{bad:?}");
     }
     assert!(is_branch("org/state") && !is_branch("org state") && !is_branch(""));
     assert!(is_remote_url("https://example.test/org.git"));
     assert!(!is_remote_url("") && !is_remote_url("https://a b") && !is_remote_url("a\n"));
     assert!(!is_remote_url(&"a".repeat(2049)));
     assert_eq!(time_text(Timestamp(0)), "1970-01-01T00:00:00.000Z");
+}
+
+#[test]
+fn a_team_file_may_repeat_its_key_and_then_it_must_be_the_numbers() {
+    let good = encode_team(&team());
+    assert!(!String::from_utf8(good.clone()).unwrap().contains("key:"));
+    let with_key = |key: &str| {
+        let mut bytes = format!("key: {key}\n").into_bytes();
+        bytes.extend(&good);
+        bytes
+    };
+    assert_eq!(decode_team(&with_key("\"TEAM-1\"")), Ok(team()));
+    for bad in [
+        "\"TEAM-2\"",
+        "\"team-1\"",
+        "\"TEAM-01\"",
+        "\"1\"",
+        "null",
+        "1",
+    ] {
+        let error = decode_team(&with_key(bad)).unwrap_err();
+        assert_eq!(error.field, "key", "{bad}");
+    }
+    // Read and dropped: the key is never written back.
+    let read = decode_team(&with_key("\"TEAM-1\"")).unwrap();
+    assert_eq!(encode_team(&read), good);
+}
+
+#[test]
+fn a_time_reads_at_second_or_millisecond_precision_and_is_written_in_milliseconds() {
+    // Document 06 writes "2026-11-14T10:00:00Z"; this office writes milliseconds.
+    let allocation = |at: &str| TeamAllocation {
+        organization_id: id(1),
+        number: 1,
+        team_id: id(4),
+        allocated_at: at.into(),
+    };
+    for at in ["2026-11-14T10:00:00Z", "2026-11-14T10:00:00.000Z"] {
+        let bytes = encode_team_allocation(&allocation(at));
+        assert_eq!(decode_team_allocation(&bytes), Ok(allocation(at)), "{at}");
+        let stamped = with_line(
+            &encode_team(&team()),
+            "created_at",
+            &format!("created_at: \"{at}\"\n"),
+        );
+        let read = decode_team(&stamped).unwrap();
+        assert_eq!(read.meta.created_at.as_deref(), Some(at));
+    }
+    for bad in [
+        "2026-11-14T10:00Z",
+        "2026-11-14 10:00:00Z",
+        "2026-11-14T10:00:00",
+    ] {
+        let bytes = encode_team_allocation(&allocation(bad));
+        assert_eq!(
+            decode_team_allocation(&bytes).unwrap_err().field,
+            "allocated_at"
+        );
+    }
+    assert_eq!(
+        time_text(Timestamp(1_794_650_400_000)),
+        "2026-11-14T10:00:00.000Z"
+    );
 }

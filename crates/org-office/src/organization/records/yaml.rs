@@ -7,7 +7,7 @@ use std::fmt;
 
 use serde_json::{Map, Value};
 
-/// The fields of one mapping. Its iteration order (byte order of key) is the file's.
+/// The fields of one mapping. [`encode`] writes them in byte order of key.
 pub type Fields = Map<String, Value>;
 
 /// Why bytes are not the record they should be: the field, as a path, and the reason.
@@ -37,13 +37,49 @@ impl fmt::Display for RecordError {
 
 impl std::error::Error for RecordError {}
 
+/// `value` as compact JSON with the keys of every object in byte order, whatever order the
+/// map itself keeps: a file's bytes do not depend on how `serde_json` was built.
+fn write_value(out: &mut String, value: &Value) {
+    match value {
+        Value::Object(fields) => {
+            out.push('{');
+            for (i, (key, value)) in sorted(fields).into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&Value::from(key.as_str()).to_string());
+                out.push(':');
+                write_value(out, value);
+            }
+            out.push('}');
+        }
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_value(out, item);
+            }
+            out.push(']');
+        }
+        // A scalar always serializes: its numbers are finite.
+        scalar => out.push_str(&scalar.to_string()),
+    }
+}
+
+fn sorted(fields: &Fields) -> Vec<(&String, &Value)> {
+    let mut entries: Vec<_> = fields.iter().collect();
+    entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    entries
+}
+
 pub fn encode(fields: &Fields) -> Vec<u8> {
     let mut out = String::new();
-    for (key, value) in fields {
+    for (key, value) in sorted(fields) {
         out.push_str(key);
         out.push_str(": ");
-        // A `Value` always serializes: its keys are strings and its numbers are finite.
-        out.push_str(&value.to_string());
+        write_value(&mut out, value);
         out.push('\n');
     }
     out.into_bytes()
@@ -148,8 +184,13 @@ impl Reader {
         readers.collect()
     }
 
+    /// Whether the file has `key` and nothing took it yet: for a field a file may omit.
+    pub fn has(&self, key: &str) -> bool {
+        self.fields.contains_key(key)
+    }
+
     pub fn finish(self) -> Result<(), RecordError> {
-        match self.fields.keys().next() {
+        match self.fields.keys().min() {
             Some(key) => Err(self.error(key, "unknown field")),
             None => Ok(()),
         }
@@ -174,6 +215,32 @@ mod tests {
             String::from_utf8(bytes).unwrap(),
             "id: \"x\"\nlead: null\nname: \"A\"\non: true\nrevision: 1\n"
         );
+    }
+
+    #[test]
+    fn the_order_fields_were_inserted_in_never_reaches_the_bytes() {
+        // Inserted in reverse byte order at both levels; holds with `preserve_order` on too.
+        let mut inner = Fields::new();
+        for key in ["z", "m", "a"] {
+            inner.insert(key.into(), json!(key));
+        }
+        let mut outer = Fields::new();
+        outer.insert("list".into(), json!([Value::Object(inner.clone())]));
+        outer.insert("b".into(), Value::Object(inner));
+        outer.insert("a".into(), json!("quote \" here"));
+        assert_eq!(
+            String::from_utf8(encode(&outer)).unwrap(),
+            concat!(
+                "a: \"quote \\\" here\"\n",
+                "b: {\"a\":\"a\",\"m\":\"m\",\"z\":\"z\"}\n",
+                "list: [{\"a\":\"a\",\"m\":\"m\",\"z\":\"z\"}]\n",
+            )
+        );
+        // The same bytes `serde_json` writes for a sorted map.
+        let sorted: std::collections::BTreeMap<_, _> = outer.iter().collect();
+        let mut plain = String::new();
+        write_value(&mut plain, &Value::Object(outer.clone()));
+        assert_eq!(plain, serde_json::to_string(&sorted).unwrap());
     }
 
     #[test]
