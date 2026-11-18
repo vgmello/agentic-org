@@ -37,13 +37,19 @@ pub struct RepositoryRegistration {
         deserialize_with = "present"
     )]
     pub path: Option<serde_json::Value>,
-    /// A reference to an office-held credential. Not supported yet: its presence is refused.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// A reference to an office-held credential. Not supported yet: its presence is refused,
+    /// whatever its value.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
     pub credential_ref: Option<serde_json::Value>,
 }
 
 /// A key that is present is `Some`, whatever its value: `"path": null` is still a path
-/// key and is refused like any other.
+/// key, and `"credential_ref": null` still a credential reference; each is refused like
+/// any other value of its key.
 fn present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<serde_json::Value>, D::Error> {
@@ -155,7 +161,7 @@ mod tests {
         .unwrap();
         assert_eq!(vectors["schema_version"], 1);
         let cases = vectors["cases"].as_array().unwrap();
-        assert_eq!(cases.len(), 17);
+        assert_eq!(cases.len(), 18);
         for case in cases {
             let name = &case["name"];
             let expect = &case["expect"];

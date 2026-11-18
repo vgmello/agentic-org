@@ -93,7 +93,10 @@ fn check_business_params(params: &Value) -> Result<(), &'static str> {
 
 impl<'de, P: DeserializeOwned> Deserialize<'de> for CommandEnvelope<P> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // The envelope has exactly these three keys. Another key is refused, not ignored:
+        // an input the gateway does not read must not look accepted.
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Raw {
             operation_id: OperationId,
             scope: Scope,

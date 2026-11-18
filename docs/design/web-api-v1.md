@@ -610,7 +610,7 @@ returning 404 confirms that.
   web connection only. The browser DTOs are `org_proto::gateway::organizations`
   (`SelectedCreateParams`, `SelectedOrganizationView`, `SelectedOrganizationList`,
   `host_operation_id`), pinned by `test-vectors/v2/gateway-organizations.json`
-  (17 cases). The list always asks the host. The older gateway `OrganizationView`
+  (18 cases). The list always asks the host. The older gateway `OrganizationView`
   and its vectors remain because the UI reader still reads them; they are deleted
   when the create page and the welcome list move to the real API (A4.5). The UI's
   lookup reader still refuses `-` in a lookup ID and is widened in the same step.

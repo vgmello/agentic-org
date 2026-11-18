@@ -210,6 +210,11 @@ fn typed_core_commands_and_cancellation_do_not_accept_another_operation_identity
     let mut invalid = request.clone();
     invalid["params"] = json!({});
     assert!(parse::<CommandEnvelope<Named>>(&invalid).is_err());
+    // The envelope has three keys. Any other top-level key is refused, not ignored.
+    let mut extra = request.clone();
+    extra["command_id"] = json!("01M72N8MG00000000000000006");
+    assert!(parse::<CommandEnvelope<Named>>(&extra).is_err());
+    assert!(parse::<CommandEnvelope<Value>>(&extra).is_err());
 }
 
 #[test]

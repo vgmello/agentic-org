@@ -195,6 +195,33 @@
       }
     },
     {
+      "name": "a null credential reference is still a credential reference",
+      "category": "create_request",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "params": {
+          "name": "Acme",
+          "slug": "acme",
+          "organization_repository": {
+            "kind": "remote",
+            "remote_url": "https://example.test/acme.git",
+            "credential_ref": null
+          },
+          "state_branch": "org/state"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "field": "organization_repository",
+        "rule": "unsupported"
+      }
+    },
+    {
       "name": "a slug that is not kebab-case",
       "category": "create_request",
       "wire": {
