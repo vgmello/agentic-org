@@ -118,7 +118,16 @@ impl Serving for Fake {
     fn ended(&mut self) -> String {
         "the fake exited".to_owned()
     }
+    fn confined(&mut self) -> String {
+        // A line break, as a reason from a web process's standard error could
+        // never have, but the log must not depend on that.
+        "confined by a fake\nforged line".to_owned()
+    }
 }
+
+/// What the supervisor logs once for each start of a [`Fake`].
+const FAKE_STARTED: &str =
+    "authenticated browser web process started, confined by a fake\\nforged line";
 impl Drop for Fake {
     fn drop(&mut self) {
         self.dropped.store(true, Ordering::SeqCst);
@@ -320,9 +329,14 @@ fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
     supervisor.thread().unpark();
     supervisor.join().unwrap();
     let logged = lock(&logged).clone();
+    // Each of the two starts is logged once; no failure or backoff is.
     assert_eq!(
         logged,
-        ["authenticated browser stopped because the host is no longer eligible; it starts again once eligible"],
+        [
+            FAKE_STARTED,
+            "authenticated browser stopped because the host is no longer eligible; it starts again once eligible",
+            FAKE_STARTED,
+        ],
         "no failure or backoff was logged"
     );
 }
@@ -357,6 +371,18 @@ fn transfer_end_handed_to_the_web_cannot_send() {
     let (transfer, child) = transfer_pair().unwrap();
     let error = child.send(b"x").unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe, "{error}");
+    // Nor to any other socket: a datagram socket can name a destination with each
+    // send, and only the shut-down write side stops the web process's end from
+    // reaching another Unix datagram socket of this user.
+    let dir = tempfile::tempdir().unwrap();
+    let other = UnixDatagram::bind(dir.path().join("other")).unwrap();
+    other.set_nonblocking(true).unwrap();
+    let error = child.send_to(b"x", dir.path().join("other")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe, "{error}");
+    assert_eq!(
+        other.recv(&mut [0u8; 4]).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
     transfer.send(b"record").unwrap();
     let mut bytes = [0u8; 16];
     assert_eq!(child.recv(&mut bytes).unwrap(), 6);
@@ -429,6 +455,9 @@ impl Serving for Brief {
     }
     fn ended(&mut self) -> String {
         "the brief run ended".to_owned()
+    }
+    fn confined(&mut self) -> String {
+        "confined by a brief run".to_owned()
     }
 }
 
@@ -635,7 +664,6 @@ fn start_scripted(
     start_error(&config)
 }
 
-#[cfg(target_os = "macos")]
 /// Starts `config`, which must be refused, and returns the refusal.
 fn start_error(config: &Configuration) -> io::Error {
     match Running::start(config, Arc::new(NoOps)) {
@@ -644,7 +672,6 @@ fn start_error(config: &Configuration) -> io::Error {
     }
 }
 
-#[cfg(target_os = "macos")]
 /// A loopback listen configuration on `port`.
 fn loopback_on(port: u16) -> ListenConfig {
     serde_json::from_str(&format!(
@@ -654,8 +681,8 @@ fn loopback_on(port: u16) -> ListenConfig {
 }
 
 /// The configuration [`start_scripted`] starts, on a free loopback port, with its
-/// temporary directory (program and runtime) kept alive by the caller.
-#[cfg(target_os = "macos")]
+/// temporary directory (program and runtime) kept alive by the caller. The program
+/// is `script`, which only a system that starts a child by its path can run.
 fn scripted_config(
     script: &str,
     answer: impl Fn(crate::server_check::Step, usize, u32) -> Result<Option<crate::peer::AuditToken>, String>
@@ -857,14 +884,18 @@ fn the_exit_of_a_running_web_is_logged_with_its_reason_and_restart() {
     };
     wait_for("running", || *lock(&state) == GatewayState::Running);
     live.store(false, Ordering::SeqCst);
-    wait_for("restart logged", || !lock(&lines).is_empty());
+    wait_for("restart logged", || lock(&lines).len() >= 2);
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
     let logged = lock(&lines).clone();
+    // The start is logged once, with what the web process is confined by, escaped.
     assert_eq!(
         logged,
-        ["authenticated browser restarting in 1s because the running web process stopped: the fake exited"],
+        [
+            FAKE_STARTED,
+            "authenticated browser restarting in 1s because the running web process stopped: the fake exited"
+        ],
     );
 }
 
@@ -897,7 +928,15 @@ fn every_failed_start_is_logged_escaped_with_its_restart_until_the_limit() {
             _ => Err(io::Error::other("refused\nforged line")),
         }
     });
-    let logged = lock(&lines).clone();
+    // The two starts that succeeded are each logged once, before their failure; a
+    // failed start logs no such line.
+    let (started, logged): (Vec<String>, Vec<String>) = lock(&lines)
+        .clone()
+        .into_iter()
+        .partition(|line| line.contains("web process started"));
+    assert_eq!(started, [FAKE_STARTED, FAKE_STARTED]);
+    assert_eq!(lock(&lines)[0], FAKE_STARTED);
+    assert_eq!(lock(&lines)[2], FAKE_STARTED);
     assert_eq!(logged.len(), MAX_STARTS, "{logged:?}");
     assert!(logged[0].ends_with("because it did not report web.serving before the deadline"));
     assert!(logged[1].ends_with("because it stopped before serving: the fake exited"));
@@ -977,7 +1016,6 @@ fn a_running_web_names_why_it_ended() {
     assert_eq!(ended_cause(false, None, true), "it stopped serving");
 }
 
-#[cfg(target_os = "macos")]
 /// A free loopback port nothing listens on.
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
@@ -987,7 +1025,6 @@ fn free_port() -> u16 {
         .port()
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
     let dir = tempfile::tempdir().unwrap();
@@ -1014,41 +1051,174 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
     let Err(error) = started else {
         panic!("an HTTPS listener never starts the web process")
     };
-    assert_eq!(
-        error.to_string(),
-        "the web process requires a verified HTTP loopback listener"
-    );
+    // The confinement question comes first: where it refuses, the listener is not
+    // looked at, and that refusal is the next test's.
+    if org_platform::confinement::web_confinement_supported().is_ok() {
+        assert_eq!(
+            error.to_string(),
+            "the web process requires a verified HTTP loopback listener"
+        );
+    }
     assert_eq!(*lock(&state), GatewayState::NotConfigured);
 }
 
-#[cfg(not(target_os = "macos"))]
+/// A configuration that every check but confinement would let start: a debug
+/// build's check, a loopback listener, and a program that is never reached.
+fn startable(dir: &Path) -> Configuration {
+    Configuration {
+        program: dir.join("agentic-org-web"),
+        instance: "instance".into(),
+        runtime: dir.to_owned(),
+        listen: loopback_on(free_port()),
+        check: ServerCheck::gateway_for_build(true, None).unwrap(),
+        critical_paths: vec![],
+        release: None,
+    }
+}
+
 #[test]
-fn the_supervisor_refuses_a_platform_without_a_confinement_adapter() {
+fn the_supervisor_starts_only_where_the_web_process_can_be_confined() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let started = Supervisor::start(
-        Configuration {
-            program: dir.path().join("agentic-org-web"),
-            instance: "instance".into(),
-            runtime: dir.path().to_owned(),
-            listen: loopback(),
-            check: ServerCheck::gateway_for_build(true, None).unwrap(),
-            critical_paths: vec![],
-            release: None,
-        },
+        startable(dir.path()),
         Arc::new(NoOps),
         Arc::clone(&state),
-        Arc::new(|| true),
+        Arc::new(|| false),
     );
-    let Err(error) = started else {
-        panic!("no web process without a confinement adapter")
-    };
+    match org_platform::confinement::web_confinement_supported() {
+        // A supervisor that waits to become eligible: nothing was bound or started.
+        Ok(()) => drop(started.unwrap()),
+        // No bind, no child, and the adapter's reason after the fixed wording.
+        Err(reason) => {
+            let Err(error) = started else {
+                panic!("no web process where it cannot be confined")
+            };
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "the web process requires process confinement, which is unavailable \
+                     here: {reason}"
+                )
+            );
+            assert_eq!(*lock(&state), GatewayState::NotConfigured);
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+    }
+}
+
+#[test]
+fn a_confinement_refusal_keeps_the_adapters_reason_bounded_and_printable() {
+    let adapter = "gateway confinement unavailable: seccomp failed with EPERM: this kernel or \
+                   its profile has no seccomp filter that kills the process";
+    assert_eq!(
+        unconfinable(io::Error::other(adapter)).to_string(),
+        format!(
+            "the web process requires process confinement, which is unavailable here: {adapter}"
+        )
+    );
+    // Whatever an adapter says, the log gets printable ASCII of a bounded length.
+    let odd = format!("a\nb\u{1b}[0m\u{202e}é{}", "x".repeat(1000));
+    let text = unconfinable(io::Error::other(odd)).to_string();
+    let reason = text.split("here: ").nth(1).unwrap();
+    assert_eq!(reason.len(), REASON_BYTES);
+    assert!(reason.starts_with("a?b?[0m??xxx"), "{reason}");
+    assert!(reason.bytes().all(|byte| (0x20..=0x7e).contains(&byte)));
+}
+
+/// The environment variable that makes this test executable the host of the next
+/// tests: a process under a profile that refuses one of the confinement calls.
+const UNDER_PROFILE: &str = "ORG_HOST_WEB_TEST_UNDER_PROFILE";
+
+/// Runs the test `name` again in a process under a profile that refuses `call`, as
+/// a container runtime's profile does, and returns what it printed. `None` where
+/// this system's adapter does not confine with such calls: nothing to refuse.
+fn under_profile(
+    name: &str,
+    call: org_platform::confinement::testing::RefusedCall,
+) -> Option<String> {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .args(["--include-ignored"])
+        .env(UNDER_PROFILE, format!("{call:?}"));
+    if let Err(error) = org_platform::confinement::testing::refuse_call(&mut command, call) {
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{error}");
+        return None;
+    }
+    let output = command.output().unwrap();
+    let printed = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(
-        error
-            .to_string()
-            .contains("has no adapter on this platform"),
-        "{error}"
+        output.status.success(),
+        "{printed}\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    Some(printed)
+}
+
+/// ADR-0017 LNX-3 at the host: under a profile that refuses `seccomp`, the layer
+/// that must hold, the host starts no web process and says which call failed with
+/// which error. A profile that refuses Landlock is no such reason: the host starts
+/// its supervisor as anywhere else.
+#[test]
+fn lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused() {
+    use org_platform::confinement::testing::RefusedCall;
+    const NAME: &str =
+        "web::tests::lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused";
+    if std::env::var_os(UNDER_PROFILE).is_some() {
+        // The host under the profile. It is never eligible, so a supervisor that
+        // does start waits and binds nothing.
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+        let started = Supervisor::start(
+            startable(dir.path()),
+            Arc::new(NoOps),
+            Arc::clone(&state),
+            Arc::new(|| false),
+        );
+        assert_eq!(
+            fs::read_dir(dir.path()).unwrap().count(),
+            0,
+            "nothing bound"
+        );
+        match started {
+            Ok(supervisor) => {
+                drop(supervisor);
+                println!("\nstarted");
+            }
+            Err(error) => {
+                assert_eq!(*lock(&state), GatewayState::NotConfigured);
+                println!("\nrefused: {error}");
+            }
+        }
+        return;
+    }
+    for call in [
+        RefusedCall::LandlockCreateRuleset,
+        RefusedCall::LandlockRuleset,
+        RefusedCall::LandlockRestrictSelf,
+        // The installation that fails is the web process's to report: the host's
+        // question passes.
+        RefusedCall::SeccompInstall,
+    ] {
+        let Some(printed) = under_profile(NAME, call) else {
+            return;
+        };
+        assert!(
+            printed.lines().any(|line| line == "started"),
+            "{call:?}: {printed}"
+        );
+        assert!(!printed.contains("refused: "), "{call:?}: {printed}");
+    }
+    let printed = under_profile(NAME, RefusedCall::Seccomp).unwrap();
+    assert!(
+        printed.lines().any(|line| line
+            == "refused: the web process requires process confinement, which is unavailable \
+                here: gateway confinement unavailable: seccomp failed with EPERM: this kernel \
+                or its profile has no seccomp filter that kills the process"),
+        "{printed}"
+    );
+    assert!(!printed.lines().any(|line| line == "started"), "{printed}");
 }
 
 /// A receiver over one end of a fresh stream pair, and the other (sending) end.
@@ -1105,6 +1275,16 @@ fn control_eof_before_a_line_is_refused() {
         error.to_string(),
         "web process start failed: control EOF before the ready line"
     );
+    // The start can tell a child that went away from one that is late.
+    let went_away = |error: &io::Error| {
+        error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<ControlEof>())
+    };
+    assert!(went_away(&error));
+    let (mut receiver, _peer) = control_pair();
+    let late = line(&mut receiver, Instant::now(), "ready line").unwrap_err();
+    assert!(!went_away(&late), "{late}");
 }
 
 #[test]
@@ -1132,7 +1312,6 @@ fn a_rendezvous_folder_that_is_a_symlink_is_refused_before_binding() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -1191,12 +1370,12 @@ fn an_unconfined_child_fails_the_sandbox_verification() {
     );
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn each_failed_start_step_before_the_child_connects_names_its_cause() {
-    let script = connecting_script(READY);
+fn each_failed_start_step_before_the_child_starts_names_its_cause() {
+    // None of these starts reaches the program, so its content does not matter.
+    let script = "#!/bin/sh\nexit 1\n";
     // The browser port is taken.
-    let (_dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    let (_dir, mut config) = scripted_config(script, |_, _, _| Ok(None));
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     config.listen = loopback_on(taken.local_addr().unwrap().port());
     let message = start_error(&config).to_string();
@@ -1205,7 +1384,7 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
         "{message}"
     );
     // The runtime directory is a file, so its rendezvous folder cannot be created.
-    let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    let (dir, mut config) = scripted_config(script, |_, _, _| Ok(None));
     config.listen = loopback_on(free_port());
     let file = dir.path().join("not-a-directory");
     fs::write(&file, b"").unwrap();
@@ -1216,7 +1395,7 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
     );
     // The rendezvous folder already exists as a symlink, so the owner-only check
     // refuses it (mkdir alone would accept the existing name and bind through it).
-    let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    let (dir, mut config) = scripted_config(script, |_, _, _| Ok(None));
     config.listen = loopback_on(free_port());
     let runtime = dir.path().join("runtime");
     let elsewhere = dir.path().join("elsewhere");
@@ -1233,14 +1412,21 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
     );
     assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
     // The program is missing.
-    let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    let (dir, mut config) = scripted_config(script, |_, _, _| Ok(None));
     config.program = dir.path().join("missing");
     let message = start_error(&config).to_string();
     assert!(
         message.starts_with("web process start failed: spawn the web process suspended ("),
         "{message}"
     );
-    // The first line would not fit in 1023 bytes.
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_first_line_that_does_not_fit_names_its_cause() {
+    // The first line would not fit in 1023 bytes. The child is started first, so
+    // this needs a program the system starts by its path.
+    let script = connecting_script(READY);
     let (_dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
     config.instance = "i".repeat(1024);
     assert_eq!(
@@ -1258,7 +1444,7 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     use org_proto::frame;
     let home = tempfile::tempdir().unwrap();
     let (handler, offices) = crate::service::tests::web_handler(home.path());
-    let running = |program: &str, resume: bool| {
+    let running = |program: &str, args: &[&str], resume: bool| {
         let (host, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
@@ -1271,14 +1457,17 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
                 .spawn(&[], &ChildEnv::new(), &SPAWN_LOCK)
                 .unwrap()
         } else {
-            // An argument that keeps it alive where a held child already runs (a system that
-            // checks the image before the child exists has no suspended child).
-            held_child(program, &["30"])
+            held_child(program, args)
         };
         let running = Running {
             control,
             process: spawned.child,
             _stdin: spawned.stdin,
+            layers: org_platform::confinement::Layers {
+                description: "nothing: a test's own child".to_owned(),
+                landlock_missing: false,
+            },
+            captured: Stderr::capture(spawned.stderr).unwrap(),
         };
         (running, io::BufReader::new(peer))
     };
@@ -1290,7 +1479,7 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     };
 
     // A refused web.serving wins over the EOF it causes; the child still runs.
-    let (mut refused, mut peer) = running("/bin/sleep", false);
+    let (mut refused, mut peer) = running("/bin/sleep", &["30"], false);
     let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
     call(&mut peer, hello.unwrap()).expect("hello answered");
     let early = org_proto::Request::new::<WebServing>(2, &Default::default()).unwrap();
@@ -1303,13 +1492,14 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     );
 
     // A reaped child's status, while the control connection is still open.
-    let (mut exited, _peer) = running("/usr/bin/false", true);
+    let (mut exited, _peer) = running("/usr/bin/false", &[], true);
     wait_for("the child exits", || !exited.serving());
     assert!(exited.control.live());
     assert_eq!(exited.ended(), "the child exited (exit code 1)");
 
-    // Control EOF while the (suspended) child still runs.
-    let (mut closed, peer) = running("/bin/sleep", false);
+    // Control EOF while the child still runs (on macOS it is suspended, elsewhere
+    // it sleeps).
+    let (mut closed, peer) = running("/bin/sleep", &["30"], false);
     assert!(closed.serving());
     drop(peer);
     wait_for("control EOF", || !closed.serving());
@@ -1578,4 +1768,611 @@ fn runs_that_end_before_they_are_stable_count_as_failed_starts() {
     );
     assert_eq!(starts.load(Ordering::SeqCst), MAX_STARTS);
     assert_eq!(*lock(&state), GatewayState::Failed);
+}
+
+#[test]
+fn a_refusal_line_is_found_only_whole_printable_and_bounded() {
+    let reason = "gateway confinement unavailable: seccomp failed with EPERM (Operation not \
+                  permitted (os error 1))";
+    let line = format!("{REFUSAL_PREFIX}{reason}\n");
+    assert_eq!(refusal_reason(line.as_bytes()), Some(reason));
+    // After other lines, as a debug build's preload notice, and before more.
+    let noisy = format!("agentic-org-web: explicit debug unpinned fixture preload\n{line}more\n");
+    assert_eq!(refusal_reason(noisy.as_bytes()), Some(reason));
+    // Only the first refusal line counts.
+    let twice = format!("{line}{REFUSAL_PREFIX}another\n");
+    assert_eq!(refusal_reason(twice.as_bytes()), Some(reason));
+    let longest = "r".repeat(REASON_BYTES);
+    assert_eq!(
+        refusal_reason(format!("{REFUSAL_PREFIX}{longest}\n").as_bytes()),
+        Some(longest.as_str())
+    );
+    for not_one in [
+        String::new(),
+        "agentic-org-web: authenticated startup unavailable\n".to_owned(),
+        // Cut off: no line feed was kept.
+        format!("{REFUSAL_PREFIX}{reason}"),
+        // The prefix must start the line.
+        format!("x{REFUSAL_PREFIX}{reason}\n"),
+        format!("{REFUSAL_PREFIX}\n"),
+        format!("{REFUSAL_PREFIX}{longest}r\n"),
+        format!("{REFUSAL_PREFIX}a\tb\n"),
+        format!("{REFUSAL_PREFIX}a\u{1b}[31mb\n"),
+        format!("{REFUSAL_PREFIX}caf\u{e9}\n"),
+        format!("{REFUSAL_PREFIX}a\rb\n"),
+        // A malformed first refusal line is not skipped for a later one.
+        format!("{REFUSAL_PREFIX}\n{line}"),
+    ] {
+        assert_eq!(refusal_reason(not_one.as_bytes()), None, "{not_one:?}");
+    }
+    assert_eq!(
+        REFUSAL_PREFIX,
+        "agentic-org-web: startup refused: confinement: "
+    );
+}
+
+#[test]
+fn only_the_start_of_a_childs_standard_error_is_kept() {
+    let reason = "kept";
+    let early = format!("{REFUSAL_PREFIX}{reason}\n{}", "x".repeat(100_000));
+    let captured = Stderr::capture(io::Cursor::new(early.into_bytes())).unwrap();
+    assert_eq!(captured.refusal(WAIT).as_deref(), Some(reason));
+    assert_eq!(lock(&captured.kept).0.len(), STDERR_KEPT);
+    // A refusal line after the kept bytes is not seen.
+    let late = format!("{}\n{REFUSAL_PREFIX}{reason}\n", "x".repeat(STDERR_KEPT));
+    let captured = Stderr::capture(io::Cursor::new(late.into_bytes())).unwrap();
+    assert_eq!(captured.refusal(WAIT), None);
+    assert!(lock(&captured.kept).1, "read to its end");
+}
+
+#[test]
+fn a_landlock_line_is_found_only_whole_printable_and_bounded() {
+    let reason =
+        "landlock_create_ruleset failed with EPERM: the Landlock version query was refused";
+    let line = format!("{LANDLOCK_NOT_APPLIED_PREFIX}{reason}\n");
+    fn found(text: &str) -> Option<&str> {
+        line_reason(text.as_bytes(), LANDLOCK_NOT_APPLIED_PREFIX)
+    }
+    assert_eq!(found(&line), Some(reason));
+    let noisy = format!("agentic-org-web: explicit debug unpinned fixture preload\n{line}more\n");
+    assert_eq!(found(&noisy), Some(reason));
+    for not_one in [
+        String::new(),
+        format!("{LANDLOCK_NOT_APPLIED_PREFIX}{reason}"),
+        format!("x{line}"),
+        format!("{LANDLOCK_NOT_APPLIED_PREFIX}\n"),
+        format!(
+            "{LANDLOCK_NOT_APPLIED_PREFIX}{}\n",
+            "r".repeat(REASON_BYTES + 1)
+        ),
+        format!("{LANDLOCK_NOT_APPLIED_PREFIX}a\u{1b}[31mb\n"),
+        // A refusal line is not this line, and this line is no refusal.
+        format!("{REFUSAL_PREFIX}{reason}\n"),
+    ] {
+        assert_eq!(found(&not_one), None, "{not_one:?}");
+    }
+    assert_eq!(refusal_reason(line.as_bytes()), None);
+    assert_eq!(
+        LANDLOCK_NOT_APPLIED_PREFIX,
+        "agentic-org-web: confinement: landlock not applied: "
+    );
+}
+
+#[test]
+fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standard_error() {
+    let line = format!("{LANDLOCK_NOT_APPLIED_PREFIX}landlock_restrict_self failed with EPERM");
+    // The child stays alive, as a web process that serves does: the line is found
+    // as soon as it is read, long before the wait ends.
+    let (mut child, captured, _stdin) = shell(&format!(
+        "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; sleep 30"
+    ));
+    let asked = Instant::now();
+    assert_eq!(
+        captured.landlock_not_applied(WAIT).as_deref(),
+        Some("landlock_restrict_self failed with EPERM")
+    );
+    assert!(asked.elapsed() < WAIT);
+    assert!(matches!(child.try_wait(), Ok(false)));
+    // A child that says nothing: the wait passes, and no longer.
+    let (mut silent, captured, _stdin) = shell("sleep 30");
+    let asked = Instant::now();
+    assert_eq!(captured.landlock_not_applied(STDERR_GRACE), None);
+    assert!(asked.elapsed() >= STDERR_GRACE);
+    assert!(asked.elapsed() < WAIT);
+    assert!(matches!(silent.try_wait(), Ok(false)));
+    // Ended, or with its kept bytes full: nothing more can come, and nothing is
+    // waited for.
+    let ended = Stderr::capture(io::Cursor::new(b"something else\n".to_vec())).unwrap();
+    let full = Stderr::capture(io::Cursor::new(vec![b'x'; 10 * STDERR_KEPT])).unwrap();
+    let late = format!("{}\n{line}\n", "x".repeat(STDERR_KEPT));
+    let late = Stderr::capture(io::Cursor::new(late.into_bytes())).unwrap();
+    let asked = Instant::now();
+    for captured in [ended, full, late] {
+        assert_eq!(captured.landlock_not_applied(WAIT), None);
+    }
+    assert!(asked.elapsed() < WAIT);
+}
+
+#[test]
+fn the_start_line_names_the_layers_and_why_landlock_is_missing() {
+    use org_platform::confinement::Layers;
+    let both = Layers {
+        description: "the seccomp filter and Landlock ABI 7".to_owned(),
+        landlock_missing: false,
+    };
+    // No reason is asked for where no layer is missing.
+    assert_eq!(
+        confined_by(&both, || panic!("no reason is read")),
+        "confined by the seccomp filter and Landlock ABI 7"
+    );
+    let alone = Layers {
+        description: "the seccomp filter alone".to_owned(),
+        landlock_missing: true,
+    };
+    assert_eq!(
+        confined_by(&alone, || Some(
+            "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock".to_owned()
+        )),
+        "confined by the seccomp filter alone: Landlock was not applied: \
+         landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock"
+    );
+    assert_eq!(
+        confined_by(&alone, || None),
+        "confined by the seccomp filter alone: Landlock was not applied, and the web process \
+         gave no reason"
+    );
+}
+
+/// A real child of `/bin/sh` that runs `script`, with its captured standard error.
+fn shell(script: &str) -> (Child, Arc<Stderr>, fs::File) {
+    // The shell's own file: an admission does not follow a link to its program.
+    let shell = fs::canonicalize("/bin/sh").unwrap();
+    let spawned = ServerCheck::Skip
+        .admission(&shell)
+        .unwrap()
+        .spawn(
+            &[OsStr::new("-c"), OsStr::new(script)],
+            &web_env(),
+            &SPAWN_LOCK,
+        )
+        .unwrap();
+    let captured = Stderr::capture(spawned.stderr).unwrap();
+    (spawned.child, captured, spawned.stdin)
+}
+
+#[test]
+fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
+    let line = format!("{REFUSAL_PREFIX}seccomp failed with ENOMEM");
+    let (mut child, captured, _stdin) = shell(&format!(
+        "echo 'agentic-org-web: some other notice' >&2; echo '{line}' >&2; exit 1"
+    ));
+    wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
+    let error = with_refusal(
+        failed("the child exited before connecting (exit code 1)"),
+        &captured,
+        &mut child,
+    );
+    assert_eq!(
+        error.to_string(),
+        "web process start failed: the child exited before connecting (exit code 1); it \
+         reported that it cannot confine itself: seccomp failed with ENOMEM"
+    );
+}
+
+#[test]
+fn a_child_that_exited_without_a_refusal_line_leaves_the_cause_as_it_is() {
+    for script in [
+        "exit 1",
+        "echo 'agentic-org-web: authenticated startup unavailable' >&2; exit 1",
+        // Not printable: a tab in the reason.
+        "printf 'agentic-org-web: startup refused: confinement: a\\tb\\n' >&2; exit 1",
+        // No line feed.
+        "printf 'agentic-org-web: startup refused: confinement: cut' >&2; exit 1",
+    ] {
+        let (mut child, captured, _stdin) = shell(script);
+        wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
+        let error = with_refusal(failed("the cause"), &captured, &mut child);
+        assert_eq!(
+            error.to_string(),
+            "web process start failed: the cause",
+            "{script}"
+        );
+    }
+}
+
+#[test]
+fn a_child_whose_control_stream_ended_gets_a_moment_to_exit_and_any_other_none() {
+    let eof = || io::Error::other(ControlEof("web process start failed: control EOF".into()));
+    // It closes its stream, writes its line and exits a moment later.
+    let (mut child, captured, _stdin) = shell(&format!(
+        "sleep 0.1; echo '{REFUSAL_PREFIX}seccomp failed with EPERM' >&2; exit 1"
+    ));
+    let error = with_refusal(eof(), &captured, &mut child);
+    assert_eq!(
+        error.to_string(),
+        "web process start failed: control EOF; it reported that it cannot confine itself: \
+         seccomp failed with EPERM"
+    );
+    // It stays alive: the cause is unchanged after the grace, and the child still
+    // runs for its owner to kill.
+    let (mut child, captured, _stdin) = shell(&format!(
+        "echo '{REFUSAL_PREFIX}written by a child that stays' >&2; sleep 30"
+    ));
+    let asked = Instant::now();
+    let error = with_refusal(eof(), &captured, &mut child);
+    assert!(asked.elapsed() >= EXIT_GRACE);
+    assert_eq!(error.to_string(), "web process start failed: control EOF");
+    assert!(matches!(child.try_wait(), Ok(false)));
+    // Any other failure does not wait for a running child at all.
+    let asked = Instant::now();
+    let error = with_refusal(failed("the cause"), &captured, &mut child);
+    assert!(asked.elapsed() < EXIT_GRACE);
+    assert_eq!(error.to_string(), "web process start failed: the cause");
+    assert!(matches!(child.try_wait(), Ok(false)));
+}
+
+#[test]
+fn a_child_that_exited_after_its_sandbox_was_verified_is_refused() {
+    // Still running: the check passes and reaps nothing.
+    let mut sleeping = held_child("/bin/sleep", &["30"]);
+    still_running(&mut sleeping.child).unwrap();
+    still_running(&mut sleeping.child).unwrap();
+    // Exited: the status that was read may be another process's by now.
+    let (mut child, _captured, _stdin) = shell("exit 4");
+    wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
+    assert_eq!(
+        still_running(&mut child).unwrap_err().to_string(),
+        "web process start failed: the child exited after its sandbox was verified (exit code 4)"
+    );
+}
+
+#[test]
+fn the_web_process_gets_nothing_of_the_hosts_environment() {
+    assert!(web_env().pairs().is_empty());
+    // A real child started with it sees no variable, whatever this process has
+    // (this test process has at least a PATH).
+    assert!(std::env::var_os("PATH").is_some());
+    let mut spawned = ServerCheck::Skip
+        .admission(Path::new("/usr/bin/env"))
+        .unwrap()
+        .spawn(&[], &web_env(), &SPAWN_LOCK)
+        .unwrap();
+    let mut printed = String::new();
+    spawned.stdout.read_to_string(&mut printed).unwrap();
+    assert_eq!(printed, "");
+    wait_for("the child exits", || {
+        matches!(spawned.child.try_wait(), Ok(true))
+    });
+}
+
+/// The real web process for the two tests below: the built `agentic-org-web` that
+/// `ORG_TEST_WEB_BIN` names, copied beside a one-file `ui` build, with a handler that
+/// answers its control calls, on a free loopback port.
+struct RealWeb {
+    config: Configuration,
+    handler: Arc<crate::service::Service>,
+    offices: Arc<crate::offices::Offices>,
+    _dir: tempfile::TempDir,
+}
+
+fn real_web() -> RealWeb {
+    use org_proto::frame;
+    use std::os::unix::fs::PermissionsExt;
+    let built = std::env::var_os("ORG_TEST_WEB_BIN")
+        .expect("ORG_TEST_WEB_BIN must name the built agentic-org-web");
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    for name in ["bin", "bin/ui", "runtime", "critical", "home"] {
+        fs::create_dir(root.join(name)).unwrap();
+        fs::set_permissions(root.join(name), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let program = root.join("bin/agentic-org-web");
+    fs::copy(built, &program).unwrap();
+    // An admission refuses a program that its group or others can write.
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    // Startup validation hashes the entry's inline bootstrap into the CSP.
+    fs::write(
+        root.join("bin/ui/index.html"),
+        b"<html><body>fixture<script>/* fixture bootstrap */</script></body></html>",
+    )
+    .unwrap();
+    let (handler, offices) = crate::service::tests::web_handler(&root.join("home"));
+    // The instance the handler answers `hello` for, asked as a web process asks.
+    let (host, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    let (transfer, _end) = UnixDatagram::pair().unwrap();
+    let asking = WebConnection::start(host, transfer, loopback(), handler.clone()).unwrap();
+    let mut peer = io::BufReader::new(peer);
+    let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
+    frame::write_message(peer.get_mut(), &hello.unwrap()).unwrap();
+    let answer: serde_json::Value = frame::read_message(&mut peer).unwrap().unwrap();
+    let instance = answer["result"]["instance_id"].as_str().unwrap().to_owned();
+    drop((asking, peer));
+    RealWeb {
+        config: Configuration {
+            program,
+            instance,
+            runtime: root.join("runtime"),
+            listen: loopback_on(free_port()),
+            check: ServerCheck::gateway_for_build(true, None).unwrap(),
+            critical_paths: vec![root.join("critical")],
+            release: None,
+        },
+        handler,
+        offices,
+        _dir: dir,
+    }
+}
+
+/// The production path as far as this module reaches: the host's own start of the
+/// real web process. It is treated as started only once it is confined, and then
+/// serves its listener. The same holds under a profile that refuses Landlock at each
+/// of its three calls: the web process is confined by its filter alone, serves the
+/// same way, and the host's log line for the start says so with the reason.
+#[test]
+#[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
+fn the_real_web_process_is_started_only_confined_and_then_serves() {
+    use org_platform::confinement::testing::RefusedCall;
+    const NAME: &str = "web::tests::the_real_web_process_is_started_only_confined_and_then_serves";
+    const STARTED: &str = "authenticated browser web process started, ";
+    let web = real_web();
+    let mut running = Running::start(&web.config, web.handler.clone()).unwrap();
+    // What the host verified it is confined by, as its log line says it.
+    let confined = running.confined();
+    assert!(confined.starts_with("confined by "), "{confined}");
+    assert!(!confined.contains("gave no reason"), "{confined}");
+    println!("\nconfined: {confined}");
+    wait_for("web.serving", || running.reported());
+    assert!(running.serving());
+    let address = (web.config.listen.address(), web.config.listen.port());
+    let mut browser = std::net::TcpStream::connect(address).unwrap();
+    browser.set_read_timeout(Some(WAIT)).unwrap();
+    write!(
+        browser,
+        "GET /api/v1/version HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        address.1
+    )
+    .unwrap();
+    let mut reply = String::new();
+    browser.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200 "), "{reply}");
+    // What a client can make it do without signing in: refuse, time nothing out,
+    // and stay confined and alive. Each of these ends in a refusal or a close,
+    // never in the filter killing the process.
+    let host = format!("Host: 127.0.0.1:{}\r\n", address.1);
+    let sends: [(&str, Vec<u8>); 5] = [
+        (
+            "a request head far beyond the limit",
+            format!(
+                "GET / HTTP/1.1\r\n{host}X-Fill: {}\r\n\r\n",
+                "h".repeat(600_000)
+            )
+            .into_bytes(),
+        ),
+        (
+            "a megabyte posted to the one route",
+            format!(
+                "POST /api/v1/version HTTP/1.1\r\n{host}Origin: http://127.0.0.1:{}\r\n\
+                 Content-Type: application/json\r\nConnection: close\r\nContent-Length: \
+                 1048576\r\n\r\n{}",
+                address.1,
+                "b".repeat(1 << 20)
+            )
+            .into_bytes(),
+        ),
+        (
+            "a megabyte posted to a missing route",
+            format!(
+                "POST /api/v1/none HTTP/1.1\r\n{host}Origin: http://127.0.0.1:{}\r\n\
+                 Connection: close\r\nTransfer-Encoding: chunked\r\n\r\n100000\r\n{}\r\n0\r\n\r\n",
+                address.1,
+                "c".repeat(1 << 20)
+            )
+            .into_bytes(),
+        ),
+        ("not HTTP", vec![0x16, 0x03, 0x01, 0xff, 0xff, 0, 0, 0]),
+        ("half a request head", b"GET / HTTP/1.1\r\nHost: ".to_vec()),
+    ];
+    for (what, bytes) in &sends {
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        client.set_write_timeout(Some(WAIT)).unwrap();
+        // The server may answer and close before it has read everything.
+        let _ = client.write_all(bytes);
+        let _ = client.read_to_end(&mut Vec::new());
+        drop(client);
+        assert!(running.serving(), "after {what}");
+    }
+    let mut browser = std::net::TcpStream::connect(address).unwrap();
+    browser.set_read_timeout(Some(WAIT)).unwrap();
+    write!(
+        browser,
+        "GET /api/v1/version HTTP/1.1\r\n{host}Connection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut reply = String::new();
+    browser.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200 "), "{reply}");
+    assert!(running.serving());
+    // The host goes away: its end of the child's standard input closes. The web
+    // process stops serving and exits by itself, normally, not by a signal.
+    let Running {
+        control,
+        mut process,
+        _stdin,
+        ..
+    } = running;
+    drop(_stdin);
+    wait_for("the web process exits", || {
+        matches!(process.try_wait(), Ok(true))
+    });
+    assert_eq!(process.ended().as_deref(), Some("exit code 0"));
+    drop(control);
+    // The supervisor's own start of it: logged once, with the same words, and it
+    // serves.
+    let stopping = AtomicBool::new(false);
+    let state = Mutex::new(GatewayState::NotConfigured);
+    let (lines, log) = recording();
+    thread::scope(|scope| {
+        let supervisor = scope.spawn(|| {
+            supervise(
+                &stopping,
+                &state,
+                &|| true,
+                Timing::PRODUCTION,
+                &log,
+                || Running::start(&web.config, web.handler.clone()),
+            )
+        });
+        wait_for("the supervised web process serves", || {
+            *lock(&state) == GatewayState::Running
+        });
+        let mut browser = std::net::TcpStream::connect(address).unwrap();
+        browser.set_read_timeout(Some(WAIT)).unwrap();
+        write!(
+            browser,
+            "GET /api/v1/version HTTP/1.1\r\n{host}Connection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut reply = String::new();
+        browser.read_to_string(&mut reply).unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200 "), "{reply}");
+        stopping.store(true, Ordering::SeqCst);
+        supervisor.thread().unpark();
+    });
+    let logged = lock(&lines).clone();
+    assert_eq!(logged, [format!("{STARTED}{confined}")]);
+    println!("log: {}", logged[0]);
+    web.offices.shutdown();
+    if std::env::var_os(UNDER_PROFILE).is_some() {
+        return;
+    }
+    // All of the above again in a host under a profile that refuses Landlock.
+    let not_permitted = "EPERM (Operation not permitted (os error 1))";
+    for (call, reason) in [
+        (
+            RefusedCall::LandlockCreateRuleset,
+            "landlock_create_ruleset failed with EPERM: the Landlock version query was refused"
+                .to_owned(),
+        ),
+        (
+            RefusedCall::LandlockRuleset,
+            format!("landlock_create_ruleset failed with {not_permitted}"),
+        ),
+        (
+            RefusedCall::LandlockRestrictSelf,
+            format!("landlock_restrict_self failed with {not_permitted}"),
+        ),
+    ] {
+        let Some(printed) = under_profile(NAME, call) else {
+            return;
+        };
+        const ALONE: &str = "confined by the seccomp filter alone: Landlock was not applied: ";
+        // A kernel without Landlock gives its own reason before a profile can.
+        let said = |line: &str, prefix: &str| {
+            line.strip_prefix(prefix)
+                .and_then(|rest| rest.strip_prefix(ALONE))
+                .is_some_and(|given| {
+                    given == reason
+                        || given.contains("this kernel has no Landlock")
+                        || given.contains("is not an enabled security module")
+                })
+        };
+        assert!(
+            printed.lines().any(|line| said(line, "confined: ")),
+            "{call:?}: {printed}"
+        );
+        assert!(
+            printed
+                .lines()
+                .any(|line| said(line, &format!("log: {STARTED}"))),
+            "{call:?}: {printed}"
+        );
+        // For whoever reads this test's output: what that host logged.
+        for line in printed.lines().filter(|line| line.starts_with("log: ")) {
+            println!("under a profile that refuses {call:?}: {line}");
+        }
+    }
+}
+
+/// ADR-0017 LNX-3 for the web process's own refusal: where the host's question
+/// passes and the installation of the filter then fails, the real web process exits
+/// before it reports ready, and every failed start is logged with the call and the
+/// error it named. Nothing is handed to it.
+#[test]
+#[ignore = "needs ORG_TEST_WEB_BIN, the built agentic-org-web, and a loopback bind"]
+fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reason() {
+    use org_platform::confinement::testing::RefusedCall;
+    const NAME: &str =
+        "web::tests::lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reason";
+    // The child connects, fails to install its filter, drops its stream and exits.
+    // The host meets one of the two, whichever it reaches first, and the same reason.
+    const ENDED: [&str; 2] = [
+        "web process start failed: control EOF before the ready line",
+        "web process start failed: the child exited before its ready line (exit code 1)",
+    ];
+    const REASON: &str = "; it reported that it cannot confine itself: gateway confinement \
+                          unavailable: seccomp failed with ENOMEM (Cannot allocate memory (os \
+                          error 12))";
+    let is_cause = |text: &str| ENDED.iter().any(|ended| text == format!("{ended}{REASON}"));
+    if std::env::var_os(UNDER_PROFILE).is_some() {
+        // The host under the profile.
+        let web = real_web();
+        org_platform::confinement::web_confinement_supported().unwrap();
+        let error = start_error(&web.config);
+        println!("\nrefused: {error}");
+        // The supervisor: each failed start is logged with that cause, up to the
+        // limit, and the web service ends as failed.
+        let state = Mutex::new(GatewayState::NotConfigured);
+        let (lines, log) = recording();
+        let timing = Timing {
+            serving: Duration::from_secs(5),
+            stable: Duration::from_secs(60),
+            backoff: Duration::from_millis(1),
+        };
+        supervise(
+            &AtomicBool::new(false),
+            &state,
+            &|| true,
+            timing,
+            &log,
+            || Running::start(&web.config, web.handler.clone()),
+        );
+        assert_eq!(*lock(&state), GatewayState::Failed);
+        for line in lock(&lines).iter() {
+            println!("log: {line}");
+        }
+        web.offices.shutdown();
+        return;
+    }
+    let Some(printed) = under_profile(NAME, RefusedCall::SeccompInstall) else {
+        return;
+    };
+    let lines: Vec<&str> = printed.lines().collect();
+    let refused: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("refused: "))
+        .collect();
+    assert!(
+        matches!(refused[..], [cause] if is_cause(cause)),
+        "{printed}"
+    );
+    let logged: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("log: "))
+        .collect();
+    assert_eq!(logged.len(), MAX_STARTS, "{printed}");
+    for line in &logged[..MAX_STARTS - 1] {
+        let cause = line
+            .strip_prefix("authenticated browser restarting in ")
+            .and_then(|rest| rest.split_once(" because "))
+            .map(|(_, cause)| cause);
+        assert!(cause.is_some_and(is_cause), "{line}");
+    }
+    let last = logged[MAX_STARTS - 1].strip_prefix(&format!(
+        "authenticated browser restart limit reached after {MAX_STARTS} failed starts; last: "
+    ));
+    assert!(last.is_some_and(is_cause), "{printed}");
 }

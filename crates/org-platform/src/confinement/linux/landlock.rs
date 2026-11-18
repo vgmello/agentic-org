@@ -1,4 +1,7 @@
-//! Step 4 of the Linux adapter: Landlock (Linux host design, section 3.3).
+//! Step 4 of the Linux adapter: Landlock, where the kernel offers it (Linux host
+//! design, section 3.3). It is a second layer under the seccomp filter, which alone
+//! holds every guarantee: a kernel without Landlock, or a profile that refuses its
+//! calls, is not a reason to refuse, and [`apply`] then says why it did nothing.
 //!
 //! A ruleset that handles every access right the running kernel's Landlock ABI
 //! knows, with no rule: nothing it handles is allowed. The constants and the
@@ -43,9 +46,10 @@ pub(super) const SCOPE_SIGNAL: u64 = 1 << 1;
 /// returns the ABI version and creates nothing.
 const CREATE_RULESET_VERSION: u32 = 1 << 0;
 
-/// The first ABI that covers truncating a file by path (Linux 6.2). Below it Landlock
-/// alone does not deny every file change, so the adapter refuses.
-pub(super) const MINIMUM_ABI: u32 = 3;
+/// The first ABI there is (Linux 5.13). Each ABI is applied with the rights it
+/// knows: ABI 1 and 2 do not cover truncating a file by path, which the seccomp
+/// filter stops as it stops every other path operation.
+pub(super) const MINIMUM_ABI: u32 = 1;
 /// The newest ABI whose rights this table lists. ABI 7 (Linux 6.15) added logging
 /// flags to `landlock_restrict_self` and no access right.
 pub(super) const HIGHEST_KNOWN_ABI: u32 = 7;
@@ -96,8 +100,12 @@ pub(super) const fn handled(abi: u32) -> Option<Handled> {
         | ACCESS_FS_MAKE_FIFO
         | ACCESS_FS_MAKE_BLOCK
         | ACCESS_FS_MAKE_SYM;
-    fs |= ACCESS_FS_REFER; // ABI 2
-    fs |= ACCESS_FS_TRUNCATE; // ABI 3
+    if abi >= 2 {
+        fs |= ACCESS_FS_REFER;
+    }
+    if abi >= 3 {
+        fs |= ACCESS_FS_TRUNCATE;
+    }
     let (mut net, mut scoped, mut size) = (0, 0, 8);
     if abi >= 4 {
         net = ACCESS_NET_BIND_TCP | ACCESS_NET_CONNECT_TCP;
@@ -136,8 +144,8 @@ pub(super) enum Unavailable {
     /// `EOPNOTSUPP`: Landlock is built in but is not among the enabled security
     /// modules.
     Disabled,
-    /// The version query answered an ABI below [`MINIMUM_ABI`].
-    TooOld(i64),
+    /// The version query answered a number that is no ABI: zero or less.
+    NoAbi(i64),
     /// Any other error of the version query, by its number: `EPERM` under a profile
     /// that refuses the call.
     Failed(i32),
@@ -147,17 +155,15 @@ impl fmt::Display for Unavailable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Missing => f.write_str(
-                "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock \
-                 (Linux 6.2 or later with Landlock is required)",
+                "landlock_create_ruleset failed with ENOSYS: this kernel has no Landlock",
             ),
             Self::Disabled => f.write_str(
                 "landlock_create_ruleset failed with EOPNOTSUPP: Landlock is built into \
                  this kernel but is not an enabled security module",
             ),
-            Self::TooOld(abi) => write!(
+            Self::NoAbi(abi) => write!(
                 f,
-                "this kernel's Landlock ABI is {abi}, below {MINIMUM_ABI} (Linux 6.2 or \
-                 later is required)"
+                "the Landlock version query answered {abi}, which is no ABI"
             ),
             Self::Failed(errno) => write!(
                 f,
@@ -176,15 +182,15 @@ pub(super) fn decide(query: Result<i64, i32>) -> Result<u32, Unavailable> {
         Ok(abi) => u32::try_from(abi)
             .ok()
             .filter(|abi| *abi >= MINIMUM_ABI)
-            .ok_or(Unavailable::TooOld(abi)),
+            .ok_or(Unavailable::NoAbi(abi)),
         Err(libc::ENOSYS) => Err(Unavailable::Missing),
         Err(libc::EOPNOTSUPP) => Err(Unavailable::Disabled),
         Err(errno) => Err(Unavailable::Failed(errno)),
     }
 }
 
-/// The running kernel's Landlock ABI, when it is high enough. The query creates
-/// nothing and restricts nothing, so the host may ask it of itself.
+/// The running kernel's Landlock ABI, when it has one this process may use. The
+/// query creates nothing and restricts nothing.
 pub(super) fn abi() -> Result<u32, Unavailable> {
     // SAFETY: the version query takes a null attribute and size 0 and writes nowhere.
     let version = unsafe {
@@ -202,13 +208,40 @@ pub(super) fn abi() -> Result<u32, Unavailable> {
     })
 }
 
+/// Why no Landlock domain was applied. The process is then confined by the seccomp
+/// filter alone, and this is what it tells its host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum NotApplied {
+    /// The version query did not answer an ABI.
+    Unavailable(Unavailable),
+    /// `landlock_create_ruleset` or `landlock_restrict_self` failed, with this error
+    /// number.
+    Failed(&'static str, i32),
+}
+
+impl fmt::Display for NotApplied {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unavailable(reason) => reason.fmt(f),
+            Self::Failed(call, errno) => write!(
+                f,
+                "{call} failed with {} ({})",
+                super::errno_text(*errno),
+                io::Error::from_raw_os_error(*errno)
+            ),
+        }
+    }
+}
+
 /// Restricts the calling thread, which must be the process's only one and must have
 /// no-new-privileges set: every right `kernel`'s ABI knows is handled and no rule
-/// allows anything. Returns the ABI enforced in full.
-pub(super) fn restrict(kernel: u32) -> io::Result<u32> {
+/// allows anything. Returns the ABI enforced in full. A failure restricts nothing.
+pub(super) fn restrict(kernel: u32) -> Result<u32, NotApplied> {
+    let errno = || io::Error::last_os_error().raw_os_error().unwrap_or(0);
     let abi = enforced_abi(kernel);
-    let handled =
-        handled(abi).ok_or_else(|| super::refuse(Unavailable::TooOld(i64::from(kernel))))?;
+    let handled = handled(abi).ok_or(NotApplied::Unavailable(Unavailable::NoAbi(i64::from(
+        kernel,
+    ))))?;
     let attr = RulesetAttr {
         handled_access_fs: handled.fs,
         handled_access_net: handled.net,
@@ -225,7 +258,7 @@ pub(super) fn restrict(kernel: u32) -> io::Result<u32> {
         )
     };
     if fd < 0 {
-        return Err(super::failed_call("landlock_create_ruleset"));
+        return Err(NotApplied::Failed("landlock_create_ruleset", errno()));
     }
     // SAFETY: a successful landlock_create_ruleset returns a new descriptor that
     // nothing else owns; it is closed when this function returns.
@@ -233,9 +266,16 @@ pub(super) fn restrict(kernel: u32) -> io::Result<u32> {
     // SAFETY: a live ruleset descriptor and zero flags; the call changes only the
     // calling thread's credentials.
     if unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset.as_raw_fd(), 0u32) } != 0 {
-        return Err(super::failed_call("landlock_restrict_self"));
+        return Err(NotApplied::Failed("landlock_restrict_self", errno()));
     }
     Ok(abi)
+}
+
+/// Applies a Landlock domain at the kernel's ABI, if the kernel has one and lets
+/// this process use it. Any failure, of the version query or of either call, leaves
+/// the process as it was and is returned as the reason.
+pub(super) fn apply() -> Result<u32, NotApplied> {
+    restrict(abi().map_err(NotApplied::Unavailable)?)
 }
 
 #[cfg(test)]
@@ -247,15 +287,24 @@ mod tests {
 
     #[test]
     fn each_abi_handles_every_right_the_kernel_added_up_to_it() {
-        // include/uapi/linux/landlock.h: REFER is bit 13 (ABI 2), TRUNCATE bit 14
-        // (ABI 3), IOCTL_DEV bit 15 (ABI 5); BIND_TCP and CONNECT_TCP are bits 0 and
-        // 1 of the network rights (ABI 4); ABSTRACT_UNIX_SOCKET and SIGNAL bits 0 and
-        // 1 of the scopes (ABI 6). ABI 7 adds no right.
-        let abi_3 = Handled {
-            fs: ABI_1_FS | 1 << 13 | 1 << 14,
+        // include/uapi/linux/landlock.h: ABI 1 has bits 0 to 12 of the filesystem
+        // rights; REFER is bit 13 (ABI 2), TRUNCATE bit 14 (ABI 3), IOCTL_DEV bit 15
+        // (ABI 5); BIND_TCP and CONNECT_TCP are bits 0 and 1 of the network rights
+        // (ABI 4); ABSTRACT_UNIX_SOCKET and SIGNAL bits 0 and 1 of the scopes (ABI 6).
+        // ABI 7 adds no right.
+        let abi_1 = Handled {
+            fs: ABI_1_FS,
             net: 0,
             scoped: 0,
             size: 8,
+        };
+        let abi_2 = Handled {
+            fs: ABI_1_FS | 1 << 13,
+            ..abi_1
+        };
+        let abi_3 = Handled {
+            fs: abi_2.fs | 1 << 14,
+            ..abi_2
         };
         let abi_4 = Handled {
             net: 0b11,
@@ -271,20 +320,22 @@ mod tests {
             size: 24,
             ..abi_5
         };
+        assert_eq!(handled(1), Some(abi_1));
+        assert_eq!(handled(2), Some(abi_2));
         assert_eq!(handled(3), Some(abi_3));
         assert_eq!(handled(4), Some(abi_4));
         assert_eq!(handled(5), Some(abi_5));
         assert_eq!(handled(6), Some(abi_6));
         assert_eq!(handled(7), Some(abi_6));
+        assert_eq!(abi_1.fs, 0x1fff);
         assert_eq!(abi_3.fs, 0x7fff);
         assert_eq!(abi_6.fs, 0xffff);
     }
 
     #[test]
-    fn an_abi_below_three_has_no_ruleset() {
-        for abi in [0, 1, 2] {
-            assert_eq!(handled(abi), None);
-        }
+    fn zero_is_no_abi() {
+        assert_eq!(handled(0), None);
+        assert_eq!(MINIMUM_ABI, 1);
     }
 
     #[test]
@@ -293,15 +344,15 @@ mod tests {
             assert_eq!(handled(abi), handled(HIGHEST_KNOWN_ABI));
             assert_eq!(enforced_abi(abi), HIGHEST_KNOWN_ABI);
         }
-        for abi in 3..=7 {
+        for abi in 1..=7 {
             assert_eq!(enforced_abi(abi), abi);
         }
     }
 
     #[test]
     fn a_newer_abi_never_handles_fewer_rights() {
-        let mut previous = handled(3).unwrap();
-        for abi in 4..=12 {
+        let mut previous = handled(1).unwrap();
+        for abi in 2..=12 {
             let next = handled(abi).unwrap();
             assert_eq!(next.fs & previous.fs, previous.fs);
             assert_eq!(next.net & previous.net, previous.net);
@@ -313,11 +364,11 @@ mod tests {
 
     #[test]
     fn the_version_query_is_decided_by_its_abi_or_its_error() {
-        for abi in [3, 4, 7, 9] {
+        for abi in [1, 2, 3, 4, 7, 9] {
             assert_eq!(decide(Ok(abi)), Ok(abi as u32));
         }
-        for abi in [0, 1, 2, -5] {
-            assert_eq!(decide(Ok(abi)), Err(Unavailable::TooOld(abi)));
+        for abi in [0, -5] {
+            assert_eq!(decide(Ok(abi)), Err(Unavailable::NoAbi(abi)));
         }
         assert_eq!(decide(Err(libc::ENOSYS)), Err(Unavailable::Missing));
         assert_eq!(decide(Err(libc::EOPNOTSUPP)), Err(Unavailable::Disabled));
@@ -328,19 +379,37 @@ mod tests {
     }
 
     #[test]
-    fn each_refusal_names_the_call_and_the_cause() {
+    fn each_reason_names_the_call_and_the_cause() {
         let text = |query| decide(query).unwrap_err().to_string();
         assert!(text(Err(libc::ENOSYS)).contains("ENOSYS: this kernel has no Landlock"));
         assert!(text(Err(libc::EOPNOTSUPP)).contains("EOPNOTSUPP"));
         assert!(text(Err(libc::EOPNOTSUPP)).contains("not an enabled security module"));
         assert!(text(Err(libc::EPERM)).contains("landlock_create_ruleset failed with EPERM"));
-        for abi in [0, 1, 2] {
-            assert!(text(Ok(abi)).contains(&format!("Landlock ABI is {abi}, below 3")));
-        }
+        assert_eq!(
+            text(Ok(0)),
+            "the Landlock version query answered 0, which is no ABI"
+        );
+        assert_eq!(
+            NotApplied::Failed("landlock_restrict_self", libc::EPERM).to_string(),
+            "landlock_restrict_self failed with EPERM (Operation not permitted (os error 1))"
+        );
+        assert_eq!(
+            NotApplied::Unavailable(Unavailable::Missing).to_string(),
+            text(Err(libc::ENOSYS))
+        );
     }
 
     #[test]
-    fn this_kernel_has_an_abi_the_adapter_accepts() {
-        assert!(abi().unwrap() >= MINIMUM_ABI);
+    fn the_version_query_answers_an_abi_or_names_the_call_that_failed() {
+        // Both are a kernel the web process runs on.
+        match abi() {
+            Ok(abi) => assert!(abi >= MINIMUM_ABI),
+            Err(reason) => assert!(
+                reason
+                    .to_string()
+                    .starts_with("landlock_create_ruleset failed with "),
+                "{reason}"
+            ),
+        }
     }
 }

@@ -154,9 +154,12 @@ fn every_listed_number_is_allowed_and_no_other() {
             arch.prctl,
             arch.ioctl,
             arch.fcntl,
+            arch.sendto,
             arch.mmap,
             arch.mprotect,
+            arch.mremap,
             arch.tgkill,
+            arch.clock_gettime,
         ];
         for number in by_argument {
             assert!(!allowed.contains(&number), "{name} {number}");
@@ -175,12 +178,22 @@ fn every_listed_number_is_allowed_and_no_other() {
                 RET_ALLOW
             } else if number == arch.clone3 {
                 ERRNO_ENOSYS
-            } else if number == arch.mmap || number == arch.mprotect {
-                // No protection asked for: not executable.
+            } else if [
+                arch.mmap,
+                arch.mprotect,
+                arch.sendto,
+                arch.mremap,
+                arch.clock_gettime,
+            ]
+            .contains(&number)
+            {
+                // No protection asked for: not executable. No destination. No
+                // flag: resized in place. Clock 0: the wall clock.
                 RET_ALLOW
             } else {
                 // Every other call, and with these arguments `clone`, `prctl`,
-                // `ioctl`, `fcntl` and `tgkill` too.
+                // `ioctl`, `fcntl` and `tgkill` too. `sendto` with nothing set
+                // names no destination and passes, as the two memory calls do.
                 RET_KILL_PROCESS
             };
             assert_eq!(action, expected, "{name} {number}");
@@ -189,11 +202,13 @@ fn every_listed_number_is_allowed_and_no_other() {
 }
 
 #[test]
-fn the_allowed_names_are_the_designs_list_and_three_more() {
+fn the_allowed_names_are_the_designs_list_and_four_more() {
     // Linux host design, section 3.3, step 5, in its order, with `epoll_*`,
     // `rt_sig*` and "clocks" read as the calls the runtime makes. The design's
-    // `mmap`, `mprotect`, `fcntl`, `clone`, `prctl`, `ioctl` and signals to itself
-    // are not here: their arguments decide.
+    // `mmap`, `mprotect`, `fcntl`, `sendto`, `clock_gettime`, `clone`, `prctl`, `ioctl` and signals
+    // to itself are not here: their arguments decide, as they do for `mremap`,
+    // which the design does not name. The design's `sendmsg` is not
+    // allowed at all: its destination is where a filter cannot read it.
     let design = [
         "munmap",
         "madvise",
@@ -208,8 +223,6 @@ fn the_allowed_names_are_the_designs_list_and_three_more() {
         "writev",
         "recvfrom",
         "recvmsg",
-        "sendmsg",
-        "sendto",
         "accept4",
         "getsockname",
         "getsockopt",
@@ -217,7 +230,6 @@ fn the_allowed_names_are_the_designs_list_and_three_more() {
         "shutdown",
         "close",
         "poll",
-        "clock_gettime",
         "getrandom",
         "rt_sigaction",
         "rt_sigprocmask",
@@ -230,7 +242,7 @@ fn the_allowed_names_are_the_designs_list_and_three_more() {
         "exit",
         "exit_group",
     ];
-    let beyond = ["getpeername", "getpid", "restart_syscall"];
+    let beyond = ["getpeername", "getpid", "restart_syscall", "sched_yield"];
     let names =
         |calls: &[Call]| -> BTreeSet<&str> { calls.iter().map(|(name, _)| *name).collect() };
     let expected: BTreeSet<&str> = design.into_iter().chain(beyond).collect();
@@ -254,13 +266,13 @@ const KILLED_X86_64: &[Call] = &[
     ("stat", 4),
     ("fstat", 5),
     ("pipe", 22),
-    ("mremap", 25),
     ("dup", 32),
     ("dup2", 33),
     ("sendfile", 40),
     ("socket", 41),
     ("connect", 42),
     ("accept", 43),
+    ("sendmsg", 46),
     ("bind", 49),
     ("listen", 50),
     ("socketpair", 53),
@@ -358,7 +370,7 @@ const KILLED_AARCH64: &[Call] = &[
     ("listen", 201),
     ("accept", 202),
     ("connect", 203),
-    ("mremap", 216),
+    ("sendmsg", 211),
     ("add_key", 217),
     ("keyctl", 219),
     ("execve", 221),
@@ -579,6 +591,76 @@ fn fcntl_is_allowed_only_for_the_three_commands_the_runtime_makes() {
 }
 
 #[test]
+fn a_send_names_no_destination_and_carries_only_the_two_flags() {
+    assert_eq!(
+        (libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL) as u32,
+        SENDTO_FLAGS
+    );
+    assert_eq!(libc::MSG_FASTOPEN, 0x2000_0000);
+    for (name, arch) in tables() {
+        let send = |flags: i32, destination: u64, length: u64| {
+            decide(
+                arch,
+                arch.sendto,
+                [
+                    7,
+                    0x7000_0000,
+                    512,
+                    flags as u32 as u64,
+                    destination,
+                    length,
+                ],
+            )
+        };
+        for flags in [
+            0,
+            libc::MSG_NOSIGNAL,
+            libc::MSG_DONTWAIT,
+            libc::MSG_NOSIGNAL | libc::MSG_DONTWAIT,
+        ] {
+            assert_eq!(send(flags, 0, 0), RET_ALLOW, "{name} {flags:#x}");
+            // A destination, by its pointer (either half) or its length alone.
+            for (destination, length) in [
+                (0x7000_1000, 16),
+                (0x7000_1000, 0),
+                (1 << 32, 0),
+                (1 << 63, 0),
+                (0, 16),
+                (0, 1),
+            ] {
+                assert_eq!(
+                    send(flags, destination, length),
+                    RET_KILL_PROCESS,
+                    "{name} {flags:#x} {destination:#x} {length}"
+                );
+            }
+        }
+        // The send-time connect and every other flag, with and without a destination.
+        for flags in [
+            libc::MSG_FASTOPEN,
+            libc::MSG_FASTOPEN | libc::MSG_NOSIGNAL,
+            libc::MSG_OOB,
+            libc::MSG_MORE,
+            libc::MSG_CONFIRM,
+            libc::MSG_ZEROCOPY,
+            -1,
+        ] {
+            assert_eq!(send(flags, 0, 0), RET_KILL_PROCESS, "{name} {flags:#x}");
+            assert_eq!(send(flags, 0x7000_1000, 16), RET_KILL_PROCESS, "{name}");
+        }
+        // The flags are the fourth argument, read as 32 bits like the kernel reads it.
+        assert_eq!(
+            decide(arch, arch.sendto, [7, 0, 0, 1 << 32, 0, 0]),
+            RET_ALLOW,
+            "{name}"
+        );
+        // `sendmsg` carries its destination in memory: it is not allowed at all.
+        let sendmsg = if name == "x86_64" { 46 } else { 211 };
+        assert_eq!(decide(arch, sendmsg, NONE), RET_KILL_PROCESS, "{name}");
+    }
+}
+
+#[test]
 fn no_memory_is_mapped_or_made_executable() {
     assert_eq!(libc::PROT_EXEC, 4);
     for (name, arch) in tables() {
@@ -610,6 +692,64 @@ fn no_memory_is_mapped_or_made_executable() {
                     "{name} {executable}"
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn memory_is_resized_or_moved_by_the_kernel_never_placed() {
+    assert_eq!(libc::MREMAP_MAYMOVE, 1);
+    for (name, arch) in tables() {
+        let flags = |flags: u64| {
+            decide(
+                arch,
+                arch.mremap,
+                [0x7000_0000, 135_168, 266_240, flags, 0, 0],
+            )
+        };
+        assert_eq!(flags(0), RET_ALLOW, "{name}");
+        assert_eq!(flags(libc::MREMAP_MAYMOVE as u64), RET_ALLOW, "{name}");
+        for other in [
+            libc::MREMAP_FIXED as u64,
+            (libc::MREMAP_MAYMOVE | libc::MREMAP_FIXED) as u64,
+            (libc::MREMAP_MAYMOVE | libc::MREMAP_DONTUNMAP) as u64,
+            8,
+            1 << 32,
+            1 | 1 << 32,
+            u64::MAX,
+        ] {
+            assert_eq!(flags(other), RET_KILL_PROCESS, "{name} {other:#x}");
+        }
+    }
+}
+
+#[test]
+fn only_a_fixed_clock_is_read_never_another_processs() {
+    for (name, arch) in tables() {
+        let clock = |clock: i32| {
+            decide(
+                arch,
+                arch.clock_gettime,
+                [clock as u32 as u64, 0x7000_0000, 0, 0, 0, 0],
+            )
+        };
+        for fixed in [
+            libc::CLOCK_REALTIME,
+            libc::CLOCK_MONOTONIC,
+            libc::CLOCK_PROCESS_CPUTIME_ID,
+            libc::CLOCK_THREAD_CPUTIME_ID,
+            libc::CLOCK_MONOTONIC_RAW,
+            libc::CLOCK_REALTIME_COARSE,
+            libc::CLOCK_MONOTONIC_COARSE,
+            libc::CLOCK_BOOTTIME,
+            libc::CLOCK_TAI,
+        ] {
+            assert_eq!(clock(fixed), RET_ALLOW, "{name} {fixed}");
+        }
+        // `MAKE_PROCESS_CPUCLOCK(pid, CPUCLOCK_SCHED)` for process 1, a clock
+        // device's id, and -1.
+        for dynamic in [(!1 << 3) | 2, (!5 << 3) | 3, -1, i32::MIN] {
+            assert_eq!(clock(dynamic), RET_KILL_PROCESS, "{name} {dynamic}");
         }
     }
 }
@@ -678,6 +818,18 @@ fn this_kernel_can_kill_a_process_from_a_filter() {
     assert_eq!(kill_process_available(), Ok(()));
 }
 
+#[test]
+fn asking_whether_a_filter_can_be_installed_installs_none() {
+    let filters = || {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        ["NoNewPrivs", "Seccomp", "Seccomp_filters"]
+            .map(|name| super::super::status::field(&status, name).map(str::to_owned))
+    };
+    let before = filters();
+    assert_eq!(installable(), Ok(()));
+    assert_eq!(filters(), before);
+}
+
 // The numbers of the killed calls are the C library's, checked when this
 // architecture's tests are built.
 #[cfg(target_arch = "x86_64")]
@@ -687,13 +839,13 @@ const _: () = {
         ("stat", libc::SYS_stat),
         ("fstat", libc::SYS_fstat),
         ("pipe", libc::SYS_pipe),
-        ("mremap", libc::SYS_mremap),
         ("dup", libc::SYS_dup),
         ("dup2", libc::SYS_dup2),
         ("sendfile", libc::SYS_sendfile),
         ("socket", libc::SYS_socket),
         ("connect", libc::SYS_connect),
         ("accept", libc::SYS_accept),
+        ("sendmsg", libc::SYS_sendmsg),
         ("bind", libc::SYS_bind),
         ("listen", libc::SYS_listen),
         ("socketpair", libc::SYS_socketpair),
@@ -795,7 +947,7 @@ const _: () = {
         ("listen", libc::SYS_listen),
         ("accept", libc::SYS_accept),
         ("connect", libc::SYS_connect),
-        ("mremap", libc::SYS_mremap),
+        ("sendmsg", libc::SYS_sendmsg),
         ("add_key", libc::SYS_add_key),
         ("keyctl", libc::SYS_keyctl),
         ("execve", libc::SYS_execve),

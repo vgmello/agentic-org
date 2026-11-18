@@ -9,8 +9,13 @@
 //! reported, as the web process's ready line does, and a report with a seccomp filter
 //! means a forbidden operation kills the process instead of returning an error. There
 //! each denial is proved by its own child, which must die of `SIGSYS`.
+//!
+//! The layers that were enforced are the contract's too (`confinement::layers`), and
+//! the `PASS` line names them. Where the adapter has a layer it applies only when
+//! the system offers it (Landlock on GNU/Linux), a child that went without it prints
+//! why, the vector holds with the remaining layer alone, and the `PASS` line says so.
 mod vector {
-    use org_platform::confinement::{self, Enforcement};
+    use org_platform::confinement::{self, Confined, Enforcement};
     use org_socket::rights::{self, StreamReceiver};
     use std::{
         fs,
@@ -70,7 +75,10 @@ mod vector {
         );
     }
     fn line(reader: &mut BufReader<impl Read + AsRawFd>) -> String {
-        assert!(org_socket::poll_readable(reader.get_ref().as_raw_fd(), WAIT).unwrap());
+        // A line already read from the pipe with the one before it is not waited for.
+        if !reader.buffer().contains(&b'\n') {
+            assert!(org_socket::poll_readable(reader.get_ref().as_raw_fd(), WAIT).unwrap());
+        }
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         line
@@ -82,6 +90,31 @@ mod vector {
             .landlock_abi
             .map_or("none".to_owned(), |abi| abi.to_string());
         format!("enforced landlock={landlock} seccomp={}\n", report.seccomp)
+    }
+    /// What a child that went without Landlock prints after its `enforced` line.
+    const NOT_APPLIED: &str = "landlock not applied: ";
+    /// A child's report as the parent takes it: its `enforced` line and, where the
+    /// contract says a Landlock layer is missing from it, the line that says why.
+    /// Returns the report and the layers in words.
+    fn report(stdout: &mut BufReader<impl Read + AsRawFd>) -> (Enforcement, String) {
+        let report = reported(&line(stdout));
+        let layers = confinement::layers(&report).unwrap();
+        if !layers.landlock_missing {
+            return (report, layers.description);
+        }
+        let why = line(stdout);
+        let reason = why
+            .strip_prefix(NOT_APPLIED)
+            .and_then(|rest| rest.strip_suffix('\n'))
+            .filter(|reason| !reason.is_empty())
+            .unwrap_or_else(|| panic!("the child did not say why it has no Landlock: {why:?}"));
+        (
+            report,
+            format!(
+                "{} (Landlock was not applied: {reason})",
+                layers.description
+            ),
+        )
     }
     /// The report of a child's `enforced` line.
     fn reported(line: &str) -> Enforcement {
@@ -102,6 +135,10 @@ mod vector {
     /// number, it has the adapter's refusal text, and nothing was confined.
     fn refused_at_entry(root: &Path, rendezvous: &Path) {
         let error = confinement::confine_web(rendezvous).unwrap_err();
+        entry_refusal(root, &error);
+    }
+    /// Checks that `error` is the entry check's refusal and that nothing was confined.
+    fn entry_refusal(root: &Path, error: &std::io::Error) {
         assert!(
             error.raw_os_error().is_none(),
             "refused at entry, not at connect: {error}"
@@ -138,7 +175,11 @@ mod vector {
     fn confine(rendezvous: &Path) -> (UnixStream, Enforcement) {
         confinement::disable_core_dumps().unwrap();
         // Connected to the approved rendezvous and confined, inside the adapter.
-        let (approved, report) = match confinement::confine_web(rendezvous) {
+        let Confined {
+            stream: approved,
+            enforcement: report,
+            landlock_not_applied,
+        } = match confinement::confine_web(rendezvous) {
             Ok(confined) => confined,
             Err(error) => {
                 println!("refused: {error}");
@@ -147,6 +188,9 @@ mod vector {
         };
         confinement::verify_ready_report(&report).unwrap();
         print!("{}", enforced(&report));
+        if let Some(reason) = landlock_not_applied {
+            println!("{NOT_APPLIED}{reason}");
+        }
         std::io::stdout().flush().unwrap();
         (approved, report)
     }
@@ -154,15 +198,32 @@ mod vector {
         let root = Path::new(&args[1]);
         let rendezvous = Path::new(&args[2]);
         if args[0] == "--thread" {
-            std::thread::spawn(|| {}).join().unwrap();
             // A second thread that lives through the call: every adapter refuses a
-            // process that has another thread, and one refuses any that ever had.
+            // process that has another thread.
             let (release, parked) = std::sync::mpsc::channel::<()>();
             let second = std::thread::spawn(move || parked.recv());
             refused_at_entry(root, rendezvous);
             drop(release);
             let _ = second.join().unwrap();
             println!("thread-refused");
+            return;
+        }
+        if args[0] == "--joined-thread" {
+            // A thread that has ended before the call, and no other. An adapter that
+            // asks whether the process ever had a thread refuses; one that counts
+            // the threads it has now may find one and confine it. The parent knows
+            // from the first child's report which it must be.
+            std::thread::spawn(|| {}).join().unwrap();
+            match confinement::confine_web(rendezvous) {
+                Err(error) => {
+                    entry_refusal(root, &error);
+                    println!("joined-thread-refused");
+                }
+                Ok(confined) => {
+                    confinement::verify_ready_report(&confined.enforcement).unwrap();
+                    println!("joined-thread-confined");
+                }
+            }
             return;
         }
         if args[0] == "--descriptor" {
@@ -202,6 +263,32 @@ mod vector {
             for worker in workers {
                 worker.join().unwrap();
             }
+            // Buffers that grow by appending, here and on another thread (the C
+            // library moves a large block with mremap), and a contended channel
+            // (a waiting side yields with sched_yield).
+            let grow = || {
+                let mut bytes = Vec::new();
+                (0..(1u32 << 20)).for_each(|value| bytes.push(value as u8));
+                let mut text = String::new();
+                while text.len() < 1 << 20 {
+                    text.push_str("grown by appending ");
+                }
+                bytes.len() + text.len()
+            };
+            assert!(grow() > 2 << 20);
+            assert!(std::thread::spawn(grow).join().unwrap() > 2 << 20);
+            let (send, receive) = std::sync::mpsc::sync_channel::<u32>(0);
+            let senders: Vec<_> = (0..4)
+                .map(|_| {
+                    let send = send.clone();
+                    std::thread::spawn(move || (0..5_000).for_each(|n| send.send(n).unwrap()))
+                })
+                .collect();
+            drop(send);
+            assert_eq!(receive.iter().count(), 20_000);
+            senders
+                .into_iter()
+                .for_each(|sender| sender.join().unwrap());
             let started = std::time::Instant::now();
             let sum = std::thread::spawn(|| {
                 let block = vec![1u8; 8 << 20];
@@ -297,6 +384,7 @@ mod vector {
         let outbound = TcpListener::bind("127.0.0.1:0").unwrap();
         let outbound_address = outbound.local_addr().unwrap().to_string();
         let mut kills = false;
+        let mut confined_by = None;
         for name in ["r", "r\"\\\né"] {
             let path = root.0.join(name);
             let listener = UnixListener::bind(&path).unwrap();
@@ -304,10 +392,12 @@ mod vector {
             let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
             // The report is checked as the host checks the ready line's, then the
             // process itself.
-            let report = reported(&line(&mut stdout));
+            let (report, layers) = report(&mut stdout);
             confinement::verify_ready_report(&report).unwrap();
             confinement::verify_web(process.0.id(), &report, &[&root.0.join("fixture")]).unwrap();
             kills = report.seccomp;
+            // Every child is confined by the same layers.
+            assert_eq!(*confined_by.get_or_insert_with(|| layers.clone()), layers);
             let (mut stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(WAIT)).unwrap();
             let inherited = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -336,8 +426,9 @@ mod vector {
             for probe in PROBES {
                 let mut process = spawn(&["--probe", probe], &root.0, &path, &outbound_address);
                 let mut stdout = BufReader::new(process.0.stdout.take().unwrap());
-                let report = reported(&line(&mut stdout));
+                let (report, layers) = report(&mut stdout);
                 assert!(report.seccomp, "{probe}");
+                assert_eq!(Some(&layers), confined_by.as_ref(), "{probe}");
                 let (held, _) = listener.accept().unwrap();
                 let mut rest = String::new();
                 stdout.read_to_string(&mut rest).unwrap();
@@ -368,9 +459,38 @@ mod vector {
             );
             assert!(negative.0.wait().unwrap().success());
         }
-        drop((unrelated, outbound));
+        // A process whose only other thread has ended. Without a filter in the
+        // report (the adapter that asks whether the process ever had a thread) it
+        // must be refused. With one, the adapter counts the threads the process has
+        // now: it is refused or confined, and either is right. Its rendezvous
+        // listens, so a refusal is the entry check's and not a failed connection.
+        let joined_rendezvous = root.0.join("j");
+        let joined_listener = UnixListener::bind(&joined_rendezvous).unwrap();
+        let mut joined = spawn(
+            &["--joined-thread"],
+            &root.0,
+            &joined_rendezvous,
+            &outbound_address,
+        );
+        let outcome = line(&mut BufReader::new(joined.0.stdout.take().unwrap()));
+        assert!(joined.0.wait().unwrap().success());
+        let joined_thread = match outcome.as_str() {
+            "joined-thread-refused\n" => "refusal of a process whose thread had ended",
+            "joined-thread-confined\n" if kills => {
+                "confinement of a process whose thread had ended (one thread at entry)"
+            }
+            other => panic!("a process that had a thread: {other:?}"),
+        };
+        drop((unrelated, outbound, joined_listener));
         assert_eq!(fs::read(root.0.join("fixture")).unwrap(), b"retained");
-        println!("PASS: normal/special pathname, main-thread enforcement, parent observation, inherited listener/rights, denied ambient I/O/exec/connect, inherited thread policy and never-threaded refusal; disposable roots only");
+        let confined_by = confined_by.expect("two children were confined");
+        println!(
+            "PASS: confined by {confined_by}; normal/special pathname, main-thread \
+             enforcement, parent observation, inherited listener/rights, denied ambient \
+             I/O/exec/connect, inherited thread policy, refusal of a process with a second \
+             thread, {joined_thread}, refusal of a process with a fourth descriptor; \
+             disposable roots only"
+        );
     }
 }
 

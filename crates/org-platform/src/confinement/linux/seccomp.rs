@@ -9,7 +9,8 @@ use std::io;
 use std::mem;
 
 use super::syscalls::{
-    Arch, FCNTL_COMMANDS, IOCTL_REQUESTS, PRCTL_OPTIONS, PROT_EXEC, THREAD_CLONE_FLAGS,
+    Arch, FCNTL_COMMANDS, FIRST_DYNAMIC_CLOCK, IOCTL_REQUESTS, MREMAP_FLAGS, PRCTL_OPTIONS,
+    PROT_EXEC, SENDTO_FLAGS, THREAD_CLONE_FLAGS,
 };
 
 /// One instruction (`struct sock_filter`, `include/uapi/linux/filter.h`).
@@ -40,12 +41,18 @@ pub(super) const RET_KILL_PROCESS: u32 = 0x8000_0000;
 pub(super) const RET_ERRNO: u32 = 0x0005_0000;
 pub(super) const RET_ALLOW: u32 = 0x7fff_0000;
 const SET_MODE_FILTER: libc::c_uint = 1;
+/// `SECCOMP_FILTER_FLAG_TSYNC`: put every thread of the process under the filter,
+/// or fail. The process has one thread here, so it synchronizes nothing; it makes
+/// the kernel refuse the filter if that were ever not so, instead of leaving a
+/// thread outside it.
+const FLAG_TSYNC: libc::c_ulong = 1;
 const GET_ACTION_AVAIL: libc::c_uint = 2;
 const _: () = {
     assert!(RET_KILL_PROCESS == libc::SECCOMP_RET_KILL_PROCESS);
     assert!(RET_ERRNO == libc::SECCOMP_RET_ERRNO);
     assert!(RET_ALLOW == libc::SECCOMP_RET_ALLOW);
     assert!(SET_MODE_FILTER == libc::SECCOMP_SET_MODE_FILTER);
+    assert!(FLAG_TSYNC == libc::SECCOMP_FILTER_FLAG_TSYNC);
     assert!(GET_ACTION_AVAIL == libc::SECCOMP_GET_ACTION_AVAIL);
 };
 
@@ -207,6 +214,44 @@ pub(super) fn program(arch: &Arch, pid: u32) -> Vec<Instruction> {
     let mut fcntl = vec![Step::Load(low(1))];
     fcntl.extend(one_of(FCNTL_COMMANDS));
     decided_by_arguments(&mut program, arch.fcntl, &fcntl);
+    // sendto(fd, buffer, length, flags, destination, destination length): a send on
+    // a connection the process holds. No flag but the two (the kernel reads the
+    // flags as a 32-bit integer), no destination pointer and no destination length:
+    // a destination can connect the socket, or address another one.
+    decided_by_arguments(
+        &mut program,
+        arch.sendto,
+        &[
+            Step::Load(low(3)),
+            Step::Test {
+                code: JUMP_ANY_BIT,
+                k: !SENDTO_FLAGS,
+                yes: To::Kill,
+                no: To::Next,
+            },
+            Step::Load(low(4)),
+            Step::Test {
+                code: JUMP_EQUAL,
+                k: 0,
+                yes: To::Next,
+                no: To::Kill,
+            },
+            Step::Load(high(4)),
+            Step::Test {
+                code: JUMP_EQUAL,
+                k: 0,
+                yes: To::Next,
+                no: To::Kill,
+            },
+            Step::Load(low(5)),
+            Step::Test {
+                code: JUMP_EQUAL,
+                k: 0,
+                yes: To::Allow,
+                no: To::Kill,
+            },
+        ],
+    );
     // mmap(addr, length, prot, ...) and mprotect(addr, length, prot): never
     // executable. `PROT_EXEC` is in the low word.
     for number in [arch.mmap, arch.mprotect] {
@@ -224,6 +269,20 @@ pub(super) fn program(arch: &Arch, pid: u32) -> Vec<Instruction> {
             ],
         );
     }
+    // mremap(old address, old size, new size, flags, ...): resize a block in place
+    // or let the kernel move it. The kernel reads the flags as a 64-bit integer.
+    let mut mremap = vec![
+        Step::Load(high(3)),
+        Step::Test {
+            code: JUMP_EQUAL,
+            k: 0,
+            yes: To::Next,
+            no: To::Kill,
+        },
+        Step::Load(low(3)),
+    ];
+    mremap.extend(one_of(MREMAP_FLAGS));
+    decided_by_arguments(&mut program, arch.mremap, &mremap);
     // tgkill(tgid, tid, signal): a signal to one of this process's own threads. The
     // kernel reads the thread group as a 32-bit integer.
     decided_by_arguments(
@@ -236,6 +295,20 @@ pub(super) fn program(arch: &Arch, pid: u32) -> Vec<Instruction> {
                 k: pid,
                 yes: To::Allow,
                 no: To::Kill,
+            },
+        ],
+    );
+    // clock_gettime(clock, ...): one of the fixed clocks, never another process's.
+    decided_by_arguments(
+        &mut program,
+        arch.clock_gettime,
+        &[
+            Step::Load(low(0)),
+            Step::Test {
+                code: JUMP_AT_LEAST,
+                k: FIRST_DYNAMIC_CLOCK,
+                yes: To::Kill,
+                no: To::Allow,
             },
         ],
     );
@@ -264,6 +337,30 @@ pub(super) fn kill_process_available() -> Result<(), i32> {
     Ok(())
 }
 
+/// Whether this process may install a filter on all its threads, asked without
+/// installing one: the installing call itself, with the flag [`install`] passes and
+/// no filter. A kernel that would take a filter answers `EFAULT`, having read
+/// nothing and changed nothing. Any other answer is returned as the reason: `EPERM`
+/// from a profile that refuses the call, `ENOSYS` from a kernel without it, `EINVAL`
+/// from one that does not know the flag.
+pub(super) fn installable() -> Result<(), i32> {
+    // SAFETY: the kernel checks the flag, then fails to read a filter description
+    // from the null pointer; nothing is installed.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            SET_MODE_FILTER,
+            FLAG_TSYNC,
+            std::ptr::null::<libc::sock_fprog>(),
+        )
+    };
+    match io::Error::last_os_error().raw_os_error() {
+        Some(libc::EFAULT) if result == -1 => Ok(()),
+        Some(errno) if result == -1 => Err(errno),
+        _ => Err(0),
+    }
+}
+
 /// Installs the filter on the calling thread, which must be the process's only one
 /// and must have no-new-privileges set. It cannot be removed, and every thread
 /// created later inherits it.
@@ -274,19 +371,24 @@ pub(super) fn install(arch: &Arch) -> io::Result<()> {
         filter: program.as_ptr().cast_mut(),
     };
     // SAFETY: `description` points to `len` initialized instructions that live
-    // through the call; the kernel copies and verifies them. Flags are zero.
+    // through the call; the kernel copies and verifies them.
     let result = unsafe {
         libc::syscall(
             libc::SYS_seccomp,
             SET_MODE_FILTER,
-            0usize,
+            FLAG_TSYNC,
             &description as *const libc::sock_fprog,
         )
     };
-    if result != 0 {
-        return Err(super::failed_call("seccomp"));
+    match result {
+        0 => Ok(()),
+        // With the flag, a positive value is the id of a thread that could not be
+        // put under the filter: nothing was installed.
+        1.. => Err(super::refuse(format_args!(
+            "seccomp could not put thread {result} under the filter"
+        ))),
+        _ => Err(super::failed_call("seccomp")),
     }
-    Ok(())
 }
 
 #[cfg(test)]
