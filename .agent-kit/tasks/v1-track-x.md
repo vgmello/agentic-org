@@ -833,11 +833,17 @@ namespaces (`57 27 0:4 net:[4026532268] /run/docker/netns/… - nsfs nsfs rw`); 
 of such a mount is not a path, the mount-table reader called the line malformed, and
 one unreadable line refused everything. It passed in the author's runs and in the
 lead's check of the merge because no daemon was running then. So a release host on
-any machine that runs Docker could not open its store. With the author
-(`x/x3-mounts`): only the two mounts that are looked for may refuse; the fixture is
-this machine's real table; the check is run inside a container as well; and, from X5,
-with a required mount point the store is compared with the whole data volume, not
-only with the instance root. The other failures of that run: the offline and IPv6
+any machine that runs Docker could not open its store. **Fixed, integrated** (branch `x/x3-mounts`, `9d364c66`, by the author): the two
+directories are found in the table by the mount id the kernel gives for their held
+descriptors; of every other line only the mount id is read, so no other line can
+refuse a store, and a line whose id cannot be read still refuses the table. The
+fixtures are real tables (this machine with Docker; two containers). With a required
+mount point the store is also compared with what the data root's mount shows, so
+`-v D:/data -v D/secrets:/secrets` is refused (`InsideDataVolume`); run by the author
+inside a container as uid 61000: two volumes accepted, a key added and read back; the
+three nested layouts refused. Lead's checks with a container running (the mount
+table then has the `nsfs` line): lint for the three targets; 1,003 tests of the
+platform and host crates unprivileged and the store's 92 as root, none failing. The other failures of that run: the offline and IPv6
 tests, and `supervisor::channels::tests::a_discard_stream_ends_at_a_non_server_event`
 (Track A's test; X5's worker saw it fail twice and pass once: intermittent, cause not
 yet looked for).

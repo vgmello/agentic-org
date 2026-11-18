@@ -51,10 +51,22 @@
 //!    the mount point, not through the directory's own parent. So each of the two is
 //!    placed in its filesystem from the mount table (`/proc/self/mountinfo`: the root
 //!    its mount shows, then its path below the mount point), and two places in one
-//!    filesystem must not be equal or inside each other. Where a place cannot be had,
-//!    the directory is refused ([`RootRule::Undetermined`]), never accepted on doubt.
-//! 8. When a mount point is required, it is the root of a mount (`statx`,
-//!    `STATX_ATTR_MOUNT_ROOT`). A kernel that cannot say refuses.
+//!    filesystem must not be equal or inside each other. Where the place of one of
+//!    the two cannot be had, the directory is refused ([`RootRule::Undetermined`]),
+//!    never accepted on doubt. The two are found in the table by the mount ids the
+//!    kernel gives for their descriptors, so the machine's other mounts are not read
+//!    beyond their ids and cannot refuse a store, whatever they are.
+//! 8. When a mount point is required (a container's mounted secrets volume), it is
+//!    the root of a mount (`statx`, `STATX_ATTR_MOUNT_ROOT`; a kernel that cannot say
+//!    refuses), and it is on another volume than the data: it is not inside the
+//!    directory that the data root's mount shows, is not that directory, and does not
+//!    contain it ([`RootRule::InsideDataVolume`], [`RootRule::ContainsDataVolume`]).
+//!    Check 7 compares the store with the data root itself, and a data root need not
+//!    be the top of its volume: with the data volume at `/data` and the instance's
+//!    root at `/data/instance`, `-v D:/data -v D/secrets:/secrets` puts the store
+//!    beside the instance root and inside the data volume. Where no mount point is
+//!    required this is not asked: the data root's mount is then the disk's own, which
+//!    shows everything on it.
 //! 9. Each of the host's item stores that exists is a directory of the service user
 //!    with mode exactly `0700`, not followed if it is a link
 //!    ([`RootRule::ItemStoreOwner`], [`RootRule::ItemStoreMode`],
@@ -289,6 +301,13 @@ pub enum RootRule {
     /// filesystem could not be determined from the mount table, for this reason. It
     /// is refused, never assumed.
     Undetermined(MountDoubt),
+    /// A mount point is required, and the release directory is inside the directory
+    /// that the data root's mount shows, or is that directory: the secrets are in the
+    /// data volume.
+    InsideDataVolume,
+    /// A mount point is required, and the release directory contains the directory
+    /// that the data root's mount shows: the data volume is in the secrets volume.
+    ContainsDataVolume,
     /// A mount point is required and the release directory is not the root of a mount.
     NotAMountPoint,
     /// A mount point is required and this kernel does not say whether a directory is
@@ -377,6 +396,16 @@ impl fmt::Display for RootRule {
                 "whether the credential directory and the data root share a directory could \
                  not be determined from the mount table ({doubt}); it is refused, not assumed"
             ),
+            Self::InsideDataVolume => f.write_str(
+                "the credential directory is inside the data volume (the directory that the \
+                 data root's mount shows); the secrets and the data must be two separate \
+                 volumes, not one inside the other",
+            ),
+            Self::ContainsDataVolume => f.write_str(
+                "the credential directory contains the data volume (the directory that the \
+                 data root's mount shows); the secrets and the data must be two separate \
+                 volumes, not one inside the other",
+            ),
             Self::NotAMountPoint => f.write_str(
                 "the credential directory must be a mount point (a mounted secrets volume) and \
                  is not one",
@@ -426,8 +455,13 @@ pub enum MountDoubt {
     /// The mount table, or a directory's own path, could not be read, with this kind
     /// of error (no `/proc`, for one).
     Unreadable(io::ErrorKind),
-    /// The mount table is not what the kernel writes.
+    /// The mount table is not what the kernel writes, where it matters: a line whose
+    /// mount id cannot be read (it could be the line of a mount that is looked for), a
+    /// table that was cut off, or the line of a mount that is looked for.
     Malformed,
+    /// The mount a directory is in shows no directory: its root is not a path (the
+    /// mount of a namespace file, for one).
+    RootNotAPath,
     /// The mount a directory is in is not in the mount table.
     NotListed,
     /// The mount a directory is in is in the mount table more than once.
@@ -445,6 +479,7 @@ impl fmt::Display for MountDoubt {
             Self::NoMountId => f.write_str("this kernel names no mount for a directory"),
             Self::Unreadable(kind) => write!(f, "the mount table could not be read: {kind}"),
             Self::Malformed => f.write_str("the mount table is not what the kernel writes"),
+            Self::RootNotAPath => f.write_str("a directory's mount shows no directory"),
             Self::NotListed => f.write_str("a directory's mount is not in the mount table"),
             Self::Ambiguous => {
                 f.write_str("a directory's mount is in the mount table more than once")
