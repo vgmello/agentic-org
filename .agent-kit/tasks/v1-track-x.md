@@ -25,8 +25,10 @@ the checklist row is FC-164. Every handoff and review of this track also carries
   architecture, A1's SQLCipher removal) and at `42dd1322` (A1.5's single launch
   contract, A2's setup and service on macOS, A3's stored browser sessions, instance
   IDs as UUIDv7; see "Merges with v1-integration" below). The session that runs this
-  lead may push only that branch; the merge into `v1-integration` is made by a
-  session that may.
+  lead pushes that branch. **Owner's go-ahead, 2026-11-18:** the lead may merge into
+  `v1-integration` what is ready, once an independent reviewer has approved the exact
+  commit; nothing else is pushed there. The path to that merge is under "Merge into
+  v1-integration" below.
 - **Systems.** Development and the full Linux checks run on Linux x86-64 (kernel
   6.18, as root in a container). macOS code is type-checked locally with
   `cargo check --target aarch64-apple-darwin` where the crate has no C build, and
@@ -934,3 +936,30 @@ default seccomp profile, no option beyond a bind mount of the build output):
 
 Not measured: Docker Desktop on a Mac, an older Docker or host kernel, the product's
 own image (X5).
+
+## Merge into v1-integration
+
+Owner's go-ahead (2026-11-18): merge what is ready when the independent reviewer
+approves it. What must be true of the one commit that is merged:
+
+1. X3's review repairs and X4's last slice are integrated (both in work); X5 is not
+   part of this merge unless it is finished and reviewed by then.
+2. `origin/v1-integration` is merged into the Track X branch again. It moved 82
+   commits past `42dd1322` (to `f7e60098`): a trial merge conflicts in 20 files, among
+   them the host's key stores, supervisor, web process and `serve`, which the running
+   workers are editing, so this merge is made once, after their branches are in. A
+   read-only analysis of Track A's changes in those files is being written as a merge
+   guide.
+3. The checks pass on that commit: fmt; lint for Linux, macOS (cross-lint) and the
+   refusing target; the guard tests; the whole workspace's tests unprivileged; and the
+   macOS CI job on the pushed commit shows no failure that `v1-integration` does not
+   already have.
+4. One fresh independent review of that exact commit covers what no fresh reviewer
+   has read: the two merges with `v1-integration` (the lead's conflict resolutions),
+   the repairs of X2's host slice and the test-race fix, all of X4's host work and the
+   Landlock change, and X3's repairs. Its verdict must be ACCEPT; a CHANGES_REQUIRED
+   is repaired and reviewed again.
+5. Then `git merge --no-ff` into `v1-integration` and push, and the Track A lead is
+   told what changed under them (the platform crates, the rule against platform
+   predicates and its CI check, the admission and credential contracts, the root
+   refusal, the runner's test user).
