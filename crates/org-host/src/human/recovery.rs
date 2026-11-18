@@ -320,6 +320,10 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
             }
             _ => return Err(HELP.into()),
         };
+    // An explicit target must name an absolute socket and a canonical instance id (UUIDv7).
+    if !socket.is_absolute() || !org_proto::is_uuid_v7(&instance) {
+        return Err(HELP.into());
+    }
     Ok(RecoveryTarget {
         instance,
         socket,
@@ -349,9 +353,6 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         default_org,
         default_login,
     } = recovery_target(&options)?;
-    if !socket.is_absolute() || !org_proto::is_uuid_v7(&instance) {
-        return Err(HELP.into());
-    }
     let org = options
         .get("--org-id")
         .map(|s| s.to_string())

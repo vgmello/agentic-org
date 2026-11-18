@@ -35,3 +35,25 @@ fn malformed_cli_arguments_do_not_collect_credentials_or_open_a_socket() {
         assert!(recovery(&args.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err());
     }
 }
+
+#[test]
+fn an_explicit_recovery_target_takes_only_a_canonical_uuid_v7_instance() {
+    let target = |instance: &str| {
+        let options = BTreeMap::from([
+            ("--host-socket", "/tmp/agentic-org-test/host.sock"),
+            ("--instance-id", instance),
+        ]);
+        recovery_target(&options).map(|t| t.instance)
+    };
+    let canonical = "01936b2e-1e5a-7c3d-8a4b-0123456789ab";
+    assert_eq!(target(canonical).as_deref(), Ok(canonical));
+    for refused in [
+        "01JD5Z00000000000000000NST",           // a ULID
+        "01936B2E-1E5A-7C3D-8A4B-0123456789AB", // uppercase UUIDv7
+        "01936b2e-1e5a-4c3d-8a4b-0123456789ab", // version 4
+    ] {
+        assert!(target(refused).is_err(), "{refused}");
+    }
+    let relative = BTreeMap::from([("--host-socket", "host.sock"), ("--instance-id", canonical)]);
+    assert!(recovery_target(&relative).is_err());
+}
