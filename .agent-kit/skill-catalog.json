@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "ceca4ce54eacb559fe79293170b9d806b6d2f5848628c7ffb6cf946f36d4b80f"
+      "sha256": "2b2dad9e266ccdc14ba0de4c9208b35e9c179b6bb566b4ee5a6c5ca55d106096"
     },
     {
       "path": "Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "1409a7ec881cc1e520e6efec00677357f87ca56ebb5413ef7e0cb20f34364443"
+      "sha256": "7fb190e5f9bd74d021763947f85dccc37bdd10a2f4f93a56f73812eaad9b5d7b"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
@@ -150,7 +150,7 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "6773e7878f6a9cc48d8ddc64e240324f873efd6baec26d7ae183fdd9ad2c822e"
+      "sha256": "40f435159fdc760c779e45a2e8f5d970f8ae02eb4ccfe7b56f36d3be14fe10a7"
     },
     {
       "path": "docs/design/organization-data/README.md",

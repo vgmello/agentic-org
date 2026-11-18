@@ -44,12 +44,14 @@ struct Reply {
 fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str) -> Reply {
     let mut stream = TcpStream::connect(address).expect("web process listener");
     stream.set_read_timeout(Some(WAIT)).unwrap();
-    write!(
-        stream,
+    // One write for head and body: a split write can leave late body bytes unread
+    // when the web process answers early, and its close then resets the socket
+    // (a known transport limit tracked for A3, not what this test proves).
+    let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}",
         body.len()
-    )
-    .unwrap();
+    );
+    stream.write_all(request.as_bytes()).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     let (headers, body) = response.split_once("\r\n\r\n").expect("HTTP response");
