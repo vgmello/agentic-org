@@ -24,7 +24,6 @@ pub mod inbox;
 mod launch;
 mod live;
 mod msg_calls;
-pub mod owned_recovery;
 mod revocations;
 mod serve;
 mod signals;
@@ -392,15 +391,9 @@ fn serve_office(
     // Stop signals are handled only from here: before this the default disposition applies, so a
     // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
-    // Live events (messages, status lines) for subscribers; a publish wakes the followers.
-    let live = live_events(&office);
-    let mailbox = match office.mailbox(live.clone()) {
-        Ok(mailbox) => Arc::new(mailbox),
-        Err(e) => {
-            let _ = std::fs::remove_file(&socket);
-            return fail_with(&mut control, &e);
-        }
-    };
+    // Nothing publishes live events while messaging, status lines and `subscribe` are not
+    // served (B6): the ports keep an empty source.
+    let live = Arc::new(live::LiveEvents::new(Box::new(|| {})));
     let inbox = match inbox::Hq::for_office(Arc::clone(&office)) {
         Ok(inbox) => inbox,
         Err(error) => {
@@ -418,21 +411,10 @@ fn serve_office(
         &info,
         &socket,
         serve::OfficePorts {
-            work: {
-                let office = Arc::clone(&office);
-                Box::new(move |caller, call| {
-                    let method = call.method();
-                    work_answer(method, office.work_call(caller, call))
-                })
-            },
-            operation_get: {
-                let office = Arc::clone(&office);
-                Box::new(move |id| {
-                    office
-                        .org_operation_get(id)
-                        .map_err(|e| logged("operation.get", &e))
-                })
-            },
+            // Calls only the old tables served answer `unsupported` until their family is
+            // rebuilt on the office store: work in B4, operation lookup in B2.
+            work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
+            operation_get: Box::new(|_| Ok(Err(unsupported("operation lookup", "B2")))),
             snapshot: {
                 let office = Arc::clone(&office);
                 Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))
@@ -440,47 +422,17 @@ fn serve_office(
             who: {
                 let office = Arc::clone(&office);
                 Box::new(move |params| {
-                    // Nothing reports presence yet: all offline, with the status lines set.
+                    // Nothing reports presence and no status lines are kept yet (B6): everyone
+                    // is offline, with no status line.
                     office
-                        .who_with_status(params)
+                        .who(params, &org_office::directory::NothingLive)
                         .map_err(|e| logged("who", &e))
                 })
             },
-            status: {
-                let office = Arc::clone(&office);
-                let live = Arc::clone(&live);
-                // One status call at a time for a member, so the events go out in the order the
-                // lines were set (two calls of one agent could otherwise publish out of commit
-                // order). Other members' calls do not wait for each other.
-                let turns = std::sync::Mutex::new(std::collections::HashMap::<
-                    String,
-                    Arc<std::sync::Mutex<()>>,
-                >::new());
-                Box::new(move |member, params| {
-                    let turn = Arc::clone(
-                        turns
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .entry(member.to_owned())
-                            .or_default(),
-                    );
-                    let _turn = turn.lock().unwrap_or_else(|p| p.into_inner());
-                    let answer = office
-                        .set_status(member, params)
-                        .map_err(|e| logged("status", &e))?;
-                    if let Ok((set, current)) = &answer {
-                        live.publish_presence(org_office::presence_after_status(
-                            member,
-                            set,
-                            current.clone(),
-                        ));
-                    }
-                    Ok(answer.map(|(set, _)| set))
-                })
-            },
-            live: Arc::clone(&live),
-            feed: Box::new(OfficeFeed(Arc::clone(&office))),
-            mailbox,
+            status: Box::new(|_, _| Ok(Err(unsupported("status lines", "B6")))),
+            live,
+            feed: None,
+            mailbox: None,
             directory: Arc::new(office.member_directory()),
             submit: {
                 let office = Arc::clone(&office);
@@ -604,22 +556,13 @@ fn logged(what: &str, error: &OfficeError) -> String {
     error.to_string()
 }
 
-/// Map committed or remembered work answers at the server composition boundary.
-fn work_answer(
-    method: &str,
-    result: Result<org_work::TxnOutput, org_work::StoreError>,
-) -> Result<Result<org_proto::work::WorkAccepted, ApiError>, String> {
-    match result {
-        // C2 publishes changed; the committed parts remain in work_feed.
-        Ok(org_work::TxnOutput::Committed { accepted, .. }) => Ok(Ok(accepted)),
-        Ok(org_work::TxnOutput::Refused(error)) => Ok(Err(error)),
-        Ok(org_work::TxnOutput::Replayed(answer)) => Ok(answer),
-        Err(error) => {
-            eprintln!("agentic-org-office: {method} failed: {error}");
-            log_causes(&error);
-            Err(error.to_string())
-        }
-    }
+/// The answer to a call this office does not serve yet: `what` is rebuilt on the office store
+/// by increment `by`.
+fn unsupported(what: &str, by: &str) -> ApiError {
+    ApiError::new(
+        org_proto::ErrorCode::Unsupported,
+        format!("this office does not serve {what} yet ({by})"),
+    )
 }
 
 /// The causes behind a storage failure (a path, the OS error, SQLite's text) belong in the log
@@ -629,48 +572,6 @@ fn log_causes(error: &dyn std::error::Error) {
     while let Some(inner) = cause {
         eprintln!("agentic-org-office:   caused by: {inner}");
         cause = inner.source();
-    }
-}
-
-/// The live events of this office: a publish wakes the followers asleep on the office's change
-/// signal, so a hint goes out at once and not at the end of their idle poll.
-fn live_events(office: &Arc<Office>) -> Arc<live::LiveEvents> {
-    let office = Arc::clone(office);
-    Arc::new(live::LiveEvents::new(Box::new(move || {
-        office.wake_followers();
-    })))
-}
-
-/// The office's log, for `subscribe`.
-struct OfficeFeed(Arc<Office>);
-
-impl follow::OrgFeed for OfficeFeed {
-    fn head(&self) -> Result<org_proto::org::Position, String> {
-        self.0.org_head().map_err(|e| logged("head", &e))
-    }
-
-    fn can_resume_from(&self, after: org_proto::org::Position) -> Result<bool, String> {
-        self.0
-            .org_can_resume_from(after)
-            .map_err(|e| logged("resume check", &e))
-    }
-
-    fn changes_after(
-        &self,
-        after: org_proto::org::Position,
-        limit: usize,
-    ) -> Result<Vec<org_proto::org::OrgChangedData>, String> {
-        self.0
-            .org_changes_after(after, limit)
-            .map_err(|e| logged("log read", &e))
-    }
-
-    fn token(&self) -> u64 {
-        self.0.org_change_token()
-    }
-
-    fn wait(&self, seen: u64, timeout: std::time::Duration) -> u64 {
-        self.0.wait_for_org_change(seen, timeout)
     }
 }
 
@@ -762,46 +663,8 @@ fn fail_code(error: &OfficeError) -> FailCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use org_office::{Key, NewOffice};
-    mod transfer_composition;
 
-    #[test]
-    fn c1_production_work_adapter_preserves_committed_refused_and_replayed_answers() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        use org_proto::ErrorCode;
-        use org_work::{StoreError, TxnOutput};
-        let accepted: org_proto::work::WorkAccepted = serde_json::from_value(serde_json::json!({
-            "status":"committed", "position":{"incarnation":2,"seq":5}, "items":[]
-        }))
-        .unwrap();
-        let refusal = ApiError::new(ErrorCode::Conflict, "changed since version 1");
-        for result in [
-            TxnOutput::Committed {
-                accepted: accepted.clone(),
-                changed: vec![],
-            },
-            TxnOutput::Replayed(Ok(accepted.clone())),
-        ] {
-            assert_eq!(
-                work_answer("task.create", Ok(result)),
-                Ok(Ok(accepted.clone()))
-            );
-        }
-        for result in [
-            TxnOutput::Refused(refusal.clone()),
-            TxnOutput::Replayed(Err(refusal.clone())),
-        ] {
-            assert_eq!(
-                work_answer("task.create", Ok(result)),
-                Ok(Err(refusal.clone()))
-            );
-        }
-        let error = StoreError::new(std::io::Error::other("private database path and SQL"));
-        assert_eq!(
-            work_answer("task.create", Err(error)),
-            Err("the office could not read or write its work storage".into())
-        );
-    }
+    mod transfer_composition;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
@@ -845,39 +708,6 @@ mod tests {
                 Path::new("/short/runtime/OFFICE1.sock")
             );
         }
-    }
-
-    #[test]
-    fn a_publish_on_the_live_events_wakes_the_offices_followers() {
-        let _spawn = crate::transfer::tests::without_process_spawn();
-        // The production wiring: publishing moves the office's change token, which is what a
-        // follower asleep in `wait_for_org_change` is waiting on.
-        let dir = tempfile::Builder::new().prefix("lv").tempdir().unwrap();
-        let office = Arc::new(
-            Office::create(
-                dir.path().join("offices").join("OFFICE1"),
-                &NewOffice {
-                    office_id: "OFFICE1".into(),
-                    office_name: "HQ".into(),
-                    role: org_office::OfficeRole::Hq,
-                    org_id: "ORG1".into(),
-                    org_name: "Acme".into(),
-                },
-                Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([4; 32])),
-            )
-            .unwrap(),
-        );
-        let live = live_events(&office);
-        let before = office.org_change_token();
-        live.publish_presence(org_proto::directory::MemberPresenceChangedData {
-            member_id: "M".into(),
-            presence: org_proto::directory::MemberPresence::Offline,
-            last_seen_at: "2026-11-09T12:00:00.000Z".into(),
-            status: None,
-            status_expires_at: None,
-            current_task_id: None,
-        });
-        assert_ne!(office.org_change_token(), before);
     }
 
     #[test]

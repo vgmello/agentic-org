@@ -1,5 +1,7 @@
-//! `agent-os` against a real office server: `msg send | inbox | read | wait` and `who` go
-//! through the office, and `send` falls back to the local spool when the office is down.
+//! `agent-os` against a real office server: `who` goes through the office; `msg send | inbox |
+//! read | wait` reach it and are refused, because the office does not serve messaging until B6
+//! rebuilds it on the office store; and `send` falls back to the local spool when the office is
+//! down.
 //!
 //! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
 //! set, runs exactly what `agentic-org-office`'s `main` runs (its library). It is driven the way
@@ -47,22 +49,18 @@ fn main() {
         serve();
     }
     let tests: &[(&str, fn())] = &[
+        ("who_goes_through_the_office", who_goes_through_the_office),
         (
-            "send_inbox_read_and_who_go_through_the_office",
-            send_inbox_read_and_who_go_through_the_office,
+            "messages_through_the_office_are_refused_unsupported_and_show_no_body",
+            messages_through_the_office_are_refused_unsupported_and_show_no_body,
         ),
         (
             "office_errors_keep_their_exit_codes_and_never_show_a_body",
             office_errors_keep_their_exit_codes_and_never_show_a_body,
         ),
-        ("wait_wakes_on_a_send", wait_wakes_on_a_send),
         (
-            "wait_times_out_and_a_person_can_interrupt_it",
-            wait_times_out_and_a_person_can_interrupt_it,
-        ),
-        (
-            "an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting",
-            an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting,
+            "an_offboarded_agent_is_refused_at_the_bind",
+            an_offboarded_agent_is_refused_at_the_bind,
         ),
         (
             "a_send_to_an_office_that_is_down_is_refused_until_ingest",
@@ -528,109 +526,9 @@ fn command_id(n: u8) -> String {
     String::from_utf8(out.to_vec()).unwrap()
 }
 
-fn send_inbox_read_and_who_go_through_the_office() {
+fn who_goes_through_the_office() {
     let world = World::new();
     let _server = world.office();
-
-    // pixel sends by handle; the office answers with the message's id. No spool, no notice.
-    let sent = world
-        .run(
-            "pixel",
-            &[
-                "msg",
-                "send",
-                "--to",
-                "nova",
-                "--subject",
-                "hi",
-                "--json",
-                "hello nova",
-            ],
-        )
-        .ok();
-    assert_eq!(sent.stderr, "");
-    let id = sent.json()["id"].as_str().unwrap().to_owned();
-    assert!(world.spooled().is_empty(), "the send was spooled");
-
-    // nova's inbox, through the office: the spool's row shape, headers only.
-    let inbox = world.run("nova", &["msg", "inbox", "--json"]).ok();
-    assert_eq!(inbox.stderr, "");
-    let rows = inbox.json();
-    let rows = rows.as_array().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["id"], id.as_str());
-    // Members by handle, as the spool showed names (the member ids are in who).
-    assert_eq!(rows[0]["from"], "pixel");
-    assert_eq!(rows[0]["to"], "nova");
-    assert_eq!(rows[0]["subject"], "hi");
-    assert_eq!(rows[0]["status"], "unread");
-    assert_eq!(rows[0]["kind"], "msg");
-    assert!(rows[0].get("body").is_none());
-    let summary = world
-        .run("nova", &["msg", "inbox", "--summary", "--json"])
-        .ok();
-    assert!(summary.json()[0].get("body").is_none());
-    let text = world.run("nova", &["msg", "inbox"]).ok();
-    let columns: Vec<&str> = text.stdout.split('\t').collect();
-    assert_eq!(columns.len(), 5, "{}", text.stdout);
-    assert_eq!(columns[0], id);
-    assert_eq!(columns[4], "hi");
-
-    // A second message, so --limit and the order can be seen: oldest first, like the spool.
-    let second = world
-        .run("pixel", &["msg", "send", "--to", "nova", "second"])
-        .ok()
-        .stdout;
-    let both = world.run("nova", &["msg", "inbox", "--json"]).ok().json();
-    let ids: Vec<&str> = both
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|r| r["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, vec![id.as_str(), second.as_str()]);
-    let limited = world
-        .run("nova", &["msg", "inbox", "--limit", "1", "--json"])
-        .ok();
-    assert_eq!(limited.json().as_array().unwrap().len(), 1);
-    assert_eq!(limited.json()[0]["id"], id.as_str());
-
-    // read --next takes the oldest and marks it read; read <id> takes the one named.
-    let read = world.run("nova", &["msg", "read", "--next", "--json"]).ok();
-    let message = read.json();
-    assert_eq!(message["id"], id.as_str());
-    assert_eq!(message["body"], "hello nova");
-    assert_eq!(message["from"], "pixel");
-    assert_eq!(message["kind"], "msg");
-    assert_eq!(message["subject"], "hi");
-    let by_id = world.run("nova", &["msg", "read", &second]).ok();
-    assert!(
-        by_id
-            .stdout
-            .starts_with(&format!("{second} [msg] pixel -> nova")),
-        "{}",
-        by_id.stdout
-    );
-    assert!(by_id.stdout.ends_with("\nsecond"), "{}", by_id.stdout);
-    assert_eq!(
-        world.run("nova", &["msg", "inbox", "--json"]).ok().stdout,
-        "[]"
-    );
-    assert_eq!(
-        world
-            .run("nova", &["msg", "read", "--next", "--json"])
-            .ok()
-            .stdout,
-        "null"
-    );
-    let all = world.run("nova", &["msg", "inbox", "--all"]).ok();
-    let lines: Vec<&str> = all.stdout.lines().collect();
-    assert_eq!(lines.len(), 2);
-    assert!(
-        lines.iter().all(|l| l.split('\t').nth(5) == Some("read")),
-        "{}",
-        all.stdout
-    );
 
     // who, through the office, in the spool's card shape.
     let everyone = world.run("pixel", &["who", "--json"]).ok().json();
@@ -656,16 +554,60 @@ fn send_inbox_read_and_who_go_through_the_office() {
     );
 }
 
+/// The office answers every messaging call `unsupported` until B6 rebuilds messaging on the
+/// office store. `agent-os` reports the refusal with its exit code for an office error it has
+/// no class for (4, `exit_code`'s default), prints nothing on stdout, never shows the body,
+/// and never falls back to a spool: the office was reached and answered.
+fn messages_through_the_office_are_refused_unsupported_and_show_no_body() {
+    let world = World::new();
+    let _server = world.office();
+    let secret = "a secret body";
+    let refused = |run: Run, what: &str| {
+        assert_eq!(run.code, 4, "{what}: {}", run.stderr);
+        assert_eq!(run.stdout, "", "{what}");
+        assert!(
+            run.stderr.contains("does not serve messaging yet"),
+            "{what}: {}",
+            run.stderr
+        );
+        assert!(!run.stderr.contains(secret), "{what}");
+    };
+    refused(
+        world.run(
+            "pixel",
+            &[
+                "msg",
+                "send",
+                "--to",
+                "nova",
+                "--subject",
+                "hi",
+                "--json",
+                secret,
+            ],
+        ),
+        "send",
+    );
+    refused(world.run("nova", &["msg", "inbox", "--json"]), "inbox");
+    refused(
+        world.run("nova", &["msg", "read", "--next", "--json"]),
+        "read",
+    );
+    // Answered at once: the office does not hold it.
+    let started = Instant::now();
+    refused(
+        world.run("nova", &["msg", "wait", "--timeout", "30s"]),
+        "wait",
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(world.spooled().is_empty(), "a refused send was spooled");
+    assert!(world.office_spooled().is_empty());
+}
+
 fn office_errors_keep_their_exit_codes_and_never_show_a_body() {
     let world = World::new();
     let _server = world.office();
     let secret = "a secret body";
-
-    // Nobody by that name: unknown recipient, exit 3, and the body is in no output.
-    let unknown = world.run("pixel", &["msg", "send", "--to", "nobody", secret]);
-    assert_eq!(unknown.code, 3, "{}", unknown.stderr);
-    assert!(!unknown.stderr.contains(secret) && !unknown.stdout.contains(secret));
-    assert!(world.spooled().is_empty());
 
     // An agent the office doesn't know can't bind: exit 1, naming the office and the agent,
     // and no fall back to the spool.
@@ -676,10 +618,6 @@ fn office_errors_keep_their_exit_codes_and_never_show_a_body() {
     assert!(!stranger.stderr.contains(secret));
     assert!(world.spooled().is_empty());
     assert_eq!(world.run("ghost", &["msg", "inbox"]).code, 1);
-
-    // A message id that isn't nova's: not found, exit 1.
-    let missing = world.run("nova", &["msg", "read", "01NOSUCHMESSAGE00000000000"]);
-    assert_eq!(missing.code, 1, "{}", missing.stderr);
 
     // An office asked for that isn't a plain id is a usage error, before anything is sent.
     let bad = world.run(
@@ -718,126 +656,11 @@ fn office_errors_keep_their_exit_codes_and_never_show_a_body() {
     assert!(world.office_spooled().is_empty());
 }
 
-fn wait_wakes_on_a_send() {
-    let world = World::new();
-    let _server = world.office();
-
-    let mut waiting = world
-        .agent("nova", &["msg", "wait", "--timeout", "30s", "--json"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    // Held: nothing has been sent, so it must still be waiting.
-    std::thread::sleep(Duration::from_millis(800));
-    assert!(
-        waiting.try_wait().unwrap().is_none(),
-        "wait ended with nothing sent"
-    );
-
-    world
-        .run("pixel", &["msg", "send", "--to", "nova", "wake up"])
-        .ok();
-    let started = Instant::now();
-    while waiting.try_wait().unwrap().is_none() {
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "the send didn't wake the wait"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let woken: Run = waiting.wait_with_output().unwrap().into();
-    let woken = woken.ok();
-    assert_eq!(woken.json()["body"], "wake up");
-    assert_eq!(woken.json()["from"], "pixel");
-    // wait doesn't mark it read.
-    let inbox = world.run("nova", &["msg", "inbox", "--json"]).ok().json();
-    assert_eq!(inbox.as_array().unwrap().len(), 1);
-
-    // --from and --urgent-only reach the office: a normal message from pixel doesn't end an
-    // urgent-only wait, and an urgent one does.
-    let mut urgent = world
-        .agent(
-            "nova",
-            &[
-                "msg",
-                "wait",
-                "--urgent-only",
-                "--from",
-                "pixel",
-                "--timeout",
-                "30s",
-            ],
-        )
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    std::thread::sleep(Duration::from_millis(800));
-    assert!(
-        urgent.try_wait().unwrap().is_none(),
-        "an urgent-only wait took a normal message"
-    );
-    world
-        .run(
-            "pixel",
-            &["msg", "send", "--to", "nova", "--priority", "urgent", "now"],
-        )
-        .ok();
-    let started = Instant::now();
-    while urgent.try_wait().unwrap().is_none() {
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "an urgent send didn't wake it"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let woken: Run = urgent.wait_with_output().unwrap().into();
-    assert!(woken.ok().stdout.ends_with("\nnow"));
-}
-
-fn wait_times_out_and_a_person_can_interrupt_it() {
-    let world = World::new();
-    let _server = world.office();
-
-    let started = Instant::now();
-    let timed_out = world.run("nova", &["msg", "wait", "--timeout", "1s"]);
-    assert_eq!(timed_out.code, 2, "{}", timed_out.stderr);
-    assert!(
-        timed_out.stderr.contains("timed out"),
-        "{}",
-        timed_out.stderr
-    );
-    assert!(started.elapsed() >= Duration::from_millis(900));
-
-    let waiting = world
-        .agent("nova", &["msg", "wait", "--timeout", "30s"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    std::thread::sleep(Duration::from_millis(800));
-    let status = Command::new("kill")
-        .args(["-INT", &waiting.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(status.success());
-    let started = Instant::now();
-    let ended = waiting.wait_with_output().unwrap();
-    assert_eq!(ended.status.code(), Some(130));
-    assert!(started.elapsed() < Duration::from_secs(5));
-}
-
-fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
+fn an_offboarded_agent_is_refused_at_the_bind() {
     let world = World::new();
     let mut server = world.office();
-    let waiting = world
-        .agent("nova", &["msg", "wait", "--timeout", "3s"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    std::thread::sleep(Duration::from_millis(800));
+    // Bound before: the office knows nova.
+    world.run("nova", &["who", "nova", "--json"]).ok();
     let mut owner = server.owner();
     let offboarded = owner.call(
         "member.offboard",
@@ -850,26 +673,6 @@ fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
     );
     assert!(offboarded.get("result").is_some(), "{offboarded}");
 
-    // The held wait ends no later than its timeout. Today the office re-checks a binding only
-    // when the next call arrives, so it times out (2); if it ends held waits on offboarding, it
-    // answers not_bound, agent-os binds again, is refused, and says so (1).
-    let started = Instant::now();
-    let ended = waiting.wait_with_output().unwrap();
-    assert!(started.elapsed() < Duration::from_secs(10));
-    let ended: Run = ended.into();
-    match ended.code {
-        2 => assert!(ended.stderr.contains("timed out"), "{}", ended.stderr),
-        1 => assert!(
-            ended
-                .stderr
-                .contains(&format!("office {OFFICE} unbound 'nova'"))
-                && ended.stderr.contains("won't bind it again"),
-            "{}",
-            ended.stderr
-        ),
-        other => panic!("exit {other}: {}", ended.stderr),
-    }
-
     // Its next command is refused at the bind, clearly, and nothing falls back to the spool.
     let next = world.run("nova", &["msg", "inbox"]);
     assert_eq!(next.code, 1, "{}", next.stderr);
@@ -879,6 +682,7 @@ fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
         next.stderr
     );
     assert!(next.stdout.is_empty());
+    assert!(world.spooled().is_empty());
 }
 
 fn a_send_to_an_office_that_is_down_is_refused_until_ingest() {
@@ -941,11 +745,10 @@ fn an_office_not_named_is_not_used() {
     assert_eq!(world.spooled().len(), 1);
     let inbox = world.run_unnamed("nova", &["msg", "inbox", "--json"]).ok();
     assert_eq!(inbox.stderr, "");
-    // Named, the office has nothing for nova: the send didn't go there.
-    assert_eq!(
-        world.run("nova", &["msg", "inbox", "--json"]).ok().stdout,
-        "[]"
-    );
+    // Named, the office is asked, and refuses: it does not serve messaging yet.
+    let named = world.run("nova", &["msg", "inbox", "--json"]);
+    assert_eq!(named.code, 4, "{}", named.stderr);
+    assert_eq!(named.stdout, "");
     // A hand-run agent the office doesn't know isn't refused when it names no office.
     let stranger = world.run_unnamed("ghost", &["msg", "inbox"]).ok();
     assert_eq!(stranger.stderr, "");

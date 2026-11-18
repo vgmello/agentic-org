@@ -152,12 +152,6 @@ fn team(
     })
 }
 
-fn agent_bound(world: &World, handle: &str) -> Client {
-    let agent = Client::connect(socket(world)).unwrap();
-    agent.bind_member(handle).unwrap();
-    agent
-}
-
 /// An initial replica has no organization yet, so it has no owner a grant could name: the real
 /// worker refuses the owner's grant as it refuses an unbound connection. (A bound caller's
 /// snapshot answering `unavailable` is covered in process, `serve.rs` tests.)
@@ -269,7 +263,8 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
     let mut first = live(&world);
     let client = Client::connect(socket(&world)).unwrap();
     assert!(client.hello().unwrap().supports("inbox.list"));
-    assert!(client.hello().unwrap().supports("inbox.changed"));
+    // Hints travel only on `subscribe`, which this office does not serve yet (B6).
+    assert!(!client.hello().unwrap().supports("inbox.changed"));
     let params = InboxListParams {
         state: InboxState::Open,
         kinds: None,
@@ -362,15 +357,16 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         kind: org_proto::OperationKind::Org,
         id: id.into(),
     };
-    let expected = org_proto::OperationOutcome::Committed {
-        result: serde_json::to_value(accepted).unwrap(),
+    // Operation lookup read the old tables: the owner's lookup is `unsupported` until B2 maps
+    // the store's receipts. What is refused before the lookup is unchanged.
+    let unsupported = |caller: &mut Caller, id: &str| {
+        caller
+            .call::<org_proto::OperationGet>(&get(id))
+            .unwrap_err()
+            .code
+            == org_proto::ErrorCode::Unsupported
     };
-    assert_eq!(
-        owner
-            .call::<org_proto::OperationGet>(&get(&command))
-            .unwrap(),
-        expected
-    );
+    assert!(unsupported(&mut owner, &command));
     // Owner/NULL rows are private even to a legacy-first unbound connection.
     let reader = Client::connect(socket(&world)).unwrap();
     let lookup = |client: &Client, id: &str| client.call::<org_proto::OperationGet>(&get(id));
@@ -387,8 +383,7 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         org_proto::ErrorCode::NotFound
     );
     let refusal_id = command_id(2);
-    let refusal = team(&mut owner, &refusal_id, " ").unwrap_err();
-    let rejected = org_proto::OperationOutcome::Rejected { refusal };
+    team(&mut owner, &refusal_id, " ").unwrap_err();
     assert_eq!(
         api_code(lookup(&reader, &refusal_id).unwrap_err()),
         org_proto::ErrorCode::NotFound
@@ -398,20 +393,9 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         api_code(lookup(&reader, &command).unwrap_err()),
         org_proto::ErrorCode::NotFound
     );
-    // Another of the owner's channels reads both answers.
     let mut other = first.caller(Some(&owner_id));
-    assert_eq!(
-        other
-            .call::<org_proto::OperationGet>(&get(&refusal_id))
-            .unwrap(),
-        rejected
-    );
-    assert_eq!(
-        other
-            .call::<org_proto::OperationGet>(&get(&command))
-            .unwrap(),
-        expected
-    );
+    assert!(unsupported(&mut other, &refusal_id));
+    assert!(unsupported(&mut other, &command));
     let after = snapshot(&mut owner);
     assert_eq!(after.teams.len(), 1);
     assert_eq!(after.teams[0].name, "Platform");
@@ -426,18 +410,7 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         org_proto::ErrorCode::NotFound
     );
     let mut owner = again.caller(Some(&owner_id));
-    assert_eq!(
-        owner
-            .call::<org_proto::OperationGet>(&get(&command))
-            .unwrap(),
-        expected
-    );
-    assert_eq!(
-        owner
-            .call::<org_proto::OperationGet>(&get(&refusal_id))
-            .unwrap(),
-        rejected
-    );
+    assert!(unsupported(&mut owner, &command));
     assert_eq!(snapshot(&mut owner), after);
     assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     assert_eq!(snapshot(&mut owner), after);
@@ -616,36 +589,45 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
     live.stop();
 }
 
+/// Messaging, status lines, work, `subscribe` and operation lookup lived only in the old
+/// tables. Until their families are rebuilt on the office store (work B4, messaging and status
+/// B6, operation lookup B2) the real worker answers each of them `unsupported`, for an agent and
+/// for the owner alike, while binding, the directory and organization commands keep working.
 #[test]
-fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_survives_a_restart() {
+fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker() {
     let _process = process_isolation();
+    use org_proto::directory::{StatusSet, StatusSetParams, Who, WhoParams};
     use org_proto::msg::{
         MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend, MsgSendParams, MsgWait,
         MsgWaitParams, KIND_MSG,
     };
+    use org_proto::work::{TaskCreate, TaskCreateParams, WorkDelete, WorkDeleteParams};
+    use org_proto::{ErrorCode, OperationGet, OperationGetParams, OperationKind};
     let world = World::new();
     let owner_id = seeded(&world);
-    let mut first = live(&world);
-    let mut owner = first.caller(Some(&owner_id));
+    let mut live = live(&world);
+    let mut owner = live.caller(Some(&owner_id));
+    // Hiring is an organization command: it still commits on the office's organization data.
     let agent_id = "AGENT00000000000000000000A";
-    owner
+    let hired = owner
         .call::<MemberAddAgent>(&hire(1, agent_id, "Pixel", "pixel"))
         .unwrap();
+    assert_eq!(hired.status, org_proto::org::CommandStatus::Committed);
 
-    // The agent binds with no token; the owner acts through its grant.
+    // The agent binds with no token, through the directory.
     let agent = Client::connect(socket(&world)).unwrap();
     let bound = agent
         .call::<MsgBind>(&MsgBindParams::member("pixel"))
         .unwrap();
     assert_eq!(bound.member_id.as_deref(), Some(agent_id));
 
-    let message = |n: u8, to: &str, body: &str| MsgSendParams {
+    let message = |n: u8, to: &str| MsgSendParams {
         id: command_id(n),
         to: to.into(),
         kind: KIND_MSG.into(),
         priority: None,
-        subject: Some("hello".into()),
-        body: body.into(),
+        subject: None,
+        body: "hello".into(),
         meta: Default::default(),
         reply_to: None,
     };
@@ -656,160 +638,96 @@ fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_surv
         cursor: None,
         limit: None,
     };
-    agent
-        .call::<MsgSend>(&message(10, "owner", "from the agent"))
-        .unwrap();
-    let seen = owner.call::<MsgInbox>(&inbox).unwrap();
-    assert_eq!(seen.headers.len(), 1);
-    assert_eq!(seen.headers[0].from_member_id, agent_id);
-    assert_eq!(seen.headers[0].to_member_id, owner_id);
-    let read = owner.call::<MsgRead>(&MsgReadParams { id: None }).unwrap();
-    assert_eq!(read.message.unwrap().body, "from the agent");
-
-    // The owner's message wakes the agent's held wait.
-    let waiting = {
-        let agent = agent_bound(&world, "pixel");
-        std::thread::spawn(move || {
-            agent
-                .call::<MsgWait>(&MsgWaitParams {
-                    timeout_ms: 30_000,
-                    from: None,
-                    urgent_only: false,
-                })
-                .unwrap()
-        })
+    let wait = MsgWaitParams {
+        timeout_ms: 30_000,
+        from: None,
+        urgent_only: false,
     };
-    std::thread::sleep(Duration::from_millis(300));
-    owner
-        .call::<MsgSend>(&message(11, "pixel", "from the owner"))
-        .unwrap();
-    let woken = waiting.join().unwrap();
-    assert_eq!(woken.message.unwrap().body, "from the owner");
-
-    // A restart keeps both messages, and the agent binds again.
-    drop((agent, owner));
-    first.stop();
-    let again = live(&world);
-    let agent = agent_bound(&world, "pixel");
-    let all = agent.call::<MsgInbox>(&inbox).unwrap();
-    assert_eq!(all.headers.len(), 1);
-    assert_eq!(all.headers[0].from_member_id, owner_id);
-    drop(agent);
-    again.stop();
-}
-
-#[test]
-fn an_agent_sets_a_status_the_directory_shows_and_it_survives_a_restart() {
-    let _process = process_isolation();
-    use org_proto::directory::{StatusSet, StatusSetParams, Who, WhoParams};
-    let world = World::new();
-    let owner_id = seeded(&world);
-    let mut first = live(&world);
-    let mut owner = first.caller(Some(&owner_id));
-    owner
-        .call::<MemberAddAgent>(&hire(1, "AGENT00000000000000000000A", "Pixel", "pixel"))
-        .unwrap();
-
-    let agent = agent_bound(&world, "pixel");
-    let set = agent
-        .call::<StatusSet>(&StatusSetParams {
-            text: Some("Wiring the broker".into()),
-            ttl_ms: None,
-        })
-        .unwrap();
-    assert_eq!(set.status.as_deref(), Some("Wiring the broker"));
-
-    let pixel_status = |caller: &mut Caller| {
-        let who = caller
-            .call::<Who>(&WhoParams {
-                member: Some("pixel".into()),
-                ..WhoParams::default()
-            })
-            .unwrap();
-        who.members[0].status.clone()
-    };
-    assert_eq!(
-        pixel_status(&mut owner).as_deref(),
-        Some("Wiring the broker")
-    );
-    // A status line is an agent's: a host channel may not set one, even with the owner's grant.
-    assert_eq!(
-        owner
-            .call::<StatusSet>(&StatusSetParams::default())
-            .unwrap_err()
-            .code,
-        org_proto::ErrorCode::InvalidRequest
-    );
-
-    drop((agent, owner));
-    first.stop();
-    let mut again = live(&world);
-    let mut owner = again.caller(Some(&owner_id));
-    assert_eq!(
-        pixel_status(&mut owner).as_deref(),
-        Some("Wiring the broker")
-    );
-    drop(owner);
-    again.stop();
-}
-
-#[test]
-fn c1_work_writes_use_the_real_office_and_replay_refusals_after_restart() {
-    let _process = process_isolation();
-    use org_proto::work::{
-        TaskCreate, TaskCreateParams, WorkAccepted, WorkDelete, WorkDeleteParams,
-    };
-    use org_proto::ErrorCode;
-    fn refusal(result: Result<WorkAccepted, org_client::ClientError>) -> ApiError {
-        match result.unwrap_err() {
-            org_client::ClientError::Api(error) => error,
-            other => panic!("work call did not receive an API refusal: {other:?}"),
-        }
-    }
-    let world = World::new();
-    let owner_id = seeded(&world);
-    let mut first = live(&world);
-    let mut owner = first.caller(Some(&owner_id));
-    owner
-        .call::<MemberAddAgent>(&hire(101, &command_id(100), "Work agent", "work-agent"))
-        .unwrap();
-    let params: TaskCreateParams = serde_json::from_value(serde_json::json!({
-        "change_id":command_id(102), "item_id":command_id(103),
-        "project_id":command_id(104), "title":"Missing project"
+    let task: TaskCreateParams = serde_json::from_value(serde_json::json!({
+        "change_id":command_id(3), "item_id":command_id(4),
+        "project_id":command_id(6), "title":"A task"
     }))
     .unwrap();
-    let agent = agent_bound(&world, "work-agent");
-    let missing = refusal(agent.call::<TaskCreate>(&params));
-    assert_eq!(missing.code, ErrorCode::NotFound);
-    assert_eq!(refusal(agent.call::<TaskCreate>(&params)), missing);
-    let mut different = params.clone();
-    different.title = "Different parameters".into();
-    assert_eq!(
-        refusal(agent.call::<TaskCreate>(&different)).code,
-        ErrorCode::InvalidRequest
-    );
     let delete = WorkDeleteParams {
-        change_id: command_id(105),
-        item_id: params.item_id.clone(),
+        change_id: command_id(5),
+        item_id: task.item_id.clone(),
         expected_version: 1,
     };
+
+    // The agent, on the office socket.
+    let unsupported = |error: org_client::ClientError| api_code(error) == ErrorCode::Unsupported;
+    assert!(unsupported(
+        agent.call::<MsgSend>(&message(10, "owner")).unwrap_err()
+    ));
+    assert!(unsupported(agent.call::<MsgInbox>(&inbox).unwrap_err()));
+    assert!(unsupported(
+        agent
+            .call::<MsgRead>(&MsgReadParams { id: None })
+            .unwrap_err()
+    ));
+    // Answered at once, not held for 30 s.
+    assert!(unsupported(agent.call::<MsgWait>(&wait).unwrap_err()));
+    assert!(unsupported(
+        agent
+            .call::<StatusSet>(&StatusSetParams {
+                text: Some("Wiring the broker".into()),
+                ttl_ms: None,
+            })
+            .unwrap_err()
+    ));
+    assert!(unsupported(agent.call::<TaskCreate>(&task).unwrap_err()));
+    // `subscribe` on the office socket, bound or not. (Host channels refuse it by their own
+    // policy, before the office is asked.)
+    let subscribe = org_proto::SubscribeParams {
+        from_position: None,
+        from_work_position: None,
+    };
+    assert!(unsupported(
+        agent.call::<org_proto::Subscribe>(&subscribe).unwrap_err()
+    ));
+    let unbound = Client::connect(socket(&world)).unwrap();
+    assert!(unsupported(
+        unbound
+            .call::<org_proto::Subscribe>(&subscribe)
+            .unwrap_err()
+    ));
+
+    // The owner, through its grant on a host channel.
+    let owner_unsupported = |error: ApiError| error.code == ErrorCode::Unsupported;
+    assert!(owner_unsupported(
+        owner.call::<MsgSend>(&message(11, "pixel")).unwrap_err()
+    ));
+    assert!(owner_unsupported(
+        owner.call::<MsgInbox>(&inbox).unwrap_err()
+    ));
+    assert!(owner_unsupported(
+        owner.call::<WorkDelete>(&delete).unwrap_err()
+    ));
+    assert!(owner_unsupported(
+        owner
+            .call::<OperationGet>(&OperationGetParams {
+                kind: OperationKind::Org,
+                id: command_id(1),
+            })
+            .unwrap_err()
+    ));
+
+    // The directory read still answers: no status line, everyone offline.
+    let who = owner
+        .call::<Who>(&WhoParams {
+            member: Some("pixel".into()),
+            ..WhoParams::default()
+        })
+        .unwrap();
+    let [pixel] = &who.members[..] else {
+        panic!("{:?}", who.members)
+    };
+    assert_eq!(pixel.id, agent_id);
+    assert_eq!(pixel.status, None);
     assert_eq!(
-        refusal(agent.call::<WorkDelete>(&delete)).code,
-        ErrorCode::NotAuthorized
+        pixel.presence,
+        org_proto::directory::MemberPresence::Offline
     );
-    assert_eq!(
-        owner.call::<WorkDelete>(&delete).unwrap_err().code,
-        ErrorCode::NotFound
-    );
-    drop((agent, owner));
-    first.stop();
-    let again = live(&world);
-    let agent = agent_bound(&world, "work-agent");
-    assert_eq!(refusal(agent.call::<TaskCreate>(&params)), missing);
-    assert_eq!(
-        refusal(agent.call::<TaskCreate>(&different)).code,
-        ErrorCode::InvalidRequest
-    );
-    drop(agent);
-    again.stop();
+    drop((agent, unbound, owner));
+    live.stop();
 }
