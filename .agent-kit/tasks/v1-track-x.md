@@ -44,10 +44,10 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 | X1b `fs`, `dirs`, `process`, `socket` | Built and accepted 2026-11-18 (three slices, each reviewed) | See below |
 | X1c `admission`, `confinement`, `presence` | Built and accepted 2026-11-18 (two slices, each reviewed); Mac run owed | See below |
 | X1d `credentials` | Built and accepted 2026-11-18; Mac run owed | See below |
-| X2 first worker on Linux (LNX-1) | Both slices integrated; LNX-1 passes on Linux; the host slice is under fresh review | See below |
-| X3 host secrets on Linux (LNX-4) | Not started | |
-| X4 web process confined on Linux (LNX-3) | The Linux confinement adapter is integrated (`458ed8b1`) and under fresh review; the host slice is in work | See below |
-| X5 service and container (LNX-2) | Not started | |
+| X2 first worker on Linux (LNX-1) | Built, reviewed and repaired; LNX-1 passes on Linux and in a default Docker container; a fresh final review of the repairs is owed | See below |
+| X3 host secrets on Linux (LNX-4) | Integrated (`d13aa040`); under fresh review | See below |
+| X4 web process confined on Linux (LNX-3) | Adapter reviewed and repaired; Landlock optional; host slice integrated (`4823b23a`); the real-host LNX-3 test and the last web tests are in work; a fresh review of the host work is owed | See below |
+| X5 service and container (LNX-2) | In work (one worker, worktree `x/x5-service`) | |
 | X6 both systems in CI (LNX-5, LNX-6) | Not started | |
 
 ## X1a · The platform crate and the check
@@ -632,9 +632,19 @@ web test. **A second is new and intermittent:**
 (twelve offices started at once by an in-process host while a client lists them)
 went silent for 30 s in 3 of 6 runs with the machine under load (load average 7 to
 8, three other builds) and passed in the others in under 2 s. It ran on Linux for the
-first time with slice 2. Whether it is the test, the load or a hang in the host's
-Linux start path is not known yet; the slice's author is finding out before anything
-else is built on it.
+first time with slice 2.
+
+**Cause found: a race in the test's own bookkeeping** (branch `x/x2-hang`,
+`d9613a56`, merged at `82fbc3d1`). Reproduced 3 of 31 on the loaded machine. The hung
+process, read with a debugger: the run was complete (10,675 calls sent and answered,
+all twelve offices active), the writer thread was gone, the test thread was parked in
+its 30 s receive, every host thread was idle in its normal wait, and all twelve
+children ran the sealed image. The reader ended on "the writer has finished and every
+call is answered"; it could read the last answer before the writer had stored its
+count, and then wait for a message that never comes. Forced with a 200 ms delay: 3 of
+3. The writer now names its last call before it makes it; no timeout changed; 30 of
+30 under load afterwards. The race is in system-neutral test code, so macOS had it
+too. The test is Track A's: what it asserts about ordering is unchanged.
 
 Not verified by the reviewer: anything on macOS at run time (first-run risks it
 names: hard-linking a socket in LNX-1, path lengths under `/private/tmp`, the private
@@ -731,7 +741,46 @@ that the test seams are compiled only for tests. Not verified: C1 on the kernel,
 aarch64 at run time, Landlock ABI 3 to 6 on a real kernel, a container runtime's
 profile, Docker Desktop's kernel, the example on macOS.
 
-**Slice 2, the host:** in work in worktree `x/x4-host` (the adapter's author): the
+**Repairs of slice 1 and slice 2, the host: integrated at `4823b23a`** (branch
+`x/x4-host`, ten commits ending at `eed52d58`, by the adapter's author).
+
+- Review repairs: C1 was real on this kernel: with `tcp_fastopen` 1, a `sendto` with
+  `MSG_FASTOPEN` and a destination connected and delivered data on a fresh TCP socket
+  and on a listener after `shutdown`, and still did under Landlock ABI 7 with TCP
+  connect denied. `sendto` now passes only without a destination and with two known
+  flags; `sendmsg` is killed. C2 and C3: `mremap` (two flags) and `sched_yield` are
+  allowed. C5: the example proves each thread refusal by itself. C7: the filter is
+  installed for every thread. C8, C9: the contract lists what a confined process must
+  not call; `clock_gettime` takes only fixed clocks.
+- Landlock optional (owner direction below): applied from ABI 1 where the kernel
+  offers it; any failure of its three calls is kept as a reason and the filter is
+  installed all the same. The forbidden list (42 calls), the working roles and the
+  host's check run in four layerings (both layers; Landlock refused at each of its
+  three calls). Asked whether any allowed call was stopped by Landlock alone: 22
+  candidate operations gave identical results unconfined, under Landlock alone, under
+  both and under the filter alone; none found. What is lost without Landlock is the
+  backstop for a mistake in the list (shown by adding `connect` to it).
+- Host: the refusal's reason reaches the host log through one bounded line on the web
+  process's standard error; the host logs once per start what confines the web
+  process; the child must be running after `verify_web`; the environment is empty by
+  name; a web process started from a sealed image takes its release root from its
+  first argument (before, it never reached confinement under the Linux admission).
+- Lead's decisions: the reason stays in the log (a status field is Track A's
+  contract); the duplicated refusal prefix stays, pinned by a test on each side; the
+  rule that the host exits on a descriptor arriving before the handoff
+  acknowledgement is unchanged.
+- Lead's checks at the merge: lint for the three targets; 1,094 tests of the
+  platform, socket, host, web and app crates passed; failing were the offline and
+  IPv6 tests, the service test whose race is described under X2, and one setup test
+  whose fixed port another agent's run held (8 of 8 alone, three times).
+
+**In work (worktree `x/x4-web`, the same author):** the real-host test of LNX-3 in
+its amended meaning; one web admission per host lifetime; the web check following the
+system's image identity; the 13 web tests that still start a script through the
+macOS admission, on a compiled fake web child. Then one fresh review of all of X4's
+host work (`7ffc5e68..4823b23a` and this slice).
+
+**Earlier plan for slice 2, kept for the record:** in worktree `x/x4-host` (the adapter's author): the
 refusal's reason from the adapter and from the web process to the host log and the
 web service's status (LNX-3 "reports the reason" holds today in the adapter and the
 example, not through the host); liveness of the child around `verify_web`; an explicit
@@ -739,6 +788,33 @@ environment for the web process; the web tests on both systems. The real-host te
 of LNX-3 follows the integration of X2's host slice.
 
 Not run anywhere yet: a release build, the container image's glibc, aarch64.
+
+## X3 · Host secrets on Linux (integrated, under review)
+
+One worker, branch `x/x3-credentials`, seven commits ending at `00d1d70e`, merged at
+`d13aa040`. What it built is in design 3.2 ("Built in X3"). Its production-path test
+(the store opened through the public contract on this machine's ext4, a key added
+through the host's key view and loaded through a second handle) passed first.
+
+Lead's decisions on what the worker raised:
+
+| Question | Decision |
+| --- | --- |
+| Where `expect_items` is checked, what an item is, and the host's source of "keys exist" (office folders) | Accepted as built, subject to the review (it is asked whether an instance with wrapped records can ever start on an empty key directory and make fresh keys) |
+| "No other members" of a private group: the member list is empty or names only the user; an account with that primary group is not looked for | Accepted for now and put to the reviewer, because the same rule now admits a group-writable image |
+| The lock is `.lock`; ancestors are opened with `O_PATH`; one error carries a path | Accepted; design 3.2 says so |
+| A whole release-profile host on a release directory runs in no test | X5: the container is the first place where it can run |
+| The runner hid the from-root acceptance tests (it made the build output writable by everyone, which the ancestor rule refuses on purpose) | The runner now leaves the build output unwritable by others and gives the test user only `target/tmp`; both from-root tests then open the store as uid 1000 (seen by the lead) |
+| `mount_point_required` is always false | X5 adds the record's service mode |
+| Interactive setup stops on Linux before it changes anything: no service adapter, and no disk-encryption adapter (not in any plan before) | Both are X5's |
+
+Lead's checks at the merge: lint for Linux (whole workspace), macOS and the refusing
+target; guard tests; the refusing target's tests; `org-platform`, `org-platform-host`,
+`org-host` and `agentic-org` unprivileged: 1,053 passed, none failed. The list of
+platform predicates: 17 files, 104 predicates.
+
+A fresh read-only review of `4823b23a..d13aa040` is in progress; it is asked to attack
+the checks on a real filesystem with trees arranged as root.
 
 ## Merges with v1-integration
 
