@@ -621,7 +621,7 @@ on the offers of design section 10.
   change.
 - **Instructions:** the built-in agent instructions are the first part of what an
   agent receives, with the sections for what this build has, and their scenarios run
-  ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8 and 12). Row
+  ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12 and 15). Row
   FC-171.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
@@ -759,12 +759,12 @@ on the offers of design section 10.
   It never reads the rest of the channel. An agent that needs something from a channel
   asks for a summary instead of loading it.
 - **Build:** first the measurement of ADR-0024 decision 17, on labelled channel
-  excerpts with the chosen watching model. Then: the subscription a channel question
+  excerpts with the chosen watching model. Then: the watch a channel question
   opens; the pass, one tool-less model run for all the open questions of a channel,
   through the copilot's runtime port and a registry entry of its own; the
   organization's watching model profile, with the feature off when none is set; the
-  bounds; the cost divided among the askers; the `answer_candidate` inbox entry linked
-  to its question; `channel summarize`.
+  bounds; each pass recorded as one product-made usage record; the `answer_candidate`
+  inbox entry linked to its question or questions; `channel summarize`.
 - **Commands:** `channel summarize` ([command line design](design/agent-os-command-line.md), section 3.3).
 - **Read:** [ADR-0024](adr/0024-a-channel-question-is-watched-for-its-answer.md)
   (WATCH-1 to WATCH-11), [smart features](design/smart-features.md) (how a tool-less
@@ -774,7 +774,9 @@ on the offers of design section 10.
   tool-less runs, wired to no model.
 - **Done when:** WATCH-3 to WATCH-8, WATCH-10 and WATCH-11 pass. WATCH-1, 2 and 9
   pass with B6.
-- **Needs:** B7, C3, C8.
+- **Needs:** B7, C8, and C3 for the runtime adapter that a tool-less run goes through.
+  With several offices it also needs S1, so that each office receives every message of
+  its agents' channels.
 
 ---
 

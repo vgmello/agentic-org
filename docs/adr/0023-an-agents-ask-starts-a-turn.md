@@ -30,8 +30,9 @@ when the turn ends.
      lead.
    - A message sent by an agent that mentions the recipient by name.
    - An answer to a question the recipient itself asked, whoever answers: a reply in
-     the question's thread, or a message the channel's watcher is confident responds to
-     it ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md)). The turn
+     the question's thread, or a message written by a person that the channel's watcher
+     is confident responds to it
+     ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md) decision 12). The turn
      continues the asker's session.
 
    Nothing else does: not an announcement, not `@here`, not an ordinary post or an
@@ -67,6 +68,9 @@ A person still starts an agent's turn with Run. A message, an ask or a mention f
 person waits for the agent's next turn, as before. The one thing from a person that
 starts a turn is an answer to a question the agent asked.
 
+The built-in HR lead is unchanged: it runs when it is called, by a person or by an
+agent, as the [run modes spec](../specs/agent-run-modes-ux.md) says.
+
 ## Acceptance criteria
 
 | ID | Passing evidence |
@@ -77,7 +81,7 @@ starts a turn is an answer to a question the agent asked.
 | WAKE-4 | Past the hourly limit no turn starts, the message is delivered and waits, and the held start is recorded; a person's Run is unaffected |
 | WAKE-5 | Two agents that ask each other in a loop start no more turns for either than the limit allows |
 | WAKE-6 | The started turn passes the same admission as a person's Run, and its history names the sending agent and the message |
-| WAKE-7 | An answer to an agent's own question that arrives while it is idle and holds no wait starts one turn that continues its session, whether a person or an agent answered |
+| WAKE-7 | While an agent is idle and holds no wait, a reply in the thread of its own question from anyone, and a confident watcher match on a person's message, each start one turn that continues its session; a watcher match on another agent's message starts none |
 
 ## Consequences
 
