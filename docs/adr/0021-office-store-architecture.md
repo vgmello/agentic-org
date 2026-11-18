@@ -49,8 +49,8 @@ the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
    custody is checked at open and confirmed once per flush.
 7. **Crates.** One new crate, `org-store`, holds the engine-neutral foundation and the
    in-memory engine for tests. The SQLite engine is `org-office/src/store/sqlite/`, the
-   only office module that names `rusqlite`. `Engine`, `CorePort` and `Projector` are the
-   only traits with two implementations. Every family has the same shape: records and
+   only office module that names `rusqlite`. `Engine` and `CorePort` (one implementation
+   per engine) and `Projector` (one per family, generic over the engine) are the seam. Every family has the same shape: records and
    codec, a read port and a write port, a projector, one file per operation, a testkit
    with a memory implementation and a conformance macro, and one SQL module.
 8. **The projection schema is the contract's `schema.sql`** plus the store's two tables.

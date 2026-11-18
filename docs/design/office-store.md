@@ -93,7 +93,7 @@ module grows.
 | `records.rs` | The typed records, their paths from the data contract, and the codec between record and file bytes (`org-docs` for Markdown and YAML, `serde_json` for JSON) |
 | `ports.rs` | Two traits: `<Family>Read` (the queries its decisions and API need) and `<Family>Write` (row upserts and removals for its records) |
 | `projector.rs` | One `Projector` implementation, generic over the engine: decode a file, call the write port |
-| `features/<operation>.rs` | One operation: its command, its `ACK` constant and `decide`, which returns a `Change` or a `Refusal` |
+| `features/<operation>.rs` | One operation: its command and `decide`, which returns a `Change` or a `Refusal`. `features/mod.rs` declares every operation's class in one `Op::ack()` match |
 | `testkit.rs` | The in-memory implementation of both ports and the conformance suite, as a macro each engine invokes |
 | `org-office/src/store/sqlite/<family>.rs` | The SQL behind both ports |
 
@@ -233,7 +233,8 @@ impl<E: Engine> Store<E> {
 }
 ```
 
-**The engine seam** (`engine.rs`): the only traits with two implementations.
+**The engine seam** (`engine.rs`). `Engine` and `CorePort` are implemented once per
+engine; `Projector` once per family, for every engine at once.
 
 ```rust
 /// The database the projection lives in (ADR-0018). SqliteEngine and MemoryEngine implement it.
@@ -259,6 +260,7 @@ pub trait CorePort: CoreRead {
     fn mark(&mut self) -> Result<Mark, EngineError>;             // a savepoint per operation
     fn undo_to(&mut self, mark: Mark) -> Result<(), EngineError>;
     fn set_source(&mut self, path: &DurablePath, hash: Option<Sha256>) -> Result<(), EngineError>;
+    fn put_receipt(&mut self, receipt: &Receipt) -> Result<(), EngineError>;
 }
 
 /// A family's projection of its own files: the same function on the write path and in rebuild.
@@ -418,9 +420,12 @@ header  = canonical JSON {
   ordinal, previous_sha256, office_id, journal_incarnation, at, ack, feed,
   operation: {id, kind, actor, fingerprint, outcome: completed|rejected} | null,
   positions: {"work": [first, last], "message": [..], "organization": [..]},
-  files: [{path, op: create|put|remove, length, sha256}] }
+  files: [{path, op: create|put|remove, length, sha256, previous_sha256}] }
 payloads = the files' bytes, in header order
 ```
+
+`previous_sha256` is the hash the projection held for that path when the entry was
+framed (`CoreRead::source_hash`), so every file change names the version it replaces.
 
 The first entry chains to the immutable `anchor.json` of the journal incarnation, which
 binds the office identity, the writer epoch, the origin high-waters it starts from and
@@ -449,7 +454,7 @@ engine and one projection schema).
 | Crash | What is on disk | How restart finishes |
 | --- | --- | --- |
 | During decide or apply | Nothing appended; projection transaction rolled back | Nothing to finish; a retry runs afresh |
-| During the append | A torn last entry | The scan stops at the first bad length or hash and truncates it. It was never acknowledged durable |
+| During the append | A torn last entry (only a power cut tears a write) | The scan stops at the first bad length or hash and truncates it. It was never acknowledged durable; committed ones are lost as their class allows |
 | After the append, before the projection commit | Journal ahead of projection | Replay the entries after the cursor through the projectors; a retry finds the receipt |
 | After the commit, before the reply | Both current | A retry by operation ID gets the original reply |
 | After a committed reply, before the flush (power cut) | Journal may end earlier; projection may be ahead of it | A cursor ahead of the journal, or a hash that differs at its ordinal, means: rebuild |
@@ -491,8 +496,8 @@ since the materialized mark, never intermediate versions:
    `fs::full_sync`).
 2. `Create`: exclusive rename (`rename_noreplace_at`); existing identical bytes are a
    no-op, other bytes stop the office. `Put` and `Remove`: the current bytes must hash
-   to the projection's recorded source hash or to a version in the retained entries;
-   then rename over, or unlink.
+   to the `previous_sha256` of the first pending change to that path, or to a later
+   version in the retained entries (a crash mid-round); then rename over, or unlink.
 3. After the round: flush each touched directory, one full flush, then write the
    materialized mark.
 
