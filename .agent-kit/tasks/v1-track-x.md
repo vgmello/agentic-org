@@ -908,6 +908,36 @@ store are each refused by their rule.
 | `-v D:/data -v D/secrets:/secrets` is not refused: the store is beside the instance root (`/data/instance`), not inside it | The store must be compared with the data volume, not only with the instance root: X3's author, after the merge |
 | Real systemd never ran (no user bus in the sandbox) | A CI runner or a machine with a user manager; an opt-in test exists |
 
+**Review of X5: CHANGES_REQUIRED** (fresh read-only reviewer, same model as the lead,
+on `82fbc3d1..a31873e8`; it built the image and attacked the running container as the
+service user, as root and as a third user, with hostile volume layouts and 19
+malformed setup files). It confirmed the plain `docker run`, an empty `docker diff`,
+the owner-only modes in both volumes, every volume refusal, root's client against a
+hostile `/data` (links, forged folders: refused; no root-owned file appears), the
+image's content and the unit-file grammar, and each of the worker's stated gaps. It
+found no way for a non-root user to gain administrator authority beyond what design
+section 5 accepts. All findings are with the author:
+
+| Finding | Severity |
+| --- | --- |
+| V1 A refused non-interactive setup leaves its frozen record behind, and every later start with a corrected file is refused: the operator must delete the data volume (shown with a typo in the credentials path) | MAJOR |
+| V2 Stop is not bounded at 8 s: with a worker that ignores the stop, `docker stop` took 12.3 s and the runtime killed the host; the README says the grace is never needed | MAJOR |
+| V3 The README says the store's directory is checked at every start; only first-start setup checks it (a tmpfs `/secrets` on a later start is accepted) | MINOR |
+| V4 Root's `admin reset --user` prints whatever link a host of the service user returns: another origin and raw terminal escape sequences reached root's terminal | MINOR (security) |
+| V5 In foreground mode the service user can take the first registration link itself, though decision 10 says it comes only from root | MINOR |
+| V6 The disk probe says "on" for dm-integrity and dm-verity targets and for a Btrfs with one encrypted member | MINOR |
+| V7 The systemd unit carries only `HOME`; with an XDG variable in the shell that ran setup the service looks elsewhere and never becomes ready | MINOR |
+| V8 systemd drop-ins that replace `ExecStart` are not seen | MINOR |
+| V9 SIGN-33's wording | MINOR |
+| V10 After a test run the image can pack a binary built with the test seams | MINOR |
+| V11 `https` is accepted in a setup file though no build serves it | MINOR: refused until X7, by the owner's decision |
+
+Also from the review: on macOS `account_folders()` newly refuses a home folder that is
+a symbolic link, which no design asks for (to be undone); LNX-2 rests on test
+scaffolding (an office planted by an example program and the linked socket), because
+no product command creates an office in the container. Not verified by anyone: real
+systemd, AppArmor, Docker Desktop on a Mac, a release-build host.
+
 Lead's decisions so far: `root` at `/data/instance` with the service user's home at
 `/data` is accepted (the host refuses overlapping instance and locator roots);
 `hello` for root is accepted as the handshake of `admin.reset`, subject to the review.
