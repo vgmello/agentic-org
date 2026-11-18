@@ -57,16 +57,19 @@ fn held_child(program: &str, args: &[&str]) -> org_platform_host::admission::Sta
     org_platform_host::testing::admission::unreleased(held)
 }
 
+/// A release build without a team id: exactly one outcome per system, the one the
+/// platform's fact names.
 #[test]
 fn refused_web_start_never_becomes_ready() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let started = Supervisor::start(
         Configuration {
-            program: dir.path().join("agentic-org-web"),
+            // Never run: its first step would end it.
+            program: fake_program(dir.path(), "exit 1\n"),
             instance: "instance".into(),
             runtime: dir.path().to_owned(),
-            listen: loopback(),
+            listen: loopback_on(free_port()),
             check: ServerCheck::gateway_for_build(false, None).unwrap(),
             critical_paths: vec![],
             release: None,
@@ -75,13 +78,29 @@ fn refused_web_start_never_becomes_ready() {
         Arc::clone(&state),
         Arc::new(|| true),
     );
-    let Err(error) = started else {
-        panic!("a release build without a team never spawns")
+    let _supervisor = match image_identity() {
+        // No signature can be checked without a team: there is no supervisor at all.
+        ImageIdentity::CodeSignature => {
+            let Err(error) = started else {
+                panic!("a release build without a team never spawns")
+            };
+            // The log names the real cause and that it is the web process's check.
+            let message = error.to_string();
+            assert!(message.contains("web process"), "{message}");
+            assert!(message.contains("no app team id"), "{message}");
+            None
+        }
+        // Where the bytes are checked no team names anything: the supervisor starts, and
+        // each start is refused because no selected release names the image (the cause is
+        // asserted in the next test, on the start itself).
+        ImageIdentity::VerifiedBytes => {
+            let supervisor = started.expect("the check may spawn; the image is refused");
+            wait_for("the first refused start", || {
+                *lock(&state) == GatewayState::Failed
+            });
+            Some(supervisor)
+        }
     };
-    // The log names the real cause and that it is the web process's check.
-    let message = error.to_string();
-    assert!(message.contains("web process"), "{message}");
-    assert!(message.contains("no app team id"), "{message}");
     let observed = *lock(&state);
     assert_ne!(observed, GatewayState::Running);
     assert!(!crate::service::web_serving(true, true, observed));
@@ -91,24 +110,34 @@ fn refused_web_start_never_becomes_ready() {
 fn an_admission_refusal_inside_start_keeps_its_cause() {
     let dir = tempfile::tempdir().unwrap();
     let config = Configuration {
-        program: dir.path().join("agentic-org-web"),
+        program: fake_program(dir.path(), "exit 1\n"),
         instance: "instance".into(),
         runtime: dir.path().to_owned(),
-        listen: loopback(),
+        listen: loopback_on(free_port()),
         check: ServerCheck::gateway_for_build(false, None).unwrap(),
         critical_paths: vec![],
         release: None,
     };
     let Err(error) = start(&config, Arc::new(NoOps)) else {
-        panic!("a release build without a team never spawns")
+        panic!("a release build without a team or a selected release never spawns")
     };
     // The supervisor logs this text, so the refusal cause must survive.
     let message = error.to_string();
-    assert!(
-        message.contains("web process admission refused"),
-        "{message}"
-    );
-    assert!(message.contains("no app team id"), "{message}");
+    match image_identity() {
+        ImageIdentity::CodeSignature => {
+            assert!(
+                message.contains("web process admission refused"),
+                "{message}"
+            );
+            assert!(message.contains("no app team id"), "{message}");
+        }
+        ImageIdentity::VerifiedBytes => assert_eq!(
+            message,
+            "web process admission refused at admission: this release build has no selected \
+             release, so nothing names the image it may start (a release image is checked \
+             against the digest in the signed release manifest)"
+        ),
+    }
 }
 
 /// A started web process: `live` is the child/control state, `reported` its `web.serving`.
@@ -1562,12 +1591,16 @@ fn a_release_build_web_admission_pins_the_selected_image_and_binds_its_release()
     const TEAM: &str = "AB12CD34EF";
     let hash = pin([7u8; 20]);
     let web = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
-    assert!(matches!(web, ServerCheck::Gateway(_)));
+    match image_identity() {
+        ImageIdentity::CodeSignature => assert!(matches!(web, ServerCheck::Gateway(_))),
+        // The team names nothing where the bytes are checked.
+        ImageIdentity::VerifiedBytes => assert_eq!(web, ServerCheck::Published),
+    }
     // A selected release pins its exact web process image and binds its identity.
     let (check, release) = admission::<()>(false, Some(TEAM), Some((Ok(hash), binding())));
     assert_eq!(check, web.clone().pinned(hash));
     assert_eq!(release, Some(binding()));
-    // No release: the Developer ID web process check alone, no binding.
+    // No release: this system's web process check alone, no binding.
     let (check, release) = admission::<()>(false, Some(TEAM), None);
     assert_eq!(check, web);
     assert_eq!(release, None);
@@ -1598,10 +1631,22 @@ fn a_release_build_web_admission_refuses_a_missing_image_hash_a_malformed_or_mis
             check.describe()
         );
     }
-    // No team id in a release build refuses.
+    // No team id in a release build: refused where a code signature is checked; where the
+    // bytes are checked, the image a selected release pins and nothing else (without a
+    // release the platform refuses the image, as the admission refusal test shows).
     let (check, release) = admission::<()>(false, None, None);
-    assert!(matches!(check, ServerCheck::WebRefused(_)), "{check:?}");
-    assert!(check.may_spawn().is_err());
+    match image_identity() {
+        ImageIdentity::CodeSignature => {
+            assert!(matches!(check, ServerCheck::WebRefused(_)), "{check:?}");
+            assert!(check.may_spawn().is_err());
+        }
+        ImageIdentity::VerifiedBytes => {
+            assert_eq!(check, ServerCheck::Published);
+            assert!(check.may_spawn().is_ok());
+            let (pinned, _) = admission::<()>(false, None, Some((Ok(pin([7u8; 20])), binding())));
+            assert_eq!(pinned, ServerCheck::Published.pinned(pin([7u8; 20])));
+        }
+    }
     assert_eq!(release, None);
 }
 
