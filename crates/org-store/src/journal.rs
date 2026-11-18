@@ -722,11 +722,12 @@ impl Journal {
         }
         // The last of the released segments has no successor's name to prove it: a cut
         // that lost its unlink can also have lost the entry of the segment after it. It
-        // is told by what it holds.
+        // is told by what it holds. One that ends at the checkpoint with another entry
+        // than the checkpoint's is another history: refused, every byte left.
         if let Some(first) = firsts.first().copied().filter(|f| *f <= base.ordinal) {
             let path = segments_dir.join(segment_name(first));
             let bytes = fs::read(&path).map_err(|e| io_error(&path, "read", &e))?;
-            if ends_at_or_below(&bytes, first, base.ordinal) {
+            if ends_at_or_below(&bytes, first, &base)? {
                 firsts.remove(0);
                 repairs.push(Repair::Unlink(path));
             }
@@ -1228,22 +1229,34 @@ fn whole_frame(rest: &[u8]) -> Result<(&[u8], Sha256), &'static str> {
 }
 
 /// Whether a segment named `first` holds only whole entries, numbered from `first`
-/// without a gap, the last of them at or below `limit`: a segment a release had passed.
+/// without a gap, the last of them at or below `base`: a segment a release had passed.
 /// Its chain cannot be verified (its predecessor is gone) and need not be: nothing in it
-/// is read again.
-fn ends_at_or_below(bytes: &[u8], first: u64, limit: u64) -> bool {
+/// is read again. The one entry that can be compared is: a last entry at `base`'s own
+/// ordinal is the entry the checkpoint was written from, so another hash there is
+/// corruption, not a segment to drop.
+fn ends_at_or_below(bytes: &[u8], first: u64, base: &JournalPoint) -> Result<bool, JournalError> {
     let (mut offset, mut next) = (0, first);
+    let mut last = None;
     while offset < bytes.len() {
         let Ok((frame, sha256)) = whole_frame(&bytes[offset..]) else {
-            return false;
+            return Ok(false);
         };
-        if next > limit || Entry::parse(frame, sha256).map(|e| e.ordinal()) != Ok(next) {
-            return false;
+        if next > base.ordinal || Entry::parse(frame, sha256).map(|e| e.ordinal()) != Ok(next) {
+            return Ok(false);
         }
+        last = Some((next, sha256));
         next += 1;
         offset += frame.len();
     }
-    true
+    match last {
+        Some((ordinal, sha256)) if ordinal == base.ordinal && sha256 != base.sha256 => {
+            Err(JournalError::Corrupt {
+                ordinal,
+                reason: "the entry at the checkpoint is not the one the checkpoint names".into(),
+            })
+        }
+        _ => Ok(true),
+    }
 }
 
 fn read_small(path: &Path) -> Result<Option<Vec<u8>>, JournalError> {

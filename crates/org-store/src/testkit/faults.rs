@@ -563,8 +563,13 @@ impl Disk for FaultDisk {
         let held = std::fs::read(path).ok();
         self.0.run(DiskOp::Unlink, path, || RealDisk.unlink(path))?;
         let mut state = self.0.lock();
-        state.lengths.remove(path);
-        if let Some(held) = held {
+        let tracked = state.lengths.remove(path);
+        if let Some(mut held) = held {
+            // What comes back if the unlink is lost is what the drive had: an appended
+            // file's bytes after its last full flush go with the same cut.
+            if let Some((_, flushed)) = tracked {
+                held.truncate(usize::try_from(flushed).unwrap_or(usize::MAX));
+            }
             state
                 .entries
                 .push(EntryChange::Unlinked(path.to_path_buf(), held));
@@ -684,5 +689,31 @@ impl Hooks for Faults {
             act();
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An unlink the cut loses gives the file back as the drive had it: without the
+    /// bytes appended after its last full flush.
+    #[test]
+    fn an_unlinked_file_restored_by_a_cut_has_only_its_flushed_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().canonicalize().unwrap().join("appended.log");
+        let faults = Faults::new();
+        let disk = faults.disk();
+        let file = disk.open_append(&path).unwrap();
+        crate::disk::write_all(&*file, b"flushed").unwrap();
+        file.flush_full().unwrap();
+        // Its name is on the drive: the cut cannot lose the file itself.
+        disk.sync_dir(path.parent().unwrap()).unwrap();
+        crate::disk::write_all(&*file, b" and not").unwrap();
+        disk.unlink(&path).unwrap();
+        assert!(!path.exists());
+
+        faults.power_cut_losing_entries().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"flushed");
     }
 }

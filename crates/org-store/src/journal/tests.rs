@@ -805,6 +805,24 @@ fn a_sole_segment_wholly_below_the_checkpoint_is_dropped_and_any_other_refuses()
         Some(JournalError::MissingPredecessor { ordinal: 3 })
     );
 
+    // Whole and ending at the checkpoint, but with another entry than the one the
+    // checkpoint was written from: corruption, and every byte stays as evidence.
+    let second = JournalPoint {
+        ordinal: 2,
+        sha256: Sha256::of(b"another entry two"),
+        high_waters: HighWaters::default(),
+        feed: FeedPosition(2),
+    };
+    let other = next(&second, &f.identity);
+    assert_eq!(other.ordinal(), 3);
+    fs::write(f.segment(3), other.stored()).unwrap();
+    let before = f.segment_bytes();
+    assert!(matches!(
+        f.open().err(),
+        Some(JournalError::Corrupt { ordinal: 3, .. })
+    ));
+    assert_eq!(f.segment_bytes(), before);
+
     fs::write(f.segment(3), &whole).unwrap();
     let (journal, recovered) = f.open().unwrap();
     assert_eq!((journal.base().ordinal, journal.head().ordinal), (3, 3));
