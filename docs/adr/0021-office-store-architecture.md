@@ -45,21 +45,24 @@ the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
    is readable from its projection commit, before its flush. Nothing leaves the office
    (replication, Git publication) before its entry is flushed. Task numbers keep
    ADR-0019's durable mark.
-6. **Reads touch only the projection.** No file read, no host call, no writer. The host
+6. **A failed flush is fatal.** The office never retries a failed flush in the same
+   process, answers no waiting durable request as success, and exits; a failed append
+   fails its batch and is truncated before the next one.
+7. **Reads touch only the projection.** No file read, no host call, no writer. The host
    custody is checked at open and confirmed once per flush.
-7. **Crates.** One new crate, `org-store`, holds the engine-neutral foundation and the
+8. **Crates.** One new crate, `org-store`, holds the engine-neutral foundation and the
    in-memory engine for tests. The SQLite engine is `org-office/src/store/sqlite/`, the
    only office module that names `rusqlite`. `Engine` and `CorePort` (one implementation
    per engine) and `Projector` (one per family, generic over the engine) are the seam. Every family has the same shape: records and
    codec, a read port and a write port, a projector, one file per operation, a testkit
    with a memory implementation and a conformance macro, and one SQL module.
-8. **The projection schema is the contract's `schema.sql`** plus the store's two tables.
+9. **The projection schema is the contract's `schema.sql`** plus the store's two tables.
    Its digest is stored in the projection; a different digest deletes and rebuilds it.
    There is no migration code.
-9. **The old store is deleted whole** in B1b. Calls only the old tables served answer
+10. **The old store is deleted whole** in B1b. Calls only the old tables served answer
    `unsupported` until their family is rebuilt (work B4, messaging B6, process ownership
    C3).
-10. **The change stream** is an in-memory ring of committed changes with feed positions
+11. **The change stream** is an in-memory ring of committed changes with feed positions
     recorded in the journal; a position older than the ring answers `resync`.
 
 ## Rejected
@@ -89,6 +92,7 @@ the Track B lead takes B1a. Implementation pending: increments B1a to B1c of the
 | STORE-4 | A committed operation is answered while a flush is held back; a durable one is not answered before the flush that covers it; no outbox consumer and no file sees an entry before its flush. |
 | STORE-5 | Reads still answer with `durable/` made unreadable and the host channel closed (they read no file and call no host), and see every change acknowledged before they began. |
 | STORE-6 | Every materialized file is at the data contract's path in its exact bytes, written atomically; bytes the office did not write stop materialization and name the path. |
+| STORE-8 | A flush error injected on a segment, a materialized file or a directory makes the office answer no waiting durable request as success and exit without retrying the flush, and the reopened office holds exactly what the journal on the drive holds; a failed or short append fails its whole batch, leaves no acknowledged operation, and is truncated before the next batch. |
 | STORE-7 | Adding a family (projects, B3) adds its own module and one SQL module and changes no file of `org-store`. |
 
 ## Consequences

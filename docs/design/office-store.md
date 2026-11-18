@@ -400,6 +400,20 @@ head to the host's writer custody; writes the final state of each path touched b
 newly flushed entries (section 5); and advances the materialized mark. A committed
 operation never waits for the drive, even in a batch with a durable one.
 
+**A failed flush is fatal.** If a full flush of a journal segment, of a materialized
+file or of a directory returns an error, the office never retries it in the same
+process: after a flush error the kernel may have dropped the dirty pages, and a second
+flush can succeed without the data being on the drive. It answers no waiting durable
+request as success (each gets an error and reconciles later by its operation ID),
+stops accepting, reports the fault with the path, and exits. On restart it reads the
+journal from the drive and proceeds from what is really there.
+
+**A failed append.** If the append returns an error or writes fewer bytes than the
+batch, the writer rolls back the batch's projection transaction, fails every operation
+of that batch (none was acknowledged), and truncates the segment back to the end of its
+last good entry, flushing that truncation, before it takes another batch. If the
+truncation fails, the office stops as for a failed flush.
+
 **Why the projection comes before the files.** Reads and the next decision need the
 change at once; files need a flush each and are wanted only by rebuild, Git and backup.
 Both are derived from the same entry, and the projection is a function of the files'
@@ -464,6 +478,8 @@ engine and one projection schema).
 | After a committed reply, before the flush (power cut) | Journal may end earlier; projection may be ahead of it | A cursor ahead of the journal, or a hash that differs at its ordinal, means: rebuild |
 | During materialization | Each file wholly old or wholly new | Write the final state of the retained entries after the materialized mark again |
 | During a rebuild | The old projection, or none | Rebuild again: the new projection is built beside the old and swapped in |
+| A flush returns an error | Unknown: the data may not be on the drive | The office exits without answering waiting durable requests as success; restart proceeds from what the journal holds on the drive |
+| An append fails or is short | Possibly a partial entry at the tail | The batch fails and is rolled back; the segment is truncated to its last good entry before the next batch; a failed truncation stops the office |
 
 **Opening.** Take the office lock and the host custody checkpoint; open the journal
 (verify the chain from anchor or checkpoint, truncate a torn tail, refuse a journal
