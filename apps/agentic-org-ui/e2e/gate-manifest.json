@@ -521,7 +521,12 @@
 				"session-foundation.spec.ts",
 				"accessibility.spec.ts"
 			],
-			"sources": ["src/routes/(onboarding)/**", "src/lib/create-flow.ts", "src/lib/open-flow.ts"]
+			"sources": [
+				"src/routes/(onboarding)/**",
+				"src/lib/create-flow.ts",
+				"src/lib/open-flow.ts",
+				"src/lib/platform/organizations/**"
+			]
 		},
 		"production": {
 			"specs": ["production-unavailable.spec.ts"],
