@@ -625,6 +625,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-command"
+version = "0.0.0"
+dependencies = [
+ "org-command",
+ "org-docs",
+ "org-proto",
+ "serde_json",
+]
+
+[[package]]
 name = "org-copilot"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,5 @@
+sample create: Create a sample
+sample inspect: One sample
+sample list: The samples, newest first
+sample ping: Whether the office answers
+sample update: Change a sample

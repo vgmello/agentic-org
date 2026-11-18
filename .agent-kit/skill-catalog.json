@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "94a705308d20dd016d8abd1b54d9ea06da409eb81ac237401fe532a128e7d802"
+      "sha256": "4f78594e2b745bca03a5569f192d3aedc98a14ba8fee9f208d92ab4feb8c4646"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "221c90230efe184e091e74b9e67a1dbe669d1b9881ac2b3cb041fd964db22e14"
+      "sha256": "10393c33b5b5b1f5fd5a9b261da414313ffef6a4ce31d75e5d1cfc194867e6f1"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -158,7 +158,7 @@
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "70ecbe4d678207b2f5764000270fabcdbe06d1ceef5c773d2dd5978989f282c6"
+      "sha256": "047f6e1e59da9d044363ac651b0d5bd0f696cd1ef90fe3934599f2ce74e5464c"
     },
     {
       "path": "docs/processes/branch-and-merge.md",

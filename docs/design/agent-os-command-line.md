@@ -624,9 +624,15 @@ capability of `org-platform`, on both systems.
 ## 7. Where the code lives
 
 - **The shared library** holds the table, the parser, the envelope, the formats, the
-  schemas and the client side of the session mode. It depends on `org-proto` and
-  `org-client`, and on nothing that knows a database or an operating system. Whether it
-  is a module of `org-client` or a crate of its own is K1's decision.
+  schemas and the client side of the session mode. It is the crate `crates/org-command`
+  (K1's decision: a crate of its own, so that the contract and its tests need no socket).
+  It depends on `org-proto` for the error codes and on `org-docs` for the bounded YAML
+  reader, and on nothing that knows a database or an operating system. It owns two
+  contracts that the executable supplies: `Office`, the one call a command makes, and
+  `Sources`, where `--input-file` and `--stdin` read from. The connection through
+  `org-client` is the executable's implementation of `Office` (A5), and the client side
+  of the session mode arrives with B6. The contract checks of section 8 are the crate's
+  `testkit` feature, which an increment runs on the table it adds rows to.
 - **`apps/agent-os` and `apps/agentic-org`** stay thin: each chooses how the caller is
   identified and hands the arguments to the library
   ([non-negotiable 15](../architecture-non-negotiables.md)).
