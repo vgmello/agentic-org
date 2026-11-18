@@ -340,11 +340,11 @@ such if shown.
 
 ## How a turn runs
 
-A turn starts from an explicit instruction, an ask addressed to the agent, a task
-assigned to it by its lead chain or its project team, the answer to a required ask, or
-a recovery ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
-Messages, mentions, other assignments and schedules never create model work by
-themselves. A waiting ask or assignment never interrupts an open turn.
+A turn starts from an explicit instruction, from something addressed to the agent (a
+direct message, a mention, an ask or a task assigned to it), from the answer to a
+required ask, or from a recovery ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
+Channel messages that do not mention the agent, and schedules, never create model
+work by themselves. What arrives during an open turn waits and never interrupts it.
 A second open turn returns `BUSY`.
 
 1. **Admit.** Authenticate the caller and scope, validate placement and configuration

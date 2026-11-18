@@ -1132,11 +1132,10 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             self.db.commit()
         self.db.rollback()
 
-    def test_only_an_agent_can_be_given_the_permission_to_hire(self):
+    def test_any_employee_can_be_given_the_permission_to_hire(self):
         self.assertEqual(self.db.execute("SELECT may_hire FROM employees WHERE id='ana'").fetchone()[0], 0)
-        self.db.execute("UPDATE employees SET may_hire=1 WHERE id='ana'")  # an agent
+        self.db.execute("UPDATE employees SET may_hire=1 WHERE id IN ('ana', 'reporter')")  # agent, person
         self.db.commit()
-        self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=1 WHERE id='reporter'"))
         self.refused(lambda: self.db.execute("UPDATE employees SET may_hire=2 WHERE id='ana'"))
 
     def test_a_process_declares_its_tabs_from_the_generic_views(self):
@@ -1149,16 +1148,18 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.db.commit()
         # A view is one of the product's; a fixed tab's key is not available; order is unique.
         self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="calendar",
-                                    position=2, view="calendar"))
-        for key in ("overview", "work", "docs", "releases", "team", "activity", "conversations"):
+                                    position=3, view="calendar"))
+        insert(self.db, "development_process_tabs", **tab, key="releases", position=2, view="releases")
+        self.db.commit()
+        for key in ("overview", "work", "docs", "team", "activity", "conversations"):
             self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key=key,
-                                        position=2, view="features"))
+                                        position=3, view="features"))
         self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="again",
                                     position=1, view="features"))
         self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="ninth",
                                     position=8, view="features"))
         self.refused(lambda: insert(self.db, "development_process_tabs", **tab, key="bad-config",
-                                    position=2, view="work", config_json='["story"]'))
+                                    position=3, view="work", config_json='["story"]'))
 
     def test_a_project_follows_an_existing_package_or_none(self):
         self.assertIsNone(self.db.execute("SELECT development_process_id FROM projects").fetchone()[0])

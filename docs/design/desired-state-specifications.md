@@ -75,6 +75,7 @@ kinds:
 tabs:
   - { key: product, title: Product, view: documents, section: product, kinds: [product-dss] }
   - { key: technical, title: Technical, view: documents, section: technical }
+  - { key: releases, title: Releases, view: releases }
 folders:
   - { path: product, title: Product documentation, kinds: [product-dss] }
   - { path: technical, title: Technical documentation, kinds: [technical-dss] }
@@ -119,8 +120,8 @@ because of it, each naming the Product DSS version it follows.
 Both are ordinary tree documents with `versioned: true`. The product knows neither
 name.
 
-The development process works with releases and milestones, as every process does, and does not
-use feature records: the Product DSS is the definition, and a
+The process uses releases and milestones, which is its choice, and does not use
+feature records: the Product DSS is the definition, and a
 task points at the versions it realizes. Software delivery by features is another
 development process ([development process design](development-processes.md#5-two-built-in-development-processes)).
 
@@ -165,16 +166,16 @@ development process ([development process design](development-processes.md#5-two
 ### 3.3 Plan and staff
 
 9. The leads break the work into tasks. Each task's `realizes` names the versions,
-   product or technical or both, that it brings the code in line with. Every change goes
-   into a release: the leads put the tasks in the project's next release, creating it
-   if there is none, and may group them in milestones of that release. Milestones are
-   optional; the release is not (owner, 2026-11-18). A task says which code links it is
+   product or technical or both, that it brings the code in line with. This process uses
+   releases: the leads put the tasks in the project's next release, creating it if
+   there is none, and may group them in milestones of that release. A task says which code links it is
    expected to touch.
 10. They decide which roles the tasks need. For each, the technical lead reads the role
     (`agent-os role show`) and asks HR for the hire with a reason
     ([development process design](development-processes.md#7-hiring-when-the-development-process-says-so)).
-    A lead approves: a person, or the technical lead itself when it leads the
-    project's team and a person has turned its May hire permission on
+    A lead with hiring power approves: the request goes up the lead chain until it
+    reaches one, and the technical lead's own request is enough when it leads the
+    project's team and has the Allow hiring permission
     ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). Tasks are assigned as the
     hires complete.
 
@@ -237,7 +238,7 @@ next time the same question comes up.
 - **A task:** the versions it realizes, each a link to that text.
 - **Needs you:** a confirmation before a version is issued, a technical decision the
   lead cannot take from the standards, and a hire to approve when the project's lead
-  is a person or an agent without May hire. Nothing else asks for the person.
+  has no hiring power and the request reaches you. Nothing else asks for the person.
 
 ## 6. The contract
 
@@ -268,7 +269,7 @@ These calls are general and belong to the documentation tree
 
 | ID | Passing evidence |
 | --- | --- |
-| DSS-1 | Choosing `dss` for a project shows two seed roles, adds the product and technical sections and gives the project Product and Technical tabs; nothing else is created, and the project has no Features tab. |
+| DSS-1 | Choosing `dss` for a project shows two seed roles, adds the product and technical sections and gives the project Product, Technical and Releases tabs; nothing else is created, and the project has no Features tab. |
 | DSS-2 | A Product DSS document is created from its template under a product domain section and appears in the index with its summary. |
 | DSS-3 | Edits to an issued document do not change what `doc show` returns by default; issuing does, and adds one version with its note and issuer. |
 | DSS-4 | A Technical DSS version records the Product DSS versions it was derived from, and a document's page shows them in both directions. |

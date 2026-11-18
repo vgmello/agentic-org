@@ -83,9 +83,10 @@ neither inherits from or replaces the other (decision 9).
 9. **Organization processes and a development process are two primitives.** A
    development process's skills do not enter this resolution: they have no level, no
    key to override and no override lock. An agent working in a project receives both,
-   in separate sections of its instructions. Where a skill and an organization
-   process or standard disagree, the organization's document is followed, and the
-   instructions say so; a non-overridable one is must-follow as always.
+   in separate sections of its instructions. Organization processes say how agents
+   interact and work in general; a development process may adjust that overridable
+   guidance for its project. A non-overridable document is must-follow as always and
+   no skill changes it.
 
 ## 1. Where each thing lives
 

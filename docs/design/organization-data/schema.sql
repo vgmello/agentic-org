@@ -575,7 +575,6 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   title_in_team TEXT,
   offboarded_at TEXT,
   may_hire INTEGER NOT NULL DEFAULT 0 CHECK (may_hire IN (0, 1)),
-  CHECK (kind = 'agent' OR may_hire = 0),
   CHECK (kind = 'agent' OR status <> 'paused'),
   CHECK (offboarded_at IS NULL OR status = 'inactive'),
   PRIMARY KEY (organization_id, id),
@@ -2366,10 +2365,10 @@ CREATE TABLE development_process_tabs (
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'
-    AND key NOT IN ('overview', 'work', 'docs', 'releases', 'team', 'activity', 'conversations')),
+    AND key NOT IN ('overview', 'work', 'docs', 'team', 'activity', 'conversations')),
   position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 7),
   title TEXT NOT NULL CHECK (length(title) > 0),
-  view TEXT NOT NULL CHECK (view IN ('documents', 'work', 'features')),
+  view TEXT NOT NULL CHECK (view IN ('documents', 'work', 'features', 'releases')),
   config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
   PRIMARY KEY (organization_id, process_id, key),
   UNIQUE (organization_id, process_id, position),

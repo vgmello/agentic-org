@@ -31,9 +31,16 @@ The owner's rule (2026-11-18): there are two primitives, and they stay apart.
 - A **skill** is one piece of a development process's guidance, written for one or
   more roles.
 
+The owner's summary: the system has primitives (projects, teams, tasks, releases,
+milestones, features, documents, roles, hiring, messages, asks). How a project uses
+them is defined by its development process. How agents interact with each other and
+work in general is defined by organization processes, and a development process may
+adjust that for its project.
+
 Both kinds are text an agent reads and applies. Neither is code the product runs.
-Neither inherits from, overrides or contains the other. Where they disagree, the
-organization's process or standard is followed.
+Neither inherits from or contains the other. A development process may refine the
+organization's overridable guidance for its project; a document the organization or a
+team marked not overridable is always followed.
 
 ## Decisions
 
@@ -55,7 +62,9 @@ organization's process or standard is followed.
 5. **Skills are delivered beside organization processes, not through them.** An agent
    working in a project receives two separate sections: the organization processes
    and standards that apply, and its project's development process with the skills
-   for its role. A skill has no level, no override key and no lock.
+   for its role. A skill has no level, no override key and no lock. It may adjust
+   overridable organization guidance for its project and never a non-overridable
+   document.
 6. **Skills are bound to roles by key.** An agent receives the skills written for its
    role and the ones written for everyone. An employee still has one role.
 7. **A project starts lean.** A development process marks a few roles as its seed.
@@ -65,17 +74,17 @@ organization's process or standard is followed.
 8. **Hiring stays the product's.** An agent asks for a hire; HR drafts it; a lead
    approves it; product code provisions it
    ([document 04](organization-data/04-agent-structure.md#who-approves-a-hire),
-   [ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). A lead that is an agent
-   approves only when a person has turned its May hire permission on. A development
-   process decides when a lead asks and for which role; it gives no one the right to
-   approve.
-9. **Releases and milestones are first-class in every project.** Whatever the
-   process, a change goes into a release, and a milestone may group work inside it.
-   Milestones are optional; releases are not.
+   [ADR-0022](../adr/0022-a-lead-approves-a-hire.md)). A lead approves only with the
+   Allow hiring permission, and a request goes up the lead chain until it reaches
+   someone who has it. A development process decides when a lead asks and for which
+   role; it gives no one the right to approve.
+9. **Releases, milestones and features are primitives a process chooses to use.**
+   They exist in the system for every project. Whether and how a project uses them
+   is its development process's choice; nothing forces a change into a release.
 10. **A development process declares the project's tabs.** The product provides a
     small set of generic views. A process lists the things it has, each as a tab
-    built from one of those views. Features are one such thing: a project has them
-    when its process says so.
+    built from one of those views. Releases and features are such things: a project
+    shows them when its process says so.
 11. **A project's documents live in one tree whose layout the project owns.** The
     process declares the sections it starts with; agents and people grow it. The
     product has no document type for any methodology.
@@ -85,8 +94,8 @@ organization's process or standard is followed.
 13. **A project's documentation is its own.** An agent reads and writes the tree of
     its own projects only. What it needs from another project it asks that project's
     agents and people for.
-14. **Agents hand work to each other.** An ask addressed to an agent, or a task
-    assigned to it by its leads or its project team, starts it
+14. **Agents hand work to each other as people do.** An agent is always available:
+    a message, a mention, an ask or a task addressed to it starts it
     ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
 15. **Changing a project's development process removes nothing.**
 
@@ -203,13 +212,13 @@ A project page is a row of tabs. Some are the same for every project. The rest a
 the things its development process says it has.
 
 ```
- Overview | Work | Product | Technical | Docs | Releases | Team | Activity | Conversations
-           fixed   └── from the process ──┘        fixed for every project
+ Overview | Work | Product | Technical | Releases | Docs | Team | Activity | Conversations
+           fixed   └─────── from the process ──────┘   fixed for every project
 ```
 
 **Fixed tabs,** in every project: Overview, Work (all tasks), Docs (the whole
-documentation tree), Releases (with their milestones), Team, Activity and
-Conversations. No process removes or renames one.
+documentation tree), Team, Activity and Conversations. No process removes or renames
+one.
 
 **Process tabs** come from `tabs[]` in the manifest, in the order written, between
 Work and Docs. Each names one of the product's generic views and says what it shows:
@@ -219,6 +228,7 @@ Work and Docs. Each names one of the product's generic views and says what it sh
 | `documents` | The documents, diagrams and images of one section of the tree, with status, version, unissued changes and progress. **New** starts a document there | `section` (one of the process's folders), optional `kinds` |
 | `work` | The project's tasks of the given types, as a list or as a board with one column per status. **New** creates a task of the first type | `types` (task types; a process may use its own, such as `story`), `layout: list \| board` |
 | `features` | The feature map of the [features UX](../specs/features-ux.md). Listing this view is how a process says it uses features | Nothing |
+| `releases` | The project's releases with their milestones and progress. Listing this view is how a process says it uses releases | Nothing |
 
 ```yaml
 tabs:
@@ -231,17 +241,20 @@ tabs:
     title: Technical
     view: documents
     section: technical
+  - key: releases
+    title: Releases
+    view: releases
 ```
 
 **How the tab bar is worked out,** every time the project page is opened:
 
 1. Start with Overview and Work.
 2. Add the tabs of the project's current development process, in order.
-3. If the project has features and no `features` tab came from step 2, add Features,
-   so that nothing a project holds becomes unreachable.
-4. Add Docs, Releases, Team, Activity and Conversations.
+3. If the project holds features or releases and step 2 gave no tab for them, add
+   that tab, so that nothing a project holds becomes unreachable.
+4. Add Docs, Team, Activity and Conversations.
 
-A project with no development process gets Features in step 2, as today.
+A project with no development process gets Features and Releases in step 2, as today.
 
 - Nothing about tabs is stored on the project. Changing the process changes the tabs
   at once and touches no data; changing back brings them back.
@@ -263,11 +276,11 @@ A project with no development process gets Features in step 2, as today.
 | What it is | Specify the product and the system as desired state, then keep the code in line | Software delivery by features: requests are scoped into features, features are built by tasks and shipped in releases |
 | The specification is | Versioned Product DSS and Technical DSS documents | Each feature's definition, `feature.md` |
 | A task points at | The document versions it realizes | Its feature |
-| Tabs it adds | Product, Technical (`documents`) | Features (`features`), Requests and Bugs (`work`, by type), Board (`work`, as a board) |
+| Tabs it adds | Product, Technical (`documents`), Releases | Features, Requests and Bugs (`work`, by type), Board (`work`, as a board), Releases |
 | Kinds it adds | `product-dss`, `technical-dss` | None; it uses decisions, designs and reports |
 | Seed roles | Product lead, technical lead | Product lead, engineering lead |
 | Starting sections | `product`, `technical` | `decisions`, `designs`, `reports` |
-| Delivered through | A release; milestones optional | A release; milestones optional |
+| Releases and milestones | Uses them: a change is planned into a release, milestones when useful | Uses them: features ship in releases |
 
 `feature-delivery` covers capturing and scoping a request
 ([request UX](../specs/feature-requests-ux.md)), writing a feature definition, breaking
@@ -286,8 +299,9 @@ sections in its instructions:
 2. **The project's development process:** its name and summary, its stages, the
    agent's role in it, and for each of the agent's skills the title and the
    when-to-use line. The body of a skill is retrieved with
-   `agent-os skill show <key>`. The section says that where it and an organization
-   process or standard disagree, the organization's document is followed.
+   `agent-os skill show <key>`. The section says that a non-overridable organization
+   process or standard is always followed, and that the skills may adjust the
+   organization's other guidance for this project.
 
 - **Which skills.** Every skill of the process whose `roles` is empty or names the key
   of the agent's role. An agent with no role, or a role the process does not name,
@@ -316,11 +330,11 @@ The lead then uses the product's hiring, as any agent may:
    sends the request to HR. HR drafts the proposal; when HR cannot run, the command
    says so and a person fills the form
    ([hire flow](../specs/our-org-in-the-app.md), APPR-8).
-3. **Approval.** A lead approves. The proposal goes to the nearest lead, going up from
-   the project's team, who may approve: a person, or an agent whose May hire
-   permission is on; else to the owner. When the requesting lead is itself that lead,
-   its request is its approval. A seed lead without the permission waits for the lead
-   above it.
+3. **Approval.** A lead with hiring power approves. The request goes up the lead
+   chain, from the project's team, until it reaches a lead whose Allow hiring
+   permission is on; at the top it reaches the owner. Each lead it passes, and the
+   requester, are told where it went. When the requesting lead has the permission,
+   its request is its approval.
 4. **Onboarding.** On approval the office provisions the agent in the project's team,
    so it is under that team's lead. The proposal suggests the requesting lead as the
    new agent's reporting line, which the approver confirms or changes. From its first
@@ -433,15 +447,15 @@ office.
 | PKG-6 | The seed roster shows each seed role as open, hire requested or filled, derived from the project team's members; an existing owner team fills the roles its members hold. |
 | PKG-7 | An agent's instructions carry the development process as its own section, separate from organization processes: the skills for its role and the ones for everyone, with retrievable bodies; another role's skills are not in it. |
 | PKG-8 | No skill appears in `process list`, `process why` or the Processes page, and no organization, team or project process document replaces or is replaced by a skill. |
-| PKG-9 | With a skill and a non-overridable organization standard that disagree, the standard is delivered in full as must-follow and the development process section says the organization's document is followed. |
-| PKG-10 | A lead agent's `hire request` for a role of the process produces a proposal for the project's team; nothing is provisioned before a lead who may approve does: a person, or an agent lead with May hire on, whose own request is then enough (HIRE-1 to HIRE-3); the new agent's first instructions carry its role's skills. |
+| PKG-9 | With a skill and a non-overridable organization standard that disagree, the standard is delivered in full as must-follow and the development process section says it is always followed. A skill that adjusts overridable organization guidance is delivered as written. |
+| PKG-10 | A lead agent's `hire request` for a role of the process produces a proposal for the project's team; nothing is provisioned before a lead with Allow hiring approves, the request going up the chain until it reaches one (HIRE-1 to HIRE-3); the new agent's first instructions carry its role's skills. |
 | PKG-11 | `doc index` returns the whole index in one call while it is at most 256 KiB, and the section list with each section readable by path beyond that. After any accepted write it lists exactly what the tree holds. |
 | PKG-12 | An agent of another project is refused `doc index`, `doc ls`, `doc show` and every write, with `other_project` and the lead to ask; a person is not. |
 | PKG-13 | Changing a project's development process removes no file, section, document or role; the tabs follow the new process at once; the next start of each agent delivers its skills. |
-| PKG-14 | With no development process, a project's tree starts with `decisions`, `designs` and `reports`, and its tabs are the fixed ones and Features. |
-| PKG-15 | The tab bar is exactly Overview, Work, the process's tabs in order, Features if the project has features and the process has no `features` tab, then Docs, Releases, Team, Activity, Conversations. Nothing about tabs is stored on the project. |
+| PKG-14 | With no development process, a project's tree starts with `decisions`, `designs` and `reports`, and its tabs are the fixed ones, Features and Releases. |
+| PKG-15 | The tab bar is exactly Overview, Work, the process's tabs in order, Features or Releases if the project holds them and the process gave no tab for them, then Docs, Team, Activity, Conversations. Nothing about tabs is stored on the project. |
 | PKG-16 | Any person of the organization creates, copies, imports and edits a development process; an agent's write of one is refused. An imported file is validated, gets a new ID and arrives as a draft; a downloaded one imports again unchanged. |
-| PKG-17 | Releases and milestones are in every project whatever its development process, and no manifest field hides or removes a fixed tab. |
+| PKG-17 | Releases, milestones and features exist as records for every project; a process that lists no `releases` or `features` tab does not use them, and nothing refuses a task that is in no release. No manifest field hides or removes a fixed tab. |
 | PKG-18 | A `documents` tab lists exactly the documents and media of its section, limited to its kinds; a `work` tab lists exactly the tasks of its types, as a list or a board; an empty tab shows its empty state and New. |
 
 ## 12. Open points

@@ -1,4 +1,4 @@
-# ADR-0022 · A lead approves a hire; an agent lead needs the permission to hire
+# ADR-0022 · A lead with hiring power approves a hire
 
 Status: **decided by the owner 2026-11-18**, in answer to the hiring point of
 [REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md): "Not a
@@ -19,38 +19,40 @@ an agent the owner trusted to staff its team.
 
 ## Decision
 
-1. **A lead approves every hire.** The approver is the nearest lead, going up from the
-   team the new agent joins, who may approve; above the top team, and at any time, the
-   organization's owner.
-2. **A lead who is a person may approve.**
-3. **A lead who is an agent may approve only when its `may_hire` is on.** `may_hire` is
-   a field of the agent's profile, off by default
+1. **A lead with hiring power approves a hire.** Hiring power is the `may_hire`
+   permission of an employee, shown as Allow hiring
    ([document 04](../design/organization-data/04-agent-structure.md#who-approves-a-hire)).
-   The permission belongs to the lead, not to the position: the agent leading an
-   engineering team can have it off while the agent leading the director team above
-   it has it on. A hire into the engineering team then goes up to the director team's
-   lead. Hiring is into a team; no project is involved.
-4. **Only the owner, or a person above the agent, turns `may_hire` on or off.** The
-   change is attributed and kept in history. No agent sets it, for itself or for
-   another, and the built-in HR lead never has it.
-5. **A lead who may approve hires for a team hires into it without a second
+2. **A request escalates until it reaches someone who has it.** It goes up the lead
+   chain from the team the new agent joins and stops at the first lead whose
+   `may_hire` is on. A lead without it does not decide; the request passes on, and
+   that lead and the requester are told who it went to. Above the top team, and at
+   any time, the organization's owner can approve.
+3. **The permission is given lead by lead, to a person or an agent.** A person's
+   record is created with it on and an agent's with it off. The lead of an
+   engineering team can have it off while the lead of the director team above has it
+   on. Hiring is into a team; no project is involved.
+4. **Only the owner, or a person above the employee, turns `may_hire` on or off.** The
+   change is attributed and kept in history. Nobody sets their own, and the built-in
+   HR lead never has it.
+5. **A lead who has the permission hires into its own teams without a second
    approval.** The proposal is still drafted and recorded, with that lead as requester
    and approver. This replaces the rule that a requester's own request went one level
    up.
 6. **Everything else about hiring is unchanged.** HR drafts and never approves.
    Product code provisions, and only after approval. Hiring limits set in Settings
-   apply to every lead, person or agent, and a request above a limit goes to the owner.
+   apply to every lead, and a request above a limit goes to the owner.
 7. **Non-negotiable 9 is restated.** Authority comes from the caller's place in the
-   organization. Two records carry it: a team's lead appointment and an agent lead's
-   permission to hire. Each is given only by someone already above the holder, and the
-   office checks it on every call.
+   organization. Two records carry it: a team's lead appointment and a lead's
+   permission to hire. Each is given only by someone already above the holder, and
+   the office checks it on every call.
 
 ## Rejected
 
 - **Keeping approval with people only.** It makes a person the bottleneck of a team an
   agent leads, which is the case development processes create on purpose.
-- **Letting any lead agent approve.** A lead appointment says who directs a team, not
-  who may spend on new employees. The owner wants that as a separate, explicit switch.
+- **Letting every lead approve.** A lead appointment says who directs a team, not who
+  may spend on new employees. The owner wants that as a separate, explicit switch,
+  for people and agents alike.
 - **A permission in the development process.** A development process is content and grants nothing
   ([ADR-0021](0021-development-processes-are-content.md)).
 
@@ -61,11 +63,11 @@ APPR-1 to APPR-4, APPR-8 and APPR-9 in the
 
 | ID | Passing evidence |
 | --- | --- |
-| HIRE-1 | With a person leading the team, an agent's hire request waits for that person; nothing is provisioned before they approve. |
-| HIRE-2 | With an agent leading the team and `may_hire` off, the request goes to the next lead above who may approve, or to the owner. |
-| HIRE-3 | With an agent leading the team and `may_hire` on, that agent's own request is approved by it and provisioned, and the hire records it as requester and approver. |
-| HIRE-4 | An agent's call to set `may_hire`, on itself or another agent, is refused. A person not above the agent is refused. |
-| HIRE-5 | Turning `may_hire` off moves the proposals waiting on that agent to the next approver. |
+| HIRE-1 | With the team's lead holding `may_hire`, an agent's hire request waits for that lead; nothing is provisioned before they approve. |
+| HIRE-2 | With the team's lead, person or agent, not holding `may_hire`, the request goes to the next lead above who holds it, or to the owner, and the lead passed over and the requester are told. |
+| HIRE-3 | A lead holding `may_hire` who asks for a hire into its own team has it approved by that request and provisioned, and the hire records it as requester and approver. |
+| HIRE-4 | An employee's call to set its own `may_hire` is refused, and so is an agent's call to set anyone's. A person not above the employee is refused. A new person record has it on and a new agent has it off. |
+| HIRE-5 | Turning `may_hire` off moves the proposals waiting on that lead to the next approver. |
 | HIRE-6 | A request above a hiring limit goes to the owner whoever the lead is. |
 | HIRE-7 | With an agent leading an engineering team (`may_hire` off) under a director team led by an agent with `may_hire` on, a hire into the engineering team waits for the director team's lead, and that lead approves it. No project exists in the organization during the test. |
 
@@ -77,3 +79,5 @@ APPR-1 to APPR-4, APPR-8 and APPR-9 in the
   hiring limits are the bounds, and every hire shows on the owner's Home.
 - The dogfood run's check that no agent can approve a hire now holds only for agents
   without the permission.
+- An agent that leads a team and lacks the permission does not need to work out whom
+  to ask: the request is routed up the chain for it.

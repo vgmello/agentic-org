@@ -23,6 +23,7 @@ Every numbered document carries one status line. The vocabulary is: **draft** (s
 
 | Date | Set revision | Change |
 | --- | --- | --- |
+| 2026-11-18 | 2.20 | Owner: releases, milestones and features are primitives a development process chooses to use (a `releases` tab view; no rule that a change is in a release); `may_hire` applies to any lead, person or agent. |
 | 2026-11-18 | 2.19 | Owner: the new primitive is a development process, separate from organization processes (tables and paths renamed from process package); it declares the project's tabs (`development_process_tabs` replaces `uses`); it can be imported as a file. 90 tables and 11 views. |
 | 2026-11-18 | 2.18 | Owner: releases and milestones are first-class in every project whatever its development process, and releases are not optional; a development process's `uses` lists only `features`. A team is created before and without any project. |
 | 2026-11-18 | 2.17 | Owner answers on REQ-07: a lead approves a hire and an agent lead needs `may_hire`, a new field of an agent's profile ([ADR-0022](../../adr/0022-a-lead-approves-a-hire.md)); a development process names the optional records it uses (`uses`); development processes do not move between organizations. |

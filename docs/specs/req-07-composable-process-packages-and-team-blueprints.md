@@ -79,7 +79,7 @@ Written by the lead on 2026-11-18 and updated the same day with the owner's answ
 | Seed archetypes, multi-hat | Roles declared in the manifest, some marked `seed`; `hats` label what a combined role covers. |
 | Process selector on a project | `development_process_id` on the project, chosen when it is created or later. |
 | Seed roster: hire, or assign an existing team | Choosing a development process shows its seed roles. Each is filled by a hire proposal into the project's team, or by an employee who already has that role; naming an existing team as the project's owner covers the "existing team" case. |
-| Process-timed hiring by the leads | A skill tells the lead when to hire. The lead reads the role with `agent-os role show` and asks with `agent-os hire request`. A lead approves; an agent lead with the May hire permission approves its own request. |
+| Process-timed hiring by the leads | A skill tells the lead when to hire. The lead reads the role with `agent-os role show` and asks with `agent-os hire request`. A lead with hiring power approves, and the request goes up the lead chain until it reaches one. |
 | Onboarded into the project team under the seed leads | The new agent's home team is the project's team, whose lead the owner appoints: a person or one of the seed agents. The proposal suggests the requesting lead as the reporting line. |
 | What a project shows | The development process declares the project's tabs from the product's generic views. |
 | Dynamic folder structure, materialized eagerly | The project documentation tree `projects/<project-id>/docs/`. Choosing a development process adds the sections it declares, at once. |
@@ -90,10 +90,10 @@ Written by the lead on 2026-11-18 and updated the same day with the owner's answ
 
 **Decided by the owner, 2026-11-18.**
 
-1. **Two kinds of process.** Organization processes stay as they are. A development process is a separate primitive: it does not inherit from them, override them or take part in their resolution, and where the two disagree the organization's document is followed.
-2. **A lead approves every hire.** A lead who is a person approves. A lead who is an agent approves only if a person has turned on its May hire permission, a field of the agent, given lead by lead ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)).
-3. **Agents start other agents.** An ask addressed to an agent, or a task assigned to it by its leads or its project team, starts it ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
-4. **Releases and milestones are first-class in every project.** Every change goes into a release; milestones are optional. Features are not first-class: a project has them when its development process says so, and software delivery by features is its own process, built in beside DSS.
+1. **Two kinds of process.** The system has primitives; a development process defines how a project uses them; organization processes define how agents interact and work in general. They are separate primitives. A development process may adjust the organization's overridable guidance for its project, and a document marked not overridable is always followed.
+2. **A lead with hiring power approves a hire.** Allow hiring is a permission of a lead, person or agent, given lead by lead; a request escalates up the lead chain until it reaches someone who has it ([ADR-0022](../adr/0022-a-lead-approves-a-hire.md)).
+3. **Agents behave like people who are always online.** Anything addressed to an agent starts it: a message, a mention, an ask or a task assignment, from anyone. An idle agent shows as available; senders see presence and decide whether to wait ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)).
+4. **Releases, milestones and features are primitives a process chooses to use.** They exist in the system for every project; nothing forces a change into a release. Software delivery by features is its own process, built in beside DSS, and both built-in processes use releases.
 5. **A development process declares the project's tabs.** The tabs are generic; a process says which things it has and they become tabs ([design](../design/development-processes.md#4-the-projects-tabs)).
 6. **Built-in processes, and processes anyone can create or edit.** A process can be imported into the system as a file. There is no link between organizations.
 7. **Teams and projects live side by side.** A team is created before any project and never needs one; a project always has a team.
@@ -109,11 +109,9 @@ Written by the lead on 2026-11-18 and updated the same day with the owner's answ
 7. **Changing a project's development process removes nothing.**
 8. **A team has one lead.** With two seed leads, the owner appoints one of them, or a person, as the project team's lead; the other directs by request.
 9. **A project's tree has one writing office,** handed over like a task's writer.
-10. **The views a tab can use are the product's:** documents of a section, tasks of given types as a list or a board, and the feature map. A new kind of view is a product change.
-11. **How agents starting agents is bounded:** a start never interrupts a running turn, passes the permit and budget checks, and starts by agents are capped per hour for each agent.
+10. **The views a tab can use are the product's:** documents of a section, tasks of given types as a list or a board, the feature map, and releases with their milestones. A new kind of view is a product change.
+11. **How agents starting agents is bounded:** a start never interrupts a running turn, passes the permit and budget checks, and one agent may start another only so many times an hour.
 
-**Points that need the owner.**
+**Point that needs the owner.**
 
-1. **Does the May hire permission apply to person leads too?** As written, a person who leads a team can always approve hires for it, and only agent leads need the permission.
-2. **"Releases are not optional."** The design has every process plan its work into a release and marks a task that is in none; it does not refuse a task without a release, because a bug or a request exists before anyone has planned it. Say if a task must always name a release.
-3. **Import.** You said earlier that processes do not move between organizations, and now that a process can be imported. The design reads this as: a person can import a process file and download one, and nothing connects two organizations. Say if that is wrong.
+1. **Import.** You said earlier that processes do not move between organizations, and later that a process can be imported. The design reads this as: a person can import a process file and download one, and nothing connects two organizations. Say if that is wrong.

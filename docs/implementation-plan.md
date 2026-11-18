@@ -30,7 +30,7 @@ single office on macOS. Its steps, in order:
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
 | 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
-| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent asked or assigned work starts by itself | B6, B7, C6, C8 |
+| 4 · Messages | Chat with people and agents, and ask a question that waits for an answer; an agent that is messaged, asked or assigned work starts by itself | B6, B7, C6, C8 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
 
 **Milestone two: Linux, in parallel (Track X).** The same server runs on Linux, including inside a
@@ -576,19 +576,21 @@ Three things to know about the order:
   finished with L4, and ASK-8 (a budget hold keeps the agent suspended) with L3.
 - **Needs:** B7, C3.
 
-### C8 · An ask or an assignment starts an agent
+### C8 · An agent is always available
 
-- **Outcome:** an agent asks another agent a question and gets an answer, and a lead
-  assigns a task to an agent and it starts, with nobody pressing Run.
-- **Build:** the two new starts of
-  [ADR-0023](adr/0023-an-ask-or-an-assignment-starts-an-agent.md): an ask addressed to
-  an agent, and a task assigned to it by its lead chain or by a member of the task's
-  accountable team. A start never interrupts, passes the permit and budget checks,
-  and starts by agents are capped per hour for each agent.
+- **Outcome:** a person or an agent messages, mentions, asks or assigns a task to an
+  agent, and it starts and answers with nobody pressing Run. An idle agent shows as
+  Available.
+- **Build:** the starts of
+  [ADR-0023](adr/0023-an-ask-or-an-assignment-starts-an-agent.md): a direct message, a
+  mention, an ask or a task assigned to the agent. A start never interrupts, passes
+  the permit and budget checks, and one agent may start another only so many times an
+  hour. Presence returned with a send and an ask, and built-in guidance on waiting or
+  sending and continuing.
 - **Read:** ADR-0023 (WAKE-1 to WAKE-8), [run modes](specs/agent-run-modes-ux.md)
   RUN-3, [agent sessions](design/agent-sessions.md). Row FC-179.
 - **Code today:** nothing starts an agent.
-- **Needs:** C3, B7 and, for assignments, B4.
+- **Needs:** C3, B6, B7 and, for assignments, B4.
 
 ---
 

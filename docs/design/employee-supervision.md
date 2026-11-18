@@ -34,8 +34,8 @@ satellite completed an operation.
    office-local bindings and HQ-issued permits. A verified idle process is reused only
    with the same launch digest. An unknown cleanup keeps the slot.
 4. **Work starts for a stated reason.** A turn starts from an explicit instruction,
-   an ask addressed to the agent, a task assigned to it by its lead chain or its
-   project team ([ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)),
+   from something addressed to the agent (a direct message, a mention, an ask or a
+   task assigned to it, [ADR-0023](../adr/0023-an-ask-or-an-assignment-starts-an-agent.md)),
    the answer to a required ask
    ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a recovery the
    office performs. The office does not choose work, queue messages into

@@ -1,6 +1,6 @@
 # Development processes and project documentation
 
-Status: **selected** data contract, revision 1.3. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: development processes, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [development process design](../development-processes.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
+Status: **selected** data contract, revision 1.4. It adds the records the owner's [REQ-07](../../specs/req-07-composable-process-packages-and-team-blueprints.md) and [REQ-06](../../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) need: development processes, a project's choice of one, the project documentation tree with its index, issued document versions, code links and the tasks that realize a version. Behaviour is in the [development process design](../development-processes.md) and the [desired state design](../desired-state-specifications.md). [Projects](02-project-structure.md) own `projects` and `documents`, which this document extends; [organization structure](01-organization-structure.md) owns roles and process and standard documents.
 
 The product carries no methodology. A development process is content: a manifest, role definitions, skills and document templates. Nothing here is a process execution engine, and no record in this document starts work, changes a status or blocks an action.
 
@@ -240,6 +240,9 @@ tabs:
     title: Technical
     view: documents
     section: technical
+  - key: releases
+    title: Releases
+    view: releases
 ```
 
 This is an organization's copy of the built-in `dss` development process, shortened. A copy has its own key, because a key is unique in the organization.
@@ -247,7 +250,7 @@ This is an organization's copy of the built-in `dss` development process, shorte
 - **`roles[]`** are the roles the development process needs. `seed: true` marks the few that start the project; the others are hired when the work calls for them. `hats` are labels for people, shown on the roster to say what a combined role covers; nothing reads them. Each role has a definition at `roles/<key>.md`, with the body headings of a [role record](../../specs/roles-ux.md).
 - **`kinds[]`** are document kinds the development process adds to the built-in ones (`brief`, `decision`, `design`, `report`, `changelog`). A development process cannot redefine a built-in kind. `versioned: true` means documents of that kind are [issued in versions](#issued-versions). A kind may have a template at `templates/<key>.md`.
 - **`folders[]`** are the sections a project's documentation starts with. `kinds` says what a folder is for; it guides and is not enforced.
-- **`tabs[]`** are the things the process gives a project, each shown as a tab of the project page, in order. A tab has a `key`, a `title` and a `view`, one of the product's generic views: `documents` (one `section` of the tree, optionally limited to `kinds`), `work` (the project's tasks of the given `types`, with `layout: list | board`) and `features` (the feature map; listing it is how a process says it uses features). A process has at most eight tabs, and a tab's key is not one of the fixed tabs' (`overview`, `work`, `docs`, `releases`, `team`, `activity`, `conversations`). Releases and milestones are not listed because they are first-class in every project, whatever its process, and a process cannot leave them out (owner, 2026-11-18). How the tab bar is worked out is in the [design](../development-processes.md#4-the-projects-tabs); nothing about tabs is stored on a project.
+- **`tabs[]`** are the things the process gives a project, each shown as a tab of the project page, in order. A tab has a `key`, a `title` and a `view`, one of the product's generic views: `documents` (one `section` of the tree, optionally limited to `kinds`), `work` (the project's tasks of the given `types`, with `layout: list | board`), `features` (the feature map) and `releases` (releases with their milestones). Releases, milestones and features are primitives of the system that exist for every project; listing their view is how a process says it uses them, and nothing forces a change into a release (owner, 2026-11-18). A process has at most eight tabs, and a tab's key is not one of the fixed tabs' (`overview`, `work`, `docs`, `team`, `activity`, `conversations`). How the tab bar is worked out is in the [design](../development-processes.md#4-the-projects-tabs); nothing about tabs is stored on a project.
 - **`stages[]`** describe the order of work for people and agents. An entry has a `key`, a `title`, an optional `summary` and an optional `lead_role` naming a declared role. The product shows stages to people and includes them in an agent's instructions. No code acts on one.
 
 A skill is a Markdown file whose front matter says who it is for:
@@ -269,7 +272,7 @@ roles: [technical-lead]
 
 ### What a development process may not carry
 
-A development process grants nothing. It cannot name tools, models, credentials, budgets, approvers or permissions, and a field that tried would be refused as unknown. It is a different primitive from the organization's processes and standards ([process design](../processes.md), decision 9): its skills have no level, no override key and no lock, they are never part of an effective set, and where a skill and an organization process or standard disagree the organization's document is followed.
+A development process grants nothing. It cannot name tools, models, credentials, budgets, approvers or permissions, and a field that tried would be refused as unknown. It is a different primitive from the organization's processes and standards ([process design](../processes.md), decision 9): its skills have no level, no override key and no lock, and they are never part of an effective set. A skill may adjust the organization's overridable guidance for its project; a document the organization or a team marked not overridable is always followed.
 
 ### Roles the development process needs, and the organization's roles
 
@@ -435,7 +438,7 @@ realizes:
     version: 2
 ```
 
-Whatever the process, the change goes into a release (owner, 2026-11-18): the tasks that realize a version are in a release of the project, listed in its content or grouped in one of its milestones ([document 09](09-release-content-and-flags.md), [document 02](02-project-structure.md)). A milestone is optional; the release is not. A version's page names the release its tasks are in and marks any task that is in none.
+A process that uses releases puts the tasks that realize a version in a release of the project, listed in its content or grouped in one of its milestones ([document 09](09-release-content-and-flags.md), [document 02](02-project-structure.md)); the version's page then names the release. Nothing requires it: a task may be in no release.
 
 `realizes[]` is authored in the task's front matter. Each entry names an issued version of a tree document in the task's own project; the accepting service checks both. A task may realize several versions and a version may be realized by several tasks.
 
@@ -587,10 +590,10 @@ CREATE TABLE development_process_tabs (
   key TEXT NOT NULL CHECK (
     length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
     AND substr(key, 1, 1) GLOB '[a-z0-9]'
-    AND key NOT IN ('overview', 'work', 'docs', 'releases', 'team', 'activity', 'conversations')),
+    AND key NOT IN ('overview', 'work', 'docs', 'team', 'activity', 'conversations')),
   position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 7),
   title TEXT NOT NULL CHECK (length(title) > 0),
-  view TEXT NOT NULL CHECK (view IN ('documents', 'work', 'features')),
+  view TEXT NOT NULL CHECK (view IN ('documents', 'work', 'features', 'releases')),
   config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json) AND json_type(config_json) = 'object'),
   PRIMARY KEY (organization_id, process_id, key),
   UNIQUE (organization_id, process_id, position),
@@ -734,7 +737,7 @@ GROUP BY v.organization_id, v.document_id, v.version;
 
 `document_versions` has no foreign key to `documents`: an issued version is history and outlives the live row, resolved through `record_refs` like any historical reference. The other direction is enforced: a document's `version` must be one of its issued versions. Version rows are written once; the two triggers refuse an update, a delete and a replace.
 
-Rules checked by the accepting service, not by SQL: a project's development process is `current` when chosen; a stage's `lead_role` is a declared role; a `documents` tab names a declared folder and kinds that are built in or declared, a `work` tab names at least one task type, and a process lists the `features` view at most once; a document's kind is built in or declared by a development process; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
+Rules checked by the accepting service, not by SQL: a project's development process is `current` when chosen; a stage's `lead_role` is a declared role; a `documents` tab names a declared folder and kinds that are built in or declared, a `work` tab names at least one task type, and a process lists the `features` view and the `releases` view at most once each; a document's kind is built in or declared by a development process; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
 
 ## Acceptance criteria
 

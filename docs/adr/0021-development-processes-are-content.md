@@ -53,7 +53,8 @@ Three rules already in force constrain how:
 3. **A development process is a different primitive from organization processes**
    (owner, 2026-11-18). Its skills reach an agent as a section of their own, filtered
    by the agent's role. They take no part in the resolution of organization processes
-   and standards, and where the two disagree the organization's document is followed.
+   and standards. A skill may adjust overridable organization guidance for its
+   project; a non-overridable document is always followed.
 4. **A development process gives no right to hire and starts no agent.** A development process can tell a lead
    when to ask for a hire. Who may approve one is decided by the lead chain and the
    permission to hire ([ADR-0022](0022-a-lead-approves-a-hire.md)), never by a development process.
@@ -69,15 +70,14 @@ Three rules already in force constrain how:
 7. **The desired state of a versioned document is its latest issued version,** written
    once. Whether the code matches it is derived from the tasks that realize it.
 8. **DSS is the first built-in development process** and proves the rule: it is delivered as
-   content. Releases and milestones are first-class for every process, and releases are not
-   optional; features are a record a development process may use or not;
+   content. Releases, milestones and features are primitives of the system that a development
+   process chooses to use;
    software delivery by features is a second built-in development process.
 9. **Built-in development processes, and ones anyone in the organization creates or
    edits.** A person may import a process file and download one. Nothing connects two
    organizations.
 10. **A development process declares the project's tabs,** each built from one of the
-    product's generic views. The fixed tabs, releases and milestones among them, are in
-    every project.
+    product's generic views. A few tabs are fixed in every project.
 
 ## Acceptance criteria
 
