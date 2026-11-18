@@ -29,18 +29,25 @@ pub(super) struct Place {
     pub(super) custody: Arc<FakeCustody>,
     pub(super) faults: Arc<Faults>,
     pub(super) probe: Probe,
-    _dir: tempfile::TempDir,
+    _dir: Option<tempfile::TempDir>,
 }
 
 impl Place {
     pub(super) fn new() -> Self {
         let dir = tempfile::tempdir().expect("a temporary directory");
+        let mut place = Self::at(dir.path());
+        place._dir = Some(dir);
+        place
+    }
+
+    /// The office under `root`, as a new process finds it: nothing kept in memory.
+    pub(super) fn at(root: &Path) -> Self {
         Self {
-            root: dir.path().canonicalize().expect("a real path"),
+            root: root.canonicalize().expect("a real path"),
             custody: Arc::new(FakeCustody::new()),
             faults: Faults::new(),
             probe: Probe::new(&identity().office_id),
-            _dir: dir,
+            _dir: None,
         }
     }
 

@@ -192,6 +192,8 @@ struct State {
     blocked_flushes: usize,
     /// Sites in the writer and flusher to die at, each after this many passes.
     sites: Vec<(Site, usize)>,
+    /// What a real process does when a site kills it.
+    on_site_crash: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[derive(Default)]
@@ -320,6 +322,13 @@ impl Faults {
     /// Every call from now fails.
     pub fn fail_everything(&self) {
         self.rule(None, 1, Action::Fail, true);
+    }
+
+    /// Runs `act` on the thread that reaches an armed site, at the site, before anything
+    /// else happens there. A subprocess test ends its own process in it, so a real kill
+    /// lands exactly where the simulated one does.
+    pub fn on_site_crash(&self, act: impl Fn() + Send + Sync + 'static) {
+        self.lock().on_site_crash = Some(Arc::new(act));
     }
 
     /// The process is dead: no call reaches the disk any more.
@@ -668,8 +677,12 @@ impl Hooks for Faults {
         state.sites.remove(index);
         state.fired = true;
         state.dead = true;
+        let act = state.on_site_crash.clone();
         drop(state);
         self.changed.notify_all();
+        if let Some(act) = act {
+            act();
+        }
         true
     }
 }

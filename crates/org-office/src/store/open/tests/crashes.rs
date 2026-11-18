@@ -428,3 +428,115 @@ fn on_sqlite_a_failed_append_fails_its_batch_alone_and_a_failed_truncation_stops
     assert!(office.team(&store, 3, 0x22).is_err());
     assert_eq!(directory(&store).teams.len(), 1);
 }
+
+// ---- a real SIGKILL, in a subprocess ----
+
+const KILL_CHILD: &str = "store::open::tests::crashes::sigkill_child";
+const KILL_ROOT: &str = "ORG_TEST_OFFICE_STORE_KILL_ROOT";
+const KILL_POINT: &str = "ORG_TEST_OFFICE_STORE_KILL_POINT";
+
+/// The three points a kill is tried at, by the name the child is given.
+#[cfg(unix)]
+const KILL_POINTS: [(&str, CrashPoint); 3] = [
+    ("during_apply", CrashPoint::DuringApply),
+    ("after_append", CrashPoint::AfterAppend),
+    ("after_committed_reply", CrashPoint::AfterCommittedReply),
+];
+
+/// The child of the test below; alone it does nothing. It creates an office on SQLite,
+/// acknowledges one team, then sends itself SIGKILL from the writer's thread at the
+/// selected point of a second team's creation and never goes past it.
+#[cfg(unix)]
+#[test]
+fn sigkill_child() {
+    let (Some(root), Ok(selected)) = (std::env::var_os(KILL_ROOT), std::env::var(KILL_POINT))
+    else {
+        return;
+    };
+    let point = KILL_POINTS.iter().find(|(name, _)| *name == selected);
+    let point = point.expect("a known kill point").1;
+    let office = Office {
+        place: Place::at(Path::new(&root)),
+        engine: EngineChoice::Sqlite,
+        decisions: Arc::new(AtomicUsize::new(0)),
+    };
+    let store = office.place.create(EngineChoice::Sqlite);
+    create_organization(&store, 1).expect("an organization");
+    office.team(&store, 2, 0x21).expect("an acknowledged team");
+    office.place.faults.on_site_crash(|| {
+        let me = std::process::id().to_string();
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &me])
+            .status();
+        // The signal ends the process; this thread goes no further meanwhile.
+        loop {
+            std::thread::park();
+        }
+    });
+    office.place.faults.arm(point, 1);
+    let _ = office.team(&store, 3, 0x22);
+    loop {
+        std::thread::park();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_real_sigkill_at_three_points_reopens_to_what_the_journal_holds() {
+    use std::os::unix::process::ExitStatusExt;
+    for (name, point) in KILL_POINTS {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([KILL_CHILD, "--exact", "--nocapture", "--test-threads=1"])
+            .env(KILL_ROOT, dir.path())
+            .env(KILL_POINT, name)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the child process");
+        // A child that never reaches its point is ended here, and the test fails.
+        let (done, wait) = mpsc::channel();
+        let pid = child.id().to_string();
+        let waiter = std::thread::spawn(move || done.send(child.wait()));
+        let status = wait.recv_timeout(std::time::Duration::from_secs(120));
+        if status.is_err() {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &pid])
+                .status();
+        }
+        let _ = waiter.join();
+        let status = status
+            .expect("the child reached its kill point")
+            .expect("its status");
+        assert_eq!(
+            status.signal(),
+            Some(9),
+            "{name}: the child ended with {status:?}"
+        );
+
+        let office = Office {
+            place: Place::at(dir.path()),
+            engine: EngineChoice::Sqlite,
+            decisions: Arc::new(AtomicUsize::new(0)),
+        };
+        let store = office.place.reopen(EngineChoice::Sqlite);
+        let seen = directory(&store);
+        let has = |team: u64| seen.teams.iter().any(|t| t.id == id(team));
+        // The acknowledged team is there. The other is there exactly when its entry was
+        // appended before the kill: the journal decides, not the projection.
+        assert!(has(0x21), "{name}: the acknowledged team is gone");
+        let appended = point != CrashPoint::DuringApply;
+        assert_eq!(has(0x22), appended, "{name}");
+        assert_eq!(seen.generation, if appended { 3 } else { 2 }, "{name}");
+        assert_eq!(store.read(HasReceipt(id(3))).unwrap().0, appended, "{name}");
+        office.check(&store, &[None, None], name);
+        // The appended one answered from its receipt; the other decided now, once.
+        assert_eq!(office.decided(), usize::from(!appended), "{name}");
+        let lived = store.dump();
+        store.close().expect("an orderly close");
+        std::fs::remove_dir_all(office.place.runtime()).expect("the runtime folder");
+        let store = office.place.reopen(EngineChoice::Sqlite);
+        assert_eq!(store.dump(), lived, "{name}: rebuild differs");
+        store.close().expect("an orderly close");
+    }
+}
