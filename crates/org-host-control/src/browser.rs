@@ -48,8 +48,8 @@ impl<'de> Deserialize<'de> for Digest32 {
             ));
         }
         let mut out = [0u8; 32];
-        for (i, pair) in bytes.chunks_exact(2).enumerate() {
-            out[i] = match (nibble(pair[0]), nibble(pair[1])) {
+        for (i, [high, low]) in bytes.as_chunks::<2>().0.iter().enumerate() {
+            out[i] = match (nibble(*high), nibble(*low)) {
                 (Some(h), Some(l)) => (h << 4) | l,
                 _ => {
                     return Err(serde::de::Error::custom(

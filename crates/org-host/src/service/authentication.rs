@@ -130,7 +130,7 @@ fn unavailable() -> ApiError {
 fn storage(_: crate::hostdb::Error) -> ApiError {
     unavailable()
 }
-fn wall_ms() -> Result<u64, ApiError> {
+pub(super) fn wall_ms() -> Result<u64, ApiError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -622,5 +622,6 @@ impl Authentication {
     }
 }
 
+mod browser;
 #[cfg(test)]
 pub(crate) mod tests;

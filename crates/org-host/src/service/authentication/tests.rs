@@ -38,6 +38,17 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Authentication, Arc<Connection>) 
     fixture_for(&crate::ids::uuid_v7().unwrap())
 }
 pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication, Arc<Connection>) {
+    fixture_seeded(instance, true)
+}
+/// A host database with no account at all: a setup link can still register the administrator.
+pub(crate) fn fixture_without_accounts() -> (tempfile::TempDir, Authentication) {
+    let (root, auth, _) = fixture_seeded(&crate::ids::uuid_v7().unwrap(), false);
+    (root, auth)
+}
+fn fixture_seeded(
+    instance: &str,
+    seed: bool,
+) -> (tempfile::TempDir, Authentication, Arc<Connection>) {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let custody: Arc<dyn HostSecrets> = Arc::new(TestCustody::default());
@@ -49,8 +60,10 @@ pub(crate) fn fixture_for(instance: &str) -> (tempfile::TempDir, Authentication,
     let db = HostDb::create(root.path(), &*custody, &init).unwrap();
     let verifier =
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
-    db.seed_account(&account, "Owner", &verifier, true, init.clock_high_ms)
-        .unwrap();
+    if seed {
+        db.seed_account(&account, "Owner", &verifier, true, init.clock_high_ms)
+            .unwrap();
+    }
     drop(db);
     let auth = Authentication::open(root.path(), custody, instance).unwrap();
     (root, auth, Connection::for_test())

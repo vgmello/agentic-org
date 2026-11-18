@@ -222,6 +222,71 @@ impl Service {
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
     }
+    /// Browser-session ops (A3 B4), only on the admitted web process's control
+    /// connection. Each `session.ended` push is written before the reply on the
+    /// connection's one ordered writer, after the record's delete.
+    fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
+        use org_host_control::browser::{
+            BrowserSessionEnd, LinkRegister, SessionEnded, SessionSignIn, SessionValidate,
+            SESSION_ENDED,
+        };
+        let browser = request.is::<LinkRegister>()
+            || request.is::<SessionSignIn>()
+            || request.is::<SessionValidate>()
+            || request.is::<BrowserSessionEnd>();
+        if !browser || connection.gateway_listen().is_none() {
+            return false;
+        }
+        let Some(authentication) = &self.authentication else {
+            connection.send_response(not_authorized(request.id));
+            return true;
+        };
+        let invalid =
+            |_| ApiError::new(ErrorCode::InvalidRequest, "invalid browser session request");
+        let mut ended = Vec::new();
+        let now = authentication::wall_ms().and_then(|ms| {
+            i64::try_from(ms)
+                .map_err(|_| ApiError::new(ErrorCode::Unavailable, "clock unavailable"))
+        });
+        let reply = if request.is::<LinkRegister>() {
+            now.and_then(|now| {
+                let p = request.params::<LinkRegister>().map_err(invalid)?;
+                authentication.register(&p, now, &mut ended)
+            })
+            .map(|r| ok::<LinkRegister>(request.id, &r))
+        } else if request.is::<SessionSignIn>() {
+            now.and_then(|now| {
+                let p = request.params::<SessionSignIn>().map_err(invalid)?;
+                authentication.sign_in_browser(&p, now, &mut ended)
+            })
+            .map(|r| ok::<SessionSignIn>(request.id, &r))
+        } else if request.is::<SessionValidate>() {
+            now.and_then(|now| {
+                let p = request.params::<SessionValidate>().map_err(invalid)?;
+                authentication.validate_browser(&p, now, &mut ended)
+            })
+            .map(|r| ok::<SessionValidate>(request.id, &r))
+        } else {
+            request
+                .params::<BrowserSessionEnd>()
+                .map_err(invalid)
+                .and_then(|p| authentication.end_browser(&p.session_id))
+                .map(|e| {
+                    ended.extend(e);
+                    ok::<BrowserSessionEnd>(request.id, &org_proto::Empty {})
+                })
+        };
+        for session in ended {
+            let event = SessionEnded {
+                session_id: session.id,
+            };
+            if let Ok(data) = serde_json::to_value(&event) {
+                connection.send_event(SESSION_ENDED, data);
+            }
+        }
+        connection.send_response(reply.unwrap_or_else(|e| Response::error(request.id, e)));
+        true
+    }
     fn authenticate(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::ops::{
             AccountVerify, FdsReceived, OfficeOpenChannel, SessionEnd, SessionGrant,
@@ -519,6 +584,9 @@ impl Handler for Service {
             return;
         }
         if self.recover(&request, connection, received) {
+            return;
+        }
+        if self.browser_op(&request, connection) {
             return;
         }
         if self.authenticate(&request, connection) {
@@ -1047,6 +1115,111 @@ pub(crate) mod tests {
             ErrorCode::NotAuthorized
         ));
         assert!(local.live());
+        drop(local);
+        offices.shutdown();
+    }
+
+    fn browser_sign_in(seed: u8) -> org_host_control::browser::SessionSignInParams {
+        use org_host_control::browser::{BrowserOrigin, Digest32, SessionSignInParams};
+        SessionSignInParams {
+            login: "owner".into(),
+            password: org_host_control::Password::new("synthetic test password".into()).unwrap(),
+            client_address: "192.0.2.1".parse().unwrap(),
+            cookie_digest: Digest32([seed; 32]),
+            proof_digest: Digest32([seed ^ 0xff; 32]),
+            origin: BrowserOrigin {
+                scheme: "https".into(),
+                host: "org.example".into(),
+                port: 443,
+            },
+        }
+    }
+
+    /// `session.end` deletes the record, then writes `session.ended` before its
+    /// reply on the web connection's one ordered writer; a later validate fails.
+    #[test]
+    fn browser_session_end_pushes_session_ended_before_its_reply_on_the_web_connection() {
+        use org_host_control::browser::{
+            BrowserSessionEnd, BrowserSessionEndParams, SessionEnded, SessionSignIn,
+            SessionValidate, SessionValidateParams, SESSION_ENDED,
+        };
+        let home = tempfile::tempdir().unwrap();
+        let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+        let service = service(home.path()).with_authentication(Some(Arc::new(authentication)));
+        let (web, mut peer, offices) = web_peer_for(
+            service,
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let signed_in = browser_sign_in(1);
+        let session = exchange::<SessionSignIn>(&mut peer, 2, &signed_in)
+            .unwrap()
+            .into_result::<SessionSignIn>()
+            .unwrap();
+        org_proto::frame::write_message(
+            peer.get_mut(),
+            &Request::new::<BrowserSessionEnd>(
+                3,
+                &BrowserSessionEndParams {
+                    session_id: session.session_id.clone(),
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let event: org_proto::Event = org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+        assert_eq!(event.event, SESSION_ENDED);
+        let ended: SessionEnded = serde_json::from_value(event.data).unwrap();
+        assert_eq!(ended.session_id, session.session_id);
+        let reply: org_proto::Response =
+            org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+        assert_eq!(reply.id, 3);
+        reply.into_result::<BrowserSessionEnd>().unwrap();
+        let validate = SessionValidateParams {
+            cookie_digest: signed_in.cookie_digest,
+            proof_digest: signed_in.proof_digest,
+            origin: signed_in.origin,
+        };
+        assert!(refused(
+            exchange::<SessionValidate>(&mut peer, 4, &validate),
+            ErrorCode::NotAuthorized
+        ));
+        drop(web);
+        offices.shutdown();
+    }
+
+    /// A local (host.sock) connection cannot create or validate browser sessions.
+    #[test]
+    fn browser_session_ops_off_the_web_connection_are_refused() {
+        use org_host_control::browser::{LinkRegister, SessionSignIn};
+        let home = tempfile::tempdir().unwrap();
+        let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+        let mut service = service(home.path()).with_authentication(Some(Arc::new(authentication)));
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
+        let offices = service.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let response = exchange::<SessionSignIn>(&mut peer, 2, &browser_sign_in(2)).unwrap();
+        assert!(matches!(response.outcome, org_proto::Outcome::Error(_)));
+        let register = serde_json::json!({});
+        org_proto::frame::write_message(
+            peer.get_mut(),
+            &serde_json::json!({"id": 3, "method": LinkRegister::METHOD, "params": register}),
+        )
+        .unwrap();
+        let response: org_proto::Response =
+            org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+        assert!(matches!(response.outcome, org_proto::Outcome::Error(_)));
         drop(local);
         offices.shutdown();
     }
