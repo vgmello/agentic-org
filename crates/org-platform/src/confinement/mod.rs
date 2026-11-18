@@ -143,8 +143,9 @@ pub fn disable_core_dumps() -> io::Result<()> {
 /// filter. Any failure returns an error that names the call and the cause, and the
 /// connected stream is dropped: the caller never holds a stream unconfined. After a
 /// failure of the last two steps the process is partly confined and must still exit.
-/// Once it returns, the process must not start with `RUST_BACKTRACE` set (a backtrace
-/// opens files) and must not open, connect, bind or execute anything: each kills it.
+/// After it returns, opening a file, creating, connecting or binding a socket and
+/// starting a program each kill the process. The host therefore starts the web
+/// process without `RUST_BACKTRACE`: a backtrace opens files.
 pub fn confine_web(rendezvous: &Path) -> io::Result<(UnixStream, Enforcement)> {
     native::confine_web(rendezvous)
 }
