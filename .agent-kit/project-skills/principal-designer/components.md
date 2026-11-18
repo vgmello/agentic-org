@@ -25,7 +25,16 @@ primitives in `apps/agentic-org-ui/src/lib/components/ui` before drawing a new o
 - **Minimum width.** A two-letter label should not make a tiny target. *Breaks for*
   icon-only buttons, which are square.
 - **The target may be larger than the shape.** At least 24 by 24 CSS px with a pointer and
-  44 to 48 px for touch (WCAG 2.5.8 and 2.5.5).
+  44 to 48 px for touch (WCAG 2.5.8 and 2.5.5). Meet the target by extending the hit area
+  into the space around the control, not by inflating what is drawn. A button grown to 44 px
+  inside a container that has its own padding makes the container 52 px, and it becomes the
+  heaviest thing in its row.
+- **Controls that sit together share one outer height.** A search field, a segmented
+  control, a select and a button in the same row or stack have the same outer height and
+  the same radius family, so they read as one set. Measure the outer box, including a
+  group's own padding and border. After any size fix, look at the control beside its
+  neighbors again. *Breaks when* one control is deliberately the primary action and larger
+  by a whole step.
 
 ### Hierarchy
 
@@ -115,6 +124,30 @@ primitives in `apps/agentic-org-ui/src/lib/components/ui` before drawing a new o
 Visible options beat hidden ones whenever they fit, because the person sees the range of
 answers before choosing.
 
+### Segmented controls and filter groups
+
+For two to five short, peer, exclusive options that change the view in place: a filter such
+as All, Active, Paused, Former, or a switch between views.
+
+- **The track matches its neighbors.** The container has the same outer height and radius
+  as the field or button beside it: 36 px on desktop, 44 px for touch in this product.
+- **The selected segment is a tile inset inside the track**, by 2 to 4 px, so it is shorter
+  than the track: a 36 px tile in a 44 px track. Its radius is the track's radius minus the
+  inset.
+- **Each segment's hit area fills the full height of the track**, inset included, and
+  segments touch, leaving no dead gap between them. That is how a 36 px tile meets a 44 px
+  target without the control growing.
+- **Width.** Sized to content when there is room. At narrow widths the track fills the
+  available width and the segments share it equally, so its edges align with the field
+  above it and the targets are as wide as they can be.
+- **Spacing.** The gap between the control and a related field is the small step used
+  between related controls, and clearly smaller than the gap to the content they act on.
+- **Label and count.** The label carries the weight; a count is regular weight, quieter and
+  in tabular figures. Both must pass contrast in the selected and the unselected state.
+- **Selected is more than a color**: a filled tile plus weight.
+- **One line only.** *Breaks when* the options do not fit on one line at the narrowest
+  width and largest text, or there are more than five: use a select instead of wrapping.
+
 ### Validation
 
 - **Validate when the person leaves a field, not while they type.** Once a field is in
@@ -181,6 +214,12 @@ answers before choosing.
   stay inline near their cause.
 - **Status** uses a small fixed vocabulary. Each status is a word plus a color plus,
   ideally, a shape. One status per row; other facts are text.
+- **A value that means "this is not working" must not look like an ordinary value.** An
+  agent with no office, a connection that is missing, a check that did not run: if it sits
+  in a column styled exactly like its healthy neighbors, nobody sees it. Give it a word
+  that says what is wrong and a mark beyond color. Use the product's own meanings for
+  color; do not borrow a hue that already means something else. *Breaks when* the empty
+  value is normal and harmless, such as an optional field left blank: keep that quiet.
 - **Counts and badges** show real numbers and disappear at zero. A badge that is always
   present stops being read.
 

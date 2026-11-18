@@ -174,6 +174,11 @@ findings in order of harm to the person. For each one give:
 Say what you checked and what you could not check. Do not pad a review with taste
 preferences. If the screen is sound, say so briefly.
 
+**After a fix, look again.** Meeting a threshold is not the end of the job. A control made
+big enough to tap can end up the wrong size for its row; a color made dark enough can stop
+matching its neighbors. Each time you change a size or a color to satisfy a rule, compare
+the result with the controls around it, and with how it looked before.
+
 **Measuring.** Contrast, target size and reflow are measured, not estimated. Where a claim
 depends on real users, such as whether a label is understood, say that it is a prediction
 and what would confirm it.

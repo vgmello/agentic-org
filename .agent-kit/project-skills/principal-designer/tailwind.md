@@ -18,6 +18,11 @@ tokens in `apps/agentic-org-ui/src/app.css`, and builds component variants with
   reading measure.
 - **Targets.** `size-6` is 24 px, `size-9` is 36 px, `min-h-11` or `size-11` is 44 px. Raise
   targets for touch with a narrow-only variant.
+- **Extend the hit area, not the shape.** A pseudo-element can carry the target:
+  `relative after:absolute after:inset-x-0 after:-inset-y-1` on a 36 px segment inside an
+  `h-11 p-1` track gives a 44 px hit area while the drawn tile stays 36 px. Do not put
+  `min-h-11` on a child of a padded container: the container then exceeds 44 px and no
+  longer matches the field beside it.
 - **Sizes are rem.** They grow with the person's text size, which is what you want. A fixed
   pixel height in brackets does not, so it needs a reason.
 
