@@ -296,8 +296,9 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
 ## The test (LNX-2)
 
 `deploy/container/lnx2.sh` builds the image and runs it in real containers. It checks
-registration and sign-in, the web process's confinement, and a worker sending and reading
-messages with `agent-os`. It checks the private modes in `/secrets`, including a
+registration and sign-in, the web process's confinement, and `agent-os` reaching an office
+worker: a directory read, and a send the office refuses until B6 restores messaging
+(since B1b the office serves none). It checks the private modes in `/secrets`, including a
 mode-`600` recovery credential created by the host under `/secrets/host-secrets` after
 organization creation is requested. It verifies that writes stay within the volumes,
 a replacement container keeps its state, and that empty or mismatched secrets volumes

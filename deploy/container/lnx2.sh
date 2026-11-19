@@ -31,14 +31,16 @@
 #   3. the browser address answers from the Docker host over plain HTTP from the first
 #      start, before any office exists: the version, the UI's index, the page of the
 #      registration link, and a refusal for any other Host; then an office worker starts
-#      and `agent-os` sends and reads inside the container (the office is stored by the
-#      test's own program: no command creates one yet);
+#      and `agent-os` reaches it inside the container: a directory read is answered, and a
+#      send is answered `unsupported` by the office itself, not spooled (since B1b the office
+#      serves no messaging; B6 restores the send and read). The office is stored by the
+#      test's own program: no command creates one yet;
 #   4. LNX-4: the service's directories and files under /secrets are private, no key
 #      is under /data, and nothing was written outside the two volumes;
 #   5. `docker stop` ends the service within 2.5 s (inside the runtime's grace), with exit code 0;
-#   6. a new container on the same volumes is the same instance with the same keys, reads
-#      a message sent before the replacement, sends and reads a new one, keeps the
-#      browser's session and signs the administrator in again;
+#   6. a new container on the same volumes is the same instance with the same keys, its
+#      office answers `agent-os` as before the replacement, and it keeps the browser's
+#      session and signs the administrator in again;
 #   7. a new container with the data volume and a new, empty secrets volume does not start
 #      ("credentials missing"), and nothing is made in the empty volume. Fresh data with
 #      the used secrets volume is also refused, with no reservation or credential changes;
@@ -188,7 +190,19 @@ bridge() {
 }
 # The bridge, made again until the worker answers through it: a worker that has just
 # started replaces the socket file of the one before it.
-answers() { bridge "$1" 2>/dev/null && agent "$1" nova msg inbox --json >/dev/null 2>&1; }
+answers() { bridge "$1" 2>/dev/null && agent "$1" pixel who nova --json >/dev/null 2>&1; }
+# reaches <container>: agent-os reads nova from the office's directory, and a send reaches the
+# office, which refuses it (exit 4, until B6 restores messaging), with nothing spooled.
+reaches() {
+    local found sent code=0
+    found=$(agent "$1" pixel who nova --json)
+    has '"id":"AGENT00000000000000000NOVA"' "$found" || fail "pixel's directory read of nova: $found"
+    sent=$(agent "$1" pixel msg send --to nova --subject first --json "hello nova" 2>&1) || code=$?
+    [ "$code" = 4 ] || fail "a send gave exit code $code, not the office's refusal (4): $sent"
+    has 'does not serve messaging yet' "$sent" || fail "the send was not refused by the office: $sent"
+    docker exec "$1" sh -c '! [ -e /data/.cache/lnx2-agent/spool/outbox/new ]' ||
+        fail "the refused send was spooled"
+}
 # A listing of every file in the secrets volume with its owner, mode and digest.
 secrets_manifest='cd /secrets && find . -type f ! -name .lock | sort | while read -r f; do
     printf "%s %s %s\n" "$(stat -c "%u:%g %a" "$f")" "$(sha256sum < "$f" | cut -d" " -f1)" "$f"; done'
@@ -384,7 +398,7 @@ echo "a wrong password: $wrong, no cookie; the same sign-in from another site: 4
 [ -z "$(docker exec -u 0 "$tag-a" find /data /secrets ! -user "$user")" ] ||
     fail "root left a file of its own in the volumes"
 
-say "3. an office worker, and agent-os sends and reads"
+say "3. an office worker, and agent-os reaches it"
 started=$(now)
 docker stop "$tag-a" >/dev/null
 echo "docker stop (no worker yet): $(since "$started") s, exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-a")"
@@ -394,14 +408,8 @@ docker start "$tag-a" >/dev/null
 wait_until "the instance to serve again" serving "$tag-a"
 wait_until "the office worker's socket" worker_serves "$tag-a"
 wait_until "the worker to answer agent-os" answers "$tag-a"
-first=$(agent "$tag-a" pixel msg send --to nova --subject first --json "hello nova")
-echo "pixel sent: $first"
-inbox=$(agent "$tag-a" nova msg inbox --json)
-has '"subject":"first"' "$inbox" || fail "nova's inbox does not show the message: $inbox"
-read_back=$(agent "$tag-a" nova msg read --next --json)
-has '"body":"hello nova"' "$read_back" || fail "nova read: $read_back"
-echo "nova read it back"
-agent "$tag-a" pixel msg send --to nova --subject kept --json "read me after the replacement" >/dev/null
+reaches "$tag-a"
+echo "pixel read nova from the office's directory; the office refused a send (no messaging until B6), and nothing was spooled"
 
 # The web process serves on after the restart, with the office there.
 wait_until "the web process to serve again" answers_http
@@ -459,16 +467,8 @@ wait_until "the office worker's socket" worker_serves "$tag-b"
 [ "$(instance_id "$tag-b")" = "$id" ] || fail "another instance: $(instance_id "$tag-b")"
 [ "$(secrets_listing "$tag-b")" = "$before" ] || fail "the keys changed"
 wait_until "the worker to answer agent-os" answers "$tag-b"
-kept=$(agent "$tag-b" nova msg read --next --json)
-has '"body":"read me after the replacement"' "$kept" || fail "the earlier message: $kept"
-echo "the same instance $id, the same keys, and nova read the message sent before"
-after=$(agent "$tag-b" pixel msg send --to nova --subject after --json "sent after the replacement")
-echo "pixel sent: $after"
-inbox=$(agent "$tag-b" nova msg inbox --json)
-has '"subject":"after"' "$inbox" || fail "nova's inbox does not show the new message: $inbox"
-read_back=$(agent "$tag-b" nova msg read --next --json)
-has '"body":"sent after the replacement"' "$read_back" || fail "nova read after the replacement: $read_back"
-echo "a new message sent and read after the replacement"
+reaches "$tag-b"
+echo "the same instance $id, the same keys, and its office answers agent-os as before"
 wait_until "the replaced web process to serve" answers_http
 session_holds || fail "the browser's session did not survive the replacement"
 signed_in "sign-in after the replacement" \
