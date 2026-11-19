@@ -96,6 +96,13 @@ the host opens its keys. A volume with existing credential files and no marker i
 also refused because its owner cannot be established. Keep the original volumes together
 and use an unused secrets volume for a new instance.
 
+A secrets volume written by a development build from before the marker existed holds
+keys and no `.instance`, so it is refused this way. No release wrote one. To keep such a
+volume with the data volume it belongs to, write the instance ID from the setup record
+(`instance_id` in `/data/.local/share/agentic-org/setup/default/setup.v1.json`) into
+`/secrets/.instance` as the service user, with mode `600` and nothing else in it (no newline), while the
+container is stopped.
+
 Once the instance has an office, a **new, empty** secrets volume is refused with
 "credentials missing". The new volume stays empty. Restore the matching secrets volume
 to recover the keys.

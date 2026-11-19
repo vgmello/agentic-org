@@ -1567,6 +1567,86 @@ mod credentials {
         assert_eq!(record.credentials, None);
     }
 
+    /// X5 review, fifth round, P3-b: a registered setup whose file names a credential
+    /// directory already bound to another instance is refused before anything is saved,
+    /// as the host would refuse it at the service's first start; the binding is untouched.
+    #[test]
+    fn a_configured_credential_directory_bound_to_another_instance_is_refused() {
+        if !release_directory_system() {
+            println!("skipped: this system keeps no secrets in a directory");
+            return;
+        }
+        // <target>/<profile>/deps/<test binary>: a place whose ancestors may pass the rule.
+        let executable = std::env::current_exe().unwrap().canonicalize().unwrap();
+        let tmp = executable.ancestors().nth(3).unwrap().join("tmp");
+        if fs::create_dir_all(&tmp).is_err() {
+            println!("skipped: {} cannot be made", tmp.display());
+            return;
+        }
+        let home_dir = tempfile::tempdir_in(&tmp).unwrap();
+        let home = home_dir.path().canonicalize().unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o755)).unwrap();
+        let account = Account {
+            base: home.join("share"),
+            _temp: tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())
+                .unwrap(),
+        };
+        fs::create_dir(&account.base).unwrap();
+        fs::set_permissions(&account.base, fs::Permissions::from_mode(0o700)).unwrap();
+        let bound = home.join("credentials");
+        fs::create_dir(&bound).unwrap();
+        fs::set_permissions(&bound, fs::Permissions::from_mode(0o700)).unwrap();
+        let marker = bound.join(".instance");
+        fs::write(&marker, "another-instance").unwrap();
+        fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let temp = account._temp.path().canonicalize().unwrap().join("t");
+        fs::create_dir(&temp).unwrap();
+        fs::set_permissions(&temp, fs::Permissions::from_mode(0o700)).unwrap();
+        let paths = Paths::at(&account.base, temp, None).unwrap();
+        let platform = Platform {
+            service: Box::new(NoService),
+            disk: Box::new(org_platform::testing::FakeDiskEncryption(
+                EncryptionState::On,
+            )),
+            credentials: CredentialDirectory::Below(home.join("state")),
+        };
+        let request = Request {
+            name: None,
+            port: None,
+            prompt: None,
+            named_port_base: NAMED_PORT_BASE,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            terminal: false,
+            development_keys: None,
+            configuration: Some(Configuration(Input {
+                version: 1,
+                service: Service::Registered,
+                root: home.join("data"),
+                credentials: Some(bound.clone()),
+                listen: loopback(free_port()).unwrap(),
+            })),
+        };
+        let refused = run_at(&paths, &platform, request, &mut Vec::new()).unwrap_err();
+        if refused.contains("writable by others") || refused.contains("owned by another") {
+            println!("skipped: no directory here passes the ancestor rule: {refused}");
+            return;
+        }
+        assert!(
+            refused.starts_with("the credential directory cannot be used: ")
+                && refused.contains("already bound to another instance")
+                && refused.ends_with("; nothing was saved"),
+            "{refused}"
+        );
+        assert!(
+            Journal::snapshot(&account.base, None).is_err(),
+            "a record was saved"
+        );
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "another-instance");
+        assert!(!bound.join(".lock").exists());
+    }
+
     /// Setup on this machine, with the host's own walk from `/`. A credential directory
     /// below a shared temporary directory is one the host would refuse (that directory is
     /// writable by others): setup refuses it in the host's words and saves no instance.

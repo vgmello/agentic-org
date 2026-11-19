@@ -195,6 +195,29 @@ fn open_as_the_host_will(
     }
 }
 
+/// [`open_as_the_host_will`] for a new reservation of a registered service whose
+/// configuration names the credential directory: the directory must also be unused, as a
+/// new foreground reservation's volume must be ([`unused_mounted_store`]). One bound to
+/// another instance, or holding credentials without a binding, is refused before the
+/// service is registered, not at its first start.
+fn unused_as_the_host_will(
+    records: std::os::fd::BorrowedFd<'_>,
+) -> impl FnOnce(
+    org_platform_host::credentials::ReleaseDirectory<'_>,
+) -> Result<
+    org_platform_host::credentials::ReleaseRoot,
+    org_platform_host::credentials::CredentialError,
+> + '_ {
+    move |location| {
+        org_platform_host::credentials::check_unused_release_directory(
+            location,
+            &crate::release_store::ITEM_STORES,
+            &[records],
+        )?;
+        open_as_the_host_will(records)(location)
+    }
+}
+
 /// A new foreground reservation requires an unused volume. The host claims it with its
 /// recorded instance ID when it starts.
 fn unused_mounted_store(
@@ -298,7 +321,7 @@ fn preflight(
             root.descriptor(),
             Path::new("/"),
             false,
-            open_as_the_host_will(records),
+            unused_as_the_host_will(records),
         )
     };
     // The data folder goes again if this made it.
@@ -1268,7 +1291,7 @@ pub(crate) fn run_at(
                             configured,
                             instance.root_descriptor(),
                             Path::new("/"),
-                            open_as_the_host_will(records.as_fd()),
+                            unused_as_the_host_will(records.as_fd()),
                         )?),
                         (None, CredentialDirectory::Below(base)) => {
                             Some(make_credential_directory(
